@@ -114,7 +114,7 @@ export function FileSurfaceNotice(props: { readonly children: ReactNode }) {
   return (
     <div
       role="status"
-      className="shrink-0 border-b border-warning/20 bg-warning-surface px-3 py-1.5 text-[11px] text-warning-foreground"
+      className="shrink-0 border-b border-warning/20 bg-warning-surface px-3 py-1.5 scient-reading-micro text-warning-foreground"
     >
       {props.children}
     </div>
@@ -143,14 +143,14 @@ export function FileSurfaceFailure(props: {
   return (
     <div
       role="alert"
-      className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-6 text-center text-xs leading-relaxed"
+      className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-6 text-center scient-reading-ui text-xs leading-relaxed"
     >
       <p className="text-destructive">{props.message}</p>
       {props.onRetry ? (
         <button
           type="button"
           onClick={props.onRetry}
-          className="rounded-md border border-input px-2.5 py-1 text-xs text-foreground hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+          className="rounded-md border border-input px-2.5 py-1 scient-reading-ui text-xs text-foreground hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
         >
           Try again
         </button>

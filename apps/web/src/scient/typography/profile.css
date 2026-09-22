@@ -1,9 +1,42 @@
 :root {
-  /* Fixed-pixel surfaces that do not inherit the interface size preference. */
-  --scient-font-size-file-tree: 14px;
+  /* Reading sizes follow the Interface preference without changing app-wide utilities. */
+  --scient-font-size-reading-body: 0.9rem;
+  --scient-font-size-reading-secondary: 0.775rem;
+  --scient-font-size-reading-micro: 0.675rem;
+  --scient-font-size-reading-compact: 0.725rem;
+  --scient-font-size-markdown-body: 0.905rem;
+  --scient-font-size-markdown-secondary: 0.78rem;
+  --scient-font-size-markdown-marker: 0.7175rem;
+  --scient-font-size-markdown-h1: 1.28rem;
+  --scient-font-size-markdown-h2: 1.155rem;
+  --scient-font-size-markdown-h3: 1.03rem;
+  --scient-font-size-markdown-editor-footnote: 0.85rem;
+  --scient-font-size-file-tree: 0.85rem;
+  /* Remaining fixed-pixel exceptions, including dependency shadow roots. */
   --scient-font-size-inline-file-chip: 14px;
   --scient-font-size-compact-meta: 13px;
   --scient-font-size-diff-header: 14px;
+}
+
+/* Opt in only the conversation timeline and selected panel chrome. Repeated
+   scopes assign absolute sizes, so nesting never applies the increase twice. */
+.scient-reading-ui,
+.scient-reading-micro {
+  --text-sm: var(--scient-font-size-reading-body);
+  --text-xs: var(--scient-font-size-reading-secondary);
+  --text-sm--line-height: calc(1.25 / 0.9);
+  --text-xs--line-height: calc(1 / 0.775);
+  --scient-font-size-inline-file-chip: calc(14px + 0.025rem);
+  --scient-font-size-compact-meta: calc(13px + 0.025rem);
+}
+
+/* Explicit rem sizing also covers the small file notices previously fixed at 11px. */
+.scient-reading-micro {
+  font-size: var(--scient-font-size-reading-micro);
+}
+
+.scient-reading-compact {
+  font-size: var(--scient-font-size-reading-compact);
 }
 
 .scient-chat-inline-chip,

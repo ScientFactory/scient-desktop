@@ -325,7 +325,7 @@ function WorkspaceImagePreview(props: {
   if (assetUrl._tag === "Failure" || (imageUrl !== null && failedUrl === imageUrl)) {
     return (
       <MediaActions source={actionsSource}>
-        <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-destructive">
+        <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center scient-reading-ui text-xs leading-relaxed text-destructive">
           Unable to load workspace image.
         </div>
       </MediaActions>
@@ -405,7 +405,7 @@ function WorkspaceBrowserPreview(props: {
 
   if (assetUrl._tag === "Failure") {
     return (
-      <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-destructive">
+      <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center scient-reading-ui text-xs leading-relaxed text-destructive">
         Unable to load file preview.
       </div>
     );
@@ -1726,7 +1726,7 @@ export default function FilePreviewPanel({
             data-file-breadcrumbs
           >
             {isHostFile ? (
-              <div className="flex h-full w-max min-w-full items-center text-xs">
+              <div className="flex h-full w-max min-w-full items-center scient-reading-ui text-xs">
                 <FileBreadcrumbs
                   cwd={cwd}
                   environmentId={environmentId}
@@ -1868,7 +1868,7 @@ export default function FilePreviewPanel({
         />
       )}
       {relativePath && !markdownLease && !isPdf && file.data?.readOnly ? (
-        <div className="shrink-0 border-b border-border/50 bg-muted/35 px-3 py-1.5 text-[11px] text-muted-foreground">
+        <div className="shrink-0 border-b border-border/50 bg-muted/35 px-3 py-1.5 scient-reading-micro text-muted-foreground">
           This file is read-only in Files.
         </div>
       ) : null}
@@ -1878,7 +1878,7 @@ export default function FilePreviewPanel({
       !isMedia &&
       !renderBrowserFile &&
       file.data?.truncated ? (
-        <div className="shrink-0 border-b border-warning/20 bg-warning-surface px-3 py-1.5 text-[11px] text-warning-foreground">
+        <div className="shrink-0 border-b border-warning/20 bg-warning-surface px-3 py-1.5 scient-reading-micro text-warning-foreground">
           Read-only preview limited to the first 1 MB of a {file.data.byteLength.toLocaleString()}{" "}
           byte file.
         </div>
@@ -1955,7 +1955,7 @@ export default function FilePreviewPanel({
             <>
               <div
                 role="alert"
-                className="shrink-0 border-b border-warning/24 bg-warning-surface px-3 py-2 text-xs text-warning-foreground"
+                className="shrink-0 border-b border-warning/24 bg-warning-surface px-3 py-2 scient-reading-ui text-xs text-warning-foreground"
               >
                 <p>
                   This file could not be opened safely for editing. The last available preview is
@@ -1987,7 +1987,7 @@ export default function FilePreviewPanel({
               aria-label="Opening Markdown editor"
             />
           ) : relativePath && file.error && file.data === null ? (
-            <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-destructive">
+            <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center scient-reading-ui text-xs leading-relaxed text-destructive">
               {file.error}
             </div>
           ) : relativePath && file.data === null ? (

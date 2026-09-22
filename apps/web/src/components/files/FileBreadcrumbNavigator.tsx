@@ -54,7 +54,7 @@ function PickerStatus(props: {
   return (
     <>
       <div
-        className="flex min-h-8 items-center gap-2 px-2 py-1 text-muted-foreground text-xs"
+        className="flex min-h-8 items-center gap-2 px-2 py-1 text-muted-foreground scient-reading-ui text-xs"
         role="status"
       >
         {props.kind === "loading" ? (
@@ -211,7 +211,7 @@ export function FileBreadcrumbNavigator({
   }, [relativePath]);
 
   return (
-    <div className="flex h-full w-max min-w-full items-center text-xs">
+    <div className="flex h-full w-max min-w-full items-center scient-reading-ui text-xs">
       {breadcrumbs.map((crumb, index) => {
         const currentFile = crumb.kind === "file";
         // FilePreviewPanel uses this marker to keep the current file visible after path changes.

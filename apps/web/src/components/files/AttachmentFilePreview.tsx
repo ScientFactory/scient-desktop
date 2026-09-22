@@ -276,8 +276,8 @@ export function AttachmentFilePreview(props: {
     </div>
   ) : (
     <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-1 px-6 text-center">
-      <p className="text-sm font-medium">No preview for this file</p>
-      <p className="max-w-sm text-xs leading-relaxed text-muted-foreground">
+      <p className="scient-reading-ui text-sm font-medium">No preview for this file</p>
+      <p className="max-w-sm scient-reading-ui text-xs leading-relaxed text-muted-foreground">
         Save it to open in an app that supports {props.name.split(".").at(-1) || "this format"}{" "}
         files.
       </p>
@@ -287,7 +287,7 @@ export function AttachmentFilePreview(props: {
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
       <div className={cn(FILE_SURFACE_SUBHEADER_CLASS)} data-surface-subheader>
-        <div className="flex min-w-0 flex-1 items-center text-xs">
+        <div className="flex min-w-0 flex-1 items-center scient-reading-ui text-xs">
           <span className="shrink-0 px-0.5 text-muted-foreground">
             {props.origin ?? "Attachment"}
           </span>

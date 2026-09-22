@@ -16,20 +16,34 @@ with the Interface font row or Restore Defaults. Available font faces determine
 how closely each requested weight can be rendered.
 
 Most of the interface uses `rem` units and therefore follows the interface
-preference without component changes. The small number of important surfaces
-that use fixed pixels or render inside dependency shadow roots consume the
-tokens in `apps/web/src/scient/typography/profile.css`:
+preference. Shared reading sizes live in
+`apps/web/src/scient/typography/profile.css`. Rendered chat Markdown and editable
+Markdown documents share body (0.905rem), heading (1.28/1.155/1.03rem), and
+table/inline-code (0.78rem) sizes. H4–H6 use the body size. These add 0.03rem to
+the previous content scale. Existing specialized footnote sizes remain distinct:
+0.78rem in chat, 0.85rem in the document editor.
 
-- workspace file names: 14 px;
-- inline chat file links and their tooltips: 14 px;
+The conversation timeline, panel launcher and tab names, and selected file-viewer
+chrome opt into `scient-reading-ui`: 0.9rem body and 0.775rem secondary text,
+an increase of 0.025rem. These are local overrides of the existing utilities;
+nested scopes do not compound. Small file notices use 0.675rem. Utility line
+heights retain their existing rem dimensions; prose keeps its line-height ratio.
+Other panel contents, global menus, sidebar, and settings keep their own scale.
+
+Shadow-root and fixed-pixel exceptions also consume this profile:
+
+- workspace file names: 0.85rem (14.45 px at the default Interface size);
+- inline file links and their tooltips: 14 px, with the local reading increment
+  applied to links inside the timeline or rendered Markdown;
 - compact diff metadata: 13 px; and
 - diff and file headers: 14 px.
 
 This is a deliberate product divergence, not a replacement typography system.
 Keep receiving T3's appearance architecture normally. Future upstream changes
-should preserve the four owned fixed-surface tokens and avoid copying the
-profile into individual components.
+should preserve the shared reading and surface tokens and avoid copying their
+values into individual components.
 
-The profile scales application chrome, rendered chat Markdown, rendered
-Markdown file previews, source files, and diffs. It does not alter document
+Prompt, source-file/diff, and terminal sizes retain their separate preferences.
+Chat code blocks use Code size; the editable Markdown editor currently retains
+its existing 0.8rem code-block size. The reading profile does not alter document
 pixels inside images, PDFs, user-authored HTML, or hosted web pages.

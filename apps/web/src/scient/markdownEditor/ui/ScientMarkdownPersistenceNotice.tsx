@@ -77,7 +77,7 @@ export function ScientMarkdownPersistenceNotice({
           ref={regionRef}
           role="region"
           aria-labelledby={titleId}
-          className="flex shrink-0 flex-wrap items-center gap-2 border-b border-warning/24 bg-warning-surface px-3 py-2 text-[11px] text-warning-foreground"
+          className="flex shrink-0 flex-wrap items-center gap-2 border-b border-warning/24 bg-warning-surface px-3 py-2 scient-reading-micro text-warning-foreground"
         >
           <AlertTriangle className="size-3.5 shrink-0" aria-hidden="true" />
           <div className="min-w-0 flex-1 basis-64 leading-relaxed">
@@ -165,7 +165,7 @@ export function ScientMarkdownPersistenceNotice({
         </div>
       ) : null}
       {snapshot.recoverySource !== null ? (
-        <div className="shrink-0 border-b border-border/50 px-3 py-1.5 text-[11px] text-muted-foreground">
+        <div className="shrink-0 border-b border-border/50 px-3 py-1.5 scient-reading-micro text-muted-foreground">
           Previous local edits are available while this document remains open.
           <Button size="xs" variant="ghost" onClick={() => persistence.restoreRecovery()}>
             Restore previous edits

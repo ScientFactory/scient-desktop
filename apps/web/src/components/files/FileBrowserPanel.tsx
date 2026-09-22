@@ -610,7 +610,7 @@ export default function FileBrowserPanel({
   return (
     <div
       ref={panelRef}
-      className="flex min-h-0 flex-1 flex-col bg-background"
+      className="scient-reading-ui flex min-h-0 flex-1 flex-col bg-background"
       data-file-browser-panel={`${environmentId}:${cwd}`}
     >
       <div
@@ -712,7 +712,7 @@ export default function FileBrowserPanel({
           {treeSnapshot.failures[0] ? (
             <button
               type="button"
-              className="shrink-0 border-b border-destructive/15 px-3 py-1.5 text-left text-[11px] leading-4 text-destructive transition-colors hover:bg-destructive/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              className="shrink-0 border-b border-destructive/15 px-3 py-1.5 text-left scient-reading-micro leading-4 text-destructive transition-colors hover:bg-destructive/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
               onClick={() =>
                 void treeControllerRef.current?.retry(
                   treeSnapshot.failures[0]?.relativeDirectory ?? "",
@@ -738,7 +738,7 @@ export default function FileBrowserPanel({
             ) : null}
           </div>
           {isSearching ? (
-            <div className="shrink-0 border-t border-border/50 px-3 py-1.5 text-[11px] leading-4 text-muted-foreground">
+            <div className="shrink-0 border-t border-border/50 px-3 py-1.5 scient-reading-micro leading-4 text-muted-foreground">
               {isSearchPending
                 ? "Searching unopened folders…"
                 : currentSearchError
