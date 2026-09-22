@@ -2,10 +2,90 @@
 
 Status: Active maintainer runbook
 Owner: ScientFactory
-Last updated: 2026-08-24
+Last updated: 2026-09-22
 Purpose: Defines the one canonical Scient development baseline and the isolated worktree runtimes used to review changes safely.
 
+## Contributor Quickstart
+
+This guide belongs to the `scient-desktop` repository and travels with its
+code. You do not need a maintainer's personal skill installation, profile, or
+signing credentials to follow it. Use your own provider authentication when
+testing agent turns.
+
+Install the Node and package-manager versions declared in `package.json`; see
+[development setup](./development.md#first-checkout). Before installing native
+dependencies on Windows, read the [Windows prerequisites](./local-dev-app-windows.md#prerequisites).
+From your existing clone, create a separate feature worktree (replace the
+example branch and directory names):
+
+```sh
+git fetch origin main
+git worktree add -b your-feature ../scient-desktop-your-feature origin/main
+cd ../scient-desktop-your-feature
+pnpm install --frozen-lockfile
+```
+
+Do not switch or reset a checkout that already owns a running app. The linked
+worktree gives the dev runner an isolated `.scient-next` state directory and
+its own port preferences. Check the actual resolved paths and ports in output.
+
+- **macOS:** follow [Daily Commands](#daily-commands). The managed app runs in
+  the background; ordinary feature review does not require installing or
+  replacing the stable launcher.
+- **Windows:** follow [Windows dev app](./local-dev-app-windows.md). Keep its
+  PowerShell terminal open; background-service and clickable-launcher commands
+  below are macOS-only.
+- **Other hosts:** use the [development guide](./development.md), including
+  native prerequisites. Do not assume macOS lifecycle support.
+
+### Verify and hand off
+
+Before reporting ready, record the worktree, branch, exact commit, dirty status,
+state root, and selected ports. Confirm the desktop window opens, the backend
+is ready, and the web origin and backend `/.well-known/t3/environment` endpoint
+respond on the ports reported for this run. Check that the processes/listeners
+belong to this candidate, not another app. A running window or status message
+alone does not prove feature behavior or exclude orphan processes.
+
+Keep the candidate running while the user reviews it. Stop with the owning
+platform's procedure only when requested or review is finished; verify its
+processes and listeners have exited without affecting other candidates. Report
+startup, feature tests, and manual acceptance separately. Microphone access,
+OAuth callbacks, and packaged-release behavior need their own checks.
+
+## Agent-Assisted Development
+
+The optional shared [scient-dev-app skill](../../.scient/skills/scient-dev-app/SKILL.md)
+guides lifecycle work; this runbook and its platform instructions remain the
+source of truth for commands. Humans can follow the same guide without a skill.
+
+In Scient, open the checkout as an initialized project. Project-owned skills
+are discovered from `.scient/skills`; after discovery, `scient-dev-app` can be
+selected automatically or explicitly as `$scient-dev-app`, subject to its
+Settings policy. See [project skill discovery](../internals/scient-skills.md#project-owned-skills).
+This does not install or replace anyone's personal skills.
+
+Other agents need not support Scient's skill discovery. Ask them to read
+`.scient/skills/scient-dev-app/SKILL.md` in this checkout explicitly, or use
+their supported repository-skill mechanism. Do not assume that a skill hosted
+on GitHub has been installed or activated in every agent tool.
+
+Example request:
+
+> Read `.scient/skills/scient-dev-app/SKILL.md`. Launch an isolated development
+> app from this feature worktree, verify readiness, and leave it running for
+> my review. Do not change other running candidates.
+
+Use this skill for lifecycle operations, not as a claim of visual acceptance.
+Browser/UI testing is a separate task; where the required tools are available,
+the existing [test-t3-app skill](../../.agents/skills/test-t3-app/SKILL.md) covers
+that workflow. Neither skill grants new tools, permissions, or release authority.
+
 ## Outcome And Boundary
+
+The managed roles, services, clickable launchers, and signing instructions
+below describe macOS. Windows shares the isolation and review principles but
+uses the separate foreground procedure linked above.
 
 There are two deliberately different local-development roles:
 

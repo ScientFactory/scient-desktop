@@ -117,6 +117,7 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Scient typography profile](./internals/scient-typography.md)
 - [Scient math rendering](./internals/scient-math.md)
 - [Scient rich Markdown editor](./internals/scient-rich-markdown-editor.md)
+  - [Shared keyboard ownership and authoring settings](./internals/scient-keyboard.md)
 - [Scient rich chat diagrams](./internals/scient-chat-diagrams.md)
 - [Scient inline workspace images](./internals/scient-chat-images.md)
 - [Scient rich chat visualizations](./internals/scient-chat-visualizations.md)
@@ -156,6 +157,7 @@ Follow their linked successors for current behavior.
 ### Runbooks
 
 - [Scient local dev app](./operations/local-dev-app.md)
+- [Windows dev app](./operations/local-dev-app-windows.md)
 - [Release](./operations/release.md)
 - [Managed provider runtime updates](./operations/managed-provider-runtime-updates.md)
 - [Observability](./operations/observability.md)

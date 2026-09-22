@@ -16,6 +16,12 @@ authoritative, agent-editable, and portable outside Scient.
 The finished experience must be suitable for sustained scientific writing rather than only
 demonstrating that plain text can round-trip through a rich-text component.
 
+## Keyboard integration
+
+Keyboard settings and context dispatch follow
+[the shared keyboard contract](./scient-keyboard.md). ProseMirror retains the
+document transaction/history authority, including edits from math input tools.
+
 ## Product principles
 
 1. **The file is the document.** No opaque database or vendor service owns canonical content.

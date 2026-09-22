@@ -38,13 +38,20 @@ text layer can be read visually, but text selection and search may be limited.
 
 Keyboard shortcuts inside the reader:
 
-| Shortcut     | Action           |
-| ------------ | ---------------- |
-| `Cmd/Ctrl+F` | Open PDF search  |
-| `Escape`     | Close PDF search |
-| `Cmd/Ctrl++` | Zoom in          |
-| `Cmd/Ctrl+-` | Zoom out         |
-| `Cmd/Ctrl+0` | Actual size      |
+| Shortcut     | Action               |
+| ------------ | -------------------- |
+| `Cmd/Ctrl+F` | Open PDF search      |
+| `Escape`     | Close PDF search     |
+| `Alt+Up`     | Zoom document in     |
+| `Alt+Down`   | Zoom document out    |
+| `Alt+0`      | Document actual size |
 
 While PDF search is focused, `Arrow Down` or `Enter` advances to the next
 match. `Arrow Up` or `Shift+Enter` returns to the previous match.
+
+On Mac, Alt is Option. Customize document commands under **Settings → Shortcuts → PDF**.
+Toolbar hints show your effective bindings.
+Document zoom deliberately differs from `Cmd/Ctrl++`, `Cmd/Ctrl+-`, and
+`Cmd/Ctrl+0`, which remain browser/application zoom. Those native menu keys can
+be intercepted before a document receives them; prefer a non-reserved custom key.
+`Cmd/Ctrl+Shift+F` does not open PDF Find.

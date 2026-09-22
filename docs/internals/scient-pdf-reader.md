@@ -13,6 +13,12 @@ its `WorkspaceBinaryFileError` protection. Instead, the reader requests an exact
 file-scoped, short-lived asset capability and PDF.js reads the authorized URL.
 PDF capabilities do not grant sibling-file access.
 
+## Keyboard ownership
+
+Keyboard ownership, document-zoom defaults, and preference scope are specified in
+[the shared keyboard contract](./scient-keyboard.md). Reader actions stay in this
+module; shared dispatch must not turn read mode into source or PDF-content editing.
+
 ## Runtime
 
 The reader pins `pdfjs-dist` exactly and ships its worker, character maps,

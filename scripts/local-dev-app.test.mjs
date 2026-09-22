@@ -453,6 +453,33 @@ describe("local dev app runner lifecycle", () => {
     ]);
   });
 
+  it("stops every same-worktree app even when the shared PID file missed them", async () => {
+    const { paths } = fixture();
+    const signals = [];
+
+    await stopApp({
+      paths,
+      matchesRunner: () => false,
+      killProcess: (...args) => signals.push(args),
+      resolveOwnedApp: () => null,
+      resolveOwnedBackend: () => null,
+      resolveOwnedApps: () => [
+        { pid: 2222, command: "/owned/Electron --t3code-dev-root=/owned" },
+        { pid: 4444, command: "/owned/Electron --t3code-dev-root=/owned" },
+      ],
+      resolveOwnedBackends: () => [{ pid: 3333, command: "/owned/Electron server/bin.mjs" }],
+      waitUntilStopped: async () => true,
+      unloadService: () => false,
+      writeLine: () => {},
+    });
+
+    assert.deepEqual(signals, [
+      [2222, "SIGTERM"],
+      [4444, "SIGTERM"],
+      [3333, "SIGTERM"],
+    ]);
+  });
+
   it("treats a runner that exits before signaling as already stopped", async () => {
     const { paths } = fixture();
     writeRunnerState(paths);
