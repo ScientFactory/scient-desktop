@@ -19,6 +19,9 @@ Date: 2026-09-22
 The remote owned main advanced with PR #337 while the first composition was
 being qualified. The alignment was rebuilt from the newer main instead of
 carrying already-merged owned changes as PR noise.
+After qualification, owned main advanced again with the release-note-only PR
+#338. Its single-file change was merged into this same alignment branch as
+`8324d36cd0`, without repeating the upstream alignment or runtime gates.
 
 ## Adopted upstream behavior
 
@@ -110,6 +113,6 @@ The build emitted existing non-fatal bundler warnings for the optional Linux
 
 ## Publication boundary
 
-This merge is integrated only in the isolated local alignment branch. It has
-not been pushed, opened as a pull request, auto-merged, or released. Those are
-separate user-authorized steps after review.
+The upstream merge is integrated in the isolated alignment branch. Delivery
+through a pull request and any subsequent release remain separate actions;
+this alignment does not authorize publication.
