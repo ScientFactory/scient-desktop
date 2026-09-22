@@ -500,7 +500,7 @@ function commandArgument(source: string, command: string): string | null {
   return close === null ? null : source.slice(opening + 1, close);
 }
 
-function tabularBody(source: string): string | null {
+function tabularBody(source: string): { source: string; from: number } | null {
   const opening = /\\begin\{(tabularx|tabular|tabulary|longtable)\}/u.exec(source);
   if (!opening) return null;
   const name = opening[1]!;
@@ -514,11 +514,23 @@ function tabularBody(source: string): string | null {
     cursor = close + 1;
   }
   const end = source.lastIndexOf(`\\end{${name}}`);
-  return end <= cursor ? null : source.slice(cursor, end);
+  return end <= cursor ? null : { source: source.slice(cursor, end), from: cursor };
 }
 
-function splitTable(source: string, delimiter: "row" | "cell"): string[] {
-  const values: string[] = [];
+interface TableSourceSlice {
+  readonly source: string;
+  readonly from: number;
+  readonly to: number;
+}
+
+interface EditableTableCell {
+  readonly display: string;
+  readonly from: number;
+  readonly to: number;
+}
+
+function splitTable(source: string, delimiter: "row" | "cell"): TableSourceSlice[] {
+  const values: TableSourceSlice[] = [];
   let from = 0;
   let depth = 0;
   for (let index = 0; index < source.length; index++) {
@@ -531,7 +543,7 @@ function splitTable(source: string, delimiter: "row" | "cell"): string[] {
     if (source[index] === "{") depth++;
     else if (source[index] === "}") depth = Math.max(0, depth - 1);
     else if (depth === 0 && delimiter === "cell" && source[index] === "&") {
-      values.push(source.slice(from, index));
+      values.push({ source: source.slice(from, index), from, to: index });
       from = index + 1;
     } else if (
       depth === 0 &&
@@ -539,25 +551,79 @@ function splitTable(source: string, delimiter: "row" | "cell"): string[] {
       source[index] === "\\" &&
       source[index + 1] === "\\"
     ) {
-      values.push(source.slice(from, index));
+      values.push({ source: source.slice(from, index), from, to: index });
       index++;
       from = index + 1;
     } else if (source[index] === "\\") index++;
   }
-  values.push(source.slice(from));
+  values.push({ source: source.slice(from), from, to: source.length });
   return values;
+}
+
+const TABLE_CELL_WRAPPER = /^(?:\\(?:textbf|textit|emph|texttt|textsc|underline|mbox))\s*\{/u;
+const TABLE_RULE_PREFIX = /^(?:\\(?:toprule|midrule|bottomrule|hline)\b\s*)+/u;
+const TABLE_RULE_SUFFIX = /(?:\s*\\(?:toprule|midrule|bottomrule|hline)\b)+\s*$/u;
+
+function trimSourceRange(source: string, from: number, to: number): [number, number] {
+  while (from < to && /\s/u.test(source[from]!)) from++;
+  while (to > from && /\s/u.test(source[to - 1]!)) to--;
+  return [from, to];
+}
+
+function editableTableCell(source: string, offset: number): EditableTableCell | null {
+  let [from, to] = trimSourceRange(source, 0, source.length);
+  const prefix = TABLE_RULE_PREFIX.exec(source.slice(from, to));
+  if (prefix) [from, to] = trimSourceRange(source, from + prefix[0].length, to);
+  const suffix = TABLE_RULE_SUFFIX.exec(source.slice(from, to));
+  if (suffix) [from, to] = trimSourceRange(source, from, from + suffix.index);
+
+  for (let depth = 0; depth < 8; depth++) {
+    const wrapper = TABLE_CELL_WRAPPER.exec(source.slice(from, to));
+    if (!wrapper) break;
+    const opening = from + wrapper[0].lastIndexOf("{");
+    const close = closingBrace(source, opening);
+    if (close === null || close !== to - 1) return null;
+    [from, to] = trimSourceRange(source, opening + 1, close);
+  }
+
+  const core = source.slice(from, to);
+  const withoutEscapes = core.replace(/\\[%&_#${}]/gu, "");
+  if (/[\\{}$%]/u.test(withoutEscapes)) return null;
+  return {
+    display: core
+      .replace(/\\([%&_#${}])/gu, "$1")
+      .replace(/~/gu, " ")
+      .replace(/\s+/gu, " ")
+      .trim(),
+    from: offset + from,
+    to: offset + to,
+  };
 }
 
 function parseTablePreview(source: string): JSONContent | null {
   if (!/\\begin\{(?:table\*?|tabularx|tabular|tabulary|longtable)\}/u.test(source)) return null;
   const body = tabularBody(source);
-  if (body === null || body.length > 100_000) return null;
-  const rows = splitTable(body, "row")
-    .map((row) => splitTable(row, "cell").map(previewText))
-    .filter((row) => row.some(Boolean))
-    .slice(0, 100);
+  if (body === null || body.source.length > 100_000) return null;
+  const parsedRows = splitTable(body.source, "row")
+    .map((row) => {
+      const cells = splitTable(row.source, "cell");
+      const editableCells = cells.map((cell) =>
+        editableTableCell(cell.source, body.from + row.from + cell.from),
+      );
+      return {
+        rows: cells.map((cell, index) => editableCells[index]?.display ?? previewText(cell.source)),
+        ranges: editableCells.map((cell) =>
+          cell ? { from: cell.from, to: cell.to, original: cell.display } : null,
+        ),
+      };
+    })
+    .filter((row) => row.rows.some(Boolean));
+  const rows = parsedRows.slice(0, 100).map((row) => row.rows);
   const width = Math.max(0, ...rows.map((row) => row.length));
   if (rows.length === 0 || width === 0 || width > 20) return null;
+  const editable =
+    parsedRows.length <= 100 &&
+    parsedRows.every((row) => row.ranges.every((cell) => cell !== null));
   return {
     type: "latexRichPreview",
     attrs: {
@@ -565,6 +631,8 @@ function parseTablePreview(source: string): JSONContent | null {
       raw: source,
       caption: previewText(commandArgument(source, "caption") ?? "Table"),
       rows,
+      cellRanges: editable ? parsedRows.map((row) => row.ranges) : null,
+      editable,
       items: null,
     },
   };
@@ -617,7 +685,14 @@ export function projectLatexVisualDocument(source: string, depth = 0): LatexVisu
       classified ?? preview ?? { type: "latexRawBlock", attrs: { raw, label: "Raw LaTeX" } },
       id,
     );
-    blocks.push({ id, from, to, node, source: raw, editable: classified !== null });
+    blocks.push({
+      id,
+      from,
+      to,
+      node,
+      source: raw,
+      editable: classified !== null || preview?.attrs?.editable === true,
+    });
     cursor = rawEnd;
   }
   if (blocks.length === 0) {
@@ -704,6 +779,47 @@ export function serializeLatexVisualBlock(node: JSONContent): string | null {
     );
   }
   if (node.type === "latexRawBlock") return String(node.attrs?.raw ?? "");
+  if (node.type === "latexRichPreview") {
+    const raw = String(node.attrs?.raw ?? "");
+    if (node.attrs?.kind !== "table" || node.attrs.editable !== true) return raw;
+    const rows = Array.isArray(node.attrs.rows) ? node.attrs.rows : null;
+    const ranges = Array.isArray(node.attrs.cellRanges) ? node.attrs.cellRanges : null;
+    if (!rows || !ranges || rows.length !== ranges.length) return null;
+    const replacements: { from: number; to: number; value: string }[] = [];
+    for (const [rowIndex, row] of rows.entries()) {
+      const rowRanges = ranges[rowIndex];
+      if (!Array.isArray(row) || !Array.isArray(rowRanges) || row.length !== rowRanges.length)
+        return null;
+      for (const [cellIndex, value] of row.entries()) {
+        const range = rowRanges[cellIndex];
+        if (
+          !range ||
+          typeof range !== "object" ||
+          !("from" in range) ||
+          !("to" in range) ||
+          !("original" in range) ||
+          typeof range.from !== "number" ||
+          typeof range.to !== "number" ||
+          typeof range.original !== "string" ||
+          range.from < 0 ||
+          range.to < range.from ||
+          range.to > raw.length ||
+          typeof value !== "string"
+        )
+          return null;
+        if (value === range.original) continue;
+        replacements.push({ from: range.from, to: range.to, value: escapeText(value) });
+      }
+    }
+    replacements.sort((left, right) => right.from - left.from);
+    let serialized = raw;
+    for (const replacement of replacements)
+      serialized =
+        serialized.slice(0, replacement.from) +
+        replacement.value +
+        serialized.slice(replacement.to);
+    return serialized;
+  }
   if (node.type === "bulletList" || node.type === "orderedList") {
     const environment = node.type === "bulletList" ? "itemize" : "enumerate";
     const items = (node.content ?? []).map((item) => {
@@ -729,7 +845,14 @@ function comparableNode(node: JSONContent): ComparableVisualNode {
   const attrs = Object.fromEntries(
     Object.entries(node.attrs ?? {})
       .filter(([key, value]) => {
-        if (key === "sourceId" || key === "latexCommand" || value === null || value === undefined)
+        if (
+          key === "sourceId" ||
+          key === "latexCommand" ||
+          (node.type === "latexRichPreview" &&
+            (key === "raw" || key === "cellRanges" || key === "editable")) ||
+          value === null ||
+          value === undefined
+        )
           return false;
         if (key === "unnumbered" && value === false) return false;
         if (key === "start" && value === 1) return false;

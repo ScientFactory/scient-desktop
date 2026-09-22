@@ -147,6 +147,21 @@ Theory & Proofs \\\\
     expect(container.textContent).toContain("Research options.");
     expect(container.querySelectorAll(".scient-latex-rich-preview")).toHaveLength(2);
     expect(container.querySelector(".scient-latex-visual-raw")).toBeNull();
+    expect(container.textContent).toContain("Editable cells");
+    const evidence = container.querySelector<HTMLInputElement>(
+      "input[aria-label='Table row 2 column 2']",
+    )!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+        evidence,
+        "Verified proofs",
+      );
+      evidence.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(current).toContain("Theory & Verified proofs");
+    expect(
+      container.querySelector<HTMLInputElement>("input[aria-label='Table row 2 column 2']"),
+    ).toBe(evidence);
   });
 
   it("rejects a destructive transaction spanning protected source", async () => {

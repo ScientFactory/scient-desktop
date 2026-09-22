@@ -185,7 +185,7 @@ describe("source-derived writing projection", () => {
     expect(edit(source, [paragraph("replacement")])).toBeNull();
   });
 
-  it("projects table and tabularx source as a protected readable table", () => {
+  it("edits simple table cells while preserving the surrounding tabularx source", () => {
     const source = document(`\\begin{table}[htbp]
 \\centering
 \\caption{Research options.}
@@ -195,12 +195,13 @@ describe("source-derived writing projection", () => {
 \\textbf{Area} & \\textbf{Evidence} \\\\
 \\midrule
 Theory & Proofs and formal models \\\\
-Systems & Prototypes and measurements \\\\
+Systems & Prototypes~and measurements \\\\
 \\bottomrule
 \\end{tabularx}
 \\end{table}`);
     const projection = projectLatexVisualDocument(source);
     expect(projection.blocks[0]!.node.type).toBe("latexRichPreview");
+    expect(projection.blocks[0]!.editable).toBe(true);
     expect(projection.blocks[0]!.node.attrs?.caption).toBe("Research options.");
     expect(projection.blocks[0]!.node.attrs?.rows).toEqual([
       ["Area", "Evidence"],
@@ -209,6 +210,36 @@ Systems & Prototypes and measurements \\\\
     ]);
     expect(source).toContain(projection.blocks[0]!.source);
     expect(projection.blocks[0]!.source).toContain("\\end{table}");
+    const nodes = structuredClone(projection.content.content!);
+    (nodes[0]!.attrs!.rows as string[][])[1]![1] = "Proofs & verified models";
+    const changed = edit(source, nodes);
+    expect(changed?.source).toBe(
+      source.replace("Proofs and formal models", "Proofs \\& verified models"),
+    );
+    expect(changed?.source).toContain("\\textbf{Area}");
+    expect(changed?.source).toContain("@{}p{2.7cm} X@{}");
+    expect(changed?.source).toContain("\\label{tab:areas}");
+    expect(changed?.source).toContain("Prototypes~and measurements");
+    const nextNodes = structuredClone(changed!.projection.content);
+    (nextNodes.content![0]!.attrs!.rows as string[][])[2]![0] = "Engineering";
+    const changedAgain = applyLatexVisualDocumentChange(
+      changed!.source,
+      changed!.projection,
+      nextNodes,
+    );
+    expect(changedAgain?.source).toContain("Theory & Proofs \\& verified models");
+    expect(changedAgain?.source).toContain("Engineering & Prototypes~and measurements");
+  });
+
+  it("keeps structurally complex table cells protected", () => {
+    const source = document(`\\begin{tabular}{ll}
+\\multicolumn{2}{c}{Heading} \\\\
+Value & $x^2$ \\\\
+\\end{tabular}`);
+    const projection = projectLatexVisualDocument(source);
+    expect(projection.blocks[0]!.node.type).toBe("latexRichPreview");
+    expect(projection.blocks[0]!.editable).toBe(false);
+    expect(edit(source, [paragraph("replacement")])).toBeNull();
   });
 
   it("does not interpret a commented environment end or a verbatim document end", () => {

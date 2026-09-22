@@ -424,6 +424,35 @@
   text-align: left;
   vertical-align: top;
 }
+.scient-latex-rich-preview td input,
+.scient-latex-rich-preview th input {
+  width: 100%;
+  min-width: 0;
+  margin: -3px -4px;
+  padding: 3px 4px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+}
+.scient-latex-rich-preview td input:hover,
+.scient-latex-rich-preview th input:hover {
+  border-color: #cbd5e1;
+  background: #fff;
+}
+.scient-latex-rich-preview td input:focus,
+.scient-latex-rich-preview th input:focus {
+  border-color: #6b9acb;
+  outline: 2px solid #dceafb;
+  background: #fff;
+}
+.scient-latex-rich-preview td input:disabled,
+.scient-latex-rich-preview th input:disabled {
+  cursor: default;
+}
 .scient-latex-rich-preview th {
   border-top: 2px solid #58697c;
   border-bottom: 1px solid #8996a5;

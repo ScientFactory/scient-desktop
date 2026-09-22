@@ -32,14 +32,16 @@ inspect exact output. A successful build never means the browser canvas is
 pixel-identical to that PDF. Compile errors preserve the last successful PDF.
 
 Description lists and common `tabular`, `tabularx`, `tabulary`, and `longtable`
-structures have readable, protected previews. These previews preserve the exact
-LaTeX and show **Protected source · edit in Source** because direct structural
-editing is not safe yet. More complex tables and other unsupported structures,
-including custom macros and equation labels or tags, appear as protected source
-blocks. Edit LaTeX opens the source editor for these; the visual editor does not
-silently normalize or discard them. A visual edit cannot delete across a
-protected preview or source block. Open an included file to edit its contents;
-the established root still controls the PDF build.
+structures have readable previews. Cells containing plain text or common outer
+text formatting can be edited directly; Scient changes only the cell text and
+preserves the table environment, column specification, rules, caption, label,
+spacing, and formatting wrappers. A table containing structural cell content,
+such as nested commands, math, or `\multicolumn`, stays protected and shows
+**Protected source · edit in Source**. Other unsupported structures, including
+custom macros and equation labels or tags, appear as protected source blocks.
+The visual editor does not silently normalize or discard them. A visual edit
+cannot delete across a protected preview or source block. Open an included file
+to edit its contents; the established root still controls the PDF build.
 
 Common citation and reference commands, including author/year and page
 references, are editable as keys, not resolved bibliography output. Preamble,

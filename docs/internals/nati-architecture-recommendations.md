@@ -5,9 +5,11 @@ source-derived writing-canvas candidate. The candidate preserves math wrappers,
 opens complete-source math popovers, recognizes a bounded group of structured
 math environments, provides matching Insert actions, expands safe citation and
 reference commands, refines the writing toolbar, and projects description lists
-and common table environments as readable source-protected previews.
-Adapter-based editable coverage, post-build measurements and exact browser/PDF
-parity remain future scoped work.
+and common table environments as readable previews. The safe table subset
+supports direct cell editing through source ranges while preserving the outer
+LaTeX structure; structurally complex cells fail closed to a protected preview.
+Broader adapter coverage, post-build measurements and exact browser/PDF parity
+remain future scoped work.
 
 ## Desired experience
 

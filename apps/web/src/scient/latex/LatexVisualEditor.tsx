@@ -228,15 +228,16 @@ function LatexRawBlockView({ node }: NodeViewProps) {
 
 function withStableKeys<T>(values: T[], serialize: (value: T) => string) {
   const occurrences = new Map<string, number>();
-  return values.map((value) => {
+  return values.map((value, index) => {
     const serialized = serialize(value);
     const occurrence = occurrences.get(serialized) ?? 0;
     occurrences.set(serialized, occurrence + 1);
-    return { key: `${serialized}\u0000${occurrence}`, value };
+    return { index, key: `${serialized}\u0000${occurrence}`, value };
   });
 }
 
-function LatexRichPreviewView({ node, selected }: NodeViewProps) {
+function LatexRichPreviewView({ node, selected, updateAttributes, editor }: NodeViewProps) {
+  const editorEditable = useEditorEditable(editor);
   const kind = node.attrs.kind === "table" ? "table" : "description";
   const items = Array.isArray(node.attrs.items)
     ? (node.attrs.items as { label?: unknown; body?: unknown }[])
@@ -244,9 +245,25 @@ function LatexRichPreviewView({ node, selected }: NodeViewProps) {
   const rows = Array.isArray(node.attrs.rows)
     ? (node.attrs.rows as unknown[]).filter(Array.isArray).map((row) => row.map(String))
     : [];
+  const cellRanges = Array.isArray(node.attrs.cellRanges)
+    ? (node.attrs.cellRanges as unknown[]).filter(Array.isArray)
+    : [];
   const caption = String(node.attrs.caption ?? "Table");
+  const tableEditable = kind === "table" && node.attrs.editable === true;
   const keyedItems = withStableKeys(items, (item) => JSON.stringify([item.label, item.body]));
-  const keyedRows = withStableKeys(rows, (row) => JSON.stringify(row));
+  const keyedRows = tableEditable
+    ? rows.map((row, index) => ({
+        index,
+        key: JSON.stringify(cellRanges[index] ?? row),
+        value: row,
+      }))
+    : withStableKeys(rows, (row) => JSON.stringify(row));
+  const updateCell = (rowIndex: number, cellIndex: number, value: string) => {
+    if (!editorEditable || !tableEditable) return;
+    const nextRows = rows.map((row) => [...row]);
+    nextRows[rowIndex]![cellIndex] = value;
+    updateAttributes({ rows: nextRows });
+  };
   return (
     <NodeViewWrapper
       className="scient-latex-rich-preview"
@@ -256,7 +273,11 @@ function LatexRichPreviewView({ node, selected }: NodeViewProps) {
     >
       <div className="scient-latex-rich-preview-label">
         <span>{kind === "table" ? "Table preview" : "Description list"}</span>
-        <span>Protected source · edit in Source</span>
+        <span>
+          {tableEditable
+            ? "Editable cells · LaTeX structure preserved"
+            : "Protected source · edit in Source"}
+        </span>
       </div>
       {kind === "description" ? (
         <dl>
@@ -273,17 +294,39 @@ function LatexRichPreviewView({ node, selected }: NodeViewProps) {
           <div className="scient-latex-rich-table-scroll">
             <table>
               <tbody>
-                {keyedRows.map(({ key, value: row }, rowIndex) => (
+                {keyedRows.map(({ index: rowIndex, key, value: row }) => (
                   <tr key={key}>
-                    {withStableKeys(row, String).map(({ key: cellKey, value: cell }) =>
-                      rowIndex === 0 ? (
+                    {(tableEditable
+                      ? row.map((cell, index) => ({
+                          index,
+                          key: JSON.stringify(cellRanges[rowIndex]?.[index] ?? cell),
+                          value: cell,
+                        }))
+                      : withStableKeys(row, String)
+                    ).map(({ index: cellIndex, key: cellKey, value: cell }) => {
+                      const content = tableEditable ? (
+                        <input
+                          aria-label={`Table row ${rowIndex + 1} column ${cellIndex + 1}`}
+                          disabled={!editorEditable}
+                          value={cell}
+                          onChange={(event) =>
+                            updateCell(rowIndex, cellIndex, event.currentTarget.value)
+                          }
+                          onKeyDown={(event) => {
+                            if (event.key === "Escape") event.currentTarget.blur();
+                          }}
+                        />
+                      ) : (
+                        cell
+                      );
+                      return rowIndex === 0 ? (
                         <th key={cellKey} scope="col">
-                          {cell}
+                          {content}
                         </th>
                       ) : (
-                        <td key={cellKey}>{cell}</td>
-                      ),
-                    )}
+                        <td key={cellKey}>{content}</td>
+                      );
+                    })}
                   </tr>
                 ))}
               </tbody>
@@ -399,6 +442,8 @@ const LatexRichPreview = Node.create({
       raw: { default: "" },
       items: { default: null },
       rows: { default: null },
+      cellRanges: { default: null, rendered: false },
+      editable: { default: false, rendered: false },
       caption: { default: null },
       sourceId: { default: null, rendered: false },
     };
