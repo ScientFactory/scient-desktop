@@ -9,6 +9,7 @@ import {
   resolveElectronLaunchCommand,
 } from "./electron-launcher.mjs";
 import {
+  findOwnedDevelopmentProcesses,
   inspectProcessCommand,
   makeMacDevelopmentAppLaunchCommand,
   readOwnedDevelopmentAppProcess,
@@ -126,17 +127,14 @@ function cleanupLaunchFiles(app) {
   if (!ownedBackend) removeDevelopmentLaunchFiles(backendPidFilePath);
 }
 
-function signalOwnedProcess(pidFilePath, commandPrefix, signal) {
+function signalOwnedProcesses(commandPrefix, signal) {
   if (!commandPrefix) return;
-  const owned = readOwnedDevelopmentAppProcess({
-    pidFilePath,
-    electronBinaryPath: commandPrefix,
-  });
-  if (!owned) return;
-  try {
-    process.kill(owned.pid, signal);
-  } catch (error) {
-    if (error?.code !== "ESRCH") throw error;
+  for (const owned of findOwnedDevelopmentProcesses({ commandPrefix })) {
+    try {
+      process.kill(owned.pid, signal);
+    } catch (error) {
+      if (error?.code !== "ESRCH") throw error;
+    }
   }
 }
 
@@ -168,7 +166,20 @@ async function waitForManagedProcessesToExit(app, timeoutMs) {
       pidFilePath: backendPidFilePath,
       electronBinaryPath: app.backendCommandPrefix,
     });
-    if (!ownedApp && !ownedBackend && app.launcher.exitCode !== null) return true;
+    const ownedApps = app.mainCommandPrefix
+      ? findOwnedDevelopmentProcesses({ commandPrefix: app.mainCommandPrefix })
+      : [];
+    const ownedBackends = app.backendCommandPrefix
+      ? findOwnedDevelopmentProcesses({ commandPrefix: app.backendCommandPrefix })
+      : [];
+    if (
+      !ownedApp &&
+      !ownedBackend &&
+      ownedApps.length === 0 &&
+      ownedBackends.length === 0 &&
+      app.launcher.exitCode !== null
+    )
+      return true;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   return false;
@@ -195,6 +206,7 @@ function startApp() {
   let pidPromise;
   let backendPidPromise = Promise.resolve(null);
   let electronBinaryPath;
+  let mainCommandPrefix;
   let backendCommandPrefix;
   if (managedMacLaunch && devProtocolClient) {
     removeDevelopmentLaunchFiles(appPidFilePath, backendPidFilePath, environmentFilePath);
@@ -205,6 +217,7 @@ function startApp() {
       "MacOS",
       "Electron",
     );
+    mainCommandPrefix = `${electronBinaryPath} --t3code-dev-root=${desktopDir} ${NodePath.join(desktopDir, "dist-electron", "main.cjs")}`;
     electronCommand = makeMacDevelopmentAppLaunchCommand({
       appBundlePath: devProtocolClient.appBundlePath,
       args: electronArgs,
@@ -252,6 +265,7 @@ function startApp() {
     managedMacLaunch,
     environmentFilePath,
     electronBinaryPath,
+    mainCommandPrefix,
     backendCommandPrefix,
     pidPromise,
     backendPidPromise,
@@ -329,11 +343,11 @@ async function stopApp() {
 
   if (app.managedMacLaunch && app.electronBinaryPath && app.backendCommandPrefix) {
     await app.pidPromise.catch(() => null);
-    signalOwnedProcess(appPidFilePath, app.electronBinaryPath, "SIGTERM");
-    signalOwnedProcess(backendPidFilePath, app.backendCommandPrefix, "SIGTERM");
+    signalOwnedProcesses(app.mainCommandPrefix, "SIGTERM");
+    signalOwnedProcesses(app.backendCommandPrefix, "SIGTERM");
     if (!(await waitForManagedProcessesToExit(app, forcedShutdownTimeoutMs))) {
-      signalOwnedProcess(appPidFilePath, app.electronBinaryPath, "SIGKILL");
-      signalOwnedProcess(backendPidFilePath, app.backendCommandPrefix, "SIGKILL");
+      signalOwnedProcesses(app.mainCommandPrefix, "SIGKILL");
+      signalOwnedProcesses(app.backendCommandPrefix, "SIGKILL");
       if (app.launcher.exitCode === null) app.launcher.kill("SIGKILL");
       await waitForManagedProcessesToExit(app, 2_000);
     }
