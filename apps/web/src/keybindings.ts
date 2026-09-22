@@ -9,9 +9,12 @@ import {
   type ThreadJumpKeybindingCommand,
 } from "@t3tools/contracts";
 import { isElectron } from "./env";
+import { keyboardFocusContext, surfaceOwnsShortcut } from "./scient/keyboard/ownership";
 import { isMacPlatform } from "./lib/utils";
 
 export interface ShortcutEventLike {
+  defaultPrevented?: boolean;
+  isComposing?: boolean;
   getModifierState?: (key: "AltGraph") => boolean;
   type?: string;
   code?: string;
@@ -238,8 +241,12 @@ export function resolveShortcutCommand(
   keybindings: ResolvedKeybindingsConfig,
   options?: ShortcutMatchOptions,
 ): KeybindingCommand | null {
+  if (event.defaultPrevented || event.isComposing || surfaceOwnsShortcut(event)) return null;
   const platform = resolvePlatform(options);
-  const context = resolveContext(options);
+  const context = resolveContext({
+    ...options,
+    context: { ...keyboardFocusContext(event), ...options?.context },
+  });
 
   for (let index = keybindings.length - 1; index >= 0; index -= 1) {
     const binding = keybindings[index];

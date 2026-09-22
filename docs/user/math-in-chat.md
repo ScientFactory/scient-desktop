@@ -36,3 +36,43 @@ recognized as inline math. When selecting and copying rendered math, even a
 partial selection of an equation copies the complete formula as Markdown/TeX.
 Rich-text destinations receive that source once, alongside the surrounding
 formatting, rather than a duplicate or incomplete representation of the equation.
+
+## Authoring math
+
+Editable Markdown and supported `.tex` / Markdown source editors share a math
+command catalog. The **Ω** toolbar opens searchable symbols, fractions, roots,
+equation insertion, and a matrix picker. Search for “alpha” or “beta”; Enter
+inserts the first result, Down focuses the results, and arrow keys navigate them.
+Escape closes the palette. Commands edit the existing source through the editor's
+own transactions and undo history; they do not modify a compiled PDF.
+
+Default examples:
+
+| Action            | Keys                      |
+| ----------------- | ------------------------- |
+| Open math palette | Ctrl+Space                |
+| Inline equation   | Cmd/Ctrl+M                |
+| Display equation  | Cmd/Ctrl+Shift+M          |
+| Alpha / beta      | Alt+M, then G, then A / B |
+| Fraction          | Alt+M, then F             |
+
+On Mac, Alt means Option and Control+M is also a math sequence prefix.
+Command+M and Control+Space may be reserved by native menus or input methods.
+Use the toolbar or assign an alternative in **Settings → Keybindings**.
+These are supported LyX-style math sequences, not an implementation of every LyX action.
+
+Inside an equation, typing a recognized command such as `\alpha` then Space or
+Tab completes it. The completion setting can restrict this to Tab or turn it off.
+Optional automatic operators turn `->`, `<=`, `>=`, `!=`, and `+-` into
+math notation. Ordinary prose, code, comments, and literal math text arguments
+are not operator-completion targets.
+
+The matrix picker supports up to 20 rows and columns, with two columns for cases
+and aligned expressions. Tab and Shift+Tab navigate supported cells; Enter can add
+a row. Row/column operations refuse malformed or unsupported matrices.
+
+Source editing is conservative: ambiguous delimiters, multi-selections, opaque
+LaTeX constructs, and read-only content are not rewritten. LaTeX commands needing
+a package require it to be explicitly declared; the palette does not silently
+change the preamble. Markdown math rendering is distinct from exact compiled TeX
+layout. Visual-mode source mapping and layout integration are separate work.

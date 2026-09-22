@@ -27,7 +27,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
 import {
   DropdownMenu,
@@ -40,6 +40,13 @@ import { toastManager } from "~/components/ui/toast";
 import { ensureLocalApi } from "~/localApi";
 import { cn } from "~/lib/utils";
 import { ScientTooltip } from "../presentation/ScientTooltip";
+import { attachShortcutHost } from "../keyboard/host";
+import {
+  commandKeys,
+  getKeyboardPreferences,
+  subscribeKeyboardPreferences,
+} from "../keyboard/preferences";
+import { labelKeys } from "../keyboard/keys";
 
 import { PdfOutline } from "./PdfOutline";
 import { announcePdfSaveCopyResult } from "./pdfSaveCopyNotification";
@@ -207,6 +214,39 @@ function LoadedScientPdfReader(props: {
   const saveCopyPendingRef = useRef(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  useSyncExternalStore(
+    subscribeKeyboardPreferences,
+    getKeyboardPreferences,
+    getKeyboardPreferences,
+  );
+  const shortcutLabel = (command: string) =>
+    commandKeys(command)
+      .map((keys) => labelKeys(keys))
+      .join(" / ");
+  const keyboardAction = useRef<(command: string) => boolean>(() => false);
+  keyboardAction.current = (command) => {
+    if (command === "pdf.find") setSearchOpen(true);
+    else if (state.phase !== "ready") return false;
+    else if (command === "pdf.zoomIn") reader.setZoom(stepPdfZoom(state.scale, "in"));
+    else if (command === "pdf.zoomOut") reader.setZoom(stepPdfZoom(state.scale, "out"));
+    else if (command === "pdf.actualSize") reader.setZoomMode("page-actual");
+    else return false;
+    return true;
+  };
+  useEffect(() => {
+    const root = rootRef.current;
+    return root
+      ? attachShortcutHost(root, "pdf", {
+          execute: (command) => keyboardAction.current(command),
+          accepts: (event, command) =>
+            command === "pdf.find" ||
+            !(
+              event.target instanceof Element &&
+              event.target.closest("input,textarea,[contenteditable='true']")
+            ),
+        })
+      : undefined;
+  }, []);
   const sourceSyncHintShowTimerRef = useRef<number | null>(null);
   const sourceSyncHintHideTimerRef = useRef<number | null>(null);
   const [pageInput, setPageInput] = useState("1");
@@ -345,36 +385,15 @@ function LoadedScientPdfReader(props: {
   );
 
   const onReaderKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    const modified = event.metaKey || event.ctrlKey;
-    if (modified && event.key.toLowerCase() === "f") {
+    if (event.defaultPrevented || event.nativeEvent.isComposing || event.key !== "Escape") return;
+    if (sourceSyncHintVisible || sourceSyncHintShowTimerRef.current !== null) {
       event.preventDefault();
-      setSearchOpen(true);
-      return;
-    }
-    if (
-      event.key === "Escape" &&
-      (sourceSyncHintVisible || sourceSyncHintShowTimerRef.current !== null)
-    ) {
-      event.preventDefault();
+      event.stopPropagation();
       dismissSourceSyncHint();
-      return;
-    }
-    if (event.key === "Escape" && searchOpen) {
+    } else if (searchOpen) {
       event.preventDefault();
+      event.stopPropagation();
       closeSearch();
-      return;
-    }
-    const target = event.target as HTMLElement;
-    if (!modified || target.matches("input, textarea, [contenteditable='true']")) return;
-    if (event.key === "+" || event.key === "=") {
-      event.preventDefault();
-      reader.setZoom(stepPdfZoom(state.scale, "in"));
-    } else if (event.key === "-") {
-      event.preventDefault();
-      reader.setZoom(stepPdfZoom(state.scale, "out"));
-    } else if (event.key === "0") {
-      event.preventDefault();
-      reader.setZoomMode("page-actual");
     }
   };
 
@@ -437,13 +456,21 @@ function LoadedScientPdfReader(props: {
         <div className="scient-pdf-toolbar-separator" />
         <ReaderButton
           className="scient-pdf-action-zoom-step"
-          label="Zoom out"
+          label={
+            "Zoom out" +
+            (shortcutLabel("pdf.zoomOut") ? " (" + shortcutLabel("pdf.zoomOut") + ")" : "")
+          }
           disabled={state.phase !== "ready"}
           onClick={() => reader.setZoom(stepPdfZoom(state.scale, "out"))}
         >
           <Minus />
         </ReaderButton>
-        <ScientTooltip content="Actual size">
+        <ScientTooltip
+          content={
+            "Actual size" +
+            (shortcutLabel("pdf.actualSize") ? " (" + shortcutLabel("pdf.actualSize") + ")" : "")
+          }
+        >
           <button
             type="button"
             className="scient-pdf-zoom-label"
@@ -455,7 +482,10 @@ function LoadedScientPdfReader(props: {
         </ScientTooltip>
         <ReaderButton
           className="scient-pdf-action-zoom-step"
-          label="Zoom in"
+          label={
+            "Zoom in" +
+            (shortcutLabel("pdf.zoomIn") ? " (" + shortcutLabel("pdf.zoomIn") + ")" : "")
+          }
           disabled={state.phase !== "ready"}
           onClick={() => reader.setZoom(stepPdfZoom(state.scale, "in"))}
         >
@@ -472,7 +502,9 @@ function LoadedScientPdfReader(props: {
         <div className="min-w-1 flex-1" />
         <ReaderButton
           className="scient-pdf-action-search"
-          label="Search PDF"
+          label={
+            "Search PDF" + (shortcutLabel("pdf.find") ? " (" + shortcutLabel("pdf.find") + ")" : "")
+          }
           aria-pressed={searchOpen}
           onClick={() => (searchOpen ? closeSearch() : setSearchOpen(true))}
         >

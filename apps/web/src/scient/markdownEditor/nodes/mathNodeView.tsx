@@ -2,6 +2,11 @@ import { createRoot, type Root } from "react-dom/client";
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import { NodeSelection } from "prosemirror-state";
 import type { EditorView, NodeView } from "prosemirror-view";
+import { closeHistory, undo, redo } from "prosemirror-history";
+import { MathInputController } from "~/scient/math/input/controller";
+import { MathInputTools } from "~/scient/math/input/MathInputTools";
+import { isPlausibleScientSingleDollarTex } from "~/scient/math/scientSingleDollarMath";
+import { matchesScientMarkdownShortcut } from "../shortcuts";
 
 import {
   getScientKatexRuntimePromise,
@@ -22,6 +27,10 @@ class ScientMathNodeView implements NodeView {
   private readonly sourceEditor: HTMLInputElement | HTMLTextAreaElement;
   private readonly retainedNotice: HTMLSpanElement;
   private readonly reactRoot: Root;
+  private toolsRoot: Root | null = null;
+  private readonly mathInput: MathInputController;
+  private readonly toolsHost: HTMLSpanElement;
+  private readonly releaseMathInput: () => void;
   private node: ProseMirrorNode;
   private destroyed = false;
   private validationVersion = 0;
@@ -49,7 +58,9 @@ class ScientMathNodeView implements NodeView {
     this.renderHost.className = "scient-markdown-math-render";
     this.renderHost.addEventListener("click", this.handleRenderClick);
     this.dom.append(this.renderHost);
-    this.sourceEditor = document.createElement(display ? "textarea" : "input");
+    // Even inline equations may contain a multiline matrix. An <input> would
+    // silently remove newlines and diverge from the saved equation.
+    this.sourceEditor = document.createElement("textarea");
     this.sourceEditor.className = "scient-markdown-math-source";
     this.sourceEditor.dir = "ltr";
     this.sourceEditor.dataset.scientMarkdownAtomEditor = "true";
@@ -63,6 +74,43 @@ class ScientMathNodeView implements NodeView {
     this.sourceEditor.addEventListener("compositionend", this.handleInput);
     this.sourceEditor.addEventListener("keydown", this.handleKeyDown);
     this.dom.append(this.sourceEditor);
+    this.toolsHost = document.createElement("span");
+    this.toolsHost.className = "scient-markdown-math-tools-host";
+    this.toolsHost.hidden = true;
+    this.dom.append(this.toolsHost);
+    const controller = new MathInputController({
+      read: () => ({
+        source: this.sourceEditor.value,
+        selection: {
+          from: this.sourceEditor.selectionStart ?? 0,
+          to: this.sourceEditor.selectionEnd ?? 0,
+        },
+        format: "tex",
+        editable: this.view.editable && !this.sourceEditor.hidden,
+      }),
+      apply: (expected, edit) => {
+        const position = this.getPos();
+        const current = position === undefined ? null : this.view.state.doc.nodeAt(position);
+        if (
+          position === undefined ||
+          !this.view.editable ||
+          !current ||
+          current.type !== this.node.type ||
+          String(current.attrs.tex) !== expected.source ||
+          this.sourceEditor.value !== expected.source
+        )
+          return false;
+        const next =
+          expected.source.slice(0, edit.from) + edit.insert + expected.source.slice(edit.to);
+        if (next !== expected.source) this.writeTex(position, next, true);
+        this.sourceEditor.value = next;
+        this.sourceEditor.setSelectionRange(edit.selection.from, edit.selection.to);
+        return true;
+      },
+      focus: () => this.sourceEditor.focus(),
+    });
+    this.releaseMathInput = controller.attach(this.sourceEditor);
+    this.mathInput = controller;
     this.retainedNotice = document.createElement("span");
     this.retainedNotice.className = "scient-markdown-math-retained";
     this.retainedNotice.textContent = "Preview kept at the last valid equation.";
@@ -93,10 +141,14 @@ class ScientMathNodeView implements NodeView {
   deselectNode(): void {
     this.dom.classList.remove("is-selected");
     this.sourceEditor.hidden = true;
+    this.toolsHost.hidden = true;
   }
 
   stopEvent(event: Event): boolean {
-    return event.target === this.sourceEditor;
+    return (
+      event.target === this.sourceEditor ||
+      (event.target instanceof Node && this.toolsHost.contains(event.target))
+    );
   }
 
   ignoreMutation(): boolean {
@@ -104,6 +156,8 @@ class ScientMathNodeView implements NodeView {
   }
 
   destroy(): void {
+    this.releaseMathInput();
+    this.toolsRoot?.unmount();
     this.destroyed = true;
     this.validationVersion += 1;
     clearTimeout(this.validationTimer);
@@ -115,6 +169,7 @@ class ScientMathNodeView implements NodeView {
   }
 
   private readonly handleInput = (event: Event) => {
+    if (!this.view.editable) return;
     if (event instanceof InputEvent && event.isComposing) return;
     const position = this.getPos();
     if (position === undefined) return;
@@ -126,13 +181,21 @@ class ScientMathNodeView implements NodeView {
     ) {
       return;
     }
-    this.view.dispatch(
-      this.view.state.tr.setNodeMarkup(position, undefined, {
-        ...currentNode.attrs,
-        tex: this.sourceEditor.value,
-      }),
-    );
+    this.writeTex(position, this.sourceEditor.value, false);
   };
+
+  private writeTex(position: number, tex: string, separateHistory: boolean): void {
+    const tr = this.view.state.tr.setNodeAttribute(position, "tex", tex);
+    // A partially typed expression is still an explicitly authored equation.
+    // Keep it parseable after save/reopen, without relaxing currency detection.
+    if (
+      !this.isDisplay(this.node) &&
+      this.node.attrs.delimiter === "$" &&
+      !isPlausibleScientSingleDollarTex(tex)
+    )
+      tr.setNodeAttribute(position, "delimiter", "\\(");
+    this.view.dispatch(separateHistory ? closeHistory(tr) : tr);
+  }
 
   private readonly handleRenderClick = (event: Event) => {
     if (!(event instanceof MouseEvent) || event.button !== 0 || !this.view.editable) return;
@@ -154,9 +217,24 @@ class ScientMathNodeView implements NodeView {
 
   private readonly handleKeyDown = (event: Event) => {
     if (!(event instanceof KeyboardEvent)) return;
+    if (event.isComposing || event.defaultPrevented || !this.view.editable) return;
+    const isUndo = matchesScientMarkdownShortcut(event, "undo");
+    const isRedo = matchesScientMarkdownShortcut(event, "redo");
+    if (isUndo || isRedo) {
+      // Never fall back to the textarea's independent browser history, even
+      // when the document has nothing left to undo.
+      event.preventDefault();
+      event.stopPropagation();
+      const replay = isRedo ? redo : undo;
+      if (replay(this.view.state, this.view.dispatch)) {
+        const position = this.getPos();
+        const node = position === undefined ? null : this.view.state.doc.nodeAt(position);
+        if (node?.type === this.node.type) this.sourceEditor.value = String(node.attrs.tex);
+      }
+      return;
+    }
     if (
       !this.isDisplay(this.node) &&
-      this.sourceEditor instanceof HTMLInputElement &&
       handleInlineAtomEditorKeyDown({
         editor: this.sourceEditor,
         event,
@@ -210,7 +288,12 @@ class ScientMathNodeView implements NodeView {
   }
 
   private showSourceEditor(): void {
+    if (!this.toolsRoot) {
+      this.toolsRoot = createRoot(this.toolsHost);
+      this.toolsRoot.render(<MathInputTools controller={this.mathInput} />);
+    }
     this.sourceEditor.hidden = false;
+    this.toolsHost.hidden = false;
     this.sourceEditor.value = String(this.node.attrs.tex);
   }
 

@@ -15,7 +15,8 @@ import {
   wrappingInputRule,
   type InputRule,
 } from "prosemirror-inputrules";
-import { keymap } from "prosemirror-keymap";
+import { keymap, keydownHandler } from "prosemirror-keymap";
+import { getKeyboardPreferences } from "../../keyboard/preferences";
 import { liftListItem, sinkListItem, splitListItem } from "prosemirror-schema-list";
 import { Plugin, PluginKey, type Command } from "prosemirror-state";
 import { goToNextCell, tableEditing } from "prosemirror-tables";
@@ -132,7 +133,21 @@ export function buildScientMarkdownPlugins(): ReadonlyArray<Plugin> {
     scientMarkdownOutlinePlugin(),
     imageFigurePlugin(),
     inputRules({ rules: [...buildInputRules()] }),
-    keymap(buildKeyBindings()),
+    (() => {
+      let snapshot = getKeyboardPreferences();
+      let handler = keydownHandler(buildKeyBindings());
+      return new Plugin({
+        props: {
+          handleKeyDown(view, event) {
+            if (snapshot !== getKeyboardPreferences()) {
+              snapshot = getKeyboardPreferences();
+              handler = keydownHandler(buildKeyBindings());
+            }
+            return handler(view, event);
+          },
+        },
+      });
+    })(),
     keymap(baseKeymap),
     history(),
     markdownTablePlugin(),

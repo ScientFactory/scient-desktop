@@ -69,6 +69,7 @@ import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsL
 import { keybindingSearchAnchorId, searchableSetting } from "./settingsSearch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { AuthoringKeybindingsSettings } from "../../scient/keyboard/AuthoringKeybindingsSettings";
 
 function KeybindingPill({ value }: { value: string }) {
   // Keys dedupe repeated parts; a literal "+" in a shortcut splits into empty strings.
@@ -1296,7 +1297,7 @@ function KeybindingsList(props: KeybindingsListProps) {
     props;
   const newProps: NewKeybindingProps = {
     commandOptions,
-    allRows: rows,
+    allRows: rowActions.allRows,
     variables: rowActions.variables,
     isSaving: savingCommand !== null,
     onSave: rowActions.onSave,
@@ -1334,7 +1335,7 @@ function KeybindingsList(props: KeybindingsListProps) {
   );
 }
 
-/** Shown in the browser build only; the desktop app receives every shortcut. */
+/** Browser reservations are additional to OS and native-menu reservations. */
 function BrowserKeybindingNotice() {
   return (
     <div className="flex items-center gap-2 px-3 py-2.5 text-[12px] leading-[1.45] text-muted-foreground sm:px-4">
@@ -1375,6 +1376,7 @@ export function KeybindingsSettingsPanel() {
   const [savingCommand, setSavingCommand] = useState<KeybindingCommand | null>(null);
   const [isAddingBinding, setIsAddingBinding] = useState(false);
   const rows = useMemo(() => buildKeybindingRows(keybindings, query), [keybindings, query]);
+  const allRows = useMemo(() => buildKeybindingRows(keybindings, ""), [keybindings]);
   // The search-target context is provided by this panel's own page container,
   // so the jump target is read from the route hash here.
   const searchTargetId = useLocation({ select: (location) => location.hash.replace(/^#/, "") });
@@ -1383,7 +1385,7 @@ export function KeybindingsSettingsPanel() {
   // A settings-search jump must not be hidden by the page's own filter.
   if (searchTargetId !== handledSearchTargetId) {
     setHandledSearchTargetId(searchTargetId);
-    if (searchTargetId.startsWith("keybinding-")) setQuery("");
+    if (searchTargetId.startsWith("keybinding-") || searchTargetId === "authoring") setQuery("");
   }
   const commandOptions = useMemo(() => buildKeybindingCommandOptions(keybindings), [keybindings]);
   const whenVariables = useMemo(() => buildWhenVariableOptions(), []);
@@ -1521,7 +1523,7 @@ export function KeybindingsSettingsPanel() {
 
   const listProps: KeybindingsListProps = {
     rows,
-    allRows: rows,
+    allRows,
     commandOptions,
     variables: whenVariables,
     savingCommand,
@@ -1583,8 +1585,22 @@ export function KeybindingsSettingsPanel() {
         }
       >
         {!isElectron ? <BrowserKeybindingNotice /> : null}
-
+        <div className="px-3 py-2 text-xs text-muted-foreground sm:px-4">
+          Application shortcuts below use the selected environment.{" "}
+          <button
+            type="button"
+            className="underline"
+            onClick={() => {
+              const section = document.getElementById("authoring-keybindings-title");
+              section?.scrollIntoView({ block: "start" });
+              section?.focus({ preventScroll: true });
+            }}
+          >
+            Jump to document and math shortcuts
+          </button>
+        </div>
         <KeybindingsList {...listProps} />
+        <AuthoringKeybindingsSettings query={query} appBindings={keybindings} />
       </SettingsSection>
     </SettingsPageContainer>
   );

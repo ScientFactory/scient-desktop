@@ -1,13 +1,56 @@
 # Keybindings
 
 Keybindings let you open common Scient actions without leaving the keyboard.
-Open **Settings → Keybindings** to see every command and the shortcut used by
+Open **Settings → Keybindings** to see configurable commands and the shortcuts used by
 the version you are running.
 
 The settings page shows whether a shortcut is built in or customized and warns
 when two active commands conflict. Change a shortcut there, remove a custom
 shortcut, or reset it to the default. Use the command list in the app rather
 than a copied list because available actions can change between versions.
+
+## Document and math shortcuts
+
+The **Document and math shortcuts** section of the same Keybindings page covers
+Markdown formatting, math authoring, and PDF reading. Filter by category or use
+the page search. **Edit** replaces a command's bindings; **Disable** removes them;
+**Reset** restores that command's preset defaults. A command without a keyboard
+binding is still available from its toolbar when supported by the focused editor.
+
+Document preferences belong to this browser or desktop profile and apply to its
+open editors across environments. Application rules above them still belong to
+the selected environment's `keybindings.json`. This is one place to discover
+shortcuts, not a migration of environment settings into browser storage.
+
+The focused document gets first use of its recognized commands. For example,
+`mod+b` formats Markdown instead of toggling the sidebar; outside that document
+the application shortcut still works. Nested equation and code inputs retain
+their own text editing. A disabled document binding no longer reserves that key.
+PDF read mode never inserts math.
+
+Use spaces between sequence strokes, such as `alt+m g a`, and commas between
+alternative bindings. **Record sequence** records the keys you press; Escape
+stops recording. `mod` means Command on Mac and Ctrl elsewhere; `ctrl` remains
+literal Control on Mac. A pending sequence shows its possible next keys.
+Escape, changing focus out of the editor, changing preferences, or the timeout
+cancels it. An incorrect continuation is consumed without typing into the file.
+
+Overlapping sequences in simultaneously active authoring contexts are rejected,
+including a one-key shortcut that would hide a longer sequence. Application
+overlaps are contextual: the edit form explains when the document takes priority.
+Clipboard, select-all, save, and native undo keys cannot be reassigned to authoring
+actions. OS, browser, and native menu reservations cannot be overridden here.
+
+**Math input behavior and preset** controls the supported LyX-style sequences,
+a minimal palette-only authoring preset, command completion, automatic operators,
+matrix Enter behavior, and sequence timeout. These settings do not alter TeX layout.
+See [math authoring](./math-in-chat.md#authoring-math).
+
+Use **Import, export, or restore document shortcuts** for portable, versioned
+authoring preferences. Import validates the complete file before applying it.
+Legacy math-binding arrays are also accepted; existing legacy storage is retained.
+Conflicting or malformed data is reported rather than partially applied. Another
+window's newer preferences are not silently overwritten by an older edit form.
 
 ## Composer controls
 

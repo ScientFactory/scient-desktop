@@ -521,9 +521,19 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "keybindings",
     title: "Keybindings",
     to: "/settings/keybindings",
-    searchTerms: ["keyboard shortcuts hotkeys commands bindings json"],
+    searchTerms: [
+      "keyboard shortcuts hotkeys commands bindings json math latex tex markdown pdf symbols matrices alpha beta",
+    ],
   },
   ...KEYBINDING_SEARCH_ITEMS,
+  {
+    id: "authoring",
+    title: "Document and math shortcuts",
+    to: "/settings/keybindings",
+    searchTerms: [
+      "keyboard math latex tex markdown pdf symbols matrices alpha beta completion preset",
+    ],
+  },
   {
     id: "snap-shot-enabled",
     title: "SnapShots",
