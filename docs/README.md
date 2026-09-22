@@ -156,6 +156,7 @@ Follow their linked successors for current behavior.
 ### Runbooks
 
 - [Scient local dev app](./operations/local-dev-app.md)
+- [Windows dev app](./operations/local-dev-app-windows.md)
 - [Release](./operations/release.md)
 - [Managed provider runtime updates](./operations/managed-provider-runtime-updates.md)
 - [Observability](./operations/observability.md)
