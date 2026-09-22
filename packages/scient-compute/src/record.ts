@@ -1,5 +1,6 @@
 import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
+import { WorkspaceScope } from "@scientfactory/operations";
 
 import {
   ComputeDiagnostic,
@@ -125,6 +126,8 @@ export const ComputeSessionRecord = Schema.Struct({
   languageId: ComputeLanguageId,
   transportKind: ComputeTransportKind,
   workingDirectory: ShortText,
+  /** Host-local workspace ownership. Absent on legacy history, never inferred from projectId. */
+  workspace: Schema.optional(WorkspaceScope),
   // Null until the runtime has been chosen, and again after a record is
   // recovered from a version that could not have chosen one.
   runtime: Schema.NullOr(ComputeRuntimeProfile),

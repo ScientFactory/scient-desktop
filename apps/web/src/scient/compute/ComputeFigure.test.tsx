@@ -200,7 +200,16 @@ describe("compute figure presentation", () => {
     expect(
       container.querySelector<HTMLElement>("[aria-label='Figure actions']")?.dataset.slot,
     ).toBe("compact-command-group");
+    const toolbarPositioner = container.querySelector<HTMLElement>(
+      "[aria-label='Figure actions']",
+    )?.parentElement;
+    expect(toolbarPositioner?.classList.contains("-top-3")).toBe(true);
+    expect(toolbarPositioner?.classList.contains("right-2")).toBe(true);
     expect(button("Move figure actions").hidden).toBe(false);
+    expect(button("Open Figure 1 in viewer").classList.contains("h-6.5")).toBe(true);
+    expect(button("Open Figure 1 in viewer").classList.contains("sm:h-5.5")).toBe(true);
+    expect(button("More image actions").classList.contains("h-6.5")).toBe(true);
+    expect(button("More image actions").classList.contains("sm:h-5.5")).toBe(true);
     expect(button("View Figure 1").disabled).toBe(true);
     expect(container.textContent).toContain("Loading figure");
     await loaded(container);
@@ -232,10 +241,10 @@ describe("compute figure presentation", () => {
         ? toolbar.style.translate.split(" ").map(Number.parseFloat)
         : [];
       return {
-        left: 396 + x,
-        top: 104 + y,
-        right: 496 + x,
-        bottom: 136 + y,
+        left: 392 + x,
+        top: 88 + y,
+        right: 492 + x,
+        bottom: 120 + y,
         width: 100,
         height: 32,
       } as DOMRect;

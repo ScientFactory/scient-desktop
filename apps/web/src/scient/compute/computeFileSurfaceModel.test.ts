@@ -1,4 +1,8 @@
-import { ComputeLanguageId, type ComputeLanguageRuntimeInspection } from "@t3tools/contracts";
+import {
+  ComputeLanguageId,
+  ComputeToolkitId,
+  type ComputeLanguageRuntimeInspection,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -13,7 +17,9 @@ import {
   normalizeComputeFileResultsView,
   nudgeComputeFileSplit,
   computeFileSplitFromPointer,
+  computeRuntimeDisplayLabel,
   resolveComputeRuntimeToolbarState,
+  resolveComputePreRunRuntimeChoice,
   defaultComputeRuntime,
   isComputeCapacityReachedError,
 } from "./computeFileSurfaceModel";
@@ -27,7 +33,118 @@ const pythonRuntime = {
   displayName: "Python 3.12.13 (configured)",
 } as const;
 
+function scientificCandidate(source: "managed" | "path", toolkitReady: boolean) {
+  const profile = { ...pythonRuntime, source, executable: `/${source}/python` };
+  return {
+    profile,
+    verification: {
+      profile,
+      readiness: "ready" as const,
+      missingRequirements: [],
+      packages: [],
+      message: null,
+    },
+    toolkits: [
+      {
+        toolkitId: ComputeToolkitId.make("python-data-and-figures"),
+        runtime: profile,
+        readiness: toolkitReady ? ("ready" as const) : ("missing-requirement" as const),
+        missingRequirements: toolkitReady ? [] : ["scipy"],
+      },
+    ],
+  };
+}
+
 describe("python compute surface model", () => {
+  it("offers an explicit installed managed runtime when automatic Python lacks the scientific toolkit", () => {
+    const current = scientificCandidate("path", false);
+    const managed = scientificCandidate("managed", true);
+    const language: ComputeLanguageRuntimeInspection = {
+      descriptor: {
+        languageId: pythonRuntime.languageId,
+        displayName: "Python",
+        sourceExtensions: [".py"],
+        capabilities: [],
+      },
+      enabled: true,
+      configuredExecutable: null,
+      managedRuntime: {
+        installed: true,
+        selection: "existing",
+        updateAvailable: false,
+        runtimeVersion: "3.12.13",
+        toolkitRevision: "scientific-1",
+        toolkitIds: [ComputeToolkitId.make("python-data-and-figures")],
+        operation: null,
+        failure: null,
+        failureMessage: null,
+      },
+      toolkits: [],
+      runtimes: [current, managed],
+    };
+
+    expect(resolveComputePreRunRuntimeChoice(language)).toEqual({ current, managed });
+    expect(
+      resolveComputePreRunRuntimeChoice({ ...language, runtimes: [managed, current] }),
+    ).toBeNull();
+    expect(
+      resolveComputePreRunRuntimeChoice({
+        ...language,
+        managedRuntime: { ...language.managedRuntime!, installed: false },
+      }),
+    ).toBeNull();
+    expect(
+      resolveComputePreRunRuntimeChoice({
+        ...language,
+        managedRuntime: {
+          ...language.managedRuntime!,
+          operation: {
+            operationId: "repair-1",
+            action: "repair",
+            phase: "verifying",
+            startedAt: "2026-09-22T00:00:00.000Z",
+            downloadedBytes: null,
+            totalBytes: null,
+          },
+        },
+      }),
+    ).toBeNull();
+    expect(
+      resolveComputePreRunRuntimeChoice({
+        ...language,
+        managedRuntime: { ...language.managedRuntime!, failureMessage: "Repair failed" },
+      }),
+    ).toBeNull();
+    expect(
+      resolveComputePreRunRuntimeChoice({
+        ...language,
+        runtimes: [scientificCandidate("path", true), managed],
+      }),
+    ).toBeNull();
+    expect(
+      resolveComputePreRunRuntimeChoice({
+        ...language,
+        runtimes: [current, scientificCandidate("managed", false)],
+      }),
+    ).toBeNull();
+    expect(
+      resolveComputePreRunRuntimeChoice({
+        ...language,
+        descriptor: { ...language.descriptor, languageId: ComputeLanguageId.make("matlab") },
+      }),
+    ).toBeNull();
+  });
+
+  it("names runtimes by version and source without exposing executable paths", () => {
+    expect(computeRuntimeDisplayLabel(pythonRuntime)).toBe("Python 3.12.13 · Custom");
+    expect(computeRuntimeDisplayLabel({ ...pythonRuntime, source: "managed" })).toBe(
+      "Python 3.12.13 · Scient-managed",
+    );
+    expect(computeRuntimeDisplayLabel({ ...pythonRuntime, source: "path" })).toBe(
+      "Python 3.12.13 · System",
+    );
+  });
+
   it("does not skip an unavailable default in favor of an unrelated ready Python", () => {
     const candidate = (source: "managed" | "path", ready: boolean) => ({
       profile: { ...pythonRuntime, source, executable: `/${source}/python` },
@@ -117,8 +234,9 @@ describe("python compute surface model", () => {
         preferredRuntimeExecutable: pythonRuntime.executable,
         scientificPackagesMissing: false,
         runtimeVersion: pythonRuntime.languageVersion,
+        runtimeSource: pythonRuntime.source,
       }),
-    ).toEqual({ kind: "status", label: "Python 3.12.13", canRun: true });
+    ).toEqual({ kind: "status", label: "Python 3.12.13 · Custom", canRun: true });
     expect(
       resolveComputeRuntimeToolbarState({
         liveSession: null,
