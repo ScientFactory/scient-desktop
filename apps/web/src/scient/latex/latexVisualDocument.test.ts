@@ -167,14 +167,14 @@ describe("source-derived writing projection", () => {
     expect(projection.blocks[2]!.node.type).toBe("latexRawBlock");
   });
 
-  it("projects description lists as protected document content", () => {
+  it("edits description labels and bodies while preserving environment options", () => {
     const source = document(`\\begin{description}[style=nextline,leftmargin=2.7cm]
   \\item[Algorithms] Design algorithms and prove their correctness.
   \\item[Complexity theory] Study resources and limits of efficient computation.
 \\end{description}`);
     const projection = projectLatexVisualDocument(source);
     expect(projection.blocks[0]!.node.type).toBe("latexRichPreview");
-    expect(projection.blocks[0]!.editable).toBe(false);
+    expect(projection.blocks[0]!.editable).toBe(true);
     expect(projection.blocks[0]!.node.attrs?.items).toEqual([
       { label: "Algorithms", body: "Design algorithms and prove their correctness." },
       {
@@ -182,7 +182,39 @@ describe("source-derived writing projection", () => {
         body: "Study resources and limits of efficient computation.",
       },
     ]);
-    expect(edit(source, [paragraph("replacement")])).toBeNull();
+    const nodes = structuredClone(projection.content.content!);
+    const items = nodes[0]!.attrs!.items as { label: string; body: string }[];
+    items[0]!.label = "Algorithms & proofs";
+    items[1]!.body = "Study time, memory, and computational limits.";
+    const changed = edit(source, nodes);
+    expect(changed?.source).toContain("\\begin{description}[style=nextline,leftmargin=2.7cm]");
+    expect(changed?.source).toContain(
+      "\\item[Algorithms \\& proofs] Design algorithms and prove their correctness.",
+    );
+    expect(changed?.source).toContain(
+      "\\item[Complexity theory] Study time, memory, and computational limits.",
+    );
+  });
+
+  it("adds and removes description items through the visual document", () => {
+    const source = document(`\\begin{description}[style=nextline]
+  \\item[Algorithms] Design and prove algorithms.
+  \\item[Complexity] Study computational limits.
+\\end{description}`);
+    const projection = projectLatexVisualDocument(source);
+    const nodes = structuredClone(projection.content.content!);
+    const attributes = nodes[0]!.attrs!;
+    attributes.items = [
+      ...(attributes.items as object[]).slice(1),
+      { label: "Cryptography", body: "Build secure protocols." },
+    ];
+    attributes.itemIds = [...(attributes.itemIds as string[]).slice(1), "description-new-test"];
+    const changed = edit(source, nodes);
+    expect(changed?.source).not.toContain("Algorithms");
+    expect(changed?.source).toContain("\\item[Complexity] Study computational limits.");
+    expect(changed?.source).toContain("\\item[Cryptography] Build secure protocols.");
+    expect(changed?.projection.blocks[0]!.editable).toBe(true);
+    expect(changed?.projection.blocks[0]!.node.attrs?.items).toHaveLength(2);
   });
 
   it("edits simple table cells while preserving the surrounding tabularx source", () => {
@@ -212,9 +244,15 @@ Systems & Prototypes~and measurements \\\\
     expect(projection.blocks[0]!.source).toContain("\\end{table}");
     const nodes = structuredClone(projection.content.content!);
     (nodes[0]!.attrs!.rows as string[][])[1]![1] = "Proofs & verified models";
+    nodes[0]!.attrs!.caption = "Research areas & evidence.";
+    (nodes[0]!.attrs!.rows as string[][]).push(["Security", "Threat models"]);
+    (nodes[0]!.attrs!.rowIds as string[]).push("table-new-test");
     const changed = edit(source, nodes);
-    expect(changed?.source).toBe(
-      source.replace("Proofs and formal models", "Proofs \\& verified models"),
+    expect(changed?.source).toContain("\\caption{Research areas \\& evidence.}");
+    expect(changed?.source).toContain("Theory & Proofs \\& verified models");
+    expect(changed?.source).toContain("Security & Threat models \\\\");
+    expect(changed?.source.indexOf("Security & Threat models")).toBeLessThan(
+      changed!.source.indexOf("\\bottomrule"),
     );
     expect(changed?.source).toContain("\\textbf{Area}");
     expect(changed?.source).toContain("@{}p{2.7cm} X@{}");

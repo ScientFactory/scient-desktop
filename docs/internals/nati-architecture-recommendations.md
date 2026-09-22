@@ -7,9 +7,11 @@ math environments, provides matching Insert actions and a contextual bottom
 math bar, disables the duplicate MathLive menu/virtual keyboard, and provides
 bounded command completion. It also expands safe citation and reference
 commands, refines the writing toolbar, and projects description lists and
-common table environments as readable previews. The safe table subset
-supports direct cell editing through source ranges while preserving the outer
-LaTeX structure; structurally complex cells fail closed to a protected preview.
+common table environments as visual structure editors. Description labels and
+bodies support direct editing plus item insertion and removal. The safe table
+subset supports caption and cell editing plus row insertion through bounded
+source ranges while preserving the outer LaTeX structure; structurally complex
+cells fail closed to a protected preview.
 Broader adapter coverage, post-build measurements and exact browser/PDF parity
 remain future scoped work.
 

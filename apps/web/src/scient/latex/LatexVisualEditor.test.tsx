@@ -173,7 +173,7 @@ describe("writing editor source transactions", () => {
     expect(current).toContain(`\\[\n${matrix}\n\\]`);
   });
 
-  it("renders protected descriptions and tables instead of raw source", async () => {
+  it("edits description and table structures without opening source", async () => {
     await mount(`\\begin{description}[style=nextline]
 \\item[Algorithms] Design and prove algorithms.
 \\item[Complexity] Study computational limits.
@@ -186,12 +186,44 @@ Area & Evidence \\\\
 Theory & Proofs \\\\
 \\end{tabular}
 \\end{table}`);
-    expect(container.textContent).toContain("Algorithms");
-    expect(container.textContent).toContain("Design and prove algorithms.");
-    expect(container.textContent).toContain("Research options.");
     expect(container.querySelectorAll(".scient-latex-rich-preview")).toHaveLength(2);
     expect(container.querySelector(".scient-latex-visual-raw")).toBeNull();
-    expect(container.textContent).toContain("Editable cells");
+    expect(container.textContent).toContain("Editable structure");
+    const descriptionLabel = container.querySelector<HTMLInputElement>(
+      "input[aria-label='Description item 1 label']",
+    )!;
+    const descriptionBody = container.querySelector<HTMLTextAreaElement>(
+      "textarea[aria-label='Description item 1 body']",
+    )!;
+    expect(descriptionLabel.value).toBe("Algorithms");
+    expect(descriptionBody.value).toBe("Design and prove algorithms.");
+    expect(
+      container.querySelector<HTMLInputElement>("input[aria-label='Table caption']")?.value,
+    ).toBe("Research options.");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+        descriptionLabel,
+        "Algorithms & proofs",
+      );
+      descriptionLabel.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(
+        descriptionBody,
+        "Design verified algorithms.",
+      );
+      descriptionBody.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(current).toContain("\\item[Algorithms \\& proofs] Design verified algorithms.");
+    const caption = container.querySelector<HTMLInputElement>("input[aria-label='Table caption']")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+        caption,
+        "Research areas & evidence.",
+      );
+      caption.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(current).toContain("\\caption{Research areas \\& evidence.}");
     const evidence = container.querySelector<HTMLInputElement>(
       "input[aria-label='Table row 2 column 2']",
     )!;
@@ -206,6 +238,12 @@ Theory & Proofs \\\\
     expect(
       container.querySelector<HTMLInputElement>("input[aria-label='Table row 2 column 2']"),
     ).toBe(evidence);
+    const addRow = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent === "Add row",
+    )!;
+    await act(async () => addRow.click());
+    expect(current).toContain("New row &  \\\\");
+    expect(container.querySelector("input[aria-label='Table row 3 column 1']")).not.toBeNull();
   });
 
   it("rejects a destructive transaction spanning protected source", async () => {

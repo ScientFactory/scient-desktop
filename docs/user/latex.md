@@ -42,11 +42,12 @@ inspect exact output. A successful build never means the browser canvas is
 pixel-identical to that PDF. Compile errors preserve the last successful PDF.
 
 Description lists and common `tabular`, `tabularx`, `tabulary`, and `longtable`
-structures have readable previews. Cells containing plain text or common outer
-text formatting can be edited directly; Scient changes only the cell text and
-preserves the table environment, column specification, rules, caption, label,
-spacing, and formatting wrappers. A table containing structural cell content,
-such as nested commands, math, or `\multicolumn`, stays protected and shows
+structures have visual editors. In a description list, edit labels and bodies
+directly or add and remove items. In a supported table, edit its caption and
+cells or add rows. Scient changes only the corresponding source ranges and
+preserves environment options, column specifications, rules, labels, spacing,
+and formatting wrappers. A table containing structural cell content, such as
+nested commands, math, or `\multicolumn`, stays protected and shows
 **Protected source · edit in Source**. Other unsupported structures, including
 custom macros and equation labels or tags, appear as protected source blocks.
 The visual editor does not silently normalize or discard them. A visual edit

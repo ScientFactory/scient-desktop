@@ -470,25 +470,55 @@ function previewText(source: string): string {
 }
 
 function parseDescriptionPreview(source: string): JSONContent | null {
-  const opening = /^\\begin\{description\}(?:\[[^\]]*\])?/u.exec(source.trim());
-  if (!opening || !source.trim().endsWith("\\end{description}")) return null;
-  const trimmed = source.trim();
-  const body = trimmed.slice(opening[0].length, trimmed.lastIndexOf("\\end{description}"));
-  const item = /\\item\s*\[([^\]]+)\]/gu;
+  const opening = /^\\begin\{description\}(?:\[[^\]]*\])?/u.exec(source);
+  const ending = source.lastIndexOf("\\end{description}");
+  if (!opening || ending < opening[0].length) return null;
+  const bodyFrom = opening[0].length;
+  const body = source.slice(bodyFrom, ending);
+  const item = /\\item\s*\[([^\]]*)\]/gu;
   const matches = [...body.matchAll(item)];
   if (matches.length === 0 || matches.length > 100) return null;
-  const items = matches.map((match, index) => {
-    const from = match.index! + match[0].length;
-    const to = index + 1 < matches.length ? matches[index + 1]!.index! : body.length;
+  let editable = true;
+  const originalItems = matches.map((match, index) => {
+    const itemFrom = match.index!;
+    const itemTo = index + 1 < matches.length ? matches[index + 1]!.index! : body.length;
+    const raw = body.slice(itemFrom, itemTo);
+    const labelStart = match[0].indexOf("[") + 1;
+    const label = editableTableCell(match[1]!, labelStart);
+    const bodyStart = match[0].length;
+    const itemBody = editableTableCell(raw.slice(bodyStart), bodyStart);
+    if (!label || !itemBody) editable = false;
     return {
-      label: previewText(match[1]!),
-      body: previewText(body.slice(from, to)),
+      id: `description-${index}`,
+      raw,
+      label: label?.display ?? previewText(match[1]!),
+      body: itemBody?.display ?? previewText(raw.slice(bodyStart)),
+      labelFrom: label?.from ?? 0,
+      labelTo: label?.to ?? 0,
+      bodyFrom: itemBody?.from ?? 0,
+      bodyTo: itemBody?.to ?? 0,
     };
   });
-  if (items.some((entry) => !entry.label || !entry.body)) return null;
+  const items = originalItems.map(({ label, body: itemBody }) => ({
+    label,
+    body: itemBody,
+  }));
   return {
     type: "latexRichPreview",
-    attrs: { kind: "description", raw: source, items, caption: null, rows: null },
+    attrs: {
+      kind: "description",
+      raw: source,
+      items,
+      itemIds: originalItems.map((entry) => entry.id),
+      caption: null,
+      rows: null,
+      editable,
+      sourceMeta: {
+        head: source.slice(0, bodyFrom + matches[0]!.index!),
+        tail: source.slice(ending),
+        originalItems,
+      },
+    },
   };
 }
 
@@ -498,6 +528,19 @@ function commandArgument(source: string, command: string): string | null {
   const opening = match.index + match[0].lastIndexOf("{");
   const close = closingBrace(source, opening);
   return close === null ? null : source.slice(opening + 1, close);
+}
+
+function commandArgumentRange(
+  source: string,
+  command: string,
+): { source: string; from: number; to: number } | null {
+  const match = new RegExp(`\\\\${command}\\s*\\{`, "u").exec(source);
+  if (!match) return null;
+  const opening = match.index + match[0].lastIndexOf("{");
+  const close = closingBrace(source, opening);
+  return close === null
+    ? null
+    : { source: source.slice(opening + 1, close), from: opening + 1, to: close };
 }
 
 function tabularBody(source: string): { source: string; from: number } | null {
@@ -615,6 +658,7 @@ function parseTablePreview(source: string): JSONContent | null {
         ranges: editableCells.map((cell) =>
           cell ? { from: cell.from, to: cell.to, original: cell.display } : null,
         ),
+        end: body.from + row.to + (row.to < body.source.length ? 2 : 0),
       };
     })
     .filter((row) => row.rows.some(Boolean));
@@ -624,14 +668,28 @@ function parseTablePreview(source: string): JSONContent | null {
   const editable =
     parsedRows.length <= 100 &&
     parsedRows.every((row) => row.ranges.every((cell) => cell !== null));
+  const captionArgument = commandArgumentRange(source, "caption");
+  const captionCell = captionArgument
+    ? editableTableCell(captionArgument.source, captionArgument.from)
+    : null;
   return {
     type: "latexRichPreview",
     attrs: {
       kind: "table",
       raw: source,
-      caption: previewText(commandArgument(source, "caption") ?? "Table"),
+      caption: captionCell?.display ?? previewText(commandArgument(source, "caption") ?? "Table"),
       rows,
       cellRanges: editable ? parsedRows.map((row) => row.ranges) : null,
+      rowIds: rows.map((_, index) => `table-row-${index}`),
+      sourceMeta: editable
+        ? {
+            captionRange: captionCell
+              ? { from: captionCell.from, to: captionCell.to, original: captionCell.display }
+              : null,
+            insertAt: parsedRows.at(-1)!.end,
+            originalRowCount: rows.length,
+          }
+        : null,
       editable,
       items: null,
     },
@@ -781,12 +839,117 @@ export function serializeLatexVisualBlock(node: JSONContent): string | null {
   if (node.type === "latexRawBlock") return String(node.attrs?.raw ?? "");
   if (node.type === "latexRichPreview") {
     const raw = String(node.attrs?.raw ?? "");
-    if (node.attrs?.kind !== "table" || node.attrs.editable !== true) return raw;
+    if (node.attrs?.editable !== true) return raw;
+    if (node.attrs.kind === "description") {
+      const items = Array.isArray(node.attrs.items) ? node.attrs.items : null;
+      const itemIds = Array.isArray(node.attrs.itemIds) ? node.attrs.itemIds : null;
+      const sourceMeta = node.attrs.sourceMeta;
+      if (
+        !items ||
+        !itemIds ||
+        items.length === 0 ||
+        items.length !== itemIds.length ||
+        !sourceMeta ||
+        typeof sourceMeta !== "object" ||
+        !("head" in sourceMeta) ||
+        !("tail" in sourceMeta) ||
+        !("originalItems" in sourceMeta) ||
+        typeof sourceMeta.head !== "string" ||
+        typeof sourceMeta.tail !== "string" ||
+        !Array.isArray(sourceMeta.originalItems)
+      )
+        return null;
+      const originals = new Map<string, Record<string, unknown>>();
+      for (const candidate of sourceMeta.originalItems as unknown[]) {
+        if (
+          candidate &&
+          typeof candidate === "object" &&
+          "id" in candidate &&
+          typeof candidate.id === "string"
+        )
+          originals.set(candidate.id, candidate as Record<string, unknown>);
+      }
+      const eol = raw.includes("\r\n") ? "\r\n" : "\n";
+      const chunks: string[] = [];
+      for (const [index, item] of items.entries()) {
+        const id = itemIds[index];
+        if (
+          !item ||
+          typeof item !== "object" ||
+          !("label" in item) ||
+          !("body" in item) ||
+          typeof item.label !== "string" ||
+          typeof item.body !== "string" ||
+          typeof id !== "string"
+        )
+          return null;
+        const original = originals.get(id);
+        if (!original) {
+          chunks.push(`\\item[${escapeText(item.label)}] ${escapeText(item.body)}${eol}`);
+          continue;
+        }
+        if (
+          !("raw" in original) ||
+          !("label" in original) ||
+          !("body" in original) ||
+          !("labelFrom" in original) ||
+          !("labelTo" in original) ||
+          !("bodyFrom" in original) ||
+          !("bodyTo" in original) ||
+          typeof original.raw !== "string" ||
+          typeof original.label !== "string" ||
+          typeof original.body !== "string" ||
+          typeof original.labelFrom !== "number" ||
+          typeof original.labelTo !== "number" ||
+          typeof original.bodyFrom !== "number" ||
+          typeof original.bodyTo !== "number"
+        )
+          return null;
+        const replacements = [
+          ...(item.label === original.label
+            ? []
+            : [{ from: original.labelFrom, to: original.labelTo, value: escapeText(item.label) }]),
+          ...(item.body === original.body
+            ? []
+            : [{ from: original.bodyFrom, to: original.bodyTo, value: escapeText(item.body) }]),
+        ].sort((left, right) => right.from - left.from);
+        let chunk = original.raw;
+        for (const replacement of replacements) {
+          if (
+            replacement.from < 0 ||
+            replacement.to < replacement.from ||
+            replacement.to > chunk.length
+          )
+            return null;
+          chunk =
+            chunk.slice(0, replacement.from) + replacement.value + chunk.slice(replacement.to);
+        }
+        chunks.push(chunk);
+      }
+      return sourceMeta.head + chunks.join("") + sourceMeta.tail;
+    }
+    if (node.attrs.kind !== "table") return raw;
     const rows = Array.isArray(node.attrs.rows) ? node.attrs.rows : null;
     const ranges = Array.isArray(node.attrs.cellRanges) ? node.attrs.cellRanges : null;
-    if (!rows || !ranges || rows.length !== ranges.length) return null;
+    const sourceMeta = node.attrs.sourceMeta;
+    if (
+      !rows ||
+      !ranges ||
+      rows.length < ranges.length ||
+      !sourceMeta ||
+      typeof sourceMeta !== "object" ||
+      !("originalRowCount" in sourceMeta) ||
+      !("insertAt" in sourceMeta) ||
+      !("captionRange" in sourceMeta) ||
+      typeof sourceMeta.originalRowCount !== "number" ||
+      typeof sourceMeta.insertAt !== "number" ||
+      sourceMeta.originalRowCount !== ranges.length ||
+      sourceMeta.insertAt < 0 ||
+      sourceMeta.insertAt > raw.length
+    )
+      return null;
     const replacements: { from: number; to: number; value: string }[] = [];
-    for (const [rowIndex, row] of rows.entries()) {
+    for (const [rowIndex, row] of rows.slice(0, ranges.length).entries()) {
       const rowRanges = ranges[rowIndex];
       if (!Array.isArray(row) || !Array.isArray(rowRanges) || row.length !== rowRanges.length)
         return null;
@@ -810,6 +973,52 @@ export function serializeLatexVisualBlock(node: JSONContent): string | null {
         if (value === range.original) continue;
         replacements.push({ from: range.from, to: range.to, value: escapeText(value) });
       }
+    }
+    const caption = node.attrs.caption;
+    const captionRange = sourceMeta.captionRange;
+    if (captionRange !== null) {
+      if (
+        !captionRange ||
+        typeof captionRange !== "object" ||
+        !("from" in captionRange) ||
+        !("to" in captionRange) ||
+        !("original" in captionRange) ||
+        typeof captionRange.from !== "number" ||
+        typeof captionRange.to !== "number" ||
+        typeof captionRange.original !== "string" ||
+        typeof caption !== "string" ||
+        captionRange.from < 0 ||
+        captionRange.to < captionRange.from ||
+        captionRange.to > raw.length
+      )
+        return null;
+      if (caption !== captionRange.original)
+        replacements.push({
+          from: captionRange.from,
+          to: captionRange.to,
+          value: escapeText(caption),
+        });
+    }
+    const width = Array.isArray(rows[0]) ? rows[0].length : 0;
+    const addedRows = rows.slice(ranges.length);
+    if (width === 0) return null;
+    if (addedRows.length > 0) {
+      const eol = raw.includes("\r\n") ? "\r\n" : "\n";
+      const lines: string[] = [];
+      for (const row of addedRows) {
+        if (
+          !Array.isArray(row) ||
+          row.length !== width ||
+          row.some((cell) => typeof cell !== "string")
+        )
+          return null;
+        lines.push(`${row.map((cell) => escapeText(cell)).join(" & ")} \\\\`);
+      }
+      replacements.push({
+        from: sourceMeta.insertAt,
+        to: sourceMeta.insertAt,
+        value: `${eol}${lines.join(eol)}`,
+      });
     }
     replacements.sort((left, right) => right.from - left.from);
     let serialized = raw;
@@ -849,7 +1058,12 @@ function comparableNode(node: JSONContent): ComparableVisualNode {
           key === "sourceId" ||
           key === "latexCommand" ||
           (node.type === "latexRichPreview" &&
-            (key === "raw" || key === "cellRanges" || key === "editable")) ||
+            (key === "raw" ||
+              key === "cellRanges" ||
+              key === "editable" ||
+              key === "sourceMeta" ||
+              key === "itemIds" ||
+              key === "rowIds")) ||
           value === null ||
           value === undefined
         )

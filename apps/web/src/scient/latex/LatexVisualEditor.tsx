@@ -447,31 +447,80 @@ function withStableKeys<T>(values: T[], serialize: (value: T) => string) {
 
 function LatexRichPreviewView({ node, selected, updateAttributes, editor }: NodeViewProps) {
   const editorEditable = useEditorEditable(editor);
+  const generatedId = useRef(0);
   const kind = node.attrs.kind === "table" ? "table" : "description";
   const items = Array.isArray(node.attrs.items)
     ? (node.attrs.items as { label?: unknown; body?: unknown }[])
     : [];
+  const itemIds = Array.isArray(node.attrs.itemIds)
+    ? (node.attrs.itemIds as unknown[]).map(String)
+    : [];
   const rows = Array.isArray(node.attrs.rows)
     ? (node.attrs.rows as unknown[]).filter(Array.isArray).map((row) => row.map(String))
     : [];
-  const cellRanges = Array.isArray(node.attrs.cellRanges)
-    ? (node.attrs.cellRanges as unknown[]).filter(Array.isArray)
+  const rowIds = Array.isArray(node.attrs.rowIds)
+    ? (node.attrs.rowIds as unknown[]).map(String)
     : [];
   const caption = String(node.attrs.caption ?? "Table");
-  const tableEditable = kind === "table" && node.attrs.editable === true;
-  const keyedItems = withStableKeys(items, (item) => JSON.stringify([item.label, item.body]));
+  const structureEditable = node.attrs.editable === true;
+  const tableEditable = kind === "table" && structureEditable;
+  const descriptionEditable = kind === "description" && structureEditable;
+  const sourceMeta =
+    node.attrs.sourceMeta && typeof node.attrs.sourceMeta === "object"
+      ? (node.attrs.sourceMeta as Record<string, unknown>)
+      : null;
+  const captionEditable = tableEditable && sourceMeta !== null && sourceMeta.captionRange !== null;
+  const nextGeneratedId = (prefix: string) => {
+    generatedId.current += 1;
+    return `${prefix}-${generatedId.current}`;
+  };
+  const keyedItems = descriptionEditable
+    ? items.map((item, index) => ({
+        index,
+        key: itemIds[index] ?? `description-item-${index}`,
+        value: item,
+      }))
+    : withStableKeys(items, (item) => JSON.stringify([item.label, item.body]));
   const keyedRows = tableEditable
     ? rows.map((row, index) => ({
         index,
-        key: JSON.stringify(cellRanges[index] ?? row),
+        key: rowIds[index] ?? `table-row-${index}`,
         value: row,
       }))
     : withStableKeys(rows, (row) => JSON.stringify(row));
+  const updateDescriptionItem = (index: number, field: "label" | "body", value: string) => {
+    if (!editorEditable || !descriptionEditable) return;
+    const nextItems = items.map((item) => ({ ...item }));
+    nextItems[index] = { ...nextItems[index], [field]: value };
+    updateAttributes({ items: nextItems });
+  };
+  const addDescriptionItem = () => {
+    if (!editorEditable || !descriptionEditable) return;
+    updateAttributes({
+      items: [...items, { label: "New item", body: "Describe this item." }],
+      itemIds: [...itemIds, nextGeneratedId("description-new")],
+    });
+  };
+  const removeDescriptionItem = (index: number) => {
+    if (!editorEditable || !descriptionEditable || items.length <= 1) return;
+    updateAttributes({
+      items: items.filter((_, itemIndex) => itemIndex !== index),
+      itemIds: itemIds.filter((_, itemIndex) => itemIndex !== index),
+    });
+  };
   const updateCell = (rowIndex: number, cellIndex: number, value: string) => {
     if (!editorEditable || !tableEditable) return;
     const nextRows = rows.map((row) => [...row]);
     nextRows[rowIndex]![cellIndex] = value;
     updateAttributes({ rows: nextRows });
+  };
+  const addTableRow = () => {
+    if (!editorEditable || !tableEditable || rows.length === 0) return;
+    const width = rows[0]!.length;
+    updateAttributes({
+      rows: [...rows, Array.from({ length: width }, (_, index) => (index === 0 ? "New row" : ""))],
+      rowIds: [...rowIds, nextGeneratedId("table-new")],
+    });
   };
   return (
     <NodeViewWrapper
@@ -483,23 +532,81 @@ function LatexRichPreviewView({ node, selected, updateAttributes, editor }: Node
       <div className="scient-latex-rich-preview-label">
         <span>{kind === "table" ? "Table preview" : "Description list"}</span>
         <span>
-          {tableEditable
-            ? "Editable cells · LaTeX structure preserved"
-            : "Protected source · edit in Source"}
+          {structureEditable
+            ? "Editable structure - LaTeX preserved"
+            : "Protected source - edit in Source"}
         </span>
       </div>
       {kind === "description" ? (
-        <dl>
-          {keyedItems.map(({ key, value: item }) => (
-            <div key={key}>
-              <dt>{String(item.label ?? "")}</dt>
-              <dd>{String(item.body ?? "")}</dd>
+        <>
+          <dl>
+            {keyedItems.map(({ index, key, value: item }) => (
+              <div key={key}>
+                <dt>
+                  {descriptionEditable ? (
+                    <input
+                      aria-label={`Description item ${index + 1} label`}
+                      disabled={!editorEditable}
+                      value={String(item.label ?? "")}
+                      onChange={(event) =>
+                        updateDescriptionItem(index, "label", event.currentTarget.value)
+                      }
+                    />
+                  ) : (
+                    String(item.label ?? "")
+                  )}
+                </dt>
+                <dd>
+                  {descriptionEditable ? (
+                    <textarea
+                      aria-label={`Description item ${index + 1} body`}
+                      disabled={!editorEditable}
+                      rows={2}
+                      value={String(item.body ?? "")}
+                      onChange={(event) =>
+                        updateDescriptionItem(index, "body", event.currentTarget.value)
+                      }
+                    />
+                  ) : (
+                    String(item.body ?? "")
+                  )}
+                </dd>
+                {descriptionEditable ? (
+                  <button
+                    aria-label={`Remove description item ${index + 1}`}
+                    className="scient-latex-structure-remove"
+                    disabled={!editorEditable || items.length <= 1}
+                    onClick={() => removeDescriptionItem(index)}
+                    type="button"
+                  >
+                    Remove
+                  </button>
+                ) : null}
+              </div>
+            ))}
+          </dl>
+          {descriptionEditable ? (
+            <div className="scient-latex-structure-actions">
+              <button disabled={!editorEditable} onClick={addDescriptionItem} type="button">
+                Add item
+              </button>
             </div>
-          ))}
-        </dl>
+          ) : null}
+        </>
       ) : (
         <figure>
-          <figcaption>{caption}</figcaption>
+          <figcaption>
+            {captionEditable ? (
+              <input
+                aria-label="Table caption"
+                disabled={!editorEditable}
+                value={caption}
+                onChange={(event) => updateAttributes({ caption: event.currentTarget.value })}
+              />
+            ) : (
+              caption
+            )}
+          </figcaption>
           <div className="scient-latex-rich-table-scroll">
             <table>
               <tbody>
@@ -508,7 +615,7 @@ function LatexRichPreviewView({ node, selected, updateAttributes, editor }: Node
                     {(tableEditable
                       ? row.map((cell, index) => ({
                           index,
-                          key: JSON.stringify(cellRanges[rowIndex]?.[index] ?? cell),
+                          key: `${rowIds[rowIndex] ?? rowIndex}-${index}`,
                           value: cell,
                         }))
                       : withStableKeys(row, String)
@@ -541,6 +648,13 @@ function LatexRichPreviewView({ node, selected, updateAttributes, editor }: Node
               </tbody>
             </table>
           </div>
+          {tableEditable ? (
+            <div className="scient-latex-structure-actions">
+              <button disabled={!editorEditable} onClick={addTableRow} type="button">
+                Add row
+              </button>
+            </div>
+          ) : null}
         </figure>
       )}
     </NodeViewWrapper>
@@ -652,6 +766,9 @@ const LatexRichPreview = Node.create({
       items: { default: null },
       rows: { default: null },
       cellRanges: { default: null, rendered: false },
+      sourceMeta: { default: null, rendered: false },
+      itemIds: { default: null, rendered: false },
+      rowIds: { default: null, rendered: false },
       editable: { default: false, rendered: false },
       caption: { default: null },
       sourceId: { default: null, rendered: false },
