@@ -6,8 +6,19 @@ import {
   formatDateTimeShort,
   formatHourShort,
   formatRelativeHourShort,
+  formatUsdPrecise,
   makeWindow,
 } from "./usageFormat.ts";
+
+describe("usage currency formatting", () => {
+  it("keeps small non-zero charges visible", () => {
+    expect(formatUsdPrecise(0)).toBe("$0.00");
+    expect(formatUsdPrecise(0.00001)).toBe("<$0.0001");
+    expect(formatUsdPrecise(-0.00001)).toBe("-<$0.0001");
+    expect(formatUsdPrecise(0.00138)).toBe("$0.0014");
+    expect(formatUsdPrecise(12.5)).toBe("$12.50");
+  });
+});
 
 describe("hourly usage formatting", () => {
   it("keeps requested zones separate when formatting repeated calls", () => {

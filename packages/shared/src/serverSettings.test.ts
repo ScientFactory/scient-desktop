@@ -4,6 +4,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   UsageLimitSourceId,
+  UsageAccountingSourceId,
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
@@ -521,6 +522,28 @@ describe("serverSettings helpers", () => {
 
     const removed = applyServerSettingsPatch(added, { usageLimitSources: { [hubA]: null } });
     expect(Object.keys(removed.usageLimitSources)).toEqual([hubB]);
+  });
+
+  it("upserts and removes usageAccountingSources per entry without clobbering", () => {
+    const first = UsageAccountingSourceId.make("openrouter-a");
+    const second = UsageAccountingSourceId.make("openrouter-b");
+    const source = (label: string) => ({
+      kind: "openrouter" as const,
+      label,
+      managementKey: "secret",
+      enabled: true,
+    });
+    const current = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      usageAccountingSources: { [first]: source("First") },
+    });
+    const added = applyServerSettingsPatch(current, {
+      usageAccountingSources: { [second]: source("Second") },
+    });
+    expect(Object.keys(added.usageAccountingSources)).toEqual([first, second]);
+    const removed = applyServerSettingsPatch(added, {
+      usageAccountingSources: { [first]: null },
+    });
+    expect(Object.keys(removed.usageAccountingSources)).toEqual([second]);
   });
 
   it("replaces and removes individual usage prices without clobbering other models", () => {
