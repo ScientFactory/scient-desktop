@@ -216,6 +216,10 @@
   --caret-color: #2769bc;
   --primary: #2769bc;
 }
+.scient-latex-mathfield math-field::part(virtual-keyboard-toggle),
+.scient-latex-mathfield math-field::part(menu-toggle) {
+  display: none;
+}
 .scient-latex-mathfield math-field:not([readonly]):focus-within,
 .scient-latex-mathfield math-field:not([readonly]):hover {
   border-color: #b4c9e3;
@@ -264,6 +268,15 @@
   color: #52657c;
   font-size: 11px;
 }
+.scient-latex-math-source-heading select {
+  max-width: 220px;
+  border: 1px solid #cad4df;
+  border-radius: 5px;
+  padding: 3px 6px;
+  background: #f8fafc;
+  color: #26384d;
+  font: inherit;
+}
 .scient-latex-math-source-heading > :first-child {
   color: #20232a;
   font-weight: 600;
@@ -285,6 +298,30 @@
 .scient-latex-math-source-popover textarea:focus {
   border-color: #4d84c4;
   box-shadow: 0 0 0 2px #d9e9fb;
+}
+.scient-latex-math-completions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 5px;
+  overflow-x: auto;
+}
+.scient-latex-math-completions button {
+  flex: none;
+  border: 1px solid #c8d4e1;
+  border-radius: 5px;
+  padding: 3px 6px;
+  background: #f7f9fc;
+  color: #285984;
+}
+.scient-latex-math-completions button:hover {
+  border-color: #7fa5cf;
+  background: #edf5ff;
+}
+.scient-latex-math-completions > span {
+  flex: none;
+  color: #748194;
+  font-size: 10px;
 }
 .scient-latex-math-source-error {
   margin-top: 6px;
@@ -310,6 +347,79 @@
   border-color: #2f6fb5;
   background: #2f6fb5;
   color: #fff;
+}
+.scient-latex-math-bar {
+  position: fixed;
+  z-index: 70;
+  right: 18px;
+  bottom: 16px;
+  left: 18px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 7px 9px;
+  border: 1px solid color-mix(in srgb, var(--border) 85%, #8ca8c7);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--background) 96%, var(--muted));
+  box-shadow: 0 12px 38px #0b1f392e;
+  color: var(--foreground);
+  font: 12px/1.4 var(--font-sans);
+}
+.scient-latex-math-bar-title {
+  flex: none;
+  padding: 0 5px;
+  color: var(--muted-foreground);
+  font-weight: 650;
+}
+.scient-latex-math-bar-scroll {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 3px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.scient-latex-math-bar button,
+.scient-latex-math-bar select {
+  min-width: 34px;
+  min-height: 32px;
+  flex: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 4px 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+.scient-latex-math-bar button {
+  font-family: "KaTeX_Main", "Cambria Math", serif;
+  font-size: 15px;
+}
+.scient-latex-math-bar button:hover,
+.scient-latex-math-bar select:hover,
+.scient-latex-math-bar button:focus-visible,
+.scient-latex-math-bar select:focus-visible {
+  border-color: color-mix(in srgb, var(--border) 75%, var(--ring));
+  outline: none;
+  background: var(--accent);
+}
+.scient-latex-math-bar .scient-latex-math-bar-done {
+  border-color: var(--border);
+  font-family: var(--font-sans);
+  font-size: 12px;
+}
+
+@media (max-width: 720px) {
+  .scient-latex-math-bar {
+    right: 8px;
+    bottom: 8px;
+    left: 8px;
+  }
+  .scient-latex-math-bar-title {
+    display: none;
+  }
 }
 .scient-latex-visual-command {
   display: inline-block;

@@ -5,16 +5,19 @@ import type { NodeViewProps } from "@tiptap/react";
 import {
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
   useSyncExternalStore,
 } from "react";
+import { createPortal } from "react-dom";
 
 import { EditorState, Plugin } from "@tiptap/pm/state";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
-import { LatexMathField } from "./LatexMathField";
+import { LatexMathField, type LatexMathFieldHandle } from "./LatexMathField";
+import { mathSourceCompletions, type MathSourceCompletion } from "./latexMathCompletion";
 import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
 import { readVisualDraft, clearVisualDraft } from "./visualDrafts";
 
@@ -60,9 +63,43 @@ function useEditorEditable(editor: Editor): boolean {
   );
 }
 
+const MATH_BAR_ITEMS = [
+  { label: "Fraction", text: "a⁄b", latex: "\\frac{}{}" },
+  { label: "Square root", text: "√", latex: "\\sqrt{}" },
+  { label: "Superscript", text: "x²", latex: "^{}" },
+  { label: "Subscript", text: "x₂", latex: "_{}" },
+  { label: "Parentheses", text: "( )", latex: "\\left(\\right)" },
+  { label: "Summation", text: "Σ", latex: "\\sum_{}^{}" },
+  { label: "Integral", text: "∫", latex: "\\int_{}^{}" },
+  { label: "Limit", text: "lim", latex: "\\lim_{}" },
+  { label: "Alpha", text: "α", latex: "\\alpha" },
+  { label: "Beta", text: "β", latex: "\\beta" },
+  { label: "Gamma", text: "γ", latex: "\\gamma" },
+  { label: "Theta", text: "θ", latex: "\\theta" },
+  { label: "Pi", text: "π", latex: "\\pi" },
+  { label: "Infinity", text: "∞", latex: "\\infty" },
+  { label: "Less than or equal", text: "≤", latex: "\\le" },
+  { label: "Greater than or equal", text: "≥", latex: "\\ge" },
+  { label: "Not equal", text: "≠", latex: "\\ne" },
+  { label: "Approximately", text: "≈", latex: "\\approx" },
+  { label: "Right arrow", text: "→", latex: "\\to" },
+] as const;
+
+function mathType(
+  attributes: { environment?: string | null; wrapper?: unknown },
+  display: boolean,
+) {
+  if (!display) return attributes.wrapper === "dollar" ? "inline-dollar" : "inline-paren";
+  if (attributes.environment) return `environment:${attributes.environment}`;
+  return attributes.wrapper === "double-dollar" ? "display-dollar" : "display-bracket";
+}
+
 function LatexMathView({ node, updateAttributes, editor, getPos, selected }: NodeViewProps) {
   const display = node.type.name === "latexDisplayMath";
   const editable = useEditorEditable(editor);
+  const mathField = useRef<LatexMathFieldHandle>(null);
+  const sourceEditor = useRef<HTMLTextAreaElement>(null);
+  const activationId = useId();
   const attributes = {
     tex: String(node.attrs.tex ?? ""),
     environment: node.attrs.environment ? String(node.attrs.environment) : null,
@@ -71,32 +108,164 @@ function LatexMathView({ node, updateAttributes, editor, getPos, selected }: Nod
   const source = latexVisualMathSource(attributes, display);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(source);
-  const [sourceError, setSourceError] = useState(false);
+  const [sourceError, setSourceError] = useState<string | null>(null);
+  const [caret, setCaret] = useState(0);
+  const completions = useMemo(
+    () => mathSourceCompletions(draft, caret).slice(0, 6),
+    [caret, draft],
+  );
+
+  useEffect(() => {
+    const deactivate = (event: Event) => {
+      if ((event as CustomEvent<string>).detail !== activationId) setEditing(false);
+    };
+    document.addEventListener("scient-latex-math-activate", deactivate);
+    return () => document.removeEventListener("scient-latex-math-activate", deactivate);
+  }, [activationId]);
+
+  const activate = () => {
+    if (!editable) return;
+    document.dispatchEvent(new CustomEvent("scient-latex-math-activate", { detail: activationId }));
+    if (!editing) setDraft(source);
+    setEditing(true);
+    requestAnimationFrame(() => mathField.current?.focus());
+  };
 
   const applySource = () => {
     const parsed = parseLatexVisualMathSource(draft, display);
     if (parsed === null) {
-      setSourceError(true);
+      setSourceError(
+        "Keep a complete supported wrapper: $…$, \\(…\\), $$…$$, \\[…\\], equation, align or gather.",
+      );
       return;
     }
     updateAttributes(parsed);
-    setSourceError(false);
-    setEditing(false);
+    setSourceError(null);
+    setDraft(latexVisualMathSource(parsed, display));
   };
+
+  const applyCompletion = (completion: MathSourceCompletion) => {
+    const next =
+      draft.slice(0, completion.from) + completion.replacement + draft.slice(completion.to);
+    const environmentBody = completion.replacement.indexOf("\n\n");
+    const emptyArgument = completion.replacement.indexOf("{}");
+    const nextCaret =
+      completion.from +
+      (environmentBody >= 0
+        ? environmentBody + 1
+        : emptyArgument >= 0
+          ? emptyArgument + 1
+          : completion.replacement.length);
+    setDraft(next);
+    setCaret(nextCaret);
+    setSourceError(null);
+    requestAnimationFrame(() => {
+      sourceEditor.current?.focus();
+      sourceEditor.current?.setSelectionRange(nextCaret, nextCaret);
+    });
+  };
+
+  const changeType = (value: string) => {
+    const inline = value.startsWith("inline-");
+    const nextAttributes = {
+      tex: attributes.tex,
+      environment: value.startsWith("environment:") ? value.slice("environment:".length) : null,
+      wrapper:
+        value === "inline-dollar"
+          ? "dollar"
+          : value === "display-dollar"
+            ? "double-dollar"
+            : inline
+              ? "paren"
+              : "bracket",
+    } as const;
+    if (inline === !display) {
+      updateAttributes(nextAttributes);
+      setDraft(latexVisualMathSource(nextAttributes, display));
+      setSourceError(null);
+      return;
+    }
+    const position = getPos();
+    if (position === undefined) return;
+    if (display) {
+      const inlineNode = editor.schema.nodes.latexInlineMath?.create(nextAttributes);
+      const paragraph = inlineNode ? editor.schema.nodes.paragraph?.create(null, inlineNode) : null;
+      if (paragraph)
+        editor.view.dispatch(
+          editor.state.tr.replaceWith(position, position + node.nodeSize, paragraph),
+        );
+      return;
+    }
+    const resolved = editor.state.doc.resolve(position);
+    if (resolved.parent.childCount !== 1) {
+      setSourceError(
+        "Centered math can replace an inline formula only when it is alone on its line.",
+      );
+      return;
+    }
+    const displayNode = editor.schema.nodes.latexDisplayMath?.create(nextAttributes);
+    if (displayNode)
+      editor.view.dispatch(
+        editor.state.tr.replaceWith(resolved.before(), resolved.after(), displayNode),
+      );
+  };
+
+  const toolbar = editing
+    ? createPortal(
+        <div className="scient-latex-math-bar" role="toolbar" aria-label="Math tools">
+          <span className="scient-latex-math-bar-title">Math</span>
+          <div className="scient-latex-math-bar-scroll">
+            {MATH_BAR_ITEMS.map((item) => (
+              <ScientTooltip key={item.label} content={item.label}>
+                <button
+                  type="button"
+                  aria-label={item.label}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => mathField.current?.insert(item.latex)}
+                >
+                  {item.text}
+                </button>
+              </ScientTooltip>
+            ))}
+            <select
+              aria-label="Insert math structure"
+              value=""
+              onChange={(event) => {
+                const latex = event.currentTarget.value;
+                if (latex) mathField.current?.insert(latex);
+                event.currentTarget.value = "";
+              }}
+            >
+              <option value="">Structure…</option>
+              <option value="\\begin{bmatrix} & \\\\ & \\end{bmatrix}">Bracket matrix</option>
+              <option value="\\begin{pmatrix} & \\\\ & \\end{pmatrix}">Parentheses matrix</option>
+              <option value="\\begin{cases} & \\\\ & \\end{cases}">Cases</option>
+              <option value="\\begin{aligned} &amp;= \\\\ &amp;= \\end{aligned}">
+                Aligned equations
+              </option>
+            </select>
+          </div>
+          <button
+            className="scient-latex-math-bar-done"
+            type="button"
+            onClick={() => setEditing(false)}
+          >
+            Done
+          </button>
+        </div>,
+        document.body,
+      )
+    : null;
   return (
     <NodeViewWrapper
       as={display ? "div" : "span"}
       className={display ? "scient-latex-visual-display-math" : "scient-latex-visual-inline-math"}
       contentEditable={false}
       data-selected={selected || editing || undefined}
-      onClick={() => {
-        if (editable) {
-          if (!editing) setDraft(source);
-          setEditing(true);
-        }
-      }}
+      onClick={activate}
     >
       <LatexMathField
+        ref={mathField}
         value={attributes.tex}
         display={display}
         disabled={!editable || !editing}
@@ -122,32 +291,71 @@ function LatexMathView({ node, updateAttributes, editor, getPos, selected }: Nod
         >
           <div className="scient-latex-math-source-heading">
             <span>LaTeX equation</span>
-            <span>{display ? "Display math" : "Inline math"}</span>
+            <select
+              aria-label="Equation type"
+              value={mathType(attributes, display)}
+              onChange={(event) => changeType(event.currentTarget.value)}
+            >
+              <option value="inline-paren">{"Inline · \\(…\\)"}</option>
+              <option value="inline-dollar">Inline · $…$</option>
+              <option value="display-bracket">{"Centered · \\[…\\]"}</option>
+              <option value="display-dollar">Centered · $$…$$</option>
+              <option value="environment:equation">Equation · numbered</option>
+              <option value="environment:equation*">Equation · unnumbered</option>
+              <option value="environment:align">Align · numbered</option>
+              <option value="environment:align*">Align · unnumbered</option>
+              <option value="environment:gather">Gather · numbered</option>
+              <option value="environment:gather*">Gather · unnumbered</option>
+            </select>
           </div>
           <textarea
-            autoFocus
+            ref={sourceEditor}
             aria-label="Complete LaTeX equation source"
             value={draft}
             rows={display ? Math.min(10, Math.max(3, draft.split("\n").length)) : 2}
             onChange={(event) => {
               setDraft(event.currentTarget.value);
-              setSourceError(false);
+              setCaret(event.currentTarget.selectionStart);
+              setSourceError(null);
             }}
+            onSelect={(event) => setCaret(event.currentTarget.selectionStart)}
             onKeyDown={(event) => {
               if (event.key === "Escape") {
                 setDraft(source);
-                setSourceError(false);
+                setSourceError(null);
                 setEditing(false);
+              } else if (event.key === "Tab" && completions[0]) {
+                event.preventDefault();
+                applyCompletion(completions[0]);
               } else if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
                 event.preventDefault();
                 applySource();
               }
             }}
           />
+          {completions.length > 0 ? (
+            <div
+              className="scient-latex-math-completions"
+              role="listbox"
+              aria-label="LaTeX completions"
+            >
+              {completions.map((completion) => (
+                <button
+                  key={completion.label}
+                  type="button"
+                  role="option"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => applyCompletion(completion)}
+                >
+                  <code>{completion.label}</code>
+                </button>
+              ))}
+              <span>Tab accepts</span>
+            </div>
+          ) : null}
           {sourceError ? (
             <div className="scient-latex-math-source-error" role="alert">
-              Keep the complete supported wrapper: $…$, \(…\), $$…$$, \[…\], equation, align or
-              gather.
+              {sourceError}
             </div>
           ) : null}
           <div className="scient-latex-math-source-actions">
@@ -156,7 +364,7 @@ function LatexMathView({ node, updateAttributes, editor, getPos, selected }: Nod
               type="button"
               onClick={() => {
                 setDraft(source);
-                setSourceError(false);
+                setSourceError(null);
                 setEditing(false);
               }}
             >
@@ -168,6 +376,7 @@ function LatexMathView({ node, updateAttributes, editor, getPos, selected }: Nod
           </div>
         </div>
       ) : null}
+      {toolbar}
     </NodeViewWrapper>
   );
 }
@@ -821,10 +1030,12 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
         <summary>What can I edit here?</summary>
         <p>
           Write text, headings, formatting, lists, citations, references and equations directly.
-          Click rendered math to open its complete LaTeX source and math keyboard. Insert matrices,
-          cases and aligned equations from the Insert menu, or type a complete supported environment
-          to convert it. Source-only blocks stay protected. Page breaks, numbering, packages and
-          macro output are verified in PDF after Rebuild.
+          Click rendered math to edit it with the contextual math bar. Its compact popover shows the
+          complete LaTeX, changes inline, centered and numbered forms, and completes common commands
+          or environments with Tab. Insert matrices, cases and aligned equations from the Insert
+          menu, or type a complete supported environment to convert it. Source-only blocks stay
+          protected. Page breaks, numbering, packages and macro output are verified in PDF after
+          Rebuild.
         </p>
       </details>
       {notice === null ? null : (

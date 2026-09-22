@@ -13,6 +13,7 @@ vi.mock("~/scient/presentation/ScientTooltip", () => ({
   ScientTooltip: ({ children }: { children: ReactNode }) => children,
 }));
 import { LatexVisualEditor } from "./LatexVisualEditor";
+import { mathSourceCompletions } from "./latexMathCompletion";
 
 describe("writing editor source transactions", () => {
   let container: HTMLDivElement;
@@ -116,6 +117,49 @@ describe("writing editor source transactions", () => {
     ) as HTMLTextAreaElement;
     expect(source.value).toBe("$x^2$");
     expect(container.textContent).toContain("x^2");
+    expect(document.body.querySelector("[aria-label='Math tools']")).not.toBeNull();
+    expect(document.body.querySelector("[aria-label='Fraction']")).not.toBeNull();
+  });
+
+  it("changes a display wrapper from the compact source popover", async () => {
+    await mount("\\[\nx^2\n\\]");
+    const equation = container.querySelector(".scient-latex-visual-display-math") as HTMLElement;
+    await act(async () => equation.click());
+    const type = container.querySelector<HTMLSelectElement>("select[aria-label='Equation type']")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(
+        type,
+        "environment:equation",
+      );
+      type.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(current).toContain("\\begin{equation}\nx^2\n\\end{equation}");
+  });
+
+  it("changes centered math to a standalone inline formula", async () => {
+    await mount("\\[\nx^2\n\\]");
+    const equation = container.querySelector(".scient-latex-visual-display-math") as HTMLElement;
+    await act(async () => equation.click());
+    const type = container.querySelector<HTMLSelectElement>("select[aria-label='Equation type']")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(
+        type,
+        "inline-paren",
+      );
+      type.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(current).toBe(tex("\\(x^2\\)"));
+  });
+
+  it("offers bounded command and environment completions", () => {
+    expect(mathSourceCompletions("\\[\n\\fra", 7)[0]).toMatchObject({
+      label: "\\frac",
+      replacement: "\\frac{}{}",
+    });
+    expect(mathSourceCompletions("\\[\n\\begin{ali", 13)[0]).toMatchObject({
+      label: "\\begin{align}",
+      replacement: "\\begin{align}\n\n\\end{align}",
+    });
   });
 
   it("converts a completely typed supported math environment", async () => {

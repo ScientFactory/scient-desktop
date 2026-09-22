@@ -12,9 +12,19 @@ writing before installing or running TeX. Its toolbar supports paragraphs,
 three heading levels, bold, italic, lists, undo/redo and inserting equations.
 Math normally stays rendered in the document. Click a formula to open an
 anchored editor showing its complete LaTeX, including `$`, `$$`, `\(`, `\[`, or
-the surrounding equation environment. Apply commits the source as one editor
-transaction; Escape cancels it. The same popover enables structured math input
-and its math keyboard.
+the surrounding equation environment. The compact editor changes between
+inline, centered, numbered, unnumbered, aligned, and gathered forms. Apply
+commits source edits as one transaction; Escape cancels them. While the formula
+is active, a contextual bar at the bottom inserts fractions, roots, scripts,
+operators, relations, Greek letters, matrices, cases, and aligned structures at
+the mathematical cursor. MathLive's separate virtual keyboard and menu are
+hidden.
+
+The formula field expands common typed shortcuts such as `sqrt`, `alpha`,
+`sum`, `->`, and `<=`. In the complete-source editor, starting a known command
+such as `\fra` or environment such as `\begin{ali` shows bounded completions;
+Tab accepts the first suggestion. Unknown commands remain literal source and
+are validated only when Apply is chosen.
 
 The Insert menu creates display equations, bracket or parenthesis matrices,
 cases, and aligned equations. You can also type a complete `matrix`, `bmatrix`,
