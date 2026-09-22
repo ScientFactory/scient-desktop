@@ -32,7 +32,7 @@ export const LATEX_PREVIEW_MODE_LABELS: Readonly<Record<ScientLatexPreviewMode, 
   pdf: "PDF",
 };
 
-export const DEFAULT_LATEX_PREVIEW_MODE: ScientLatexPreviewMode = "split";
+export const DEFAULT_LATEX_PREVIEW_MODE: ScientLatexPreviewMode = "visual";
 export const DEFAULT_LATEX_SPLIT_FRACTION = 0.5;
 /** Neither half may be squeezed into a strip too narrow to work in. */
 export const MIN_LATEX_SPLIT_FRACTION = 0.2;
@@ -434,7 +434,9 @@ export function latexStatusStripModel(
             ? buildLabel(status.requesting && !active ? "running" : state)
             : offline
               ? "Build status unavailable"
-              : buildLabel(state),
+              : generated?.bindingStatus === "stale" && state === "idle"
+                ? "Rebuild required"
+                : buildLabel(state),
     errorCount: counts.errors,
     warningCount: counts.warnings,
     stale: generated?.bindingStatus === "stale",

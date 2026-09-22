@@ -5,27 +5,31 @@ document while seeing the compiled PDF beside its source. Opening a `.tex` file
 shows Source, Split, Visual, and PDF views. Switch
 between them, and drag the divider in split view to resize either side.
 
-## Edit the typeset page
+## Write visually, verify with TeX
 
-Visual uses the actual compiled PDF, with an editing layer over its text.
-After a successful build, click ordinary prose and type. Text selection,
-deletion, paste, and native text-input undo operate within the active prose
-region. Escape finishes the edit. Source remains the authoritative `.tex`
-file; changing modes does not create another document or another save queue.
+Visual is a source-derived writing canvas, not an editable PDF. You can start
+writing before installing or running TeX. Its toolbar supports paragraphs,
+three heading levels, bold, italic, lists, undo/redo and inserting equations.
+Click an equation to edit it with structured math input and its math keyboard.
+Source remains the authoritative `.tex` file. Source and Visual share the same
+revision-checked save queue; switching views does not create a second document.
 
-While typing, the active prose region shows immediate provisional text over
-the last compiled page; the untouched page remains the exact PDF. Finish the
-edit to typeset the new exact glyphs, line breaks, and pagination. Compile
-errors keep the last successful PDF and appear in the build diagnostics.
+Writing view uses browser layout with locally bundled math fonts. It is always
+approximate: page breaks, floats, numbering, references, package output and
+arbitrary macro expansion require TeX. Rebuild, then select PDF or Split to
+inspect exact output. A successful build never means the browser canvas is
+pixel-identical to that PDF. Compile errors preserve the last successful PDF.
 
-This is a bounded prose-editing implementation, not arbitrary LaTeX WYSIWYG.
-Equations, tables, generated text, unknown macros, ambiguous matches, rotated
-pages, and right-to-left text are not directly editable. Selection cannot
-cross a formatting or protected-source boundary. Text from an included file
-is editable only when that file is open; content owned by another source stays
-read-only until you open that source. Use Source for unsupported regions.
-Opening an older retained build may require Rebuild before its source
-identities can be verified.
+Unsupported structures, including tables, custom macros and equation labels or
+tags, appear as protected source blocks. Edit LaTeX opens the source editor for
+these; the visual editor does not silently normalize or discard them. A visual
+edit cannot delete across a protected block. Open an included file to edit its
+contents; the established root still controls the PDF build.
+
+Simple citation and reference commands are editable as keys, not resolved
+bibliography output. Preamble, macro and global-layout edits show a rebuild
+notice. After a crash or interrupted save, a recovered draft is offered as
+copyable source, never automatically written over a newer file.
 
 ## Math insertion
 
@@ -37,7 +41,9 @@ limitations. These controls change LaTeX source; PDF read mode does not insert m
 
 ## Build and review
 
-Builds happen automatically — save the file and Scient compiles it. Errors and
+Builds are explicit: choose Rebuild after pending source saves finish. Opening,
+typing, autosaving, status polling and toolchain installation do not compile.
+An agent can still explicitly request a build through the existing tools. Errors and
 warnings from the build appear in a list above the document; each one shows
 the file and line it came from when the compiler reported one. Click a message
 that names a project file to open that file at the reported line.
@@ -115,5 +121,5 @@ that isn't the main document:
 % !TEX root = main.tex
 ```
 
-Scient then compiles from `main.tex` whenever you edit or save that file, the
+Scient then compiles from `main.tex` when you request Rebuild, following the
 same convention other LaTeX editors use.

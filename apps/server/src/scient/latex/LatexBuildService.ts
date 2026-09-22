@@ -98,6 +98,19 @@ export interface LatexBuildInput {
   readonly relativePath: string;
 }
 
+function staleSnapshot(snapshot: ScientLatexBuildSnapshot): ScientLatexBuildSnapshot {
+  const reason = "Sources changed. Rebuild to update the PDF.";
+  return {
+    ...snapshot,
+    state: "idle",
+    visualSourceRevisions: {},
+    descriptor:
+      snapshot.descriptor?._tag === "generated-pdf"
+        ? { ...snapshot.descriptor, bindingStatus: "stale", staleReason: reason }
+        : snapshot.descriptor,
+  };
+}
+
 export class LatexBuildError extends Schema.TaggedError<LatexBuildError>()("LatexBuildError", {
   operation: Schema.Literals(["resolve", "build", "status", "cancel"]),
   reason: Schema.Literals(["invalid-path", "document-key-too-long"]),
@@ -1390,23 +1403,8 @@ export const make = Effect.gen(function* () {
         );
         return true;
       }
-      const changedPath = probe.changedPath;
-      if (
-        changedPath !== null &&
-        cached.evidence.dependencies.some(
-          (dependency) =>
-            dependency.path === changedPath && dependency.sha256 === UNVERIFIED_FILE_DIGEST,
-        )
-      ) {
-        yield* Ref.update(evidenceRef, (all) =>
-          new Map(all).set(target.logicalDocumentKey, {
-            revision: cached.revision,
-            evidence: cached.evidence,
-            marks: probe.marks,
-            reverifiedUnverifiedPaths: new Set(cached.reverifiedUnverifiedPaths).add(changedPath),
-          }),
-        );
-      }
+      // A status read must not consume a requalification attempt: without an
+      // actual rebuild the same stale evidence must remain stale on later polls.
       yield* Effect.logDebug("latex build inputs changed since the published PDF", {
         logicalDocumentKey: target.logicalDocumentKey,
         changedPath: probe.changedPath,
@@ -2111,23 +2109,19 @@ export const make = Effect.gen(function* () {
       const entry = yield* getEntry(target.logicalDocumentKey);
       if (entry === null) {
         const restored = yield* syntheticSnapshot(target);
-        // A binding that outlived this process says a PDF was published once,
-        // not that it still matches the sources. Nothing in the request carries
-        // a revision, so the only honest answer comes from the files: report
-        // `succeeded` when the evidence still holds, and otherwise say the
-        // document is building — which is true, because it is started here.
+        // Status is observational: stale evidence never starts a compiler.
         if (restored.state !== "succeeded") return restored;
         if (yield* evidenceIsCurrent(target, restored.descriptor)) {
           return yield* restoreVisualSourceRevisions(target, restored);
         }
-        return yield* startBuild(target, restored.descriptor);
+        return staleSnapshot(restored);
       }
       // Only a finished, successful entry can be wrong about being current: an
       // active one is already going to answer with its own compile, and a
       // failed one is already telling the reader not to trust what it shows.
       if (entry.state === "succeeded" && !entry.pendingRerun) {
         if (!(yield* evidenceIsCurrent(target, entry.descriptor))) {
-          return yield* startBuild(target, entry.descriptor);
+          return staleSnapshot(yield* withToolchain(entry));
         }
       }
       return yield* withToolchain(entry);

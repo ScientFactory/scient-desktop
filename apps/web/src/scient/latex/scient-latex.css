@@ -8,6 +8,233 @@
   color: var(--foreground);
 }
 
+.scient-latex-preview-notice,
+.scient-latex-visual-summary {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 6px 16px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted-foreground);
+  font: 11px/1.5 var(--font-sans);
+}
+
+.scient-latex-visual-workspace {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.scient-latex-writing-help {
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted-foreground);
+  font: 11px/1.6 var(--font-sans);
+}
+.scient-latex-writing-help summary {
+  cursor: pointer;
+}
+.scient-latex-writing-help p {
+  max-width: 80ch;
+  margin: 6px 0;
+}
+
+.scient-latex-writing-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--background);
+  font: 12px/1.5 var(--font-sans);
+}
+
+.scient-latex-writing-toolbar button,
+.scient-latex-writing-toolbar select {
+  padding: 5px 9px;
+  border-radius: 5px;
+  background: var(--background);
+  color: var(--foreground);
+}
+
+.scient-latex-writing-toolbar button:hover,
+.scient-latex-writing-toolbar button[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
+.scient-latex-writing-toolbar :disabled {
+  opacity: 0.4;
+}
+.scient-latex-writing-toolbar :focus-visible {
+  outline: 2px solid var(--ring);
+}
+.scient-latex-toolbar-divider {
+  height: 20px;
+  border-left: 1px solid var(--border);
+  margin: 0 5px;
+}
+.scient-latex-visual-notice {
+  padding: 8px 12px;
+  background: var(--muted);
+  font-size: 12px;
+}
+
+.scient-latex-visual-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 28px clamp(12px, 4%, 48px) 64px;
+  background: color-mix(in srgb, var(--muted) 65%, var(--background));
+}
+
+.scient-latex-visual-paper {
+  width: min(100%, 816px);
+  min-height: 1056px;
+  margin: 0 auto;
+  padding: clamp(28px, 8%, 82px);
+  background: #fff;
+  color: #20232a;
+  border: 1px solid #d9dce1;
+  border-radius: 2px;
+  box-shadow: 0 3px 18px #0000000d;
+  color-scheme: light;
+}
+
+.scient-latex-visual-document {
+  min-height: 880px;
+  outline: none;
+  font:
+    17px/1.65 "KaTeX_Main",
+    "Cambria",
+    "Times New Roman",
+    serif;
+  overflow-wrap: anywhere;
+  caret-color: #2769bc;
+}
+
+.scient-latex-visual-document p {
+  margin: 0 0 1em;
+}
+.scient-latex-visual-document h1 {
+  margin: 1.2em 0 0.65em;
+  font-size: 1.65em;
+  font-weight: 700;
+  line-height: 1.25;
+}
+.scient-latex-visual-document h2 {
+  margin: 1.2em 0 0.65em;
+  font-size: 1.3em;
+  font-weight: 700;
+  line-height: 1.3;
+}
+.scient-latex-visual-document h3 {
+  margin: 1.2em 0 0.65em;
+  font-size: 1.1em;
+  font-weight: 700;
+}
+.scient-latex-visual-document > :first-child {
+  margin-top: 0;
+}
+.scient-latex-visual-document ul {
+  list-style: disc;
+  padding-left: 1.6em;
+  margin: 1em 0;
+}
+.scient-latex-visual-document ol {
+  list-style: decimal;
+  padding-left: 1.6em;
+  margin: 1em 0;
+}
+.scient-latex-visual-document li p {
+  margin: 0.3em 0;
+}
+.scient-latex-visual-document strong {
+  font-weight: bold;
+}
+.scient-latex-visual-document em {
+  font-style: italic;
+}
+.scient-latex-visual-document code {
+  font: 0.85em/1.5 var(--font-mono);
+  background: #f1f3f5;
+  padding: 1px 3px;
+}
+
+.scient-latex-visual-inline-math {
+  display: inline-block;
+  vertical-align: baseline;
+}
+.scient-latex-visual-display-math {
+  margin: 1.3em 0;
+  text-align: center;
+}
+.scient-latex-mathfield math-field {
+  display: inline-block;
+  min-width: 1.2em;
+  max-width: 100%;
+  padding: 0 3px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  font-size: 1em;
+  color: #20232a;
+  --selection-background-color: #d5e5ff;
+  --caret-color: #2769bc;
+  --primary: #2769bc;
+}
+.scient-latex-mathfield math-field:focus-within,
+.scient-latex-mathfield math-field:hover {
+  border-color: #b4c9e3;
+  background: #f8fbff;
+}
+.scient-latex-visual-display-math math-field {
+  font-size: 1.15em;
+}
+.scient-latex-visual-command {
+  display: inline-block;
+  font: 12px/1.5 var(--font-sans);
+  vertical-align: baseline;
+}
+.scient-latex-visual-command button {
+  border-radius: 4px;
+  background: #eef3f9;
+  padding: 2px 5px;
+  color: #285984;
+}
+.scient-latex-visual-command-name {
+  font-size: 10px;
+  opacity: 0.7;
+  margin-right: 5px;
+}
+.scient-latex-visual-command input {
+  min-width: 4em;
+  max-width: 14em;
+  border: 1px solid #8aafda;
+  padding: 2px 5px;
+}
+.scient-latex-visual-raw {
+  margin: 1.2em 0;
+  border: 1px solid #dbe0e7;
+  border-left: 3px solid #a3b3c5;
+  background: #f7f9fb;
+  border-radius: 5px;
+  padding: 10px 12px;
+}
+.scient-latex-visual-raw-label {
+  color: #63758a;
+  font: 11px/1.5 var(--font-sans);
+  margin-bottom: 5px;
+}
+.scient-latex-visual-raw pre {
+  white-space: pre-wrap;
+  font: 12px/1.6 var(--font-mono);
+}
+
 .scient-latex-surface button:not(:disabled) {
   cursor: pointer;
 }

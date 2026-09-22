@@ -1360,7 +1360,7 @@ describe("LatexBuildService", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
-  it.live("rebuilds a published document whose recorded dependency changed under it", () =>
+  it.live("reports changed dependencies as stale without compiling until requested", () =>
     Effect.gen(function* () {
       // The gap this closes: a request carries a workspace root and a path and
       // nothing about which revision of the sources it means, so a PDF built
@@ -1391,7 +1391,14 @@ describe("LatexBuildService", () => {
           "The introduction, rewritten by an agent.\n",
         );
         const noticed = yield* service.status(harness.buildInput);
-        expect(TERMINAL_STATES.has(noticed.state)).toBe(false);
+        expect(noticed.state).toBe("idle");
+        expect(noticed.descriptor).toMatchObject({ bindingStatus: "stale" });
+        expect(yield* Ref.get(harness.startCount)).toBe(1);
+        for (let poll = 0; poll < 5; poll++) {
+          expect((yield* service.status(harness.buildInput)).state).toBe("idle");
+        }
+        expect(yield* Ref.get(harness.startCount)).toBe(1);
+        yield* service.requestBuild(harness.buildInput);
 
         const rebuilt = yield* awaitTerminal(service, harness.buildInput);
         expect(rebuilt.state).toBe("succeeded");
@@ -1763,8 +1770,11 @@ describe("LatexBuildService", () => {
       yield* Effect.gen(function* () {
         const service = yield* LatexBuildService;
         const restored = yield* service.status(restarted.buildInput);
-        expect(TERMINAL_STATES.has(restored.state)).toBe(false);
-        expect(restored.visualSourceRevisions).toBeUndefined();
+        expect(restored.state).toBe("idle");
+        expect(restored.descriptor).toMatchObject({ bindingStatus: "stale" });
+        expect(restored.visualSourceRevisions).toEqual({});
+        expect(yield* Ref.get(restarted.startCount)).toBe(0);
+        yield* service.requestBuild(restarted.buildInput);
         // The stale PDF stays on screen while its replacement compiles.
         expect(restored.descriptor).not.toBeNull();
 
@@ -1852,8 +1862,11 @@ describe("LatexBuildService", () => {
       yield* Effect.gen(function* () {
         const service = yield* LatexBuildService;
         const restored = yield* service.status(restarted.buildInput);
-        expect(TERMINAL_STATES.has(restored.state)).toBe(false);
-        expect(restored.visualSourceRevisions).toBeUndefined();
+        expect(restored.state).toBe("idle");
+        expect(restored.descriptor).toMatchObject({ bindingStatus: "stale" });
+        expect(restored.visualSourceRevisions).toEqual({});
+        expect(yield* Ref.get(restarted.startCount)).toBe(0);
+        yield* service.requestBuild(restarted.buildInput);
         expect(restored.descriptor).toMatchObject({ revisionId: secondRevision });
 
         const rebuilt = yield* awaitTerminal(service, restarted.buildInput);
@@ -1892,9 +1905,9 @@ describe("LatexBuildService", () => {
         const service = yield* LatexBuildService;
         // No evidence is not the same as good evidence: it earns one rebuild,
         // which is what leaves evidence behind for every poll after it.
-        expect(TERMINAL_STATES.has((yield* service.status(restarted.buildInput)).state)).toBe(
-          false,
-        );
+        expect((yield* service.status(restarted.buildInput)).state).toBe("idle");
+        expect(yield* Ref.get(restarted.startCount)).toBe(0);
+        yield* service.requestBuild(restarted.buildInput);
         expect((yield* awaitTerminal(service, restarted.buildInput)).state).toBe("succeeded");
         expect(yield* Ref.get(restarted.startCount)).toBe(1);
 

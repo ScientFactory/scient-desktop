@@ -2,7 +2,7 @@
  * Per-document LaTeX build state and the poll loop that keeps it current.
  *
  * The server owns the build; this store owns one watcher per open document.
- * A watcher starts a build, then polls the status endpoint on a self-scheduling
+ * A watcher reads status without compiling, then polls on a self-scheduling
  * timeout while the server still has work to do. Successful documents retain a
  * low-frequency currentness check so edits made by agents or external editors
  * cannot leave an open reader calling an old PDF current indefinitely.
@@ -33,8 +33,6 @@ export const LATEX_POLL_INTERVAL_MS = 1_500;
 export const LATEX_CURRENTNESS_POLL_INTERVAL_MS = 15_000;
 /** A transport failure backs the loop off so an unreachable environment is not hammered. */
 export const LATEX_OFFLINE_POLL_INTERVAL_MS = 5_000;
-/** Saves are cheap and frequent; a PDF checkpoint belongs to settled source, not every save. */
-export const LATEX_EDIT_CHECKPOINT_DELAY_MS = 1_500;
 
 export interface LatexBuildTarget {
   readonly environmentId: EnvironmentId;
@@ -134,40 +132,15 @@ interface WatchLoop {
    * spinner on a build that is still queued.
    */
   sequence: number;
-  /** Independent from status polling so saving cannot accidentally become a compile cadence. */
-  rebuildTimer: ReturnType<typeof setTimeout> | null;
-  rebuildPending: boolean;
-  /** Visual input holds publication until its direct-manipulation transaction has ended. */
-  rebuildSuspensions: number;
 }
 
 const loops = new Map<string, WatchLoop>();
 
-/**
- * Documents that need a build as soon as anything watches them again. A
- * closing editor flushes its pending save on the way out, so the confirmation
- * can arrive after the last watcher is gone; without this the next open would
- * adopt the PDF built from the text before that save. Keys leave the set the
- * moment their build is issued, so it holds nothing but documents closed
- * mid-save.
- */
+/** Explicit rebuild requests made while no surface is watching. */
 const pendingRebuilds = new Set<string>();
 
-interface VisualQualificationAttempt {
-  readonly requestedFromRevision: string;
-}
-
-/**
- * One automatic compatibility build per source revision. Older retained PDFs
- * can predate Visual's provenance sidecar even though their ordinary build
- * evidence is still current. Entering an editable view upgrades that artifact
- * once; a toolchain that cannot produce complete evidence is never put into a
- * rebuild loop.
- */
-const visualQualificationAttempts = new Map<string, VisualQualificationAttempt>();
-
-/** What a freshly opened document does with the status it reads first. */
-type LatexOpenBuild = "none" | "when-idle" | "always";
+/** Only an explicitly requested build may be resumed when a watcher opens. */
+type LatexOpenBuild = "none" | "always";
 
 function issueSequence(loop: WatchLoop): number {
   loop.sequence += 1;
@@ -182,28 +155,6 @@ function clearTimer(loop: WatchLoop): void {
   if (loop.timer === null) return;
   clearTimeout(loop.timer);
   loop.timer = null;
-}
-
-function clearRebuildTimer(loop: WatchLoop): void {
-  if (loop.rebuildTimer === null) return;
-  clearTimeout(loop.rebuildTimer);
-  loop.rebuildTimer = null;
-}
-
-function schedulePendingRebuild(
-  key: string,
-  target: LatexBuildTarget,
-  loop: WatchLoop,
-  delayMs: number,
-): void {
-  clearRebuildTimer(loop);
-  if (loop.stopped || !loop.rebuildPending || loop.rebuildSuspensions > 0) return;
-  loop.rebuildTimer = setTimeout(() => {
-    loop.rebuildTimer = null;
-    if (loop.stopped || !loop.rebuildPending || loop.rebuildSuspensions > 0) return;
-    loop.rebuildPending = false;
-    runBuild(key, target, loop);
-  }, delayMs);
 }
 
 function schedulePoll(
@@ -232,24 +183,16 @@ function scheduleFollowUp(
   loop: WatchLoop,
   snapshot: ScientLatexBuildSnapshot,
 ): void {
-  // A hold is a polling boundary as well as a rebuild-timer boundary. In
-  // particular, an active server build must not re-arm status polling behind
-  // the transaction that just suspended this loop.
-  if (loop.rebuildSuspensions > 0) return;
   // The coordinator re-arms a coalesced rerun after writing the terminal
   // state, so a terminal snapshot with pendingRerun still has work coming.
   if (isActiveLatexBuildState(snapshot.state) || snapshot.pendingRerun || installUnderway(key)) {
     schedulePoll(key, target, loop, LATEX_POLL_INTERVAL_MS);
     return;
   }
-  if (loop.rebuildPending) {
-    schedulePendingRebuild(key, target, loop, LATEX_EDIT_CHECKPOINT_DELAY_MS);
-    return;
-  }
   // The server's status read verifies persisted build evidence. Saves inside
-  // Scient already request a rebuild directly; this slower lane covers writes
+  // Scient trigger an immediate status refresh; this slower lane covers writes
   // with no browser event, without paying the active-build cadence forever.
-  if (snapshot.state === "succeeded") {
+  if (snapshot.state === "succeeded" || snapshot.descriptor !== null) {
     schedulePoll(key, target, loop, LATEX_CURRENTNESS_POLL_INTERVAL_MS);
   }
 }
@@ -261,15 +204,6 @@ async function pollStatus(
   buildOnOpen: LatexOpenBuild = "none",
 ): Promise<void> {
   if (loop.stopped) return;
-  const current = useLatexBuildStore.getState().entries[key] ?? EMPTY_ENTRY;
-  // A local edit has already selected the next build revision. Do not let the
-  // server's currentness check turn a harmless status poll into an early build.
-  if (
-    (loop.rebuildPending || loop.rebuildSuspensions > 0) &&
-    !isActiveLatexBuildState(current.snapshot?.state ?? "idle") &&
-    !installUnderway(key)
-  )
-    return;
   // A poll that outlives its slot must not silently drop the cadence with it.
   if (loop.polling) {
     schedulePoll(key, target, loop, LATEX_POLL_INTERVAL_MS, buildOnOpen);
@@ -290,7 +224,7 @@ async function pollStatus(
     });
     if (!isCurrentIssue(loop, issued)) return;
     applySnapshot(key, snapshot);
-    if (buildOnOpen === "always" || (buildOnOpen === "when-idle" && snapshot.state === "idle")) {
+    if (buildOnOpen === "always") {
       pendingRebuilds.delete(key);
       runBuild(key, target, loop);
       return;
@@ -354,24 +288,20 @@ async function pollToolchain(
   try {
     const report = await readLatexToolchain(target.environmentId, { refresh });
     const managedInstall = report.managedInstall ?? null;
-    const justInstalled =
-      managedInstall?.state === "ready" &&
-      (useLatexBuildStore.getState().entries[key] ?? EMPTY_ENTRY).managedInstall?.state !== "ready";
     updateEntry(key, (current) => ({
       ...current,
       toolchain: report,
       canInstallManaged: report.canInstallManaged,
       managedInstall: managedInstall ?? current.managedInstall,
     }));
-    if (justInstalled) requestLatexRebuild(target);
   } catch {
     // Build snapshots carry the toolchain too; a failed probe is not a build failure.
   }
 }
 
 /**
- * Watch one document: read what the environment already has, build only if it
- * has nothing, then keep the snapshot current until every watcher is gone.
+ * Watch one document without compiling; keep its snapshot current until all
+ * watchers leave. Compilation belongs only to explicit requests.
  * Repeat calls for the same document share the single loop.
  */
 export function startWatchingLatexBuild(target: LatexBuildTarget): () => void {
@@ -388,19 +318,14 @@ export function startWatchingLatexBuild(target: LatexBuildTarget): () => void {
     polling: false,
     stopped: false,
     sequence: 0,
-    rebuildTimer: null,
-    rebuildPending: false,
-    rebuildSuspensions: 0,
   };
   loops.set(key, loop);
   // One probe per opened document: the empty state has to know whether this
   // environment can install an engine before any build has run. Every later
   // toolchain read belongs to an install this loop is already watching.
   void pollToolchain(key, target);
-  // Status first, so a document the environment built earlier paints its
-  // stored PDF at once and a build already running is joined rather than
-  // restarted. Only a document with nothing behind it is built on open.
-  void pollStatus(key, target, loop, pendingRebuilds.has(key) ? "always" : "when-idle");
+  // Opening is observational unless an explicit request was deferred.
+  void pollStatus(key, target, loop, pendingRebuilds.has(key) ? "always" : "none");
   return () => releaseWatcher(key, loop);
 }
 
@@ -410,54 +335,7 @@ function releaseWatcher(key: string, loop: WatchLoop): void {
   if (loop.watchers > 0) return;
   loop.stopped = true;
   clearTimer(loop);
-  clearRebuildTimer(loop);
-  if (loop.rebuildPending) pendingRebuilds.add(key);
   if (loops.get(key) === loop) loops.delete(key);
-}
-
-/**
- * Save-driven checkpointing. Repeated saves replace the pending timer, and an
- * active Visual transaction holds it until the user has finished editing.
- */
-export function scheduleLatexRebuild(target: LatexBuildTarget): void {
-  const key = latexBuildKey(target);
-  const loop = loops.get(key);
-  if (!loop) {
-    pendingRebuilds.add(key);
-    return;
-  }
-  loop.rebuildPending = true;
-  clearTimer(loop);
-  schedulePendingRebuild(key, target, loop, LATEX_EDIT_CHECKPOINT_DELAY_MS);
-}
-
-/** Balance calls per mounted Visual interaction. Manual rebuild remains an explicit override. */
-export function setLatexBuildSuspended(target: LatexBuildTarget, suspended: boolean): void {
-  const key = latexBuildKey(target);
-  const loop = loops.get(key);
-  if (!loop || loop.stopped) return;
-  if (suspended) {
-    loop.rebuildSuspensions += 1;
-    // Discredit a status response issued before the hold. The server request
-    // may already be beyond cancellation, but its response cannot restart this
-    // client's poll cadence or publish stale local state into the store.
-    issueSequence(loop);
-    clearTimer(loop);
-    clearRebuildTimer(loop);
-    return;
-  }
-  loop.rebuildSuspensions = Math.max(0, loop.rebuildSuspensions - 1);
-  if (loop.rebuildSuspensions !== 0) return;
-  if (loop.rebuildPending) {
-    // Ending direct input is not proof that the file save carrying its final
-    // source has landed. Keep the normal checkpoint window: a confirmation
-    // arriving just after the hold is released replaces this timer instead of
-    // causing an obsolete build followed by a rerun.
-    schedulePendingRebuild(key, target, loop, LATEX_EDIT_CHECKPOINT_DELAY_MS);
-    return;
-  }
-  clearTimer(loop);
-  schedulePoll(key, target, loop, 0);
 }
 
 /**
@@ -484,8 +362,6 @@ export function requestLatexRebuild(
     return;
   }
   pendingRebuilds.delete(key);
-  loop.rebuildPending = false;
-  clearRebuildTimer(loop);
   const entry = useLatexBuildStore.getState().entries[key] ?? EMPTY_ENTRY;
   if (
     options.reprobeToolchain === true &&
@@ -498,59 +374,6 @@ export function requestLatexRebuild(
   runBuild(key, target, loop);
 }
 
-export type LatexVisualQualification = "ready" | "preparing" | "unavailable";
-
-/**
- * Ensure a retained build carries exact source authorization for Visual.
- *
- * This is intentionally opt-in from Split/Visual rather than part of ordinary
- * PDF status: readers that never edit do not pay for a compatibility build.
- */
-export function ensureLatexVisualBuild(
-  target: LatexBuildTarget,
-  snapshot: ScientLatexBuildSnapshot | null,
-  sourceRevision: string | null,
-): LatexVisualQualification {
-  const key = `${latexBuildKey(target)}\0${target.relativePath}`;
-  if (
-    sourceRevision !== null &&
-    snapshot?.visualSourceRevisions?.[target.relativePath] === sourceRevision
-  ) {
-    visualQualificationAttempts.delete(key);
-    return "ready";
-  }
-  // An attached manifest — including an empty one — is a current compiler
-  // answer, not a legacy artifact. Missing or mismatched file authorization
-  // cannot be repaired by compiling the same source again.
-  if (snapshot?.visualSourceRevisions !== undefined) return "unavailable";
-  const descriptor = snapshot?.descriptor;
-  if (
-    sourceRevision === null ||
-    snapshot?.state !== "succeeded" ||
-    snapshot.pendingRerun ||
-    descriptor?._tag !== "generated-pdf" ||
-    descriptor.bindingStatus !== "current"
-  ) {
-    return "preparing";
-  }
-
-  const previous = visualQualificationAttempts.get(key);
-  if (previous !== undefined) {
-    // The same artifact is still being replaced, or its replacement completed
-    // without complete recorder evidence. Either way, never request it again.
-    return previous.requestedFromRevision === descriptor.revisionId ? "preparing" : "unavailable";
-  }
-
-  const loop = loops.get(latexBuildKey(target));
-  if (loop === undefined || loop.stopped) return "unavailable";
-  if (loop.rebuildSuspensions > 0) return "preparing";
-  visualQualificationAttempts.set(key, {
-    requestedFromRevision: descriptor.revisionId,
-  });
-  runBuild(latexBuildKey(target), target, loop);
-  return "preparing";
-}
-
 /**
  * A producer-neutral binding event is only a wake-up hint. Re-reading the
  * LaTeX status keeps the build coordinator authoritative and also preserves
@@ -561,7 +384,6 @@ export function notifyLatexBindingChange(target: LatexBuildTarget): void {
   const loop = loops.get(key);
   if (loop === undefined || loop.stopped) return;
   clearTimer(loop);
-  if (loop.rebuildSuspensions > 0) return;
   schedulePoll(key, target, loop, 0);
 }
 
@@ -634,10 +456,8 @@ export function resetLatexBuildsForTests(): void {
   for (const [key, loop] of loops) {
     loop.stopped = true;
     clearTimer(loop);
-    clearRebuildTimer(loop);
     loops.delete(key);
   }
   pendingRebuilds.clear();
-  visualQualificationAttempts.clear();
   useLatexBuildStore.setState({ entries: {} });
 }

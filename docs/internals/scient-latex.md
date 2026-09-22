@@ -1,7 +1,7 @@
 # Scient LaTeX build
 
-The [editable typeset view](scient-latex-visual.md) describes Visual mode's
-source ownership, exact-output decision, supported subset, and remaining
+The [source-derived writing canvas](scient-latex-visual.md) describes Visual mode's
+source ownership, approximate-preview boundary, supported subset, and remaining
 qualification boundaries.
 
 Status: Scient-owned server and desktop feature. A build runs entirely on the
@@ -85,11 +85,10 @@ The opened source remains the editor and save owner. Build watching,
 coalescing, status, cancellation, generated-PDF identity, and rebuilds are all
 keyed by the resolved root. Consequently, opening `sections/introduction.tex`
 can show and edit that source while the typeset page comes from `main.tex`.
-Split mounts the same editable Visual interaction as Visual mode; its left pane
-continues to show the opened source. Cross-file Visual ownership—clicking page
-text owned by a different included file and changing that file directly—still
-requires the document-level multi-buffer session described in the Visual
-design and is not implied by root resolution.
+Visual edits the opened source through its structured canvas. Split displays
+source beside the actual PDF with navigation, not an editing overlay. Editing
+another included file requires opening that source; root resolution does not
+grant cross-file writes.
 
 **Logical document key.** Every build, status, and cancel call resolves to
 `latex:<sha256-of-normalized-workspace-root>:<root-relative-path>`, capped at 1,024
@@ -285,47 +284,21 @@ a checkout that rewrites a file with identical bytes costs one hash and then
 stops costing anything. The first probe after a server restart has no marks, so
 it streams and hashes every recorded dependency once before the cheap stat path
 is restored; that is a deliberate correctness cost, not uniform poll behavior.
-An mtime alone never forces a rebuild. On a mismatch the
-service triggers the rebuild itself, through the same `startBuild` path a client
-request uses, so it takes the same three-permit admission and the same
-`pendingRerun` coalescing and adds no concurrency; the snapshot then reports an
-active state, which is exactly what the web client's existing poll continuation
-already handles, and the stale PDF stays on screen (`seedDescriptor`) while its
-replacement compiles. No wire contract changed.
+An mtime alone never requires a rebuild. A verified mismatch produces an
+observational status with `state: idle`, a stale descriptor and no source
+authorization. It never calls `startBuild`. The last PDF remains readable.
 
-Evidence collection records `unverified` rather than `missing` when a present
-dependency is temporarily unreadable. A probe leaves that marker alone while
-the lock or permission failure remains, avoiding a rebuild loop; once the file
-becomes observable, it requests one rebuild so the replacement record contains
-the content identity the prior evidence never established. A per-path in-memory
-marker records that this re-verification rebuild was spent. If post-build
-evidence collection hits the transient lock again, another readable poll does
-not start the same rebuild every 15 seconds; a later evidence record with a real
-digest clears the marker.
+Scient saves request a status refresh, not a compile. External writes are also
+noticed by the 15-second currentness poll; active builds retain the 1.5-second
+cadence. Stale descriptors continue to be checked, so undoing an external edit
+back to the verified bytes can restore freshness without compiling. Installing
+a toolchain does not itself request a build.
 
-Scient saves request rebuilds directly. For writes with no browser event — an
-agent, another editor, or a checkout — an open successful reader asks status at
-`LATEX_CURRENTNESS_POLL_INTERVAL_MS = 15 seconds`; active builds retain the
-1.5-second cadence and failed/cancelled builds go quiet. This is the bounded
-fallback until the neutral binding-change stream gains a server-to-browser
-transport.
-
-Restart synthesis obeys the same rule: a persisted binding that says a PDF was
-published is only reported `succeeded` after the evidence check passes.
-Evidence that is absent — every binding written before this existed — or that
-this version cannot decode counts as a mismatch and earns exactly one rebuild,
-which is what leaves evidence behind for every poll after it.
-
-Two things this accepts and states rather than hides. The evidence is read
-between the engine's exit and the publish, so a save landing in that window is
-recorded as what the PDF was built from when it was not; the cost is one missed
-rebuild of one document, which the next save corrects, against hashing every
-input twice per build forever. And the in-memory copy is written before the
-entry reaches `succeeded` and before the on-disk copy: a status poll must never
-observe a published PDF with no evidence behind it, because that reads as
-"cannot be vouched for" and would rebuild every document on every build. A state
-directory that cannot be written therefore costs a re-check after restart and
-nothing else.
+Restart synthesis obeys the same rule: a persisted binding is only reported
+`succeeded` after its evidence check passes. Missing or undecodable evidence
+requires an explicit rebuild; polling cannot consume a requalification attempt.
+An explicit build keeps the existing before/after source verification and
+bounded stabilization pass described in the writing-canvas document.
 
 **Forced reprocessing.** Every `latexmk` invocation carries `-g`. The work
 directory outlives a build, and `latexmk` keeps its own decision state there in
@@ -714,7 +687,7 @@ different columns can legitimately return the same candidates; Scient keeps
 the official first candidate instead of inventing a more precise PDF position.
 
 Inverse search starts with a modified PDF double-click while Split is open;
-plain page clicks belong to the Visual editor. The reader preserves native selection, converts the pointer's
+ordinary clicks retain PDF selection behavior. The reader preserves native selection, converts the pointer's
 page position back to top-left big points, asks `synctex edit`, and selects the
 first returned candidate whose input is contained in the workspace. Source-only
 and PDF-only modes never switch layout implicitly. The source pane opens that

@@ -53,17 +53,15 @@ import type { RequestedPdfPresentation } from "~/scient/pdf/useScientPdfReader";
 import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
 
 import { documentBindingChanges } from "./bindingChanges";
-import { LatexVisualInteraction } from "./LatexVisualInteraction";
+import { LatexVisualEditor } from "./LatexVisualEditor";
+import { latexPreviewRebuildReason } from "./latexPreviewPolicy";
 import { LatexToolchainSetupCard } from "./LatexToolchainSetupCard";
 import { requestLatexForwardSync, requestLatexInverseSync } from "./client";
 import {
   cancelLatexBuild,
-  ensureLatexVisualBuild,
   notifyLatexBindingChange,
   requestLatexRebuild,
   requestManagedLatexInstall,
-  scheduleLatexRebuild,
-  setLatexBuildSuspended,
   startWatchingLatexBuild,
   useLatexBuild,
   type LatexBuildTarget,
@@ -86,8 +84,8 @@ import {
   type LatexViewerState,
   type ScientLatexPreviewMode,
 } from "./scientLatexSurfaceModel";
-import { confirmVisualDraft, discardVisualDraft } from "./visualDrafts";
-import { canPublishVisualPdf, useLatexSourceIdentity } from "./visualPdfPublication";
+import { checkpointVisualDraft, confirmVisualDraft, discardVisualDraft } from "./visualDrafts";
+import { useLatexSourceIdentity } from "./visualPdfPublication";
 import { visualStateAfterSaveResolution } from "./visualSaveResolution";
 import { useLatexDocumentResolution } from "./useLatexDocumentResolution";
 
@@ -408,7 +406,7 @@ const LatexViewerPane = memo(function LatexViewerPane({
         <LatexPendingViewer label="Building…" />
       ) : (
         <div className="scient-latex-placeholder">
-          <p>Save this document or select Rebuild to compile a PDF.</p>
+          <p>Select Rebuild to compile a PDF. Writing and saving do not run TeX.</p>
         </div>
       )}
     </div>
@@ -482,11 +480,9 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   );
   const [splitFraction, setSplitFraction] = useState(initialSplitFraction);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
-  const [visualEditing, setVisualEditing] = useState(false);
   const [visualAwaitingSave, setVisualAwaitingSave] = useState(false);
   const visualEditingRef = useRef(false);
   const visualAwaitingSaveRef = useRef(false);
-  const visualBuildHeldRef = useRef(false);
   const visualPendingSourceRef = useRef<string | null>(null);
   const visualPendingBaseRevisionRef = useRef<string | null>(null);
   const visualConfirmedRevisionRef = useRef(props.revision);
@@ -503,14 +499,6 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   const lastBindingChangeRef = useRef<DocumentBindingChange | null>(null);
   const syncRequestRef = useRef(0);
   const pdfPageRef = useRef<number | null>(null);
-  const updateVisualBuildHold = useCallback(
-    (held: boolean) => {
-      if (visualBuildHeldRef.current === held) return;
-      visualBuildHeldRef.current = held;
-      if (target !== null) setLatexBuildSuspended(target, held);
-    },
-    [target],
-  );
 
   useEffect(() => {
     const request = props.latexPresentationRequest;
@@ -551,14 +539,13 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
         visualPendingBaseRevisionRef.current = null;
       }
       onSaveConfirmed(path, contents, revision);
-      if (target !== null) scheduleLatexRebuild(target);
+      if (target !== null) notifyLatexBindingChange(target);
       if (contents === sourceRef.current) {
         visualAwaitingSaveRef.current = false;
         setVisualAwaitingSave(false);
-        updateVisualBuildHold(visualEditingRef.current);
       }
     },
-    [onSaveConfirmed, target, updateVisualBuildHold, visualDraftKey],
+    [onSaveConfirmed, target, visualDraftKey],
   );
   const handleSaveFailure = useCallback(
     (path: string, error: unknown, failedContents?: string) => {
@@ -571,7 +558,6 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
       if (failedContents === sourceRef.current && !revisionConflict) {
         visualAwaitingSaveRef.current = false;
         setVisualAwaitingSave(false);
-        updateVisualBuildHold(visualEditingRef.current);
       }
       // A conflicting write is the panel's notice to resolve, and saying it
       // twice would only compete with the buttons that fix it. Anything else —
@@ -585,7 +571,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
             : "The file could not be saved.",
       );
     },
-    [onSaveFailure, updateVisualBuildHold],
+    [onSaveFailure],
   );
   const handleInstallToolchain = useCallback(() => {
     if (target !== null) requestManagedLatexInstall(target);
@@ -616,9 +602,8 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
       );
       visualAwaitingSaveRef.current = next.awaitingSave;
       setVisualAwaitingSave(next.awaitingSave);
-      updateVisualBuildHold(next.buildHeld);
     },
-    [onSaveResolutionApplied, updateVisualBuildHold, visualDraftKey],
+    [onSaveResolutionApplied, visualDraftKey],
   );
 
   // One persistence owner survives layout switches. Both editors use the same
@@ -632,15 +617,13 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   });
   const handleContentsChange = useCallback(
     (contents: string) => {
+      visualAwaitingSaveRef.current = true;
+      setVisualAwaitingSave(true);
       sourceRef.current = contents;
       setProjectFileQueryData(props.environmentId, props.cwd, props.relativePath, contents);
       coordinator.change(contents);
     },
     [coordinator, props.environmentId, props.cwd, props.relativePath],
-  );
-  const getVisualDraftBaseRevision = useCallback(
-    () => visualPendingBaseRevisionRef.current ?? visualConfirmedRevisionRef.current,
-    [],
   );
   const handleVisualEdit = useCallback(
     (expected: string, next: string) => {
@@ -651,11 +634,17 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
       visualPendingSourceRef.current = next;
       visualAwaitingSaveRef.current = true;
       setVisualAwaitingSave(true);
-      updateVisualBuildHold(true);
+      checkpointVisualDraft(
+        visualDraftKey,
+        next,
+        expected,
+        next,
+        visualPendingBaseRevisionRef.current ?? visualConfirmedRevisionRef.current,
+      );
       handleContentsChange(next);
       return true;
     },
-    [handleContentsChange, props.truncated, props.saveResolution, updateVisualBuildHold],
+    [handleContentsChange, props.truncated, props.saveResolution, visualDraftKey],
   );
 
   // A reveal asks for a line of source, so a document parked on the PDF shows
@@ -680,19 +669,21 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
     revealPending && (preferredMode === "pdf" || preferredMode === "visual")
       ? "split"
       : preferredMode;
-  const visualCapable = mode === "visual" || mode === "split";
-  const sourceIdentity = useLatexSourceIdentity(props.contents, visualCapable);
+  const sourceIdentity = useLatexSourceIdentity(props.contents);
+  const verifiedSource = useRef(props.contents);
+  const compiledRevision = build.snapshot?.visualSourceRevisions?.[props.relativePath];
+  const pdfMatchesBuffer =
+    sourceIdentity !== null &&
+    sourceIdentity.revision === compiledRevision &&
+    build.snapshot?.state === "succeeded";
   useEffect(() => {
-    if (!visualCapable || visualEditing || visualAwaitingSave || target === null) return;
-    ensureLatexVisualBuild(target, build.snapshot, sourceIdentity?.revision ?? null);
-  }, [
-    build.snapshot,
-    sourceIdentity?.revision,
-    target,
-    visualAwaitingSave,
-    visualCapable,
-    visualEditing,
-  ]);
+    if (pdfMatchesBuffer) verifiedSource.current = props.contents;
+  }, [pdfMatchesBuffer, props.contents]);
+  const rebuildReason = latexPreviewRebuildReason(
+    verifiedSource.current,
+    props.contents,
+    pdfMatchesBuffer,
+  );
   const selectMode = useCallback(
     (next: ScientLatexPreviewMode) => {
       finishVisualEditingRef.current?.();
@@ -837,7 +828,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
       descriptor?._tag === "generated-pdf"
         ? {
             forwardTarget: forwardSyncTarget,
-            ...(mode === "pdf" ? { onInverseSearch: handleInverseSync } : {}),
+            ...(mode === "pdf" || mode === "split" ? { onInverseSearch: handleInverseSync } : {}),
             onPageChange: handlePdfPageChange,
           }
         : undefined,
@@ -853,80 +844,14 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
         : descriptor.logicalDocumentKey;
   const compiledFrom = latexCompiledFromPath(build.snapshot?.rootRelativePath, props.relativePath);
   const showEditor = mode === "source" || mode === "split";
-  const showViewer = mode !== "source";
+  const showViewer = mode === "pdf" || mode === "split";
 
-  const canPublishPresentation = useCallback(
-    (candidate: RequestedPdfPresentation) =>
-      !visualCapable ||
-      canPublishVisualPdf({
-        candidateRevisionId: candidate.revisionId,
-        editing: visualEditingRef.current || visualEditing,
-        relativePath: props.relativePath,
-        snapshot: build.snapshot,
-        source: sourceRef.current,
-        sourceIdentity,
-        truncated: props.truncated,
-      }),
-    [
-      build.snapshot,
-      props.relativePath,
-      props.truncated,
-      sourceIdentity,
-      visualCapable,
-      visualEditing,
-    ],
-  );
-
-  const handleVisualEditingChange = useCallback(
-    (editing: boolean) => {
-      visualEditingRef.current = editing;
-      setVisualEditing(editing);
-      coordinator.setSuspended(editing);
-      updateVisualBuildHold(editing || visualAwaitingSaveRef.current);
-    },
-    [coordinator, updateVisualBuildHold],
-  );
+  const handleVisualEditingChange = useCallback((editing: boolean) => {
+    visualEditingRef.current = editing;
+  }, []);
   const registerFinishVisualEditing = useCallback((finish: (() => void) | null) => {
     finishVisualEditingRef.current = finish;
   }, []);
-  const renderVisualInteraction = useCallback(
-    (host: PdfInteractionHost) => (
-      <LatexVisualInteraction
-        key={visualDraftKey}
-        draftKey={visualDraftKey}
-        host={host}
-        source={props.contents}
-        fileRevision={props.revision}
-        getDraftBaseRevision={getVisualDraftBaseRevision}
-        sourceRevision={build.snapshot?.visualSourceRevisions?.[props.relativePath] ?? null}
-        ready={
-          !props.truncated &&
-          build.snapshot?.state === "succeeded" &&
-          !build.snapshot.pendingRerun &&
-          descriptor?._tag === "generated-pdf" &&
-          descriptor.bindingStatus === "current"
-        }
-        revisionId={descriptorRevision}
-        onEdit={handleVisualEdit}
-        onEditingChange={handleVisualEditingChange}
-        registerFinishEditing={registerFinishVisualEditing}
-      />
-    ),
-    [
-      props.contents,
-      props.relativePath,
-      props.truncated,
-      props.revision,
-      build.snapshot,
-      descriptor,
-      descriptorRevision,
-      handleVisualEdit,
-      handleVisualEditingChange,
-      getVisualDraftBaseRevision,
-      registerFinishVisualEditing,
-      visualDraftKey,
-    ],
-  );
 
   return (
     <div className="scient-latex-surface" data-latex-layout={mode} dir="ltr">
@@ -1073,7 +998,13 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
           <button
             type="button"
             className="scient-latex-action"
-            disabled={target === null || !status.canRebuild || visualEditing || visualAwaitingSave}
+            disabled={
+              target === null ||
+              !status.canRebuild ||
+              visualAwaitingSave ||
+              saveError !== null ||
+              props.saveResolution !== null
+            }
             // By hand is the one rebuild that re-probes: a TeX installed while
             // this document sat here has no other way to be noticed.
             onClick={() => {
@@ -1128,7 +1059,27 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
         </div>
       ) : null}
 
+      <div className="scient-latex-preview-notice" role="status">
+        <span>
+          {rebuildReason ??
+            "PDF matches the saved source. Writing view remains an approximate layout."}
+        </span>
+        <span>{visualAwaitingSave ? "Saving source…" : "PDF builds only when requested"}</span>
+      </div>
       <div className="scient-latex-content" ref={containerRef}>
+        {mode === "visual" ? (
+          <LatexVisualEditor
+            key={visualDraftKey}
+            source={props.contents}
+            draftKey={visualDraftKey}
+            fileRevision={props.revision}
+            disabled={props.truncated || props.saveResolution !== null}
+            onEdit={handleVisualEdit}
+            onEditingChange={handleVisualEditingChange}
+            onOpenSource={() => selectMode("source")}
+            registerFinishEditing={registerFinishVisualEditing}
+          />
+        ) : null}
         {showEditor ? (
           <ScientTooltip content="In Split, double-click a source line to find it in the typeset page">
             <div
@@ -1194,9 +1145,6 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
               managedInstall={build.managedInstall}
               installRequesting={build.installRequesting}
               onInstall={handleInstallToolchain}
-              {...(visualCapable
-                ? { canPublishPresentation, renderInteraction: renderVisualInteraction }
-                : {})}
               {...(syncNavigation === undefined ? {} : { syncNavigation })}
             />
           </div>

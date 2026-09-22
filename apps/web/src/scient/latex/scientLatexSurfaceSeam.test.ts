@@ -74,19 +74,20 @@ describe("Scient LaTeX file-preview seam", () => {
     expect(automationHostSource).toContain("latexRootRelativePath: input.rootSourcePath");
   });
 
-  it("mounts the editable Visual interaction in both Visual and Split", () => {
-    expect(surfaceSource).toContain('const visualCapable = mode === "visual" || mode === "split";');
-    expect(surfaceSource).toContain(
-      "visualCapable\n                ? { canPublishPresentation, renderInteraction: renderVisualInteraction }",
-    );
+  it("mounts source-derived writing independently of the compiled viewer", () => {
+    expect(surfaceSource).toContain("<LatexVisualEditor");
+    expect(surfaceSource).toContain('mode === "visual" ? (');
+    expect(surfaceSource).toContain('const showViewer = mode === "pdf" || mode === "split";');
+    expect(surfaceSource).not.toContain("LatexVisualInteraction");
+    expect(surfaceSource).not.toContain("ensureLatexVisualBuild");
+    expect(surfaceSource).not.toContain("scheduleLatexRebuild");
+    expect(surfaceSource).not.toContain("coordinator.setSuspended");
   });
 
   it("keeps source ownership separate from the root-keyed build target", () => {
     expect(surfaceSource).toContain("sourceRelativePath: props.relativePath");
     expect(surfaceSource).toContain("relativePath: resolvedRootRelativePath");
-    expect(surfaceSource).toContain(
-      "build.snapshot?.visualSourceRevisions?.[props.relativePath] ?? null",
-    );
+    expect(surfaceSource).toContain("build.snapshot?.visualSourceRevisions?.[props.relativePath]");
   });
 
   it("hands the surface the save bindings the panel's own editor mount gets", () => {
@@ -138,7 +139,7 @@ describe("Scient LaTeX file-preview seam", () => {
       "visualPendingBaseRevisionRef.current = visualConfirmedRevisionRef.current",
     );
     expect(surfaceSource).toContain("visualConfirmedRevisionRef.current = revision");
-    expect(surfaceSource).toContain("getDraftBaseRevision={getVisualDraftBaseRevision}");
+    expect(surfaceSource).toContain("checkpointVisualDraft(");
   });
 
   it("passes truthful source and current PDF page context to forward SyncTeX", () => {
@@ -151,15 +152,12 @@ describe("Scient LaTeX file-preview seam", () => {
     expect(surfaceSource).toContain("onPageChange: handlePdfPageChange");
   });
 
-  it("uses Split's PDF half for direct editing and keeps inverse navigation in PDF mode", () => {
+  it("keeps PDF and Split navigation separate from writing", () => {
     expect(surfaceSource).toContain('if (mode !== "split") return;');
     expect(surfaceSource).toContain(
-      '...(mode === "pdf" ? { onInverseSearch: handleInverseSync } : {})',
+      '...(mode === "pdf" || mode === "split" ? { onInverseSearch: handleInverseSync } : {})',
     );
-    expect(surfaceSource).toContain('const visualCapable = mode === "visual" || mode === "split";');
-    expect(surfaceSource).toContain(
-      "? { canPublishPresentation, renderInteraction: renderVisualInteraction }",
-    );
+    expect(surfaceSource).not.toContain("renderInteraction: renderVisualInteraction");
     expect(surfaceSource).not.toContain('if (preferredMode === "source") selectMode("split")');
     expect(surfaceSource).not.toMatch(/event\.(?:ctrlKey|metaKey)/u);
   });

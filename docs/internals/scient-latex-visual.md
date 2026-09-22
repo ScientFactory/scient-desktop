@@ -1,4 +1,59 @@
-# Editable typeset view
+# Source-derived writing canvas
+
+Status: implementation candidate; human visual review pending.
+
+## Current architecture
+
+`.tex` is authoritative. `latexVisualDocument.ts` projects supported source
+ranges into a disposable ProseMirror model. `LatexVisualEditor.tsx` uses the
+existing Tiptap editor stack for native selection, composition, formatting,
+lists and undo. MathLive supplies structured math input; fonts are bundled
+locally, sounds and the optional compute engine are disabled. No web service
+or TeX process participates in a writing transaction.
+
+The transaction guard serializes only changed blocks, verifies the exact
+source generation, reparses the candidate, and rejects unsupported structural
+round trips. Unchanged source, comments, preamble and opaque blocks remain
+byte-for-byte intact. The session retains editor whitespace and undo across
+local transactions; adopting external source resets editor history so Undo
+cannot replay an edit from an obsolete revision. Supported blocks may be
+normalized when edited. This is a bounded source adapter, not a complete TeX
+parser or macro evaluator. Category-code changes fail closed.
+
+Source and Visual use one `useFileSaveCoordinator` and its existing compare-and-set
+writes. The recovery journal records accepted source before disk persistence.
+Autosaving continues while the writing surface is focused. Conflicts use the
+existing explicit retry/discard workflow. Rebuild is disabled until saves
+finish, and cannot run while a known save error or conflict is unresolved.
+
+`LatexBuildService.status` verifies dependency evidence but never starts a
+compiler. A stale status keeps the old artifact readable, marks its descriptor
+stale and removes visual source authorization from that response. The client
+does not build on open, save, focus change or completed toolchain installation.
+Only explicit rebuild requests (including agent tools) start TeX. Existing
+root resolution, cancellation, bounded compile stabilization, immutable
+artifacts and PDF navigation remain owned by the existing build/reader path.
+
+Visual uses continuous browser paper layout. PDF and Split use the actual PDF
+with navigation, not the old editing overlay. Browser layout is always an
+approximation, even immediately after a successful build. Macro/preamble
+changes produce explicit rebuild guidance; rebuilding verifies the PDF, not
+arbitrary browser rendering. This candidate does not implement incremental TeX,
+checkpointed macro execution, exact browser pagination, tables, custom macro
+adapters or editable generated content. Those need separate scoped work.
+
+Unit tests cover source-range integrity, whitespace, headings, nested lists,
+empty paragraphs, math, escaping, protected syntax and rebuild notices. Build
+service/store tests cover observational status and explicit compilation.
+Running-candidate checks and remaining qualification gaps are recorded in the
+PR handoff. Human review is required before merge.
+
+## Superseded PDF-overlay design (historical)
+
+The material below documents the previous PR candidate. Its PDF/source
+matching and overlay authorization no longer drive Visual or Split editing.
+It is retained as provenance for the existing build-evidence and reader code,
+not as a description of the current editing workflow.
 
 Status: implementation candidate; human visual review pending.
 Owner: ScientFactory. This extends [Scient LaTeX build](scient-latex.md).
