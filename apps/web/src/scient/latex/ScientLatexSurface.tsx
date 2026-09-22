@@ -58,6 +58,7 @@ import { LatexToolchainSetupCard } from "./LatexToolchainSetupCard";
 import { requestLatexForwardSync, requestLatexInverseSync } from "./client";
 import {
   cancelLatexBuild,
+  ensureLatexVisualBuild,
   notifyLatexBindingChange,
   requestLatexRebuild,
   requestManagedLatexInstall,
@@ -648,7 +649,19 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
     revealPending && (preferredMode === "pdf" || preferredMode === "visual")
       ? "split"
       : preferredMode;
-  const sourceIdentity = useLatexSourceIdentity(props.contents, mode === "visual");
+  const visualCapable = mode === "visual" || mode === "split";
+  const sourceIdentity = useLatexSourceIdentity(props.contents, visualCapable);
+  useEffect(() => {
+    if (!visualCapable || visualEditing || visualAwaitingSave) return;
+    ensureLatexVisualBuild(target, build.snapshot, sourceIdentity?.revision ?? null);
+  }, [
+    build.snapshot,
+    sourceIdentity?.revision,
+    target,
+    visualAwaitingSave,
+    visualCapable,
+    visualEditing,
+  ]);
   const selectMode = useCallback(
     (next: ScientLatexPreviewMode) => {
       finishVisualEditingRef.current?.();
@@ -791,7 +804,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
       descriptor?._tag === "generated-pdf"
         ? {
             forwardTarget: forwardSyncTarget,
-            ...(mode === "split" ? { onInverseSearch: handleInverseSync } : {}),
+            ...(mode === "pdf" ? { onInverseSearch: handleInverseSync } : {}),
             onPageChange: handlePdfPageChange,
           }
         : undefined,
@@ -811,7 +824,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
 
   const canPublishPresentation = useCallback(
     (candidate: RequestedPdfPresentation) =>
-      mode !== "visual" ||
+      !visualCapable ||
       canPublishVisualPdf({
         candidateRevisionId: candidate.revisionId,
         editing: visualEditingRef.current || visualEditing,
@@ -821,7 +834,14 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
         sourceIdentity,
         truncated: props.truncated,
       }),
-    [build.snapshot, mode, props.relativePath, props.truncated, sourceIdentity, visualEditing],
+    [
+      build.snapshot,
+      props.relativePath,
+      props.truncated,
+      sourceIdentity,
+      visualCapable,
+      visualEditing,
+    ],
   );
 
   const handleVisualEditingChange = useCallback(
@@ -1098,7 +1118,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
               managedInstall={build.managedInstall}
               installRequesting={build.installRequesting}
               onInstall={handleInstallToolchain}
-              {...(mode === "visual"
+              {...(visualCapable
                 ? { canPublishPresentation, renderInteraction: renderVisualInteraction }
                 : {})}
               {...(syncNavigation === undefined ? {} : { syncNavigation })}

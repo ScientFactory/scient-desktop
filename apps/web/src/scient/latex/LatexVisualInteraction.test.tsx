@@ -303,7 +303,7 @@ describe("source-backed PDF visual interaction", () => {
     expect(mount.querySelector('[role="status"]')).toBeNull();
   });
 
-  it("keeps a unique fragment read-only when omitted PDF text leaves its run incomplete", async () => {
+  it("uses short PDF.js fragments when together they prove the complete run", async () => {
     const fragmented = "\\begin{document}\nA unique editable sentence.\n\\end{document}\n";
     first.textContent = "A";
     second.textContent = "unique editable sentence.";
@@ -317,9 +317,10 @@ describe("source-backed PDF visual interaction", () => {
     await render();
     await settleManifest();
 
-    expect(second.classList.contains("scient-latex-visual-editable")).toBe(false);
+    expect(first.classList.contains("scient-latex-visual-editable")).toBe(true);
+    expect(second.classList.contains("scient-latex-visual-editable")).toBe(true);
     await click(second);
-    expect(document.activeElement).not.toBe(textarea());
+    expect(document.activeElement).toBe(textarea());
     expect(edit).not.toHaveBeenCalled();
   });
 

@@ -137,10 +137,14 @@ describe("Scient LaTeX file-preview seam", () => {
     expect(surfaceSource).toContain("onPageChange: handlePdfPageChange");
   });
 
-  it("keeps plain double-click navigation inside an already-open split", () => {
+  it("uses Split's PDF half for direct editing and keeps inverse navigation in PDF mode", () => {
     expect(surfaceSource).toContain('if (mode !== "split") return;');
     expect(surfaceSource).toContain(
-      '...(mode === "split" ? { onInverseSearch: handleInverseSync } : {})',
+      '...(mode === "pdf" ? { onInverseSearch: handleInverseSync } : {})',
+    );
+    expect(surfaceSource).toContain('const visualCapable = mode === "visual" || mode === "split";');
+    expect(surfaceSource).toContain(
+      "? { canPublishPresentation, renderInteraction: renderVisualInteraction }",
     );
     expect(surfaceSource).not.toContain('if (preferredMode === "source") selectMode("split")');
     expect(surfaceSource).not.toMatch(/event\.(?:ctrlKey|metaKey)/u);

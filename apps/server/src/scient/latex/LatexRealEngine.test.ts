@@ -166,7 +166,7 @@ describe.skipIf(!ENGINE_ON_PATH)("LatexBuildService against an installed engine"
   );
 
   it.live(
-    "compiles a root under paper/ that inputs and includes its neighbours",
+    "discovers and compiles a root under paper/ from an opened included fragment",
     () =>
       Effect.gen(function* () {
         const harness = yield* makeWorkspace({
@@ -188,7 +188,7 @@ describe.skipIf(!ENGINE_ON_PATH)("LatexBuildService against an installed engine"
           const store = yield* GeneratedDocumentStore;
           const input: LatexBuildInput = {
             workspaceRoot: harness.workspaceRoot,
-            relativePath: "paper/main.tex",
+            relativePath: "paper/sections/intro.tex",
           };
           yield* service.requestBuild(input);
           const finished = yield* awaitTerminal(service, input);

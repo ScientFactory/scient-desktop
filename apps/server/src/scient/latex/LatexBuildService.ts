@@ -88,7 +88,7 @@ import { evaluateLatexEngineGate } from "./latexEngineGate.ts";
 import { parseLatexLog, summarizeLatexFailure, transcriptFailureDiagnostic } from "./latexLog.ts";
 import { missingLatexPackageInputs } from "./latexMissingPackages.ts";
 import { latexPreambleIncludes, latexPreamblePackages } from "./latexPreamble.ts";
-import { resolveLatexRoot } from "./latexRoot.ts";
+import { isLatexSourcePath, resolveLatexRoot } from "./latexRoot.ts";
 
 export interface LatexBuildInput {
   readonly workspaceRoot: string;
@@ -132,6 +132,9 @@ const MAX_LOGICAL_DOCUMENT_KEY_LENGTH = 1_024;
  * a status poll on a multi-megabyte source reads one block instead of all of it.
  */
 const ROOT_RESOLUTION_HEAD_BYTES = 8 * 1_024;
+/** Bounds containing-root discovery in source-heavy workspaces. */
+const MAX_ROOT_DISCOVERY_CANDIDATES = 128;
+const MAX_ROOT_DISCOVERY_ANCESTORS = 16;
 /**
  * How much of the root document the upfront package scan reads. A preamble is
  * the first page or two of a file, but a document that defines its own macros
@@ -468,6 +471,64 @@ export const make = Effect.gen(function* () {
         return Option.isNone(chunk) ? "" : new TextDecoder().decode(chunk.value);
       }),
     );
+
+  /**
+   * A fragment without `% !TEX root` may still belong to one nearby document.
+   * Search only the fragment's directory and its ancestors, and only inspect
+   * bounded LaTeX heads. This catches the ordinary `main.tex` + `sections/`
+   * layout without turning every status poll into a recursive workspace walk.
+   */
+  const discoverContainingLatexRoots = Effect.fnUntraced(function* (input: {
+    readonly workspaceRoot: string;
+    readonly requestedRelativePath: string;
+  }) {
+    const requested = input.requestedRelativePath.replaceAll("\\", "/");
+    const roots: string[] = [];
+    let candidates = 0;
+    let directory = path.dirname(path.join(input.workspaceRoot, requested));
+    let truncated = false;
+
+    for (let depth = 0; depth < MAX_ROOT_DISCOVERY_ANCESTORS; depth += 1) {
+      const names = yield* fileSystem
+        .readDirectory(directory)
+        .pipe(Effect.orElseSucceed(() => [] as string[]));
+      for (const name of names.toSorted()) {
+        const absolutePath = path.join(directory, name);
+        const relativePath = toPosixPath(path.relative(input.workspaceRoot, absolutePath));
+        if (
+          relativePath === requested ||
+          escapesWorkspaceRoot(relativePath) ||
+          !isLatexSourcePath(relativePath)
+        )
+          continue;
+        candidates += 1;
+        if (candidates > MAX_ROOT_DISCOVERY_CANDIDATES) {
+          truncated = true;
+          break;
+        }
+        const contents = yield* readSourceHead(absolutePath, PREAMBLE_SCAN_HEAD_BYTES).pipe(
+          Effect.orElseSucceed(() => null),
+        );
+        if (contents === null) continue;
+        const resolution = resolveLatexRoot({ relativePath, contents });
+        if (resolution.reason !== "documentclass") continue;
+        const rootDirectory = path.dirname(absolutePath);
+        const includesRequested = latexPreambleIncludes(contents).some((included) => {
+          const includedRelative = toPosixPath(
+            path.relative(input.workspaceRoot, path.resolve(rootDirectory, included)),
+          );
+          return includedRelative === requested;
+        });
+        if (includesRequested) roots.push(relativePath);
+      }
+      if (truncated || directory === input.workspaceRoot) break;
+      const parent = path.dirname(directory);
+      if (parent === directory || !path.isAbsolute(parent)) break;
+      directory = parent;
+    }
+
+    return { roots: [...new Set(roots)].toSorted(), truncated };
+  });
 
   /**
    * TeX resolves `\input` against its working directory, so a build compiles
@@ -1870,6 +1931,26 @@ export const make = Effect.gen(function* () {
         relativePath: requestedRelative,
         contents: contents.value,
       });
+      if (resolution.reason === "fallback-self") {
+        const containing = yield* discoverContainingLatexRoots({
+          workspaceRoot,
+          requestedRelativePath: requestedRelative,
+        });
+        if (containing.truncated) {
+          return yield* makeTarget(
+            requestedRelative,
+            `Scient found too many possible LaTeX roots for ${requestedRelative}. Add a % !TEX root comment to select one.`,
+          );
+        }
+        if (containing.roots.length > 1) {
+          return yield* makeTarget(
+            requestedRelative,
+            `Multiple LaTeX roots include ${requestedRelative}: ${containing.roots.join(", ")}. Add a % !TEX root comment to select one.`,
+          );
+        }
+        const containingRoot = containing.roots[0];
+        if (containingRoot !== undefined) return yield* makeTarget(containingRoot, null);
+      }
       const rootRelativePath = toPosixPath(
         path.relative(workspaceRoot, path.resolve(workspaceRoot, resolution.rootRelativePath)),
       );

@@ -151,6 +151,19 @@ const loops = new Map<string, WatchLoop>();
  */
 const pendingRebuilds = new Set<string>();
 
+interface VisualQualificationAttempt {
+  readonly requestedFromRevision: string;
+}
+
+/**
+ * One automatic compatibility build per source revision. Older retained PDFs
+ * can predate Visual's provenance sidecar even though their ordinary build
+ * evidence is still current. Entering an editable view upgrades that artifact
+ * once; a toolchain that cannot produce complete evidence is never put into a
+ * rebuild loop.
+ */
+const visualQualificationAttempts = new Map<string, VisualQualificationAttempt>();
+
 /** What a freshly opened document does with the status it reads first. */
 type LatexOpenBuild = "none" | "when-idle" | "always";
 
@@ -483,6 +496,59 @@ export function requestLatexRebuild(
   runBuild(key, target, loop);
 }
 
+export type LatexVisualQualification = "ready" | "preparing" | "unavailable";
+
+/**
+ * Ensure a retained build carries exact source authorization for Visual.
+ *
+ * This is intentionally opt-in from Split/Visual rather than part of ordinary
+ * PDF status: readers that never edit do not pay for a compatibility build.
+ */
+export function ensureLatexVisualBuild(
+  target: LatexBuildTarget,
+  snapshot: ScientLatexBuildSnapshot | null,
+  sourceRevision: string | null,
+): LatexVisualQualification {
+  const key = `${latexBuildKey(target)}\0${target.relativePath}`;
+  if (
+    sourceRevision !== null &&
+    snapshot?.visualSourceRevisions?.[target.relativePath] === sourceRevision
+  ) {
+    visualQualificationAttempts.delete(key);
+    return "ready";
+  }
+  // An attached manifest — including an empty one — is a current compiler
+  // answer, not a legacy artifact. Missing or mismatched file authorization
+  // cannot be repaired by compiling the same source again.
+  if (snapshot?.visualSourceRevisions !== undefined) return "unavailable";
+  const descriptor = snapshot?.descriptor;
+  if (
+    sourceRevision === null ||
+    snapshot?.state !== "succeeded" ||
+    snapshot.pendingRerun ||
+    descriptor?._tag !== "generated-pdf" ||
+    descriptor.bindingStatus !== "current"
+  ) {
+    return "preparing";
+  }
+
+  const previous = visualQualificationAttempts.get(key);
+  if (previous !== undefined) {
+    // The same artifact is still being replaced, or its replacement completed
+    // without complete recorder evidence. Either way, never request it again.
+    return previous.requestedFromRevision === descriptor.revisionId ? "preparing" : "unavailable";
+  }
+
+  const loop = loops.get(latexBuildKey(target));
+  if (loop === undefined || loop.stopped) return "unavailable";
+  if (loop.rebuildSuspensions > 0) return "preparing";
+  visualQualificationAttempts.set(key, {
+    requestedFromRevision: descriptor.revisionId,
+  });
+  runBuild(latexBuildKey(target), target, loop);
+  return "preparing";
+}
+
 /**
  * A producer-neutral binding event is only a wake-up hint. Re-reading the
  * LaTeX status keeps the build coordinator authoritative and also preserves
@@ -570,5 +636,6 @@ export function resetLatexBuildsForTests(): void {
     loops.delete(key);
   }
   pendingRebuilds.clear();
+  visualQualificationAttempts.clear();
   useLatexBuildStore.setState({ entries: {} });
 }

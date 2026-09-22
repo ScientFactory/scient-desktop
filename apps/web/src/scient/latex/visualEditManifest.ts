@@ -15,15 +15,11 @@ export interface VisualEditManifest {
   readonly dispose: () => void;
 }
 
-interface CandidateEntry extends VisualEditManifestEntry {
-  readonly page: HTMLElement;
-}
-
-interface SourceClaim {
-  readonly run: VisualRun;
-  readonly sourceCharacterStart: number;
-  readonly sourceCharacterEnd: number;
+interface RenderedSpan {
   readonly span: HTMLElement;
+  /** Null spans stay in the sequence as barriers; they can never authorize input. */
+  readonly node: Text | null;
+  readonly characters: ReturnType<typeof visualCharacters>;
 }
 
 interface SourceProjection {
@@ -31,117 +27,82 @@ interface SourceProjection {
   readonly characters: ReturnType<typeof visualCharacters>;
 }
 
-interface UniqueSourceMatch extends SourceProjection {
-  readonly start: number;
-}
-
 function textNode(span: HTMLElement): Text | null {
   const node = span.firstChild;
   return node instanceof Text && span.childNodes.length === 1 && span.dir !== "rtl" ? node : null;
 }
 
-function uniqueSourceMatch(
-  runs: readonly SourceProjection[],
-  pdfCharacters: ReturnType<typeof visualCharacters>,
-): UniqueSourceMatch | null {
-  let unique: UniqueSourceMatch | null = null;
-  for (const candidate of runs) {
-    let index = candidate.characters.text.indexOf(pdfCharacters.text);
-    while (index >= 0) {
-      if (unique !== null) return null;
-      unique = { ...candidate, start: index };
-      index = candidate.characters.text.indexOf(pdfCharacters.text, index + 1);
-    }
+function occurrenceCount(corpus: string, needle: string): number {
+  let count = 0;
+  let index = corpus.indexOf(needle);
+  while (index >= 0) {
+    count += 1;
+    if (count > 1) return count;
+    index = corpus.indexOf(needle, index + 1);
   }
-  return unique;
+  return count;
 }
 
-function outputOccurrenceCounter(documentTextItems: readonly string[]) {
-  // PDF.js is free to split the same visible word into different TextItems on
-  // different pages. Removing item boundaries makes that segmentation unable
-  // to hide a second occurrence. It may conservatively reject a token formed
-  // across unrelated adjacent items, which is the safe direction for source
-  // authorization.
-  const corpus = documentTextItems.map((item) => visualCharacters(item).text).join("");
-  const cache = new Map<string, number>();
-  return (needle: string): number => {
-    const cached = cache.get(needle);
-    if (cached !== undefined) return cached;
-    let count = 0;
-    let index = corpus.indexOf(needle);
-    while (index >= 0) {
-      count += 1;
-      // Admission only distinguishes exactly one from every other result.
-      // Stop early rather than scanning a long document after ambiguity is proven.
-      if (count > 1) {
-        cache.set(needle, count);
-        return count;
-      }
-      index = corpus.indexOf(needle, index + 1);
-    }
-    cache.set(needle, count);
-    return count;
-  };
-}
-
-function sourceClaimsWithCollisions(claims: readonly SourceClaim[]): ReadonlySet<HTMLElement> {
-  const collisions = new Set<HTMLElement>();
-  const byRun = new Map<VisualRun, SourceClaim[]>();
-  for (const claim of claims) {
-    const grouped = byRun.get(claim.run);
-    if (grouped) grouped.push(claim);
-    else byRun.set(claim.run, [claim]);
-  }
-  for (const runClaims of byRun.values()) {
-    const ordered = runClaims.toSorted(
-      (left, right) =>
-        left.sourceCharacterStart - right.sourceCharacterStart ||
-        right.sourceCharacterEnd - left.sourceCharacterEnd,
-    );
-    let furthest: SourceClaim | null = null;
-    for (const claim of ordered) {
-      if (furthest !== null && claim.sourceCharacterStart < furthest.sourceCharacterEnd) {
-        collisions.add(furthest.span);
-        collisions.add(claim.span);
-      }
-      if (furthest === null || claim.sourceCharacterEnd > furthest.sourceCharacterEnd) {
-        furthest = claim;
-      }
-    }
-  }
-  return collisions;
+function outputCorpus(documentTextItems: readonly string[]): string {
+  // PDF.js is free to split one paragraph into arbitrary TextItems. Removing
+  // item boundaries makes that segmentation irrelevant to the proof and also
+  // catches a second occurrence split differently on another page.
+  return documentTextItems.map((item) => visualCharacters(item).text).join("");
 }
 
 /**
- * The editor replaces one complete source run with one textarea. Its admitted
- * PDF spans therefore have to form one ordered, gap-free cover of that run on
- * one page. A merely unique fragment is enough to locate source, but it is not
- * enough to prove that the textarea will mask every glyph it replaces.
+ * Locate a complete source run in one materialized page.
+ *
+ * Authorization belongs to the whole run, not to each PDF.js token. Requiring
+ * every individual word to be globally unique made ordinary prose such as
+ * "the result ... the result" impossible to edit even when the paragraph was
+ * unique. A complete, ordered, single-page cover proves the same source splice
+ * without mistaking repeated words for ambiguity.
  */
-function completelyCoveredRun(entries: readonly CandidateEntry[]): boolean {
-  const first = entries[0];
-  if (!first) return false;
-  let expectedStart = 0;
-  for (const entry of entries) {
-    if (
-      entry.page !== first.page ||
-      entry.run !== first.run ||
-      entry.sourceCharacters !== first.sourceCharacters ||
-      entry.sourceCharacterStart !== expectedStart
-    )
-      return false;
-    expectedStart += entry.pdfCharacters.text.length;
+function completeRunEntries(
+  page: HTMLElement,
+  projection: SourceProjection,
+): readonly VisualEditManifestEntry[] | null {
+  const spans: RenderedSpan[] = [];
+  for (const span of page.querySelectorAll<HTMLElement>(".textLayer span")) {
+    const characters = visualCharacters(span.textContent ?? "");
+    if (characters.text.length === 0) continue;
+    spans.push({ span, node: textNode(span), characters });
   }
-  return expectedStart === first.sourceCharacters.text.length;
+
+  const expected = projection.characters.text;
+  const pageCorpus = spans.map((rendered) => rendered.characters.text).join("");
+  if (occurrenceCount(pageCorpus, expected) !== 1) return null;
+  for (let start = 0; start < spans.length; start += 1) {
+    let combined = "";
+    const entries: VisualEditManifestEntry[] = [];
+    for (let index = start; index < spans.length && combined.length < expected.length; index += 1) {
+      const rendered = spans[index]!;
+      if (rendered.node === null) break;
+      const sourceCharacterStart = combined.length;
+      combined += rendered.characters.text;
+      if (!expected.startsWith(combined)) break;
+      entries.push({
+        span: rendered.span,
+        node: rendered.node,
+        run: projection.run,
+        sourceCharacterStart,
+        pdfCharacters: rendered.characters,
+        sourceCharacters: projection.characters,
+      });
+      if (combined === expected) return entries;
+    }
+  }
+  return null;
 }
 
 /**
  * Build the semantic half of direct editing before the pointer arrives.
  *
- * A PDF text token is editable only when its normalized contents occur exactly
- * once in both the bounded source projection and the complete compiled PDF text
- * stream. Rendered spans must also claim disjoint source intervals. The PDF stays
- * authoritative visually; this manifest only grants a safe source splice.
+ * A run is editable only when its complete normalized text occurs exactly once
+ * in the immutable compiled document and exactly one materialized page carries
+ * a gap-free cover of it. The PDF stays authoritative visually; this manifest
+ * only grants a safe splice of the corresponding literal source run.
  */
 export function createVisualEditManifest(
   container: HTMLElement,
@@ -154,68 +115,42 @@ export function createVisualEditManifest(
     HTMLElement,
     Readonly<Record<"tabindex" | "aria-description" | "aria-keyshortcuts", string | null>>
   >();
-  const runs = visualRuns(source).map((run) => ({
-    run,
-    characters: visualCharacters(run.text),
-  }));
-  const outputOccurrences =
-    documentTextItems === null ? null : outputOccurrenceCounter(documentTextItems);
-  const claims: SourceClaim[] = [];
-  const candidates: CandidateEntry[] = [];
-
-  for (const span of container.querySelectorAll<HTMLElement>(
-    ".page[data-page-number] .textLayer span",
-  )) {
-    const renderedText = span.textContent ?? "";
-    const pdfCharacters = visualCharacters(renderedText);
-    if (pdfCharacters.text.length === 0) continue;
-    const unique = uniqueSourceMatch(runs, pdfCharacters);
-    if (unique === null) continue;
-
-    const sourceCharacterEnd = unique.start + pdfCharacters.text.length;
-    claims.push({
-      run: unique.run,
-      sourceCharacterStart: unique.start,
-      sourceCharacterEnd,
-      span,
-    });
-
-    const node = textNode(span);
-    if (
-      node === null ||
-      pdfCharacters.text.length < 3 ||
-      outputOccurrences === null ||
-      outputOccurrences(pdfCharacters.text) !== 1
-    )
-      continue;
-
-    const page = span.closest<HTMLElement>(".page[data-page-number]");
-    if (!page) continue;
-    const entry: CandidateEntry = {
-      span,
-      node,
-      run: unique.run,
-      sourceCharacterStart: unique.start,
-      pdfCharacters,
-      sourceCharacters: unique.characters,
-      page,
-    };
-    candidates.push(entry);
+  if (documentTextItems === null) {
+    return { entries, entryFor: () => null, dispose: () => undefined };
   }
 
-  const collisions = sourceClaimsWithCollisions(claims);
-  const candidatesByRun = new Map<VisualRun, CandidateEntry[]>();
-  for (const candidate of candidates) {
-    if (collisions.has(candidate.span)) continue;
-    const grouped = candidatesByRun.get(candidate.run);
-    if (grouped) grouped.push(candidate);
-    else candidatesByRun.set(candidate.run, [candidate]);
+  const corpus = outputCorpus(documentTextItems);
+  const pages = container.querySelectorAll<HTMLElement>(".page[data-page-number]");
+  const covers: Array<readonly VisualEditManifestEntry[]> = [];
+  for (const run of visualRuns(source)) {
+    const characters = visualCharacters(run.text);
+    if (characters.text.length < 3 || occurrenceCount(corpus, characters.text) !== 1) continue;
+
+    let uniqueCover: readonly VisualEditManifestEntry[] | null = null;
+    let ambiguous = false;
+    for (const page of pages) {
+      const cover = completeRunEntries(page, { run, characters });
+      if (cover === null) continue;
+      if (uniqueCover !== null) {
+        ambiguous = true;
+        break;
+      }
+      uniqueCover = cover;
+    }
+    if (ambiguous || uniqueCover === null) continue;
+
+    covers.push(uniqueCover);
   }
 
-  for (const runCandidates of candidatesByRun.values()) {
-    if (!completelyCoveredRun(runCandidates)) continue;
-    for (const candidate of runCandidates) {
-      const { page: _page, ...entry } = candidate;
+  // A span cannot authorize two source runs. Count before installing so an
+  // ambiguity rejects every claimant rather than whichever one arrived last.
+  const claims = new Map<HTMLElement, number>();
+  for (const cover of covers)
+    for (const entry of cover) claims.set(entry.span, (claims.get(entry.span) ?? 0) + 1);
+
+  for (const cover of covers) {
+    if (cover.some((entry) => claims.get(entry.span) !== 1)) continue;
+    for (const entry of cover) {
       bySpan.set(entry.span, entry);
       entries.push(entry);
       entry.span.classList.add("scient-latex-visual-editable");

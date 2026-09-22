@@ -2489,6 +2489,74 @@ describe("LatexBuildService", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
+  it.live("discovers the one nearby root that directly includes an opened fragment", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        relativePath: "sections/intro.tex",
+        files: {
+          "main.tex": SOURCE_WITH_INCLUDE,
+          "sections/intro.tex": "Editable introduction.\n",
+        },
+        compiles: [
+          {
+            transcript: "",
+            exitCode: 0,
+            pdf: minimalPdf("fragment-root"),
+            fls: RECORDER_MANIFEST,
+          },
+        ],
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        const queued = yield* service.requestBuild(harness.buildInput);
+        expect(queued.rootRelativePath).toBe("main.tex");
+
+        const request = yield* Queue.take(harness.started);
+        expect(request.args.at(-1)?.replaceAll("\\", "/")).toMatch(/(?:^|\/)main\.tex$/u);
+
+        const finished = yield* awaitTerminal(service, harness.buildInput);
+        expect(finished.state).toBe("succeeded");
+        expect(finished.rootRelativePath).toBe("main.tex");
+        expect(finished.visualSourceRevisions?.["sections/intro.tex"]).toMatch(
+          /^sha256:[a-f0-9]{64}$/u,
+        );
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("surfaces containing-root ambiguity instead of compiling or guessing", () =>
+    Effect.gen(function* () {
+      const root = (title: string) =>
+        [
+          "\\documentclass{article}",
+          "\\begin{document}",
+          `\\section{${title}}`,
+          "\\input{sections/intro}",
+          "\\end{document}",
+          "",
+        ].join("\n");
+      const harness = yield* makeHarness({
+        relativePath: "sections/intro.tex",
+        files: {
+          "main.tex": root("First"),
+          "alternate.tex": root("Second"),
+          "sections/intro.tex": "Shared introduction.\n",
+        },
+        compiles: [],
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        const result = yield* service.requestBuild(harness.buildInput);
+
+        expect(result.state).toBe("failed");
+        expect(result.failureSummary).toContain("Multiple LaTeX roots include");
+        expect(result.failureSummary).toContain("alternate.tex");
+        expect(result.failureSummary).toContain("main.tex");
+        expect(yield* Ref.get(harness.startCount)).toBe(0);
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.live("never compiles a Windows drive-relative path", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ compiles: [] });

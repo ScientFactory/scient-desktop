@@ -6,10 +6,11 @@ Owner: ScientFactory. This extends [Scient LaTeX build](scient-latex.md).
 ## Decision
 
 Keep `.tex` authoritative and the compiled PDF authoritative for settled
-layout. Offer **Source / Split / Visual / PDF**. Visual uses the PDF.js page as
-its stable fidelity layer and temporarily replaces the active, source-mapped
-prose region with a native editing surface. Export continues to use the
-existing immutable PDF artifact path. There is no new editable file format.
+layout. Offer **Source / Split / Visual / PDF**. Visual, and the preview half of
+Split, use the PDF.js page as their stable fidelity layer and temporarily
+replace the active, source-mapped prose region with a native editing surface.
+PDF remains the read-only/navigation view. Export continues to use the existing
+immutable PDF artifact path. There is no new editable file format.
 
 Exact typography and immediate feedback are separate requirements. TeX must
 run before exact new line breaks, floats and page breaks are known. The active
@@ -91,15 +92,22 @@ external editor later requires its own license and dependency review.
    legacy, truncated, or unsupported documents visible but read-only. Loaded
    URL and revision checks prevent old geometry authorizing new source edits or
    sync.
-4. When a revision's PDF.js text layer appears, the client builds a local,
-   revision-pinned edit manifest before interaction. Only an upright LTR token
-   whose normalized text occurs exactly once in the bounded source projection
-   receives an editing affordance. A click is therefore a synchronous lookup;
-   it never invokes SyncTeX, starts a build, or displays a refusal. Blank space
-   resolves only to a nearby already-proven token on the same page, and an
-   ambiguous gutter fails quietly. The initial client source must match the
-   build identity. SyncTeX remains the navigation mechanism for Split mode,
-   not the authorization mechanism for Visual writes.
+4. Entering Split or Visual verifies that the retained PDF carries Visual
+   source identities. A current PDF that predates those identities receives one
+   automatic compatibility build for that source revision. A toolchain whose
+   recorder still cannot produce complete evidence is never put into a rebuild
+   loop. Ordinary PDF viewing pays no compatibility-build cost. When a
+   revision's PDF.js text layer appears, the client builds a local,
+   revision-pinned edit manifest before interaction. Authorization belongs to a
+   complete literal source run: its normalized text must occur exactly once in
+   the complete compiled PDF, and one materialized page must carry a unique,
+   ordered, gap-free cover. Individual PDF.js words and short fragments may
+   repeat inside that proven paragraph. A click is therefore a synchronous
+   lookup and never invokes SyncTeX. Blank space resolves only to a nearby
+   already-proven span on the same page, and an ambiguous gutter fails quietly.
+   The initial client source must match the build identity. PDF mode keeps
+   double-click inverse SyncTeX navigation; Source/Visual editing proof never
+   uses SyncTeX as write authorization.
 5. `packages/shared/src/latexVisual.ts` projects supported literal prose runs
    and keeps display-to-source boundaries. Normalization is comparison-only.
    Ligatures, escaped punctuation, whitespace and basic TeX punctuation can be
@@ -165,6 +173,8 @@ paste, paragraph insertion and native textarea composition. Qualified PDF text
 is keyboard-focusable and Enter, Space or F2 opens the same native editor;
 Escape checkpoints and returns focus to the originating text. Native undo is
 scoped to the active text-input session, not a new cross-mode undo system.
+Repeated words and short PDF.js text fragments are supported when the complete
+single-page paragraph has a unique compiled occurrence.
 
 Opaque: equations, tables, TikZ, verbatim, unknown command paragraphs, dynamic
 syntax primitives and text without a unique mapping. Unknown environments are
@@ -174,15 +184,20 @@ TeX expansion is reversible. Source remains the escape hatch.
 
 Current limitations requiring further product work:
 
-- A click in an included file does not silently switch the active file's save
-  owner. The user must open that source first. Multi-file, single-canvas
-  transactions need a document-level session owner with per-file leases.
+- Opening a fragment with one nearby root that directly `\input`s or
+  `\include`s it compiles that root, so the fragment can be edited against the
+  complete PDF. Multiple containing roots are reported explicitly and require
+  a `% !TEX root` comment. A click while the root file itself is active does
+  not silently switch the save owner to an included file; true multi-file,
+  single-canvas transactions still need a document-level session owner with
+  per-file leases.
 - Cross-formatting selections, equation/table editors, continuous document-wide
   undo and complete screen-reader page navigation are not finished capabilities
   of this candidate.
-- Hyphenated line fragments and short glyph spans can be refused. The active
-  paragraph's browser line breaking is provisional and can differ from TeX;
-  the exact result returns only after the transaction ends and compiles.
+- Hyphenated line fragments and paragraphs split across pages can be refused.
+  The active paragraph's browser line breaking is provisional and can differ
+  from TeX; the exact result returns only after the transaction ends and
+  compiles.
 - Recovery currently serializes the complete intended source synchronously on
   each native input and falls back to renderer memory if browser storage rejects
   the write. Before release, replace this with a compact, crash-consistent

@@ -4,6 +4,14 @@ import {
   type ScientLatexManagedInstallState,
   type ScientLatexToolchainStatus,
 } from "@t3tools/contracts";
+import {
+  ArtifactAuthority,
+  ArtifactId,
+  ArtifactRevisionId,
+  BindingGeneration,
+  LogicalDocumentKey,
+  PdfSourceDescriptor,
+} from "@scientfactory/document-artifacts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const {
@@ -34,6 +42,7 @@ import {
   LATEX_OFFLINE_POLL_INTERVAL_MS,
   LATEX_POLL_INTERVAL_MS,
   cancelLatexBuild,
+  ensureLatexVisualBuild,
   latexBuildKey,
   notifyLatexBindingChange,
   readLatexBuild,
@@ -81,6 +90,22 @@ function snapshot(
     pendingRerun: false,
     ...overrides,
   };
+}
+
+function generatedDescriptor(revisionId: string) {
+  return PdfSourceDescriptor.make({
+    _tag: "generated-pdf",
+    authority: ArtifactAuthority.make("environment-latex"),
+    logicalDocumentKey: LogicalDocumentKey.make("latex:/workspace/paper/main.tex"),
+    artifactId: ArtifactId.make("artifact-1"),
+    revisionId: ArtifactRevisionId.make(revisionId),
+    bindingGeneration: BindingGeneration.make(1),
+    bindingStatus: "current",
+    staleReason: null,
+    title: "main",
+    fileName: "main.pdf",
+    capabilities: { canSaveCopy: true, canRevealSource: false },
+  });
 }
 
 function install(
@@ -180,6 +205,68 @@ describe("latexBuildStore", () => {
 
     await vi.advanceTimersByTimeAsync(LATEX_POLL_INTERVAL_MS * 4);
     expect(readLatexBuildStatus).toHaveBeenCalledTimes(1);
+    stop();
+  });
+
+  it("qualifies a retained PDF for Visual once without creating a rebuild loop", async () => {
+    const retained = snapshot("succeeded", { descriptor: generatedDescriptor("revision-old") });
+    readLatexBuildStatus.mockResolvedValue(retained);
+    const stop = startWatchingLatexBuild(target);
+    await settle();
+
+    const sourceRevision = `sha256:${"a".repeat(64)}`;
+    expect(ensureLatexVisualBuild(target, retained, sourceRevision)).toBe("preparing");
+    await settle();
+    expect(requestLatexBuild).toHaveBeenCalledTimes(1);
+
+    expect(ensureLatexVisualBuild(target, retained, sourceRevision)).toBe("preparing");
+    await settle();
+    expect(requestLatexBuild).toHaveBeenCalledTimes(1);
+
+    const replacementWithoutEvidence = snapshot("succeeded", {
+      descriptor: generatedDescriptor("revision-new"),
+    });
+    expect(ensureLatexVisualBuild(target, replacementWithoutEvidence, sourceRevision)).toBe(
+      "unavailable",
+    );
+    expect(
+      ensureLatexVisualBuild(target, replacementWithoutEvidence, `sha256:${"c".repeat(64)}`),
+    ).toBe("unavailable");
+    await settle();
+    expect(requestLatexBuild).toHaveBeenCalledTimes(1);
+    stop();
+  });
+
+  it("recognizes exact Visual evidence without rebuilding", async () => {
+    const sourceRevision = `sha256:${"b".repeat(64)}`;
+    const retained = snapshot("succeeded", {
+      descriptor: generatedDescriptor("revision-ready"),
+      visualSourceRevisions: { "main.tex": sourceRevision },
+    });
+    readLatexBuildStatus.mockResolvedValue(retained);
+    const stop = startWatchingLatexBuild(target);
+    await settle();
+
+    expect(ensureLatexVisualBuild(target, retained, sourceRevision)).toBe("ready");
+    await settle();
+    expect(requestLatexBuild).not.toHaveBeenCalled();
+    stop();
+  });
+
+  it("does not retry a current build whose manifest explicitly has no authorization", async () => {
+    const retained = snapshot("succeeded", {
+      descriptor: generatedDescriptor("revision-unsupported"),
+      visualSourceRevisions: {},
+    });
+    readLatexBuildStatus.mockResolvedValue(retained);
+    const stop = startWatchingLatexBuild(target);
+    await settle();
+
+    expect(ensureLatexVisualBuild(target, retained, `sha256:${"d".repeat(64)}`)).toBe(
+      "unavailable",
+    );
+    await settle();
+    expect(requestLatexBuild).not.toHaveBeenCalled();
     stop();
   });
 

@@ -46,7 +46,7 @@ describe("revision-local Visual edit manifest", () => {
     expect(spans[0]!.hasAttribute("aria-keyshortcuts")).toBe(false);
   });
 
-  it("fails closed for repeated, short, generated, RTL, and multi-node tokens", () => {
+  it("fails closed for incomplete, generated, RTL, and multi-node runs", () => {
     const source =
       "\\begin{document}\nRepeated prose. Repeated prose. Unique literal sentence.\n\\end{document}";
     const { container, spans } = pdfWith("Repeated prose.", "ab", "Generated title");
@@ -64,6 +64,34 @@ describe("revision-local Visual edit manifest", () => {
     expect(manifest.entryFor(split)).toBeNull();
   });
 
+  it("treats unsupported rendered spans as barriers instead of joining around them", () => {
+    const source = "\\begin{document}\nAlpha omega.\n\\end{document}";
+    const { container, spans } = pdfWith("Alpha ", "generated", "omega.");
+    spans[1]!.replaceChildren("gen", document.createElement("b"), "erated");
+    // Even stale/inconsistent document evidence cannot make the materialized
+    // unsupported span disappear from the local cover proof.
+    const manifest = createVisualEditManifest(container, source, ["Alpha ", "omega."]);
+
+    expect(manifest.entries).toHaveLength(0);
+    expect(manifest.entryFor(spans[0]!)).toBeNull();
+    expect(manifest.entryFor(spans[2]!)).toBeNull();
+  });
+
+  it("edits an unambiguous paragraph even when words repeat inside it", () => {
+    const source =
+      "\\begin{document}\nThe result supports the result in this complete paragraph.\n\\end{document}";
+    const { container, spans } = pdfWith(
+      "The result ",
+      "supports the ",
+      "result in this ",
+      "complete paragraph.",
+    );
+    const manifest = createVisualEditManifest(container, source, documentTextItems(container));
+
+    expect(manifest.entries).toHaveLength(4);
+    expect(spans.every((span) => manifest.entryFor(span) !== null)).toBe(true);
+  });
+
   it("maps PDF ligatures and whitespace to stable source-run offsets", () => {
     const source = "\\begin{document}\nBefore office   words after.\n\\end{document}";
     const { container, spans } = pdfWith("Before ofﬁce", "words after.");
@@ -76,15 +104,15 @@ describe("revision-local Visual edit manifest", () => {
     );
   });
 
-  it("fails closed when an omitted short span leaves the source run only partly covered", () => {
+  it("uses short PDF.js fragments when the complete paragraph proves their source run", () => {
     const source = "\\begin{document}\nA unique editable sentence.\n\\end{document}";
     const { container, spans } = pdfWith("A", "unique editable sentence.");
     const manifest = createVisualEditManifest(container, source, documentTextItems(container));
 
-    expect(manifest.entries).toHaveLength(0);
-    expect(manifest.entryFor(spans[0]!)).toBeNull();
-    expect(manifest.entryFor(spans[1]!)).toBeNull();
-    expect(spans[1]!.classList.contains("scient-latex-visual-editable")).toBe(false);
+    expect(manifest.entries).toHaveLength(2);
+    expect(manifest.entryFor(spans[0]!)).not.toBeNull();
+    expect(manifest.entryFor(spans[1]!)).not.toBeNull();
+    expect(spans[1]!.classList.contains("scient-latex-visual-editable")).toBe(true);
   });
 
   it("admits an ordered fragmented run only when every normalized character is covered", () => {
