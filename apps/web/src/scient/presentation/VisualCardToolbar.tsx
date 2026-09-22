@@ -172,7 +172,7 @@ export function VisualCardToolbar(props: {
               <span className="size-0.5 rounded-full bg-current" />
             </span>
           </TooltipTrigger>
-          <TooltipPopup>Drag to move</TooltipPopup>
+          <TooltipPopup className={dragging ? "hidden" : undefined}>Drag to move</TooltipPopup>
         </Tooltip>
         <span id={movementDescriptionId} className="sr-only">
           Use arrow keys to move. Hold Shift for precise movement. Press Home to reset.

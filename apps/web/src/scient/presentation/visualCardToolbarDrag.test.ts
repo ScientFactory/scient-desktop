@@ -70,7 +70,10 @@ function event(
   return input;
 }
 
-function fixture(focusableCard = false) {
+function fixture(
+  focusableCard = false,
+  authored: { right: number; top: number } = { right: 4, top: 4 },
+) {
   const bounds = { left: 100, top: 100, width: 400, height: 300 };
   const size = { width: 100, height: 32 };
   const style = {
@@ -83,7 +86,11 @@ function fixture(focusableCard = false) {
   const card = Object.assign(
     new ElementTarget(["[data-scient-visual-card]", ...(focusableCard ? ["[tabindex]"] : [])]),
     {
-      getBoundingClientRect: () => ({ ...bounds }),
+      getBoundingClientRect: () => ({
+        ...bounds,
+        right: bounds.left + bounds.width,
+        bottom: bounds.top + bounds.height,
+      }),
     },
   );
   const toolbar = Object.assign(new ElementTarget([], card), {
@@ -91,8 +98,8 @@ function fixture(focusableCard = false) {
     getBoundingClientRect: () => {
       const [x = 0, y = 0] = position();
       return {
-        left: bounds.left + bounds.width - size.width - 4 + x,
-        top: bounds.top + 4 + y,
+        left: bounds.left + bounds.width - size.width - authored.right + x,
+        top: bounds.top + authored.top + y,
         ...size,
       };
     },
@@ -156,6 +163,16 @@ describe("visual-card toolbar movement", () => {
     expect(observers).toHaveLength(0);
     expect(event(f.toolbar, "pointerdown").defaultPrevented).toBe(false);
     expect(event(f.toolbar, "click").defaultPrevented).toBe(false);
+  });
+
+  it("keeps an authored top overhang stable when movement begins", () => {
+    const f = fixture(false, { right: 8, top: -12 });
+    f.key("ArrowLeft");
+    expect(f.position()).toEqual([-10, 0]);
+    f.key("ArrowDown");
+    expect(f.position()).toEqual([-10, 10]);
+    f.key("Home");
+    expect(f.toolbar.style.translate).toBe("");
   });
 
   it("captures the handle and coalesces movement to the latest pointer once per frame", () => {
