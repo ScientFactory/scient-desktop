@@ -13,8 +13,12 @@ import {
   ComboboxTrigger,
 } from "../ui/combobox";
 import { selectTriggerVariants } from "../ui/select";
-
-const DEFAULT_FONT_VALUE = "__default__";
+import {
+  DEFAULT_FONT_VALUE,
+  getFontFamilyPreference,
+  getFontPickerDisplayLabel,
+  getFontPickerItems,
+} from "./FontFamilyPicker.logic";
 
 function supportsFontEnumeration(): boolean {
   return (
@@ -100,13 +104,14 @@ export function useFontEnumeration(): FontEnumerationState {
 
 /**
  * A searchable picker over every installed family, the way native editors
- * list system fonts. The trigger always names the font in use: the committed
- * family, or what the default stack resolves to on this machine.
+ * list system fonts. An unset preference keeps its semantic label in the
+ * trigger while the menu also names the family it currently resolves to.
  */
 export function FontFamilyPicker({
   ariaLabel,
   triggerClassName,
   defaultFamily,
+  defaultOptionLabel,
   selectedFamily,
   requireMonospace = false,
   initialOpen = false,
@@ -116,6 +121,8 @@ export function FontFamilyPicker({
   triggerClassName?: string;
   /** What an unset preference renders as, e.g. "Menlo". */
   defaultFamily: string;
+  /** Semantic meaning of an unset preference, e.g. "System default". */
+  defaultOptionLabel: string;
   /** Committed family name; empty string means the default is in use. */
   selectedFamily: string;
   requireMonospace?: boolean;
@@ -148,22 +155,14 @@ export function FontFamilyPicker({
   }, [enumeration, requireMonospace]);
 
   const items = useMemo(() => {
-    const trimmedQuery = query.trim().toLowerCase();
-    const result: string[] = [];
-    if (trimmedQuery.length === 0) result.push(DEFAULT_FONT_VALUE);
-    result.push(
-      ...families.filter(
-        (family) => trimmedQuery.length === 0 || family.toLowerCase().includes(trimmedQuery),
-      ),
-    );
-    return result;
-  }, [query, families]);
+    return getFontPickerItems({ families, query, defaultFamily, defaultOptionLabel });
+  }, [defaultFamily, defaultOptionLabel, families, query]);
 
   const selectedValue = selectedFamily.length === 0 ? DEFAULT_FONT_VALUE : selectedFamily;
 
   const handlePick = (value: string) => {
     setOpen(false);
-    onSelect(value === DEFAULT_FONT_VALUE ? "" : value);
+    onSelect(getFontFamilyPreference(value));
   };
 
   const renderItem = (item: string, index: number) => {
@@ -173,11 +172,13 @@ export function FontFamilyPicker({
       <ComboboxItem hideIndicator index={index} key={item} value={item}>
         <div className="flex w-full min-w-0 items-center justify-between gap-2">
           <span className="min-w-0 truncate" style={{ fontFamily: family }}>
-            {family}
+            {isDefault ? defaultOptionLabel : family}
           </span>
           <span className="flex shrink-0 items-center gap-1.5">
             {isDefault ? (
-              <span className="text-[10px] text-muted-foreground/60">default</span>
+              <span className="max-w-28 truncate text-[10px] text-muted-foreground/60">
+                Currently {defaultFamily}
+              </span>
             ) : null}
             {item === selectedValue ? (
               <CheckIcon className="size-3.5 text-muted-foreground" />
@@ -212,7 +213,7 @@ export function FontFamilyPicker({
         className={cn(selectTriggerVariants({ size: "sm" }), triggerClassName)}
       >
         <span className="min-w-0 truncate">
-          {selectedFamily.length === 0 ? defaultFamily : selectedFamily}
+          {getFontPickerDisplayLabel(selectedFamily, defaultOptionLabel)}
         </span>
         <ChevronDownIcon className="-me-1 size-3 opacity-50" />
       </ComboboxTrigger>
