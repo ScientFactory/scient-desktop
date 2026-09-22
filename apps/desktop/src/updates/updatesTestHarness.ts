@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Config from "effect/Config";
 import type { DesktopUpdateState } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -34,7 +35,29 @@ export interface UpdatesHarnessOptions {
   readonly env?: Record<string, string | undefined>;
 }
 
-export function makeHarness(options: UpdatesHarnessOptions = {}) {
+export function makeHarness(options: UpdatesHarnessOptions = {}): {
+  readonly layer: Layer.Layer<
+    | DesktopAppSettings.DesktopAppSettings
+    | DesktopBackendPool.DesktopBackendPool
+    | DesktopEnvironment.DesktopEnvironment
+    | DesktopState.DesktopState
+    | DesktopUpdates.DesktopUpdates
+    | ElectronUpdater.ElectronUpdater
+    | ElectronWindow.ElectronWindow
+    | NodeServices.NodeServices,
+    Config.ConfigError,
+    never
+  >;
+  readonly checkCount: () => number;
+  readonly quitAndInstalls: () => number;
+  readonly installSteps: string[];
+  readonly downloadCount: () => number;
+  readonly feedUrls: () => ElectronUpdater.ElectronUpdaterFeedUrl[];
+  readonly fullChangelog: () => boolean;
+  readonly listenerCount: () => number;
+  readonly sentStates: DesktopUpdateState[];
+  readonly emit: (eventName: string, payload?: unknown) => void;
+} {
   let checkCount = 0;
   let quitAndInstallCount = 0;
   let downloadCount = 0;

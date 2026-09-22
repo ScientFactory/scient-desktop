@@ -1159,7 +1159,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                   {props.renderProviderSetup(selectedSetupEntry)}
                 </div>
               ) : null}
-              <ComboboxListVirtualized className="size-full min-w-0 p-0 not-empty:p-0">
+              <ComboboxListVirtualized className="not-empty:p-0">
                 <LegendList<string>
                   ref={modelListRef}
                   data={filteredItemKeys}

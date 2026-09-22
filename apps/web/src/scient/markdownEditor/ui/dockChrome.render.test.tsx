@@ -87,11 +87,11 @@ describe("DockOverflowRow", () => {
   it("does not remeasure layout when only command state rerenders", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     vi.stubGlobal("ResizeObserver", TestResizeObserver);
-    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(
-      function (this: HTMLElement) {
-        return this.getAttribute("role") === "toolbar" ? 500 : 0;
-      },
-    );
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return this.getAttribute("role") === "toolbar" ? 500 : 0;
+    });
     const offsetWidth = vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(60);
     const host = document.createElement("div");
     document.body.append(host);
@@ -141,11 +141,11 @@ describe("DockOverflowRow", () => {
     width.mockImplementation(function (this: HTMLElement) {
       return this.getAttribute("role") === "toolbar" ? 120 : 0;
     });
-    vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(
-      function (this: HTMLElement) {
-        return this.hasAttribute("data-dock-reserved") ? 50 : 80;
-      },
-    );
+    vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return this.hasAttribute("data-dock-reserved") ? 50 : 80;
+    });
 
     const host = document.createElement("div");
     document.body.append(host);
