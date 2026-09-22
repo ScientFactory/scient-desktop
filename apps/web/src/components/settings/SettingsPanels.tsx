@@ -1964,6 +1964,7 @@ function FontFamilySettingsRow({
     fontEnumeration.status === "granted" ? (
       <FontFamilyPicker
         ariaLabel={`${title} family`}
+        {...(weight ? { triggerClassName: "min-w-0 px-2" } : {})}
         defaultFamily={defaultFamily}
         selectedFamily={trimmed}
         requireMonospace={requireMonospace}
@@ -1977,7 +1978,7 @@ function FontFamilySettingsRow({
         aria-invalid={draftPending || undefined}
         autoCapitalize="off"
         autoComplete="off"
-        className="min-w-0 flex-1"
+        className={weight ? "min-w-0 flex-1 [&_input]:px-2" : "min-w-0 flex-1"}
         maxLength={200}
         onFocus={() => {
           inputFocusedRef.current = true;
@@ -2023,11 +2024,15 @@ function FontFamilySettingsRow({
     <div
       className={
         weight
-          ? "grid w-full grid-cols-2 items-center gap-2 sm:w-64"
+          ? "flex w-full min-w-0 items-center gap-1.5 sm:w-auto"
           : "flex w-full items-center gap-2 sm:w-auto"
       }
     >
-      <div className={weight ? "col-span-2 min-w-0" : "min-w-0 flex-1 sm:w-44 sm:flex-none"}>
+      <div
+        className={
+          weight ? "min-w-0 flex-1 sm:w-32 sm:flex-none" : "min-w-0 flex-1 sm:w-44 sm:flex-none"
+        }
+      >
         {familyControl}
       </div>
       <Select
@@ -2042,7 +2047,7 @@ function FontFamilySettingsRow({
       >
         <SelectTrigger
           size="sm"
-          className={weight ? "w-full min-w-0" : "w-22 shrink-0"}
+          className={weight ? "w-18 min-w-0 shrink-0 px-2" : "w-22 shrink-0"}
           aria-label={size.label}
         >
           <SelectValue>{size.value} px</SelectValue>
@@ -2065,7 +2070,11 @@ function FontFamilySettingsRow({
             if (isInterfaceFontWeight(parsed)) weight.onChange(parsed);
           }}
         >
-          <SelectTrigger size="sm" className="w-full min-w-0" aria-label="Interface text weight">
+          <SelectTrigger
+            size="sm"
+            className="w-24 min-w-0 shrink-0 px-2"
+            aria-label="Interface text weight"
+          >
             <SelectValue>{INTERFACE_FONT_WEIGHT_LABELS[weight.value]}</SelectValue>
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>

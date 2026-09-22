@@ -2,6 +2,7 @@ import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { CheckIcon, ChevronDownIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { isMonospaceFamily, queryInstalledFontFamilies } from "../../appearanceFonts";
+import { cn } from "../../lib/utils";
 import {
   Combobox,
   ComboboxEmpty,
@@ -104,6 +105,7 @@ export function useFontEnumeration(): FontEnumerationState {
  */
 export function FontFamilyPicker({
   ariaLabel,
+  triggerClassName,
   defaultFamily,
   selectedFamily,
   requireMonospace = false,
@@ -111,6 +113,7 @@ export function FontFamilyPicker({
   onSelect,
 }: {
   ariaLabel: string;
+  triggerClassName?: string;
   /** What an unset preference renders as, e.g. "Menlo". */
   defaultFamily: string;
   /** Committed family name; empty string means the default is in use. */
@@ -204,7 +207,10 @@ export function FontFamilyPicker({
         void listRef.current?.scrollIndexIntoView?.({ index: eventDetails.index, animated: false });
       }}
     >
-      <ComboboxTrigger aria-label={ariaLabel} className={selectTriggerVariants({ size: "sm" })}>
+      <ComboboxTrigger
+        aria-label={ariaLabel}
+        className={cn(selectTriggerVariants({ size: "sm" }), triggerClassName)}
+      >
         <span className="min-w-0 truncate">
           {selectedFamily.length === 0 ? defaultFamily : selectedFamily}
         </span>
