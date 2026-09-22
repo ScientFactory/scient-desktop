@@ -92,12 +92,13 @@ vi.mock("~/components/ui/button", () => ({
   },
 }));
 vi.mock("~/components/ui/alert-dialog", () => ({
-  AlertDialog: () => null,
+  AlertDialog: ({ open, children }: { open: boolean; children: ReactNode }) =>
+    open ? <>{children}</> : null,
   AlertDialogClose: () => null,
   AlertDialogDescription: () => null,
-  AlertDialogFooter: () => null,
+  AlertDialogFooter: ({ children }: { children: ReactNode }) => <>{children}</>,
   AlertDialogHeader: () => null,
-  AlertDialogPopup: () => null,
+  AlertDialogPopup: ({ children }: { children: ReactNode }) => <>{children}</>,
   AlertDialogTitle: () => null,
 }));
 vi.mock("~/components/ui/contextual-confirmation", () => ({
@@ -228,6 +229,105 @@ describe("Python file run actions", () => {
     mocks.submit.mockResolvedValue({ _tag: "Success", value: {} });
     useComputeContextStore.setState({ bindings: {} });
   });
+
+  it.each(["ready", "unavailable"])(
+    "switches only to the confirmed environment, without rerunning code (%s)",
+    async (availability) => {
+      const sessionId = ComputeSessionId.make("system-session");
+      const session = {
+        sessionId,
+        generation: ComputeSessionGeneration.make(1),
+        languageId: "python",
+        label: "Python",
+        workingDirectory: "/project",
+        status: "ready",
+        activity: "idle",
+        runtime: runtime("path").profile,
+      };
+      ensureComputeContext({
+        contextId: testContextId,
+        environmentId: testEnvironmentId,
+        cwd: "/project",
+        ownerKey: "file",
+      });
+      useComputeContextStore.getState().reserveSession({ contextId: testContextId, sessionId });
+      useComputeContextStore.getState().bindSession({
+        contextId: testContextId,
+        sessionId,
+        generation: ComputeSessionGeneration.make(1),
+      });
+      mocks.sessions = [session];
+      const target = runtime("managed");
+      setRuntimeCandidates([target, runtime("path")]);
+      mocks.stop.mockResolvedValue({ _tag: "Success", value: { ...session, status: "stopped" } });
+      mocks.start.mockImplementation(async ({ input }) => ({
+        _tag: "Success",
+        value: { ...session, sessionId: input.sessionId, runtime: target.profile },
+      }));
+      // Inspection's default has changed by confirmation time; the captured target must win.
+      mocks.refresh.mockResolvedValue({
+        _tag: "Success",
+        value: {
+          languages: [
+            {
+              ...mocks.languages[0],
+              runtimes: availability === "ready" ? [runtime("path"), target] : [runtime("path")],
+            },
+          ],
+        },
+      });
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      const root = createRoot(document.createElement("div"));
+      try {
+        await act(() =>
+          root.render(
+            <ComputeFileActions
+              language={PYTHON_COMPUTE_SOURCE}
+              environmentId={testEnvironmentId}
+              cwd="/project"
+              relativePath="test.py"
+              contents="print(1)"
+              sourceRevision="revision-1"
+              sourcePending={false}
+              selection={null}
+              editorSelection={null}
+              contextId={testContextId}
+              onRunRequested={mocks.runRequested}
+              onShowMatlabOneShot={vi.fn()}
+              onExecutionSubmitted={vi.fn()}
+            />,
+          ),
+        );
+        const choose = mocks.buttons.findLast(
+          (button) => button["aria-label"] === "Switch Python environment",
+        )!;
+        expect(choose).toBeDefined();
+        await act(() => choose.onClick?.({} as never));
+        const confirm = mocks.buttons.findLast(
+          (button) => Array.isArray(button.children) && button.children.includes("Switch"),
+        )!;
+        expect(confirm).toBeDefined();
+        await act(async () => {
+          confirm.onClick?.({} as never);
+        });
+        if (availability === "ready") {
+          expect(mocks.stop).toHaveBeenCalledWith({
+            environmentId: testEnvironmentId,
+            input: { cwd: "/project", sessionId, expectedGeneration: 1, onlyIfIdle: true },
+          });
+          expect(mocks.start).toHaveBeenCalledOnce();
+          expect(mocks.start.mock.calls[0]![0].input.executable).toBe(target.profile.executable);
+        } else {
+          expect(mocks.stop).not.toHaveBeenCalled();
+          expect(mocks.start).not.toHaveBeenCalled();
+        }
+        expect(mocks.submit).not.toHaveBeenCalled();
+      } finally {
+        await act(() => root.unmount());
+        vi.unstubAllGlobals();
+      }
+    },
+  );
 
   it("resolves the current default on the correct server instead of pinning a cached executable", async () => {
     const button = render();

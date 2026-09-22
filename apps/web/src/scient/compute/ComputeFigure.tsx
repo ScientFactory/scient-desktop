@@ -5,10 +5,7 @@ import { useRef, useState } from "react";
 import { useAssetUrlRefresh, useAssetUrlState, type AssetUrlState } from "~/assets/assetUrls";
 import { copyStaticImage, downloadStaticImage } from "~/components/preview/staticImageActions";
 import { Button } from "~/components/ui/button";
-import { CompactCommandGroupSeparator } from "~/components/ui/compact-command-group";
-import { compactCommandClassName } from "~/components/ui/compact-command-group.styles";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
-import { cn } from "~/lib/utils";
 import { selectThreadPreviewMiniPlayer, usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
 import {
   openStaticArtifactInPanel,
@@ -18,11 +15,9 @@ import {
   ScientImageActionMenu,
   type ScientImageAction,
 } from "~/scient/images/ScientImageActionMenu";
-import { VisualCardDetails, VisualCardToolbar } from "~/scient/presentation/VisualCardToolbar";
+import { VisualCardDetails } from "~/scient/presentation/VisualCardToolbar";
 import { downloadComputeNativeFigure } from "./ComputeOutputViewDownload";
 import type { ComputeFigurePresentation } from "./computeFigurePresentation";
-
-const computeFigureCommandClassName = cn(compactCommandClassName, "h-6.5 sm:h-5.5");
 
 interface ComputeFigureProps {
   readonly presentation: ComputeFigurePresentation;
@@ -143,21 +138,33 @@ function ComputeFigurePreview(
     <figure className="min-w-0 max-w-full">
       <div
         data-scient-visual-card
-        className={`relative inline-flex min-w-24 max-w-full items-center justify-center rounded-md bg-white ${loaded ? "" : "h-32 w-64"}`}
+        className="inline-flex min-w-24 max-w-full flex-col overflow-hidden rounded-md border border-border/60 bg-white"
       >
-        <span className="absolute -top-3 right-2 z-10 max-w-full">
-          <VisualCardToolbar label="Figure actions" appearance="command-group" movement="direct">
+        <div
+          data-scient-compute-figure-header
+          className="flex h-6.5 min-w-0 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-1"
+        >
+          <span
+            className="min-w-0 flex-1 truncate px-1 text-[11px] font-medium text-muted-foreground"
+            dir="auto"
+          >
+            {presentation.inline.label}
+          </span>
+          <span
+            aria-label="Figure actions"
+            className="flex shrink-0 items-center gap-0.5"
+            role="group"
+          >
             <Tooltip>
               <TooltipTrigger
                 render={
                   <Button
                     aria-label={`Open ${presentation.inline.label} in viewer`}
-                    className={cn("chat-markdown-chrome-action", computeFigureCommandClassName)}
                     disabled={!loaded}
                     onClick={openViewer}
-                    size="icon-xs"
+                    size="icon-header"
                     type="button"
-                    variant="ghost"
+                    variant="chrome-action"
                   />
                 }
               >
@@ -165,12 +172,12 @@ function ComputeFigurePreview(
               </TooltipTrigger>
               <TooltipPopup>Open in viewer</TooltipPopup>
             </Tooltip>
-            <CompactCommandGroupSeparator />
             <ScientImageActionMenu
               actions={actions}
               busy={busy}
               run={run}
-              triggerClassName={computeFigureCommandClassName}
+              triggerSize="icon-header"
+              triggerVariant="chrome-action"
               details={
                 <VisualCardDetails
                   title={presentation.inline.label}
@@ -178,60 +185,65 @@ function ComputeFigurePreview(
                 />
               }
             />
-          </VisualCardToolbar>
-        </span>
-        {asset._tag === "Success" ? (
-          <button
-            type="button"
-            aria-label={`View ${presentation.inline.label}`}
-            disabled={!loaded}
-            onClick={openViewer}
-            className="flex max-w-full cursor-zoom-in items-center justify-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-default"
-          >
-            <img
-              key={imageKey}
-              ref={imageElement}
-              src={asset.url}
-              alt={presentation.inline.label}
-              loading="lazy"
-              decoding="async"
-              draggable={false}
-              className={`block max-h-[min(60vh,42rem)] max-w-full object-contain ${loaded ? "" : "opacity-0"}`}
-              onLoad={(event) => {
-                if (imageElement.current !== event.currentTarget) return;
-                setFailedKey(null);
-                setImage({
-                  key: imageKey,
-                  width: event.currentTarget.naturalWidth,
-                  height: event.currentTarget.naturalHeight,
-                });
-              }}
-              onError={(event) => {
-                if (imageElement.current === event.currentTarget) setFailedKey(imageKey);
-              }}
-            />
-          </button>
-        ) : null}
-        {!loaded ? (
-          <div
-            role="status"
-            className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-3 pt-8 pb-3 text-center text-xs text-muted-foreground"
-          >
-            {failed ? (
-              <>
-                <span>Figure preview unavailable</span>
-                <Button size="xs" variant="outline" onClick={props.retry}>
-                  Try again
-                </Button>
-              </>
-            ) : (
-              <span className="flex items-center gap-2">
-                <LoaderCircle className="size-3 animate-spin" />
-                Loading figure…
-              </span>
-            )}
-          </div>
-        ) : null}
+          </span>
+        </div>
+        <div
+          data-scient-compute-figure-body
+          className={`relative flex min-w-0 items-center justify-center ${loaded ? "" : "h-32 w-64 max-w-full"}`}
+        >
+          {asset._tag === "Success" ? (
+            <button
+              type="button"
+              aria-label={`View ${presentation.inline.label}`}
+              disabled={!loaded}
+              onClick={openViewer}
+              className="flex max-w-full cursor-zoom-in items-center justify-center outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-default"
+            >
+              <img
+                key={imageKey}
+                ref={imageElement}
+                src={asset.url}
+                alt={presentation.inline.label}
+                loading="lazy"
+                decoding="async"
+                draggable={false}
+                className={`block max-h-[min(60vh,42rem)] max-w-full object-contain ${loaded ? "" : "opacity-0"}`}
+                onLoad={(event) => {
+                  if (imageElement.current !== event.currentTarget) return;
+                  setFailedKey(null);
+                  setImage({
+                    key: imageKey,
+                    width: event.currentTarget.naturalWidth,
+                    height: event.currentTarget.naturalHeight,
+                  });
+                }}
+                onError={(event) => {
+                  if (imageElement.current === event.currentTarget) setFailedKey(imageKey);
+                }}
+              />
+            </button>
+          ) : null}
+          {!loaded ? (
+            <div
+              role="status"
+              className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-3 py-3 text-center text-xs text-muted-foreground"
+            >
+              {failed ? (
+                <>
+                  <span>Figure preview unavailable</span>
+                  <Button size="xs" variant="outline" onClick={props.retry}>
+                    Try again
+                  </Button>
+                </>
+              ) : (
+                <span className="flex items-center gap-2">
+                  <LoaderCircle className="size-3 animate-spin" />
+                  Loading figure…
+                </span>
+              )}
+            </div>
+          ) : null}
+        </div>
       </div>
       {message ? (
         <p role="status" className="mt-1 text-xs text-muted-foreground">

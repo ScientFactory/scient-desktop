@@ -53,6 +53,7 @@ import {
   type ComputeProjectId,
   type ComputeQueueState,
   type ComputeSessionCommandInput,
+  type ComputeStopSessionInput,
   type ComputeSessionGeneration,
   type ComputeSessionJournalEntry,
   type ComputeSessionJournalEvent,
@@ -434,7 +435,7 @@ export class ComputeSessionService extends Context.Service<
       input: ComputeSessionCommandInput,
     ) => Effect.Effect<ComputeSessionRecord, ComputeOperationError>;
     readonly stopSession: (
-      input: ComputeSessionCommandInput,
+      input: ComputeStopSessionInput,
     ) => Effect.Effect<ComputeSessionRecord, ComputeOperationError>;
     readonly inspectVariables: (
       input: ComputeSessionCommandInput,
@@ -3117,7 +3118,7 @@ const make = Effect.gen(function* () {
       return record.generation;
     });
 
-  const stopSession = (input: ComputeSessionCommandInput) =>
+  const stopSession = (input: ComputeStopSessionInput) =>
     Effect.gen(function* () {
       const live = yield* requireLiveSession("stop", input.projectId, input.sessionId);
       const generation = yield* live.mutation
@@ -3125,6 +3126,19 @@ const make = Effect.gen(function* () {
           Effect.gen(function* () {
             const record = yield* Ref.get(live.recordRef);
             yield* requireCurrentGeneration("stop", live, record, input.expectedGeneration);
+            // Admission shares the submission lock: a stale idle read cannot cancel new work.
+            if (
+              input.onlyIfIdle &&
+              (record.status !== "ready" ||
+                record.activity !== "idle" ||
+                (yield* Ref.get(live.pendingRef)).size > 0)
+            ) {
+              return yield* computeError(
+                "stop",
+                "session-not-running",
+                "The session changed or is busy. Wait for it to finish before switching environments.",
+              );
+            }
             return yield* beginStop(live);
           }),
         )

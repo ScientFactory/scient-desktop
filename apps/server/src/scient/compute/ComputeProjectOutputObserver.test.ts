@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Clock from "effect/Clock";
 
 import {
   ComputeProjectOutputObserver,
@@ -35,6 +36,30 @@ function withProject<A, E, R>(
 }
 
 describe("ComputeProjectOutputObserver", () => {
+  it.effect("bounds observation with the injected clock and reports the coverage gap", () =>
+    withProject((root) =>
+      Effect.gen(function* () {
+        const observation = yield* begin(root);
+        yield* Effect.promise(() => NodeFSP.writeFile(NodePath.join(root, "figure.svg"), "<svg/>"));
+        const clock = yield* Clock.Clock;
+        let now = 0;
+        const collection = yield* collect(observation).pipe(
+          Effect.provideService(Clock.Clock, {
+            ...clock,
+            currentTimeMillisUnsafe: () => {
+              now += 2_000;
+              return now;
+            },
+          }),
+        );
+        expect(collection.images).toEqual([]);
+        expect(collection.warnings).toEqual([
+          "Some project files could not be checked (time limit).",
+        ]);
+      }),
+    ).pipe(Effect.provide(liveLayer)),
+  );
+
   it.effect("collects new and changed SVG/PNG files with project provenance", () =>
     withProject((root) =>
       Effect.gen(function* () {
@@ -168,7 +193,93 @@ describe("ComputeProjectOutputObserver", () => {
 
         const collection = yield* collect(observation);
         expect(collection.images).toEqual([]);
-        expect(collection.warnings.some((warning) => warning.includes("scan limit"))).toBe(true);
+        expect(collection.warnings).toEqual([
+          "Some project files could not be checked (entry limit).",
+        ]);
+      }),
+    ).pipe(Effect.provide(liveLayer)),
+  );
+
+  it.effect("retains verified root changes even when an unrelated subtree exceeds the budget", () =>
+    withProject((root) =>
+      Effect.gen(function* () {
+        yield* Effect.promise(() => NodeFSP.mkdir(NodePath.join(root, "large")));
+        yield* Effect.promise(() => NodeFSP.writeFile(NodePath.join(root, "known.svg"), "<svg/>"));
+        for (let start = 0; start < 4100; start += 128) {
+          yield* Effect.promise(() =>
+            Promise.all(
+              Array.from({ length: Math.min(128, 4100 - start) }, (_, offset) =>
+                NodeFSP.writeFile(NodePath.join(root, "large", `${start + offset}.txt`), ""),
+              ),
+            ),
+          );
+        }
+        const observation = yield* begin(root);
+        yield* Effect.promise(() =>
+          NodeFSP.writeFile(NodePath.join(root, "known.svg"), "<svg><circle/></svg>"),
+        );
+        yield* Effect.promise(() => NodeFSP.writeFile(NodePath.join(root, "new.svg"), "<svg/>"));
+        const collection = yield* collect(observation);
+        expect(collection.images.map((image) => image.relativePath)).toEqual([
+          "known.svg",
+          "new.svg",
+        ]);
+        expect(collection.warnings).toEqual([
+          "Some project files could not be checked (entry limit).",
+        ]);
+      }),
+    ).pipe(Effect.provide(liveLayer)),
+  );
+
+  it.effect("does not mistake an unobserved pre-existing image for a new output", () =>
+    withProject((root) =>
+      Effect.gen(function* () {
+        yield* Effect.promise(() => NodeFSP.mkdir(NodePath.join(root, "unobserved")));
+        yield* Effect.promise(() =>
+          NodeFSP.writeFile(NodePath.join(root, "unobserved", "old.svg"), "<svg/>"),
+        );
+        const observation = yield* begin(root);
+        const baseline = observation.baseline!;
+        const partial = {
+          ...observation,
+          baseline: {
+            ...baseline,
+            files: new Map(),
+            directories: new Map([["", baseline.directories.get("")!]]),
+            warnings: ["Some project files could not be checked (entry limit)."],
+          },
+        };
+        yield* Effect.promise(() =>
+          NodeFSP.mkdir(NodePath.join(root, "new", "nested"), { recursive: true }),
+        );
+        yield* Effect.promise(() =>
+          NodeFSP.writeFile(NodePath.join(root, "new", "nested", "new.svg"), "<svg/>"),
+        );
+        const collection = yield* collect(partial);
+        expect(collection.images.map((image) => image.relativePath)).toEqual([
+          "new/nested/new.svg",
+        ]);
+        expect(collection.warnings).toHaveLength(1);
+      }),
+    ).pipe(Effect.provide(liveLayer)),
+  );
+
+  it.effect("reports depth gaps without claiming any figures were generated or lost", () =>
+    withProject((root) =>
+      Effect.gen(function* () {
+        const deep = NodePath.join(root, ...Array.from({ length: 9 }, () => "nested"));
+        yield* Effect.promise(() => NodeFSP.mkdir(deep, { recursive: true }));
+        const observation = yield* begin(root);
+        const unchanged = yield* collect(observation);
+        expect(unchanged.images).toEqual([]);
+        expect(unchanged.warnings).toEqual([
+          "Some project files could not be checked (depth limit).",
+        ]);
+        yield* Effect.promise(() => NodeFSP.writeFile(NodePath.join(deep, "unseen.svg"), "<svg/>"));
+        yield* Effect.promise(() => NodeFSP.writeFile(NodePath.join(root, "seen.svg"), "<svg/>"));
+        const collection = yield* collect(observation);
+        expect(collection.images.map((image) => image.relativePath)).toEqual(["seen.svg"]);
+        expect(collection.warnings).toEqual(unchanged.warnings);
       }),
     ).pipe(Effect.provide(liveLayer)),
   );

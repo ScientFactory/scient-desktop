@@ -122,6 +122,8 @@ import { buttonVariants } from "~/components/ui/button";
 import { cn } from "~/lib/utils";
 import pythonLogo from "~/assets/compute/python.svg";
 import matlabLogo from "~/assets/compute/matlab.svg";
+import octaveLogo from "~/assets/compute/octave.svg";
+import wolframLogo from "~/assets/compute/wolfram.svg";
 
 const managedPath = "/scient/python";
 const systemPath = "/system/python";
@@ -746,22 +748,28 @@ describe("Scientific Computing settings interactions", () => {
 
   it("shows only Coming soon for preview languages without changing runtime settings", async () => {
     await render();
-    for (const [id, hasBrandLogo] of [
-      ["julia", true],
-      ["r", true],
-      ["rust", true],
-      ["spss", true],
-      ["sql", false],
-      ["octave", false],
-      ["wolfram", false],
-      ["stata", false],
+    for (const [id, logo] of [
+      ["julia", "brand"],
+      ["r", "brand"],
+      ["rust", "brand"],
+      ["spss", "brand"],
+      ["sql", "symbol"],
+      ["octave", octaveLogo],
+      ["wolfram", wolframLogo],
+      ["stata", "symbol"],
     ] as const) {
       const trigger = container.querySelector<HTMLButtonElement>(
         `#scientific-computing-${id}-trigger`,
       )!;
       expect(trigger.textContent).toContain("Coming soon");
-      expect(trigger.querySelector("img") !== null).toBe(hasBrandLogo);
-      if (!hasBrandLogo) expect(trigger.querySelector("svg")).not.toBeNull();
+      if (logo === "symbol") {
+        expect(trigger.querySelector("img")).toBeNull();
+        expect(trigger.querySelector(`[data-language-icon='${id}']`)).not.toBeNull();
+      } else {
+        const image = trigger.querySelector("img");
+        expect(image).not.toBeNull();
+        if (logo !== "brand") expect(image?.getAttribute("src")).toBe(logo);
+      }
       await act(() => trigger.click());
       const panel = container.querySelector<HTMLElement>(`#scientific-computing-${id}`)!;
       expect(panel.hidden).toBe(false);

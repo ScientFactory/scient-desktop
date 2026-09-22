@@ -298,7 +298,7 @@ describe("python compute surface model", () => {
         preferredRuntimeExecutable: null,
         scientificPackagesMissing: false,
       }),
-    ).toEqual({ kind: "status", label: "Python running", canRun: true });
+    ).toEqual({ kind: "status", label: "Python · Custom · Running", canRun: true });
     expect(
       resolveComputeRuntimeToolbarState({
         liveSession: {
@@ -346,7 +346,7 @@ describe("python compute surface model", () => {
         preferredRuntimeExecutable: "/scient/managed/python",
         scientificPackagesMissing: true,
       }),
-    ).toEqual({ kind: "switch", label: "Switch Python", canRun: true });
+    ).toEqual({ kind: "switch", label: "Python · Custom", canRun: true });
   });
 
   it("distinguishes scientific packages from the ability to run ordinary Python", () => {
@@ -403,7 +403,7 @@ describe("python compute surface model", () => {
         preferredRuntimeExecutable: "/MATLAB/bin/matlab",
         scientificPackagesMissing: false,
       }),
-    ).toEqual({ kind: "status", label: "MATLAB", canRun: true });
+    ).toEqual({ kind: "status", label: "MATLAB · Custom", canRun: true });
     expect(
       resolveComputeRuntimeToolbarState({
         languageId: "matlab",
@@ -427,7 +427,7 @@ describe("python compute surface model", () => {
         preferredRuntimeExecutable: "/MATLAB/bin/matlab",
         scientificPackagesMissing: false,
       }),
-    ).toEqual({ kind: "status", label: "MATLAB", canRun: true });
+    ).toEqual({ kind: "status", label: "MATLAB · Custom", canRun: true });
   });
 
   it("does not offer a switch from stale inspection data or while work is running", () => {
@@ -447,7 +447,7 @@ describe("python compute surface model", () => {
     };
     expect(resolveComputeRuntimeToolbarState(input)).toEqual({
       kind: "status",
-      label: "Python",
+      label: "Python · Custom",
       canRun: true,
     });
     expect(
@@ -456,6 +456,6 @@ describe("python compute surface model", () => {
         runtimeInspectionPending: false,
         liveSession: { ...liveSession, activity: "busy" },
       }),
-    ).toEqual({ kind: "status", label: "Python running", canRun: true });
+    ).toEqual({ kind: "status", label: "Python · Custom · Running", canRun: true });
   });
 });
