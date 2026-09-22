@@ -108,19 +108,26 @@ assertion, or platform-specific skip was weakened. The focused real-kernel and
 fresh-run files pass locally against the fully provisioned managed runtime;
 Windows acceptance remains the hosted exact-head rerun described below.
 
-### Hosted Windows persistence finding under investigation
+### Hosted Windows atomic-replacement finding
 
 After the cleanup fix, the complete bridge-loss and kernel-death suite passes
 on Windows. Python 3.12 also passes the following fresh-session suite. Python
-3.10 reproducibly reaches the first fresh execution's `accepted` event and then
-loses the session while recording that event. The current structured log
-collapses the typed Effect cause to `[Object]`, so it does not identify the
-failing filesystem operation or Windows error code.
+3.10 reproducibly reached the first fresh execution's `accepted` event and then
+lost the session while recording that event. Rendering the complete Effect
+cause identified the exact failure: Windows returned `EPERM` while atomically
+renaming a staged execution result over `result.json`, which the test was
+concurrently reading. The failed persistence transition correctly ended the
+session, but a transient destination lock should not have been treated as
+permanent data loss.
 
-The existing error log now renders the complete Effect cause. This is
-diagnostic hardening rather than a guessed recovery policy: the next hosted
-run must identify the exact operation before production persistence behavior
-is changed. The Python 3.10 failure remains an acceptance blocker.
+The shared atomic-text replacement primitive now retries only Windows
+`EPERM`, `EACCES`, and `EBUSY` rename failures with bounded exponential
+backoff. Other platforms and error codes still fail immediately, cancellation
+still interrupts backoff, and the staged file remains private until one rename
+succeeds. Tests cover eventual replacement, immediate permanent/non-Windows
+failure, bounded exhaustion, cancellation, and temporary-file cleanup. Hosted
+Python 3.10 remains an acceptance blocker until the exact-head matrix proves
+the fix.
 
 ### Count-based unit-test wait finding
 
