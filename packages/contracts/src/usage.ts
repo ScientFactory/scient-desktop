@@ -15,24 +15,25 @@
 import * as Schema from "effect/Schema";
 
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { UsageAccountingSourceId } from "./usageAccountingSourceId.ts";
 
 /**
  * Bumped whenever the shape of {@link UsageSummary} changes incompatibly. The
  * client renders partial coverage when an environment reports an older version
  * rather than failing the whole page.
  */
-export const USAGE_CONTRACT_VERSION = 5 as const;
+export const USAGE_CONTRACT_VERSION = 6 as const;
 
 /**
  * Oldest {@link UsageSummary} version a current client will still merge.
  *
- * v5 only adds `grok` to {@link UsageProviderKind}; v4 Claude/Codex buckets
- * remain valid, so mixed-version environments keep those totals instead of
- * treating every older server as stale.
+ * v5 added `grok`; v6 adds `pi` and optional provider accounting. v4
+ * Claude/Codex buckets remain valid, so mixed-version environments keep those
+ * totals instead of treating every older server as stale.
  */
 export const USAGE_MERGE_COMPATIBLE_SINCE = 4 as const;
 
-export const UsageProviderKind = Schema.Literals(["claude", "codex", "grok"]);
+export const UsageProviderKind = Schema.Literals(["claude", "codex", "grok", "pi"]);
 export type UsageProviderKind = typeof UsageProviderKind.Type;
 
 /**
@@ -169,6 +170,94 @@ export const UsagePricing = Schema.Struct({
 });
 export type UsagePricing = typeof UsagePricing.Type;
 
+/** Provider-billed metrics returned by OpenRouter's Analytics API. */
+export const UsageAccountingMetrics = Schema.Struct({
+  requests: NonNegativeInt,
+  totalTokens: NonNegativeInt,
+  promptTokens: NonNegativeInt,
+  completionTokens: NonNegativeInt,
+  reasoningTokens: NonNegativeInt,
+  cachedTokens: NonNegativeInt,
+  totalCostUsd: Schema.Number,
+  creditsCostUsd: Schema.Number,
+  byokCostUsd: Schema.Number,
+  upstreamCostUsd: Schema.Number,
+  cacheCostUsd: Schema.Number,
+  dataCostUsd: Schema.Number,
+  webCostUsd: Schema.Number,
+});
+export type UsageAccountingMetrics = typeof UsageAccountingMetrics.Type;
+
+export const UsageAccountingKey = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+  label: Schema.optional(TrimmedNonEmptyString),
+  workspaceId: Schema.optional(TrimmedNonEmptyString),
+  disabled: Schema.Boolean,
+  limitUsd: Schema.NullOr(Schema.Number),
+  limitRemainingUsd: Schema.NullOr(Schema.Number),
+  limitReset: Schema.optional(Schema.NullOr(Schema.Literals(["daily", "weekly", "monthly"]))),
+  includeByokInLimit: Schema.optional(Schema.Boolean),
+  usageUsd: Schema.Number,
+  usageDailyUsd: Schema.Number,
+  usageWeeklyUsd: Schema.Number,
+  usageMonthlyUsd: Schema.Number,
+  byokUsageUsd: Schema.Number,
+  expiresAt: Schema.NullOr(Schema.String),
+});
+export type UsageAccountingKey = typeof UsageAccountingKey.Type;
+
+/** One authoritative `(UTC day, API key, model)` OpenRouter cell. */
+export const UsageAccountingRow = Schema.Struct({
+  day: UsageDay,
+  keyId: TrimmedNonEmptyString,
+  model: TrimmedNonEmptyString,
+  /** Provider-authored display name when the model catalog can resolve the analytics slug. */
+  modelName: Schema.optional(TrimmedNonEmptyString),
+  metrics: UsageAccountingMetrics,
+});
+export type UsageAccountingRow = typeof UsageAccountingRow.Type;
+
+export const UsageAccountingSourceStatus = Schema.Literals(["ok", "cached", "partial", "failed"]);
+export type UsageAccountingSourceStatus = typeof UsageAccountingSourceStatus.Type;
+export const UsageAccountingSourceSummary = Schema.Struct({
+  sourceId: UsageAccountingSourceId,
+  kind: Schema.Literal("openrouter"),
+  label: TrimmedNonEmptyString,
+  status: UsageAccountingSourceStatus,
+  lastSyncedAt: Schema.NullOr(Schema.String),
+  message: Schema.NullOr(TrimmedNonEmptyString),
+  truncated: Schema.Boolean,
+  totalCreditsUsd: Schema.NullOr(Schema.Number),
+  totalUsageUsd: Schema.NullOr(Schema.Number),
+  keys: Schema.Array(UsageAccountingKey),
+  rows: Schema.Array(UsageAccountingRow),
+});
+export type UsageAccountingSourceSummary = typeof UsageAccountingSourceSummary.Type;
+
+/** Local pi execution truth. Cost is explicitly an estimate, never billed spend. */
+export const PiUsageRow = Schema.Struct({
+  day: UsageDay,
+  connectionId: TrimmedNonEmptyString,
+  /** Friendly labels resolved from current custom-model settings when available. */
+  connectionName: Schema.optional(TrimmedNonEmptyString),
+  provider: TrimmedNonEmptyString,
+  model: TrimmedNonEmptyString,
+  modelName: Schema.optional(TrimmedNonEmptyString),
+  totals: UsageTokenTotals,
+  estimatedCostUsd: Schema.Number,
+  records: NonNegativeInt,
+  sessions: NonNegativeInt,
+  generations: NonNegativeInt,
+});
+export type PiUsageRow = typeof PiUsageRow.Type;
+
+export const UsageAccountingSummary = Schema.Struct({
+  sources: Schema.Array(UsageAccountingSourceSummary),
+  pi: Schema.Array(PiUsageRow),
+});
+export type UsageAccountingSummary = typeof UsageAccountingSummary.Type;
+
 export const UsageSummaryInput = Schema.Struct({
   /** Inclusive first day of the window, in `timeZone`. */
   sinceDay: UsageDay,
@@ -185,6 +274,8 @@ export const UsageSummaryInput = Schema.Struct({
   sinceTime: Schema.optional(TrimmedNonEmptyString),
   /** Exclusive UTC instant for an hourly rolling window. */
   untilTime: Schema.optional(TrimmedNonEmptyString),
+  /** Opt-in because provider billing may require bounded external API calls. */
+  includeAccounting: Schema.optional(Schema.Boolean),
 });
 export type UsageSummaryInput = typeof UsageSummaryInput.Type;
 
@@ -197,6 +288,8 @@ export const UsageSummary = Schema.Struct({
   buckets: Schema.Array(UsageBucket),
   sources: Schema.Array(UsageSource),
   pricing: UsagePricing,
+  /** Optional for version-skew compatibility with servers before v6. */
+  accounting: Schema.optional(UsageAccountingSummary),
   /** Wall-clock cost of the scan, surfaced in diagnostics. */
   scanDurationMs: NonNegativeInt,
 });

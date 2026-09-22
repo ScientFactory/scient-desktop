@@ -104,7 +104,7 @@ function deleteAtomFromEditor(
  * maps that edge to the atom's logical before/after document position.
  */
 export function handleInlineAtomEditorKeyDown(input: {
-  readonly editor: HTMLInputElement;
+  readonly editor: HTMLInputElement | HTMLTextAreaElement;
   readonly event: KeyboardEvent;
   readonly fieldDirection: PhysicalTextDirection;
   readonly getPos: () => number | undefined;

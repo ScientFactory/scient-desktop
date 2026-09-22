@@ -24,6 +24,7 @@ import {
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
   type UsageLimitSourceConfig,
+  type UsageAccountingSourceConfig,
   ProviderDriverKind,
   ProviderInstanceId,
   resolveProviderInstanceEnabled,
@@ -152,14 +153,18 @@ function providerEnvironmentSecretName(input: {
 }
 
 /**
- * On disk the hub key is replaced by this marker and the real value lives in
- * the secret store, mirroring provider environment secrets. A client that
- * sends the marker back means "keep what you have".
+ * On disk provider management keys are replaced by this marker and their real
+ * values live in the secret store, mirroring provider environment secrets. A
+ * client that sends the marker back means "keep what you have".
  */
-const USAGE_LIMIT_SOURCE_KEY_REDACTED = "\u2022\u2022\u2022\u2022\u2022\u2022";
+const MANAGEMENT_KEY_REDACTED = "\u2022\u2022\u2022\u2022\u2022\u2022";
 
 function usageLimitSourceSecretName(sourceId: string): string {
   return `usage-limit-source-${Buffer.from(sourceId, "utf8").toString("base64url")}`;
+}
+
+function usageAccountingSourceSecretName(sourceId: string): string {
+  return `usage-accounting-source-${Buffer.from(sourceId, "utf8").toString("base64url")}`;
 }
 
 function redactProviderEnvironmentVariable(
@@ -194,11 +199,20 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
       id,
       {
         ...source,
-        managementKey: source.managementKey.length > 0 ? USAGE_LIMIT_SOURCE_KEY_REDACTED : "",
+        managementKey: source.managementKey.length > 0 ? MANAGEMENT_KEY_REDACTED : "",
       },
     ]),
   );
-  return { ...settings, providerInstances, usageLimitSources };
+  const usageAccountingSources = Object.fromEntries(
+    Object.entries(settings.usageAccountingSources).map(([id, source]) => [
+      id,
+      {
+        ...source,
+        managementKey: source.managementKey.length > 0 ? MANAGEMENT_KEY_REDACTED : "",
+      },
+    ]),
+  );
+  return { ...settings, providerInstances, usageLimitSources, usageAccountingSources };
 }
 
 export class ServerSettingsService extends Context.Service<
@@ -747,7 +761,7 @@ const make = Effect.gen(function* () {
       }
       const usageLimitSources: Record<string, UsageLimitSourceConfig> = {};
       for (const [sourceId, source] of Object.entries(settings.usageLimitSources)) {
-        if (source.managementKey !== USAGE_LIMIT_SOURCE_KEY_REDACTED) {
+        if (source.managementKey !== MANAGEMENT_KEY_REDACTED) {
           usageLimitSources[sourceId] = source;
           continue;
         }
@@ -763,10 +777,29 @@ const make = Effect.gen(function* () {
           managementKey: Option.isSome(secret) ? textDecoder.decode(secret.value) : "",
         };
       }
+      const usageAccountingSources: Record<string, UsageAccountingSourceConfig> = {};
+      for (const [sourceId, source] of Object.entries(settings.usageAccountingSources)) {
+        if (source.managementKey !== MANAGEMENT_KEY_REDACTED) {
+          usageAccountingSources[sourceId] = source;
+          continue;
+        }
+        const secret = yield* secretStore
+          .get(usageAccountingSourceSecretName(sourceId))
+          .pipe(
+            Effect.mapError(
+              (cause) => new ServerSettingsError({ settingsPath, operation: "read-secret", cause }),
+            ),
+          );
+        usageAccountingSources[sourceId] = {
+          ...source,
+          managementKey: Option.isSome(secret) ? textDecoder.decode(secret.value) : "",
+        };
+      }
       return {
         ...settings,
         providerInstances: providerInstances as ServerSettings["providerInstances"],
         usageLimitSources: usageLimitSources as ServerSettings["usageLimitSources"],
+        usageAccountingSources: usageAccountingSources as ServerSettings["usageAccountingSources"],
       };
     });
 
@@ -883,7 +916,7 @@ const make = Effect.gen(function* () {
       const usageLimitSources: Record<string, UsageLimitSourceConfig> = {};
       for (const [sourceId, source] of Object.entries(next.usageLimitSources)) {
         const secretName = usageLimitSourceSecretName(sourceId);
-        if (source.managementKey === USAGE_LIMIT_SOURCE_KEY_REDACTED) {
+        if (source.managementKey === MANAGEMENT_KEY_REDACTED) {
           usageLimitSources[sourceId] = source;
           continue;
         }
@@ -897,7 +930,7 @@ const make = Effect.gen(function* () {
           secretName,
           value: textEncoder.encode(source.managementKey),
         });
-        usageLimitSources[sourceId] = { ...source, managementKey: USAGE_LIMIT_SOURCE_KEY_REDACTED };
+        usageLimitSources[sourceId] = { ...source, managementKey: MANAGEMENT_KEY_REDACTED };
       }
       for (const sourceId of Object.keys(current.usageLimitSources)) {
         if (sourceId in next.usageLimitSources) continue;
@@ -908,11 +941,44 @@ const make = Effect.gen(function* () {
         });
       }
 
+      const usageAccountingSources: Record<string, UsageAccountingSourceConfig> = {};
+      for (const [sourceId, source] of Object.entries(next.usageAccountingSources)) {
+        const secretName = usageAccountingSourceSecretName(sourceId);
+        if (source.managementKey === MANAGEMENT_KEY_REDACTED) {
+          usageAccountingSources[sourceId] = source;
+          continue;
+        }
+        if (source.managementKey.length === 0) {
+          changes.push({ kind: "remove", secretName, operation: "remove-secret" });
+          usageAccountingSources[sourceId] = source;
+          continue;
+        }
+        changes.push({
+          kind: "write",
+          secretName,
+          value: textEncoder.encode(source.managementKey),
+        });
+        usageAccountingSources[sourceId] = {
+          ...source,
+          managementKey: MANAGEMENT_KEY_REDACTED,
+        };
+      }
+      for (const sourceId of Object.keys(current.usageAccountingSources)) {
+        if (sourceId in next.usageAccountingSources) continue;
+        changes.push({
+          kind: "remove",
+          secretName: usageAccountingSourceSecretName(sourceId),
+          operation: "remove-stale-secret",
+        });
+      }
+
       return {
         settings: {
           ...next,
           providerInstances: providerInstances as ServerSettings["providerInstances"],
           usageLimitSources: usageLimitSources as ServerSettings["usageLimitSources"],
+          usageAccountingSources:
+            usageAccountingSources as ServerSettings["usageAccountingSources"],
         },
         changes,
       };

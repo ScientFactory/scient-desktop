@@ -48,6 +48,8 @@ import * as ServerSettings from "../serverSettings.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { mergeProviderInstanceEnvironment } from "../provider/ProviderInstanceEnvironment.ts";
 import { UsageAggregator } from "./usageAggregation.ts";
+import { makeUsageAccounting } from "./usageAccounting.ts";
+import { scanPiUsage } from "./piUsage.ts";
 import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
   listTranscriptFiles,
@@ -150,6 +152,7 @@ export const make = Effect.gen(function* () {
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const httpClient = yield* HttpClient.HttpClient;
   const hostEnvironment = yield* HostProcessEnvironment;
+  const usageAccounting = yield* makeUsageAccounting;
 
   const fileCache: ScanCache = new Map();
   const sourceCache = new Map<string, typeof CachedSource.Type>();
@@ -538,10 +541,43 @@ export const make = Effect.gen(function* () {
     // Pricing only matters once records are aggregated, so the rate table
     // loads while transcripts stream instead of gating them: a cold rates
     // fetch on a slow network no longer delays the scan by its own timeout.
-    const [, scannedDirs] = yield* Effect.all(
-      [ensureRates(false), collectDirs(windowStartMs, settings, retentionCutoffMs)],
-      { concurrency: 2 },
+    const [, scannedDirs, accountingSources, rawPiUsage] = yield* Effect.all(
+      [
+        ensureRates(false),
+        collectDirs(windowStartMs, settings, retentionCutoffMs),
+        input.includeAccounting
+          ? usageAccounting.read({
+              cachePath: path.join(config.stateDir, "usage-accounting-cache.json"),
+              query: input,
+              sources: settings.usageAccountingSources,
+            })
+          : Effect.succeed([]),
+        input.includeAccounting
+          ? Effect.promise(() =>
+              scanPiUsage({
+                root: path.join(config.stateDir, "providers", "pi"),
+                sinceMs: windowStartMs,
+                timeZone: input.timeZone,
+                sinceDay: input.sinceDay,
+                untilDay: input.untilDay,
+              }),
+            ).pipe(Effect.catchCause(() => Effect.succeed([])))
+          : Effect.succeed([]),
+      ],
+      { concurrency: 4 },
     );
+    const customModelConnections = new Map(
+      settings.customModels.connections.map((connection) => [connection.id, connection]),
+    );
+    const piUsage = rawPiUsage.map((row) => {
+      const connection = customModelConnections.get(row.connectionId);
+      const model = connection?.models.find((candidate) => candidate.modelId === row.model);
+      return {
+        ...row,
+        ...(connection === undefined ? {} : { connectionName: connection.name }),
+        ...(model === undefined ? {} : { modelName: model.name }),
+      };
+    });
 
     const aggregator = new UsageAggregator({
       timeZone: input.timeZone,
@@ -636,6 +672,7 @@ export const make = Effect.gen(function* () {
       buckets: aggregated.buckets,
       sources,
       pricing: pricing(),
+      accounting: { sources: accountingSources, pi: piUsage },
       scanDurationMs: Math.max(0, finishedAtMs - startedAtMs),
     } satisfies UsageSummary;
   });
@@ -658,6 +695,7 @@ export const make = Effect.gen(function* () {
       input.resolution ?? "day",
       input.sinceTime ?? null,
       input.untilTime ?? null,
+      input.includeAccounting ?? false,
       priceOverrides,
     ]);
 

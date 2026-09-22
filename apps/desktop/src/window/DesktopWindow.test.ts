@@ -30,8 +30,13 @@ vi.mock("electron", async (importOriginal) => ({
     getAllDisplays: vi.fn(() => [
       {
         bounds: { x: 0, y: 0, width: 1920, height: 1080 },
+        workArea: { x: 0, y: 0, width: 1920, height: 1040 },
       },
     ]),
+    getPrimaryDisplay: vi.fn(() => ({
+      bounds: { x: 0, y: 0, width: 1920, height: 1080 },
+      workArea: { x: 0, y: 0, width: 1920, height: 1040 },
+    })),
   },
 }));
 
@@ -98,8 +103,8 @@ function makeFakeBrowserWindow() {
   const window = {
     close: vi.fn(),
     focus: vi.fn(),
-    getBounds: vi.fn(() => ({ x: 0, y: 0, width: 1100, height: 780 })),
-    getNormalBounds: vi.fn(() => ({ x: 0, y: 0, width: 1100, height: 780 })),
+    getBounds: vi.fn(() => ({ x: 0, y: 0, width: 1280, height: 840 })),
+    getNormalBounds: vi.fn(() => ({ x: 0, y: 0, width: 1280, height: 840 })),
     isDestroyed: vi.fn(() => false),
     isFullScreen: vi.fn(() => false),
     isMaximized: vi.fn(() => false),
@@ -217,6 +222,7 @@ function makeTestLayer(input: {
   readonly createdWindowOptions?: Electron.BrowserWindowConstructorOptions[];
   readonly desktopSettings?: DesktopAppSettings.DesktopSettings;
   readonly mainWindowBoundsUpdates?: DesktopAppSettings.DesktopWindowBounds[];
+  readonly mainWindowSizeIncreaseUpdates?: (DesktopAppSettings.DesktopWindowBounds | null)[];
   readonly mainWindowMaximizedUpdates?: boolean[];
   readonly beforeMainWindowBoundsUpdate?: (
     bounds: DesktopAppSettings.DesktopWindowBounds,
@@ -249,6 +255,20 @@ function makeTestLayer(input: {
           };
           input.mainWindowBoundsUpdates?.push(bounds);
           input.mainWindowMaximizedUpdates?.push(isMaximized);
+        }
+        return { settings: desktopSettings, changed };
+      }),
+    applyMainWindowSizeIncrease: (bounds) =>
+      Effect.sync(() => {
+        const changed = !desktopSettings.mainWindowSizeIncreaseApplied;
+        if (changed) {
+          desktopSettings = {
+            ...desktopSettings,
+            mainWindowBounds: bounds,
+            mainWindowMaximized: bounds !== null && desktopSettings.mainWindowMaximized,
+            mainWindowSizeIncreaseApplied: true,
+          };
+          input.mainWindowSizeIncreaseUpdates?.push(bounds);
         }
         return { settings: desktopSettings, changed };
       }),
@@ -590,6 +610,82 @@ describe("DesktopWindow", () => {
     );
   });
 
+  it("fits the new default to the usable screen without changing the native minimum", () => {
+    assert.deepEqual(
+      DesktopWindow.resolveInitialMainWindowBounds(null, [], {
+        x: 0,
+        y: 24,
+        width: 1180,
+        height: 760,
+      }),
+      { width: 1180, height: 760 },
+    );
+  });
+
+  it("increases legacy bounds once on the same display without shrinking larger dimensions", () => {
+    const primary = {
+      bounds: { x: 0, y: 0, width: 1920, height: 1080 },
+      workArea: { x: 0, y: 24, width: 1920, height: 1016 },
+    };
+    const secondary = {
+      bounds: { x: 1920, y: 0, width: 1600, height: 900 },
+      workArea: { x: 1920, y: 0, width: 1600, height: 860 },
+    };
+    assert.deepEqual(
+      DesktopWindow.resolveOneTimeMainWindowSizeIncrease(
+        { x: 2250, y: 150, width: 1050, height: 690 },
+        [primary, secondary],
+        primary,
+      ),
+      { x: 2240, y: 20, width: 1280, height: 840 },
+    );
+    assert.deepEqual(
+      DesktopWindow.resolveOneTimeMainWindowSizeIncrease(
+        { x: 300, y: 100, width: 1500, height: 700 },
+        [primary],
+        primary,
+      ),
+      { x: 300, y: 100, width: 1500, height: 840 },
+    );
+    const alreadyLarge = { x: 50, y: 8, width: 1500, height: 900 };
+    assert.strictEqual(
+      DesktopWindow.resolveOneTimeMainWindowSizeIncrease(alreadyLarge, [primary], primary),
+      alreadyLarge,
+    );
+    assert.deepEqual(
+      DesktopWindow.resolveOneTimeMainWindowSizeIncrease(
+        { x: 3000, y: 100, width: 1000, height: 700 },
+        [primary],
+        primary,
+      ),
+      { x: 320, y: 112, width: 1280, height: 840 },
+    );
+    assert.isNull(DesktopWindow.resolveOneTimeMainWindowSizeIncrease(null, [primary], primary));
+  });
+
+  it("caps the one-time increase on small screens and relocates disconnected windows", () => {
+    const primary = {
+      bounds: { x: 0, y: 0, width: 1180, height: 800 },
+      workArea: { x: 0, y: 20, width: 1180, height: 760 },
+    };
+    assert.deepEqual(
+      DesktopWindow.resolveOneTimeMainWindowSizeIncrease(
+        { x: 100, y: 90, width: 980, height: 680 },
+        [primary],
+        primary,
+      ),
+      { x: 0, y: 20, width: 1180, height: 760 },
+    );
+    assert.deepEqual(
+      DesktopWindow.resolveOneTimeMainWindowSizeIncrease(
+        { x: 2200, y: 90, width: 1000, height: 700 },
+        [primary],
+        primary,
+      ),
+      { x: 0, y: 20, width: 1180, height: 760 },
+    );
+  });
+
   it("recognizes only same-origin renderer navigations", () => {
     assert.isTrue(
       DesktopWindow.isSameOriginRendererNavigation({
@@ -631,8 +727,8 @@ describe("DesktopWindow", () => {
 
         yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
         assert.equal(yield* Ref.get(createCount), 1);
-        assert.equal(createdWindowOptions[0]?.width, 1100);
-        assert.equal(createdWindowOptions[0]?.height, 780);
+        assert.equal(createdWindowOptions[0]?.width, 1280);
+        assert.equal(createdWindowOptions[0]?.height, 840);
         assert.isUndefined(createdWindowOptions[0]?.x);
         assert.isUndefined(createdWindowOptions[0]?.y);
         assert.isTrue(createdWindowOptions[0]?.disableAutoHideCursor);
@@ -845,6 +941,45 @@ describe("DesktopWindow", () => {
         assert.equal(createdWindowOptions[0]?.height, 880);
         assert.equal(createdWindowOptions[0]?.x, 120);
         assert.equal(createdWindowOptions[0]?.y, 80);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("applies the size increase to a legacy maximized window before opening", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const createdWindowOptions: Electron.BrowserWindowConstructorOptions[] = [];
+      const mainWindowSizeIncreaseUpdates: (DesktopAppSettings.DesktopWindowBounds | null)[] = [];
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        createdWindowOptions,
+        mainWindowSizeIncreaseUpdates,
+        desktopSettings: {
+          ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+          mainWindowBounds: { x: 760, y: 340, width: 1000, height: 700 },
+          mainWindowMaximized: true,
+          mainWindowSizeIncreaseApplied: false,
+        },
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        assert.deepEqual(mainWindowSizeIncreaseUpdates, [
+          { x: 640, y: 200, width: 1280, height: 840 },
+        ]);
+        assert.equal(createdWindowOptions[0]?.width, 1280);
+        assert.equal(createdWindowOptions[0]?.height, 840);
+        assert.equal(createdWindowOptions[0]?.x, 640);
+        assert.equal(createdWindowOptions[0]?.y, 200);
+        assert.equal(fakeWindow.maximize.mock.calls.length, 0);
+        fakeWindow.windowListeners.get("ready-to-show")?.();
+        assert.equal(fakeWindow.maximize.mock.calls.length, 1);
       }).pipe(Effect.provide(layer));
     }),
   );
@@ -1206,8 +1341,8 @@ describe("DesktopWindow", () => {
       );
       assert.isDefined(warning);
       assert.strictEqual(warning.annotations.cause, displayLookupFailure);
-      assert.equal(createdWindowOptions[0]?.width, 1100);
-      assert.equal(createdWindowOptions[0]?.height, 780);
+      assert.equal(createdWindowOptions[0]?.width, 1280);
+      assert.equal(createdWindowOptions[0]?.height, 840);
       assert.isUndefined(createdWindowOptions[0]?.x);
       assert.isUndefined(createdWindowOptions[0]?.y);
     }),

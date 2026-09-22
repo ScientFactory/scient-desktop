@@ -1,4 +1,5 @@
-/* Math, code, and tables share quiet scrolling in chat and the Markdown editor. */
+/* Math, code, and data surfaces share the same quiet scrollbar presentation. */
+.scient-content-scrollbar,
 .scient-math-display,
 .scient-markdown-document .tableWrapper,
 .chat-markdown .chat-markdown-codeblock pre,
