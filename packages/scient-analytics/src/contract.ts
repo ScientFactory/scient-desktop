@@ -105,6 +105,7 @@ const PROVIDERS = new Set([
   "grok",
   "opencode",
   "pi",
+  "omp",
 ]);
 const RUNTIME_SOURCES = new Set(["custom", "system", "scient_managed", "missing", "unknown"]);
 const LIFECYCLE_ACTIONS = new Set([

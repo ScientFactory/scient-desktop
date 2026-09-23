@@ -36,6 +36,7 @@ describe("analytics contract conformance corpus", () => {
       "grok",
       "opencode",
       "pi",
+      "omp",
     ]) {
       const result = normalizeInheritedEvent(
         "provider.turn.sent",

@@ -22,6 +22,7 @@ describe("mergeProviderInstanceEnvironment", () => {
         [
           { name: "CODEX_HOME", value, sensitive: false },
           { name: "CLAUDE_CONFIG_DIR", value, sensitive: false },
+          { name: "PI_CODING_AGENT_DIR", value, sensitive: false },
           { name: "CUSTOM_VALUE", value, sensitive: false },
         ],
         baseEnv,
@@ -30,6 +31,7 @@ describe("mergeProviderInstanceEnvironment", () => {
       expect(environment).toEqual({
         CODEX_HOME: path.join(NodeOS.homedir(), tail),
         CLAUDE_CONFIG_DIR: path.join(NodeOS.homedir(), tail),
+        PI_CODING_AGENT_DIR: path.join(NodeOS.homedir(), tail),
         CUSTOM_VALUE: value,
       });
       expect(baseEnv).toEqual({

@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "owner": "ScientFactory",
+  "purpose": "External Oh My Pi provider. The wire package has no Scient orchestration types. The desktop files own process, session cursor, and turn mapping.",
+  "ownedRoots": ["packages/effect-omp-rpc", "apps/server/src/provider/omp"],
+  "ownedFiles": [
+    "apps/server/src/provider/Drivers/OmpDriver.ts",
+    "apps/server/src/provider/Layers/OmpAdapter.ts",
+    "apps/server/src/provider/Layers/OmpProvider.ts",
+    "apps/server/src/textGeneration/OmpTextGeneration.ts",
+    "docs/user/providers-omp.md"
+  ],
+  "upstreamMounts": [
+    "apps/server/src/provider/builtInDrivers.ts",
+    "apps/server/src/provider/ScientAwareness.ts",
+    "apps/server/src/scient/skills/ScientSkillSession.ts",
+    "packages/contracts/src/settings.ts",
+    "packages/contracts/src/model.ts",
+    "packages/scient-analytics/src/contract.ts",
+    "packages/scient-analytics/src/wireContract.ts",
+    "apps/web/src/session-logic.ts",
+    "apps/web/src/components/settings/providerDriverMeta.ts",
+    "apps/web/src/components/chat/providerIconUtils.ts",
+    "apps/web/src/components/Icons.tsx"
+  ]
+}

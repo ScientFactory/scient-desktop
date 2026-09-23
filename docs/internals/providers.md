@@ -7,7 +7,7 @@ orchestration layer does not know which one is behind a thread.
 
 ## Built-in drivers
 
-[`builtInDrivers.ts`][drivers] exports `BUILT_IN_DRIVERS` with eight entries:
+[`builtInDrivers.ts`][drivers] exports `BUILT_IN_DRIVERS` with nine entries:
 
 | Driver kind   | Driver source                                 |
 | ------------- | --------------------------------------------- |
@@ -19,6 +19,7 @@ orchestration layer does not know which one is behind a thread.
 | `droid`       | [`Drivers/DroidDriver.ts`][droid]             |
 | `antigravity` | [`Drivers/AntigravityDriver.ts`][antigravity] |
 | `pi`          | [`Drivers/PiDriver.ts`][pi]                   |
+| `omp`         | [`Drivers/OmpDriver.ts`][omp]                 |
 
 Each driver declares its `driverKind`, a `configSchema`, and a `create` function that builds an
 adapter in a child scope. Adapter implementations live beside them in
@@ -448,6 +449,24 @@ profiles and local model/MCP endpoints. It exercises the real binary without use
 Passing it proves native protocol/tool integration, not hosted authentication, every third-party
 extension, cross-platform runtime support, or human product acceptance.
 
+### Oh My Pi driver
+
+[`OmpDriver.ts`][omp] is an external provider on the current adapter. `packages/effect-omp-rpc` speaks
+Oh My Pi's newline JSON protocol, including protocol v2 chunk reassembly, and imports no Scient
+orchestration types. The adapter owns the process and the turn mapping.
+
+- The executable is user-installed `omp` 18.2.8 or newer. Launch arguments are `--mode rpc` and
+  `--approval-mode yolo`. Scient does not download Oh My Pi or call `login` during discovery.
+- One process serves one thread. Stop closes that process only. The child session directory is
+  `PI_CODING_AGENT_SESSION_DIR`; `--session-dir` is not passed.
+- A prompt response is acceptance. Completion is a local prompt, or a terminal `agent_end` confirmed
+  idle with `get_state`. Process exit during a turn is a failure.
+- Resume cursors must match the provider instance and stay inside Scient's session directory.
+- Subagent frames stay on the parent turn. Native compact reports a compacted thread. Command names
+  can be listed and are not imported as Scient skills.
+- Awareness and Scient skill delivery are unsupported. Unexpected host-tool calls are rejected.
+  Full access is the only runtime mode. There is no Orchestration V2 adapter.
+
 ## Scient-assisted provider lifecycle
 
 Codex, Claude, Cursor, Antigravity, Grok, and Droid optionally expose assisted runtime and account
@@ -626,6 +645,7 @@ when a request opens (approval) or user input is requested, via
 [opencode-server-owner]: ../../apps/server/src/provider/OpenCodeServerOwner.ts
 [droid]: ../../apps/server/src/provider/Drivers/DroidDriver.ts
 [pi]: ../../apps/server/src/provider/Drivers/PiDriver.ts
+[omp]: ../../apps/server/src/provider/Drivers/OmpDriver.ts
 [pi-notice]: ../../apps/server/src/provider/pi/NOTICE.md
 [agy-session]: ../../apps/server/src/provider/antigravity/AgySession.ts
 [adapter]: ../../apps/server/src/provider/Services/ProviderAdapter.ts

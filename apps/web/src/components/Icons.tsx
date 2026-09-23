@@ -790,6 +790,17 @@ export const PiIcon: Icon = ({ className, ...props }) => (
   </svg>
 );
 
+export const OhMyPiIcon: Icon = ({ className, ...props }) => (
+  <svg {...props} viewBox="0 0 800 800" className={cn("fill-none", className)}>
+    <rect width="800" height="800" rx="160" fill="#111827" />
+    <circle cx="400" cy="400" r="220" fill="none" stroke="#F8FAFC" strokeWidth="48" />
+    <path
+      fill="#F8FAFC"
+      d="M292 250h216v72H436v228h-72V322H292V250Zm216 150h72v228h-72V400Z"
+    />
+  </svg>
+);
+
 // Official two-color mark from https://forgejo.org/favicon.svg.
 export const ForgejoIcon: Icon = (props) => (
   <svg viewBox="0 0 212 212" aria-hidden="true" {...props}>

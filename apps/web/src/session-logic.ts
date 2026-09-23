@@ -61,6 +61,12 @@ const PROVIDER_OPTIONS_UNORDERED: Array<{
   { value: ProviderDriverKind.make("claudeAgent"), label: "Claude", available: true },
   { value: ProviderDriverKind.make("pi"), label: "Pi", available: true, pickerSidebarBadge: "new" },
   {
+    value: ProviderDriverKind.make("omp"),
+    label: "Oh My Pi",
+    available: true,
+    pickerSidebarBadge: "new",
+  },
+  {
     value: ProviderDriverKind.make("opencode"),
     label: "OpenCode",
     available: true,

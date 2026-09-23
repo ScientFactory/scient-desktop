@@ -1,0 +1,222 @@
+import * as Schema from "effect/Schema";
+
+/** Protocol v2 is the lossless chunked transport. v1 remains a single JSONL frame. */
+export const OMP_RPC_PROTOCOL_V2 = 2;
+/** Physical JSONL ceiling from OMP's RpcFrameDecoder. Advertised limits cannot raise it. */
+export const OMP_HARD_MAX_FRAME_BYTES = 1024 * 1024;
+/** Reassembled logical-frame ceiling from OMP's RpcFrameDecoder. */
+export const OMP_HARD_MAX_REASSEMBLED_FRAME_BYTES = 64 * 1024 * 1024;
+/** Each chunk payload must fit in this many decoded bytes. */
+export const OMP_RPC_CHUNK_PAYLOAD_BYTES = 256 * 1024;
+export const OMP_RPC_MAX_CHUNK_ID_LENGTH = 128;
+export const OMP_DEFAULT_MAX_FRAME_BYTES = OMP_HARD_MAX_FRAME_BYTES;
+export const OMP_DEFAULT_MAX_REASSEMBLED_FRAME_BYTES = OMP_HARD_MAX_REASSEMBLED_FRAME_BYTES;
+
+export const OmpThinkingLevel = Schema.Literals([
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+]);
+export type OmpThinkingLevel = typeof OmpThinkingLevel.Type;
+
+export const OmpRpcImage = Schema.Struct({
+  type: Schema.Literal("image"),
+  data: Schema.String,
+  mimeType: Schema.String,
+});
+export type OmpRpcImage = typeof OmpRpcImage.Type;
+
+export const OmpRpcReady = Schema.Struct({
+  type: Schema.Literal("ready"),
+  protocolVersion: Schema.optional(Schema.Finite),
+  supportedProtocolVersions: Schema.optional(Schema.Array(Schema.Finite)),
+  maxFrameBytes: Schema.optional(Schema.Finite),
+  maxReassembledFrameBytes: Schema.optional(Schema.Finite),
+});
+export type OmpRpcReady = typeof OmpRpcReady.Type;
+
+export const OmpRpcResponse = Schema.Struct({
+  id: Schema.optional(Schema.String),
+  type: Schema.Literal("response"),
+  command: Schema.String,
+  success: Schema.Boolean,
+  data: Schema.optional(Schema.Unknown),
+  error: Schema.optional(Schema.String),
+  code: Schema.optional(Schema.String),
+});
+export type OmpRpcResponse = typeof OmpRpcResponse.Type;
+
+export const OmpRpcModel = Schema.Struct({
+  provider: Schema.String,
+  id: Schema.String,
+  name: Schema.optional(Schema.String),
+  reasoning: Schema.optional(Schema.Boolean),
+  thinkingLevels: Schema.optional(Schema.Array(Schema.String)),
+});
+export type OmpRpcModel = typeof OmpRpcModel.Type;
+
+export const OmpRpcAvailableModels = Schema.Struct({
+  models: Schema.Array(OmpRpcModel),
+});
+export type OmpRpcAvailableModels = typeof OmpRpcAvailableModels.Type;
+
+export const OmpRpcCommandDescriptor = Schema.Struct({
+  name: Schema.String,
+  description: Schema.optional(Schema.String),
+  source: Schema.optional(Schema.String),
+  aliases: Schema.optional(Schema.Array(Schema.String)),
+});
+export type OmpRpcCommandDescriptor = typeof OmpRpcCommandDescriptor.Type;
+
+export const OmpRpcAvailableCommands = Schema.Struct({
+  commands: Schema.Array(OmpRpcCommandDescriptor),
+});
+export type OmpRpcAvailableCommands = typeof OmpRpcAvailableCommands.Type;
+
+export const OmpRpcState = Schema.Struct({
+  model: Schema.optional(
+    Schema.Struct({
+      provider: Schema.String,
+      id: Schema.String,
+    }),
+  ),
+  thinkingLevel: Schema.optional(Schema.String),
+  isStreaming: Schema.optional(Schema.Boolean),
+  isCompacting: Schema.optional(Schema.Boolean),
+  sessionFile: Schema.optional(Schema.String),
+  sessionId: Schema.optional(Schema.String),
+  sessionName: Schema.optional(Schema.String),
+  messageCount: Schema.optional(Schema.Finite),
+});
+export type OmpRpcState = typeof OmpRpcState.Type;
+
+export const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const maybeString = Schema.optional(Schema.String);
+const maybeBoolean = Schema.optional(Schema.Boolean);
+const maybeUnknown = Schema.optional(Schema.Unknown);
+
+/**
+ * One decoded stdout event. Excess fields are ignored. Response frames use
+ * `OmpRpcResponse` instead, and a failed decode of a response is fatal.
+ */
+export const OmpRpcEvent = Schema.Struct({
+  type: Schema.String,
+  id: maybeString,
+  isTerminal: maybeBoolean,
+  agentInvoked: maybeBoolean,
+  assistantMessageEvent: maybeUnknown,
+  message: maybeUnknown,
+  messages: maybeUnknown,
+  toolCallId: maybeString,
+  toolName: maybeString,
+  name: maybeString,
+  isError: maybeBoolean,
+  partialResult: maybeUnknown,
+  result: maybeUnknown,
+  arguments: maybeUnknown,
+  output: maybeString,
+  text: maybeString,
+  delta: maybeString,
+  subagentId: maybeString,
+  title: maybeString,
+  status: maybeString,
+  phase: maybeString,
+  method: maybeString,
+  options: maybeUnknown,
+  optionDetails: maybeUnknown,
+  placeholder: maybeString,
+  commands: maybeUnknown,
+  sessionFile: maybeString,
+  sessionId: maybeString,
+  error: maybeString,
+  targetId: maybeString,
+  url: maybeString,
+  operation: maybeString,
+});
+export type OmpRpcEvent = typeof OmpRpcEvent.Type;
+
+export const OmpHostToolCall = Schema.Struct({
+  type: Schema.Literal("host_tool_call"),
+  id: Schema.String,
+  toolCallId: maybeString,
+  toolName: maybeString,
+  arguments: maybeUnknown,
+});
+export type OmpHostToolCall = typeof OmpHostToolCall.Type;
+
+export const OmpHostToolCancel = Schema.Struct({
+  type: Schema.Literal("host_tool_cancel"),
+  id: maybeString,
+  targetId: Schema.String,
+});
+export type OmpHostToolCancel = typeof OmpHostToolCancel.Type;
+
+export const OmpHostToolResult = Schema.Struct({
+  type: Schema.Literal("host_tool_result"),
+  id: Schema.String,
+  isError: maybeBoolean,
+  result: maybeUnknown,
+});
+export type OmpHostToolResult = typeof OmpHostToolResult.Type;
+
+export const OmpHostUriRequest = Schema.Struct({
+  type: Schema.Literal("host_uri_request"),
+  id: Schema.String,
+  operation: maybeString,
+  url: maybeString,
+});
+export type OmpHostUriRequest = typeof OmpHostUriRequest.Type;
+
+export const OmpHostUriCancel = Schema.Struct({
+  type: Schema.Literal("host_uri_cancel"),
+  id: maybeString,
+  targetId: Schema.String,
+});
+export type OmpHostUriCancel = typeof OmpHostUriCancel.Type;
+
+export const OmpHostUriResult = Schema.Struct({
+  type: Schema.Literal("host_uri_result"),
+  id: Schema.String,
+  isError: maybeBoolean,
+  error: maybeString,
+});
+export type OmpHostUriResult = typeof OmpHostUriResult.Type;
+
+export const OmpExtensionUiRequest = Schema.Struct({
+  type: Schema.Literal("extension_ui_request"),
+  id: Schema.String,
+  method: Schema.String,
+  title: maybeString,
+  message: maybeString,
+  placeholder: maybeString,
+  options: maybeUnknown,
+  optionDetails: maybeUnknown,
+  targetId: maybeString,
+});
+export type OmpExtensionUiRequest = typeof OmpExtensionUiRequest.Type;
+
+export const OmpExtensionUiResponse = Schema.Struct({
+  type: Schema.Literal("extension_ui_response"),
+  id: Schema.String,
+  value: maybeString,
+  confirmed: maybeBoolean,
+  cancelled: maybeBoolean,
+});
+export type OmpExtensionUiResponse = typeof OmpExtensionUiResponse.Type;
+
+export const OmpSubagentFrame = Schema.Struct({
+  type: Schema.Literals(["subagent_lifecycle", "subagent_progress"]),
+  id: maybeString,
+  subagentId: maybeString,
+  title: maybeString,
+  status: maybeString,
+  phase: maybeString,
+  message: maybeString,
+});
+export type OmpSubagentFrame = typeof OmpSubagentFrame.Type;

@@ -3095,6 +3095,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 "cursor",
                 "droid",
                 "grok",
+                "omp",
                 "opencode",
                 "pi",
               ]);

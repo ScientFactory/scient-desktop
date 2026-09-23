@@ -12,6 +12,7 @@ describe("provider display order", () => {
       "opencode",
       "droid",
       "pi",
+      "omp",
       "cursor",
       "grok",
     ]);
