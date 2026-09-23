@@ -67,7 +67,7 @@ import {
 } from "./composerInlineChip";
 import { FileTagChipContent } from "./chat/FileTagChip";
 import { SkillChipIcon } from "./chat/SkillInlineText";
-import { CitationChip } from "./chat/AssistantCitationChip";
+import { AssistantCitationChip } from "./chat/AssistantCitationChip";
 import { getTimelinePageScrollKey } from "./chat/pageScrollController";
 import { ContextChipPopover } from "./contextChipParts";
 import { Button } from "./ui/button";
@@ -406,7 +406,7 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
       spellCheck={false}
       data-composer-citation-chip="true"
     >
-      <CitationChip
+      <AssistantCitationChip
         citation={citation}
         composer
         onRemove={onRemove}

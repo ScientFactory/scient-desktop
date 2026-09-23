@@ -249,7 +249,3 @@ export function AssistantCitationChip({
     </ContextChip>
   );
 }
-
-// Keep the existing local component name for call sites outside the shared
-// upstream renderer while converging on its AssistantCitationChip naming.
-export const CitationChip = AssistantCitationChip;

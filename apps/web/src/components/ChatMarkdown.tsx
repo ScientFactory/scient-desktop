@@ -87,7 +87,7 @@ import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
 import { parseComposerCitationHref } from "@t3tools/shared/composerCitations";
-import { CitationChip } from "./chat/AssistantCitationChip";
+import { AssistantCitationChip } from "./chat/AssistantCitationChip";
 import { parseComposerContextHref } from "@t3tools/shared/composerContextReferences";
 import remarkGfm from "remark-gfm";
 import { remarkGithubAlerts } from "../markdown-github-alerts";
@@ -2926,7 +2926,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       renderContextReference,
     } = use(ChatMarkdownRendererContext);
     const citation = href ? parseComposerCitationHref(href) : null;
-    if (citation) return <CitationChip citation={citation} />;
+    if (citation) return <AssistantCitationChip citation={citation} />;
     const contextReference = href ? parseComposerContextHref(href) : null;
     if (contextReference) {
       const label = hastPlainTextDeep(node) || contextReference.contextId;
