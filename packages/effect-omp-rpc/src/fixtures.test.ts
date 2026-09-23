@@ -5,7 +5,15 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as Schema from "effect/Schema";
 
-import { OmpRpcAvailableModels, OmpRpcEvent, OmpRpcReady, OmpRpcState } from "./schema.ts";
+import {
+  OmpMessageEndEvent,
+  OmpMessageStartEvent,
+  OmpRpcAvailableModels,
+  OmpRpcEvent,
+  OmpRpcReady,
+  OmpRpcState,
+  OmpSubagentFrame,
+} from "./schema.ts";
 
 const fixtureDirectory = NodePath.resolve(
   NodeURL.fileURLToPath(new URL("../test/fixtures/v18.2.8", import.meta.url)),
@@ -38,13 +46,26 @@ describe("OMP v18.2.8 recorded fixtures", () => {
     expect(models.models[0]?.input).toEqual(["text", "image"]);
   });
 
+  it("decodes the real subagent payload shape", () => {
+    const frame = Schema.decodeUnknownSync(OmpSubagentFrame)({
+      type: "subagent_lifecycle",
+      payload: {
+        id: "sub-1",
+        status: "completed",
+        index: 0,
+        description: "Review",
+      },
+    });
+    expect(frame.type).toBe("subagent_lifecycle");
+  });
+
   it("preserves the real user message lifecycle for role-aware mapping", () => {
     const values = frames("prompt-events.jsonl");
-    const messageStart = Schema.decodeUnknownSync(OmpRpcEvent)(values[3]);
-    const messageEnd = Schema.decodeUnknownSync(OmpRpcEvent)(values[4]);
-    expect(messageStart).toMatchObject({ type: "message_start" });
-    expect(messageEnd).toMatchObject({ type: "message_end" });
-    expect((messageStart.message as { role: string }).role).toBe("user");
-    expect((messageEnd.message as { role: string }).role).toBe("user");
+    const messageStart = Schema.decodeUnknownSync(OmpMessageStartEvent)(values[3]);
+    const messageEnd = Schema.decodeUnknownSync(OmpMessageEndEvent)(values[4]);
+    expect(messageStart.type).toBe("message_start");
+    expect(messageEnd.type).toBe("message_end");
+    expect(messageStart.message.role).toBe("user");
+    expect(messageEnd.message.role).toBe("user");
   });
 });

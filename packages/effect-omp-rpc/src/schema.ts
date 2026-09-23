@@ -156,12 +156,46 @@ export const OmpRpcEvent = Schema.Struct({
 });
 export type OmpRpcEvent = typeof OmpRpcEvent.Type;
 
+export const OmpAgentMessage = Schema.Struct({
+  role: Schema.String,
+  content: Schema.optional(Schema.Unknown),
+  stopReason: maybeString,
+  isError: maybeBoolean,
+});
+export type OmpAgentMessage = typeof OmpAgentMessage.Type;
+
+export const OmpMessageStartEvent = Schema.Struct({
+  type: Schema.Literal("message_start"),
+  message: OmpAgentMessage,
+});
+export type OmpMessageStartEvent = typeof OmpMessageStartEvent.Type;
+
+export const OmpMessageUpdateEvent = Schema.Struct({
+  type: Schema.Literal("message_update"),
+  message: OmpAgentMessage,
+  assistantMessageEvent: Schema.Unknown,
+});
+export type OmpMessageUpdateEvent = typeof OmpMessageUpdateEvent.Type;
+
+export const OmpMessageEndEvent = Schema.Struct({
+  type: Schema.Literal("message_end"),
+  message: OmpAgentMessage,
+});
+export type OmpMessageEndEvent = typeof OmpMessageEndEvent.Type;
+
+export const OmpAgentEndEvent = Schema.Struct({
+  type: Schema.Literal("agent_end"),
+  messages: Schema.Array(Schema.Unknown),
+  isTerminal: maybeBoolean,
+});
+export type OmpAgentEndEvent = typeof OmpAgentEndEvent.Type;
+
 export const OmpHostToolCall = Schema.Struct({
   type: Schema.Literal("host_tool_call"),
   id: Schema.String,
-  toolCallId: maybeString,
-  toolName: maybeString,
-  arguments: maybeUnknown,
+  toolCallId: Schema.String,
+  toolName: Schema.String,
+  arguments: Schema.Unknown,
 });
 export type OmpHostToolCall = typeof OmpHostToolCall.Type;
 
@@ -183,8 +217,9 @@ export type OmpHostToolResult = typeof OmpHostToolResult.Type;
 export const OmpHostUriRequest = Schema.Struct({
   type: Schema.Literal("host_uri_request"),
   id: Schema.String,
-  operation: maybeString,
-  url: maybeString,
+  operation: Schema.Literals(["read", "write"]),
+  url: Schema.String,
+  content: maybeString,
 });
 export type OmpHostUriRequest = typeof OmpHostUriRequest.Type;
 
@@ -210,6 +245,7 @@ export const OmpExtensionUiRequest = Schema.Struct({
   title: maybeString,
   message: maybeString,
   placeholder: maybeString,
+  prefill: maybeString,
   options: maybeUnknown,
   optionDetails: maybeUnknown,
   targetId: maybeString,
@@ -225,15 +261,51 @@ export const OmpExtensionUiResponse = Schema.Struct({
 });
 export type OmpExtensionUiResponse = typeof OmpExtensionUiResponse.Type;
 
-export const OmpSubagentFrame = Schema.Struct({
-  type: Schema.Literals(["subagent_lifecycle", "subagent_progress"]),
-  id: maybeString,
-  subagentId: maybeString,
-  title: maybeString,
-  status: maybeString,
-  phase: maybeString,
-  message: maybeString,
+export const OmpSubagentProgress = Schema.Struct({
+  id: Schema.String,
+  status: Schema.String,
+  description: maybeString,
 });
+export type OmpSubagentProgress = typeof OmpSubagentProgress.Type;
+
+export const OmpSubagentLifecyclePayload = Schema.Struct({
+  id: Schema.String,
+  status: Schema.String,
+  agent: maybeString,
+  agentSource: maybeString,
+  description: maybeString,
+  index: Schema.Finite,
+  parentToolCallId: maybeString,
+  sessionFile: maybeString,
+});
+export type OmpSubagentLifecyclePayload = typeof OmpSubagentLifecyclePayload.Type;
+
+export const OmpSubagentProgressPayload = Schema.Struct({
+  index: Schema.Finite,
+  agent: Schema.String,
+  agentSource: Schema.String,
+  task: maybeString,
+  assignment: maybeString,
+  parentToolCallId: maybeString,
+  sessionFile: maybeString,
+  progress: OmpSubagentProgress,
+});
+export type OmpSubagentProgressPayload = typeof OmpSubagentProgressPayload.Type;
+
+export const OmpSubagentFrame = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("subagent_lifecycle"),
+    payload: OmpSubagentLifecyclePayload,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("subagent_progress"),
+    payload: OmpSubagentProgressPayload,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("subagent_event"),
+    payload: Schema.Unknown,
+  }),
+]);
 export type OmpSubagentFrame = typeof OmpSubagentFrame.Type;
 
 export const OmpHostToolDefinition = Schema.Struct({
