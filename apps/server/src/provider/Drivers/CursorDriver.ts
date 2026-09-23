@@ -213,7 +213,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
           ? yield* makeCursorConnectionActions(effectiveConfig, effectiveProcessEnv, spawner)
           : undefined;
 
-      const discoverModels = yield* makeCursorModelDiscovery(effectiveConfig, effectiveProcessEnv);
+      const modelDiscovery = yield* makeCursorModelDiscovery(effectiveConfig, effectiveProcessEnv);
       const machineSkills = yield* makeCursorMachineSkillCatalog(effectiveProcessEnv);
       const readMachineSkills = machineSkills.pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -227,7 +227,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
       const checkProvider = checkCursorProviderStatus(
         effectiveConfig,
         effectiveProcessEnv,
-        discoverModels,
+        modelDiscovery.discover,
       ).pipe(
         Effect.flatMap((snapshot) =>
           effectiveConfig.enabled && snapshot.installed
@@ -322,6 +322,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         accentColor,
         enabled,
         snapshot,
+        invalidateCaches: modelDiscovery.invalidate,
         snapshotForCwd: (cwd) =>
           !effectiveConfig.enabled
             ? snapshot.getSnapshot

@@ -85,9 +85,8 @@ function QueueRow(props: {
           {props.threadBusy && (
             <Button
               type="button"
-              size="compact"
+              size="micro"
               variant="ghost-muted"
-              className="h-4.5 gap-0.5 px-1.5 [&_svg]:-mx-0"
               disabled={props.dispatching}
               title="Send this message into the running turn"
               onClick={() => props.onSteer(props.item)}

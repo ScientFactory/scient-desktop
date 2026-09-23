@@ -68,7 +68,7 @@ export function ProviderAuthorizationCodeDisclosure(props: {
       <Button
         aria-controls={formId}
         aria-expanded={props.expanded}
-        className="text-muted-foreground in-[[data-model-picker-content=true]]:mx-auto"
+        className="in-[[data-model-picker-content=true]]:mx-auto"
         disabled={props.disabled}
         onClick={() => props.onExpandedChange(!props.expanded)}
         size="sm"

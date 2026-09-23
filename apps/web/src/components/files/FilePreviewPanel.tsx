@@ -1741,10 +1741,11 @@ export default function FilePreviewPanel({
           data-surface-subheader
         >
           <ScrollArea
+            radius="none"
             ref={breadcrumbRef}
             hideScrollbars
             scrollFade
-            className="min-w-0 flex-1 rounded-none"
+            className="min-w-0 flex-1"
             data-file-breadcrumbs
           >
             {isHostFile ? (

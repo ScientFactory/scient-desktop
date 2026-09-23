@@ -31,6 +31,7 @@ function ScrollArea({
   hideScrollbars = false,
   chainVerticalScroll = false,
   dir,
+  radius = "inherit",
   ...props
 }: ScrollAreaPrimitive.Root.Props & {
   scrollFade?: boolean;
@@ -40,6 +41,8 @@ function ScrollArea({
   scrollbarGutter?: boolean;
   hideScrollbars?: boolean;
   chainVerticalScroll?: boolean;
+  /** The viewport clips to the parent's radius; "none" for a region flush to an edge. */
+  radius?: "inherit" | "none";
 }) {
   const inheritedDirection = useDirection();
   const direction = dir === "rtl" || dir === "ltr" ? dir : inheritedDirection;
@@ -47,7 +50,11 @@ function ScrollArea({
   return (
     <DirectionProvider direction={direction}>
       <ScrollAreaPrimitive.Root
-        className={cn("relative size-full min-h-0 overflow-hidden rounded-[inherit]", className)}
+        className={cn(
+          "relative size-full min-h-0 overflow-hidden",
+          radius === "none" ? "rounded-none" : "rounded-[inherit]",
+          className,
+        )}
         dir={dir}
         {...props}
       >

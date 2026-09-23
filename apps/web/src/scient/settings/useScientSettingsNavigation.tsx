@@ -57,7 +57,7 @@ function SettingsSubmenuCollapse({
 }) {
   return (
     <Collapsible open={open}>
-      <CollapsiblePanel id={id} className="duration-150 ease-out motion-reduce:transition-none">
+      <CollapsiblePanel id={id} motion="fast">
         {children}
       </CollapsiblePanel>
     </Collapsible>
@@ -152,7 +152,7 @@ export function useScientSettingsNavigation(
         ) : null}
         {pageSections ? (
           <SettingsSubmenuCollapse id={pageSectionsId} open={pageSectionsExpanded}>
-            <SidebarMenuSub className="border-l-0">
+            <SidebarMenuSub variant="plain">
               {pageSections.map((section) => (
                 <SidebarMenuSubItem key={section.targetId}>
                   <SidebarMenuSubButton

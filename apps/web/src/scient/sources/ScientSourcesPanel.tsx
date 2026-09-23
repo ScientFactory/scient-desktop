@@ -131,7 +131,7 @@ export function MetadataReviewIndicator(props: {
           </button>
         }
       />
-      <TooltipPopup side="top" align="end" className="max-w-72 p-0" variant="glass">
+      <TooltipPopup side="top" align="end" className="max-w-72" variant="glass">
         <div className="space-y-1 px-3 py-2">
           <div className="font-medium">Metadata needs review</div>
           <div className="text-muted-foreground">
@@ -153,8 +153,8 @@ export function SourceErrorBanner(props: {
       <span className="min-w-0 flex-1">{props.message}</span>
       <Button
         size="icon-xs"
-        variant="ghost"
-        className="shrink-0 text-destructive hover:text-destructive"
+        variant="ghost-destructive"
+        className="shrink-0"
         aria-label="Dismiss source notification"
         onClick={props.onDismiss}
       >
@@ -627,14 +627,15 @@ export function ScientSourcesPanel(props: {
                 placeholder="Search title, creator, or year"
                 value={query}
                 onChange={(event) => setQuery(event.currentTarget.value)}
-                className="min-w-0 flex-1 [&_[data-slot=input]]:h-auto [&_[data-slot=input]]:p-0 [&_[data-slot=input]]:leading-normal [&_[data-slot=input]]:text-sm [&_[data-slot=input]]:font-medium [&_[data-slot=input]]:text-foreground [&_[data-slot=input]]:placeholder:text-muted-foreground"
+                size="inline"
+                className="min-w-0 flex-1"
               />
               {query ? (
                 <Button
                   type="button"
-                  size="icon-xs"
-                  variant="ghost"
-                  className="size-5 shrink-0 rounded-sm text-muted-foreground hover:bg-muted"
+                  size="icon-micro"
+                  variant="ghost-muted"
+                  className="shrink-0"
                   aria-label="Clear Zotero search"
                   onClick={() => {
                     setQuery("");
@@ -709,7 +710,7 @@ export function ScientSourcesPanel(props: {
                 >
                   <Checkbox
                     checked={checked}
-                    className="size-4 border-border bg-transparent shadow-none [&_[data-slot=checkbox-indicator]]:bg-accent [&_[data-slot=checkbox-indicator]]:text-foreground"
+                    className="size-4"
                     onCheckedChange={() => toggleSelected(key)}
                   />
                   <span className="min-w-0 flex-1">
@@ -785,7 +786,7 @@ export function ScientSourcesPanel(props: {
               <Button
                 size="sm"
                 variant="ghost-muted"
-                className="w-full justify-start font-normal"
+                className="w-full justify-start"
                 disabled={sources.checkingZotero}
                 aria-busy={sources.checkingZotero}
                 onClick={() => void sources.openZoteroLibrary(true)}
@@ -797,7 +798,7 @@ export function ScientSourcesPanel(props: {
                 <Button
                   size="sm"
                   variant="ghost-muted"
-                  className="w-full justify-start font-normal"
+                  className="w-full justify-start"
                   onClick={() =>
                     void readLocalApi()?.shell.openExternal("https://www.zotero.org/download/")
                   }
@@ -813,7 +814,7 @@ export function ScientSourcesPanel(props: {
                       type="button"
                       size="sm"
                       variant="ghost-muted"
-                      className="w-full justify-start font-normal"
+                      className="w-full justify-start"
                     >
                       <BookOpen />
                       How to connect
@@ -1081,14 +1082,15 @@ export function ScientSourcesPanel(props: {
               placeholder="Search title, author, DOI, year, or keyword"
               value={sourceQuery}
               onChange={(event) => setSourceQuery(event.currentTarget.value)}
-              className="min-w-0 flex-1 [&_[data-slot=input]]:h-8 [&_[data-slot=input]]:p-0 [&_[data-slot=input]]:leading-normal [&_[data-slot=input]]:text-sm [&_[data-slot=input]]:font-medium [&_[data-slot=input]]:text-foreground [&_[data-slot=input]]:placeholder:text-muted-foreground/60"
+              size="inline"
+              className="min-w-0 flex-1"
             />
             {sourceQuery ? (
               <Button
                 type="button"
-                size="icon-xs"
-                variant="ghost"
-                className="size-5 shrink-0 rounded-sm text-muted-foreground hover:bg-muted"
+                size="icon-micro"
+                variant="ghost-muted"
+                className="shrink-0"
                 aria-label="Clear source search"
                 onClick={() => setSourceQuery("")}
               >
@@ -1106,13 +1108,13 @@ export function ScientSourcesPanel(props: {
             }}
           >
             <SelectTrigger
-              size="sm"
+              size="compact"
               variant="ghost"
-              className="w-auto shrink-0 cursor-pointer gap-1 px-1.5"
+              className="w-auto shrink-0 cursor-pointer"
               aria-label="Sort sources"
             >
               <ArrowDownUp className="size-3.5" aria-hidden="true" />
-              <SelectValue className="max-w-20 truncate text-xs" />
+              <SelectValue className="max-w-20" />
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
               {SCIENT_SOURCE_SORT_OPTIONS.map((option) => (
@@ -1433,7 +1435,7 @@ function ImportReview(props: {
                     <label className="flex shrink-0 cursor-pointer items-center gap-2 text-xs text-muted-foreground">
                       <Checkbox
                         checked={importingPossibleMatch}
-                        className="size-4 border-border bg-transparent shadow-none [&_[data-slot=checkbox-indicator]]:bg-accent [&_[data-slot=checkbox-indicator]]:text-foreground"
+                        className="size-4"
                         onCheckedChange={() => {
                           setPossibleMatchOverrides((current) => {
                             const next = new Set(current);

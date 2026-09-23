@@ -11,8 +11,8 @@ import { AsyncResult } from "effect/unstable/reactivity";
 import {
   buildLocalEnvironmentUpdateGroups,
   canOneClickUpdateProviderCandidate,
-  collectProviderUpdateCandidates,
   collectManagedRuntimeUpdateCandidates,
+  collectProviderUpdateCandidates,
   collectProviderUpdateOutcomeSnapshots,
   collectUpdatedProviderSnapshots,
   deriveEnvironmentDisplayLabel,
@@ -24,8 +24,9 @@ import {
   getProviderUpdateRejectedToastView,
   getProviderUpdateSidebarPillView,
   hasOneClickUpdateProviderCandidate,
-  isProviderUpdateCandidate,
   isManagedRuntimeUpdateCandidate,
+  isProviderSettingsUpdateCandidate,
+  isProviderUpdateCandidate,
   isTerminalProviderUpdatePhase,
   localEnvironmentUpdateNotificationKey,
   managedRuntimeUpdateNotificationKey,
@@ -1157,4 +1158,23 @@ describe("provider update launch notification logic", () => {
       ).toMatchObject({ kind: "idle", text: "Codex" });
     });
   });
+});
+
+it("does not offer incompatible latest versions and restores suggestions after policy relaxation", () => {
+  const installed = provider({ driver: driver("codex") });
+  for (const latestVersionStatus of ["broken", "unsupported", "supported", "unknown"] as const) {
+    const snapshot: ServerProvider = {
+      ...installed,
+      compatibilityAdvisory: {
+        status: "supported",
+        latestVersionStatus,
+        message: null,
+        recommendedRange: null,
+        recommendedVersion: null,
+      },
+    };
+    const expected = latestVersionStatus === "supported" || latestVersionStatus === "unknown";
+    expect(isProviderUpdateCandidate(snapshot)).toBe(expected);
+    expect(isProviderSettingsUpdateCandidate(snapshot)).toBe(expected);
+  }
 });

@@ -55,11 +55,11 @@ function ToolButton({
           <Button
             aria-label={label}
             aria-pressed={active || undefined}
-            className="rounded-sm"
             data-pressed={active || undefined}
             disabled={disabled}
             onClick={onClick}
             size="icon-xs"
+            shape="square"
             type="button"
             variant="ghost"
           />

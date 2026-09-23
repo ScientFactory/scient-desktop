@@ -110,21 +110,11 @@ export function AddUsageAccountingSourceDialog({
           </form>
         </DialogPanel>
         <DialogFooter variant="bare">
-          <Button
-            size="sm"
-            variant="outline"
-            className="text-[15px] sm:text-[15px]"
-            onClick={() => onOpenChange(false)}
-          >
-            Cancel
+          <Button size="sm" variant="outline" onClick={() => onOpenChange(false)}>
+            <span className="text-[15px]">Cancel</span>
           </Button>
-          <Button
-            size="sm"
-            className="text-[15px] sm:text-[15px]"
-            onClick={save}
-            disabled={!canSave}
-          >
-            Add billing
+          <Button size="sm" onClick={save} disabled={!canSave}>
+            <span className="text-[15px]">Add billing</span>
           </Button>
         </DialogFooter>
       </DialogPopup>

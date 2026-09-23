@@ -232,6 +232,7 @@ export default defineConfig(() => {
               "@base-ui/react/combobox",
               "@base-ui/react/direction-provider",
               "@base-ui/react/scroll-area",
+              "@base-ui/react/toggle",
               "@pierre/diffs/utils/parsePatchFiles",
               "@pierre/trees",
               "effect/unstable/reactivity/AsyncResult",

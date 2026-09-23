@@ -50,10 +50,12 @@ function CommandDialogViewport({ className, ...props }: CommandDialogPrimitive.V
 function CommandDialogPopup({
   className,
   children,
+  padding = "default",
   onBackdropPointerDown,
   ...props
 }: CommandDialogPrimitive.Popup.Props & {
   onBackdropPointerDown?: React.PointerEventHandler<HTMLDivElement>;
+  padding?: "default" | "none";
 }) {
   return (
     <CommandDialogPortal>
@@ -63,9 +65,11 @@ function CommandDialogPopup({
           className={cn(
             DIALOG_POPUP_CLASS,
             "pointer-events-auto max-h-105 max-w-xl text-foreground",
+            padding === "none" && "p-0",
             className,
           )}
           data-slot="command-dialog-popup"
+          data-padding={padding}
           {...props}
         >
           {children}
@@ -93,19 +97,11 @@ function Command({
 
 function CommandInput({
   className,
-  wrapperClassName,
   placeholder,
   ...props
-}: React.ComponentProps<typeof AutocompleteInput> & {
-  wrapperClassName?: string | undefined;
-}) {
+}: React.ComponentProps<typeof AutocompleteInput>) {
   return (
-    <div
-      className={cn(
-        "px-[var(--command-shell-inset)] py-1.5 [&_[data-slot=autocomplete-start-addon]]:ps-[calc(var(--command-shell-inset)+0.0625rem)]",
-        wrapperClassName,
-      )}
-    >
+    <div className="px-[var(--command-shell-inset)] py-1.5 [&_[data-slot=autocomplete-start-addon]]:ps-[calc(var(--command-shell-inset)+0.0625rem)]">
       <AutocompleteInput
         autoFocus
         className={cn(
@@ -160,13 +156,24 @@ function CommandCollection({ ...props }: React.ComponentProps<typeof Autocomplet
   return <AutocompleteCollection data-slot="command-collection" {...props} />;
 }
 
-function CommandItem({ className, ...props }: React.ComponentProps<typeof AutocompleteItem>) {
+// Pass `active` when the palette tracks the highlighted row itself; the
+// primitive's hover and keyboard highlight are then ignored so the two never
+// disagree, and the row shows the active surface instead.
+function CommandItem({
+  className,
+  active,
+  ...props
+}: React.ComponentProps<typeof AutocompleteItem> & { active?: boolean }) {
   return (
     <AutocompleteItem
       className={cn(
         "py-1.5 data-selected:bg-foreground/[0.06] data-highlighted:bg-foreground/[0.09] data-highlighted:text-foreground [&[data-highlighted][data-selected]]:bg-foreground/[0.09] [&[data-highlighted][data-selected]]:text-foreground",
+        active !== undefined &&
+          "cursor-pointer hover:bg-transparent hover:text-inherit data-highlighted:bg-transparent data-highlighted:text-inherit data-selected:bg-transparent data-selected:text-inherit [&[data-highlighted][data-selected]]:bg-transparent [&[data-highlighted][data-selected]]:text-inherit",
+        active && "bg-accent! text-accent-foreground!",
         className,
       )}
+      data-active={active || undefined}
       data-slot="command-item"
       {...props}
     />

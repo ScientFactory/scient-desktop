@@ -12,8 +12,8 @@ import {
   type ProviderInstanceId,
 } from "@t3tools/contracts";
 import * as Redacted from "effect/Redacted";
-import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
-import { cn, randomUUID } from "~/lib/utils";
+import { ChevronRightIcon } from "lucide-react";
+import { randomUUID } from "~/lib/utils";
 import { PROVIDER_ICON_BY_PROVIDER } from "../chat/providerIconUtils";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -31,11 +31,11 @@ import {
 import {
   Select,
   SelectItem,
+  NativeSelect,
   SelectPopup,
   SelectSeparator,
   SelectTrigger,
   SelectValue,
-  selectTriggerVariants,
 } from "../ui/select";
 import { CUSTOM_MODEL_PRESETS, CUSTOM_MODEL_PROTOCOLS, customModelPresetId } from "./customModels";
 
@@ -161,7 +161,7 @@ function hostLabel(baseUrl: string): string {
     return "Custom endpoint";
   }
 }
-/** Native select styled like the shared select trigger, so it matches the inputs beside it. */
+/** Native select keeps the platform option menu while matching the shared select field. */
 export function Choice({
   value,
   onChange,
@@ -176,21 +176,14 @@ export function Choice({
   disabled?: boolean;
 }) {
   return (
-    <span className="relative inline-flex w-full">
-      <select
-        aria-label={label}
-        value={value}
-        disabled={disabled}
-        onChange={(event) => onChange(event.target.value)}
-        className={cn(
-          selectTriggerVariants({ variant: "default", size: "default" }),
-          "appearance-none pr-9 disabled:pointer-events-none disabled:opacity-64",
-        )}
-      >
-        {children}
-      </select>
-      <ChevronDownIcon className="pointer-events-none absolute top-1/2 right-3 size-4 -translate-y-1/2 text-icon-muted opacity-80" />
-    </span>
+    <NativeSelect
+      aria-label={label}
+      value={value}
+      disabled={disabled}
+      onChange={(event) => onChange(event.target.value)}
+    >
+      {children}
+    </NativeSelect>
   );
 }
 
@@ -558,8 +551,8 @@ export function ModelConnectionEditor({
                   <ChevronRightIcon className="size-4 text-icon-muted transition-transform duration-200 group-data-panel-open:rotate-90" />
                   Advanced
                 </CollapsibleTrigger>
-                <CollapsiblePanel keepMounted className="text-sm">
-                  <div className="mt-4 space-y-4 border-l border-border pl-4">
+                <CollapsiblePanel keepMounted>
+                  <div className="mt-4 space-y-4 border-l border-border pl-4 text-sm">
                     <Field label="Display name">
                       <Input
                         maxLength={256}

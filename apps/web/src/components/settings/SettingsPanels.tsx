@@ -933,7 +933,7 @@ function BackgroundActivityAdvancedDialog({
             Tune the shared power policy and the background intervals that feed it.
           </DialogDescription>
         </DialogHeader>
-        <DialogPanel className="space-y-0 px-6 pb-5">
+        <DialogPanel>
           <div className="overflow-hidden rounded-xl border bg-card text-card-foreground">
             <div className="flex flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0 space-y-1">
@@ -1994,7 +1994,7 @@ function FontFamilySettingsRow({
         aria-invalid={draftPending || undefined}
         autoCapitalize="off"
         autoComplete="off"
-        className={weight ? "min-w-0 flex-1 [&_input]:px-2" : "min-w-0 flex-1"}
+        className="min-w-0 flex-1"
         maxLength={200}
         onFocus={() => {
           inputFocusedRef.current = true;
@@ -2063,7 +2063,7 @@ function FontFamilySettingsRow({
       >
         <SelectTrigger
           size="sm"
-          className={weight ? "w-18 min-w-0 shrink-0 px-2" : "w-22 shrink-0"}
+          className={weight ? "w-18 min-w-0 shrink-0" : "w-22 shrink-0"}
           aria-label={size.label}
         >
           <SelectValue>{size.value} px</SelectValue>
@@ -2088,7 +2088,7 @@ function FontFamilySettingsRow({
         >
           <SelectTrigger
             size="sm"
-            className="w-24 min-w-0 shrink-0 px-2"
+            className="w-24 min-w-0 shrink-0"
             aria-label="Interface text weight"
           >
             <SelectValue>{INTERFACE_FONT_WEIGHT_LABELS[weight.value]}</SelectValue>
@@ -3275,7 +3275,6 @@ export function GeneralSettingsPanel() {
                   lockedProvider={null}
                   instanceEntries={textGenerationModelInstanceEntries}
                   modelOptionsByInstance={textGenerationModelOptionsByInstance}
-                  triggerVariant="outline"
                   triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                   {...(mixedTextGenerationModel ? { triggerLabel: "Mixed" } : {})}
                   getModelDisabledReason={textGenerationModelDisabledReason}
@@ -3334,7 +3333,6 @@ export function GeneralSettingsPanel() {
                     modelOptions={textGenModelOptions}
                     allowPromptInjectedEffort={false}
                     planModeEnabled={settings.planModeEnabled}
-                    triggerVariant="outline"
                     triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                     onModelOptionsChange={(nextOptions) => {
                       updateSettings({

@@ -127,7 +127,7 @@ export function ScientMarkdownRenameButton(props: ScientMarkdownRenameButtonProp
             void submit();
           }}
         >
-          <PopoverTitle className="text-sm">Rename Markdown document</PopoverTitle>
+          <PopoverTitle>Rename Markdown document</PopoverTitle>
           <Input
             ref={inputRef}
             aria-invalid={error !== null || undefined}

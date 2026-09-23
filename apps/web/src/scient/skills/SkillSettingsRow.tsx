@@ -47,7 +47,7 @@ export function SkillSettingsRow(props: {
             <SelectTrigger
               size="sm"
               variant="ghost"
-              className="w-fit min-w-0 gap-1.5"
+              className="w-fit min-w-0"
               icon={<ChevronDownIcon className="size-3 opacity-70" strokeWidth={2.25} />}
               aria-label={`${skill.name} use`}
             >

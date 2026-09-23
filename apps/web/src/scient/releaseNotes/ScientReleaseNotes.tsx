@@ -7,7 +7,6 @@ import {
   Dialog,
   DialogDescription,
   DialogFooter,
-  DialogHeader,
   DialogPanel,
   DialogPopup,
   DialogTitle,
@@ -121,7 +120,9 @@ function ScientReleaseNotesDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogPopup
-        className="max-w-[34rem] gap-0 overflow-hidden p-0 max-sm:max-h-[calc(100dvh-3rem)]"
+        gap="none"
+        padding="none"
+        className="max-w-[34rem] overflow-hidden max-sm:max-h-[calc(100dvh-3rem)]"
         finalFocus={() =>
           document.querySelector<HTMLElement>(
             "[data-sidebar='footer'] [data-sidebar='menu-button']",
@@ -137,7 +138,7 @@ function ScientReleaseNotesDialog({
         />
 
         <DialogPanel
-          className={view === "release" ? "px-5 pb-4 pt-5" : "p-0"}
+          padding={view === "release" ? "compact" : "none"}
           scrollAreaClassName={
             view === "release"
               ? "max-h-[min(32rem,calc(100dvh-12rem))]"
@@ -167,11 +168,7 @@ function ScientReleaseNotesDialog({
           ) : (
             <span aria-hidden />
           )}
-          <Button
-            className="bg-[linear-gradient(135deg,color-mix(in_srgb,var(--scient-slate)_78%,white)_0%,var(--scient-slate)_58%,color-mix(in_srgb,var(--scient-slate)_90%,black)_100%)] text-white hover:brightness-[0.96]"
-            size="sm"
-            onClick={() => onOpenChange(false)}
-          >
+          <Button size="sm" onClick={() => onOpenChange(false)}>
             Done
           </Button>
         </DialogFooter>
@@ -192,7 +189,10 @@ function ScientReleaseDialogHeader({
   readonly onBack: () => void;
 }) {
   return (
-    <DialogHeader className="relative h-20 overflow-hidden bg-[linear-gradient(105deg,color-mix(in_srgb,var(--scient-warm-white)_88%,white)_0%,color-mix(in_srgb,var(--scient-warm-white)_42%,white)_58%,white_100%)] !p-0 dark:bg-[#151315]">
+    <div
+      className="relative h-20 overflow-hidden bg-[linear-gradient(105deg,color-mix(in_srgb,var(--scient-warm-white)_88%,white)_0%,color-mix(in_srgb,var(--scient-warm-white)_42%,white)_58%,white_100%)] dark:bg-[#151315]"
+      data-slot="dialog-header"
+    >
       <ScientSymbol className="pointer-events-none absolute -right-3 -top-4 size-32 opacity-[0.065] dark:opacity-[0.09]" />
       {view === "release" ? (
         <div className="relative flex h-full w-full items-center gap-3 px-5 pr-14">
@@ -200,10 +200,10 @@ function ScientReleaseDialogHeader({
             <ScientSymbol className="size-[1.125rem]" />
           </div>
           <div className="min-w-0">
-            <DialogTitle className="text-lg leading-5" ref={titleRef} tabIndex={-1}>
+            <DialogTitle size="large" ref={titleRef} tabIndex={-1}>
               What&rsquo;s new in Scient
             </DialogTitle>
-            <DialogDescription className="mt-0.5 text-xs leading-4">
+            <DialogDescription className="mt-0.5" size="compact">
               Version {formatScientReleaseVersion(release.version)} ·{" "}
               {formatScientReleaseMonth(release.publishedAt)}
             </DialogDescription>
@@ -215,16 +215,16 @@ function ScientReleaseDialogHeader({
             <ArrowLeftIcon />
           </Button>
           <div>
-            <DialogTitle className="text-lg leading-5" ref={titleRef} tabIndex={-1}>
+            <DialogTitle size="large" ref={titleRef} tabIndex={-1}>
               Release history
             </DialogTitle>
-            <DialogDescription className="mt-0.5 text-xs leading-4">
+            <DialogDescription className="mt-0.5" size="compact">
               Scient updates, newest first.
             </DialogDescription>
           </div>
         </div>
       )}
-    </DialogHeader>
+    </div>
   );
 }
 

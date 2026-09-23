@@ -329,13 +329,7 @@ export function ProviderModelsSection({
         render={
           <Button
             size="icon-micro"
-            variant="ghost"
-            className={cn(
-              "[--control-icon-color:currentColor]",
-              isFavorite
-                ? "text-yellow-500 hover:text-yellow-600"
-                : "text-muted-foreground/40 hover:text-muted-foreground",
-            )}
+            variant="ghost-muted"
             onClick={() => handleToggleFavorite(model.slug)}
             aria-label={`${isFavorite ? "Remove" : "Add"} ${model.name} ${
               isFavorite ? "from" : "to"
@@ -343,7 +337,7 @@ export function ProviderModelsSection({
           />
         }
       >
-        <StarIcon className={cn("size-3", isFavorite && "fill-current")} />
+        <StarIcon className={cn("size-3", isFavorite && "fill-current text-warning")} />
       </TooltipTrigger>
       <TooltipPopup side="top">
         {isFavorite ? "Remove from favorites" : "Add to favorites"}
@@ -603,7 +597,7 @@ export function ProviderModelsSection({
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="group mt-3 h-auto w-full cursor-pointer justify-start gap-3 rounded-md px-2 py-2 sm:h-auto"
+                    className="group mt-3 h-auto w-full cursor-pointer justify-start"
                     aria-expanded={expandedMore}
                     onClick={() => setExpandedMore((value) => !value)}
                   >

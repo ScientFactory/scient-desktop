@@ -176,7 +176,7 @@ export const PREFERRED_DEFAULT_ANTIGRAVITY_MODELS: ReadonlyArray<string> = [
   "gemini-3.1-pro",
   "gemini-3.5-flash",
 ];
-export const DEFAULT_TEXT_GENERATION_MODEL = "gpt-5.6-luna";
+export const DEFAULT_TEXT_GENERATION_MODEL = "gpt-6-luna";
 /** Keep the official Antigravity session's current model. Never send this ID to ACP. */
 export const ANTIGRAVITY_DEFAULT_MODEL = "antigravity-default";
 export const DEFAULT_TEXT_GENERATION_REASONING_EFFORT = "low";

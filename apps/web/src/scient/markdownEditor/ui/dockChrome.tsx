@@ -193,7 +193,7 @@ export function DockMenu(props: {
         </Tooltip>
         <MenuPopup
           align={props.align ?? "start"}
-          className={cn("w-44 p-1", props.popupClassName)}
+          className={cn("w-44", props.popupClassName)}
           data-keybinding-capture=""
           // Commands own focus (editor, nested editor, or a picker). Escape and
           // other dismissals retain the menu's standard accessible focus return.
