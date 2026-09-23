@@ -450,9 +450,9 @@ describe("formatting menu focus", () => {
       sixByThree.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
     });
     expect(sizeLabel.textContent).toBe("6 × 3");
-    expect(
-      Array.from(choices).filter((choice) => choice.classList.contains("bg-accent")),
-    ).toHaveLength(18);
+    expect(Array.from(choices).filter((choice) => choice.hasAttribute("data-active"))).toHaveLength(
+      18,
+    );
     expect(insertTable).not.toHaveBeenCalled();
 
     const threeByThree = picker.querySelector<HTMLElement>(

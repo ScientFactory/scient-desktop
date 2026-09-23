@@ -56,13 +56,15 @@ export function GeneratedPdfTitleRow(props: {
           <TooltipTrigger
             render={
               <Button
-                variant="ghost"
+                variant={
+                  updateAction.tone === "warning"
+                    ? "ghost-warning"
+                    : updateAction.tone === "destructive"
+                      ? "ghost-destructive-action"
+                      : "ghost"
+                }
                 size="icon-xs"
-                className={cn(
-                  "shrink-0",
-                  updateAction.tone === "warning" && "text-warning",
-                  updateAction.tone === "destructive" && "text-destructive",
-                )}
+                className="shrink-0"
                 onClick={props.onRequestUpdate}
                 aria-label={updateAction.label}
                 aria-busy={updating}

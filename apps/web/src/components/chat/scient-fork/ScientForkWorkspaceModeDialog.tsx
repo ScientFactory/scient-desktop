@@ -277,29 +277,29 @@ export function ScientForkWorkspaceModeDialog({
         finishClose.current = null;
       }}
     >
-      <DialogPopup
-        className="max-w-[23rem] -translate-y-4"
-        backdropClassName="!backdrop-blur-[0.5px]"
-      >
-        <DialogHeader className="gap-1.5 p-5 pe-12 max-sm:p-4">
-          <DialogTitle className="flex items-center gap-2">
-            <SplitIcon className="size-4 rotate-90" />
-            {copy.title}
-          </DialogTitle>
-          <DialogDescription>{copy.description}</DialogDescription>
+      <DialogPopup className="max-w-[23rem] -translate-y-4">
+        <DialogHeader>
+          <div className="pe-12">
+            <DialogTitle>
+              <span className="inline-flex items-center gap-2">
+                <SplitIcon className="size-4 rotate-90" />
+                {copy.title}
+              </span>
+            </DialogTitle>
+            <DialogDescription>{copy.description}</DialogDescription>
+          </div>
         </DialogHeader>
-        <DialogPanel className="p-5 max-sm:p-4">
+        <DialogPanel>
           <form id={formId} className="grid gap-3" onSubmit={handleSubmit}>
             <div className="grid gap-1.5">
               <Label htmlFor={`${formId}-title`}>Thread title</Label>
               <Input
                 id={`${formId}-title`}
                 ref={titleInputRef}
+                size="default"
                 value={displayedTitle}
-                unstyled
                 disabled={disabled || locked || !titleOverrideSupported}
                 aria-invalid={!submission.ok}
-                className="relative inline-flex h-9 w-full min-w-0 items-center rounded-md bg-muted/20 text-base text-foreground shadow-none ring-1 ring-foreground/50 transition-shadow [&>input]:px-2.5"
                 onChange={(event) => {
                   setTitleDraft(event.target.value);
                   setTitleEdited(true);
@@ -337,7 +337,7 @@ export function ScientForkWorkspaceModeDialog({
             ) : null}
           </form>
         </DialogPanel>
-        <DialogFooter className="px-5 py-3 max-sm:px-4" variant="bare">
+        <DialogFooter variant="bare">
           <Button
             type="button"
             variant="ghost"

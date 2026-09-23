@@ -1358,13 +1358,13 @@ export function ComputePanel(props: {
                     <Button
                       size="xs"
                       variant="ghost-muted"
-                      className="h-6 max-w-48 px-1.5 text-[11px] font-normal text-warning"
+                      className="max-w-48"
                       disabled={stoppingUnusedSession !== null}
                       aria-label="Choose a compute session to stop"
                     />
                   }
                 >
-                  Capacity · choose session
+                  <span className="font-normal text-warning">Capacity · choose session</span>
                 </MenuTrigger>
                 <MenuPopup align="start" side="bottom" className="min-w-64">
                   {capacitySessions.length === 0 ? (
@@ -1393,11 +1393,11 @@ export function ComputePanel(props: {
                 render={
                   <Button
                     size="xs"
-                    variant="ghost"
-                    className="-ms-1.5 mt-0.5 h-6 max-w-full gap-1 px-1.5 font-normal text-muted-foreground"
+                    variant="ghost-muted"
+                    className="-ms-1.5 mt-0.5 max-w-full"
                     aria-label="Compute session history"
                   >
-                    <span className="truncate">
+                    <span className="truncate font-normal">
                       {selectedSession
                         ? `${computeSessionOwnerLabel(selectedSession, props.environmentId, props.cwd)} · ${statusLabel(selectedSession.status)}`
                         : "Session history"}
@@ -1412,11 +1412,7 @@ export function ComputePanel(props: {
                   onValueChange={(sessionId) => setSelectedSessionId(sessionId)}
                 >
                   {contextSessions.map((session) => (
-                    <MenuRadioItem
-                      key={session.sessionId}
-                      value={session.sessionId}
-                      className="min-h-7 py-1 sm:text-xs"
-                    >
+                    <MenuRadioItem key={session.sessionId} value={session.sessionId} size="compact">
                       {computeSessionOwnerLabel(session, props.environmentId, props.cwd)} ·{" "}
                       {new Date(session.createdAt).toLocaleString()} · {statusLabel(session.status)}
                     </MenuRadioItem>
@@ -1781,7 +1777,7 @@ export function ComputePanel(props: {
                     >
                       <SelectTrigger
                         size="xs"
-                        className="w-fit min-w-0 max-w-full gap-1.5"
+                        className="w-fit min-w-0 max-w-full"
                         aria-label="Runtime"
                       >
                         <SelectValue className="max-w-56">
@@ -1794,7 +1790,7 @@ export function ComputePanel(props: {
                             key={runtime.key}
                             value={runtime.key}
                             hideIndicator
-                            className="text-xs"
+                            size="compact"
                           >
                             {runtime.candidate.profile.displayName}
                           </SelectItem>
@@ -1841,15 +1837,15 @@ export function ComputePanel(props: {
           role="alertdialog"
           side="left"
           sideOffset={4}
-          viewportClassName="p-0"
+          padding="none"
         >
           <div className="p-3">
-            <PopoverTitle className="text-sm">
+            <PopoverTitle>
               {sessionConfirmation?.kind === "restart"
                 ? "Restart this session?"
                 : "Stop this session?"}
             </PopoverTitle>
-            <PopoverDescription className="mt-1 text-xs leading-5">
+            <PopoverDescription className="mt-1" size="compact">
               {sessionConfirmation?.kind === "restart"
                 ? "Cancels queued work and clears variables. Run history stays."
                 : "Closes the runtime and clears its variables. Run history stays."}

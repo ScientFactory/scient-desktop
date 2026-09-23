@@ -72,7 +72,7 @@ describe("AddUsageAccountingSourceDialog", () => {
     expect(markup).toContain("https://openrouter.ai/settings/management-keys");
     expect(markup).toContain("Add billing");
     expect(markup.match(/data-size="sm"/g)).toHaveLength(2);
-    expect(markup.match(/text-\[15px\] sm:text-\[15px\]/g)).toHaveLength(2);
+    expect(markup.match(/text-\[15px\]/g)).toHaveLength(2);
     expect(markup).not.toContain("Label (optional)");
     expect(markup).not.toContain("Connect OpenRouter accounting");
   });

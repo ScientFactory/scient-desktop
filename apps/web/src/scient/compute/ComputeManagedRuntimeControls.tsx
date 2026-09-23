@@ -433,11 +433,7 @@ export function ManagedRuntimeNotice({
               >
                 <ChevronDown className="size-3" aria-hidden />
               </PopoverTrigger>
-              <PopoverPopup
-                align="end"
-                className="w-80 max-w-[calc(100vw-2rem)]"
-                viewportClassName="p-2"
-              >
+              <PopoverPopup align="end" className="w-80 max-w-[calc(100vw-2rem)]" padding="tight">
                 <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words text-[11px] text-destructive">
                   {failure.detail}
                 </pre>

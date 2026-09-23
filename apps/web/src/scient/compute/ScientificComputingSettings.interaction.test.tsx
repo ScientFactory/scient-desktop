@@ -118,8 +118,6 @@ vi.mock("~/state/use-atom-command", () => ({
             : vi.fn(async () => ({ _tag: "Success", value: null })),
 }));
 import { ScientificComputingSettings } from "./ScientificComputingSettings";
-import { buttonVariants } from "~/components/ui/button";
-import { cn } from "~/lib/utils";
 import pythonLogo from "~/assets/compute/python.svg";
 import matlabLogo from "~/assets/compute/matlab.svg";
 import octaveLogo from "~/assets/compute/octave.svg";
@@ -128,12 +126,9 @@ import wolframLogo from "~/assets/compute/wolfram.svg";
 const managedPath = "/scient/python";
 const systemPath = "/system/python";
 const automaticRuntimeOption = "scient-runtime:automatic";
-function expectCompactAction(node: HTMLButtonElement, className?: string) {
-  for (const token of cn(buttonVariants({ size: "xs", variant: "outline" }), className).split(
-    /\s+/u,
-  )) {
-    expect(node.classList.contains(token), token).toBe(true);
-  }
+function expectCompactAction(node: HTMLButtonElement) {
+  expect(node.getAttribute("data-slot")).toBe("button");
+  expect(node.getAttribute("data-size")).toBe("xs");
   expect(node.classList.contains("bg-primary")).toBe(false);
 }
 const status = (): ComputeManagedRuntimeStatus => ({
@@ -1664,7 +1659,7 @@ describe("Scientific Computing settings interactions", () => {
       ];
       await render();
       const row = () => container.querySelector(`#${languageId}-managed-runtime`)!;
-      expectCompactAction(button("Update", row()), "text-primary");
+      expectCompactAction(button("Update", row()));
       expect(button("Update", row()).classList.contains("text-primary")).toBe(true);
       await openMaintenance(languageId === "matlab" ? "MATLAB connection" : "Python runtime");
       expect(

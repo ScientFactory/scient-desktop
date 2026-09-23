@@ -74,13 +74,12 @@ export function MermaidDiagramDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogPopup
-        bottomStickOnMobile={false}
-        className="scient-visual-dialog flex max-w-none flex-col overflow-hidden"
-      >
-        <DialogHeader className="flex-row items-center gap-3 border-b px-4 py-3 pe-12">
+      <DialogPopup bottomStickOnMobile={false} layout="visual">
+        <DialogHeader layout="visual">
           <div className="min-w-0 flex-1">
-            <DialogTitle className="truncate text-base">{title}</DialogTitle>
+            <DialogTitle size="compact">
+              <span className="block truncate">{title}</span>
+            </DialogTitle>
             <DialogDescription className="sr-only">
               Expanded view of the Mermaid diagram with zoom and export controls.
             </DialogDescription>

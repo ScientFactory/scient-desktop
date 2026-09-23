@@ -37,7 +37,7 @@ export function ScientProjectInitializationDialog(props: {
       <DialogPopup className={ready ? "max-w-xl" : "max-w-lg"} showCloseButton>
         {inspection ? (
           <>
-            <DialogHeader className="pr-10">
+            <DialogHeader>
               <DialogTitle>
                 {recovering
                   ? "Finish setting up this Scient project?"
@@ -54,7 +54,7 @@ export function ScientProjectInitializationDialog(props: {
               </DialogDescription>
             </DialogHeader>
 
-            <DialogPanel className="space-y-3 pt-1">
+            <DialogPanel spacing="compact">
               {inspection.state === "conflicting" ? (
                 inspection.issues.map((issue) => (
                   <div

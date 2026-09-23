@@ -19,10 +19,6 @@ import {
   AssistedSetupStatus,
 } from "./AssistedProviderSetup";
 import {
-  DESTRUCTIVE_GHOST_ACTION_CLASS,
-  PRIMARY_GHOST_ACTION_CLASS,
-} from "./providerConnectionActionStyles";
-import {
   isActiveProviderConnectionOperation,
   isActiveProviderRuntimeOperation,
   isProviderRuntimePresentedAsInstalled,
@@ -160,12 +156,11 @@ export function DroidInlineSetup(props: {
         {activeRuntimeOperation ? (
           <AssistedSetupActions>
             <Button
-              className={DESTRUCTIVE_GHOST_ACTION_CLASS}
               disabled={pendingAction === "cancel-runtime"}
               onClick={() => void cancelRuntime()}
               size="sm"
               type="button"
-              variant="ghost-muted"
+              variant="ghost-destructive-action"
             >
               {pendingAction === "cancel-runtime" ? (
                 <LoaderIcon aria-hidden className="animate-spin" />
@@ -193,11 +188,10 @@ export function DroidInlineSetup(props: {
         />
         <AssistedSetupActions>
           <Button
-            className={PRIMARY_GHOST_ACTION_CLASS}
             onClick={() => void runRuntime("repair")}
             size="sm"
             type="button"
-            variant="ghost"
+            variant="ghost-primary"
           >
             <RefreshCwIcon aria-hidden /> Repair Droid
           </Button>
@@ -232,11 +226,10 @@ export function DroidInlineSetup(props: {
         {canInstall ? (
           <AssistedSetupActions>
             <Button
-              className={PRIMARY_GHOST_ACTION_CLASS}
               onClick={() => void runRuntime("install")}
               size="sm"
               type="button"
-              variant="ghost"
+              variant="ghost-primary"
             >
               {installationError ? <RefreshCwIcon aria-hidden /> : <DownloadIcon aria-hidden />}
               {installationError ? "Retry installation" : "Install"}
@@ -270,12 +263,11 @@ export function DroidInlineSetup(props: {
         {activeConnectionOperation ? (
           <AssistedSetupActions>
             <Button
-              className={DESTRUCTIVE_GHOST_ACTION_CLASS}
               disabled={pendingAction === "cancel-sign-in"}
               onClick={() => void cancelSignIn()}
               size="sm"
               type="button"
-              variant="ghost-muted"
+              variant="ghost-destructive-action"
             >
               {pendingAction === "cancel-sign-in" ? (
                 <LoaderIcon aria-hidden className="animate-spin" />
@@ -346,13 +338,7 @@ export function DroidInlineSetup(props: {
         title={signInError ? "Droid sign-in didn’t finish" : "Sign in required"}
       />
       <AssistedSetupActions>
-        <Button
-          className={PRIMARY_GHOST_ACTION_CLASS}
-          onClick={() => void signIn()}
-          size="sm"
-          type="button"
-          variant="ghost"
-        >
+        <Button onClick={() => void signIn()} size="sm" type="button" variant="ghost-primary">
           {signInError ? <RefreshCwIcon aria-hidden /> : <ExternalLinkIcon aria-hidden />}
           {signInError ? "Try sign in again" : "Sign in with Factory"}
         </Button>

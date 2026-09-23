@@ -70,7 +70,6 @@ export function CodeBlockActions({
               type="button"
               variant="ghost"
               size="icon-xs"
-              className="chat-markdown-chrome-action"
               aria-pressed={wrapped}
               onClick={() => onWrapChange(!wrapped)}
               aria-label={wrapLabel}
@@ -88,7 +87,6 @@ export function CodeBlockActions({
               type="button"
               variant="ghost"
               size="icon-xs"
-              className="chat-markdown-chrome-action"
               onClick={() => void copy()}
               aria-label={copyLabel}
             />

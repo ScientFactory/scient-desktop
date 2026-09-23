@@ -84,7 +84,7 @@ function VoiceLanguagePicker({
             render={
               <Button
                 aria-label="Choose voice language"
-                className="relative top-0.5 h-6 gap-1 px-1.5"
+                className="relative top-0.5"
                 size="xs"
                 variant="ghost-muted"
               />
@@ -96,74 +96,71 @@ function VoiceLanguagePicker({
           <PopoverPopup
             align="start"
             className="w-56 max-w-[calc(100vw-1rem)]"
+            padding="none"
             side="bottom"
             sideOffset={4}
-            viewportClassName="p-1"
           >
-            <div className="space-y-0.5">
-              {PRIMARY_VOICE_LANGUAGES.map((language) => {
-                const selected = value === language;
-                return (
+            <div className="p-1">
+              <div className="space-y-0.5">
+                {PRIMARY_VOICE_LANGUAGES.map((language) => {
+                  const selected = value === language;
+                  return (
+                    <Button
+                      key={language}
+                      aria-pressed={selected}
+                      className="w-full justify-start"
+                      onClick={() => selectLanguage(language)}
+                      size="sm-multiline"
+                      variant={selected ? "selected" : "ghost-muted"}
+                    >
+                      <span className="flex min-w-0 flex-1 items-center gap-2">
+                        <span>{VOICE_LANGUAGE_NAMES[language]}</span>
+                        {language === "auto" ? (
+                          <Badge size="sm" variant="info">
+                            Recommended
+                          </Badge>
+                        ) : null}
+                      </span>
+                      {selected ? <CheckIcon className="stroke-[2.5]" /> : null}
+                    </Button>
+                  );
+                })}
+                <div className="mt-1 border-border/60 border-t pt-1">
                   <Button
-                    key={language}
-                    aria-pressed={selected}
-                    className={
-                      selected
-                        ? "h-auto w-full justify-start bg-accent/60 px-2 py-1.5 text-foreground hover:bg-accent"
-                        : "h-auto w-full justify-start px-2 py-1.5 hover:bg-accent hover:text-foreground"
-                    }
-                    onClick={() => selectLanguage(language)}
+                    aria-expanded={moreLanguagesOpen}
+                    className="w-full justify-start"
+                    onClick={() => setMoreLanguagesOpen((open) => !open)}
+                    size="xs"
                     variant="ghost-muted"
                   >
-                    <span className="flex min-w-0 flex-1 items-center gap-2">
-                      <span>{VOICE_LANGUAGE_NAMES[language]}</span>
-                      {language === "auto" ? (
-                        <Badge size="sm" variant="info">
-                          Recommended
-                        </Badge>
-                      ) : null}
-                    </span>
-                    {selected ? <CheckIcon className="stroke-[2.5]" /> : null}
+                    <span className="flex-1 text-left">More languages</span>
+                    <ChevronRightIcon
+                      className={`size-3.5 stroke-[2.5] transition-transform ${moreLanguagesOpen ? "rotate-90" : ""}`}
+                    />
                   </Button>
-                );
-              })}
-              <div className="mt-1 border-border/60 border-t pt-1">
-                <Button
-                  aria-expanded={moreLanguagesOpen}
-                  className="w-full justify-start px-2 hover:bg-accent hover:text-foreground"
-                  onClick={() => setMoreLanguagesOpen((open) => !open)}
-                  size="xs"
-                  variant="ghost-muted"
-                >
-                  <span className="flex-1 text-left">More languages</span>
-                  <ChevronRightIcon
-                    className={`size-3.5 stroke-[2.5] transition-transform ${moreLanguagesOpen ? "rotate-90" : ""}`}
-                  />
-                </Button>
-                {moreLanguagesOpen ? (
-                  <div className="mt-0.5 space-y-0.5">
-                    {MORE_VOICE_LANGUAGES.map((language) => {
-                      const selected = value === language;
-                      return (
-                        <Button
-                          key={language}
-                          aria-pressed={selected}
-                          className={
-                            selected
-                              ? "w-full justify-start bg-accent/60 px-2 text-foreground hover:bg-accent"
-                              : "w-full justify-start px-2 hover:bg-accent hover:text-foreground"
-                          }
-                          onClick={() => selectLanguage(language)}
-                          size="xs"
-                          variant="ghost-muted"
-                        >
-                          <span className="flex-1 text-left">{VOICE_LANGUAGE_NAMES[language]}</span>
-                          {selected ? <CheckIcon className="stroke-[2.5]" /> : null}
-                        </Button>
-                      );
-                    })}
-                  </div>
-                ) : null}
+                  {moreLanguagesOpen ? (
+                    <div className="mt-0.5 space-y-0.5">
+                      {MORE_VOICE_LANGUAGES.map((language) => {
+                        const selected = value === language;
+                        return (
+                          <Button
+                            key={language}
+                            aria-pressed={selected}
+                            className="w-full justify-start"
+                            onClick={() => selectLanguage(language)}
+                            size="xs"
+                            variant={selected ? "selected" : "ghost-muted"}
+                          >
+                            <span className="flex-1 text-left">
+                              {VOICE_LANGUAGE_NAMES[language]}
+                            </span>
+                            {selected ? <CheckIcon className="stroke-[2.5]" /> : null}
+                          </Button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                </div>
               </div>
             </div>
           </PopoverPopup>
@@ -350,14 +347,14 @@ function VoiceModelCard({
             <PopoverPopup
               align="start"
               className="w-72 max-w-[calc(100vw-1rem)]"
+              padding="none"
               side="bottom"
               sideOffset={6}
-              viewportClassName="p-0"
               role="alertdialog"
             >
               <div className="p-3">
-                <PopoverTitle className="text-sm">Remove {model.displayName}?</PopoverTitle>
-                <PopoverDescription className="mt-1 text-xs leading-5">
+                <PopoverTitle>Remove {model.displayName}?</PopoverTitle>
+                <PopoverDescription className="mt-1" size="compact">
                   {removeDescription}
                 </PopoverDescription>
                 <div className="mt-3 flex justify-end gap-1.5">

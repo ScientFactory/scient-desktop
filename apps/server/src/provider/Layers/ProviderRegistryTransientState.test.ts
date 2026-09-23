@@ -19,6 +19,7 @@ import * as Stream from "effect/Stream";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../../config.ts";
+import * as ModelManifest from "../ModelManifest.ts";
 import type { ProviderInstance } from "../ProviderDriver.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
 import { readProviderStatusCache, resolveProviderStatusCachePath } from "../providerStatusCache.ts";
@@ -214,6 +215,7 @@ const makeHarness = Effect.fn("ProviderRegistryTransientState.makeHarness")(func
           prefix: "scient-provider-registry-transient-state-",
         }),
       ),
+      Layer.provideMerge(ModelManifest.layerTest),
       Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
       Layer.provideMerge(NodeServices.layer),
     ),

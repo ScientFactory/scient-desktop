@@ -5,6 +5,7 @@ import { PanelLeftCloseIcon, PanelLeftIcon } from "lucide-react";
 import * as React from "react";
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
+import { Input, type InputProps } from "~/components/ui/input";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import {
   Sheet,
@@ -530,6 +531,20 @@ function SidebarRail({
   );
 }
 
+/** A bare search or rename field that sits in a row of sidebar chrome. */
+function SidebarInput({ className, ...props }: Omit<InputProps, "unstyled" | "variant">) {
+  return (
+    <Input
+      className={cn(
+        "[&_[data-slot=input]]:h-auto [&_[data-slot=input]]:p-0 [&_[data-slot=input]]:font-medium [&_[data-slot=input]]:text-sidebar-foreground [&_[data-slot=input]]:text-sm [&_[data-slot=input]]:leading-normal [&_[data-slot=input]]:placeholder:text-sidebar-muted-foreground",
+        className,
+      )}
+      unstyled
+      {...props}
+    />
+  );
+}
+
 function SidebarInset({ className, ...props }: React.ComponentProps<"main">) {
   return (
     <main
@@ -587,7 +602,10 @@ function SidebarContent({
         <div
           // Reordered rows must not pull the viewport to their new position.
           className={cn(
-            "flex w-full min-w-0 flex-col gap-2 [overflow-anchor:none] group-data-[collapsible=icon]:overflow-hidden",
+            // Stacked groups share one inset between them instead of doubling
+            // it, including across the fixed header's boundary.
+            "flex w-full min-w-0 flex-col [overflow-anchor:none] group-data-[collapsible=icon]:overflow-hidden [&>[data-sidebar=group]+[data-sidebar=group]]:pt-0",
+            fixedHeader && "[&>[data-sidebar=group]:first-child]:pt-0",
             className,
           )}
           data-sidebar="content"
@@ -742,16 +760,22 @@ function SidebarMenuAction({
   });
 }
 
-function SidebarMenuSub({ className, ...props }: React.ComponentProps<"ul">) {
+function SidebarMenuSub({
+  className,
+  variant = "default",
+  ...props
+}: React.ComponentProps<"ul"> & { variant?: "default" | "plain" }) {
   return (
     <ul
       className={cn(
-        "mx-3.5 flex min-w-0 translate-x-px flex-col gap-1 border-sidebar-border border-l px-2.5 py-0.5",
+        "mx-3.5 flex min-w-0 translate-x-px flex-col gap-1 px-2.5 py-0.5",
+        variant === "default" && "border-sidebar-border border-l",
         "group-data-[collapsible=icon]:hidden",
         className,
       )}
       data-sidebar="menu-sub"
       data-slot="sidebar-menu-sub"
+      data-variant={variant}
       {...props}
     />
   );
@@ -801,6 +825,7 @@ function SidebarMenuSubButton({
 }
 
 export {
+  SidebarInput,
   Sidebar,
   SidebarContent,
   SidebarFooter,

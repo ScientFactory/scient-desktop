@@ -36,10 +36,6 @@ import {
   providerLifecycleFailureMessage,
   providerRuntimeComputerLabel,
 } from "./providerConnectionPresentation";
-import {
-  DESTRUCTIVE_GHOST_ACTION_CLASS,
-  PRIMARY_GHOST_ACTION_CLASS,
-} from "./providerConnectionActionStyles";
 import { ProviderAccountManagementLink } from "./ProviderAccountManagementLink";
 import {
   ProviderAuthorizationCodeDisclosure,
@@ -228,12 +224,11 @@ export function AntigravityInlineSetup(props: {
         {activeRuntimeOperation ? (
           <AssistedSetupActions>
             <Button
-              className={DESTRUCTIVE_GHOST_ACTION_CLASS}
               disabled={pendingAction === "cancel-runtime"}
               onClick={() => void cancelRuntime()}
               size="sm"
               type="button"
-              variant="ghost-muted"
+              variant="ghost-destructive-action"
             >
               {pendingAction === "cancel-runtime" ? (
                 <LoaderIcon aria-hidden className="animate-spin" />
@@ -264,11 +259,10 @@ export function AntigravityInlineSetup(props: {
         />
         <AssistedSetupActions>
           <Button
-            className={PRIMARY_GHOST_ACTION_CLASS}
             onClick={() => void run("repair", () => runtimeAction("repair"))}
             size="sm"
             type="button"
-            variant="ghost"
+            variant="ghost-primary"
           >
             <RefreshCwIcon aria-hidden /> Repair Antigravity
           </Button>
@@ -292,11 +286,10 @@ export function AntigravityInlineSetup(props: {
         {runtime?.actions.includes("install") ? (
           <AssistedSetupActions>
             <Button
-              className={PRIMARY_GHOST_ACTION_CLASS}
               onClick={() => void run("install", () => runtimeAction("install"))}
               size="sm"
               type="button"
-              variant="ghost"
+              variant="ghost-primary"
             >
               <DownloadIcon aria-hidden /> Install again
             </Button>
@@ -359,11 +352,10 @@ export function AntigravityInlineSetup(props: {
         {canInstall ? (
           <AssistedSetupActions>
             <Button
-              className={PRIMARY_GHOST_ACTION_CLASS}
               onClick={() => void run("install", () => runtimeAction("install"))}
               size="sm"
               type="button"
-              variant="ghost"
+              variant="ghost-primary"
             >
               {localError ? <RefreshCwIcon aria-hidden /> : <DownloadIcon aria-hidden />}
               {localError ? "Retry installation" : "Install Antigravity"}
@@ -471,12 +463,11 @@ export function AntigravityInlineSetup(props: {
             ) : null}
             {activeConnectionOperation ? (
               <Button
-                className={DESTRUCTIVE_GHOST_ACTION_CLASS}
                 disabled={pendingAction === "submit-code" || pendingAction === "cancel-sign-in"}
                 onClick={() => void cancelSignIn()}
                 size="sm"
                 type="button"
-                variant="ghost-muted"
+                variant="ghost-destructive-action"
               >
                 Cancel
               </Button>
@@ -540,7 +531,6 @@ export function AntigravityInlineSetup(props: {
         />
         <AssistedSetupActions>
           <Button
-            className={PRIMARY_GHOST_ACTION_CLASS}
             onClick={() =>
               void run("sign-in", () =>
                 startAntigravitySignInAndOpenAuthorizationPage(props.controller, props.provider),
@@ -548,7 +538,7 @@ export function AntigravityInlineSetup(props: {
             }
             size="sm"
             type="button"
-            variant="ghost"
+            variant="ghost-primary"
           >
             {usesCredentials ? <LogInIcon aria-hidden /> : <ExternalLinkIcon aria-hidden />}{" "}
             {signInError ? "Try again" : usesCredentials ? "Connect" : "Sign in with Google"}
@@ -594,13 +584,12 @@ export function AntigravityInlineSetup(props: {
         <AssistedSetupActions>
           {props.accountAction}
           <Button
-            className={PRIMARY_GHOST_ACTION_CLASS}
             onClick={() =>
               void run("update", () => updateAntigravityRuntime(props.controller, props.provider))
             }
             size="sm"
             type="button"
-            variant="ghost"
+            variant="ghost-primary"
           >
             <RefreshCwIcon aria-hidden /> Update Antigravity
           </Button>

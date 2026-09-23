@@ -62,12 +62,12 @@ export function SourceRemovalConfirmation(props: {
         align="start"
         sideOffset={8}
         className="w-[19rem] max-w-[calc(100vw-1rem)]"
-        viewportClassName="p-0"
+        padding="none"
         role="alertdialog"
       >
         <div className="min-w-0 p-3">
-          <PopoverTitle className="text-sm">Remove source?</PopoverTitle>
-          <PopoverDescription className="mt-1 text-xs leading-5">
+          <PopoverTitle>Remove source?</PopoverTitle>
+          <PopoverDescription className="mt-1" size="compact">
             <span className="line-clamp-2 text-foreground">
               “{props.record.title ?? "Untitled source"}”
             </span>

@@ -164,7 +164,7 @@ function ComputeFigurePreview(
                     onClick={openViewer}
                     size="icon-header"
                     type="button"
-                    variant="chrome-action"
+                    variant="ghost-muted"
                   />
                 }
               >
@@ -177,7 +177,6 @@ function ComputeFigurePreview(
               busy={busy}
               run={run}
               triggerSize="icon-header"
-              triggerVariant="chrome-action"
               details={
                 <VisualCardDetails
                   title={presentation.inline.label}

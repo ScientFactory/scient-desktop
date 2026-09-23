@@ -34,10 +34,6 @@ import {
 } from "./providerConnectionPresentation";
 import { ProviderAccountManagementLink } from "./ProviderAccountManagementLink";
 import { ProviderAuthorizationCodeDisclosure } from "./ProviderAuthorizationCodeForm";
-import {
-  DESTRUCTIVE_GHOST_ACTION_CLASS,
-  PRIMARY_GHOST_ACTION_CLASS,
-} from "./providerConnectionActionStyles";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
 
 type PendingAction =
@@ -306,12 +302,11 @@ export function ClaudeInlineSetup(props: {
         {activeRuntimeOperation ? (
           <AssistedSetupActions>
             <Button
-              className={DESTRUCTIVE_GHOST_ACTION_CLASS}
               disabled={pendingAction === "cancel-runtime"}
               onClick={() => void cancelRuntime()}
               size="sm"
               type="button"
-              variant="ghost-muted"
+              variant="ghost-destructive-action"
             >
               {pendingAction === "cancel-runtime" ? (
                 <LoaderIcon aria-hidden className="animate-spin" />
@@ -341,13 +336,7 @@ export function ClaudeInlineSetup(props: {
           title="Claude needs repair"
         />
         <AssistedSetupActions>
-          <Button
-            className={PRIMARY_GHOST_ACTION_CLASS}
-            onClick={() => void repair()}
-            size="sm"
-            type="button"
-            variant="ghost"
-          >
+          <Button onClick={() => void repair()} size="sm" type="button" variant="ghost-primary">
             <RefreshCwIcon aria-hidden /> Repair Claude
           </Button>
         </AssistedSetupActions>
@@ -380,13 +369,7 @@ export function ClaudeInlineSetup(props: {
         />
         {canInstall ? (
           <AssistedSetupActions>
-            <Button
-              className={PRIMARY_GHOST_ACTION_CLASS}
-              onClick={() => void install()}
-              size="sm"
-              type="button"
-              variant="ghost"
-            >
+            <Button onClick={() => void install()} size="sm" type="button" variant="ghost-primary">
               {error ? <RefreshCwIcon aria-hidden /> : <DownloadIcon aria-hidden />}
               {error ? "Retry installation" : "Install Claude"}
             </Button>
@@ -439,12 +422,11 @@ export function ClaudeInlineSetup(props: {
           ) : null}
           {activeConnectionOperation ? (
             <Button
-              className={DESTRUCTIVE_GHOST_ACTION_CLASS}
               disabled={pendingAction === "cancel-sign-in" || pendingAction === "submit-code"}
               onClick={() => void cancelSignIn()}
               size="sm"
               type="button"
-              variant="ghost-muted"
+              variant="ghost-destructive-action"
             >
               Cancel
             </Button>
@@ -505,13 +487,7 @@ export function ClaudeInlineSetup(props: {
           />
           <AssistedSetupActions>
             {props.accountAction}
-            <Button
-              className={PRIMARY_GHOST_ACTION_CLASS}
-              onClick={() => void update()}
-              size="sm"
-              type="button"
-              variant="ghost"
-            >
+            <Button onClick={() => void update()} size="sm" type="button" variant="ghost-primary">
               <RefreshCwIcon aria-hidden /> {error ? "Try again" : "Update Claude"}
             </Button>
           </AssistedSetupActions>
@@ -590,7 +566,6 @@ export function ClaudeInlineSetup(props: {
       <AssistedSetupActions>
         {alternateSignInMethod ? (
           <Button
-            className="text-muted-foreground"
             onClick={() => void signIn(alternateSignInMethod)}
             size="sm"
             type="button"
@@ -601,13 +576,7 @@ export function ClaudeInlineSetup(props: {
               : "Use Claude subscription"}
           </Button>
         ) : null}
-        <Button
-          className={PRIMARY_GHOST_ACTION_CLASS}
-          onClick={() => void signIn()}
-          size="sm"
-          type="button"
-          variant="ghost"
-        >
+        <Button onClick={() => void signIn()} size="sm" type="button" variant="ghost-primary">
           {signInError ? <RefreshCwIcon aria-hidden /> : <ExternalLinkIcon aria-hidden />}
           {signInError
             ? "Try sign in again"

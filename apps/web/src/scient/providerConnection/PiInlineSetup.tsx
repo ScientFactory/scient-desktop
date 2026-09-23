@@ -10,10 +10,6 @@ import {
   AssistedSetupStatus,
 } from "./AssistedProviderSetup";
 import {
-  PRIMARY_GHOST_ACTION_CLASS,
-  DESTRUCTIVE_GHOST_ACTION_CLASS,
-} from "./providerConnectionActionStyles";
-import {
   isActiveProviderRuntimeOperation,
   isProviderRuntimePresentedAsInstalled,
   needsManagedRuntimeRecovery,
@@ -160,9 +156,8 @@ function PiComposerRuntimeSetup(props: {
       {active ? (
         <AssistedSetupActions>
           <Button
-            className={DESTRUCTIVE_GHOST_ACTION_CLASS}
             type="button"
-            variant="ghost-muted"
+            variant="ghost-destructive-action"
             size="sm"
             disabled={pending === "cancel"}
             onClick={() => void run("cancel")}
@@ -172,13 +167,7 @@ function PiComposerRuntimeSetup(props: {
         </AssistedSetupActions>
       ) : !working && runtime?.actions.includes(action) ? (
         <AssistedSetupActions>
-          <Button
-            className={PRIMARY_GHOST_ACTION_CLASS}
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={() => void run(action)}
-          >
+          <Button type="button" variant="ghost-primary" size="sm" onClick={() => void run(action)}>
             {error || repair ? <RefreshCwIcon aria-hidden /> : <DownloadIcon aria-hidden />}
             {repair ? "Repair Pi" : error ? "Retry installation" : "Install"}
           </Button>

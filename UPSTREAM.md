@@ -46,18 +46,29 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current T3 alignment is recorded in
-[`docs/internals/2026-09-22-upstream-sync-aff9318bf4.md`](docs/internals/2026-09-22-upstream-sync-aff9318bf4.md)
-and in `upstream-state.json`. It extends the previous alignment through
-`9a609a4e444ba739d6fcd607769d68b679b0bcc5` with the exact 7 official commits
-through `aff9318bf46beaf05cc7155b428d3f0b8711efd2`. The history-preserving
-extension merge is `7c8197ae12bf0076de0bec61b5d0e463021ca497`, whose second
-parent is that exact official target and whose first parent is the latest
-Scient main `02f8826b4f5be8462845dd2d43beaa5e1b56856d`.
+[`docs/internals/2026-09-23-upstream-sync-d7819c1881.md`](docs/internals/2026-09-23-upstream-sync-d7819c1881.md)
+and in `upstream-state.json`. PR #350 is the same open alignment, extended through
+`f5ef0ddb90a8c36584e181b1913e7b8a5df30ffc`: 72 official
+commits from `aff9318bf46beaf05cc7155b428d3f0b8711efd2`, including 42 added
+since the d781 checkpoint. The candidate preserves the initial history merge
+`719f452a4633af276ed9f5e219ced8de43863d49` and later official merge commits
+`f741668a6d31ec6681d6324a0f6a7b97f205f06e` and
+`34f081f99f368f9eaca0af29266ec13530956f77`. The latest owned-main catch-up
+is `ea6af93176134c52d76eadc7a33cc5fabeb714d7`, incorporating fetched
+`origin/main` at `a86cec5fd747fe7937241649bc6a500e2d64516a` without replaying
+or replacing the official merge history.
 
-Automated qualification and source review passed. The requested PR is the delivery boundary;
-release publication remains separate. The [preceding alignment](docs/internals/2026-09-18-upstream-sync-3fd5d643.md)
-and all earlier official ancestry remain literal history. Later observed upstream tips do not
-move `integrationBase` by themselves.
+The full local workspace test run had one load-sensitive Markdown performance
+threshold miss; its isolated rerun and the clean CI workspace gate both passed
+without changing the test or threshold. The final CI check and web-layout
+failures were repaired on the same branch and passed in the next CI run.
+
+Automated qualification and source review passed. The alignment is delivered
+as an unmerged draft PR for review; release publication remains separate. The
+[preceding alignment](docs/internals/2026-09-22-upstream-sync-aff9318bf4.md),
+[earlier receipt](docs/internals/2026-09-18-upstream-sync-3fd5d643.md), and all
+earlier official ancestry remain literal history. Later observed upstream
+tips do not move `integrationBase` by themselves.
 
 ## Receiving T3 updates
 

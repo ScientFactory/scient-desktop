@@ -81,8 +81,7 @@ export function MathInputTools({ controller }: { readonly controller: MathInputC
           <PopoverPopup
             anchor={trigger}
             align="start"
-            className="scient-math-tools"
-            viewportClassName="p-0"
+            padding="none"
             initialFocus={searchInput}
             finalFocus={false}
             data-keybinding-capture=""

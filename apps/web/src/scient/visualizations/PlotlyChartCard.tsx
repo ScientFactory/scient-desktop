@@ -109,7 +109,6 @@ function ChartActionButton({
         render={
           <Button
             aria-label={label}
-            className="chat-markdown-chrome-action"
             disabled={disabled}
             onClick={onClick}
             size="icon-xs"
@@ -330,7 +329,6 @@ export function PlotlyChartCard({
                     render={
                       <Button
                         aria-label="More Plotly actions"
-                        className="chat-markdown-chrome-action"
                         disabled={activeAction != null}
                         size="icon-xs"
                         type="button"

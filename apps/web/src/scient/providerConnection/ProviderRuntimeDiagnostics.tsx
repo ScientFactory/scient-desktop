@@ -71,11 +71,11 @@ export function ProviderRuntimeDiagnosticsDetails(props: {
             </ScientTooltip>
             <Button
               aria-label={`Copy ${props.displayName} executable path`}
-              className="size-5 shrink-0 rounded-sm p-0 text-muted-foreground hover:text-foreground"
+              className="shrink-0"
               onClick={() => copyToClipboard(diagnostics.executable, undefined)}
-              size="icon-xs"
+              size="icon-micro"
               type="button"
-              variant="ghost"
+              variant="ghost-muted"
             >
               {isCopied ? (
                 <CheckIcon aria-hidden className="size-3" />

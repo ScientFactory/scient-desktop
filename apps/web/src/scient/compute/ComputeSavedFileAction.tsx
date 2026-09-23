@@ -91,7 +91,8 @@ export function ComputeSavedFileAction(props: {
         {open ? (
           <CommandDialogPopup
             aria-label="Run saved file"
-            className="overflow-hidden p-0"
+            padding="none"
+            className="overflow-hidden"
             onBackdropPointerDown={() => setOpen(false)}
           >
             <ProjectFilePickerForTarget

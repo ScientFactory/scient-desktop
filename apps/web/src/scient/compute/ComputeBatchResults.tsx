@@ -1020,8 +1020,8 @@ export function ComputeBatchResults({
               render={
                 <Button
                   size="xs"
-                  variant="ghost"
-                  className="max-w-44 gap-1 px-1.5 text-muted-foreground"
+                  variant="ghost-muted"
+                  className="max-w-44"
                   aria-label={`Local ${props.runtimeLabel} run history`}
                 >
                   <span className="truncate">
@@ -1042,11 +1042,7 @@ export function ComputeBatchResults({
                 }}
               >
                 {runs.map((run) => (
-                  <MenuRadioItem
-                    key={run.receipt.runId}
-                    value={run.receipt.runId}
-                    className="min-h-7 py-1 sm:text-xs"
-                  >
+                  <MenuRadioItem key={run.receipt.runId} value={run.receipt.runId} size="compact">
                     {statusLabel(run, props.runtimeLabel)} ·{" "}
                     {new Date(run.receipt.startedAt).toLocaleTimeString()}
                   </MenuRadioItem>

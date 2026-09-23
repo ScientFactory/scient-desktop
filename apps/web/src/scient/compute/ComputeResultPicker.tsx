@@ -27,12 +27,7 @@ export function ComputeResultPicker({ contextId }: { readonly contextId: Compute
     <Menu>
       <MenuTrigger
         render={
-          <Button
-            size="xs"
-            variant="ghost"
-            className="max-w-40 gap-1 px-1.5 text-muted-foreground"
-            aria-label="Choose results"
-          >
+          <Button size="xs" variant="ghost-muted" className="max-w-40" aria-label="Choose results">
             <span className="truncate">
               {choices.find((choice) => choice.contextId === selected)?.label ?? "Session"}
             </span>

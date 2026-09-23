@@ -27,6 +27,7 @@ function MenuPopup({
   anchor,
   collisionAvoidance,
   keepMounted = false,
+  padding = "default",
   ...props
 }: MenuPrimitive.Popup.Props & {
   align?: MenuPrimitive.Positioner.Props["align"];
@@ -36,14 +37,8 @@ function MenuPopup({
   anchor?: MenuPrimitive.Positioner.Props["anchor"];
   collisionAvoidance?: MenuPrimitive.Positioner.Props["collisionAvoidance"];
   keepMounted?: boolean;
+  padding?: "default" | "compact";
 }) {
-  const hasExplicitWidthClass =
-    typeof className === "string" &&
-    className.split(/\s+/).some((classToken) => {
-      const utility = classToken.split(":").at(-1) ?? classToken;
-      return /^(?:min-|max-)?w-/.test(utility);
-    });
-
   return (
     <MenuPrimitive.Portal keepMounted={keepMounted}>
       <MenuPrimitive.Positioner
@@ -63,13 +58,22 @@ function MenuPopup({
             // the Review panel header). Drag hit-testing ignores z-index, so
             // the topmost row would stay unhoverable without this opt-out.
             "[-webkit-app-region:no-drag]",
-            !hasExplicitWidthClass && "min-w-32",
+            // Menus size to their content from one minimum, never past the viewport.
+            "min-w-[min(10rem,calc(100vw-2rem))] max-w-[calc(100vw-2rem)]",
             className,
           )}
           data-slot="menu-popup"
           {...props}
         >
-          <div className="max-h-(--available-height) w-full overflow-y-auto p-1">{children}</div>
+          <div
+            className={cn(
+              "max-h-(--available-height) w-full overflow-y-auto",
+              padding === "default" ? "p-1" : "p-0.5",
+            )}
+            data-padding={padding}
+          >
+            {children}
+          </div>
         </MenuPrimitive.Popup>
       </MenuPrimitive.Positioner>
     </MenuPrimitive.Portal>
@@ -83,13 +87,17 @@ function MenuGroup(props: MenuPrimitive.Group.Props) {
 function MenuItem({
   className,
   inset,
+  active = false,
   density = "default",
+  size = "default",
   variant = "default",
   ...props
 }: MenuPrimitive.Item.Props & {
   inset?: boolean;
+  active?: boolean;
   density?: "default" | "touch";
-  variant?: "default" | "destructive" | "ghost";
+  size?: "default" | "compact";
+  variant?: "default" | "destructive" | "ghost" | "selected" | "grid-cell";
 }) {
   return (
     <MenuPrimitive.Item
@@ -101,11 +109,17 @@ function MenuItem({
             size: "compact",
             className: "h-auto min-h-7 w-full sm:text-xs",
           }),
+        variant === "selected" && "bg-accent/60",
+        variant === "grid-cell" &&
+          "size-4 min-h-0 gap-0 rounded-[3px] border border-border/80 bg-background p-0 data-highlighted:outline-2 data-highlighted:outline-ring data-highlighted:outline-offset-1 data-active:border-muted-foreground/55 data-active:bg-accent sm:min-h-0",
+        size === "compact" && "min-h-6 py-0 text-sm sm:min-h-6",
         density === "touch" && "min-h-10 sm:min-h-10",
         className,
       )}
+      data-active={active || undefined}
       data-density={density}
       data-inset={inset}
+      data-size={size}
       data-slot="menu-item"
       data-variant={variant}
       {...props}
@@ -120,7 +134,7 @@ function MenuItemLabel({ className, ...props }: React.ComponentProps<"span">) {
     <span
       data-slot="menu-item-label"
       className={cn(
-        "min-w-0 in-data-[density=touch]:[text-box:trim-both_cap_alphabetic] supports-[text-box:trim-both_cap_alphabetic]:in-data-[density=touch]:py-[0.5em]",
+        "min-w-0 truncate in-data-[density=touch]:[text-box:trim-both_cap_alphabetic] supports-[text-box:trim-both_cap_alphabetic]:in-data-[density=touch]:py-[0.5em]",
         className,
       )}
       {...props}
@@ -142,7 +156,9 @@ function MenuCheckboxItem({
       checked={checked}
       className={cn(
         "grid min-h-8 in-data-[side=none]:min-w-[calc(var(--anchor-width)+1.25rem)] cursor-pointer items-center gap-2 rounded-sm py-1 ps-2 text-base text-foreground outline-none data-disabled:pointer-events-none data-disabled:cursor-not-allowed data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:opacity-64 sm:min-h-7 sm:text-sm [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4 [&_svg]:pointer-events-none [&_svg]:shrink-0",
-        variant === "switch" ? "grid-cols-[1fr_auto] gap-4 pe-1.5" : "grid-cols-[1rem_1fr] pe-4",
+        variant === "switch"
+          ? "grid-cols-[1fr_auto] gap-4 pe-1.5"
+          : "grid-cols-[1rem_minmax(0,1fr)] pe-4",
         className,
       )}
       data-slot="menu-checkbox-item"
@@ -189,17 +205,21 @@ function MenuRadioGroup(props: MenuPrimitive.RadioGroup.Props) {
 function MenuRadioItem({
   className,
   children,
+  size = "default",
   hideIndicator: _hideIndicator = false,
   ...props
 }: MenuPrimitive.RadioItem.Props & {
   hideIndicator?: boolean;
+  size?: "default" | "compact";
 }) {
   return (
     <MenuPrimitive.RadioItem
       className={cn(
         "[&_svg]:-mx-0.5 flex min-h-8 in-data-[side=none]:min-w-[calc(var(--anchor-width)+1.25rem)] cursor-pointer items-center rounded-sm px-2 py-1 text-base text-foreground outline-none data-checked:bg-foreground/[0.08] data-disabled:pointer-events-none data-disabled:cursor-not-allowed data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:opacity-64 sm:min-h-7 sm:text-sm [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4 [&_svg]:pointer-events-none [&_svg]:shrink-0",
+        size === "compact" && "min-h-7 sm:text-xs",
         className,
       )}
+      data-size={size}
       data-slot="menu-radio-item"
       {...props}
     >
