@@ -139,18 +139,21 @@ and Pi also have application-awareness paths. Transport support does not
 establish spontaneous model discovery or equal task quality across providers.
 An externally managed OpenCode server does not
 receive Scient's per-session MCP connection and is therefore unsupported for
-this path. Stable application-owned awareness directs agents to search or browse
-`scient_skills_list` before answering or acting on a substantive new request,
-including planning, and to load applicable instructions before proceeding.
-Already-visible summaries may be reused when their complete scope digest still
-matches and they suffice for the current task. A new task can need a fresh
-search even when that digest is unchanged; context loss or uncertainty also
-calls for rediscovery. Query and paginated results do not represent the whole
-catalog unless `scope.includesAllSkills` says they do. Acknowledgements and
-routine follow-ups do not require rediscovery. The tool definitions stay stable
-as the catalog changes; discovery reads the current turn snapshot, not cached
-tool descriptions. Ordinary user input receives no skill catalog or skill
-instructions. Provider-native skills remain separate from this Scient scope.
+this path. Each nonempty non-command input turn with actual `skills:read`
+capability appends a compact current-scope marker to provider input. It reports
+a complete empty scope, or
+the current nonempty scope's count and digest, or that discovery is incomplete;
+it never includes skill names, descriptions, or instruction bodies. Static
+awareness directs the agent to read this marker first. A complete empty scope
+needs no list call. For a complete nonempty scope, visible full-catalog
+summaries may be reused when their digest matches and they suffice; otherwise
+the agent can search or browse `scient_skills_list`. Pending or incomplete
+scope does not establish emptiness. Query and paginated results do not represent
+the whole catalog unless `scope.includesAllSkills` says they do. After context
+loss or uncertainty, rediscover. Acknowledgements and routine follow-ups do not
+require rediscovery. The tool definitions stay stable as the catalog changes;
+discovery reads the current turn snapshot, not cached tool descriptions.
+Provider-native skills remain separate from this Scient scope.
 
 An explicitly selected skill receives only a small turn-local loading instruction
 with its exact name and provider-projected loader. This selection signal still
@@ -198,8 +201,10 @@ fork wrapping, explicit scope and exact character-boundary cases. Real-provider
 task quality, loaded resource/result cost and compaction remain separate proofs.
 
 The automatic index and its 2,800-byte truncation/fallback path have been removed.
-Only selected names add turn-local orientation. Descriptions and instruction
-bodies never appear in that signal; full instructions are loaded separately.
+Only the compact current-scope marker and selected names add turn-local
+orientation. The marker contains freshness and completeness only; selected
+names add loading instructions. Descriptions and instruction bodies never
+appear in provider input; full instructions are loaded separately.
 
 `scient_skills_list` accepts `{}` to browse one page. Optional `query` matches all supplied
 terms against name and description; `offset` and `limit` browse deterministic
@@ -248,11 +253,13 @@ Antigravity and Cursor receive Scient's authenticated MCP connection and exact
 turn-scoped skill tools; Antigravity retains that connection on resume. Their
 agents can browse the available list, and a user can explicitly select a skill
 through `$name`. Neither provider has a reviewed private awareness seam, so
-Scient does not claim qualified automatic discovery or emulate it through a
-catalog in user input, generated project guidance, or provider configuration.
-Provider-native skill discovery remains authoritative. The composer appends
-active Scient skills only when the provider has reviewed MCP transport, and
-withholds a Scient entry when a native skill already owns the same name.
+Scient does not claim equal automatic discovery quality. When the session has
+Scient MCP skill capability, provider input carries only the compact current
+scope marker described above; it does not emulate a catalog or copy skill
+guidance into user input, generated project instructions, or provider
+configuration. Provider-native skill discovery remains separate. The composer
+appends active Scient skills only when the provider has reviewed MCP transport,
+and withholds a Scient entry when a native skill already owns the same name.
 
 ## Product surface
 

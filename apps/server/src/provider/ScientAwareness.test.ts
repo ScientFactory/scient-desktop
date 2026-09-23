@@ -51,11 +51,17 @@ describe("Scient awareness", () => {
     expect(SCIENT_SKILLS_AWARENESS).toContain("`scient_skill_load`");
     expect(SCIENT_SKILLS_AWARENESS).toContain("These tools cover Scient skills only");
     expect(SCIENT_SKILLS_AWARENESS).not.toContain("project-specific guidance");
-    expect(SCIENT_SKILLS_AWARENESS).toContain("new task may need a new search");
+    expect(SCIENT_SKILLS_AWARENESS).toContain("read the current-turn marker first");
+    expect(SCIENT_SKILLS_AWARENESS).toContain("A complete empty scope needs no");
+    expect(SCIENT_SKILLS_AWARENESS).toContain("reuse visible full-catalog summaries only");
+    expect(SCIENT_SKILLS_AWARENESS).toContain("The digest is freshness metadata, not authority");
+    expect(SCIENT_SKILLS_AWARENESS).not.toContain("Before a substantive new task");
     expect(SCIENT_SKILLS_AWARENESS).toContain("provider-native skills are separate");
     expect(SCIENT_SKILLS_AWARENESS).toContain("scope.includesAllSkills");
-    expect(SCIENT_SKILLS_AWARENESS).toContain("Pending or incomplete scope");
-    expect(SCIENT_SKILLS_AWARENESS).toContain("load applicable instructions");
+    expect(SCIENT_SKILLS_AWARENESS).toContain(
+      "Pending or incomplete scope does not prove emptiness",
+    );
+    expect(SCIENT_SKILLS_AWARENESS).toContain("Load applicable instructions");
     expect(SCIENT_SKILLS_AWARENESS).toContain("provide guidance and grant no tools or authority");
     expect(SCIENT_SKILLS_AWARENESS).not.toContain("automatic skill");
     expect(SCIENT_SKILLS_AWARENESS).not.toContain("user-selected");

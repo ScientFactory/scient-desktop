@@ -332,6 +332,10 @@ function turnEffort(modelSelection: ProviderSendTurnInput["modelSelection"]): st
   );
 }
 
+const canDeliverScientSkills = (adapter: ProviderAdapterShape<unknown>): boolean =>
+  adapter.capabilities.mcpSessionInjection === true &&
+  ScientSkillSession.scientSkillDeliveryForProvider(adapter.provider) === "mcp";
+
 type ProviderServiceMethod<Name extends keyof ProviderService.ProviderService["Service"]> =
   ProviderService.ProviderService["Service"][Name];
 
@@ -967,9 +971,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     threadId: ThreadId,
     adapter: ProviderAdapterShape<unknown>,
   ) {
-    const supportsScientSkills =
-      adapter.capabilities.mcpSessionInjection === true &&
-      ScientSkillSession.scientSkillDeliveryForProvider(adapter.provider) === "mcp";
+    const supportsScientSkills = canDeliverScientSkills(adapter);
     const capabilities = new Set<McpInvocationContext.McpCapability>([
       "pull-requests",
       "documents:build",
@@ -1833,7 +1835,13 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       );
       const scientTools = scientToolProjectionForProvider(routed.adapter.provider);
       const skillProjection = {
+        skillListToolName: scientTools.name("scient_skills_list"),
         skillLoadToolName: scientTools.name("scient_skill_load"),
+        includeCatalogMarker:
+          canDeliverScientSkills(routed.adapter) &&
+          McpProviderSession.readMcpProviderSession(input.threadId)?.capabilities.has(
+            "skills:read",
+          ) === true,
         providerNativeSkillTool: scientTools.providerNativeSkillTool,
         deferred: scientTools.deferred,
       };
