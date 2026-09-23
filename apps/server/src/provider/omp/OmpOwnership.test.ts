@@ -7,7 +7,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 
 describe("Oh My Pi ownership inventory", () => {
-  it("lists files that exist and stays out of the T3 seam checker", () => {
+  it("lists owned files and is checked by the shared seam inventory", () => {
     const root = NodePath.resolve(
       NodeURL.fileURLToPath(new URL(".", import.meta.url)),
       "../../../../../",
@@ -17,7 +17,9 @@ describe("Oh My Pi ownership inventory", () => {
         Schema.Struct({
           ownedRoots: Schema.Array(Schema.String),
           ownedFiles: Schema.Array(Schema.String),
-          upstreamMounts: Schema.Array(Schema.String),
+          upstreamMounts: Schema.Array(
+            Schema.Struct({ path: Schema.String, anchor: Schema.String }),
+          ),
         }),
       ),
     );
@@ -27,7 +29,7 @@ describe("Oh My Pi ownership inventory", () => {
     for (const relative of [
       ...manifest.ownedRoots,
       ...manifest.ownedFiles,
-      ...manifest.upstreamMounts,
+      ...manifest.upstreamMounts.map((mount) => mount.path),
     ]) {
       expect(NodeFS.existsSync(NodePath.join(root, relative)), relative).toBe(true);
     }
@@ -35,7 +37,7 @@ describe("Oh My Pi ownership inventory", () => {
       NodePath.join(root, "scripts/scient-seam-check.mjs"),
       "utf8",
     );
-    expect(checker.includes("scient-omp-seams")).toBe(false);
+    expect(checker.includes('omp: { schema: 2, signals: "ompDiffSignals" }')).toBe(true);
     const rpcDir = NodePath.join(root, "packages/effect-omp-rpc/src");
     for (const name of NodeFS.readdirSync(rpcDir)) {
       if (!name.endsWith(".ts") || name.endsWith(".test.ts")) continue;

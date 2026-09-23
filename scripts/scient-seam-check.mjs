@@ -10,6 +10,7 @@ const definitions = {
   skills: { schema: 1, signals: "skillDiffSignals" },
   analysis: { schema: 2, signals: "analysisDiffSignals" },
   latex: { schema: 2, signals: "latexDiffSignals" },
+  omp: { schema: 2, signals: "ompDiffSignals" },
 };
 
 function git(cwd, args, env = process.env) {
