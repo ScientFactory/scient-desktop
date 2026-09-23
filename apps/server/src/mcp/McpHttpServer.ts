@@ -650,10 +650,11 @@ export const DeviceToolkitRegistrationLive = Layer.mergeAll(
   DeviceStandardToolkitRegistrationLive,
   DeviceScreenshotRegistrationLive,
 );
-const McpToolListLive = makeScientToolListLayer([
-  ...Object.values(PullRequestsToolkit.tools),
-  ...Object.values(DeviceToolkit.tools),
-]);
+const deviceTools = Object.values(DeviceToolkit.tools);
+const McpToolListLive = makeScientToolListLayer(
+  [...Object.values(PullRequestsToolkit.tools), ...deviceTools],
+  deviceTools,
+);
 const McpTransportLive = McpServer.layerHttp({
   name: "Scient",
   version: packageJson.version,
