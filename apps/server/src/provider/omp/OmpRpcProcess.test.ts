@@ -5,11 +5,11 @@ import { redactOmpDiagnostic, ompRpcArgs, OMP_RPC_ARGS } from "./OmpRpcProcess.t
 describe("Oh My Pi launch arguments", () => {
   it("adds an explicit session directory without changing the core RPC contract", () => {
     expect(ompRpcArgs()).toEqual([...OMP_RPC_ARGS]);
-    expect(ompRpcArgs("/state/omp/session", ["--no-session"])).toEqual([
+    expect(ompRpcArgs("/state/omp/session", ["--no-tools"])).toEqual([
       ...OMP_RPC_ARGS,
       "--session-dir",
       "/state/omp/session",
-      "--no-session",
+      "--no-tools",
     ]);
   });
 

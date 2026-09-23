@@ -23,6 +23,7 @@ const response = (command: string, data: unknown = {}): OmpRpcResponse => ({
 const makeClient = (events: ReadonlyArray<OmpRpcNotification>) =>
   ({
     version: "18.2.8",
+    binaryPathFingerprint: "binary-test",
     ready: Effect.succeed({
       type: "ready" as const,
       protocolVersion: 1,

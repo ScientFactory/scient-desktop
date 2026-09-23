@@ -27,6 +27,7 @@ const settings = Schema.decodeSync(OmpSettings)({
 
 const process = (overrides: Partial<OmpRpcProcess> = {}): OmpRpcProcess => ({
   version: "18.2.8",
+  binaryPathFingerprint: "binary-test",
   ready: Effect.succeed({
     type: "ready" as const,
     protocolVersion: 1,

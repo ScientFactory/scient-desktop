@@ -94,16 +94,18 @@ export interface OmpAdapterOptions {
   readonly makeProcess?: (options: OmpRpcProcessOptions) => Effect.Effect<
     OmpRpcClient & {
       readonly version: string;
+      readonly binaryPathFingerprint?: string;
       readonly shutdown?: Effect.Effect<OmpProcessExit, OmpRpcError>;
     },
     OmpRpcError,
-    ChildProcessSpawner.ChildProcessSpawner | Scope.Scope
+    ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path | Scope.Scope
   >;
 }
 
 interface SessionContext {
   readonly client: OmpRpcClient & {
     readonly version: string;
+    readonly binaryPathFingerprint?: string;
     readonly shutdown?: Effect.Effect<OmpProcessExit, OmpRpcError>;
   };
   runtime: OmpSessionRuntime;
@@ -700,11 +702,11 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
             Effect.mapError((issue) => validation("startSession", issue)),
           );
           const scope = yield* Scope.make("sequential");
-          const resumeIdentity = resumeIdentityFor(rootReal, cwd);
+          const baseResumeIdentity = resumeIdentityFor(rootReal, cwd);
           const session = yield* Effect.gen(function* () {
             const cursor = input.resumeCursor
               ? yield* parseOmpSessionCursor(input.resumeCursor, {
-                  identity: resumeIdentity,
+                  identity: baseResumeIdentity,
                   rpcProtocolVersion: OMP_RPC_PROTOCOL_V2,
                 }).pipe(Effect.mapError((issue) => validation("startSession", issue)))
               : undefined;
@@ -725,6 +727,18 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
               Effect.mapError((cause) => request("startSession", cause.message, cause)),
             );
+            const resumeIdentity = client.binaryPathFingerprint
+              ? {
+                  ...baseResumeIdentity,
+                  binaryPathFingerprint: client.binaryPathFingerprint,
+                }
+              : baseResumeIdentity;
+            if (cursor && cursor.binaryPathFingerprint !== resumeIdentity.binaryPathFingerprint) {
+              return yield* validation(
+                "startSession",
+                "Oh My Pi resume cursor was written by a different executable.",
+              );
+            }
             const ctx: SessionContext = {
               client,
               runtime: undefined as unknown as OmpSessionRuntime,

@@ -1,6 +1,8 @@
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
@@ -8,17 +10,18 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import { resolveCommandPath, resolveSpawnCommand } from "@t3tools/shared/shell";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 
 import { makeOmpRpcClient, type OmpRpcClient } from "effect-omp-rpc/client";
 import { OmpRpcProtocolError, type OmpRpcError } from "effect-omp-rpc/errors";
 
 import { spawnAndCollect } from "../providerSnapshot.ts";
+import { ompBinaryFingerprint } from "./OmpSessionCursor.ts";
 
 const isProtocolError = Schema.is(OmpRpcProtocolError);
 
-const OMP_MINIMUM_VERSION = "18.2.8";
+export const OMP_MINIMUM_VERSION = "18.2.8";
 const OMP_SESSION_DIR_ENV = "PI_CODING_AGENT_SESSION_DIR";
 /** Agent directory override from oh-my-pi v18.2.8 `packages/utils/src/dirs.ts`. */
 export const OMP_AGENT_DIR_ENV = "PI_CODING_AGENT_DIR";
@@ -82,6 +85,8 @@ export interface OmpProcessExit {
 
 export interface OmpRpcProcess extends OmpRpcClient {
   readonly version: string;
+  /** Identity of the executable selected by the effective process environment. */
+  readonly binaryPathFingerprint: string;
   readonly shutdown: Effect.Effect<OmpProcessExit, OmpRpcError>;
 }
 
@@ -128,11 +133,20 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
 ): Effect.fn.Return<
   OmpRpcProcess,
   OmpRpcError,
-  ChildProcessSpawner.ChildProcessSpawner | Scope.Scope
+  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path | Scope.Scope
 > {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const scope = yield* Scope.Scope;
+  const fs = yield* FileSystem.FileSystem;
   const env = childEnv(options.env, options.sessionDir);
+  const resolvedBinary = yield* resolveCommandPath(options.command, {
+    env,
+    bypassCache: true,
+  }).pipe(Effect.catch(() => Effect.succeed(options.command)));
+  const canonicalBinary = yield* fs
+    .realPath(resolvedBinary)
+    .pipe(Effect.catch(() => Effect.succeed(resolvedBinary)));
+  const binaryPathFingerprint = ompBinaryFingerprint(canonicalBinary, env.PATH);
   const now = yield* Clock.currentTimeMillis;
   const cacheKey = versionCacheKey(options.command, env);
   const cached = versionCache.get(cacheKey);
@@ -257,5 +271,5 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
     },
     {},
   );
-  return { ...client, version, shutdown };
+  return { ...client, version, binaryPathFingerprint, shutdown };
 });

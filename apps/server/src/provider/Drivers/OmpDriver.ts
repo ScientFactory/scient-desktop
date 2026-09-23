@@ -79,6 +79,8 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
       const serverConfig = yield* ServerConfig;
       const serverSettings = yield* ServerSettingsService;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const httpClient = yield* HttpClient.HttpClient;
       const effectiveConfig = { ...config, enabled } satisfies OmpSettings;
       const processEnv: NodeJS.ProcessEnv = { ...mergeProviderInstanceEnvironment(environment) };
@@ -121,8 +123,14 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
         environment: processEnv,
         homePath: home || undefined,
         profile: profile || undefined,
-      });
-      const textGeneration = yield* makeOmpTextGeneration(effectiveConfig, processEnv);
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+      );
+      const textGeneration = yield* makeOmpTextGeneration(effectiveConfig, processEnv).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+      );
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
       const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<OmpSettings>>({
         resolveMaintenance: () => Effect.succeed(MAINTENANCE),
@@ -133,6 +141,8 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
           makePendingOmpProvider(settings.provider).pipe(Effect.map(stamp)),
         checkProvider: checkOmpProviderStatus(effectiveConfig, processEnv).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, path),
           Effect.map(stamp),
         ),
         enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
@@ -164,6 +174,8 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
         snapshotForCwd: (cwd) =>
           checkOmpProviderStatus(effectiveConfig, processEnv, undefined, cwd).pipe(
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.provideService(FileSystem.FileSystem, fs),
+            Effect.provideService(Path.Path, path),
             Effect.map(stamp),
           ),
         adapter,

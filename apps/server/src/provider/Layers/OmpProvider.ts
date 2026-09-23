@@ -2,6 +2,8 @@ import { OmpSettings } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import { OmpRpcCommandError, OmpRpcProtocolError, type OmpRpcError } from "effect-omp-rpc/errors";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
@@ -13,6 +15,7 @@ import { compileOmpCommandCatalog } from "../omp/OmpCommandPolicy.ts";
 import { ompModelToServerModel } from "../omp/OmpModel.ts";
 import {
   OMP_ISOLATED_ARGS,
+  OMP_MINIMUM_VERSION,
   makeOmpRpcProcess,
   ompUserDetail,
   type OmpRpcProcess,
@@ -39,7 +42,7 @@ export type OmpProcessFactory = (
 ) => Effect.Effect<
   OmpRpcProcess,
   OmpRpcError,
-  ChildProcessSpawner.ChildProcessSpawner | Scope.Scope
+  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path | Scope.Scope
 >;
 
 const isProtocolError = Schema.is(OmpRpcProtocolError);
@@ -49,7 +52,7 @@ const checkedAt = Effect.map(DateTime.now, DateTime.formatIso);
 
 const discoveryMessage = (error: unknown): string => {
   if (isProtocolError(error) || isCommandError(error)) return ompUserDetail(error.detail);
-  return "Oh My Pi could not be checked. Confirm the executable path and that version 18.2.8 or newer is installed.";
+  return `Oh My Pi could not be checked. Confirm the executable path and that version ${OMP_MINIMUM_VERSION} or newer is installed.`;
 };
 
 export const makePendingOmpProvider = (settings: OmpSettings): Effect.Effect<ServerProviderDraft> =>
@@ -81,7 +84,7 @@ export const checkOmpProviderStatus = Effect.fn("checkOmpProviderStatus")(functi
 ): Effect.fn.Return<
   ServerProviderDraft & { readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand> },
   never,
-  ChildProcessSpawner.ChildProcessSpawner
+  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
 > {
   const at = yield* checkedAt;
   if (!settings.enabled) return yield* makePendingOmpProvider(settings);
