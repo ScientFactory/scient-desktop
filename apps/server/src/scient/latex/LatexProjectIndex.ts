@@ -107,7 +107,7 @@ async function isSafeWorkspaceSourceFile(
 }
 
 /** Removes syntax regions where dependency-looking text is literal rather than executable TeX. */
-export function latexDependencySource(source: string): string {
+function latexDependencySource(source: string): string {
   const withoutComments = source
     .split(/\r?\n/u)
     .map((line) => {
