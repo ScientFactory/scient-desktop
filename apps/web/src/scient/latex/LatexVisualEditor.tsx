@@ -12,6 +12,7 @@ import {
   useState,
   useSyncExternalStore,
   type CSSProperties,
+  type FocusEvent,
 } from "react";
 import { createPortal } from "react-dom";
 import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
@@ -48,7 +49,12 @@ const LatexSourceAttributes = Extension.create({
         attributes: {
           sourceId: { default: null, rendered: false },
           latexCommand: { default: null, rendered: false },
-          unnumbered: { default: false, rendered: false },
+          unnumbered: {
+            default: false,
+            rendered: true,
+            renderHTML: (attributes: Record<string, unknown>) =>
+              attributes.unnumbered === true ? { "data-latex-unnumbered": "" } : {},
+          },
         },
       },
     ];
@@ -116,6 +122,7 @@ function LatexMathView({ node, updateAttributes, editor, getPos, selected }: Nod
   } as const;
   const source = latexVisualMathSource(attributes, display);
   const [editing, setEditing] = useState(false);
+  const [sourceOpen, setSourceOpen] = useState(false);
   const [draft, setDraft] = useState(source);
   const [sourceError, setSourceError] = useState<string | null>(null);
   const [caret, setCaret] = useState(0);
@@ -126,7 +133,10 @@ function LatexMathView({ node, updateAttributes, editor, getPos, selected }: Nod
 
   useEffect(() => {
     const deactivate = (event: Event) => {
-      if ((event as CustomEvent<string>).detail !== activationId) setEditing(false);
+      if ((event as CustomEvent<string>).detail !== activationId) {
+        setEditing(false);
+        setSourceOpen(false);
+      }
     };
     document.addEventListener("scient-latex-math-activate", deactivate);
     return () => document.removeEventListener("scient-latex-math-activate", deactivate);
@@ -223,6 +233,22 @@ function LatexMathView({ node, updateAttributes, editor, getPos, selected }: Nod
     ? createPortal(
         <div className="scient-latex-math-bar" role="toolbar" aria-label="Math tools">
           <span className="scient-latex-math-bar-title">Math</span>
+          <select
+            aria-label="Equation type"
+            value={mathType(attributes, display)}
+            onChange={(event) => changeType(event.currentTarget.value)}
+          >
+            <option value="inline-paren">Inline</option>
+            <option value="inline-dollar">Inline ($)</option>
+            <option value="display-bracket">Centered</option>
+            <option value="display-dollar">Centered ($$)</option>
+            <option value="environment:equation">Equation - numbered</option>
+            <option value="environment:equation*">Equation - unnumbered</option>
+            <option value="environment:align">Align - numbered</option>
+            <option value="environment:align*">Align - unnumbered</option>
+            <option value="environment:gather">Gather - numbered</option>
+            <option value="environment:gather*">Gather - unnumbered</option>
+          </select>
           <div className="scient-latex-math-bar-scroll">
             {MATH_BAR_ITEMS.map((item) => (
               <ScientTooltip key={item.label} content={item.label}>
@@ -255,9 +281,20 @@ function LatexMathView({ node, updateAttributes, editor, getPos, selected }: Nod
             </select>
           </div>
           <button
+            className="scient-latex-math-bar-source"
+            aria-pressed={sourceOpen}
+            type="button"
+            onClick={() => setSourceOpen((open) => !open)}
+          >
+            LaTeX
+          </button>
+          <button
             className="scient-latex-math-bar-done"
             type="button"
-            onClick={() => setEditing(false)}
+            onClick={() => {
+              setSourceOpen(false);
+              setEditing(false);
+            }}
           >
             Done
           </button>
@@ -291,7 +328,7 @@ function LatexMathView({ node, updateAttributes, editor, getPos, selected }: Nod
           );
         }}
       />
-      {editing ? (
+      {editing && sourceOpen ? (
         <div
           className="scient-latex-math-source-popover"
           role="dialog"
@@ -301,7 +338,7 @@ function LatexMathView({ node, updateAttributes, editor, getPos, selected }: Nod
           <div className="scient-latex-math-source-heading">
             <span>LaTeX equation</span>
             <select
-              aria-label="Equation type"
+              aria-label="Equation source type"
               value={mathType(attributes, display)}
               onChange={(event) => changeType(event.currentTarget.value)}
             >
@@ -553,6 +590,7 @@ function LatexRichPreviewView({
   const generatedId = useRef(0);
   const tableRoot = useRef<HTMLElement | null>(null);
   const [selectedCell, setSelectedCell] = useState({ row: 0, column: 0 });
+  const [objectActive, setObjectActive] = useState(false);
   const kind = String(node.attrs.kind ?? "description");
   const items = Array.isArray(node.attrs.items)
     ? (node.attrs.items as { label?: unknown; body?: unknown }[])
@@ -577,6 +615,7 @@ function LatexRichPreviewView({
   const caption = String(node.attrs.caption ?? "");
   const tableLabel = String(node.attrs.label ?? "");
   const structureEditable = node.attrs.editable === true;
+  const controlsVisible = selected || objectActive;
   const tableEditable = kind === "table" && structureEditable;
   const descriptionEditable = kind === "description" && structureEditable;
   const sourceMeta =
@@ -639,7 +678,7 @@ function LatexRichPreviewView({
   const focusTableCell = (row: number, column: number) => {
     requestAnimationFrame(() => {
       tableRoot.current
-        ?.querySelector<HTMLInputElement>(`[data-table-cell="${row}-${column}"]`)
+        ?.querySelector<HTMLTextAreaElement>(`[data-table-cell="${row}-${column}"]`)
         ?.focus();
     });
   };
@@ -740,6 +779,77 @@ function LatexRichPreviewView({
     });
     focusTableCell(selectedCell.row, to);
   };
+  if (kind === "title") {
+    return (
+      <NodeViewWrapper
+        className="scient-latex-title-preview"
+        data-selected={selected || undefined}
+        contentEditable={false}
+      >
+        <input
+          aria-label="Document title"
+          disabled={!editorEditable}
+          placeholder="Document title"
+          value={String(node.attrs.title ?? "")}
+          onChange={(event) => updateAttributes({ title: event.currentTarget.value })}
+        />
+        <input
+          aria-label="Document author"
+          disabled={!editorEditable}
+          placeholder="Author"
+          value={String(node.attrs.author ?? "")}
+          onChange={(event) => updateAttributes({ author: event.currentTarget.value })}
+        />
+        <input
+          aria-label="Document date"
+          disabled={!editorEditable}
+          placeholder="Date"
+          value={String(node.attrs.date ?? "")}
+          onChange={(event) => updateAttributes({ date: event.currentTarget.value })}
+        />
+      </NodeViewWrapper>
+    );
+  }
+  if (kind === "abstract") {
+    return (
+      <NodeViewWrapper
+        className="scient-latex-abstract-preview"
+        data-selected={selected || undefined}
+        contentEditable={false}
+      >
+        <h2>Abstract</h2>
+        <textarea
+          aria-label="Abstract"
+          disabled={!editorEditable || !structureEditable}
+          rows={4}
+          value={String(node.attrs.body ?? "")}
+          onChange={(event) => updateAttributes({ body: event.currentTarget.value })}
+        />
+      </NodeViewWrapper>
+    );
+  }
+  if (kind === "toc") {
+    const entries = Array.isArray(node.attrs.tocEntries)
+      ? (node.attrs.tocEntries as { level?: unknown; number?: unknown; title?: unknown }[])
+      : [];
+    return (
+      <NodeViewWrapper className="scient-latex-toc-preview" contentEditable={false}>
+        <h2>Contents</h2>
+        {entries.length > 0 ? (
+          <ol>
+            {entries.map((entry) => (
+              <li data-level={Number(entry.level ?? 1)} key={String(entry.number)}>
+                <span>{String(entry.number ?? "")}</span>
+                <span>{String(entry.title ?? "")}</span>
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <p>The table of contents will be generated from numbered headings.</p>
+        )}
+      </NodeViewWrapper>
+    );
+  }
   if (kind === "figure") {
     const figureEditable = structureEditable && editorEditable;
     return (
@@ -899,6 +1009,11 @@ function LatexRichPreviewView({
       data-kind={kind}
       data-selected={selected || undefined}
       contentEditable={false}
+      onFocusCapture={() => setObjectActive(true)}
+      onBlurCapture={(event: FocusEvent<HTMLElement>) => {
+        if (!event.currentTarget.contains(event.relatedTarget as globalThis.Node | null))
+          setObjectActive(false);
+      }}
     >
       <div className="scient-latex-rich-preview-label">
         <span>{kind === "table" ? "Table preview" : "Description list"}</span>
@@ -942,7 +1057,7 @@ function LatexRichPreviewView({
                     String(item.body ?? "")
                   )}
                 </dd>
-                {descriptionEditable ? (
+                {descriptionEditable && controlsVisible ? (
                   <button
                     aria-label={`Remove description item ${index + 1}`}
                     className="scient-latex-structure-remove"
@@ -956,7 +1071,7 @@ function LatexRichPreviewView({
               </div>
             ))}
           </dl>
-          {descriptionEditable ? (
+          {descriptionEditable && controlsVisible ? (
             <div className="scient-latex-structure-actions">
               <button disabled={!editorEditable} onClick={addDescriptionItem} type="button">
                 Add item
@@ -966,7 +1081,7 @@ function LatexRichPreviewView({
         </>
       ) : (
         <figure ref={tableRoot} data-table-style={String(node.attrs.tableStyle ?? "plain")}>
-          {tableEditable ? (
+          {tableEditable && controlsVisible ? (
             <div className="scient-latex-table-toolbar" role="toolbar" aria-label="Table tools">
               <label>
                 Style
@@ -1094,7 +1209,7 @@ function LatexRichPreviewView({
               caption || "Table"
             )}
           </figcaption>
-          {labelEditable ? (
+          {labelEditable && controlsVisible ? (
             <label className="scient-latex-table-label">
               Reference label
               <input
@@ -1112,7 +1227,7 @@ function LatexRichPreviewView({
           ) : null}
           <div className="scient-latex-rich-table-scroll">
             <table>
-              {tableEditable ? (
+              {tableEditable && controlsVisible ? (
                 <thead aria-label="Column controls">
                   <tr>
                     <th className="scient-latex-table-corner" />
@@ -1139,7 +1254,7 @@ function LatexRichPreviewView({
               <tbody>
                 {keyedRows.map(({ index: rowIndex, key, value: row }) => (
                   <tr key={key}>
-                    {tableEditable ? (
+                    {tableEditable && controlsVisible ? (
                       <th
                         className="scient-latex-table-row-handle"
                         data-selected={selectedCell.row === rowIndex || undefined}
@@ -1165,10 +1280,11 @@ function LatexRichPreviewView({
                       : withStableKeys(row, String)
                     ).map(({ index: cellIndex, key: cellKey, value: cell }) => {
                       const content = tableEditable ? (
-                        <input
+                        <textarea
                           aria-label={`Table row ${rowIndex + 1} column ${cellIndex + 1}`}
                           data-table-cell={`${rowIndex}-${cellIndex}`}
                           disabled={!editorEditable}
+                          rows={1}
                           value={cell}
                           onFocus={() => setSelectedCell({ row: rowIndex, column: cellIndex })}
                           onChange={(event) =>
@@ -1201,7 +1317,9 @@ function LatexRichPreviewView({
                         <th
                           data-align={columnAlignments[cellIndex] ?? "left"}
                           data-selected={
-                            selectedCell.row === rowIndex && selectedCell.column === cellIndex
+                            controlsVisible &&
+                            selectedCell.row === rowIndex &&
+                            selectedCell.column === cellIndex
                               ? true
                               : undefined
                           }
@@ -1214,7 +1332,9 @@ function LatexRichPreviewView({
                         <td
                           data-align={columnAlignments[cellIndex] ?? "left"}
                           data-selected={
-                            selectedCell.row === rowIndex && selectedCell.column === cellIndex
+                            controlsVisible &&
+                            selectedCell.row === rowIndex &&
+                            selectedCell.column === cellIndex
                               ? true
                               : undefined
                           }
@@ -1229,7 +1349,7 @@ function LatexRichPreviewView({
               </tbody>
             </table>
           </div>
-          {tableEditable ? (
+          {tableEditable && controlsVisible ? (
             <div className="scient-latex-table-hint">
               Tab moves between cells; Tab in the last cell adds a row. Structure controls normalize
               only this supported table.
@@ -1363,6 +1483,9 @@ const LatexRichPreview = Node.create<LatexVisualWorkspace>({
       label: { default: null },
       environment: { default: null },
       title: { default: null },
+      author: { default: null },
+      date: { default: null },
+      tocEntries: { default: null, rendered: false },
       body: { default: null },
       path: { default: null },
       figureWidth: { default: null },

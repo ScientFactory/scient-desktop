@@ -86,6 +86,50 @@ describe("source-derived writing projection", () => {
     ).toBe(document("\\subsection*{New title}"));
   });
 
+  it("projects and edits document front matter without replacing the document body", () => {
+    const source = `\\documentclass{article}
+\\title{Research Guide}
+\\author{Nati}
+\\date{\\today}
+\\begin{document}
+\\maketitle
+
+\\begin{abstract}
+A concise introduction.
+\\end{abstract}
+
+\\tableofcontents
+\\end{document}
+`;
+    const projection = projectLatexVisualDocument(source);
+    expect(projection.rawBlocks).toBe(0);
+    expect(projection.content.content?.map((node) => node.attrs?.kind)).toEqual([
+      "title",
+      "abstract",
+      "toc",
+    ]);
+    const nodes = structuredClone(projection.content.content!);
+    nodes[0]!.attrs = { ...nodes[0]!.attrs, title: "A Better Guide" };
+    const titleChange = applyLatexVisualDocumentChange(source, projection, {
+      type: "doc",
+      content: nodes,
+    });
+    expect(titleChange?.source).toContain("\\title{A Better Guide}");
+    expect(titleChange?.source).toContain("\\date{\\today}");
+    expect(titleChange?.source).toContain("\\maketitle");
+
+    const abstractNodes = structuredClone(titleChange!.projection.content.content!);
+    abstractNodes[1]!.attrs = { ...abstractNodes[1]!.attrs, body: "A revised introduction." };
+    const abstractChange = applyLatexVisualDocumentChange(
+      titleChange!.source,
+      titleChange!.projection,
+      { type: "doc", content: abstractNodes },
+    );
+    expect(abstractChange?.source).toContain(
+      "\\begin{abstract}\nA revised introduction.\n\\end{abstract}",
+    );
+  });
+
   it("round-trips nested lists and empty list items", () => {
     const nodes: JSONContent[] = [
       {

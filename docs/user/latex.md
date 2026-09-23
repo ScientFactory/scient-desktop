@@ -14,15 +14,15 @@ quick insertion for common scientific objects, a page ruler and a contextual
 status bar. Home supports paragraphs, three heading levels, bold, italic, lists,
 undo and redo. Insert adds equations, tables, statements and figures without
 requiring their LaTeX syntax to be typed first.
-Math normally stays rendered in the document. Click a formula to open an
-anchored editor showing its complete LaTeX, including `$`, `$$`, `\(`, `\[`, or
-the surrounding equation environment. The compact editor changes between
-inline, centered, numbered, unnumbered, aligned, and gathered forms. Apply
-commits source edits as one transaction; Escape cancels them. While the formula
-is active, a contextual bar at the bottom inserts fractions, roots, scripts,
-operators, relations, Greek letters, matrices, cases, and aligned structures at
-the mathematical cursor. MathLive's separate virtual keyboard and menu are
-hidden.
+Math normally stays rendered in the document. Click a formula to edit it in
+place and open a contextual bar at the bottom. The bar changes between inline,
+centered, numbered, unnumbered, aligned, and gathered forms and inserts
+fractions, roots, scripts, operators, relations, Greek letters, matrices,
+cases, and aligned structures at the mathematical cursor. Choose **LaTeX** in
+that bar when you need the complete source, including `$`, `$$`, `\(`, `\[`, or
+the surrounding equation environment. Apply commits that source edit as one
+transaction; Escape cancels it. MathLive's separate virtual keyboard and menu
+are hidden.
 
 The formula field expands common typed shortcuts such as `sqrt`, `alpha`,
 `sum`, `->`, and `<=`. In the complete-source editor, starting a known command
@@ -50,9 +50,17 @@ Use **Layout** to change paper size, base font size, margins and paragraph style
 these controls update explicit LaTeX preamble settings rather than maintaining
 private visual-only state.
 
+Standard `\title`, `\author`, and `\date` metadata appears as the document's
+title block at `\maketitle` and can be edited in place. Plain abstract text is
+also shown and edited as an abstract rather than as a source card. Numbered
+sections, subsections, and subsubsections display their expected hierarchy in
+the canvas; starred headings remain unnumbered. `\tableofcontents` is represented
+as generated content and remains authoritative in the compiled PDF.
+
 Description lists and common `tabular`, `tabularx`, `tabulary`, and `longtable`
-structures have visual editors. In a description list, edit labels and bodies
-directly or add and remove items. In a supported table, type directly in cells
+structures have visual editors. When inactive they read like document content;
+selection and keyboard focus reveal their structural controls. In a description
+list, edit labels and bodies directly or add and remove items. In a supported table, type directly in cells
 and use Tab to move through the grid; Tab from the last cell adds a row. The
 contextual table toolbar adds, removes, and reorders rows or columns, aligns the
 selected column, toggles a header, and changes between simple, booktabs, and

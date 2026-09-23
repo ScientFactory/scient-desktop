@@ -454,6 +454,7 @@
 }
 
 .scient-latex-visual-document {
+  counter-reset: scient-section;
   min-height: 880px;
   outline: none;
   font:
@@ -474,22 +475,43 @@
 .scient-latex-visual-document th p {
   text-indent: 0;
 }
-.scient-latex-visual-document h1 {
+.scient-latex-visual-document > h1 {
+  counter-reset: scient-subsection;
   margin: 1.2em 0 0.65em;
   font-size: 1.65em;
   font-weight: 700;
   line-height: 1.25;
 }
-.scient-latex-visual-document h2 {
+.scient-latex-visual-document > h1:not([data-latex-unnumbered]) {
+  counter-increment: scient-section;
+}
+.scient-latex-visual-document > h1:not([data-latex-unnumbered])::before {
+  content: counter(scient-section) " ";
+}
+.scient-latex-visual-document > h2 {
+  counter-reset: scient-subsubsection;
   margin: 1.2em 0 0.65em;
   font-size: 1.3em;
   font-weight: 700;
   line-height: 1.3;
 }
-.scient-latex-visual-document h3 {
+.scient-latex-visual-document > h2:not([data-latex-unnumbered]) {
+  counter-increment: scient-subsection;
+}
+.scient-latex-visual-document > h2:not([data-latex-unnumbered])::before {
+  content: counter(scient-section) "." counter(scient-subsection) " ";
+}
+.scient-latex-visual-document > h3 {
   margin: 1.2em 0 0.65em;
   font-size: 1.1em;
   font-weight: 700;
+}
+.scient-latex-visual-document > h3:not([data-latex-unnumbered]) {
+  counter-increment: scient-subsubsection;
+}
+.scient-latex-visual-document > h3:not([data-latex-unnumbered])::before {
+  content: counter(scient-section) "." counter(scient-subsection) "." counter(scient-subsubsection)
+    " ";
 }
 .scient-latex-visual-document > :first-child {
   margin-top: 0;
@@ -747,6 +769,16 @@
   font-family: var(--font-sans);
   font-size: 12px;
 }
+.scient-latex-math-bar .scient-latex-math-bar-source {
+  border-color: var(--border);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.scient-latex-math-bar .scient-latex-math-bar-source[aria-pressed="true"] {
+  border-color: #6f9bca;
+  background: #e8f2fc;
+  color: #245a91;
+}
 
 @media (max-width: 720px) {
   .scient-latex-math-bar {
@@ -798,6 +830,102 @@
   font: 12px/1.6 var(--font-mono);
 }
 
+.scient-latex-title-preview {
+  display: grid;
+  justify-items: center;
+  gap: 0.35em;
+  margin: 1.5em 0 2.4em;
+  text-align: center;
+}
+.scient-latex-title-preview input {
+  width: min(100%, 42rem);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 3px 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: center;
+}
+.scient-latex-title-preview input:first-child {
+  font-size: 2em;
+  font-weight: 700;
+  line-height: 1.2;
+}
+.scient-latex-title-preview input:nth-child(2) {
+  margin-top: 0.45em;
+  font-size: 1.15em;
+}
+.scient-latex-title-preview input:hover,
+.scient-latex-title-preview input:focus {
+  border-color: #a8c1dc;
+  outline: none;
+  background: #f8fbff;
+}
+.scient-latex-abstract-preview {
+  margin: 1.8em auto;
+  max-width: 88%;
+}
+.scient-latex-abstract-preview h2,
+.scient-latex-toc-preview h2 {
+  margin: 0 0 0.6em;
+  font-size: 1.05em;
+  text-align: center;
+}
+.scient-latex-abstract-preview h2::before,
+.scient-latex-toc-preview h2::before {
+  content: none !important;
+}
+.scient-latex-abstract-preview textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 5px 7px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  resize: none;
+  field-sizing: content;
+}
+.scient-latex-abstract-preview textarea:hover,
+.scient-latex-abstract-preview textarea:focus {
+  border-color: #a8c1dc;
+  outline: none;
+  background: #f8fbff;
+}
+.scient-latex-toc-preview {
+  margin: 2em 0;
+  padding: 0 2em;
+}
+.scient-latex-toc-preview p {
+  color: #66768a;
+  font-family: var(--font-sans);
+  font-size: 0.85em;
+  text-align: center;
+  text-indent: 0;
+}
+.scient-latex-toc-preview ol {
+  display: grid;
+  gap: 0.3em;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.scient-latex-toc-preview li {
+  display: grid;
+  grid-template-columns: 3.6em minmax(0, 1fr);
+  gap: 0.5em;
+}
+.scient-latex-toc-preview li[data-level="2"] {
+  padding-left: 1.5em;
+}
+.scient-latex-toc-preview li[data-level="3"] {
+  padding-left: 3em;
+  font-size: 0.94em;
+}
+
 .scient-latex-rich-preview {
   margin: 1.4em 0;
   border: 1px solid transparent;
@@ -805,7 +933,6 @@
   background: #fff;
   overflow: hidden;
 }
-.scient-latex-rich-preview:hover,
 .scient-latex-rich-preview:focus-within {
   border-color: #d7dde5;
 }
@@ -823,7 +950,6 @@
   color: #68798c;
   font: 10px/1.5 var(--font-sans);
 }
-.scient-latex-rich-preview:hover > .scient-latex-rich-preview-label,
 .scient-latex-rich-preview:focus-within > .scient-latex-rich-preview-label,
 .scient-latex-rich-preview[data-selected="true"] > .scient-latex-rich-preview-label {
   display: flex;
@@ -842,7 +968,7 @@
   gap: 12px;
   align-items: start;
   padding: 7px 0;
-  border-bottom: 1px solid #e8ebef;
+  border-bottom: 1px solid transparent;
 }
 .scient-latex-rich-preview dl > div:last-child {
   border-bottom: 0;
@@ -873,7 +999,7 @@
   min-height: 3.2em;
   padding: 4px 5px;
   line-height: 1.55;
-  resize: vertical;
+  resize: none;
 }
 .scient-latex-rich-preview dt input:hover,
 .scient-latex-rich-preview dd textarea:hover,
@@ -992,8 +1118,8 @@
 .scient-latex-rich-preview table {
   width: calc(100% - 1px);
   border-collapse: collapse;
-  table-layout: fixed;
-  font-size: 0.84em;
+  table-layout: auto;
+  font-size: 0.9em;
   line-height: 1.4;
 }
 .scient-latex-rich-preview th,
@@ -1012,8 +1138,8 @@
 .scient-latex-rich-preview th[data-align="right"] {
   text-align: right;
 }
-.scient-latex-rich-preview td input,
-.scient-latex-rich-preview th input {
+.scient-latex-rich-preview td textarea,
+.scient-latex-rich-preview th textarea {
   width: 100%;
   min-height: 34px;
   min-width: 0;
@@ -1028,13 +1154,16 @@
   font-weight: inherit;
   line-height: inherit;
   text-align: inherit;
+  resize: none;
+  overflow: hidden;
+  field-sizing: content;
 }
-.scient-latex-rich-preview td input:hover,
-.scient-latex-rich-preview th input:hover {
+.scient-latex-rich-preview td textarea:hover,
+.scient-latex-rich-preview th textarea:hover {
   background: #f7fafc;
 }
-.scient-latex-rich-preview td input:focus,
-.scient-latex-rich-preview th input:focus {
+.scient-latex-rich-preview td textarea:focus,
+.scient-latex-rich-preview th textarea:focus {
   outline: none;
   background: #fff;
 }
@@ -1044,8 +1173,8 @@
   z-index: 1;
   box-shadow: inset 0 0 0 2px #6495c7;
 }
-.scient-latex-rich-preview td input:disabled,
-.scient-latex-rich-preview th input:disabled {
+.scient-latex-rich-preview td textarea:disabled,
+.scient-latex-rich-preview th textarea:disabled {
   cursor: default;
 }
 .scient-latex-rich-preview th {

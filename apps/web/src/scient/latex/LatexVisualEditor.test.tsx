@@ -111,10 +111,62 @@ describe("writing editor source transactions", () => {
     expect(current).toContain("\\(x^2\\)");
   });
 
+  it("shows editable front matter and marks only starred headings as unnumbered", async () => {
+    current = `\\documentclass{article}
+\\title{Research Guide}
+\\author{Nati}
+\\date{2026}
+\\begin{document}
+\\maketitle
+
+\\section{Introduction}
+
+\\subsection*{Scope}
+\\end{document}
+`;
+    function Harness() {
+      const [source, setSource] = useState(current);
+      return (
+        <LatexVisualEditor
+          draftKey="synthetic-front-matter-test"
+          fileRevision="r1"
+          source={source}
+          disabled={false}
+          onEditingChange={() => {}}
+          onOpenSource={() => {}}
+          onEdit={(expected, next) => {
+            if (current !== expected) return false;
+            current = next;
+            setSource(next);
+            return true;
+          }}
+        />
+      );
+    }
+    await act(async () => root.render(<Harness />));
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 20)));
+    const title = container.querySelector<HTMLInputElement>("input[aria-label='Document title']")!;
+    expect(title.value).toBe("Research Guide");
+    expect(container.querySelector("h1")?.hasAttribute("data-latex-unnumbered")).toBe(false);
+    expect(container.querySelector("h2")?.hasAttribute("data-latex-unnumbered")).toBe(true);
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+        title,
+        "A Better Guide",
+      );
+      title.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(current).toContain("\\title{A Better Guide}");
+  });
+
   it("opens complete math source without replacing the rendered equation", async () => {
     await mount("Inline $x^2$ here");
     const equation = container.querySelector(".scient-latex-visual-inline-math") as HTMLElement;
     await act(async () => equation.click());
+    const sourceButton = document.body.querySelector<HTMLButtonElement>(
+      ".scient-latex-math-bar-source",
+    )!;
+    await act(async () => sourceButton.click());
     const source = container.querySelector(
       "textarea[aria-label='Complete LaTeX equation source']",
     ) as HTMLTextAreaElement;
@@ -128,7 +180,9 @@ describe("writing editor source transactions", () => {
     await mount("\\[\nx^2\n\\]");
     const equation = container.querySelector(".scient-latex-visual-display-math") as HTMLElement;
     await act(async () => equation.click());
-    const type = container.querySelector<HTMLSelectElement>("select[aria-label='Equation type']")!;
+    const type = document.body.querySelector<HTMLSelectElement>(
+      "select[aria-label='Equation type']",
+    )!;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(
         type,
@@ -143,7 +197,9 @@ describe("writing editor source transactions", () => {
     await mount("\\[\nx^2\n\\]");
     const equation = container.querySelector(".scient-latex-visual-display-math") as HTMLElement;
     await act(async () => equation.click());
-    const type = container.querySelector<HTMLSelectElement>("select[aria-label='Equation type']")!;
+    const type = document.body.querySelector<HTMLSelectElement>(
+      "select[aria-label='Equation type']",
+    )!;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(
         type,
@@ -227,11 +283,12 @@ Theory & Proofs \\\\
       caption.dispatchEvent(new Event("input", { bubbles: true }));
     });
     expect(current).toContain("\\caption{Research areas \\& evidence.}");
-    const evidence = container.querySelector<HTMLInputElement>(
-      "input[aria-label='Table row 2 column 2']",
+    const evidence = container.querySelector<HTMLTextAreaElement>(
+      "textarea[aria-label='Table row 2 column 2']",
     )!;
     await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+      evidence.focus();
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(
         evidence,
         "Verified proofs",
       );
@@ -239,19 +296,19 @@ Theory & Proofs \\\\
     });
     expect(current).toContain("Theory & Verified proofs");
     expect(
-      container.querySelector<HTMLInputElement>("input[aria-label='Table row 2 column 2']"),
+      container.querySelector<HTMLTextAreaElement>("textarea[aria-label='Table row 2 column 2']"),
     ).toBe(evidence);
     const addRow = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
       (button) => button.textContent === "+ Row",
     )!;
     await act(async () => addRow.click());
     expect(current).toContain(" &  \\\\");
-    expect(container.querySelector("input[aria-label='Table row 3 column 1']")).not.toBeNull();
+    expect(container.querySelector("textarea[aria-label='Table row 3 column 1']")).not.toBeNull();
     const addColumn = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
       (button) => button.textContent === "+ Column",
     )!;
     await act(async () => addColumn.click());
-    expect(container.querySelector("input[aria-label='Table row 1 column 3']")).not.toBeNull();
+    expect(container.querySelector("textarea[aria-label='Table row 1 column 3']")).not.toBeNull();
     const style = container.querySelector<HTMLSelectElement>("select[aria-label='Table style']")!;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(
@@ -286,7 +343,7 @@ Theory & Proofs \\\\
     await act(async () => insert.click());
     expect(current).toContain("\\begin{table}[htbp]");
     expect(current).toContain("\\begin{tabular}");
-    expect(container.querySelector("input[aria-label='Table row 3 column 4']")).not.toBeNull();
+    expect(container.querySelector("textarea[aria-label='Table row 3 column 4']")).not.toBeNull();
   });
 
   it("inserts and edits theorem-like scientific statements", async () => {

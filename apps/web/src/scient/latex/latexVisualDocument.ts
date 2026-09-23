@@ -686,6 +686,49 @@ function parseDescriptionPreview(source: string): JSONContent | null {
   };
 }
 
+function titleMetadata(source: string): { title: string; author: string; date: string } {
+  const read = (command: string) => {
+    const value = commandArgument(source, command);
+    if (value === null) return "";
+    if (command === "date" && value.trim() === "\\today") return "Today";
+    return previewText(value);
+  };
+  return { title: read("title"), author: read("author"), date: read("date") };
+}
+
+function parseDocumentFrontMatter(source: string, documentSource: string): JSONContent | null {
+  if (source.trim() === "\\maketitle") {
+    return {
+      type: "latexRichPreview",
+      attrs: {
+        kind: "title",
+        raw: source,
+        ...titleMetadata(documentSource),
+        editable: true,
+      },
+    };
+  }
+  if (source.trim() === "\\tableofcontents") {
+    return {
+      type: "latexRichPreview",
+      attrs: { kind: "toc", raw: source, editable: true },
+    };
+  }
+  const opening = /^\\begin\{abstract\}/u.exec(source);
+  const ending = source.lastIndexOf("\\end{abstract}");
+  if (!opening || ending < opening[0].length) return null;
+  const body = editableTableCell(source.slice(opening[0].length, ending), opening[0].length);
+  return {
+    type: "latexRichPreview",
+    attrs: {
+      kind: "abstract",
+      raw: source,
+      body: body?.display ?? previewText(source.slice(opening[0].length, ending)),
+      editable: body !== null,
+    },
+  };
+}
+
 function commandArgument(source: string, command: string): string | null {
   const match = new RegExp(`\\\\${command}\\s*\\{`, "u").exec(source);
   if (!match) return null;
@@ -1188,8 +1231,9 @@ export function latexVisualFigureSource(): string {
   ].join("\n");
 }
 
-function parseRichPreview(source: string): JSONContent | null {
+function parseRichPreview(source: string, documentSource: string): JSONContent | null {
   return (
+    parseDocumentFrontMatter(source, documentSource) ??
     parseDescriptionPreview(source) ??
     parseTablePreview(source) ??
     parseFigurePreview(source) ??
@@ -1235,7 +1279,7 @@ export function projectLatexVisualDocument(source: string, depth = 0): LatexVisu
         raw,
       );
     const classified = dynamicSyntax ? null : classifyBlock(raw, depth);
-    const preview = classified === null && !dynamicSyntax ? parseRichPreview(raw) : null;
+    const preview = classified === null && !dynamicSyntax ? parseRichPreview(raw, source) : null;
     const node = withSourceId(
       classified ?? preview ?? { type: "latexRawBlock", attrs: { raw, label: "Raw LaTeX" } },
       id,
@@ -1249,6 +1293,44 @@ export function projectLatexVisualDocument(source: string, depth = 0): LatexVisu
       editable: classified !== null || preview?.attrs?.editable === true,
     });
     cursor = rawEnd;
+  }
+  let section = 0;
+  let subsection = 0;
+  let subsubsection = 0;
+  const tocEntries = blocks.flatMap((block) => {
+    if (block.node.type !== "heading" || block.node.attrs?.unnumbered === true) return [];
+    const level = Number(block.node.attrs?.level ?? 1);
+    if (level === 1) {
+      section += 1;
+      subsection = 0;
+      subsubsection = 0;
+    } else if (level === 2) {
+      subsection += 1;
+      subsubsection = 0;
+    } else subsubsection += 1;
+    const number =
+      level === 1
+        ? `${section}`
+        : level === 2
+          ? `${section}.${subsection}`
+          : `${section}.${subsection}.${subsubsection}`;
+    const title = (block.node.content ?? [])
+      .map((child) =>
+        child.type === "text"
+          ? (child.text ?? "")
+          : child.type === "latexInlineMath"
+            ? String(child.attrs?.tex ?? "")
+            : String(child.attrs?.argument ?? ""),
+      )
+      .join("");
+    return [{ level, number, title }];
+  });
+  for (const [index, block] of blocks.entries()) {
+    if (block.node.type !== "latexRichPreview" || block.node.attrs?.kind !== "toc") continue;
+    blocks[index] = {
+      ...block,
+      node: { ...block.node, attrs: { ...block.node.attrs, tocEntries } },
+    };
   }
   if (blocks.length === 0) {
     const id = sourceId(0);
@@ -1509,6 +1591,12 @@ export function serializeLatexVisualBlock(node: JSONContent): string | null {
   if (node.type === "latexRichPreview") {
     const raw = String(node.attrs?.raw ?? "");
     if (node.attrs?.editable !== true) return raw;
+    if (node.attrs.kind === "title" || node.attrs.kind === "toc") return raw;
+    if (node.attrs.kind === "abstract") {
+      if (typeof node.attrs.body !== "string") return null;
+      const eol = raw.includes("\r\n") ? "\r\n" : "\n";
+      return `\\begin{abstract}${eol}${escapeText(node.attrs.body)}${eol}\\end{abstract}`;
+    }
     if (node.attrs.kind === "scientific") return serializeScientificPreview(node);
     if (node.attrs.kind === "figure") return serializeFigurePreview(node);
     if (node.attrs.kind === "description") {
@@ -1854,6 +1942,7 @@ function comparableNode(node: JSONContent): ComparableVisualNode {
               key === "cellRanges" ||
               key === "editable" ||
               key === "sourceMeta" ||
+              key === "tocEntries" ||
               key === "itemIds" ||
               key === "rowIds" ||
               key === "columnIds" ||
@@ -1866,8 +1955,10 @@ function comparableNode(node: JSONContent): ComparableVisualNode {
                   key === "figurePlacement" ||
                   key === "figureAlignment" ||
                   key === "figureStarred")) ||
-              (node.attrs?.kind !== "scientific" &&
-                (key === "environment" || key === "title" || key === "body")) ||
+              (node.attrs?.kind !== "scientific" && key === "environment") ||
+              (!["scientific", "title"].includes(String(node.attrs?.kind)) && key === "title") ||
+              (!["scientific", "abstract"].includes(String(node.attrs?.kind)) && key === "body") ||
+              (node.attrs?.kind !== "title" && (key === "author" || key === "date")) ||
               (node.attrs?.kind !== "table" &&
                 (key === "columnAlignments" ||
                   key === "tableStyle" ||
@@ -2012,6 +2103,38 @@ function ensureFigurePackage(source: string, shouldInsert: boolean, eol: string)
   return source.slice(0, begin) + boundary + `\\usepackage{graphicx}${eol}` + source.slice(begin);
 }
 
+function updateTitleMetadata(
+  source: string,
+  previous: JSONContent,
+  node: JSONContent,
+): string | null {
+  const begin = source.indexOf("\\begin{document}");
+  if (begin < 0) return null;
+  const values = ["title", "author", "date"] as const;
+  if (values.some((key) => typeof node.attrs?.[key] !== "string")) return null;
+  const eol = source.includes("\r\n") ? "\r\n" : "\n";
+  let changed = source;
+  for (const key of values) {
+    const value = String(node.attrs?.[key] ?? "");
+    if (value === String(previous.attrs?.[key] ?? "")) continue;
+    const changedBegin = changed.indexOf("\\begin{document}");
+    const preamble = changed.slice(0, changedBegin);
+    const range = commandArgumentRange(preamble, key);
+    if (range) {
+      changed = changed.slice(0, range.from) + escapeText(value) + changed.slice(range.to);
+    } else {
+      changed = replaceOrInsertPreambleLine(
+        changed,
+        new RegExp("(?!)", "u"),
+        `\\${key}{${escapeText(value)}}`,
+        changedBegin,
+        eol,
+      );
+    }
+  }
+  return changed;
+}
+
 export function applyLatexVisualDocumentChange(
   source: string,
   projection: LatexVisualDocument,
@@ -2040,6 +2163,24 @@ export function applyLatexVisualDocumentChange(
   const oldChanged = previous.slice(prefix, previous.length - suffix);
   const newChanged = next.slice(prefix, next.length - suffix);
   if (oldChanged.some((block) => !block.editable)) return null;
+  if (
+    oldChanged.length === 1 &&
+    newChanged.length === 1 &&
+    oldChanged[0]?.node.type === "latexRichPreview" &&
+    oldChanged[0]?.node.attrs?.kind === "title" &&
+    newChanged[0]?.type === "latexRichPreview" &&
+    newChanged[0]?.attrs?.kind === "title"
+  ) {
+    const changedSource = updateTitleMetadata(source, oldChanged[0]!.node, newChanged[0]);
+    if (changedSource === null) return null;
+    const projected = projectLatexVisualDocument(changedSource);
+    if (roundTripSignature(projected.content) !== roundTripSignature(nextContent)) return null;
+    return {
+      source: changedSource,
+      projection: adoptLatexVisualContent(changedSource, nextContent, projected),
+      structural: false,
+    };
+  }
   const serialized = newChanged.map(serializeLatexVisualBlock);
   if (serialized.some((value) => value === null)) return null;
   const from =
