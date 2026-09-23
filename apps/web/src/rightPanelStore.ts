@@ -57,6 +57,8 @@ export interface OpenFileOptions {
   readonly fileCitation?: FileCitation;
   readonly htmlPreviewMode?: HtmlFilePresentationRequest["mode"];
   readonly latexPreviewMode?: LatexFilePresentationRequest["mode"];
+  /** Root retained when SyncTeX navigates from a multi-file PDF to a source. */
+  readonly latexRootRelativePath?: string;
 }
 
 export interface DeviceTabTarget {
@@ -89,6 +91,7 @@ export type RightPanelSurface =
       revealRequestId: number;
       htmlPresentationRequest?: HtmlFilePresentationRequest;
       latexPresentationRequest?: LatexFilePresentationRequest;
+      latexRootRelativePath?: string;
       /** Transient rendered-text reveal; the quote remains owned by the message. */
       fileCitation?: FileCitation;
       /** Present when the file lives in the thread's attachment store rather
@@ -129,7 +132,8 @@ const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 // v15 keys generated-PDF surfaces by stable artifact identity instead of revision.
 // v16 adds the device surface alongside Scient's existing durable surfaces.
 // v17 also preserves explicit Compute context ids from the parallel v16 Compute candidate.
-const RIGHT_PANEL_STORAGE_VERSION = 17;
+// v18 carries the selected LaTeX document root across source navigation.
+const RIGHT_PANEL_STORAGE_VERSION = 18;
 /** A fixed workspace-level ref: each PR surface carries its own real environment. */
 export const PULL_REQUESTS_PANEL_REF = scopeThreadRef(
   EnvironmentId.make("pull-requests-panel"),
@@ -290,6 +294,9 @@ const fileSurface = (
           mode: options.latexPreviewMode,
         },
       }),
+  ...(typeof options?.latexRootRelativePath === "string"
+    ? { latexRootRelativePath: options.latexRootRelativePath }
+    : {}),
 });
 
 const attachmentSurface = (attachment: ChatFileAttachment): RightPanelSurface => ({
@@ -464,7 +471,23 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                         surface.revealRequestId >= 0
                           ? surface.revealRequestId
                           : 0;
-                      return [{ ...persistentSurface, revealLine, revealRequestId }];
+                      const latexRootRelativePath =
+                        typeof surface.latexRootRelativePath === "string" &&
+                        surface.latexRootRelativePath.length > 0 &&
+                        surface.latexRootRelativePath.length <= 4_096 &&
+                        !surface.latexRootRelativePath.includes("\0") &&
+                        !/^(?:\/|[A-Za-z]:[\\/])/u.test(surface.latexRootRelativePath) &&
+                        !surface.latexRootRelativePath.split(/[\\/]/u).includes("..")
+                          ? surface.latexRootRelativePath
+                          : undefined;
+                      return [
+                        {
+                          ...persistentSurface,
+                          revealLine,
+                          revealRequestId,
+                          ...(latexRootRelativePath === undefined ? {} : { latexRootRelativePath }),
+                        },
+                      ];
                     }
                     if (surface.kind === "pull-request") {
                       if (

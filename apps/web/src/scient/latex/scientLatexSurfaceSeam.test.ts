@@ -43,6 +43,18 @@ describe("Scient LaTeX file-preview seam", () => {
     expect([...mountedPropNames()].sort()).toEqual([...declaredPropNames()].sort());
   });
 
+  it("resolves a document root before starting a build and offers known roots when inference is incomplete", () => {
+    expect(surfaceSource).toContain("useLatexDocumentResolution({");
+    expect(surfaceSource).toContain("resolvedRootRelativePath === null");
+    expect(surfaceSource).toContain('resolution.result?._tag === "unresolved"');
+    expect(surfaceSource).toContain('aria-label="Choose LaTeX document to compile"');
+  });
+
+  it("carries the selected root through SyncTeX source navigation", () => {
+    expect(surfaceSource).toContain("latexRootRelativePath: snapshot.rootRelativePath");
+    expect(panelSource).toContain("latexRootRelativePath={latexRootRelativePath}");
+  });
+
   it("consumes an automatic Split presentation without changing the saved user preference", () => {
     expect(surfaceSource).toContain("props.latexPresentationRequest?.mode ?? initialPreviewMode()");
     expect(surfaceSource).toContain("setPreferredMode(request.mode)");

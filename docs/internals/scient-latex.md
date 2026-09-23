@@ -61,18 +61,32 @@ upstream-provenance check and the General Chat and analysis seam verifiers.
 
 ## Build lifecycle
 
-**Root resolution.** `resolveLatexRoot` (`latexRoot.ts`) reads only the first
-4,000 characters of the requested file looking for a `% !TEX root = …` magic
-comment; if one names another `.tex`/`.latex`/`.ltx` file, that file — resolved
-relative to the declaring file, not the workspace — is the root. Otherwise a
-file containing `\documentclass` is its own root, and anything else falls back
-to compiling itself, letting the engine's own error name the real problem.
-`LatexBuildService` performs this resolution from a bounded 8 KiB read
-(`ROOT_RESOLUTION_HEAD_BYTES`) of the requested source, so a status poll on a
-large document never reads the whole file. The resolved root is always
-rebased back onto a workspace-relative, forward-slash path, and any resolution
-that would escape the workspace root (`..` walks, a Windows drive-relative
-absolute path) is rejected as `invalid-path`.
+**Root resolution.** `LatexProjectIndex.ts` indexes a bounded portion of the
+server-owned workspace and follows static `\input`, `\include`, `\subfile`,
+`\import`, and `\subimport` references. A complete scan that finds one
+document root containing the requested source resolves to that root. Multiple
+roots remain explicit choices. Dynamic TeX inputs and incomplete scans never
+produce a guessed root; when known documents are available, the UI offers them
+for explicit selection. The index skips symlinks and generated/dependency
+directories, and is bounded to 2,000 TeX files, 20,000 directory entries, 1 MiB
+per source, 24 MiB total source text, and 32 directory levels. It strips TeX
+comments and common literal environments before recognizing dependency
+commands; unsupported inclusion forms, paths outside the workspace, and
+reachable references through skipped symlinks make discovery incomplete. It
+does not execute TeX or evaluate macros.
+
+A `% !TEX root = …` magic comment remains an explicit author declaration. Its
+target is resolved relative to the declaring file, not the workspace. A
+previously selected root is carried through source navigation and accepted
+while it still names a regular LaTeX source inside the workspace. This
+preserves an explicit choice when bounded discovery cannot index the root;
+paths through symlinks are rejected. `LatexBuildService` continues to apply
+its bounded 8 KiB root read (`ROOT_RESOLUTION_HEAD_BYTES`)
+when asked to build, so status polling on a large document does not read the
+whole file. Both root discovery and build resolution keep paths workspace-
+relative and reject paths that escape the workspace root. When there is no
+complete, unique root and no explicit selection or root comment, the fragment
+is left unbuilt rather than compiled as if it were a document.
 
 **Logical document key.** Every build, status, and cancel call resolves to
 `latex:<sha256-of-normalized-workspace-root>:<root-relative-path>`, capped at 1,024

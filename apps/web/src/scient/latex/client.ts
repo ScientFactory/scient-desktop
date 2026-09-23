@@ -4,6 +4,7 @@ import {
   getEnvironmentLatexForwardSync,
   getEnvironmentLatexInstallToolchain,
   getEnvironmentLatexInverseSync,
+  getEnvironmentLatexResolution,
   getEnvironmentLatexStatus,
   getEnvironmentLatexToolchain,
 } from "@t3tools/client-runtime/state/scient-latex";
@@ -11,6 +12,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import type {
   ScientLatexForwardSyncRequest,
   ScientLatexInverseSyncRequest,
+  ScientLatexResolveRequest,
 } from "@t3tools/contracts";
 
 import { runtime } from "../../lib/runtime";
@@ -31,6 +33,15 @@ function prepared(environmentId: EnvironmentId) {
 export function requestLatexBuild(environmentId: EnvironmentId, input: ScientLatexDocumentRef) {
   return runtime.runPromise(
     getEnvironmentLatexBuild({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export function requestLatexResolution(
+  environmentId: EnvironmentId,
+  request: ScientLatexResolveRequest,
+) {
+  return runtime.runPromise(
+    getEnvironmentLatexResolution({ prepared: prepared(environmentId), request }),
   );
 }
 

@@ -5,6 +5,7 @@ import type {
   ScientLatexCancelRequest,
   ScientLatexForwardSyncRequest,
   ScientLatexInverseSyncRequest,
+  ScientLatexResolveRequest,
   ScientLatexStatusRequest,
   ScientLatexToolchainRequest,
 } from "@t3tools/contracts";
@@ -23,6 +24,30 @@ import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
 const REQUEST_TIMEOUT_MS = 15_000;
 /** A cold toolchain probe shells out to the engine, which can be slow on first run. */
 const TOOLCHAIN_TIMEOUT_MS = 30_000;
+
+export const getEnvironmentLatexResolution = Effect.fn(
+  "clientRuntime.state.getEnvironmentLatexResolution",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly request: ScientLatexResolveRequest;
+}) {
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared: input.prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/latex/resolve"),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientLatex",
+    request: ({ client, headers }) =>
+      client.resolve({
+        headers,
+        payload: input.request,
+      }),
+  });
+});
 
 export const getEnvironmentLatexBuild = Effect.fn("clientRuntime.state.getEnvironmentLatexBuild")(
   function* (input: {

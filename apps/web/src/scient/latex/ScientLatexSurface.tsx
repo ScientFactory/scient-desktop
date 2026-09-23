@@ -26,7 +26,7 @@ import { type DraftId } from "~/composerDraftStore";
 import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
 import { DIFF_SURFACE_THEME_UNSAFE_CSS, resolveDiffThemeName } from "~/lib/diffRendering";
 import { cn } from "~/lib/utils";
-import type { LatexFilePresentationRequest } from "~/rightPanelStore";
+import type { LatexFilePresentationRequest, OpenFileOptions } from "~/rightPanelStore";
 import { scientificSourceLanguageOverride } from "~/scient/analysis/sourceLanguage";
 import { type FileSaveResolution } from "~/scient/fileSurfaces/useWorkspaceFileRefresh";
 import { useScientSplit } from "~/scient/layout/useScientSplit";
@@ -41,6 +41,7 @@ import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
 import { documentBindingChanges } from "./bindingChanges";
 import { LatexToolchainSetupCard } from "./LatexToolchainSetupCard";
 import { requestLatexForwardSync, requestLatexInverseSync } from "./client";
+import { useLatexDocumentResolution } from "./useLatexDocumentResolution";
 import {
   cancelLatexBuild,
   notifyLatexBindingChange,
@@ -78,6 +79,8 @@ interface ScientLatexSurfaceProps {
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
   readonly relativePath: string;
+  /** Root carried by navigation from an already established LaTeX document. */
+  readonly latexRootRelativePath: string | null;
   readonly composerDraftTarget: ScopedThreadRef | DraftId;
   readonly contents: string;
   readonly revision: string;
@@ -89,7 +92,11 @@ interface ScientLatexSurfaceProps {
   readonly wordWrap: boolean;
   readonly onPostRender: FilePostRender;
   readonly onPendingChange: (relativePath: string, pending: boolean) => void;
-  readonly onOpenFileSource: (relativePath: string, line?: number) => void;
+  readonly onOpenFileSource: (
+    relativePath: string,
+    line?: number,
+    options?: OpenFileOptions,
+  ) => void;
   readonly onLatexPresentationRequestHandled: (
     relativePath: string,
     request: LatexFilePresentationRequest,
@@ -407,13 +414,42 @@ function sourcePositionFromPointerEvent(
 }
 
 export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
-  const target = useMemo<LatexBuildTarget>(
-    () => ({
-      environmentId: props.environmentId,
-      cwd: props.cwd,
-      relativePath: props.relativePath,
-    }),
-    [props.cwd, props.environmentId, props.relativePath],
+  const [manualRootSelection, setManualRootSelection] = useState<{
+    readonly environmentId: EnvironmentId;
+    readonly workspaceRoot: string;
+    readonly sourceRelativePath: string;
+    readonly carriedRootRelativePath: string | null;
+    readonly selectedRootRelativePath: string;
+  } | null>(null);
+  const selectedRootRelativePath =
+    manualRootSelection !== null &&
+    manualRootSelection.environmentId === props.environmentId &&
+    manualRootSelection.workspaceRoot === props.cwd &&
+    manualRootSelection.sourceRelativePath === props.relativePath &&
+    manualRootSelection.carriedRootRelativePath === props.latexRootRelativePath
+      ? manualRootSelection.selectedRootRelativePath
+      : (props.latexRootRelativePath ?? undefined);
+  const resolution = useLatexDocumentResolution({
+    environmentId: props.environmentId,
+    workspaceRoot: props.cwd,
+    sourceRelativePath: props.relativePath,
+    sourceRevision: props.revision,
+    ...(selectedRootRelativePath === undefined
+      ? {}
+      : { contextRootRelativePath: selectedRootRelativePath }),
+  });
+  const resolvedRootRelativePath =
+    resolution.result?._tag === "resolved" ? resolution.result.rootRelativePath : null;
+  const target = useMemo<LatexBuildTarget | null>(
+    () =>
+      resolvedRootRelativePath === null
+        ? null
+        : {
+            environmentId: props.environmentId,
+            cwd: props.cwd,
+            relativePath: resolvedRootRelativePath,
+          },
+    [props.cwd, props.environmentId, resolvedRootRelativePath],
   );
   const build = useLatexBuild(target);
   const bindingChange = useLatexBindingChange(props.environmentId, build.snapshot);
@@ -444,22 +480,22 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
     props.revealRequestId,
   ]);
 
-  useEffect(() => startWatchingLatexBuild(target), [target]);
+  useEffect(() => (target === null ? undefined : startWatchingLatexBuild(target)), [target]);
   useEffect(() => {
     lastBindingChangeRef.current = null;
   }, [target]);
   useEffect(() => {
     if (bindingChange === null || lastBindingChangeRef.current === bindingChange) return;
     lastBindingChangeRef.current = bindingChange;
-    notifyLatexBindingChange(target);
+    if (target !== null) notifyLatexBindingChange(target);
   }, [bindingChange, target]);
 
-  const { onSaveConfirmed, onSaveFailure, revealLine, revealRequestId } = props;
+  const { onOpenFileSource, onSaveConfirmed, onSaveFailure, revealLine, revealRequestId } = props;
   const handleSaveConfirmed = useCallback(
     (path: string, contents: string, revision: string) => {
       setSaveError(null);
       onSaveConfirmed(path, contents, revision);
-      requestLatexRebuild(target);
+      if (target !== null) requestLatexRebuild(target);
     },
     [onSaveConfirmed, target],
   );
@@ -481,7 +517,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
     [onSaveFailure],
   );
   const handleInstallToolchain = useCallback(() => {
-    requestManagedLatexInstall(target);
+    if (target !== null) requestManagedLatexInstall(target);
   }, [target]);
 
   // A reveal asks for a line of source, so a document parked on the PDF shows
@@ -613,7 +649,9 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
             setSyncNotice({ label: syncUnavailableLabel(result.reason), message: result.message });
             return;
           }
-          props.onOpenFileSource(result.relativePath, result.line);
+          onOpenFileSource(result.relativePath, result.line, {
+            latexRootRelativePath: snapshot.rootRelativePath,
+          });
         })
         .catch((error: unknown) => {
           if (syncRequestRef.current !== issued) return;
@@ -623,7 +661,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
           });
         });
     },
-    [build.snapshot, descriptor, props.cwd, props.environmentId, props.onOpenFileSource],
+    [build.snapshot, descriptor, onOpenFileSource, props.cwd, props.environmentId],
   );
   const syncNavigation = useMemo<PdfSyncNavigation | undefined>(
     () =>
@@ -665,13 +703,23 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
           ))}
         </div>
         <div className="scient-latex-status">
-          {status.busy ? (
+          {resolution.pending || status.busy ? (
             <LoaderCircle
               className="size-3.5 animate-spin text-muted-foreground"
               aria-hidden="true"
             />
           ) : null}
-          {status.toolchainMissing ? (
+          {target === null ? (
+            <span className="scient-latex-status-label">
+              {resolution.pending
+                ? "Finding document"
+                : resolution.result?._tag === "ambiguous" ||
+                    (resolution.result?._tag === "unresolved" &&
+                      resolution.result.candidates.length > 0)
+                  ? "Choose the document to compile"
+                  : (resolution.error ?? "No compiling document found")}
+            </span>
+          ) : status.toolchainMissing ? (
             <ScientTooltip content={LATEX_TOOLCHAIN_MISSING_HINT}>
               <span
                 className={cn(
@@ -692,6 +740,35 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
               {status.label}
             </span>
           )}
+          {target === null &&
+          (resolution.result?._tag === "ambiguous" || resolution.result?._tag === "unresolved") &&
+          resolution.result.candidates.length > 0 ? (
+            <select
+              className="scient-latex-root-choice"
+              aria-label="Choose LaTeX document to compile"
+              value=""
+              onChange={(event) => {
+                if (event.target.value !== "") {
+                  setManualRootSelection({
+                    environmentId: props.environmentId,
+                    workspaceRoot: props.cwd,
+                    sourceRelativePath: props.relativePath,
+                    carriedRootRelativePath: props.latexRootRelativePath,
+                    selectedRootRelativePath: event.target.value,
+                  });
+                }
+              }}
+            >
+              <option value="" disabled>
+                Choose document…
+              </option>
+              {resolution.result.candidates.map((candidate) => (
+                <option key={candidate.rootRelativePath} value={candidate.rootRelativePath}>
+                  {candidate.rootRelativePath}
+                </option>
+              ))}
+            </select>
+          ) : null}
           {compiledFrom === null ? null : (
             <ScientTooltip
               content={`This file is part of ${compiledFrom}, which is what Scient compiles.`}
@@ -737,7 +814,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
           )}
         </div>
         <div className="scient-latex-actions">
-          {status.canCancel ? (
+          {status.canCancel && target !== null ? (
             <button
               type="button"
               className="scient-latex-action"
@@ -750,10 +827,12 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
           <button
             type="button"
             className="scient-latex-action"
-            disabled={!status.canRebuild}
+            disabled={target === null || !status.canRebuild}
             // By hand is the one rebuild that re-probes: a TeX installed while
             // this document sat here has no other way to be noticed.
-            onClick={() => requestLatexRebuild(target, { reprobeToolchain: true })}
+            onClick={() => {
+              if (target !== null) requestLatexRebuild(target, { reprobeToolchain: true });
+            }}
           >
             <RotateCw className="size-3.5" aria-hidden="true" />
             Rebuild
@@ -787,7 +866,15 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
                   key={row.key}
                   diagnostic={row.diagnostic}
                   workspaceRoot={props.cwd}
-                  onNavigate={props.onOpenFileSource}
+                  onNavigate={(relativePath, line) =>
+                    onOpenFileSource(
+                      relativePath,
+                      line,
+                      build.snapshot === null
+                        ? undefined
+                        : { latexRootRelativePath: build.snapshot.rootRelativePath },
+                    )
+                  }
                 />
               ))}
             </ul>

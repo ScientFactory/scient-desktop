@@ -106,6 +106,8 @@ import {
   ScientLatexInverseSyncRequest,
   ScientLatexInverseSyncResult,
   ScientLatexManagedInstallState,
+  ScientLatexResolveRequest,
+  ScientLatexResolveResult,
   ScientLatexStatusRequest,
   ScientLatexToolchainReport,
   ScientLatexToolchainRequest,
@@ -902,6 +904,14 @@ export class EnvironmentScientSourcesHttpApi extends HttpApiGroup.make("scientSo
   ) {}
 
 export class EnvironmentScientLatexHttpApi extends HttpApiGroup.make("scientLatex")
+  .add(
+    HttpApiEndpoint.post("resolve", "/api/scient/latex/resolve", {
+      headers: OptionalBearerHeaders,
+      payload: ScientLatexResolveRequest,
+      success: ScientLatexResolveResult,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
   .add(
     HttpApiEndpoint.post("build", "/api/scient/latex/build", {
       headers: OptionalBearerHeaders,

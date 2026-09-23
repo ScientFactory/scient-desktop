@@ -57,6 +57,14 @@ export const scientLatexHttpApiLayer = HttpApiBuilder.group(
       });
 
     return handlers
+      .handle("resolve", (args) =>
+        handle(
+          args.endpoint.name,
+          AuthOrchestrationReadScope,
+          "scient_latex_build_failed",
+          builds.resolveDocument(args.payload),
+        ),
+      )
       .handle("build", (args) =>
         handle(
           args.endpoint.name,

@@ -31,6 +31,12 @@ export const ScientLatexPdfBuildInput = Schema.Struct({
   sourcePath: ProjectPath.annotate({
     description: "Project-relative path to an existing .tex source document.",
   }),
+  rootSourcePath: Schema.optional(
+    ProjectPath.annotate({
+      description:
+        "Optional project-relative root .tex file when the source belongs to several documents.",
+    }),
+  ),
   outputPath: ProjectPath.annotate({
     description:
       "Project-relative .pdf path where the validated PDF should be written or replaced.",

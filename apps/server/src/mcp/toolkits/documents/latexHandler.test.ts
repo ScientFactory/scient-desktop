@@ -22,6 +22,7 @@ import { vi } from "vite-plus/test";
 import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { GeneratedDocumentStore } from "../../../scient/documentArtifacts/GeneratedDocumentStore.ts";
 import * as LatexBuildService from "../../../scient/latex/LatexBuildService.ts";
+import { resolveLatexDocument } from "../../../scient/latex/LatexProjectIndex.ts";
 import {
   WorkspaceAuthorityGeneration,
   WorkspaceAuthorityScopeRevision,
@@ -294,8 +295,14 @@ function makeBuildService(options: {
     return Effect.succeed(current);
   });
   const cancel = vi.fn(() => Effect.succeed(snapshot({ state: "cancelled" })));
-  const service = LatexBuildService.LatexBuildService.of({ requestBuild, status, cancel });
-  return { service, requestBuild, status, cancel };
+  const resolveDocument = vi.fn((input) => Effect.promise(() => resolveLatexDocument(input)));
+  const service = LatexBuildService.LatexBuildService.of({
+    resolveDocument,
+    requestBuild,
+    status,
+    cancel,
+  });
+  return { service, resolveDocument, requestBuild, status, cancel };
 }
 
 function makeStore(revisionPath: string) {
@@ -496,6 +503,104 @@ describe("Scient LaTeX build handler", () => {
           input: { rootSourcePath: "main.tex" },
         }),
       );
+    }),
+  );
+
+  it.effect("builds an included source from its unique static document root", () =>
+    Effect.gen(function* () {
+      const root = yield* Effect.promise(() => fixture("scient-latex-static-root-"));
+      yield* Effect.promise(() =>
+        NodeFSP.mkdir(NodePath.join(root, "chapters"), { recursive: true }),
+      );
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          NodePath.join(root, "main.tex"),
+          String.raw`\documentclass{article}\begin{document}\input{chapters/results}\end{document}`,
+        ),
+      );
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(NodePath.join(root, "chapters/results.tex"), "Results."),
+      );
+      const succeeded = snapshot({
+        state: "succeeded",
+        rootRelativePath: "main.tex",
+        descriptor: source,
+      });
+      const builds = makeBuildService({ initial: succeeded });
+      const { context } = yield* Effect.promise(() => makeContext(root, builds));
+
+      const result = yield* runBuild(
+        buildScientLatexForInvocation({
+          sourcePath: "chapters/results.tex",
+          outputPath: "paper.pdf",
+        }),
+        context,
+      );
+
+      expect(result).toMatchObject({
+        status: "completed",
+        sourcePath: "chapters/results.tex",
+        rootSourcePath: "main.tex",
+      });
+      const canonicalRoot = yield* Effect.promise(() => NodeFSP.realpath(root));
+      expect(builds.resolveDocument).toHaveBeenCalledWith({
+        workspaceRoot: canonicalRoot,
+        sourceRelativePath: "chapters/results.tex",
+      });
+      expect(builds.requestBuild).not.toHaveBeenCalled();
+    }),
+  );
+
+  it.effect("requires a root choice for shared sources and builds the explicit root", () =>
+    Effect.gen(function* () {
+      const root = yield* Effect.promise(() => fixture("scient-latex-ambiguous-root-"));
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          NodePath.join(root, "paper-a.tex"),
+          String.raw`\documentclass{article}\begin{document}\input{shared}\end{document}`,
+        ),
+      );
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          NodePath.join(root, "paper-b.tex"),
+          String.raw`\documentclass{article}\begin{document}\input{shared}\end{document}`,
+        ),
+      );
+      yield* Effect.promise(() => NodeFSP.writeFile(NodePath.join(root, "shared.tex"), "Shared."));
+      const succeeded = snapshot({
+        state: "succeeded",
+        rootRelativePath: "paper-a.tex",
+        descriptor: source,
+      });
+      const builds = makeBuildService({ initial: succeeded });
+      const { context } = yield* Effect.promise(() => makeContext(root, builds));
+
+      const ambiguous = yield* runBuild(
+        buildScientLatexForInvocation({ sourcePath: "shared.tex", outputPath: "paper.pdf" }),
+        context,
+      ).pipe(Effect.result);
+      expect(ambiguous).toMatchObject({
+        _tag: "Failure",
+        failure: {
+          _tag: "ScientLatexBuildToolError",
+          code: "build-failed",
+          message: expect.stringContaining("multiple documents"),
+        },
+      });
+
+      const selected = yield* runBuild(
+        buildScientLatexForInvocation({
+          sourcePath: "shared.tex",
+          rootSourcePath: "paper-a.tex",
+          outputPath: "paper.pdf",
+        }),
+        context,
+      );
+      expect(selected).toMatchObject({
+        status: "completed",
+        sourcePath: "shared.tex",
+        rootSourcePath: "paper-a.tex",
+      });
     }),
   );
 

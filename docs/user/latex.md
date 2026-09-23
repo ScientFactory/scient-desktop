@@ -86,12 +86,22 @@ compiler byproducts stay out of your project entirely.
 
 ## Choose the root document
 
-For a project with multiple `.tex` files, add a comment near the top of a file
-that isn't the main document:
+When you open or edit a `.tex` file that belongs to a larger document, Scient
+looks for the document that includes it and builds that document, not the
+fragment on its own. A single, unambiguous static dependency is enough; common
+`\input`, `\include`, `\subfile`, `\import`, and `\subimport` references are followed.
+
+If the source belongs to more than one document, or Scient cannot safely infer
+the root (for example, because an input is computed by a TeX macro or uses an
+unsupported inclusion command), choose the document in the LaTeX toolbar.
+Scient will not guess between possible roots.
+You can also state the root explicitly near the top of the included file:
 
 ```
-% !TEX root = main.tex
+% !TEX root = ../main.tex
 ```
 
-Scient then compiles from `main.tex` whenever you edit or save that file, the
-same convention other LaTeX editors use.
+The path in this comment is relative to the file containing the comment, as in
+other LaTeX editors. If no root can be found, open the main document or add the
+comment; Scient leaves the fragment unbuilt rather than silently compiling the
+wrong file.
