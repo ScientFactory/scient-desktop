@@ -16,6 +16,9 @@ user prompts, credentials, machine paths, or model-generated content.
 - `prompt-events.jsonl`: the beginning of a real prompt lifecycle, including
   the user `message_start`/`message_end` pair that must not be projected as
   assistant output.
+- `live-turn.jsonl`: a minimized real model turn from the same qualified run,
+  including assistant streaming, `message_end`, `turn_end`, and terminal
+  `agent_end`.
 
 The live qualification run was performed outside the repository. The binary
 is not committed.

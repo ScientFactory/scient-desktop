@@ -6,8 +6,10 @@ import * as NodeURL from "node:url";
 import * as Schema from "effect/Schema";
 
 import {
+  OmpAgentEndEvent,
   OmpMessageEndEvent,
   OmpMessageStartEvent,
+  OmpMessageUpdateEvent,
   OmpRpcAvailableModels,
   OmpRpcEvent,
   OmpRpcReady,
@@ -57,6 +59,22 @@ describe("OMP v18.2.8 recorded fixtures", () => {
       },
     });
     expect(frame.type).toBe("subagent_lifecycle");
+  });
+
+  it("decodes a complete real assistant turn", () => {
+    const values = frames("live-turn.jsonl");
+    expect(Schema.decodeUnknownSync(OmpMessageStartEvent)(values[3]).message.role).toBe("user");
+    expect(Schema.decodeUnknownSync(OmpMessageStartEvent)(values[5]).message.role).toBe(
+      "assistant",
+    );
+    expect(Schema.decodeUnknownSync(OmpMessageUpdateEvent)(values[6])).toMatchObject({
+      type: "message_update",
+    });
+    expect(Schema.decodeUnknownSync(OmpMessageEndEvent)(values[8]).message.role).toBe("assistant");
+    expect(Schema.decodeUnknownSync(OmpAgentEndEvent)(values[10])).toMatchObject({
+      type: "agent_end",
+      isTerminal: true,
+    });
   });
 
   it("preserves the real user message lifecycle for role-aware mapping", () => {
