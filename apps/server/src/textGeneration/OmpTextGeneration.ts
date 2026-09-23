@@ -9,6 +9,8 @@ import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -84,7 +86,7 @@ export const makeOmpTextGeneration = Effect.fn("makeOmpTextGeneration")(function
   ) => Effect.Effect<
     OmpRpcProcess,
     OmpRpcError,
-    ChildProcessSpawner.ChildProcessSpawner | Scope.Scope
+    ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path | Scope.Scope
   > = makeOmpRpcProcess,
   timeoutMs = TIMEOUT_MS,
 ) {
