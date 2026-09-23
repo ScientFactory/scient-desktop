@@ -3,7 +3,11 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { initializeScientProject, readScientProjectIdentity } from "@scientfactory/project-init";
+import {
+  initializeScientProject,
+  readScientProjectIdentity,
+  SCIENT_TRANSACTION_FILE,
+} from "@scientfactory/project-init";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
 import {
@@ -92,6 +96,59 @@ describe("project-scoped Scient skills", () => {
     expect(catalog.releases).toEqual([]);
     expect(catalog.diagnostics).toEqual([
       expect.objectContaining({ code: "not-initialized-project", path: ".scient/project.json" }),
+    ]);
+  });
+
+  it("reports interrupted project setup without treating it as an ordinary folder", async () => {
+    const projectRoot = await fixture();
+    await NodeFSP.mkdir(NodePath.join(projectRoot, ".scient"));
+    await NodeFSP.writeFile(
+      NodePath.join(projectRoot, SCIENT_TRANSACTION_FILE),
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          operationId: "6da0c02a-d740-4601-9f91-f285df4663f6",
+          createdAt: "2026-08-07T08:00:00.000Z",
+          title: "Recoverable project",
+          identity: {
+            projectId: "6da0c664-f547-4c09-bc79-2c76916fc4ec",
+            formatVersion: 1,
+            createdAt: "2026-08-07T08:00:00.000Z",
+          },
+          files: [],
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    const catalog = await loadProjectSkillCatalog(projectRoot);
+
+    expect(catalog.releases).toEqual([]);
+    expect(catalog.diagnostics).toEqual([
+      expect.objectContaining({
+        code: "invalid-project",
+        path: SCIENT_TRANSACTION_FILE,
+        message: expect.stringContaining("must be recovered"),
+      }),
+    ]);
+  });
+
+  it("preserves the identity validation diagnostic for conflicting projects", async () => {
+    const projectRoot = await fixture();
+    await initializeScientProject({ root: projectRoot });
+    await NodeFSP.writeFile(NodePath.join(projectRoot, ".scient", "project.json"), "not-json\n");
+
+    const catalog = await loadProjectSkillCatalog(projectRoot);
+
+    expect(catalog.releases).toEqual([]);
+    expect(catalog.diagnostics).toEqual([
+      expect.objectContaining({
+        code: "invalid-project",
+        path: ".scient/project.json",
+        message: expect.stringContaining("identity is not valid"),
+      }),
     ]);
   });
 

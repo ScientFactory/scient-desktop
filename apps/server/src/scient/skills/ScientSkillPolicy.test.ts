@@ -91,7 +91,7 @@ describe("Scient skill policy", () => {
     }),
   );
 
-  it.effect("marks a failed persisted-policy read incomplete instead of authoritative empty", () =>
+  it.effect("keeps failed reads incomplete until an atomic policy write recovers them", () =>
     Effect.gen(function* () {
       const baseDir = yield* Effect.promise(fixture);
       const configLayer = ServerConfig.layerTest(process.cwd(), baseDir).pipe(
@@ -103,17 +103,27 @@ describe("Scient skill policy", () => {
         await NodeFSP.writeFile(NodePath.join(config.stateDir, "scient-skills.json"), "not-json\n");
       });
 
-      const complete = yield* Effect.gen(function* () {
+      const { initialState, recoveredState } = yield* Effect.gen(function* () {
         const policy = yield* ScientSkillPolicy.ScientSkillPolicy;
-        expect(yield* policy.snapshot).toEqual({
-          userSkills: [],
-          projectSkills: [],
-          trustedProjects: [],
-        });
-        return yield* policy.snapshotIsComplete;
+        const initialState = yield* policy.readState;
+        yield* policy.setUserSkillActivation(release, true, "automatic");
+        const recoveredState = yield* policy.readState;
+        return { initialState, recoveredState };
       }).pipe(Effect.provide(ScientSkillPolicy.layer.pipe(Layer.provide(configLayer))));
 
-      expect(complete).toBe(false);
+      expect(initialState).toEqual({
+        snapshot: { userSkills: [], projectSkills: [], trustedProjects: [] },
+        snapshotIsComplete: false,
+      });
+
+      expect(recoveredState).toEqual({
+        snapshot: {
+          userSkills: [{ release, active: true, invocationPolicy: "automatic" }],
+          projectSkills: [],
+          trustedProjects: [],
+        },
+        snapshotIsComplete: true,
+      });
     }),
   );
 

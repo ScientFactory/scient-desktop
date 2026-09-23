@@ -129,8 +129,7 @@ const make = Effect.fn("ScientSkillSessionPlanner.make")(function* () {
   const resolve: ScientSkillSessionPlannerShape["resolve"] = Effect.fn(
     "ScientSkillSessionPlanner.resolve",
   )(function* (input) {
-    const snapshot = yield* policy.snapshot;
-    const snapshotIsComplete = yield* policy.snapshotIsComplete;
+    const { snapshot, snapshotIsComplete } = yield* policy.readState;
     const diagnostics: ScientSkillSessionDiagnostic[] = [];
     let projectCatalogReadFailed = false;
     const releases = new Map<
