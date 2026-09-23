@@ -1,8 +1,6 @@
 import * as Schema from "effect/Schema";
 
 import {
-  OMP_DEFAULT_MAX_FRAME_BYTES,
-  OMP_DEFAULT_MAX_REASSEMBLED_FRAME_BYTES,
   OMP_HARD_MAX_FRAME_BYTES,
   OMP_HARD_MAX_REASSEMBLED_FRAME_BYTES,
   OMP_RPC_CHUNK_PAYLOAD_BYTES,
@@ -29,11 +27,11 @@ export const defaultOmpFrameLimits = (ready?: {
   readonly maxReassembledFrameBytes?: number | undefined;
 }): OmpFrameLimits => ({
   maxFrameBytes: Math.min(
-    positiveFinite(ready?.maxFrameBytes) ?? OMP_DEFAULT_MAX_FRAME_BYTES,
+    positiveFinite(ready?.maxFrameBytes) ?? OMP_HARD_MAX_FRAME_BYTES,
     OMP_HARD_MAX_FRAME_BYTES,
   ),
   maxReassembledFrameBytes: Math.min(
-    positiveFinite(ready?.maxReassembledFrameBytes) ?? OMP_DEFAULT_MAX_REASSEMBLED_FRAME_BYTES,
+    positiveFinite(ready?.maxReassembledFrameBytes) ?? OMP_HARD_MAX_REASSEMBLED_FRAME_BYTES,
     OMP_HARD_MAX_REASSEMBLED_FRAME_BYTES,
   ),
 });

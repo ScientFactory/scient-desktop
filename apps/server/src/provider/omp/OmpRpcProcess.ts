@@ -18,8 +18,8 @@ import { spawnAndCollect } from "../providerSnapshot.ts";
 
 const isProtocolError = Schema.is(OmpRpcProtocolError);
 
-export const OMP_MINIMUM_VERSION = "18.2.8";
-export const OMP_SESSION_DIR_ENV = "PI_CODING_AGENT_SESSION_DIR";
+const OMP_MINIMUM_VERSION = "18.2.8";
+const OMP_SESSION_DIR_ENV = "PI_CODING_AGENT_SESSION_DIR";
 /** Agent directory override from oh-my-pi v18.2.8 `packages/utils/src/dirs.ts`. */
 export const OMP_AGENT_DIR_ENV = "PI_CODING_AGENT_DIR";
 /** Named profile from the same v18.2.8 resolver. `OMP_PROFILE` wins over `PI_PROFILE`. */
@@ -49,7 +49,6 @@ export const OMP_ISOLATED_ARGS = [
   "--no-skills",
   "--no-rules",
 ] as const;
-export const OMP_DISCOVERY_ARGS = OMP_ISOLATED_ARGS;
 
 const VERSION_CACHE_MS = 5 * 60 * 1000;
 const versionCache = new Map<string, { readonly version: string; readonly expiresAt: number }>();
@@ -86,7 +85,7 @@ export interface OmpRpcProcess extends OmpRpcClient {
   readonly shutdown: Effect.Effect<OmpProcessExit, OmpRpcError>;
 }
 
-export const parseOmpVersion = (output: string): string | undefined =>
+const parseOmpVersion = (output: string): string | undefined =>
   output.match(/\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?/u)?.[0];
 
 const childEnv = (

@@ -1,4 +1,4 @@
-export const OMP_SESSION_MUTATOR_COMMANDS = [
+const OMP_SESSION_MUTATOR_COMMANDS = [
   "new",
   "fresh",
   "clear",
@@ -31,7 +31,7 @@ export const OMP_SESSION_MUTATOR_COMMANDS = [
  * Discovery is not permission: an extension, skill, or user command is not
  * trusted merely because OMP reports it.
  */
-export const OMP_QUALIFIED_COMMANDS = ["help", "status", "compact"] as const;
+const OMP_QUALIFIED_COMMANDS = ["help", "status", "compact"] as const;
 
 const mutators = new Set<string>(OMP_SESSION_MUTATOR_COMMANDS);
 const qualified = new Set<string>(OMP_QUALIFIED_COMMANDS);
@@ -92,7 +92,7 @@ export const compileOmpCommandCatalog = (
   return { advertised, allowed, known };
 };
 
-export const ompSlashCommandName = (input: string): string | undefined => {
+const ompSlashCommandName = (input: string): string | undefined => {
   if (!input.startsWith("/")) return undefined;
   return clean(input.slice(1).split(" ", 1)[0]);
 };

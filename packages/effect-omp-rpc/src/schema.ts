@@ -9,8 +9,6 @@ export const OMP_HARD_MAX_REASSEMBLED_FRAME_BYTES = 64 * 1024 * 1024;
 /** Each chunk payload must fit in this many decoded bytes. */
 export const OMP_RPC_CHUNK_PAYLOAD_BYTES = 256 * 1024;
 export const OMP_RPC_MAX_CHUNK_ID_LENGTH = 128;
-export const OMP_DEFAULT_MAX_FRAME_BYTES = OMP_HARD_MAX_FRAME_BYTES;
-export const OMP_DEFAULT_MAX_REASSEMBLED_FRAME_BYTES = OMP_HARD_MAX_REASSEMBLED_FRAME_BYTES;
 
 export const OmpThinkingLevel = Schema.Literals([
   "off",

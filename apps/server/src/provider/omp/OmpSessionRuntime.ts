@@ -23,10 +23,10 @@ import {
   type OmpTurnState,
 } from "./OmpTurnMachine.ts";
 
-export const OMP_DRAIN_RETRY_LIMIT = 20;
-export const OMP_INBOX_CAPACITY = 256;
+const OMP_DRAIN_RETRY_LIMIT = 20;
+const OMP_INBOX_CAPACITY = 256;
 
-export const ompDrainRetry = (attempt: number, busy: boolean): "confirm" | "retry" | "give-up" => {
+const ompDrainRetry = (attempt: number, busy: boolean): "confirm" | "retry" | "give-up" => {
   if (!busy) return "confirm";
   if (attempt >= OMP_DRAIN_RETRY_LIMIT) return "give-up";
   return "retry";
