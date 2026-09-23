@@ -45,14 +45,23 @@ official `main` only after its untouched baseline passed. That historical
 revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
-The current T3 alignment is recorded in
+The accepted T3 alignment is recorded in
 [`docs/internals/2026-09-23-upstream-sync-d7819c1881.md`](docs/internals/2026-09-23-upstream-sync-d7819c1881.md)
-and in `upstream-state.json`. It extends the previous official integration tip
-`aff9318bf46beaf05cc7155b428d3f0b8711efd2` with 30 official commits through
-`d7819c18813fa03b033cc1c9472c9acc0ffc0618`. The history-preserving merge is
-`719f452a4633af276ed9f5e219ced8de43863d49`, whose second parent is that exact
-official target and whose first parent is the latest fetched owned main
-`38681f131d0c2ab852b56c6d9c4b24b13cc901b6`.
+and in `upstream-state.json`. PR #350 is the same open alignment, extended as a
+candidate through `f5ef0ddb90a8c36584e181b1913e7b8a5df30ffc`: 72 official
+commits from `aff9318bf46beaf05cc7155b428d3f0b8711efd2`, including 42 added
+since the d781 checkpoint. The candidate preserves the initial history merge
+`719f452a4633af276ed9f5e219ced8de43863d49` and later official merge commits
+`f741668a6d31ec6681d6324a0f6a7b97f205f06e` and
+`34f081f99f368f9eaca0af29266ec13530956f77`. The latest owned-main catch-up
+is `ea6af93176134c52d76eadc7a33cc5fabeb714d7`, incorporating fetched
+`origin/main` at `a86cec5fd747fe7937241649bc6a500e2d64516a` without replaying
+or replacing the official merge history.
+
+The full local workspace test run had one load-sensitive Markdown performance
+threshold miss; its isolated rerun passed. Until the full gate is green,
+`upstream-state.json` and the accepted integration pointer remain at
+`d7819c18813fa03b033cc1c9472c9acc0ffc0618`.
 
 Automated qualification and source review passed. The alignment is delivered
 as an unmerged draft PR for review; release publication remains separate. The

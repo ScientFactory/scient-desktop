@@ -330,7 +330,9 @@ export function SourceEditor(props: {
                     }))
                   }
                 />
-                {invalidCustomType ? <FieldError>Enter the source type.</FieldError> : null}
+                {invalidCustomType ? (
+                  <FieldError match={true}>Enter the source type.</FieldError>
+                ) : null}
               </Field>
             ) : null}
             <Field>
@@ -363,7 +365,9 @@ export function SourceEditor(props: {
                       }}
                     />
                     {!creator.creatorType.trim() ? (
-                      <FieldError>Enter a creator role, such as author or editor.</FieldError>
+                      <FieldError match={true}>
+                        Enter a creator role, such as author or editor.
+                      </FieldError>
                     ) : null}
                   </Field>
                   <div className="flex items-end justify-end">
@@ -479,7 +483,9 @@ export function SourceEditor(props: {
                   value={yearText}
                   onChange={(event) => setYearText(event.target.value)}
                 />
-                {invalidYear ? <FieldError>Enter a four-digit year.</FieldError> : null}
+                {invalidYear ? (
+                  <FieldError match={true}>Enter a four-digit year.</FieldError>
+                ) : null}
               </Field>
             </div>
             <Field>
@@ -549,7 +555,7 @@ export function SourceEditor(props: {
                       }}
                     />
                     {!identifier.scheme.trim() || !identifier.value.trim() ? (
-                      <FieldError>Enter both an identifier type and value.</FieldError>
+                      <FieldError match={true}>Enter both an identifier type and value.</FieldError>
                     ) : null}
                   </Field>
                   <Button
@@ -599,7 +605,9 @@ export function SourceEditor(props: {
                   setMetadata((current) => ({ ...current, url: event.target.value }))
                 }
               />
-              {invalidUrl ? <FieldError>Enter an HTTP or HTTPS source URL.</FieldError> : null}
+              {invalidUrl ? (
+                <FieldError match={true}>Enter an HTTP or HTTPS source URL.</FieldError>
+              ) : null}
             </Field>
           </FormSection>
 

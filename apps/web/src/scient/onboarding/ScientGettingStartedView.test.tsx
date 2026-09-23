@@ -101,7 +101,8 @@ describe("GettingStartedPreferencesStep", () => {
     expect(withoutOther).toContain('class="mt-7 flex justify-end"');
     expect(withoutOther).not.toContain("mt-7 flex max-w-md");
     expect(withoutOther).toContain("min-h-11");
-    expect(withoutOther).toContain("bg-primary/75");
+    expect(withoutOther).toContain('data-checked=""');
+    expect(withoutOther).toContain("data-checked:bg-primary");
     expect(withOther).toContain('placeholder="Tell us what you do"');
     expect(withOther).toContain('aria-label="Describe how you use Scient"');
     expect(withOther).toContain('autoCapitalize="sentences"');

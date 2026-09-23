@@ -65,6 +65,10 @@ describe("provider compatibility", () => {
     ] as const) {
       assert.strictEqual(resolveProviderCompatibility([policy], driver, version)?.status, expected);
     }
+    assert.strictEqual(
+      resolveProviderCompatibility([policy], driver, "0.9.0")?.message,
+      "This provider version is known to be incompatible with this Scient release. Use 2.0.0.",
+    );
     assert.isUndefined(resolveProviderCompatibility([policy], driver, "0.9.0", "0.1.0"));
   });
 

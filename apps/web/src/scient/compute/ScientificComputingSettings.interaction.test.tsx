@@ -127,8 +127,8 @@ const managedPath = "/scient/python";
 const systemPath = "/system/python";
 const automaticRuntimeOption = "scient-runtime:automatic";
 function expectCompactAction(node: HTMLButtonElement) {
-  expect(node).toHaveAttribute("data-slot", "button");
-  expect(node).toHaveAttribute("data-size", "xs");
+  expect(node.getAttribute("data-slot")).toBe("button");
+  expect(node.getAttribute("data-size")).toBe("xs");
   expect(node.classList.contains("bg-primary")).toBe(false);
 }
 const status = (): ComputeManagedRuntimeStatus => ({
