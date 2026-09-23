@@ -1,4 +1,5 @@
 import { useNavigate } from "@tanstack/react-router";
+import { PROVIDER_DISPLAY_NAMES } from "@t3tools/contracts";
 import { DownloadIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -9,9 +10,11 @@ import { ProviderUpdateEnvironmentRows } from "./ProviderUpdateEnvironmentRows";
 import { useLocalEnvironmentUpdateGroups } from "./ProviderUpdateLaunchNotification.environments";
 import {
   collectProviderUpdateCandidates,
+  collectManagedRuntimeUpdateCandidates,
   environmentGroupsWithUpdates,
   getProviderUpdateInitialToastView,
   localEnvironmentUpdateNotificationKey,
+  managedRuntimeUpdateNotificationKey,
 } from "./ProviderUpdateLaunchNotification.logic";
 import { ProviderUpdatePrimaryNotification } from "./ProviderUpdatePrimaryNotification";
 import { stackedThreadToast, toastManager } from "./ui/toast";
@@ -41,9 +44,15 @@ export function ProviderUpdateLaunchNotification() {
   const hasLocalSecondary = useHasLocalSecondaryEnvironment();
 
   return hasLocalSecondary ? (
-    <ProviderUpdateEnvironmentsNotification />
+    <>
+      <ProviderUpdateEnvironmentsNotification />
+      <ManagedRuntimeUpdateNotification />
+    </>
   ) : (
-    <ProviderUpdatePrimaryNotification />
+    <>
+      <ProviderUpdatePrimaryNotification />
+      <ManagedRuntimeUpdateNotification />
+    </>
   );
 }
 
@@ -191,6 +200,120 @@ function ProviderUpdateEnvironmentsNotification() {
     candidateUnion,
     dismissedNotificationKeys,
     dismissNotificationKey,
+    openProviderSettings,
+  ]);
+
+  return null;
+}
+
+const seenManagedRuntimeUpdateKeys = new Set<string>();
+
+function ManagedRuntimeUpdateNotification() {
+  const navigate = useNavigate();
+  const { groups } = useLocalEnvironmentUpdateGroups();
+  const { dismissedNotificationKeys, dismissNotificationKey } =
+    useDismissedProviderUpdateNotificationKeys();
+  const candidates = useMemo(() => collectManagedRuntimeUpdateCandidates(groups), [groups]);
+  const notificationKey = useMemo(
+    () => managedRuntimeUpdateNotificationKey(candidates),
+    [candidates],
+  );
+  const activeToastRef = useRef<{
+    readonly toastId: ProviderUpdateToastId;
+    readonly key: string;
+  } | null>(null);
+
+  const openProviderSettings = useCallback(() => {
+    const candidate = candidates[0];
+    const active = activeToastRef.current;
+    if (active !== null) {
+      activeToastRef.current = null;
+      toastManager.close(active.toastId);
+    }
+    if (candidate) {
+      void navigate({
+        to: "/settings/providers",
+        search: {
+          environmentId: candidate.environmentId,
+          instanceId: candidate.provider.instanceId,
+        },
+      });
+    }
+  }, [candidates, navigate]);
+
+  useEffect(() => {
+    return () => {
+      const active = activeToastRef.current;
+      if (active !== null) {
+        activeToastRef.current = null;
+        toastManager.close(active.toastId);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const active = activeToastRef.current;
+    if (active && active.key !== notificationKey) {
+      // This is a state change, not a user dismissal. Clear ownership before
+      // closing so the old toast cannot dismiss the new update set.
+      activeToastRef.current = null;
+      toastManager.close(active.toastId);
+    }
+
+    if (
+      !notificationKey ||
+      activeToastRef.current !== null ||
+      dismissedNotificationKeys.has(notificationKey) ||
+      seenManagedRuntimeUpdateKeys.has(notificationKey)
+    ) {
+      return;
+    }
+
+    seenManagedRuntimeUpdateKeys.add(notificationKey);
+    const labels = candidates.map(({ provider, environmentLabel, availableVersion }) => {
+      const name = PROVIDER_DISPLAY_NAMES[provider.driver] ?? provider.driver;
+      const version = availableVersion
+        ? ` ${availableVersion.startsWith("v") ? availableVersion : `v${availableVersion}`}`
+        : "";
+      return `${name}${version} in ${environmentLabel}`;
+    });
+    const title =
+      candidates.length === 1
+        ? `Update available for ${labels[0]}`
+        : `${candidates.length} managed provider updates available`;
+    const description =
+      candidates.length === 1
+        ? "Open provider settings to review or install the Scient-managed update."
+        : `Updates are ready for ${labels.join(", ")}. Open provider settings to review them.`;
+    const dismissPrompt = () => {
+      if (activeToastRef.current?.key !== notificationKey) return;
+      activeToastRef.current = null;
+      dismissNotificationKey(notificationKey);
+    };
+    const toastId = toastManager.add(
+      stackedThreadToast({
+        type: "warning",
+        title,
+        description,
+        timeout: 0,
+        actionProps: {
+          children: "Settings",
+          onClick: openProviderSettings,
+        },
+        actionVariant: "outline",
+        data: {
+          hideCopyButton: true,
+          leadingIcon: <DownloadIcon aria-hidden="true" className="size-4 text-success" />,
+          onClose: dismissPrompt,
+        },
+      }),
+    );
+    activeToastRef.current = { toastId, key: notificationKey };
+  }, [
+    candidates,
+    dismissedNotificationKeys,
+    dismissNotificationKey,
+    notificationKey,
     openProviderSettings,
   ]);
 

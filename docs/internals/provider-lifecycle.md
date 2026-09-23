@@ -176,7 +176,11 @@ catalog service may fetch a newer qualified catalog from the generated
 immediate non-blocking refresh, revalidates successful results at most hourly using HTTP ETags, and
 retries a failed fetch after five minutes. Re-enabling update checks also triggers a refresh. Memory
 and an atomic disk cache keep provider status available while offline. An explicit Install, Update,
-or Repair click may wait for the same TTL-gated refresh. The client then starts the operation with
+or Repair click may wait for the same TTL-gated refresh. The Settings **Refresh providers** action
+bypasses those automatic success/retry windows while still honoring the update-check setting, request
+deadline, ETag validation, and atomic cache. It reconciles newly available actions before returning
+the refreshed provider snapshot. A managed update notice opens the exact environment and provider in
+Settings; it never runs an external package-manager command. The client then starts the operation with
 the preflight plan's exact catalog revision; no second confirmation or technical plan screen is needed.
 Opening Manage, selecting a provider, and enabling one never implicitly start installation.
 
@@ -193,6 +197,10 @@ targets, contract drift, malformed data, provider-channel downgrades, and same-v
 closed. A newer app-bundled catalog also outranks an older disk cache. An authoritative catalog commit
 may withdraw a previously cached candidate down to this app's bundled floor; it never downgrades an
 already active runtime.
+
+An installer-policy change advances only the affected provider's contract revision. Older app builds
+reject releases requiring a newer revision while retaining their compatible installed runtime; a
+Scient app update is required before those releases can be offered safely.
 
 The scheduled promotion workflow checks each official stable channel independently every two hours.
 A provider failure cannot block discovery or promotion for another provider. A changed provider is

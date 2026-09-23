@@ -110,13 +110,17 @@ const serviceLayers = (input: {
   );
 
 describe("managed runtime catalog resolution", () => {
-  it("protects old clients while accepting the new Codex contract in upgraded clients", () => {
+  it("protects revision 1 and 2 clients while accepting the new Codex contract", () => {
     const bundled = BUNDLED_MANAGED_RUNTIME_CATALOG;
     const codex = bundled.providers.codex!;
     const claude = bundled.providers.claudeAgent!;
     const oldClient = {
       ...bundled,
       providers: { ...bundled.providers, codex: { ...codex, contractRevision: 1 } },
+    };
+    const revisionTwoClient = {
+      ...bundled,
+      providers: { ...bundled.providers, codex: { ...codex, contractRevision: 2 } },
     };
     const feed = {
       ...bundled,
@@ -128,6 +132,10 @@ describe("managed runtime catalog resolution", () => {
     };
     const oldResult = mergeManagedRuntimeCatalogs(oldClient, feed);
     assert.deepStrictEqual(oldResult.providers.codex, oldClient.providers.codex);
+    assert.deepStrictEqual(
+      mergeManagedRuntimeCatalogs(revisionTwoClient, feed).providers.codex,
+      revisionTwoClient.providers.codex,
+    );
     assert.strictEqual(oldResult.providers.claudeAgent?.version, nextPatch(claude.version));
     assert.strictEqual(
       resolveFetchedManagedRuntimeCatalog(feed).providers.codex?.version,
@@ -141,10 +149,23 @@ describe("managed runtime catalog resolution", () => {
       resolveManagedRuntimeCatalogArtifact({ catalog: feed, policy, contractRevision: 1 }),
     );
     assert.deepStrictEqual(
-      resolveManagedRuntimeCatalogArtifact({ catalog: feed, policy, contractRevision: 2 })
+      resolveManagedRuntimeCatalogArtifact({ catalog: feed, policy, contractRevision: 3 })
         ?.extractionLimits,
       { maxEntries: 128, maxExpandedBytes: 512 * 1024 * 1024 },
     );
+    const windowsPolicy = resolveReviewedCodexArtifact({ platform: "win32", arch: "x64" })!;
+    assert.deepStrictEqual(
+      resolveManagedRuntimeCatalogArtifact({
+        catalog: feed,
+        policy: windowsPolicy,
+        contractRevision: 3,
+      })?.extractionLimits,
+      { maxEntries: 64, maxExpandedBytes: 512 * 1024 * 1024 },
+    );
+    assert.isUndefined(
+      resolveManagedRuntimeCatalogArtifact({ catalog: feed, policy, contractRevision: 2 }),
+    );
+    assert.deepStrictEqual(MANAGED_RUNTIME_POLICY.codex.historicalRevisions, [1, 2]);
   });
 
   it("never lets an older cache outrank a newer bundled provider release", () => {
@@ -490,10 +511,51 @@ describe("ManagedRuntimeCatalog service", () => {
     ),
   );
 
+  it.live("lets an explicit refresh bypass the automatic success and retry windows", () =>
+    Effect.gen(function* () {
+      let fetchCount = 0;
+      let responseVersion = newerCodexVersion;
+      const requestEtags: Array<string | undefined> = [];
+      const service = yield* makeWithOptions({ startBackgroundRefresh: false }).pipe(
+        Effect.provide(
+          httpClientLayer((request) => {
+            fetchCount += 1;
+            requestEtags.push(request.headers["if-none-match"]);
+            return Response.json(remoteCatalog(responseVersion), {
+              headers: { etag: `"catalog-${fetchCount}"` },
+            });
+          }),
+        ),
+      );
+
+      assert.strictEqual((yield* service.refresh).providers.codex?.version, newerCodexVersion);
+      responseVersion = nextPatch(newerCodexVersion);
+
+      // Ordinary refresh remains inside the existing hourly TTL.
+      assert.strictEqual((yield* service.refresh).providers.codex?.version, newerCodexVersion);
+      assert.strictEqual(fetchCount, 1);
+
+      // A user-requested refresh revalidates immediately with the existing
+      // ETag, bounded response, validation, and atomic-cache path.
+      assert.strictEqual((yield* service.refreshNow).providers.codex?.version, responseVersion);
+      assert.strictEqual(fetchCount, 2);
+      assert.deepStrictEqual(requestEtags, [undefined, '"catalog-1"']);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        serviceLayers({
+          prefix: "managed-runtime-catalog-forced-refresh-test",
+          response: () => Response.json(remoteCatalog()),
+        }),
+      ),
+    ),
+  );
+
   it.live("keeps the bundled catalog when remote data is malformed", () =>
     Effect.gen(function* () {
       const service = yield* makeWithOptions({ startBackgroundRefresh: false });
       assert.deepStrictEqual(yield* service.refresh, BUNDLED_MANAGED_RUNTIME_CATALOG);
+      assert.deepStrictEqual(yield* service.refreshNow, BUNDLED_MANAGED_RUNTIME_CATALOG);
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -517,6 +579,7 @@ describe("ManagedRuntimeCatalog service", () => {
         ),
       );
       assert.deepStrictEqual(yield* service.refresh, BUNDLED_MANAGED_RUNTIME_CATALOG);
+      assert.deepStrictEqual(yield* service.refreshNow, BUNDLED_MANAGED_RUNTIME_CATALOG);
       assert.strictEqual(fetchCount, 0);
     }).pipe(
       Effect.scoped,

@@ -230,7 +230,7 @@ describe("EnvironmentProviderSettings routing", () => {
 
     expect(commands.refresh).toHaveBeenCalledWith({
       environmentId,
-      input: { refreshModels: true },
+      input: { refreshModels: true, refreshManagedRuntimeCatalog: true },
     });
 
     const providerCard = visitElements(
