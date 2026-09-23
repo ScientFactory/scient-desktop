@@ -40,7 +40,7 @@ export function ShortcutKeys({ value }: { readonly value: string }) {
   const mac = /Mac|iPhone|iPad/u.test(navigator.platform);
   const strokes = keyedParts(value.trim().split(/\s+/u));
   return (
-    <KbdGroup className="bg-transparent p-0 shadow-none">
+    <KbdGroup>
       {strokes.map((stroke, strokeIndex) => (
         <span key={stroke.key} className="inline-flex items-center gap-1">
           {strokeIndex > 0 ? (
@@ -49,7 +49,7 @@ export function ShortcutKeys({ value }: { readonly value: string }) {
             </span>
           ) : null}
           {keyedParts(stroke.value.replace(/\+$/u, "plus").split("+")).map((part) => (
-            <Kbd key={part.key} className="min-w-6 justify-center px-1.5">
+            <Kbd key={part.key} className="min-w-6 justify-center">
               {keyLabel(part.value, mac)}
             </Kbd>
           ))}

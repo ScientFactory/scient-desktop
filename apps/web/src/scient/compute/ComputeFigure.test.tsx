@@ -214,7 +214,7 @@ describe("compute figure presentation", () => {
       const classes = button(label).classList;
       expect(classes.contains("rounded-[4px]")).toBe(true);
       expect(classes.contains("text-muted-foreground")).toBe(true);
-      expect(classes.contains("chat-markdown-chrome-action")).toBe(true);
+      expect(button(label).dataset.variant).toBe("ghost-muted");
       expect(classes.contains("sm:size-6")).toBe(false);
     }
     expect(button("View Figure 1").disabled).toBe(true);

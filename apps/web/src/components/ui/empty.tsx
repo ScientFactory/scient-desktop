@@ -14,16 +14,22 @@ const emptySizeClassName = {
 function Empty({
   className,
   size = "default",
+  variant = "default",
   ...props
-}: React.ComponentProps<"div"> & { size?: keyof typeof emptySizeClassName }) {
+}: React.ComponentProps<"div"> & {
+  size?: keyof typeof emptySizeClassName;
+  variant?: "default" | "outlined";
+}) {
   return (
     <div
       className={cn(
         "flex min-w-0 flex-1 flex-col items-center justify-center text-balance text-center",
         emptySizeClassName[size],
+        variant === "outlined" && "rounded-xl border border-dashed border-border/60",
         className,
       )}
       data-slot="empty"
+      data-variant={variant}
       {...props}
     />
   );
@@ -89,24 +95,39 @@ function EmptyMedia({
   );
 }
 
-function EmptyTitle({ className, ...props }: React.ComponentProps<"div">) {
+function EmptyTitle({
+  className,
+  size = "default",
+  ...props
+}: React.ComponentProps<"div"> & { size?: "default" | "compact" }) {
   return (
     <div
-      className={cn("font-heading font-semibold text-xl", className)}
+      className={cn(
+        "font-heading font-semibold",
+        size === "compact" ? "text-base" : "text-xl",
+        className,
+      )}
       data-slot="empty-title"
+      data-size={size}
       {...props}
     />
   );
 }
 
-function EmptyDescription({ className, ...props }: React.ComponentProps<"p">) {
+function EmptyDescription({
+  className,
+  size = "default",
+  ...props
+}: React.ComponentProps<"p"> & { size?: "default" | "compact" }) {
   return (
     <div
       className={cn(
-        "text-muted-foreground text-sm [&>a:hover]:text-primary [&>a]:underline [&>a]:underline-offset-4 [[data-slot=empty-title]+&]:mt-1 [[data-slot=empty-description]+&]:mt-1",
+        "text-muted-foreground [&>a:hover]:text-primary [&>a]:underline [&>a]:underline-offset-4 [[data-slot=empty-title]+&]:mt-1 [[data-slot=empty-description]+&]:mt-1",
+        size === "compact" ? "text-xs" : "text-sm",
         className,
       )}
       data-slot="empty-description"
+      data-size={size}
       {...props}
     />
   );

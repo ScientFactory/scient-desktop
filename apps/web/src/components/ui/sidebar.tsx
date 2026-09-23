@@ -760,16 +760,22 @@ function SidebarMenuAction({
   });
 }
 
-function SidebarMenuSub({ className, ...props }: React.ComponentProps<"ul">) {
+function SidebarMenuSub({
+  className,
+  variant = "default",
+  ...props
+}: React.ComponentProps<"ul"> & { variant?: "default" | "plain" }) {
   return (
     <ul
       className={cn(
-        "mx-3.5 flex min-w-0 translate-x-px flex-col gap-1 border-sidebar-border border-l px-2.5 py-0.5",
+        "mx-3.5 flex min-w-0 translate-x-px flex-col gap-1 px-2.5 py-0.5",
+        variant === "default" && "border-sidebar-border border-l",
         "group-data-[collapsible=icon]:hidden",
         className,
       )}
       data-sidebar="menu-sub"
       data-slot="sidebar-menu-sub"
+      data-variant={variant}
       {...props}
     />
   );

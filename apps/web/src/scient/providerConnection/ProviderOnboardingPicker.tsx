@@ -29,7 +29,6 @@ import {
   canManageProviderLifecycle,
   providerConnectionPresentation,
 } from "./providerConnectionPresentation";
-import { PRIMARY_GHOST_ACTION_CLASS } from "./providerConnectionActionStyles";
 import { resolveAntigravityDraftSelection } from "./antigravityDraftSelection";
 
 export function providerOnboardingStatusLabel(entry: ProviderInstanceEntry | undefined): string {
@@ -251,8 +250,9 @@ export function ProviderOnboardingPicker(props: {
         <PopoverPopup
           {...composerFloatingLayerProps}
           align="start"
-          className="border-0 bg-transparent p-0 shadow-none before:hidden [-webkit-backdrop-filter:none]! [--viewport-inline-padding:0] [backdrop-filter:none]!"
-          viewportClassName="rounded-lg !overflow-hidden p-0"
+          className="[--viewport-inline-padding:0]"
+          padding="none"
+          surface="bare"
         >
           <div
             className="dropdown-glass model-picker-surface relative flex h-screen max-h-86.5 w-screen max-w-90 overflow-hidden rounded-lg text-popover-foreground [clip-path:inset(0_round_var(--radius-lg))]"
@@ -463,11 +463,11 @@ function ProviderSetupDetail(props: {
         {props.status}
       </p>
       <Button
-        className={`mt-4 ${PRIMARY_GHOST_ACTION_CLASS}`}
+        className="mt-4"
         onClick={props.onManage}
         size="sm"
         type="button"
-        variant="ghost"
+        variant="ghost-primary"
       >
         <SettingsIcon aria-hidden /> Open provider settings
       </Button>

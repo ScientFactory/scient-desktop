@@ -597,7 +597,7 @@ export function ProviderModelsSection({
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="group mt-3 h-auto w-full cursor-pointer justify-start gap-3 rounded-md px-2 py-2 sm:h-auto"
+                    className="group mt-3 h-auto w-full cursor-pointer justify-start"
                     aria-expanded={expandedMore}
                     onClick={() => setExpandedMore((value) => !value)}
                   >

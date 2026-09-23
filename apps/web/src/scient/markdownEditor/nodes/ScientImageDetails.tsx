@@ -70,13 +70,13 @@ export function ScientImageDetails(props: {
         align="start"
         className="w-80 max-w-[calc(100vw-1rem)]"
         style={paneWidth ? { maxWidth: Math.max(1, paneWidth - 16) } : undefined}
-        viewportClassName="p-3"
+        padding="comfortable"
         data-keybinding-capture=""
         initialFocus={session.intent === "details" ? inputRef : undefined}
         finalFocus={false}
       >
         <form className="flex min-w-0 flex-col gap-3" onSubmit={submit}>
-          <PopoverTitle className="text-xs font-medium">
+          <PopoverTitle size="compact">
             {session.intent === "caption" ? "Shared image caption" : "Image details"}
           </PopoverTitle>
           {session.referenceLabel !== null ? (

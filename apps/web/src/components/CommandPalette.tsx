@@ -726,7 +726,7 @@ function CommandPaletteDialog(props: {
             ? "Search project contents"
             : "Command palette"
       }
-      className={cn("overflow-hidden p-0", props.mode === "content" && "h-105")}
+      className={cn("overflow-hidden", props.mode === "content" && "h-105")}
       data-command-palette="true"
       data-palette-mode={props.mode}
       data-testid="command-palette"
@@ -1730,9 +1730,8 @@ function OpenCommandPaletteDialog(props: {
               <TooltipTrigger
                 render={
                   <Button
-                    variant="outline"
-                    size="xs"
-                    className="h-5 rounded-[.25rem] px-1.5 text-[10px] text-warning-foreground"
+                    variant="warning-outline"
+                    size="micro"
                     onClick={() => {
                       openSourceControlSettings();
                     }}
@@ -3285,10 +3284,10 @@ function OpenCommandPaletteDialog(props: {
         <TooltipTrigger
           render={
             <Button
-              variant="outline"
               size="xs"
               tabIndex={-1}
-              className="absolute inset-e-2.5 top-1/2 gap-1.5 pe-1 ps-2 -translate-y-1/2"
+              variant="outline"
+              className="absolute inset-e-2.5 top-1/2 -translate-y-1/2"
               aria-label={`${remoteProjectButtonLabel ?? "Continue"} (Enter)`}
               disabled={!canSubmitRemoteProjectFlow}
               onMouseDown={(event) => {
@@ -3312,13 +3311,10 @@ function OpenCommandPaletteDialog(props: {
         <TooltipTrigger
           render={
             <Button
-              variant="outline"
               size="xs"
               tabIndex={-1}
-              className={cn(
-                "absolute inset-e-2.5 top-1/2 border-info/32 bg-info/4 pe-1 ps-2 text-info-foreground shadow-none -translate-y-1/2 before:shadow-none [:hover,[data-pressed]]:border-info/45 [:hover,[data-pressed]]:bg-info/8 dark:bg-info/4 dark:[:hover,[data-pressed]]:bg-info/8",
-                hasKeyboardBrowseHighlight ? "gap-1" : "gap-1.5",
-              )}
+              className="absolute inset-e-2.5 top-1/2 -translate-y-1/2"
+              variant="info-outline"
               aria-label={`${submitActionLabel} (${addShortcutLabel})`}
               disabled={
                 !canCreateProjectInEnvironment(browseEnvironment?.connection.phase) ||
@@ -3341,16 +3337,23 @@ function OpenCommandPaletteDialog(props: {
             />
           }
         >
-          <span>
-            {isOpeningProject
-              ? "Opening…"
-              : isCloneDestinationStep && isRemoteProjectPending
-                ? "Cloning"
-                : submitActionLabel}
+          <span
+            className={cn(
+              "inline-flex items-center",
+              hasKeyboardBrowseHighlight ? "gap-1" : "gap-1.5",
+            )}
+          >
+            <span>
+              {isOpeningProject
+                ? "Opening…"
+                : isCloneDestinationStep && isRemoteProjectPending
+                  ? "Cloning"
+                  : submitActionLabel}
+            </span>
+            <KbdGroup className="pointer-events-none -me-0.5 items-center">
+              <Kbd>{hasKeyboardBrowseHighlight ? `${submitModifierLabel} Enter` : "Enter"}</Kbd>
+            </KbdGroup>
           </span>
-          <KbdGroup className="pointer-events-none -me-0.5 items-center gap-1">
-            <Kbd>{hasKeyboardBrowseHighlight ? `${submitModifierLabel} Enter` : "Enter"}</Kbd>
-          </KbdGroup>
         </TooltipTrigger>
         <TooltipPopup side="top">
           {submitActionLabel} ({addShortcutLabel})
@@ -3417,9 +3420,6 @@ function OpenCommandPaletteDialog(props: {
                 })
               : undefined,
         placeholder: inputPlaceholder,
-        wrapperClassName: isSubmenu
-          ? "[&_[data-slot=autocomplete-start-addon]]:pointer-events-auto"
-          : undefined,
         ...(isSubmenu
           ? {
               startAddon: (

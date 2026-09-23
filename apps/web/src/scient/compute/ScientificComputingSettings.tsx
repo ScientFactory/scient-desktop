@@ -355,8 +355,7 @@ function LanguageRuntimeSummary({
       return (
         <Button
           size="xs"
-          variant="outline"
-          className="text-primary"
+          variant="primary-outline"
           disabled={disabled || (isMatlab && !selectedInstallation)}
           onClick={() => void runtime.act("update")}
         >

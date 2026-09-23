@@ -233,22 +233,24 @@ function AccountingEmptyState({
               "OpenRouter is connected and synchronized. Try a longer date range or verify that the account has activity.",
           };
   return (
-    <Empty className="min-h-64 rounded-xl border border-dashed border-border bg-card">
-      <EmptyHeader>
-        <EmptyMedia variant="icon">
-          <ChartNoAxesCombinedIcon aria-hidden />
-        </EmptyMedia>
-        <EmptyTitle>{content.title}</EmptyTitle>
-        <EmptyDescription>{content.description}</EmptyDescription>
-      </EmptyHeader>
-      {kind === "unconfigured" ? (
-        <EmptyContent>
-          <Button render={<Link to="/settings/providers" hash="provider-billing" />}>
-            Connect OpenRouter
-          </Button>
-        </EmptyContent>
-      ) : null}
-    </Empty>
+    <div className="min-h-64 rounded-xl border border-dashed border-border bg-card">
+      <Empty className="min-h-64">
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <ChartNoAxesCombinedIcon aria-hidden />
+          </EmptyMedia>
+          <EmptyTitle>{content.title}</EmptyTitle>
+          <EmptyDescription>{content.description}</EmptyDescription>
+        </EmptyHeader>
+        {kind === "unconfigured" ? (
+          <EmptyContent>
+            <Button render={<Link to="/settings/providers" hash="provider-billing" />}>
+              Connect OpenRouter
+            </Button>
+          </EmptyContent>
+        ) : null}
+      </Empty>
+    </div>
   );
 }
 

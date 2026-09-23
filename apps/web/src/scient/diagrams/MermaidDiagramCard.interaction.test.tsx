@@ -272,7 +272,7 @@ describe("Mermaid error recovery", () => {
     expect(codeBlock.className).not.toContain("my-[0.65rem]");
     expect(container.querySelector(".scient-mermaid-source")).toBeNull();
     expect(copy.textContent).toBe("");
-    expect(copy.className).toContain("chat-markdown-chrome-action");
+    expect(copy.dataset.slot).toBe("button");
     vi.useFakeTimers();
     await act(() => copy.click());
     expect(copy.querySelector(".lucide-check")).not.toBeNull();

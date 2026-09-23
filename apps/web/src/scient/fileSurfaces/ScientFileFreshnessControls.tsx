@@ -24,15 +24,12 @@ export function ScientFileReloadButton(props: {
       <TooltipTrigger
         render={
           <Button
-            className={cn(
-              "shrink-0",
-              props.automaticRefreshUnavailable && "text-warning hover:text-warning",
-            )}
+            className="shrink-0"
             onClick={props.onReload}
             aria-label={actionLabel}
             aria-busy={props.isPending}
             disabled={props.isPending}
-            variant="ghost"
+            variant={props.automaticRefreshUnavailable ? "ghost-warning" : "ghost"}
             size={props.size ?? "icon-sm"}
           >
             <RefreshCw className={cn("size-3.5", props.isPending && "animate-spin")} />

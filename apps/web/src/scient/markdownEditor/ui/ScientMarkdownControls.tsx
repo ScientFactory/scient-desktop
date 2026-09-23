@@ -162,7 +162,11 @@ function commandIcon(command: ScientMarkdownCommand): ReactNode {
     case "footnote":
       return <NotebookText className={className} />;
     case "table":
-      return <TableIcon className={className} />;
+      return (
+        <span className="text-muted-foreground">
+          <TableIcon className="size-4" />
+        </span>
+      );
     case "image":
       return <ImageIcon className={className} />;
     case "wiki-link":
@@ -849,13 +853,8 @@ function TableSizeMenu({ controller }: { readonly controller: ScientMarkdownEdit
                     data-scient-table-size-cell-column={dimensions.columns}
                     data-scient-table-size-cell-row={dimensions.rows}
                     label={label}
-                    className={cn(
-                      "size-4 min-h-0 rounded-[3px] border p-0 sm:min-h-0",
-                      "data-highlighted:outline-2 data-highlighted:outline-ring data-highlighted:outline-offset-1",
-                      selected
-                        ? "border-muted-foreground/55 bg-accent"
-                        : "border-border/80 bg-background",
-                    )}
+                    active={selected}
+                    variant="grid-cell"
                     onFocus={() => {
                       if (initialFocusPendingRef.current) {
                         initialFocusPendingRef.current = false;
@@ -1049,19 +1048,24 @@ function BlockActionsMenuItems({
             <ListTree />
             <span>Document outline</span>
           </MenuSubTrigger>
-          <MenuSubPopup className="w-60 p-1" data-keybinding-capture="">
+          <MenuSubPopup className="w-60" data-keybinding-capture="">
             {snapshot.outlineItems.map((item, index) => (
               <MenuItem
                 key={`${item.position}-${item.level}-${item.text}`}
                 inset={item.level === 1}
-                className={cn(
-                  item.level === 2 && "ps-5",
-                  item.level >= 3 && "ps-7 text-[13px]",
-                  index === snapshot.outlineActiveIndex && "bg-accent/70 font-medium",
-                )}
+                variant={index === snapshot.outlineActiveIndex ? "selected" : "default"}
                 onClick={() => controller.navigateToOutline(item.position)}
               >
-                <span className="truncate">{item.text || "Untitled heading"}</span>
+                <span
+                  className={cn(
+                    "truncate",
+                    item.level === 2 && "ps-5",
+                    item.level >= 3 && "ps-7 text-[13px]",
+                    index === snapshot.outlineActiveIndex && "font-medium",
+                  )}
+                >
+                  {item.text || "Untitled heading"}
+                </span>
               </MenuItem>
             ))}
           </MenuSubPopup>
@@ -1250,8 +1254,8 @@ function LinkEditorPopup({
       <PopoverPopup
         align="center"
         className="w-72 max-w-[calc(100vw-1rem)]"
+        padding="none"
         side="bottom"
-        viewportClassName="p-2"
         data-keybinding-capture=""
         initialFocus={inputRef}
         finalFocus={() => {
@@ -1260,38 +1264,40 @@ function LinkEditorPopup({
           return target;
         }}
       >
-        <form className="flex flex-col gap-2" onSubmit={submit}>
-          <div className="flex items-center justify-between px-1">
-            <PopoverTitle className="text-xs font-medium">Link</PopoverTitle>
-            {active ? (
-              <button
-                type="button"
-                className="inline-flex items-center gap-1 text-[11px] text-destructive hover:underline"
-                onClick={remove}
-              >
-                <Trash2 className="size-3" />
-                Remove
-              </button>
-            ) : null}
-          </div>
-          <Input
-            ref={inputRef}
-            aria-label="Link destination"
-            inputMode="url"
-            placeholder="https://... or relative path"
-            size="compact"
-            value={href}
-            onChange={(event) => setHref(event.target.value)}
-          />
-          <div className="flex items-center justify-end gap-1">
-            <Button size="xs" type="button" variant="ghost" onClick={closeToEditor}>
-              Cancel
-            </Button>
-            <Button disabled={!href.trim()} size="xs" type="submit">
-              Apply
-            </Button>
-          </div>
-        </form>
+        <div className="p-2">
+          <form className="flex flex-col gap-2" onSubmit={submit}>
+            <div className="flex items-center justify-between px-1">
+              <PopoverTitle size="compact">Link</PopoverTitle>
+              {active ? (
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 text-[11px] text-destructive hover:underline"
+                  onClick={remove}
+                >
+                  <Trash2 className="size-3" />
+                  Remove
+                </button>
+              ) : null}
+            </div>
+            <Input
+              ref={inputRef}
+              aria-label="Link destination"
+              inputMode="url"
+              placeholder="https://... or relative path"
+              size="compact"
+              value={href}
+              onChange={(event) => setHref(event.target.value)}
+            />
+            <div className="flex items-center justify-end gap-1">
+              <Button size="xs" type="button" variant="ghost" onClick={closeToEditor}>
+                Cancel
+              </Button>
+              <Button disabled={!href.trim()} size="xs" type="submit">
+                Apply
+              </Button>
+            </div>
+          </form>
+        </div>
       </PopoverPopup>
     </Popover>
   );

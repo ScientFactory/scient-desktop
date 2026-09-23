@@ -22,7 +22,7 @@ import {
   ComposerControlIcon,
 } from "../../components/chat/ComposerControl.tsx";
 import { Badge } from "../../components/ui/badge.tsx";
-import { Button } from "../../components/ui/button.tsx";
+import { Button, InlineButton } from "../../components/ui/button.tsx";
 import { Popover, PopoverPopup, PopoverTrigger } from "../../components/ui/popover.tsx";
 import {
   Tooltip,
@@ -105,9 +105,9 @@ function VoiceErrorText({
       <CircleAlertIcon aria-hidden="true" className="size-3.5 shrink-0" />
       <span>{message}</span>
       {onOpenSettings ? (
-        <Button className="h-auto px-1 py-0" onClick={onOpenSettings} size="xs" variant="ghost">
+        <InlineButton tone="destructive" onClick={onOpenSettings} type="button">
           Open Settings
-        </Button>
+        </InlineButton>
       ) : null}
     </div>
   );
@@ -137,11 +137,11 @@ export function VoiceModelSetupPicker({
       <PopoverPopup
         align="end"
         className="w-[min(20rem,calc(100vw-1rem))]"
+        padding="none"
         side="top"
         sideOffset={8}
-        viewportClassName="space-y-1 p-2 [--viewport-inline-padding:--spacing(2)]"
       >
-        <div className="space-y-1">
+        <div className="space-y-1 p-2">
           {models.map((model) => {
             const recommended = model.id === recommendedModelId;
             return (
@@ -171,9 +171,9 @@ export function VoiceModelSetupPicker({
           })}
         </div>
         <Button
-          className="h-auto justify-start gap-1.5 px-2 py-1"
+          className="justify-start"
           render={<Link to="/settings/voice" />}
-          size="xs"
+          size="compact"
           variant="ghost-muted"
         >
           <SlidersHorizontalIcon className="text-current" />
@@ -310,7 +310,7 @@ export function ScientVoiceComposerControl({
                           aria-label="Transcribe and send"
                           onClick={() => void controller.stop(true)}
                           size="icon-sm"
-                          className="rounded-full bg-primary text-primary-foreground hover:bg-primary/90"
+                          variant="round-primary"
                         />
                       }
                     >

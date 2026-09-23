@@ -5,7 +5,6 @@ import { type ComponentType, type ReactNode, useEffect, useRef } from "react";
 
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
-import { Input } from "../../components/ui/input";
 import { SidebarInset } from "../../components/ui/sidebar";
 import { ScientSymbol } from "../../components/ScientSymbol";
 import type { ProviderInstanceEntry } from "../../providerInstances";
@@ -29,7 +28,7 @@ export function ScientGettingStartedShell(props: {
 }) {
   const currentIndex = Math.max(0, props.journey.indexOf(props.currentStep));
   return (
-    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
+    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none">
       <div className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-background">
         <main className="mx-auto flex min-h-full w-full max-w-2xl flex-col justify-center px-5 py-10 sm:px-8">
           <section
@@ -253,7 +252,6 @@ export function GettingStartedPreferencesStep(props: {
             >
               <Checkbox
                 checked={selected}
-                className="size-4.5 rounded-[0.2rem] border-border/80 shadow-none sm:size-4.5 [&_[data-slot=checkbox-indicator]]:bg-primary/75"
                 onCheckedChange={() => props.onToggleWorkKind(option.value)}
               />
               <span>{option.label}</span>
@@ -264,17 +262,16 @@ export function GettingStartedPreferencesStep(props: {
           <label className="flex shrink-0 cursor-pointer items-center gap-2.5">
             <Checkbox
               checked={props.otherSelected}
-              className="size-4.5 rounded-[0.2rem] border-border/80 shadow-none sm:size-4.5 [&_[data-slot=checkbox-indicator]]:bg-primary/75"
               onCheckedChange={(checked) => props.onOtherSelectedChange(checked === true)}
             />
             <span>Other</span>
           </label>
           {props.otherSelected ? (
-            <Input
+            <input
               ref={otherInputRef}
               aria-label="Describe how you use Scient"
               autoCapitalize="sentences"
-              className="min-w-28 flex-1 rounded-none border-b border-border/60 px-0 shadow-none transition-colors focus-within:border-primary/75"
+              className="h-8.5 min-w-28 flex-1 rounded-none border-0 border-b border-border/60 bg-transparent px-0 leading-8.5 text-foreground outline-none placeholder:text-placeholder transition-colors focus:border-primary/75 sm:h-7.5 sm:leading-7.5"
               maxLength={SCIENT_OTHER_WORK_MAX_LENGTH}
               onChange={(event) =>
                 props.onOtherWorkChange(
@@ -285,7 +282,7 @@ export function GettingStartedPreferencesStep(props: {
                 )
               }
               placeholder="Tell us what you do"
-              unstyled
+              type="text"
               value={props.otherWork}
             />
           ) : null}

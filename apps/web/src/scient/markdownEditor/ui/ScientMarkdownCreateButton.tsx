@@ -140,7 +140,7 @@ export function ScientMarkdownCreateButton(props: ScientMarkdownCreateButtonProp
             void submit();
           }}
         >
-          <PopoverTitle className="text-sm">New Markdown document</PopoverTitle>
+          <PopoverTitle>New Markdown document</PopoverTitle>
           <Input
             ref={inputRef}
             aria-invalid={error !== null || undefined}

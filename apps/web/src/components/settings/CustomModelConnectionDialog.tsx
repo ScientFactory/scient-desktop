@@ -139,13 +139,7 @@ export function CustomModelConnectionDialog({
               </p>
             ) : null}
             <div className="flex items-center justify-between gap-3 border-t border-border pt-4">
-              <Button
-                type="button"
-                variant="ghost"
-                className="text-destructive hover:text-destructive"
-                disabled={busy}
-                onClick={onDelete}
-              >
+              <Button type="button" variant="ghost-destructive" disabled={busy} onClick={onDelete}>
                 Delete connection
               </Button>
               <Button type="submit" disabled={busy}>

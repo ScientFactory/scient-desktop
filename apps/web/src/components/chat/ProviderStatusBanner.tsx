@@ -25,22 +25,12 @@ function isExpectedAssistedLifecycleState(status: ServerProvider): boolean {
   );
 }
 
-function shouldRenderProviderStatus(status: ServerProvider | null): status is ServerProvider {
-  return (
-    status !== null &&
-    status.status !== "ready" &&
-    status.status !== "disabled" &&
-    // Saved Antigravity credentials are checked on session start, not by the
-    // passive health probe. Keep real lifecycle failures visible.
-    !(
-      status.driver === "antigravity" &&
-      status.installed &&
-      status.status === "warning" &&
-      status.auth.status === "unknown" &&
-      providerLifecycleFailureMessage(status) === null
-    ) &&
-    !isExpectedAssistedLifecycleState(status)
-  );
+/** Unsupported and broken versions fail mid-turn, so they warn even when ready. */
+function getIncompatibleVersion(status: ServerProvider) {
+  const compatibility = status.compatibilityAdvisory;
+  return compatibility?.status === "unsupported" || compatibility?.status === "broken"
+    ? compatibility
+    : null;
 }
 
 function providerLifecycleFailureMessage(status: ServerProvider): string | null {
@@ -51,15 +41,36 @@ function providerLifecycleFailureMessage(status: ServerProvider): string | null 
 }
 
 export function getProviderStatusBannerKey(status: ServerProvider | null): string | null {
-  return !shouldRenderProviderStatus(status)
-    ? null
-    : [
-        status.instanceId,
-        status.status,
-        status.auth.status,
-        status.message ?? "",
-        providerLifecycleFailureMessage(status) ?? "",
-      ].join("\u0000");
+  if (!status || status.status === "disabled") return null;
+  if (status.status === "ready") {
+    const incompatible = getIncompatibleVersion(status);
+    return incompatible
+      ? [status.instanceId, incompatible.status, status.version ?? ""].join("\u0000")
+      : null;
+  }
+  // Saved Antigravity credentials are checked on session start, not by the
+  // passive health probe. Keep real lifecycle failures visible.
+  if (
+    status.driver === "antigravity" &&
+    status.installed &&
+    status.status === "warning" &&
+    status.auth.status === "unknown" &&
+    providerLifecycleFailureMessage(status) === null
+  ) {
+    return null;
+  }
+  if (isExpectedAssistedLifecycleState(status)) return null;
+  return [
+    status.instanceId,
+    status.status,
+    status.auth.status,
+    status.message ?? "",
+    providerLifecycleFailureMessage(status) ?? "",
+  ].join("\u0000");
+}
+
+function shouldRenderProviderStatus(status: ServerProvider | null): status is ServerProvider {
+  return status !== null && getProviderStatusBannerKey(status) !== null;
 }
 
 export function shouldShowProviderStatusBanner(
@@ -121,19 +132,25 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
     !lifecycleFailureMessage &&
     status.status === "error" &&
     status.auth.status === "unauthenticated";
+  const incompatible = status.status === "ready" ? getIncompatibleVersion(status) : null;
   const title = runtimeFailed
     ? `${providerName} setup failed`
     : connectionFailed
       ? `${providerName} sign-in failed`
       : isUnauthenticated
         ? `${providerName} is unauthenticated`
-        : `${providerName} provider status`;
-  const message = lifecycleFailureMessage ?? getProviderStatusMessage(status);
+        : incompatible
+          ? `${providerName} ${status.version ?? ""} is ${incompatible.status === "broken" ? "known to be broken" : "unsupported"}`
+          : `${providerName} provider status`;
+  const message =
+    lifecycleFailureMessage ?? incompatible?.message ?? getProviderStatusMessage(status);
+  const isWarning = status.status === "warning" || incompatible !== null;
 
   return (
     <div className="pointer-events-auto mx-auto w-fit max-w-[calc(100%-2rem)] pt-3">
       <Alert
-        variant={status.status === "warning" ? "warning" : "error"}
+        variant={isWarning ? "warning" : "error"}
+        role={incompatible && incompatible.status !== "broken" ? "status" : "alert"}
         surface="glass"
         controlAlignment="first-line"
       >

@@ -92,7 +92,7 @@ const TestHttpClientLive = Layer.merge(
       spawn: () => Effect.die("PTY must not start in provider registry tests"),
     }),
   ),
-);
+).pipe(Layer.provideMerge(ModelManifest.layerTest));
 
 const BackgroundPolicyAlwaysRunLayer = Layer.mock(BackgroundPolicy.BackgroundPolicy)({
   reportClientActivity: () => Effect.void,

@@ -215,10 +215,10 @@ export function PythonToolkitSettings({
                     >
                       <MoreHorizontalIcon />
                     </MenuTrigger>
-                    <MenuPopup align="end" className="w-max [&>div]:p-0.5">
+                    <MenuPopup align="end" className="w-max" padding="compact">
                       <MenuItem
                         variant="destructive"
-                        className="min-h-6 py-0 text-sm sm:min-h-6"
+                        size="compact"
                         disabled={disabled}
                         onClick={() => update(false)}
                       >

@@ -1,8 +1,7 @@
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
-import { CheckIcon, ChevronDownIcon } from "lucide-react";
+import { CheckIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { isMonospaceFamily, queryInstalledFontFamilies } from "../../appearanceFonts";
-import { cn } from "../../lib/utils";
 import {
   Combobox,
   ComboboxEmpty,
@@ -12,7 +11,7 @@ import {
   ComboboxPopup,
   ComboboxTrigger,
 } from "../ui/combobox";
-import { selectTriggerVariants } from "../ui/select";
+import { SelectButton } from "../ui/select";
 import {
   DEFAULT_FONT_VALUE,
   getFontFamilyPreference,
@@ -215,12 +214,9 @@ export function FontFamilyPicker({
     >
       <ComboboxTrigger
         aria-label={ariaLabel}
-        className={cn(selectTriggerVariants({ size: "sm" }), triggerClassName)}
+        render={<SelectButton size="sm" className={triggerClassName} />}
       >
-        <span className="min-w-0 truncate">
-          {getFontPickerDisplayLabel(selectedFamily, defaultOptionLabel)}
-        </span>
-        <ChevronDownIcon className="-me-1 size-3 opacity-50" />
+        {getFontPickerDisplayLabel(selectedFamily, defaultOptionLabel)}
       </ComboboxTrigger>
       <ComboboxPopup align="end" className="flex w-72 flex-col">
         <ComboboxSearchInput

@@ -4,11 +4,10 @@ import type {
   ScientSourceMetadataUpdateRequest,
 } from "@t3tools/contracts";
 import { AlertCircle, ChevronLeft, LoaderCircle, Plus, Trash2 } from "lucide-react";
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ComponentProps, type ReactNode } from "react";
 
 import { Button } from "../../components/ui/button";
-import { Field, FieldDescription, FieldLabel } from "../../components/ui/field";
-import { Input, type InputProps } from "../../components/ui/input";
+import { Field, FieldDescription, FieldError, FieldLabel } from "../../components/ui/field";
 import { Popover, PopoverPopup, PopoverTrigger } from "../../components/ui/popover";
 import { ScrollArea } from "../../components/ui/scroll-area";
 import {
@@ -18,7 +17,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../../components/ui/select";
-import { Textarea, type TextareaProps } from "../../components/ui/textarea";
 import { cn } from "../../lib/utils";
 import { useSourceEditor } from "./useSourceEditor";
 
@@ -50,18 +48,17 @@ const SOURCE_TYPE_LABELS: Readonly<Record<Metadata["type"], string>> = {
 };
 
 const INLINE_INPUT_CLASS =
-  "flex min-h-8 w-full cursor-text items-center rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent hover:text-accent-foreground focus-within:bg-accent focus-within:text-accent-foreground [&_[data-slot=input]]:h-auto [&_[data-slot=input]]:p-0 [&_[data-slot=input]]:leading-normal";
+  "block min-h-8 w-full cursor-text rounded-md px-2 py-1.5 text-sm leading-normal outline-none transition-colors placeholder:text-placeholder hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground";
 
-function InlineInput({ className, ...props }: InputProps) {
-  return <Input nativeInput unstyled className={cn(INLINE_INPUT_CLASS, className)} {...props} />;
+function InlineInput({ className, ...props }: ComponentProps<"input">) {
+  return <input className={cn(INLINE_INPUT_CLASS, className)} {...props} />;
 }
 
-function InlineTextarea({ className, ...props }: TextareaProps) {
+function InlineTextarea({ className, ...props }: ComponentProps<"textarea">) {
   return (
-    <Textarea
-      unstyled
+    <textarea
       className={cn(
-        "flex w-full cursor-text rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent hover:text-accent-foreground focus-within:bg-accent focus-within:text-accent-foreground [&_[data-slot=textarea]]:min-h-16 [&_[data-slot=textarea]]:p-0",
+        "field-sizing-content min-h-16 max-h-64 w-full cursor-text resize-y rounded-md px-2 py-1.5 text-sm leading-normal outline-none transition-colors placeholder:text-placeholder hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground",
         className,
       )}
       {...props}
@@ -218,30 +215,27 @@ export function SourceEditor(props: {
             <ChevronLeft />
             Cancel
           </PopoverTrigger>
-          <PopoverPopup
-            side="bottom"
-            align="start"
-            className="w-64"
-            viewportClassName="space-y-2 p-2"
-          >
-            <div className="px-1 text-sm font-medium">Save your changes?</div>
-            <div className="flex items-center justify-end gap-1">
-              <Button size="xs" variant="ghost" onClick={() => setDiscardOpen(false)}>
-                Keep editing
-              </Button>
-              <Button size="xs" variant="ghost" onClick={props.onCancel}>
-                Discard
-              </Button>
-              <Button
-                size="xs"
-                disabled={invalid || editor.saving || stale}
-                onClick={() => {
-                  setDiscardOpen(false);
-                  void save();
-                }}
-              >
-                Save
-              </Button>
+          <PopoverPopup side="bottom" align="start" className="w-64" padding="none">
+            <div className="space-y-2 p-2">
+              <div className="px-1 text-sm font-medium">Save your changes?</div>
+              <div className="flex items-center justify-end gap-1">
+                <Button size="xs" variant="ghost" onClick={() => setDiscardOpen(false)}>
+                  Keep editing
+                </Button>
+                <Button size="xs" variant="ghost" onClick={props.onCancel}>
+                  Discard
+                </Button>
+                <Button
+                  size="xs"
+                  disabled={invalid || editor.saving || stale}
+                  onClick={() => {
+                    setDiscardOpen(false);
+                    void save();
+                  }}
+                >
+                  Save
+                </Button>
+              </div>
             </div>
           </PopoverPopup>
         </Popover>
@@ -322,7 +316,7 @@ export function SourceEditor(props: {
               </Select>
             </Field>
             {metadata.type === "other" ? (
-              <Field>
+              <Field invalid={invalidCustomType}>
                 <FieldLabel>Source type</FieldLabel>
                 <InlineInput
                   autoFocus
@@ -336,11 +330,7 @@ export function SourceEditor(props: {
                     }))
                   }
                 />
-                {invalidCustomType ? (
-                  <FieldDescription className="text-destructive">
-                    Enter the source type.
-                  </FieldDescription>
-                ) : null}
+                {invalidCustomType ? <FieldError>Enter the source type.</FieldError> : null}
               </Field>
             ) : null}
             <Field>
@@ -361,10 +351,9 @@ export function SourceEditor(props: {
                 className="space-y-2 border-b border-border pb-3 last:border-0 last:pb-0"
               >
                 <div className="grid grid-cols-2 gap-2">
-                  <Field>
+                  <Field invalid={!creator.creatorType.trim()}>
                     <FieldLabel>Role</FieldLabel>
                     <InlineInput
-                      size="sm"
                       value={creator.creatorType}
                       aria-invalid={!creator.creatorType.trim() || undefined}
                       onChange={(event) => {
@@ -373,6 +362,9 @@ export function SourceEditor(props: {
                         setMetadata((current) => ({ ...current, creators }));
                       }}
                     />
+                    {!creator.creatorType.trim() ? (
+                      <FieldError>Enter a creator role, such as author or editor.</FieldError>
+                    ) : null}
                   </Field>
                   <div className="flex items-end justify-end">
                     <Button
@@ -396,16 +388,10 @@ export function SourceEditor(props: {
                     </Button>
                   </div>
                 </div>
-                {!creator.creatorType.trim() ? (
-                  <FieldDescription className="text-destructive">
-                    Enter a creator role, such as author or editor.
-                  </FieldDescription>
-                ) : null}
                 <div className="grid grid-cols-2 gap-2">
                   <Field>
                     <FieldLabel>Given name</FieldLabel>
                     <InlineInput
-                      size="sm"
                       value={creator.givenName ?? ""}
                       onChange={(event) => {
                         const creators = [...metadata.creators];
@@ -417,7 +403,6 @@ export function SourceEditor(props: {
                   <Field>
                     <FieldLabel>Family name</FieldLabel>
                     <InlineInput
-                      size="sm"
                       value={creator.familyName ?? ""}
                       onChange={(event) => {
                         const creators = [...metadata.creators];
@@ -430,7 +415,6 @@ export function SourceEditor(props: {
                 <Field>
                   <FieldLabel>Organization or group name</FieldLabel>
                   <InlineInput
-                    size="sm"
                     value={creator.literalName ?? ""}
                     onChange={(event) => {
                       const creators = [...metadata.creators];
@@ -495,11 +479,7 @@ export function SourceEditor(props: {
                   value={yearText}
                   onChange={(event) => setYearText(event.target.value)}
                 />
-                {invalidYear ? (
-                  <FieldDescription className="text-destructive">
-                    Enter a four-digit year.
-                  </FieldDescription>
-                ) : null}
+                {invalidYear ? <FieldError>Enter a four-digit year.</FieldError> : null}
               </Field>
             </div>
             <Field>
@@ -514,7 +494,9 @@ export function SourceEditor(props: {
             <div className="grid grid-cols-3 gap-2">
               {(["volume", "issue", "pages"] as const).map((field) => (
                 <Field key={field}>
-                  <FieldLabel className="capitalize">{field}</FieldLabel>
+                  <FieldLabel>
+                    {field === "volume" ? "Volume" : field === "issue" ? "Issue" : "Pages"}
+                  </FieldLabel>
                   <InlineInput
                     value={metadata[field] ?? ""}
                     onChange={(event) =>
@@ -540,10 +522,9 @@ export function SourceEditor(props: {
             {metadata.identifiers.map((identifier, index) => (
               <div key={identifierKeys[index]} className="space-y-1">
                 <div className="flex items-end gap-2">
-                  <Field className="w-24 shrink-0">
+                  <Field className="w-24 shrink-0" invalid={!identifier.scheme.trim()}>
                     <FieldLabel>Type</FieldLabel>
                     <InlineInput
-                      size="sm"
                       value={identifier.scheme}
                       aria-invalid={!identifier.scheme.trim() || undefined}
                       onChange={(event) => {
@@ -553,10 +534,12 @@ export function SourceEditor(props: {
                       }}
                     />
                   </Field>
-                  <Field className="min-w-0 flex-1">
+                  <Field
+                    className="min-w-0 flex-1"
+                    invalid={!identifier.scheme.trim() || !identifier.value.trim()}
+                  >
                     <FieldLabel>Value</FieldLabel>
                     <InlineInput
-                      size="sm"
                       value={identifier.value}
                       aria-invalid={!identifier.value.trim() || undefined}
                       onChange={(event) => {
@@ -565,6 +548,9 @@ export function SourceEditor(props: {
                         setMetadata((current) => ({ ...current, identifiers }));
                       }}
                     />
+                    {!identifier.scheme.trim() || !identifier.value.trim() ? (
+                      <FieldError>Enter both an identifier type and value.</FieldError>
+                    ) : null}
                   </Field>
                   <Button
                     type="button"
@@ -586,11 +572,6 @@ export function SourceEditor(props: {
                     <Trash2 />
                   </Button>
                 </div>
-                {!identifier.scheme.trim() || !identifier.value.trim() ? (
-                  <FieldDescription className="text-destructive">
-                    Enter both an identifier type and value.
-                  </FieldDescription>
-                ) : null}
               </div>
             ))}
             <Button
@@ -608,7 +589,7 @@ export function SourceEditor(props: {
             >
               <Plus /> Add identifier
             </Button>
-            <Field>
+            <Field invalid={invalidUrl}>
               <FieldLabel>Source URL</FieldLabel>
               <InlineInput
                 type="url"
@@ -618,11 +599,7 @@ export function SourceEditor(props: {
                   setMetadata((current) => ({ ...current, url: event.target.value }))
                 }
               />
-              {invalidUrl ? (
-                <FieldDescription className="text-destructive">
-                  Enter an HTTP or HTTPS source URL.
-                </FieldDescription>
-              ) : null}
+              {invalidUrl ? <FieldError>Enter an HTTP or HTTPS source URL.</FieldError> : null}
             </Field>
           </FormSection>
 

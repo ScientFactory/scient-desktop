@@ -140,14 +140,14 @@ export function AnalyticsPrivacySettings() {
               showBackdrop={false}
               showCloseButton={false}
             >
-              <DialogHeader className="gap-2 p-4 text-left">
-                <DialogTitle className="text-base">Delete analytics data?</DialogTitle>
-                <DialogDescription className="text-xs">
+              <DialogHeader size="compact" className="text-left">
+                <DialogTitle size="compact">Delete analytics data?</DialogTitle>
+                <DialogDescription size="compact">
                   Request deletion of this installation’s analytics data and reset its random
                   analytics identifier.
                 </DialogDescription>
               </DialogHeader>
-              <DialogFooter variant="bare" className="flex-row justify-end px-4 pb-4 pt-0">
+              <DialogFooter variant="bare" padding="compact" className="flex-row justify-end">
                 <DialogClose render={<Button size="sm" variant="outline" />}>Cancel</DialogClose>
                 <Button size="sm" disabled={pending} onClick={() => void deleteData()}>
                   Delete data

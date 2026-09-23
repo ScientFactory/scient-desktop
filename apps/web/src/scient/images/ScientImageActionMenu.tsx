@@ -22,15 +22,13 @@ export function ScientImageActionMenu({
   busy,
   run,
   details,
-  triggerClassName,
   triggerSize = "icon-xs",
-  triggerVariant = "ghost",
+  triggerVariant = "ghost-muted",
 }: {
   readonly actions: readonly ScientImageAction[];
   readonly busy: boolean;
   readonly run: (action: ScientImageAction) => void;
   readonly details?: ReactNode;
-  readonly triggerClassName?: string;
   readonly triggerSize?: ComponentProps<typeof Button>["size"];
   readonly triggerVariant?: ComponentProps<typeof Button>["variant"];
 }) {
@@ -58,7 +56,6 @@ export function ScientImageActionMenu({
               render={
                 <Button
                   aria-label="More image actions"
-                  className={cn("chat-markdown-chrome-action", triggerClassName)}
                   size={triggerSize}
                   type="button"
                   variant={triggerVariant}

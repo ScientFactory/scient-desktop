@@ -35,10 +35,6 @@ import {
   providerAccountIdentity,
   providerLifecycleFailureMessage,
 } from "./providerConnectionPresentation";
-import {
-  DESTRUCTIVE_GHOST_ACTION_CLASS,
-  PRIMARY_GHOST_ACTION_CLASS,
-} from "./providerConnectionActionStyles";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
 
 type PendingAction =
@@ -190,7 +186,6 @@ export function GrokInlineSetup(props: {
         {activeRuntimeOperation ? (
           <AssistedSetupActions>
             <Button
-              className={DESTRUCTIVE_GHOST_ACTION_CLASS}
               disabled={pendingAction === "cancel-runtime"}
               onClick={() =>
                 void run("cancel-runtime", () =>
@@ -199,7 +194,7 @@ export function GrokInlineSetup(props: {
               }
               size="sm"
               type="button"
-              variant="ghost-muted"
+              variant="ghost-destructive-action"
             >
               <XIcon aria-hidden /> Cancel
             </Button>
@@ -222,10 +217,9 @@ export function GrokInlineSetup(props: {
         />
         <AssistedSetupActions>
           <Button
-            className={PRIMARY_GHOST_ACTION_CLASS}
             onClick={() => void run("repair", () => runtimeAction("repair"))}
             size="sm"
-            variant="ghost"
+            variant="ghost-primary"
           >
             <RefreshCwIcon aria-hidden /> Repair Grok
           </Button>
@@ -258,10 +252,9 @@ export function GrokInlineSetup(props: {
         {canInstall ? (
           <AssistedSetupActions>
             <Button
-              className={PRIMARY_GHOST_ACTION_CLASS}
               onClick={() => void run("install", () => runtimeAction("install"))}
               size="sm"
-              variant="ghost"
+              variant="ghost-primary"
             >
               {localError ? <RefreshCwIcon aria-hidden /> : <DownloadIcon aria-hidden />}
               {localError ? "Retry installation" : "Install"}
@@ -344,10 +337,9 @@ export function GrokInlineSetup(props: {
             ) : null}
             {activeConnectionOperation ? (
               <Button
-                className={DESTRUCTIVE_GHOST_ACTION_CLASS}
                 onClick={() => void run("cancel-sign-in", cancelConnection)}
                 size="sm"
-                variant="ghost-muted"
+                variant="ghost-destructive-action"
               >
                 Cancel
               </Button>
@@ -444,7 +436,6 @@ export function GrokInlineSetup(props: {
       />
       <AssistedSetupActions>
         <Button
-          className="text-muted-foreground"
           onClick={() =>
             void run("device-sign-in", () => startGrokSignIn(props.controller, "grok_device_code"))
           }
@@ -454,10 +445,9 @@ export function GrokInlineSetup(props: {
           Use device code
         </Button>
         <Button
-          className={PRIMARY_GHOST_ACTION_CLASS}
           onClick={() => void run("sign-in", () => startGrokSignIn(props.controller))}
           size="sm"
-          variant="ghost"
+          variant="ghost-primary"
         >
           <ExternalLinkIcon aria-hidden /> {signInError ? "Try again" : "Sign in with Grok"}
         </Button>

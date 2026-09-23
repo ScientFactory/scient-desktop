@@ -260,7 +260,7 @@ export function ExternalSkillsSettings() {
                           skill.canSetEnabled === true ? (
                             <Switch
                               checked={shownEnabled}
-                              className="transition-none [&_[data-slot=switch-thumb]]:transition-none"
+                              motion="none"
                               aria-label={`${shownEnabled ? "Deactivate" : "Activate"} ${displayName}`}
                               onCheckedChange={(checked) =>
                                 void updateSkill({

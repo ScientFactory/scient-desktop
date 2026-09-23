@@ -1117,9 +1117,9 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                 <MenuTrigger
                   render={
                     <Button
-                      size="xs"
+                      size="toolbar"
                       variant="ghost-muted"
-                      className="h-6 min-w-0 max-w-full px-1 text-[11px] font-normal"
+                      className="min-w-0 max-w-full"
                       disabled={stoppingUnusedSession !== null}
                       aria-label="Choose a compute session to stop"
                       ref={capacityAnchor}
@@ -1167,20 +1167,20 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
               <Button
                 size="xs"
                 variant="ghost-muted"
-                className="h-6 min-w-0 max-w-full px-1 text-[11px] font-normal"
+                className="min-w-0 max-w-full"
                 title={`${runtimeNote ?? ""} — Switch to the selected ${props.language.displayName} environment`}
                 aria-label={`Switch ${props.language.displayName} environment`}
                 disabled={switching || props.contextId === undefined}
                 onClick={requestRuntimeSwitch}
               >
-                <span className="truncate">{runtimeToolbar.label}</span>
+                <span className="truncate font-normal">{runtimeToolbar.label}</span>
               </Button>
             ) : (
               <ScientTooltip content={runtimeNote ?? "Open Scientific Computing"}>
                 <Button
                   size="xs"
                   variant="ghost-muted"
-                  className="h-6 min-w-0 max-w-full shrink px-1.5 text-[11px] font-normal"
+                  className="min-w-0 max-w-full shrink"
                   aria-label={`${runtimeToolbar.label}. Open Scientific Computing`}
                   render={
                     <Link
@@ -1192,7 +1192,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                   {runtimeToolbar.kind === "status" && runtimeToolbar.label.includes("…") ? (
                     <LoaderCircle className="animate-spin" aria-hidden />
                   ) : null}
-                  <span className="truncate">{runtimeToolbar.label}</span>
+                  <span className="truncate font-normal">{runtimeToolbar.label}</span>
                 </Button>
               </ScientTooltip>
             )}
@@ -1204,7 +1204,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                   ref={primaryRunAnchor}
                   size="xs"
                   variant="outline"
-                  className="rounded-r-none px-1.5 @[15rem]/python-file-actions:px-[calc(--spacing(2)-1px)]"
+                  shape="group-start"
                   aria-label={primaryRunBlocked ? "MATLAB definition file" : primary.label}
                   disabled={liveRunDisabled || primary.slice === null}
                   onClick={() => void run(primary.kind, primary.slice)}
@@ -1226,7 +1226,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                   <Button
                     size="icon-xs"
                     variant="outline"
-                    className="rounded-l-none border-l-0"
+                    shape="group-end"
                     disabled={runMenuDisabled}
                     aria-label={`Choose ${props.language.displayName} code to run`}
                   />

@@ -97,6 +97,68 @@ describe("Pi status copy", () => {
     expect(markup).toContain("Update available");
     expect(markup).not.toContain("Authentication is model-specific");
   });
+
+  it("shows managed-runtime compatibility guidance without exposing an external installer", () => {
+    const managedProvider: ServerProvider = {
+      ...liveProvider,
+      versionAdvisory: {
+        status: "behind_latest",
+        currentVersion: "0.84.4",
+        latestVersion: "0.85.0",
+        updateCommand: "npm install -g pi-coding-agent@latest",
+        canUpdate: true,
+        canInstallVersion: true,
+        checkedAt: "2026-09-05T00:00:00.000Z",
+        message: null,
+      },
+      compatibilityAdvisory: {
+        status: "broken",
+        latestVersionStatus: "broken",
+        message: "This release has a known issue. Use 0.83.0.",
+        recommendedVersion: "0.83.0",
+        recommendedRange: null,
+      },
+      connection: {
+        methods: [],
+        canDisconnect: false,
+        operation: null,
+        runtime: {
+          source: "scient_managed",
+          supportTier: "fully_assisted",
+          target: "darwin-arm64",
+          actions: ["update"],
+          managedVersion: "0.84.4",
+          previousManagedVersion: null,
+          operation: null,
+          message: "Update available.",
+        },
+      },
+    };
+    const markup = renderToStaticMarkup(
+      createElement(ProviderInstanceCard, {
+        environmentId,
+        instanceId: managedProvider.instanceId,
+        instance: { driver, enabled: true },
+        driverOption: getDriverOption(driver),
+        liveProvider: managedProvider,
+        mode: "editor",
+        onUpdate: () => undefined,
+        onRunUpdate: () => undefined,
+        onInstallRecommended: () => undefined,
+        hiddenModels: [],
+        favoriteModels: [],
+        modelOrder: [],
+        onHiddenModelsChange: () => undefined,
+        onFavoriteModelsChange: () => undefined,
+        onModelOrderChange: () => undefined,
+      }),
+    );
+
+    expect(markup).toContain("Known broken version");
+    expect(markup).toContain("Incompatible");
+    expect(markup).not.toContain("npm install -g pi-coding-agent@latest");
+    expect(markup).not.toContain("Install v0.83.0");
+  });
 });
 
 describe("deriveProviderModelsForDisplay", () => {

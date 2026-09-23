@@ -23,10 +23,6 @@ import { ConnectModelsButton } from "./ConnectModelsButton";
 import { GrokInlineSetup } from "./GrokInlineSetup";
 import { PiInlineSetup } from "./PiInlineSetup";
 import {
-  DESTRUCTIVE_GHOST_ACTION_CLASS,
-  PRIMARY_GHOST_ACTION_CLASS,
-} from "./providerConnectionActionStyles";
-import {
   isProviderAccountPresentedAsConnected,
   providerLifecycleFailureMessage,
 } from "./providerConnectionPresentation";
@@ -140,12 +136,11 @@ function SupportedAssistedProviderSetupHost(props: AssistedProviderSetupHostProp
     isProviderAccountPresentedAsConnected(props.provider) &&
     props.provider.connection?.canDisconnect ? (
       <Button
-        className={DESTRUCTIVE_GHOST_ACTION_CLASS}
         disabled={disconnecting || props.accountActionDisabled}
         onClick={() => void disconnect()}
         size="sm"
         type="button"
-        variant="ghost-muted"
+        variant="ghost-destructive-action"
       >
         {disconnecting ? <LoaderIcon className="animate-spin" /> : <LogOutIcon />}
         {props.provider.connection.methods.includes("antigravity_credentials")
@@ -321,12 +316,11 @@ export function DisabledProviderSetup(props: {
       {canEnable ? (
         <AssistedSetupActions>
           <Button
-            className={PRIMARY_GHOST_ACTION_CLASS}
             disabled={enabling}
             onClick={() => void runEnable()}
             size="sm"
             type="button"
-            variant="ghost"
+            variant="ghost-primary"
           >
             {enabling ? (
               <LoaderIcon aria-hidden className="animate-spin" />

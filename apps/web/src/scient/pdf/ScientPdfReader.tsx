@@ -511,14 +511,9 @@ function LoadedScientPdfReader(props: {
           <Search />
         </ReaderButton>
         <DropdownMenu>
-          <ScientTooltip content="More PDF actions">
-            <DropdownMenuTrigger
-              className="scient-pdf-toolbar-button"
-              aria-label="More PDF actions"
-            >
-              <Ellipsis />
-            </DropdownMenuTrigger>
-          </ScientTooltip>
+          <DropdownMenuTrigger render={<ReaderButton label="More PDF actions" />}>
+            <Ellipsis />
+          </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuItem
               disabled={state.phase !== "ready"}

@@ -50,10 +50,12 @@ function CommandDialogViewport({ className, ...props }: CommandDialogPrimitive.V
 function CommandDialogPopup({
   className,
   children,
+  padding = "default",
   onBackdropPointerDown,
   ...props
 }: CommandDialogPrimitive.Popup.Props & {
   onBackdropPointerDown?: React.PointerEventHandler<HTMLDivElement>;
+  padding?: "default" | "none";
 }) {
   return (
     <CommandDialogPortal>
@@ -63,9 +65,11 @@ function CommandDialogPopup({
           className={cn(
             DIALOG_POPUP_CLASS,
             "pointer-events-auto max-h-105 max-w-xl text-foreground",
+            padding === "none" && "p-0",
             className,
           )}
           data-slot="command-dialog-popup"
+          data-padding={padding}
           {...props}
         >
           {children}
@@ -93,19 +97,11 @@ function Command({
 
 function CommandInput({
   className,
-  wrapperClassName,
   placeholder,
   ...props
-}: React.ComponentProps<typeof AutocompleteInput> & {
-  wrapperClassName?: string | undefined;
-}) {
+}: React.ComponentProps<typeof AutocompleteInput>) {
   return (
-    <div
-      className={cn(
-        "px-[var(--command-shell-inset)] py-1.5 [&_[data-slot=autocomplete-start-addon]]:ps-[calc(var(--command-shell-inset)+0.0625rem)]",
-        wrapperClassName,
-      )}
-    >
+    <div className="px-[var(--command-shell-inset)] py-1.5 [&_[data-slot=autocomplete-start-addon]]:ps-[calc(var(--command-shell-inset)+0.0625rem)]">
       <AutocompleteInput
         autoFocus
         className={cn(

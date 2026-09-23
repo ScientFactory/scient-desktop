@@ -125,11 +125,14 @@ function SidebarControl() {
         <TooltipTrigger
           render={
             <SidebarTrigger
+              // Over the stage artwork the trigger is a control on imagery, like the media
+              // viewer's arrows; that variant positions itself, so the layout is reset here.
+              variant={isSidebarVisible && stageBackdropVariant ? "media-navigation" : "ghost"}
               className={cn(
                 "pointer-events-auto",
                 isSidebarVisible &&
                   stageBackdropVariant && [
-                    "sidebar-stage-trigger",
+                    "relative top-auto translate-y-0",
                     resolveSidebarStageFocusRingOffsetClass(stageBackdropVariant),
                   ],
               )}
@@ -246,7 +249,6 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           side="left"
           collapsible="offcanvas"
           data-app-sidebar=""
-          className="border-r border-sidebar-border"
           resizable={{
             maxWidth: sidebarMaximumWidth,
             minWidth: THREAD_SIDEBAR_MIN_WIDTH,

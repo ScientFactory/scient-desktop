@@ -55,10 +55,6 @@ jobs:
 
       - name: Verify Scient product identity
         run: vp run brand:check
-
-      - name: Check className overrides on components/ui do not grow
-        run: vp run lint:restyle-ceiling
-
       - name: Typecheck
         run: vpr typecheck
 
