@@ -72,13 +72,12 @@ const reviewedPackages = [
 ] as const;
 
 describe("reviewed Codex runtime manifest", () => {
-  it("allows the reviewed Codex package shape within target-specific bounded budgets", () => {
+  it("keeps every reviewed Codex target within the same bounded extraction budget", () => {
     for (const { target } of reviewedPackages) {
-      expect(resolveReviewedCodexArtifact(target)?.extractionLimits).toEqual(
-        target.platform === "win32"
-          ? { maxEntries: 64, maxExpandedBytes: 512 * 1024 * 1024 }
-          : { maxEntries: 128, maxExpandedBytes: 512 * 1024 * 1024 },
-      );
+      expect(resolveReviewedCodexArtifact(target)?.extractionLimits).toEqual({
+        maxEntries: 128,
+        maxExpandedBytes: 512 * 1024 * 1024,
+      });
     }
   });
 

@@ -160,7 +160,7 @@ describe("managed runtime catalog resolution", () => {
         policy: windowsPolicy,
         contractRevision: 3,
       })?.extractionLimits,
-      { maxEntries: 64, maxExpandedBytes: 512 * 1024 * 1024 },
+      { maxEntries: 128, maxExpandedBytes: 512 * 1024 * 1024 },
     );
     assert.isUndefined(
       resolveManagedRuntimeCatalogArtifact({ catalog: feed, policy, contractRevision: 2 }),

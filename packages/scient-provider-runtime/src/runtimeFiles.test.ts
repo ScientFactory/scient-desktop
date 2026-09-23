@@ -37,8 +37,8 @@ describe("managed runtime files", () => {
     { platform: "linux", entries: 128, passes: true },
     { platform: "linux", entries: 129, passes: false },
     { platform: "win32", entries: 51, passes: true },
-    { platform: "win32", entries: 64, passes: true },
-    { platform: "win32", entries: 65, passes: false },
+    { platform: "win32", entries: 128, passes: true },
+    { platform: "win32", entries: 129, passes: false },
   ] as const)(
     "enforces the Codex $platform budget at $entries entries",
     async ({ platform, entries, passes }) => {
