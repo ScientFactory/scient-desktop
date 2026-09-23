@@ -47,10 +47,10 @@ or observed tip.
 
 The current T3 alignment is recorded in
 [`docs/internals/2026-09-23-upstream-sync-d7819c1881.md`](docs/internals/2026-09-23-upstream-sync-d7819c1881.md)
-and in `upstream-state.json`. PR #350 is the same open alignment, extended through
-`f5ef0ddb90a8c36584e181b1913e7b8a5df30ffc`: 72 official
+and in `upstream-state.json`. PR #350 merged this alignment into Scient `main`,
+extending it through `f5ef0ddb90a8c36584e181b1913e7b8a5df30ffc`: 72 official
 commits from `aff9318bf46beaf05cc7155b428d3f0b8711efd2`, including 42 added
-since the d781 checkpoint. The candidate preserves the initial history merge
+since the d781 checkpoint. The merge preserves the initial history merge
 `719f452a4633af276ed9f5e219ced8de43863d49` and later official merge commits
 `f741668a6d31ec6681d6324a0f6a7b97f205f06e` and
 `34f081f99f368f9eaca0af29266ec13530956f77`. The latest owned-main catch-up
@@ -63,8 +63,7 @@ threshold miss; its isolated rerun and the clean CI workspace gate both passed
 without changing the test or threshold. The final CI check and web-layout
 failures were repaired on the same branch and passed in the next CI run.
 
-Automated qualification and source review passed. The alignment is delivered
-as an unmerged draft PR for review; release publication remains separate. The
+Automated qualification and source review passed; release publication remains separate. The
 [preceding alignment](docs/internals/2026-09-22-upstream-sync-aff9318bf4.md),
 [earlier receipt](docs/internals/2026-09-18-upstream-sync-3fd5d643.md), and all
 earlier official ancestry remain literal history. Later observed upstream

@@ -278,6 +278,10 @@ the current pointer in `UPSTREAM.md` advance to that exact target and merge. Pus
 for review. Do not merge to `main`, publish, or clean the worktree until review and user acceptance
 authorize those separate actions.
 
+In `UPSTREAM.md`, identify the alignment's Scient pull request by number without describing whether
+the PR is open, draft, or merged. Its current lifecycle is directly checkable on GitHub, and the
+integration record should not need a follow-up edit just to keep that status current.
+
 ## Stop conditions
 
 Stop and ask for a product decision when the clean composition would:
