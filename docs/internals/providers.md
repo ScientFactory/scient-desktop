@@ -497,18 +497,24 @@ Scient-managed paths remain manual-only at this generic boundary: their separate
 own discovery, verification, activation, leases, and rollback. Never send a managed binary through
 an inferred system-package update command.
 
-The model picker's legacy section is driven by `apps/server/src/provider/model-manifest.json`, which
-lists the current (non-legacy) model slugs per driver kind. The `ModelManifest` service
-(`apps/server/src/provider/ModelManifest.ts`) refreshes that policy from the same file on Scient's
-`main` branch, so changing a model's classification is a reviewed Scient commit rather than an app
-release. Preference order is remote fetch, then the on-disk copy of the last successful fetch in
-the state directory, then the bundled copy.
+The model picker's legacy section is driven by explicit per-model statuses in
+`apps/server/src/provider/model-manifest.json`. Unknown discovered models are
+visible by default, while known legacy models remain explicitly classified;
+provider-native legacy flags are preserved. The top-level `currentModels` lists
+remain for compatibility and as positive current classifications. The
+`ModelManifest` service (`apps/server/src/provider/ModelManifest.ts`) refreshes
+policy from the same file on Scient's `main` branch, so changing a model's
+classification is a reviewed Scient commit rather than an app release.
+Preference order is remote fetch, then the on-disk copy of the last successful
+fetch in the state directory, then the bundled copy.
 
 Refreshes are TTL-gated, run concurrently with provider probes, respect the
-`enableProviderUpdateChecks` setting, and never fail a provider check. Codex and Claude currently
-apply the classification to every snapshot; driver kinds absent from the manifest have no legacy
-classification. Keep the remote source Scient-owned: pointing it at upstream would let an unrelated
-repository change Scient's model policy outside Scient's review and release boundary.
+`enableProviderUpdateChecks` setting, and never fail a provider check. Codex,
+Claude, and Antigravity apply the classification to snapshots. Claude's
+built-in catalog is manifest-owned; dynamic providers expose unclassified
+discoveries by default. Keep the remote source Scient-owned: pointing it at
+upstream would let an unrelated repository change Scient's model policy
+outside Scient's review and release boundary.
 
 ## Attachment access
 
