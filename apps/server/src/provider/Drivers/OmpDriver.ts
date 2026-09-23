@@ -83,8 +83,15 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
       const effectiveConfig = { ...config, enabled } satisfies OmpSettings;
       const processEnv: NodeJS.ProcessEnv = { ...mergeProviderInstanceEnvironment(environment) };
       const home = effectiveConfig.homePath.trim();
-      if (home.length > 0) processEnv[OMP_AGENT_DIR_ENV] = expandHomePath(home);
       const profile = effectiveConfig.profile.trim();
+      if (home.length > 0 && profile.length > 0) {
+        return yield* new ProviderDriverError({
+          driver: DRIVER_KIND,
+          instanceId,
+          detail: "Choose either an Oh My Pi home or a named profile, not both.",
+        });
+      }
+      if (home.length > 0) processEnv[OMP_AGENT_DIR_ENV] = expandHomePath(home);
       if (profile.length > 0) processEnv[OMP_PROFILE_ENV] = profile;
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,

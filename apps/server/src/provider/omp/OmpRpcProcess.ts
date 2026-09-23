@@ -29,6 +29,15 @@ export const OMP_PROFILE_ENV = "OMP_PROFILE";
 export const ompUserDetail = (detail: string): string =>
   detail.includes("Oh My Pi") ? detail : `Oh My Pi: ${detail}`;
 export const OMP_RPC_ARGS = ["--mode", "rpc", "--approval-mode", "yolo"] as const;
+
+export const ompRpcArgs = (
+  sessionDir?: string,
+  extraArgs: ReadonlyArray<string> = [],
+): ReadonlyArray<string> => [
+  ...OMP_RPC_ARGS,
+  ...(sessionDir ? ["--session-dir", sessionDir] : []),
+  ...extraArgs,
+];
 /**
  * Verified against oh-my-pi v18.2.8 `packages/coding-agent/src/cli/flag-tables.ts`.
  * `--no-session --no-tools` alone does not disable extension discovery.
@@ -44,6 +53,19 @@ export const OMP_DISCOVERY_ARGS = OMP_ISOLATED_ARGS;
 
 const VERSION_CACHE_MS = 5 * 60 * 1000;
 const versionCache = new Map<string, { readonly version: string; readonly expiresAt: number }>();
+const versionCacheKey = (
+  command: string,
+  env: Readonly<Record<string, string | undefined>>,
+): string =>
+  JSON.stringify([
+    command,
+    env.PATH ?? "",
+    env.HOME ?? "",
+    env.USERPROFILE ?? "",
+    env.PI_CODING_AGENT_DIR ?? "",
+    env.OMP_PROFILE ?? "",
+    env.PI_PROFILE ?? "",
+  ]);
 
 export interface OmpRpcProcessOptions {
   readonly command: string;
@@ -85,10 +107,20 @@ const redactTail = (
   env: Readonly<Record<string, string | undefined>> | undefined,
 ): string => {
   let next = tail;
+  for (const [key, value] of Object.entries(env ?? {})) {
+    if (!value || value.length < 4) continue;
+    if (/(?:KEY|TOKEN|SECRET|PASSWORD|AUTH|COOKIE|CREDENTIAL|API)/iu.test(key)) {
+      next = next.split(value).join("[REDACTED]");
+    }
+  }
   for (const key of ["HOME", "USERPROFILE"] as const) {
     const value = env?.[key];
     if (value && value.length > 1) next = next.split(value).join("~");
   }
+  next = next
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/giu, "Bearer [REDACTED]")
+    .replace(/\b(?:sk|rk)-[A-Za-z0-9_-]{12,}\b/gu, "[REDACTED]")
+    .replace(/([?&](?:api[_-]?key|token|secret)=)[^&\s]+/giu, "$1[REDACTED]");
   return next.slice(-4096);
 };
 
@@ -103,7 +135,8 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
   const scope = yield* Scope.Scope;
   const env = childEnv(options.env, options.sessionDir);
   const now = yield* Clock.currentTimeMillis;
-  const cached = versionCache.get(options.command);
+  const cacheKey = versionCacheKey(options.command, env);
+  const cached = versionCache.get(cacheKey);
   const version = yield* Effect.gen(function* () {
     if (cached && cached.expiresAt > now) return cached.version;
     const command = yield* resolveSpawnCommand(options.command, ["--version"], {
@@ -128,7 +161,7 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
         detail: `Scient requires Oh My Pi ${OMP_MINIMUM_VERSION} or newer. Check the configured executable.`,
       });
     }
-    versionCache.set(options.command, { version: parsed, expiresAt: now + VERSION_CACHE_MS });
+    versionCache.set(cacheKey, { version: parsed, expiresAt: now + VERSION_CACHE_MS });
     return parsed;
   }).pipe(
     Effect.timeout("4 seconds"),
@@ -140,7 +173,7 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
   );
   const command = yield* resolveSpawnCommand(
     options.command,
-    [...OMP_RPC_ARGS, ...(options.extraArgs ?? [])],
+    ompRpcArgs(options.sessionDir, options.extraArgs),
     { env, extendEnv: false },
   ).pipe(
     Effect.mapError(

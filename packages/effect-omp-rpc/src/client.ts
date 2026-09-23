@@ -32,6 +32,7 @@ import {
   OmpRpcReady,
   OmpRpcResponse,
   OmpRpcState,
+  OmpSwitchSessionResult,
   OmpHostToolDefinition,
   OmpHostUriSchemeDefinition,
   type OmpRpcImage,
@@ -89,7 +90,9 @@ export interface OmpRpcClient {
     level: OmpThinkingLevel,
   ) => Effect.Effect<OmpRpcResponse, OmpRpcError>;
   readonly compact: (customInstructions?: string) => Effect.Effect<OmpRpcResponse, OmpRpcError>;
-  readonly switchSession: (sessionPath: string) => Effect.Effect<OmpRpcResponse, OmpRpcError>;
+  readonly switchSession: (
+    sessionPath: string,
+  ) => Effect.Effect<OmpSwitchSessionResult, OmpRpcError>;
   readonly setSubagentSubscription: (
     level: "off" | "progress" | "events",
   ) => Effect.Effect<OmpRpcResponse, OmpRpcError>;
@@ -119,6 +122,7 @@ const MAX_REMEMBERED_PROMPTS = 64;
 const encoder = new TextEncoder();
 const decodeReady = Schema.decodeUnknownEffect(OmpRpcReady);
 const decodeState = Schema.decodeUnknownEffect(OmpRpcState);
+const decodeSwitchSession = Schema.decodeUnknownEffect(OmpSwitchSessionResult);
 const decodeModels = Schema.decodeUnknownEffect(OmpRpcAvailableModels);
 const decodeCommands = Schema.decodeUnknownEffect(OmpRpcAvailableCommands);
 const decodeResponse = Schema.decodeUnknownEffect(OmpRpcResponse);
@@ -520,7 +524,14 @@ export const makeOmpRpcClient = Effect.fn("OmpRpcClient.make")(function* (
         type: "compact",
         ...(customInstructions ? { customInstructions } : {}),
       }),
-    switchSession: (sessionPath) => command({ type: "switch_session", sessionPath }),
+    switchSession: (sessionPath) =>
+      command({ type: "switch_session", sessionPath }).pipe(
+        Effect.flatMap((response) =>
+          decodeSwitchSession(response.data ?? {}).pipe(
+            Effect.mapError((cause) => protocol("Invalid switch_session response.", cause)),
+          ),
+        ),
+      ),
     setSubagentSubscription: (level) => command({ type: "set_subagent_subscription", level }),
     setHostTools: (tools) => command({ type: "set_host_tools", tools }),
     setHostUriSchemes: (schemes) => command({ type: "set_host_uri_schemes", schemes }),

@@ -45,7 +45,7 @@ const makeClient = (events: Queue.Queue<OmpRpcNotification, Cause.Done>) =>
     setModel: () => Effect.succeed(response("set_model")),
     setThinkingLevel: () => Effect.succeed(response("set_thinking_level")),
     compact: () => Effect.succeed(response("compact")),
-    switchSession: () => Effect.succeed(response("switch_session", { cancelled: false })),
+    switchSession: () => Effect.succeed({ cancelled: false }),
     setSubagentSubscription: () => Effect.succeed(response("set_subagent_subscription")),
     setHostTools: () => Effect.succeed(response("set_host_tools")),
     setHostUriSchemes: () => Effect.succeed(response("set_host_uri_schemes")),

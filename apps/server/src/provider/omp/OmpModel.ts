@@ -28,6 +28,9 @@ export const decodeOmpModelSlug = (
   }
 };
 
+export const ompModelSupportsImages = (model: OmpRpcModel): boolean =>
+  model.input?.includes("image") === true;
+
 export const ompThinkingLevel = (value: string | undefined): OmpThinkingLevel | undefined =>
   value === "off" ||
   value === "minimal" ||

@@ -46,7 +46,12 @@ import {
 } from "../Errors.ts";
 import type { ProviderAdapterShape, ProviderThreadSnapshot } from "../Services/ProviderAdapter.ts";
 import { ompCommandDecision } from "../omp/OmpCommandPolicy.ts";
-import { decodeOmpModelSlug, encodeOmpModelSlug, ompThinkingLevel } from "../omp/OmpModel.ts";
+import {
+  decodeOmpModelSlug,
+  encodeOmpModelSlug,
+  ompModelSupportsImages,
+  ompThinkingLevel,
+} from "../omp/OmpModel.ts";
 import {
   makeOmpRpcProcess,
   ompUserDetail,
@@ -116,6 +121,8 @@ interface SessionContext {
   activeAssistantItemId: RuntimeItemId | undefined;
   readonly threadLock: Semaphore.Semaphore;
   readonly toolItems: Map<string, RuntimeItemId>;
+  readonly knownModels: Set<string>;
+  readonly imageModels: Set<string>;
   readonly subagentSeen: Set<string>;
   closing: boolean;
   stopped: boolean;
@@ -728,6 +735,8 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
               assistantItemIds: new Map(),
               activeAssistantItemId: undefined,
               toolItems: new Map(),
+              knownModels: new Set(),
+              imageModels: new Set(),
               subagentSeen: new Set(),
               closing: false,
               stopped: false,
@@ -778,7 +787,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
               const switched = yield* client
                 .switchSession(path.resolve(rootReal, cursor.relativeSessionFile))
                 .pipe(Effect.mapError((cause) => request("switch_session", cause.message, cause)));
-              if (isRecord(switched.data) && switched.data.cancelled === true) {
+              if (switched.cancelled) {
                 return yield* validation(
                   "startSession",
                   "Oh My Pi cancelled the requested session switch.",
@@ -809,6 +818,25 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
               ctx.session = { ...ctx.session, model: initialModel };
             }
             if (state.thinkingLevel) ctx.thinkingLevel = state.thinkingLevel;
+            const models = yield* client.getModels().pipe(Effect.option);
+            if (models._tag === "Some") {
+              for (const model of models.value.models) {
+                const slug = encodeOmpModelSlug(model.provider, model.id);
+                if (!slug) continue;
+                ctx.knownModels.add(slug);
+                if (ompModelSupportsImages(model)) ctx.imageModels.add(slug);
+              }
+            } else {
+              const base = yield* eventBase(ctx);
+              yield* offer({
+                type: "runtime.warning",
+                ...base,
+                payload: {
+                  message:
+                    "Oh My Pi did not report model capabilities; image inputs may be rejected.",
+                },
+              });
+            }
             yield* refreshCursor(ctx, state.sessionFile, state.sessionId);
             const commands = yield* client.getCommands().pipe(Effect.option);
             if (commands._tag === "Some") ctx.runtime.replaceCatalog(commands.value.commands);
@@ -920,6 +948,25 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
                 );
               ctx.thinkingLevel = level;
             }
+          }
+          const requestedModel = input.modelSelection
+            ? (() => {
+                const selected = decodeOmpModelSlug(input.modelSelection?.model ?? "");
+                return selected
+                  ? encodeOmpModelSlug(selected.provider, selected.modelId)
+                  : undefined;
+              })()
+            : ctx.model;
+          if (
+            input.attachments?.some((attachment) => attachment.type === "image") &&
+            requestedModel &&
+            ctx.knownModels.has(requestedModel) &&
+            !ctx.imageModels.has(requestedModel)
+          ) {
+            return yield* validation(
+              "sendTurn",
+              "The selected Oh My Pi model does not advertise image input support.",
+            );
           }
           const images: Array<OmpRpcImage> = [];
           const filePaths: Array<string> = [];

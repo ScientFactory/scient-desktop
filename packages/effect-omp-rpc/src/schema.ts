@@ -55,6 +55,7 @@ export const OmpRpcModel = Schema.Struct({
   id: Schema.String,
   name: Schema.optional(Schema.String),
   reasoning: Schema.optional(Schema.Boolean),
+  input: Schema.optional(Schema.Array(Schema.Literals(["text", "image"]))),
   thinkingLevels: Schema.optional(Schema.Array(Schema.String)),
 });
 export type OmpRpcModel = typeof OmpRpcModel.Type;
@@ -76,6 +77,11 @@ export const OmpRpcAvailableCommands = Schema.Struct({
   commands: Schema.Array(OmpRpcCommandDescriptor),
 });
 export type OmpRpcAvailableCommands = typeof OmpRpcAvailableCommands.Type;
+
+export const OmpSwitchSessionResult = Schema.Struct({
+  cancelled: Schema.Boolean,
+});
+export type OmpSwitchSessionResult = typeof OmpSwitchSessionResult.Type;
 
 export const OmpRpcState = Schema.Struct({
   model: Schema.optional(

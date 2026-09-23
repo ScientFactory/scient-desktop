@@ -821,7 +821,7 @@ export const OmpSettings = makeProviderSettingsSchema(
       Schema.annotateKey({
         title: "Oh My Pi home",
         description:
-          "Optional PI_CODING_AGENT_DIR for this instance. Leave empty to use the server's normal Oh My Pi home and credentials, which every empty-home instance shares. Set a directory to isolate this instance.",
+          "Optional PI_CODING_AGENT_DIR for this instance. Leave empty to use the server's normal Oh My Pi home and credentials, which every empty-home instance shares. Set a directory to isolate this instance; do not combine it with a named profile.",
         providerSettingsForm: { placeholder: "~/.omp/agent", clearWhenEmpty: "omit" },
       }),
     ),
@@ -830,7 +830,7 @@ export const OmpSettings = makeProviderSettingsSchema(
       Schema.annotateKey({
         title: "Oh My Pi profile",
         description:
-          "Optional OMP_PROFILE for this instance. Leave empty to use Oh My Pi's default profile. A profile name asks Oh My Pi to use that profile's agent directory.",
+          "Optional OMP_PROFILE for this instance. Leave empty to use Oh My Pi's default profile. A profile name asks Oh My Pi to use that profile's agent directory; do not combine it with a custom home.",
         providerSettingsForm: { placeholder: "work", clearWhenEmpty: "omit" },
       }),
     ),
