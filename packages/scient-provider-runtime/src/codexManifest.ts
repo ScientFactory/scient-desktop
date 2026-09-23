@@ -121,13 +121,9 @@ export function resolveReviewedCodexArtifact(
     checksum: { algorithm: "sha256", digest: artifact.sha256 },
     size: artifact.size,
     archiveFormat: "tar.gz",
-    // The official Windows package includes 51 entries, largely for voice
-    // support. Give only Codex Windows bounded entry-count headroom; keep the
-    // existing expanded-byte ceiling and shared defaults unchanged.
-    extractionLimits:
-      target.platform === "win32"
-        ? { maxEntries: 64, maxExpandedBytes: 512 * 1024 * 1024 }
-        : { maxEntries: 128, maxExpandedBytes: 512 * 1024 * 1024 },
+    // Reserve the same bounded package headroom for Codex on every target.
+    // Other providers retain the shared extraction default.
+    extractionLimits: { maxEntries: 128, maxExpandedBytes: 512 * 1024 * 1024 },
     executablePath: artifact.executablePath,
     auxiliaryExecutablePaths: artifact.auxiliaryExecutablePaths,
     smokeArgs: ["--version"],
