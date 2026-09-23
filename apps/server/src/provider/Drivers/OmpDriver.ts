@@ -112,6 +112,8 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
         stateDir: serverConfig.stateDir,
         attachmentsDir: serverConfig.attachmentsDir,
         environment: processEnv,
+        homePath: home || undefined,
+        profile: profile || undefined,
       });
       const textGeneration = yield* makeOmpTextGeneration(effectiveConfig, processEnv);
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);

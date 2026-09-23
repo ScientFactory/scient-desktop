@@ -50,10 +50,10 @@ export type OmpSessionUpdate =
       readonly requestId?: string;
       readonly source?: "process" | "unconfirmed";
     }
-  | { readonly type: "assistant-started" }
-  | { readonly type: "assistant-delta"; readonly delta: string }
-  | { readonly type: "assistant-completed" }
-  | { readonly type: "reasoning-delta"; readonly delta: string }
+  | { readonly type: "assistant-started"; readonly messageId: string }
+  | { readonly type: "assistant-delta"; readonly messageId: string; readonly delta: string }
+  | { readonly type: "assistant-completed"; readonly messageId: string }
+  | { readonly type: "reasoning-delta"; readonly messageId: string; readonly delta: string }
   | {
       readonly type: "tool";
       readonly phase: "started" | "updated" | "completed";
@@ -83,6 +83,7 @@ export type OmpSessionUpdate =
   | { readonly type: "compacted" }
   | { readonly type: "warning"; readonly message: string }
   | { readonly type: "error"; readonly message: string }
+  | { readonly type: "process-exited" }
   | { readonly type: "session-info"; readonly sessionFile?: string; readonly sessionId?: string };
 
 interface InboxItem {
@@ -99,6 +100,7 @@ interface InboxItem {
   readonly done?: Deferred.Deferred<void>;
   readonly requestId?: string;
   readonly agentInvoked?: boolean;
+  readonly mode?: "prompt" | "steer";
   readonly notification?: OmpRpcNotification;
 }
 
@@ -108,7 +110,11 @@ export interface OmpSessionRuntime {
   readonly lookupQuestion: (id: string) => OmpPendingQuestion | undefined;
   readonly removeQuestion: (id: string) => void;
   readonly begin: (turnId: string) => Effect.Effect<void>;
-  readonly accepted: (requestId: string, agentInvoked?: boolean) => Effect.Effect<void>;
+  readonly accepted: (
+    requestId: string,
+    agentInvoked?: boolean,
+    mode?: "prompt" | "steer",
+  ) => Effect.Effect<void>;
   readonly commandFailed: (requestId: string) => Effect.Effect<void>;
   readonly requestCancel: () => Effect.Effect<void>;
   readonly confirmCancel: () => Effect.Effect<void>;
@@ -142,15 +148,29 @@ const messageText = (message: unknown): string | undefined => {
   return parts.length > 0 ? parts.join("") : undefined;
 };
 
+const messageRole = (message: unknown): string | undefined => {
+  if (!isRecord(message)) return undefined;
+  return text(message.role)?.toLowerCase();
+};
+
+const isAssistantMessage = (message: unknown): boolean => messageRole(message) === "assistant";
+
+const subagentPayload = (event: OmpRpcEvent): Record<string, unknown> | undefined =>
+  isRecord(event.payload) ? event.payload : undefined;
+
 const subagentStatus = (event: OmpRpcEvent): "inProgress" | "completed" | "failed" | "stopped" => {
-  const status = text(event.status)?.toLowerCase();
-  const phase = text(event.phase)?.toLowerCase();
+  const payload = subagentPayload(event);
+  const progress = payload && isRecord(payload.progress) ? payload.progress : undefined;
+  const status = text(payload?.status ?? progress?.status ?? event.status)?.toLowerCase();
+  const phase = text(payload?.phase ?? progress?.phase ?? event.phase)?.toLowerCase();
   if (status === "error" || status === "failed" || phase === "error" || phase === "failed") {
     return "failed";
   }
   if (
+    status === "aborted" ||
     status === "cancelled" ||
     status === "canceled" ||
+    phase === "aborted" ||
     phase === "cancelled" ||
     phase === "canceled"
   ) {
@@ -166,6 +186,38 @@ const subagentStatus = (event: OmpRpcEvent): "inProgress" | "completed" | "faile
     return "completed";
   }
   return "inProgress";
+};
+
+const subagentId = (event: OmpRpcEvent): string | undefined => {
+  const payload = subagentPayload(event);
+  const progress = payload && isRecord(payload.progress) ? payload.progress : undefined;
+  return text(payload?.id) ?? text(progress?.id) ?? text(event.subagentId) ?? text(event.id);
+};
+
+const subagentTitle = (event: OmpRpcEvent): string | undefined => {
+  const payload = subagentPayload(event);
+  const progress = payload && isRecord(payload.progress) ? payload.progress : undefined;
+  return (
+    text(payload?.description) ??
+    text(payload?.task) ??
+    text(progress?.description) ??
+    text(event.title)
+  );
+};
+
+const subagentDetail = (event: OmpRpcEvent): string | undefined => {
+  const payload = subagentPayload(event);
+  const progress = payload && isRecord(payload.progress) ? payload.progress : undefined;
+  return text(payload?.message) ?? text(progress?.message) ?? text(event.message);
+};
+
+const lastAssistantText = (messages: unknown): string | undefined => {
+  if (!Array.isArray(messages)) return undefined;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (isAssistantMessage(message)) return messageText(message);
+  }
+  return undefined;
 };
 
 const eventTypeLabel = (type: string): string => {
@@ -195,6 +247,26 @@ const commandRecords = (value: unknown): ReadonlyArray<OmpCatalogCommand> | unde
 const turnIsOpen = (state: OmpTurnState): boolean =>
   state.phase === "accepted" || state.phase === "running" || state.phase === "draining";
 
+const ignoredLifecycleEvents = new Set([
+  "turn_start",
+  "turn_end",
+  "auto_retry_start",
+  "auto_retry_end",
+  "retry_fallback_applied",
+  "retry_fallback_succeeded",
+  "model_changed",
+  "thinking_level_changed",
+  "config_update",
+  "config_warnings_changed",
+  "advisor_cost_changed",
+  "advisor_yielded",
+  "ttsr_triggered",
+  "todo_reminder",
+  "todo_auto_clear",
+  "notice",
+  "goal_updated",
+]);
+
 export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function* (input: {
   readonly client: OmpRpcClient;
   readonly scope: Scope.Scope;
@@ -203,15 +275,17 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
   const inbox = yield* Queue.bounded<InboxItem>(OMP_INBOX_CAPACITY);
   let catalog = emptyOmpCommandCatalog();
   let turn = initialOmpTurnState;
-  let assistantStarted = false;
-  let assistantCompleted = false;
-  let sawText = false;
+  let assistantMessageSequence = 0;
+  let activeAssistantMessageId: string | undefined;
+  let activeAssistantHasDelta = false;
+  let assistantMessageSeen = false;
   let drainRetries = 0;
   let drainRetryPending = false;
   let turnSettled: Deferred.Deferred<void> | undefined;
   let eventSequence = 0;
   const seenUnknownEvents = new Set<string>();
   const questions = new Map<string, OmpPendingQuestion>();
+  const subagentStatuses = new Map<string, "inProgress" | "completed" | "failed" | "stopped">();
   const cancelledHostTools = new Set<string>();
   const cancelledHostUris = new Set<string>();
   const publish = (update: OmpSessionUpdate) => input.onUpdate(update);
@@ -225,9 +299,11 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
 
   const finishAssistant = () =>
     Effect.gen(function* () {
-      if (!assistantStarted || assistantCompleted) return;
-      assistantCompleted = true;
-      yield* publish({ type: "assistant-completed" });
+      const messageId = activeAssistantMessageId;
+      if (!messageId) return;
+      activeAssistantMessageId = undefined;
+      activeAssistantHasDelta = false;
+      yield* publish({ type: "assistant-completed", messageId });
     });
 
   const settleTurn = (outcome: OmpTurnOutcome, source?: "process" | "unconfirmed") =>
@@ -311,11 +387,15 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     );
   });
 
-  const ensureAssistant = () =>
+  const ensureAssistant = (messageId?: string) =>
     Effect.gen(function* () {
-      if (assistantStarted) return;
-      assistantStarted = true;
-      yield* publish({ type: "assistant-started" });
+      if (activeAssistantMessageId) return activeAssistantMessageId;
+      const nextId = messageId ?? `message-${++assistantMessageSequence}`;
+      activeAssistantMessageId = nextId;
+      activeAssistantHasDelta = false;
+      assistantMessageSeen = true;
+      yield* publish({ type: "assistant-started", messageId: nextId });
+      return nextId;
     });
 
   const rejectHostTool = (id: string) =>
@@ -412,30 +492,47 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       }
       if (event.type === "agent_end") {
         yield* applySignal({ type: "agent-end", terminal: event.isTerminal !== false });
+        if (!assistantMessageSeen) {
+          const fallback = lastAssistantText(event.messages);
+          if (fallback) {
+            const messageId = yield* ensureAssistant();
+            yield* publish({ type: "assistant-delta", messageId, delta: fallback });
+            yield* finishAssistant();
+          }
+        }
         return;
       }
-      if (event.type === "prompt_result" && event.id && typeof event.agentInvoked === "boolean") {
+      if (event.type === "prompt_result" && typeof event.agentInvoked === "boolean") {
         yield* applySignal({
           type: "prompt-result",
-          requestId: event.id,
+          ...(event.id ? { requestId: event.id } : {}),
           agentInvoked: event.agentInvoked,
         });
         return;
       }
       if (event.type === "auto_compaction_end" || event.type === "compaction_end") {
-        yield* publish({ type: "compacted" });
+        if (event.aborted === true) {
+          yield* publish({ type: "warning", message: "Oh My Pi compaction was aborted." });
+        } else if (event.willRetry === true) {
+          yield* publish({ type: "warning", message: "Oh My Pi compaction will retry." });
+        } else {
+          yield* publish({ type: "compacted" });
+        }
         return;
       }
       if (event.type === "message_start" && turnIsOpen(turn)) {
-        yield* ensureAssistant();
+        if (isAssistantMessage(event.message)) {
+          yield* ensureAssistant();
+        }
         return;
       }
       if (event.type === "message_end" && turnIsOpen(turn)) {
-        const fallback = sawText ? undefined : messageText(event.message);
+        if (!isAssistantMessage(event.message)) return;
+        const messageId = yield* ensureAssistant();
+        const fallback = activeAssistantHasDelta ? undefined : messageText(event.message);
         if (fallback && fallback.length > 0) {
-          yield* ensureAssistant();
-          sawText = true;
-          yield* publish({ type: "assistant-delta", delta: fallback });
+          activeAssistantHasDelta = true;
+          yield* publish({ type: "assistant-delta", messageId, delta: fallback });
         }
         yield* finishAssistant();
         return;
@@ -448,11 +545,12 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         const update = event.assistantMessageEvent;
         const delta = typeof update.delta === "string" ? update.delta : "";
         if (update.type === "text_delta" && delta.length > 0) {
-          yield* ensureAssistant();
-          sawText = true;
-          yield* publish({ type: "assistant-delta", delta });
+          const messageId = yield* ensureAssistant();
+          activeAssistantHasDelta = true;
+          yield* publish({ type: "assistant-delta", messageId, delta });
         } else if (update.type === "thinking_delta" && delta.length > 0) {
-          yield* publish({ type: "reasoning-delta", delta });
+          const messageId = yield* ensureAssistant();
+          yield* publish({ type: "reasoning-delta", messageId, delta });
         }
         return;
       }
@@ -483,17 +581,22 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         return;
       }
       if (event.type === "subagent_lifecycle" || event.type === "subagent_progress") {
+        const id = subagentId(event) ?? "activity";
         const status = subagentStatus(event);
-        const detail = text(event.message);
+        const previous = subagentStatuses.get(id);
+        if (previous && previous !== "inProgress") return;
+        subagentStatuses.set(id, status);
+        const detail = subagentDetail(event);
         yield* publish({
           type: "subagent",
-          id: text(event.subagentId) ?? text(event.id) ?? "activity",
-          title: text(event.title) ?? text(event.status) ?? "Subagent",
+          id,
+          title: subagentTitle(event) ?? (status === "inProgress" ? "Subagent" : "Subagent"),
           status,
           ...(detail ? { detail } : {}),
         });
         return;
       }
+      if (event.type === "subagent_event") return;
       if (event.type === "command_output" && turnIsOpen(turn)) {
         const output = text(event.output) ?? text(event.text) ?? text(event.delta);
         if (output) yield* publish({ type: "command-output", delta: output });
@@ -547,6 +650,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         });
         return;
       }
+      if (ignoredLifecycleEvents.has(event.type)) return;
       if (seenUnknownEvents.has(event.type)) return;
       seenUnknownEvents.add(event.type);
       yield* publish({
@@ -575,9 +679,10 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     Effect.gen(function* () {
       if (item.type === "begin" && item.turnId && item.done) {
         turnSettled = yield* Deferred.make<void>();
-        assistantStarted = false;
-        assistantCompleted = false;
-        sawText = false;
+        assistantMessageSequence = 0;
+        activeAssistantMessageId = undefined;
+        activeAssistantHasDelta = false;
+        assistantMessageSeen = false;
         drainRetries = 0;
         drainRetryPending = false;
         yield* applySignal({ type: "begin" });
@@ -586,11 +691,15 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         return;
       }
       if (item.type === "accepted" && item.requestId) {
-        yield* applySignal({
-          type: "prompt-accepted",
-          requestId: item.requestId,
-          ...(item.agentInvoked === undefined ? {} : { agentInvoked: item.agentInvoked }),
-        });
+        yield* applySignal(
+          item.mode === "steer"
+            ? { type: "steer-accepted" }
+            : {
+                type: "prompt-accepted",
+                requestId: item.requestId,
+                ...(item.agentInvoked === undefined ? {} : { agentInvoked: item.agentInvoked }),
+              },
+        );
         yield* confirmIdle;
         return;
       }
@@ -618,6 +727,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       }
       if (item.type === "process-exit") {
         yield* applySignal({ type: "process-exit" });
+        yield* publish({ type: "process-exited" });
         if (item.done) yield* Deferred.succeed(item.done, undefined);
         return;
       }
@@ -655,10 +765,11 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         yield* offer({ type: "begin", turnId, done });
         yield* Deferred.await(done);
       }),
-    accepted: (requestId, agentInvoked) =>
+    accepted: (requestId, agentInvoked, mode = "prompt") =>
       offer({
         type: "accepted",
         requestId,
+        mode,
         ...(agentInvoked === undefined ? {} : { agentInvoked }),
       }),
     commandFailed: (requestId) => offer({ type: "command-failed", requestId }),

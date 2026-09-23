@@ -143,6 +143,8 @@ export const OmpRpcEvent = Schema.Struct({
   event: maybeString,
   stopReason: maybeString,
   role: maybeString,
+  aborted: maybeBoolean,
+  willRetry: maybeBoolean,
   content: maybeUnknown,
 });
 export type OmpRpcEvent = typeof OmpRpcEvent.Type;

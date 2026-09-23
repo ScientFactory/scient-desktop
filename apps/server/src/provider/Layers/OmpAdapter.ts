@@ -46,7 +46,7 @@ import {
 } from "../Errors.ts";
 import type { ProviderAdapterShape, ProviderThreadSnapshot } from "../Services/ProviderAdapter.ts";
 import { ompCommandDecision } from "../omp/OmpCommandPolicy.ts";
-import { decodeOmpModelSlug, ompThinkingLevel } from "../omp/OmpModel.ts";
+import { decodeOmpModelSlug, encodeOmpModelSlug, ompThinkingLevel } from "../omp/OmpModel.ts";
 import {
   makeOmpRpcProcess,
   ompUserDetail,
@@ -62,6 +62,7 @@ import {
   ompSessionDirectoryKey,
   parseOmpSessionCursor,
   sessionFileInsideRoot,
+  type OmpResumeIdentity,
   type OmpSessionCursor,
 } from "../omp/OmpSessionCursor.ts";
 import {
@@ -72,8 +73,8 @@ import {
 
 const PROVIDER = ProviderDriverKind.make("omp");
 const OMP_MAX_PROMPT_IMAGE_BYTES = 512 * 1024;
-/** Newest events win when the desktop falls behind, so a turn outcome is not stuck behind unbounded growth. */
-const OMP_EVENT_QUEUE_CAPACITY = 256;
+/** Canonical provider events are lossless; backpressure is safer than dropping conversation state. */
+const OMP_EVENT_QUEUE_CAPACITY = 4096;
 const OMP_READY_TIMEOUT = "8 seconds";
 const OMP_CANCEL_DEADLINE = "3 seconds";
 
@@ -83,6 +84,8 @@ export interface OmpAdapterOptions {
   readonly stateDir: string;
   readonly attachmentsDir: string;
   readonly environment: NodeJS.ProcessEnv;
+  readonly homePath?: string | undefined;
+  readonly profile?: string | undefined;
   readonly makeProcess?: (options: OmpRpcProcessOptions) => Effect.Effect<
     OmpRpcClient & {
       readonly version: string;
@@ -101,19 +104,24 @@ interface SessionContext {
   runtime: OmpSessionRuntime;
   readonly scope: Scope.Scope;
   readonly sessionRoot: string;
+  readonly resumeIdentity: OmpResumeIdentity;
   readonly lockPath: string;
   session: ProviderSession;
   cursor?: OmpSessionCursor | undefined;
   turnId?: TurnId | undefined;
   requestId?: string | undefined;
-  assistantItemId?: RuntimeItemId;
-  assistantStarted: boolean;
+  model?: string | undefined;
+  thinkingLevel?: string | undefined;
+  readonly assistantItemIds: Map<string, RuntimeItemId>;
+  activeAssistantItemId: RuntimeItemId | undefined;
+  readonly threadLock: Semaphore.Semaphore;
   readonly toolItems: Map<string, RuntimeItemId>;
   readonly subagentSeen: Set<string>;
   closing: boolean;
   stopped: boolean;
   warnedEscape: boolean;
   outcomeUncertain: boolean;
+  finalized: boolean;
   protocolVersion: number;
 }
 
@@ -127,11 +135,19 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
   const path = yield* Path.Path;
   const crypto = yield* Crypto.Crypto;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const adapterScope = yield* Scope.Scope;
   const makeProcess = options.makeProcess ?? makeOmpRpcProcess;
   const sessions = new Map<ThreadId, SessionContext>();
   const threadLocks = yield* SynchronizedRef.make(new Map<ThreadId, Semaphore.Semaphore>());
-  const events = yield* Queue.sliding<ProviderRuntimeEvent>(OMP_EVENT_QUEUE_CAPACITY);
-  const binaryFingerprint = ompBinaryFingerprint(options.binaryPath);
+  const events = yield* Queue.bounded<ProviderRuntimeEvent>(OMP_EVENT_QUEUE_CAPACITY);
+  const binaryFingerprint = ompBinaryFingerprint(options.binaryPath, options.environment.PATH);
+  const effectiveHomeIdentity =
+    options.homePath?.trim() || options.environment.PI_CODING_AGENT_DIR?.trim() || "";
+  const effectiveProfileIdentity =
+    options.profile?.trim() ||
+    options.environment.OMP_PROFILE?.trim() ||
+    options.environment.PI_PROFILE?.trim() ||
+    "";
   const now = Effect.map(DateTime.now, DateTime.formatIso);
   const uuid = crypto.randomUUIDv4.pipe(
     Effect.mapError(
@@ -154,11 +170,26 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     });
   const withThreadLock = <A, E, R>(threadId: ThreadId, effect: Effect.Effect<A, E, R>) =>
     Effect.flatMap(getThreadLock(threadId), (lock) => lock.withPermit(effect));
+  const releaseThreadLock = (threadId: ThreadId, expected: Semaphore.Semaphore) =>
+    SynchronizedRef.update(threadLocks, (locks) => {
+      if (sessions.has(threadId) || locks.get(threadId) !== expected) return locks;
+      const next = new Map(locks);
+      next.delete(threadId);
+      return next;
+    });
   const locally = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
     );
+  const resumeIdentityFor = (sessionRoot: string, workspace: string) => ({
+    providerInstanceId: String(options.providerInstanceId),
+    sessionRoot,
+    workspace,
+    binaryPathFingerprint: binaryFingerprint,
+    homeIdentity: effectiveHomeIdentity ? path.resolve(effectiveHomeIdentity) : "",
+    profileIdentity: effectiveProfileIdentity,
+  });
 
   const validation = (operation: string, issue: string) =>
     new ProviderAdapterValidationError({ provider: PROVIDER, operation, issue });
@@ -244,13 +275,11 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       }).pipe(Effect.option);
       if (readable._tag === "None") return;
       const built = makeOmpSessionCursor({
-        providerInstanceId: options.providerInstanceId,
-        sessionRoot: ctx.sessionRoot,
+        identity: ctx.resumeIdentity,
         sessionFile,
         ...(sessionId ? { sessionId } : {}),
         ompVersion: ctx.client.version,
         rpcProtocolVersion: ctx.protocolVersion,
-        binaryPathFingerprint: binaryFingerprint,
         ...(ctx.requestId ? { lastRequestId: ctx.requestId } : {}),
       });
       if (!built) return;
@@ -260,11 +289,20 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
 
   const applyUpdate = (ctx: SessionContext, update: OmpSessionUpdate) =>
     Effect.gen(function* () {
+      if (update.type === "process-exited") {
+        if (ctx.finalized) return;
+        ctx.finalized = true;
+        ctx.closing = true;
+        ctx.stopped = true;
+        sessions.delete(ctx.session.threadId);
+        yield* Effect.forkIn(finalizeUnexpectedProcess(ctx), adapterScope);
+        return;
+      }
       if (update.type === "turn-started") {
         ctx.turnId = TurnId.make(update.turnId);
         ctx.outcomeUncertain = false;
-        ctx.assistantItemId = RuntimeItemId.make(`omp-assistant:${update.turnId}`);
-        ctx.assistantStarted = false;
+        ctx.assistantItemIds.clear();
+        ctx.activeAssistantItemId = undefined;
         ctx.toolItems.clear();
         ctx.subagentSeen.clear();
         const base = yield* eventBase(ctx);
@@ -307,46 +345,57 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           updatedAt: yield* now,
         };
         ctx.turnId = undefined;
-        ctx.assistantStarted = false;
+        ctx.activeAssistantItemId = undefined;
         return;
       }
-      if (update.type === "assistant-started" && ctx.assistantItemId) {
-        if (ctx.assistantStarted) return;
-        ctx.assistantStarted = true;
+      if (update.type === "assistant-started" && ctx.turnId) {
+        if (ctx.assistantItemIds.has(update.messageId)) return;
+        const itemId = RuntimeItemId.make(`omp-assistant:${ctx.turnId}:${update.messageId}`);
+        ctx.assistantItemIds.set(update.messageId, itemId);
+        ctx.activeAssistantItemId = itemId;
         const base = yield* eventBase(ctx);
         yield* offer({
           type: "item.started",
           ...base,
-          itemId: ctx.assistantItemId,
+          itemId,
           payload: { itemType: "assistant_message", status: "inProgress" },
         });
         return;
       }
-      if (update.type === "assistant-delta" && ctx.assistantItemId && ctx.turnId) {
+      if (update.type === "assistant-delta" && ctx.turnId) {
+        const itemId = ctx.assistantItemIds.get(update.messageId);
+        if (!itemId) return;
         const base = yield* eventBase(ctx);
         yield* offer({
           type: "content.delta",
           ...base,
-          itemId: ctx.assistantItemId,
+          itemId,
           payload: { streamKind: "assistant_text", delta: update.delta },
         });
         return;
       }
-      if (update.type === "assistant-completed" && ctx.assistantItemId && ctx.assistantStarted) {
+      if (update.type === "assistant-completed" && ctx.turnId) {
+        const itemId = ctx.assistantItemIds.get(update.messageId);
+        if (!itemId) return;
+        ctx.assistantItemIds.delete(update.messageId);
+        if (ctx.activeAssistantItemId === itemId) ctx.activeAssistantItemId = undefined;
         const base = yield* eventBase(ctx);
         yield* offer({
           type: "item.completed",
           ...base,
-          itemId: ctx.assistantItemId,
+          itemId,
           payload: { itemType: "assistant_message", status: "completed" },
         });
         return;
       }
       if (update.type === "reasoning-delta" && ctx.turnId) {
+        const itemId = ctx.assistantItemIds.get(update.messageId);
+        if (!itemId) return;
         const base = yield* eventBase(ctx);
         yield* offer({
           type: "content.delta",
           ...base,
+          itemId,
           payload: { streamKind: "reasoning_text", delta: update.delta },
         });
         return;
@@ -498,6 +547,30 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     return Effect.succeed(ctx);
   };
 
+  const finalizeUnexpectedProcess = (ctx: SessionContext) =>
+    Effect.gen(function* () {
+      if (ctx.turnId) yield* offerUncertain(ctx);
+      yield* ctx.client.close();
+      yield* Scope.close(ctx.scope, Exit.void);
+      yield* releaseOmpSessionLock(ctx.lockPath);
+      yield* releaseThreadLock(ctx.session.threadId, ctx.threadLock);
+      const base = yield* eventBase(ctx);
+      ctx.session = {
+        ...ctx.session,
+        status: "closed",
+        updatedAt: yield* now,
+      };
+      yield* offer({
+        type: "session.exited",
+        ...base,
+        ...refs(ctx),
+        payload: {
+          reason: "Oh My Pi exited before the runtime could confirm the session was idle.",
+          exitKind: "error",
+        },
+      });
+    }).pipe(Effect.ignore);
+
   const stopSessionUnlocked = (threadId: ThreadId) =>
     Effect.gen(function* () {
       const ctx = sessions.get(threadId);
@@ -506,6 +579,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       ctx.outcomeUncertain = false;
       ctx.closing = true;
       ctx.stopped = true;
+      ctx.finalized = true;
       sessions.delete(threadId);
       const exit = ctx.client.shutdown
         ? yield* ctx.client.shutdown.pipe(
@@ -517,6 +591,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       if (ctx.turnId) yield* offerUncertain(ctx);
       yield* Scope.close(ctx.scope, Exit.void);
       yield* releaseOmpSessionLock(ctx.lockPath);
+      yield* releaseThreadLock(threadId, ctx.threadLock);
       const base = yield* eventBase(ctx);
       const tail = exit.stderrTail.trim();
       if (tail.length > 0) {
@@ -548,6 +623,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       withThreadLock(
         input.threadId,
         Effect.gen(function* () {
+          const threadLock = yield* getThreadLock(input.threadId);
           if (input.runtimeMode !== "full-access") {
             return yield* validation(
               "startSession",
@@ -556,7 +632,13 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           }
           if (!input.cwd)
             return yield* validation("startSession", "Oh My Pi requires a workspace directory.");
-          const cwd = input.cwd;
+          const cwd = yield* fs
+            .realPath(input.cwd)
+            .pipe(
+              Effect.mapError((cause) =>
+                request("startSession", "Failed to resolve the Oh My Pi workspace.", cause),
+              ),
+            );
           if (sessions.has(input.threadId)) {
             return yield* validation(
               "startSession",
@@ -600,12 +682,12 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
             Effect.mapError((issue) => validation("startSession", issue)),
           );
           const scope = yield* Scope.make("sequential");
+          const resumeIdentity = resumeIdentityFor(rootReal, cwd);
           const session = yield* Effect.gen(function* () {
             const cursor = input.resumeCursor
               ? yield* parseOmpSessionCursor(input.resumeCursor, {
-                  providerInstanceId: options.providerInstanceId,
-                  sessionRoot: rootReal,
-                  expectedBinaryFingerprint: binaryFingerprint,
+                  identity: resumeIdentity,
+                  rpcProtocolVersion: OMP_RPC_PROTOCOL_V2,
                 }).pipe(Effect.mapError((issue) => validation("startSession", issue)))
               : undefined;
             if (cursor) {
@@ -630,7 +712,9 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
               runtime: undefined as unknown as OmpSessionRuntime,
               scope,
               sessionRoot: rootReal,
+              resumeIdentity,
               lockPath,
+              threadLock,
               session: {
                 provider: PROVIDER,
                 providerInstanceId: options.providerInstanceId,
@@ -641,13 +725,15 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
                 createdAt: yield* now,
                 updatedAt: yield* now,
               },
-              assistantStarted: false,
+              assistantItemIds: new Map(),
+              activeAssistantItemId: undefined,
               toolItems: new Map(),
               subagentSeen: new Set(),
               closing: false,
               stopped: false,
               warnedEscape: false,
               outcomeUncertain: false,
+              finalized: false,
               protocolVersion: OMP_RPC_PROTOCOL_V2,
             };
             sessions.set(input.threadId, ctx);
@@ -689,13 +775,40 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
               });
             }
             if (cursor) {
-              yield* client
+              const switched = yield* client
                 .switchSession(path.resolve(rootReal, cursor.relativeSessionFile))
                 .pipe(Effect.mapError((cause) => request("switch_session", cause.message, cause)));
+              if (isRecord(switched.data) && switched.data.cancelled === true) {
+                return yield* validation(
+                  "startSession",
+                  "Oh My Pi cancelled the requested session switch.",
+                );
+              }
             }
             const state = yield* client
               .getState()
               .pipe(Effect.mapError((cause) => request("get_state", cause.message, cause)));
+            if (cursor) {
+              const expectedSessionFile = path.resolve(rootReal, cursor.relativeSessionFile);
+              if (
+                !state.sessionFile ||
+                path.resolve(state.sessionFile) !== expectedSessionFile ||
+                (cursor.sessionId !== undefined && state.sessionId !== cursor.sessionId)
+              ) {
+                return yield* validation(
+                  "startSession",
+                  "Oh My Pi resumed a different session than the cursor requested.",
+                );
+              }
+            }
+            const initialModel = state.model
+              ? encodeOmpModelSlug(state.model.provider, state.model.id)
+              : undefined;
+            if (initialModel) {
+              ctx.model = initialModel;
+              ctx.session = { ...ctx.session, model: initialModel };
+            }
+            if (state.thinkingLevel) ctx.thinkingLevel = state.thinkingLevel;
             yield* refreshCursor(ctx, state.sessionFile, state.sessionId);
             const commands = yield* client.getCommands().pipe(Effect.option);
             if (commands._tag === "Some") ctx.runtime.replaceCatalog(commands.value.commands);
@@ -718,6 +831,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
                 : releaseOmpSessionLock(lockPath).pipe(
                     Effect.andThen(Effect.sync(() => sessions.delete(input.threadId))),
                     Effect.andThen(Scope.close(scope, Exit.void)),
+                    Effect.andThen(releaseThreadLock(input.threadId, threadLock)),
                   ),
             ),
           );
@@ -775,18 +889,36 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
                 "sendTurn",
                 "Oh My Pi model selection must use provider/model.",
               );
-            yield* ctx.client
-              .setModel(selected.provider, selected.modelId)
-              .pipe(Effect.mapError((cause) => request("set_model", cause.message, cause)));
+            const selectedModel = encodeOmpModelSlug(selected.provider, selected.modelId);
+            if (selectedModel && selectedModel !== ctx.model) {
+              if (steering) {
+                return yield* validation(
+                  "sendTurn",
+                  "Wait for the current Oh My Pi turn before changing its model.",
+                );
+              }
+              yield* ctx.client
+                .setModel(selected.provider, selected.modelId)
+                .pipe(Effect.mapError((cause) => request("set_model", cause.message, cause)));
+              ctx.model = selectedModel;
+              ctx.session = { ...ctx.session, model: selectedModel, updatedAt: yield* now };
+            }
             const level = ompThinkingLevel(
               getModelSelectionStringOptionValue(input.modelSelection, "thinkingLevel"),
             );
-            if (level) {
+            if (level && level !== ctx.thinkingLevel) {
+              if (steering) {
+                return yield* validation(
+                  "sendTurn",
+                  "Wait for the current Oh My Pi turn before changing its thinking level.",
+                );
+              }
               yield* ctx.client
                 .setThinkingLevel(level)
                 .pipe(
                   Effect.mapError((cause) => request("set_thinking_level", cause.message, cause)),
                 );
+              ctx.thinkingLevel = level;
             }
           }
           const images: Array<OmpRpcImage> = [];
@@ -877,12 +1009,14 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
               ? response.data.agentInvoked
               : undefined;
           const requestId = response.id ?? String(turnId);
-          ctx.requestId = requestId;
-          if (ctx.cursor) {
-            ctx.cursor = { ...ctx.cursor, lastRequestId: requestId };
-            ctx.session = { ...ctx.session, resumeCursor: ctx.cursor, updatedAt: yield* now };
+          if (!steering) {
+            ctx.requestId = requestId;
+            if (ctx.cursor) {
+              ctx.cursor = { ...ctx.cursor, lastRequestId: requestId };
+              ctx.session = { ...ctx.session, resumeCursor: ctx.cursor, updatedAt: yield* now };
+            }
           }
-          yield* ctx.runtime.accepted(requestId, agentInvoked);
+          yield* ctx.runtime.accepted(requestId, agentInvoked, steering ? "steer" : "prompt");
           return {
             threadId: input.threadId,
             turnId,
@@ -942,8 +1076,19 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
               ],
               { concurrency: "unbounded" },
             );
-            if (aborted._tag === "Failure" || settled._tag === "None") {
+            if (settled._tag === "None") {
               yield* stopSessionUnlocked(threadId);
+            } else if (aborted._tag === "Failure") {
+              const base = yield* eventBase(ctx);
+              yield* offer({
+                type: "runtime.warning",
+                ...base,
+                ...refs(ctx),
+                payload: {
+                  message:
+                    "Oh My Pi did not acknowledge abort, but the turn reached terminal settlement.",
+                },
+              });
             }
           }),
         ),

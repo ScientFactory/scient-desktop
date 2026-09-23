@@ -25,7 +25,8 @@ export type OmpTurnSignal =
       readonly agentInvoked?: boolean;
     }
   | { readonly type: "prompt-failed"; readonly requestId: string }
-  | { readonly type: "prompt-result"; readonly requestId: string; readonly agentInvoked: boolean }
+  | { readonly type: "prompt-result"; readonly requestId?: string; readonly agentInvoked: boolean }
+  | { readonly type: "steer-accepted" }
   | { readonly type: "agent-start" }
   | { readonly type: "agent-end"; readonly terminal: boolean }
   | { readonly type: "drain-idle" }
@@ -79,11 +80,25 @@ export const reduceOmpTurn = (state: OmpTurnState, signal: OmpTurnSignal): OmpTu
       return { state: { ...next, phase: "accepted" } };
     }
     case "prompt-result":
-      if (state.requestId !== undefined && signal.requestId !== state.requestId) return { state };
-      if (!signal.agentInvoked && !state.sawAgent) {
-        return settle({ ...state, requestId: signal.requestId }, "terminal", "local");
+      if (
+        signal.requestId !== undefined &&
+        state.requestId !== undefined &&
+        signal.requestId !== state.requestId
+      ) {
+        return { state };
       }
-      return { state: { ...state, requestId: signal.requestId } };
+      if (!signal.agentInvoked && !state.sawAgent) {
+        return settle(
+          signal.requestId === undefined ? state : { ...state, requestId: signal.requestId },
+          "terminal",
+          "local",
+        );
+      }
+      return {
+        state: signal.requestId === undefined ? state : { ...state, requestId: signal.requestId },
+      };
+    case "steer-accepted":
+      return { state };
     case "prompt-failed":
       if (state.requestId !== undefined && signal.requestId !== state.requestId) return { state };
       return settle(state, "failed", "failed");

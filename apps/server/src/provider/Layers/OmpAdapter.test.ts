@@ -124,7 +124,7 @@ describe("Oh My Pi adapter", () => {
       const rejected = yield* adapter
         .startSession({
           threadId,
-          cwd: "/workspace",
+          cwd: NodeOS.tmpdir(),
           runtimeMode: "approval-required",
         })
         .pipe(Effect.flip);
@@ -132,12 +132,12 @@ describe("Oh My Pi adapter", () => {
 
       yield* adapter.startSession({
         threadId,
-        cwd: "/workspace",
+        cwd: NodeOS.tmpdir(),
         runtimeMode: "full-access",
       });
       const other = yield* adapter.startSession({
         threadId: ThreadId.make("thread-b"),
-        cwd: "/workspace",
+        cwd: NodeOS.tmpdir(),
         runtimeMode: "full-access",
       });
       NodeAssert.equal(launches.length, 2);
@@ -260,7 +260,7 @@ describe("Oh My Pi adapter", () => {
       const rejected = yield* adapter
         .startSession({
           threadId,
-          cwd: "/workspace",
+          cwd: NodeOS.tmpdir(),
           runtimeMode: "full-access",
           resumeCursor: {
             schemaVersion: 1,
@@ -271,12 +271,12 @@ describe("Oh My Pi adapter", () => {
           },
         })
         .pipe(Effect.flip);
-      NodeAssert.match(rejected.message, /different provider instance/);
+      NodeAssert.match(rejected.message, /recognized session record|different provider instance/);
       NodeAssert.equal(launches, 0);
 
       yield* adapter.startSession({
         threadId,
-        cwd: "/workspace",
+        cwd: NodeOS.tmpdir(),
         runtimeMode: "full-access",
       });
       yield* adapter.sendTurn({ threadId, input: "hello" });
@@ -289,14 +289,7 @@ describe("Oh My Pi adapter", () => {
       NodeAssert.equal(hostResults[0]?.isError, true);
       yield* Queue.end(events);
       yield* waitForReady(
-        adapter
-          .listSessions()
-          .pipe(
-            Effect.map(
-              (current) =>
-                current.find((session) => session.threadId === threadId)?.status === "closed",
-            ),
-          ),
+        adapter.listSessions().pipe(Effect.map((current) => current.length === 0)),
       );
       yield* adapter.stopAll();
     }).pipe(Effect.provide(NodeServices.layer)),
@@ -374,7 +367,7 @@ describe("Oh My Pi adapter", () => {
         makeProcess,
       });
       const threadId = ThreadId.make("thread-commands");
-      yield* adapter.startSession({ threadId, cwd: "/workspace", runtimeMode: "full-access" });
+      yield* adapter.startSession({ threadId, cwd: NodeOS.tmpdir(), runtimeMode: "full-access" });
       const mutator = yield* adapter
         .sendTurn({ threadId, input: "/new", originalInput: "/new" })
         .pipe(Effect.flip);
