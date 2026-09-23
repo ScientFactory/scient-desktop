@@ -116,6 +116,10 @@ describe("real OMP qualification", () => {
         type: "turn.completed",
         payload: { state: "completed" },
       });
+      expect(
+        (yield* adapter.listSessions()).find((session) => session.threadId === threadId)
+          ?.resumeCursor,
+      ).toBeDefined();
       yield* adapter.stopAll();
       expect(yield* adapter.hasSession(threadId)).toBe(false);
       NodeFS.rmSync(root, { recursive: true, force: true });
