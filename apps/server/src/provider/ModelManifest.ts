@@ -208,21 +208,26 @@ export const encodeManifestCache = Schema.encodeEffect(
   ),
 );
 
-/** True when the manifest classifies `slug` as legacy for `driverKind`. */
-function isLegacyModel(
+/** Explicit manifest classification; unknown models keep the provider's signal. */
+function legacyClassification(
   manifest: ModelManifestData,
   driverKind: ProviderDriverKind,
   slug: string,
-): boolean {
-  const family = driverKind === "codex" ? codexModelFamily(slug) : slug;
+): boolean | undefined {
+  const family =
+    driverKind === "codex"
+      ? codexModelFamily(slug)
+      : driverKind === "antigravity"
+        ? slug.replace(/-(low|medium|high)$/, "")
+        : slug;
   const catalog = manifest.providers?.[driverKind]?.models;
   const catalogModel =
     catalog?.find((model) => model.slug === slug) ??
     catalog?.find((model) => model.slug === family);
   if (catalogModel) return catalogModel.status === "legacy";
   const currentModels = manifest.currentModels[driverKind];
-  if (!currentModels) return false;
-  return !currentModels.includes(slug) && !currentModels.includes(family);
+  if (currentModels?.includes(slug) || currentModels?.includes(family)) return false;
+  return undefined;
 }
 
 /**
@@ -299,7 +304,9 @@ export function classifyModels(
 ): ReadonlyArray<ServerProviderModel> {
   return models.map((model) => {
     if (model.isCustom) return model;
-    if (isLegacyModel(manifest, driverKind, model.slug)) {
+    const isLegacy = legacyClassification(manifest, driverKind, model.slug);
+    if (isLegacy === undefined) return model;
+    if (isLegacy) {
       return model.isLegacy ? model : { ...model, isLegacy: true };
     }
     if (!model.isLegacy) return model;
