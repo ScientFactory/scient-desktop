@@ -46,13 +46,16 @@ describe("Scient awareness", () => {
   });
 
   it("mentions Scient skills only when exact skill access is granted", () => {
-    expect(wordCount(SCIENT_SKILLS_AWARENESS)).toBeLessThanOrEqual(85);
+    expect(wordCount(SCIENT_SKILLS_AWARENESS)).toBeLessThanOrEqual(125);
     expect(SCIENT_SKILLS_AWARENESS).toContain("`scient_skills_list`");
     expect(SCIENT_SKILLS_AWARENESS).toContain("`scient_skill_load`");
-    expect(SCIENT_SKILLS_AWARENESS).toContain("Scient guidance available to this task");
+    expect(SCIENT_SKILLS_AWARENESS).toContain("These tools cover Scient skills only");
     expect(SCIENT_SKILLS_AWARENESS).not.toContain("project-specific guidance");
-    expect(SCIENT_SKILLS_AWARENESS).not.toContain("index");
-    expect(SCIENT_SKILLS_AWARENESS).toContain("Do not repeat discovery already done");
+    expect(SCIENT_SKILLS_AWARENESS).toContain("new task may need a new search");
+    expect(SCIENT_SKILLS_AWARENESS).toContain("provider-native skills are separate");
+    expect(SCIENT_SKILLS_AWARENESS).toContain("scope.includesAllSkills");
+    expect(SCIENT_SKILLS_AWARENESS).toContain("Pending or incomplete scope");
+    expect(SCIENT_SKILLS_AWARENESS).toContain("load applicable instructions");
     expect(SCIENT_SKILLS_AWARENESS).toContain("provide guidance and grant no tools or authority");
     expect(SCIENT_SKILLS_AWARENESS).not.toContain("automatic skill");
     expect(SCIENT_SKILLS_AWARENESS).not.toContain("user-selected");
@@ -136,7 +139,7 @@ describe("Scient awareness", () => {
     expect(awareness).toContain("`mcp__t3-code__scient_skills_list`");
     expect(awareness).toContain("`mcp__t3-code__scient_skill_load`");
     expect(awareness).not.toContain("`scient_skills_list`");
-    expect(awareness).toContain("separate from the provider's native skills");
+    expect(awareness).toContain("provider-native skills are separate");
     expect(buildScientAwareness(new Set(), CLAUDE_SCIENT_TOOL_PROJECTION)).toBe(
       SCIENT_CORE_AWARENESS,
     );

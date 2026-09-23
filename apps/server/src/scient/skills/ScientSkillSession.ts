@@ -12,6 +12,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import type { AgentSkillCatalogStatus } from "../operations/AgentInvocationContext.ts";
 import * as ScientSkillPolicy from "./ScientSkillPolicy.ts";
 import * as ScientSkillRegistry from "./ScientSkillRegistry.ts";
 import { resolveEffectiveUserSkillPolicies } from "./ScientSkillEffectivePolicy.ts";
@@ -54,6 +55,7 @@ export interface ScientSkillSessionDiagnostic {
 
 export interface ScientSkillSessionPlan {
   readonly delivery: "mcp" | "none" | "unsupported";
+  readonly catalogStatus: Exclude<AgentSkillCatalogStatus, "pending">;
   readonly projectRoot?: string;
   readonly releases: ReadonlyMap<string, SkillRelease>;
   readonly skills: ReadonlyArray<ScientSkillSessionSkill>;
@@ -86,7 +88,13 @@ export class ScientSkillSessionPlanner extends Context.Reference<ScientSkillSess
   {
     defaultValue: () => ({
       resolve: () =>
-        Effect.succeed({ delivery: "none", releases: new Map(), skills: [], diagnostics: [] }),
+        Effect.succeed({
+          delivery: "none",
+          catalogStatus: "complete",
+          releases: new Map(),
+          skills: [],
+          diagnostics: [],
+        }),
     }),
   },
 ) {}
@@ -122,7 +130,9 @@ const make = Effect.fn("ScientSkillSessionPlanner.make")(function* () {
     "ScientSkillSessionPlanner.resolve",
   )(function* (input) {
     const snapshot = yield* policy.snapshot;
+    const snapshotIsComplete = yield* policy.snapshotIsComplete;
     const diagnostics: ScientSkillSessionDiagnostic[] = [];
+    let projectCatalogReadFailed = false;
     const releases = new Map<
       string,
       {
@@ -185,9 +195,10 @@ const make = Effect.fn("ScientSkillSessionPlanner.make")(function* () {
       const projectCatalog: ProjectSkillCatalog = yield* Effect.tryPromise(() =>
         loadProjectSkillCatalog(requestedProjectRoot),
       ).pipe(
-        Effect.orElseSucceed(
-          () =>
-            ({
+        Effect.catch(() =>
+          Effect.sync(() => {
+            projectCatalogReadFailed = true;
+            return {
               rootPath: requestedProjectRoot,
               releases: [],
               diagnostics: [
@@ -197,7 +208,8 @@ const make = Effect.fn("ScientSkillSessionPlanner.make")(function* () {
                   message: "Project skills could not be inspected.",
                 },
               ],
-            }) satisfies ProjectSkillCatalog,
+            } satisfies ProjectSkillCatalog;
+          }),
         ),
       );
       projectRoot = projectCatalog.rootPath;
@@ -205,7 +217,7 @@ const make = Effect.fn("ScientSkillSessionPlanner.make")(function* () {
         // Ordinary T3 projects are valid workspaces but have no Scient identity
         // and therefore no project-skill namespace. That expected state is
         // silent during turns; management surfaces may still explain it.
-        if (diagnostic.code === "invalid-project") continue;
+        if (diagnostic.code === "not-initialized-project") continue;
         diagnostics.push({
           code: "project-skill-invalid",
           message: `${diagnostic.path}: ${diagnostic.message}`,
@@ -239,9 +251,20 @@ const make = Effect.fn("ScientSkillSessionPlanner.make")(function* () {
       }
     }
 
+    const catalogStatus = (): Exclude<AgentSkillCatalogStatus, "pending"> =>
+      !snapshotIsComplete ||
+      registry.catalog.diagnostics.length > 0 ||
+      projectCatalogReadFailed ||
+      diagnostics.some(
+        ({ code }) => code !== "project-lock-untrusted" && code !== "provider-unsupported",
+      )
+        ? "incomplete"
+        : "complete";
+
     if (releases.size === 0) {
       return {
         delivery: "none" as const,
+        catalogStatus: catalogStatus(),
         ...(projectRoot ? { projectRoot } : {}),
         releases: new Map<string, SkillRelease>(),
         skills: [],
@@ -258,6 +281,7 @@ const make = Effect.fn("ScientSkillSessionPlanner.make")(function* () {
       });
       return {
         delivery: "unsupported" as const,
+        catalogStatus: "incomplete" as const,
         ...(projectRoot ? { projectRoot } : {}),
         releases: new Map<string, SkillRelease>(),
         skills: [],
@@ -295,6 +319,7 @@ const make = Effect.fn("ScientSkillSessionPlanner.make")(function* () {
     if (skills.length === 0) {
       return {
         delivery: "none" as const,
+        catalogStatus: catalogStatus(),
         ...(projectRoot ? { projectRoot } : {}),
         releases: new Map<string, SkillRelease>(),
         skills: [],
@@ -303,6 +328,7 @@ const make = Effect.fn("ScientSkillSessionPlanner.make")(function* () {
     }
     return {
       delivery: "mcp" as const,
+      catalogStatus: catalogStatus(),
       ...(projectRoot ? { projectRoot } : {}),
       releases: new Map(
         skills.map((skill) => [skill.releaseKey, releases.get(skill.releaseKey)!.release]),

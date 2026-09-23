@@ -45,6 +45,12 @@ const resolveAllowedRelease = Effect.fn("ScientSkillsToolkit.resolveAllowedRelea
   requestedName: string,
 ) {
   const skillScope = yield* requireSkillScope();
+  if (skillScope.catalog?.status === "pending") {
+    return yield* toolError(
+      "not-found",
+      "The Scient skill scope is not prepared yet. Retry after this turn starts.",
+    );
+  }
   const matches = skillScope.skills.filter((skill) => skill.name === requestedName);
   if (matches.length === 0) {
     return yield* toolError(
@@ -77,6 +83,16 @@ export const listScientSkillsForInvocation = Effect.fn("ScientSkillsToolkit.list
   input: ScientSkillListInput = {},
 ) {
   const skillScope = yield* requireSkillScope();
+  const scope = skillScope.catalog ?? { status: "pending" as const };
+  if (scope.status === "pending") {
+    return {
+      skills: [],
+      total: 0,
+      nextOffset: null,
+      scope: { status: "pending" as const, includesAllSkills: false },
+      hint: "The Scient skill scope has not been prepared for this turn. This is not evidence that no skills are available; retry discovery after turn setup.",
+    };
+  }
   const descriptorByReleaseKey = new Map(
     skillScope.skills.map((skill) => [skill.releaseKey, skill] as const),
   );
@@ -114,18 +130,27 @@ export const listScientSkillsForInvocation = Effect.fn("ScientSkillsToolkit.list
   const matches = browseFallback ? skills : matched;
   const offset = input.offset ?? 0;
   const page = matches.slice(offset, offset + (input.limit ?? 20));
+  const nextOffset = offset + page.length < matches.length ? offset + page.length : null;
+  const includesAllSkills =
+    scope.status === "complete" && terms.length === 0 && offset === 0 && nextOffset === null;
+  const hint =
+    scope.status === "incomplete"
+      ? "Scient skill discovery was incomplete for this turn. Results may be partial, and an empty result does not establish that no Scient skills are available. Retry discovery after a new turn scope is prepared."
+      : skills.length === 0
+        ? "No Scient skills are available in this prepared turn scope."
+        : browseFallback
+          ? "No keyword matches; showing available skills to browse instead. Load any applicable skill by name. Pagination uses this browse order."
+          : undefined;
   return {
     skills: page,
     total: matches.length,
-    nextOffset: offset + page.length < matches.length ? offset + page.length : null,
-    ...(browseFallback || skills.length === 0
-      ? {
-          hint:
-            skills.length === 0
-              ? "No Scient skills are available in this turn."
-              : "No keyword matches; showing available skills to browse instead. Load any applicable skill by name. Pagination uses this browse order.",
-        }
-      : {}),
+    nextOffset,
+    scope: {
+      status: scope.status,
+      ...(scope.digest ? { digest: scope.digest } : {}),
+      includesAllSkills,
+    },
+    ...(hint ? { hint } : {}),
   };
 });
 

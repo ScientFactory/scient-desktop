@@ -63,7 +63,7 @@ export const ScientSkillResource = Schema.Struct({
 
 export const ScientSkillsListTool = Tool.make("scient_skills_list", {
   description:
-    "Discover Scient guidance for a new task. Omit query to browse, or search using short keywords in skill names/descriptions. If no keywords match, returns a labeled browse page instead; search never restricts loading. Results are summaries, not instructions: load applicable skills with scient_skill_load before following them. Default page size 20, maximum 50; use nextOffset when more results are needed. Provider-native skills remain separate.",
+    "Discover Scient-managed guidance in this turn's authorized scope; provider-native skills are separate. Omit query to browse, or search short keywords in names/descriptions. A keyword miss returns a labeled browse page; search never restricts loading. Results are summaries only: load applicable instructions with scient_skill_load before following them. The scope digest changes with visible releases, selections, or invocation policy; it is freshness metadata, not authority. Reuse visible summaries only when the scope is complete, its digest matches, and they suffice. Query and paged results are not a full catalog unless scope.includesAllSkills is true. A new task may need a new search even when the digest matches; rediscover after context loss or uncertainty. Pending or incomplete scope status is not evidence that no skills are available. Default page size 20, maximum 50; use nextOffset for more results.",
   parameters: ScientSkillListInput,
   success: Schema.Struct({
     skills: Schema.Array(
@@ -76,6 +76,11 @@ export const ScientSkillsListTool = Tool.make("scient_skills_list", {
     ).pipe(Schema.check(Schema.isMaxLength(50))),
     total: Schema.Int,
     nextOffset: Schema.NullOr(Schema.Int),
+    scope: Schema.Struct({
+      status: Schema.Literals(["pending", "complete", "incomplete"]),
+      digest: Schema.optional(Digest),
+      includesAllSkills: Schema.Boolean,
+    }),
     hint: Schema.optional(NonEmptyString),
   }),
   failure: ScientSkillToolError,

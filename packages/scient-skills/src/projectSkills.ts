@@ -2,7 +2,7 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
-import { readScientProjectIdentity } from "@scientfactory/project-init";
+import { inspectScientProject, readScientProjectIdentity } from "@scientfactory/project-init";
 
 import type { SkillRelease } from "./model.ts";
 import { loadProjectSkillRelease } from "./release.ts";
@@ -14,6 +14,7 @@ export const MAX_PROJECT_SKILL_BYTES = 25 * 1024 * 1024;
 export interface ProjectSkillDiagnostic {
   readonly code:
     | "invalid-project"
+    | "not-initialized-project"
     | "invalid-skills-directory"
     | "invalid-skill"
     | "project-skill-limit";
@@ -63,16 +64,23 @@ export async function loadProjectSkillCatalog(root: string): Promise<ProjectSkil
     rootPath = await NodeFSP.realpath(requestedRoot);
     projectId = (await readScientProjectIdentity(rootPath)).projectId;
   } catch (error) {
+    let inspection: Awaited<ReturnType<typeof inspectScientProject>> | undefined;
+    try {
+      inspection = await inspectScientProject(requestedRoot);
+    } catch {
+      // The original identity error below remains the actionable diagnostic.
+    }
+    const notInitialized = inspection?.state === "ordinary";
     return frozenCatalog({
-      rootPath: requestedRoot,
+      rootPath: inspection?.root ?? requestedRoot,
       diagnostics: [
         {
-          code: "invalid-project",
+          code: notInitialized ? "not-initialized-project" : "invalid-project",
           path: ".scient/project.json",
           message:
-            error instanceof Error
-              ? error.message
-              : "This folder is not an initialized Scient project.",
+            (notInitialized ? "This folder is not an initialized Scient project." : undefined) ??
+            inspection?.issues[0]?.message ??
+            (error instanceof Error ? error.message : "Project identity could not be read."),
         },
       ],
     });

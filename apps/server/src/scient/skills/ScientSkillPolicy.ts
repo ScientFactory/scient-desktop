@@ -130,6 +130,8 @@ export class ScientSkillPolicyError extends Schema.TaggedError<ScientSkillPolicy
 
 export interface ScientSkillPolicyShape {
   readonly snapshot: Effect.Effect<ScientSkillPolicySnapshot>;
+  /** False when persisted preferences could not be read and the safe empty fallback was used. */
+  readonly snapshotIsComplete: Effect.Effect<boolean>;
   readonly setUserSkillActivation: (
     release: SkillReleaseRef,
     active: boolean,
@@ -206,9 +208,13 @@ function normalizeSnapshot(snapshot: ScientSkillPolicySnapshot): ScientSkillPoli
   });
 }
 
-function makeSnapshotService(snapshot: ScientSkillPolicySnapshot): ScientSkillPolicyShape {
+function makeSnapshotService(
+  snapshot: ScientSkillPolicySnapshot,
+  snapshotIsComplete = true,
+): ScientSkillPolicyShape {
   return {
     snapshot: Effect.succeed(normalizeSnapshot(snapshot)),
+    snapshotIsComplete: Effect.succeed(snapshotIsComplete),
     setUserSkillActivation: () => Effect.void,
     setProjectSkillPreference: () => Effect.void,
     trustProjectLock: (projectRoot) =>
@@ -222,8 +228,8 @@ function makeSnapshotService(snapshot: ScientSkillPolicySnapshot): ScientSkillPo
   };
 }
 
-export const layerFromSnapshot = (snapshot: ScientSkillPolicySnapshot) =>
-  Layer.succeed(ScientSkillPolicy, makeSnapshotService(snapshot));
+export const layerFromSnapshot = (snapshot: ScientSkillPolicySnapshot, snapshotIsComplete = true) =>
+  Layer.succeed(ScientSkillPolicy, makeSnapshotService(snapshot, snapshotIsComplete));
 
 const make = Effect.fn("ScientSkillPolicy.make")(function* () {
   const config = yield* ServerConfig.ServerConfig;
@@ -268,12 +274,17 @@ const make = Effect.fn("ScientSkillPolicy.make")(function* () {
         cause,
       }),
   }).pipe(
+    Effect.map((snapshot) => ({ snapshot, complete: true })),
     Effect.catch((error) =>
-      Effect.logWarning(error.message, { cause: error.cause }).pipe(Effect.as(EMPTY_POLICY)),
+      Effect.logWarning(error.message, { cause: error.cause }).pipe(
+        Effect.as({ snapshot: EMPTY_POLICY, complete: false }),
+      ),
     ),
   );
 
-  const state = yield* Ref.make(yield* load);
+  const initial = yield* load;
+  const state = yield* Ref.make(initial.snapshot);
+  const snapshotIsComplete = yield* Ref.make(initial.complete);
   const writePermit = yield* Semaphore.make(1);
 
   const persist = Effect.fn("ScientSkillPolicy.persist")(function* (
@@ -318,6 +329,7 @@ const make = Effect.fn("ScientSkillPolicy.make")(function* () {
         }),
     });
     yield* Ref.set(state, normalized);
+    yield* Ref.set(snapshotIsComplete, true);
   });
 
   const update = (transform: (current: ScientSkillPolicySnapshot) => ScientSkillPolicySnapshot) =>
@@ -336,6 +348,7 @@ const make = Effect.fn("ScientSkillPolicy.make")(function* () {
 
   return ScientSkillPolicy.of({
     snapshot: Ref.get(state),
+    snapshotIsComplete: Ref.get(snapshotIsComplete),
     setUserSkillActivation: (release, active, invocationPolicy) =>
       update((current) => ({
         ...current,

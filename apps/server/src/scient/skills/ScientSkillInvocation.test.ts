@@ -97,10 +97,12 @@ describe("turn-local Scient skill routing", () => {
     expect(result.input).not.toContain(automatic.releaseKey);
     expect(result.input).not.toContain(explicit.releaseKey);
     expect(result.input).toContain("grant no additional tools or permissions");
-    expect(result.skillScope).toEqual({
+    expect(result.skillScope).toMatchObject({
       releases,
       skills: [explicit, automatic],
+      catalog: { status: "complete" },
     });
+    expect(result.skillScope.catalog?.digest).toMatch(/^sha256:[0-9a-f]{64}$/u);
   });
 
   it("keeps unselected explicit, inactive, and partial names out of the turn", () => {
@@ -129,9 +131,10 @@ describe("turn-local Scient skill routing", () => {
     expect(result.input).toContain(`{"name":"${authoring.name}"}`);
     expect(result.input).not.toContain(authoring.releaseKey);
     expect(result.input?.match(new RegExp(authoring.name, "gu"))).toHaveLength(3);
-    expect(result.skillScope).toEqual({
+    expect(result.skillScope).toMatchObject({
       releases: new Map([[authoring.releaseKey, authoringRelease]]),
       skills: [authoring],
+      catalog: { status: "complete" },
     });
   });
 
@@ -158,10 +161,49 @@ describe("turn-local Scient skill routing", () => {
   });
 
   it("returns an empty, inert scope when no skills are active", () => {
-    expect(prepareScientSkillTurn("Review this workspace.", [], new Map())).toEqual({
+    const result = prepareScientSkillTurn("Review this workspace.", [], new Map());
+    expect(result).toMatchObject({
       input: "Review this workspace.",
-      skillScope: { releases: new Map(), skills: [] },
+      skillScope: {
+        releases: new Map(),
+        skills: [],
+        catalog: { status: "complete" },
+      },
     });
+    expect(result.skillScope.catalog?.digest).toMatch(/^sha256:[0-9a-f]{64}$/u);
+  });
+
+  it("versions the exact visible scope without treating the digest as authority", () => {
+    const ordinary = prepareScientSkillTurn("First task.", skills, releases);
+    const sameScope = prepareScientSkillTurn("A different task.", skills, releases);
+    const selected = prepareScientSkillTurn(
+      "Use the selected skill.",
+      skills,
+      releases,
+      undefined,
+      [explicit.name],
+    );
+    const changedRelease = {
+      ...automaticRelease,
+      version: "0.2.0",
+      digest: `sha256:${"b".repeat(64)}`,
+    };
+    const changedSkill = {
+      ...automatic,
+      releaseKey: skillReleaseKey(changedRelease),
+    };
+    const changed = prepareScientSkillTurn(
+      "First task.",
+      [changedSkill],
+      new Map([[changedSkill.releaseKey, changedRelease]]),
+    );
+
+    expect(ordinary.skillScope.catalog?.digest).toBe(sameScope.skillScope.catalog?.digest);
+    expect(selected.skillScope.catalog?.digest).not.toBe(ordinary.skillScope.catalog?.digest);
+    expect(changed.skillScope.catalog?.digest).not.toBe(ordinary.skillScope.catalog?.digest);
+    expect(ordinary.skillScope.skills).toEqual([automatic]);
+    expect(selected.skillScope.skills).toEqual([explicit, automatic]);
+    expect(changed.skillScope.skills).toEqual([changedSkill]);
   });
 
   it("preserves ordinary text, native commands and promptless input exactly", () => {

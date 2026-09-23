@@ -1028,7 +1028,15 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         threadId,
         providerInstanceId,
         capabilities,
-        ...(supportsScientSkills ? { skillScope: { releases: new Map(), skills: [] } } : {}),
+        ...(supportsScientSkills
+          ? {
+              skillScope: {
+                catalog: { status: "pending" as const },
+                releases: new Map(),
+                skills: [],
+              },
+            }
+          : {}),
       });
       if (credential) {
         const deviceEnvironment = capabilities.has("device")
@@ -1835,6 +1843,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         skillPlan.delivery === "mcp" ? skillPlan.releases : new Map(),
         skillProjection,
         parsed.selectedScientSkillNames ?? [],
+        skillPlan.catalogStatus,
       );
       if ((skillTurn.input?.length ?? 0) > PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
         return yield* toValidationError(

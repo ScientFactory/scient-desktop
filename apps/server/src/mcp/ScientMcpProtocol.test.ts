@@ -45,7 +45,15 @@ const scope = (actor: string): McpInvocationScope => ({
   capabilities: new Set(
     actor === "browser" ? ["preview"] : actor === "workspace" ? ["sources:read"] : ["skills:read"],
   ),
-  ...(actor === "skills" ? { skillScope: { skills: [], releases: new Map() } } : {}),
+  ...(actor === "skills"
+    ? {
+        skillScope: {
+          catalog: { status: "complete" as const, digest: `sha256:${"a".repeat(64)}` },
+          skills: [],
+          releases: new Map(),
+        },
+      }
+    : {}),
 });
 
 const decodeToolList = Schema.decodeUnknownEffect(

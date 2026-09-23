@@ -5043,6 +5043,7 @@ describe("agent browser access", () => {
     threadId: ThreadId,
     skillPlan: ScientSkillSession.ScientSkillSessionPlan = {
       delivery: "none",
+      catalogStatus: "complete",
       releases: new Map(),
       skills: [],
       diagnostics: [],
@@ -5067,6 +5068,10 @@ describe("agent browser access", () => {
         readonly threadId: ThreadId;
         readonly capabilities: ReadonlySet<string>;
         readonly skillScope?: {
+          readonly catalog?: {
+            readonly status: "pending" | "complete" | "incomplete";
+            readonly digest?: string;
+          };
           readonly releases: ReadonlyMap<string, (typeof BUILT_IN_SKILL_RELEASES)[number]>;
           readonly skills: ReadonlyArray<ScientSkillSession.ScientSkillSessionSkill>;
         };
@@ -5142,6 +5147,9 @@ describe("agent browser access", () => {
               ...(request.skillScope
                 ? {
                     skillScope: {
+                      ...(request.skillScope.catalog
+                        ? { catalog: { ...request.skillScope.catalog } }
+                        : {}),
                       releases: new Map(request.skillScope.releases),
                       skills: request.skillScope.skills.map((skill) => ({ ...skill })),
                     },
@@ -5240,6 +5248,7 @@ describe("agent browser access", () => {
       };
       let skillPlan: ScientSkillSession.ScientSkillSessionPlan = {
         delivery: "mcp",
+        catalogStatus: "complete",
         projectRoot,
         releases: new Map([
           [automatic.releaseKey, BUILT_IN_SKILL_RELEASES[0]!],
@@ -5252,6 +5261,10 @@ describe("agent browser access", () => {
         Parameters<ScientSkillSession.ScientSkillSessionPlannerShape["resolve"]>[0]
       > = [];
       const replaced: Array<{
+        readonly catalog?: {
+          readonly status: "pending" | "complete" | "incomplete";
+          readonly digest?: string;
+        };
         readonly releases: ReadonlyMap<string, (typeof BUILT_IN_SKILL_RELEASES)[number]>;
         readonly skills: ReadonlyArray<ScientSkillSession.ScientSkillSessionSkill>;
       }> = [];
@@ -5268,6 +5281,7 @@ describe("agent browser access", () => {
         replaceMcpSkillScope: (_threadId, scope) =>
           Effect.sync(() => {
             replaced.push({
+              ...(scope.catalog ? { catalog: { ...scope.catalog } } : {}),
               releases: new Map(scope.releases),
               skills: scope.skills.map((skill) => ({ ...skill })),
             });
@@ -5312,6 +5326,7 @@ describe("agent browser access", () => {
 
         skillPlan = {
           delivery: "mcp",
+          catalogStatus: "complete",
           projectRoot,
           releases: new Map([[explicit.releaseKey, BUILT_IN_SKILL_RELEASES[1]!]]),
           skills: [explicit],
@@ -5451,6 +5466,11 @@ describe("agent browser access", () => {
         replaced.slice(0, 3).map((scope) => new Set(scope.releases.keys())),
         [new Set([automatic.releaseKey]), new Set([explicit.releaseKey]), new Set<string>()],
       );
+      assert.deepEqual(
+        replaced.slice(0, 3).map((scope) => scope.catalog?.status),
+        ["complete", "complete", "complete"],
+      );
+      assert.notEqual(replaced[0]?.catalog?.digest, replaced[1]?.catalog?.digest);
       const sent = codex.sendTurn.mock.calls.map((call) => call[0].input ?? "");
       assert.equal(sent[0], "Is this workspace organized?");
       assert.notInclude(sent[0] ?? "", `{"name":"${explicit.name}"}`);
@@ -5481,7 +5501,11 @@ describe("agent browser access", () => {
             "sources:write",
             "skills:read",
           ]),
-          skillScope: { releases: new Map(), skills: [] },
+          skillScope: {
+            catalog: { status: "pending" },
+            releases: new Map(),
+            skills: [],
+          },
         },
       ]);
     }).pipe(Effect.provide(NodeServices.layer)),
@@ -5505,7 +5529,11 @@ describe("agent browser access", () => {
             "sources:write",
             "skills:read",
           ]),
-          skillScope: { releases: new Map(), skills: [] },
+          skillScope: {
+            catalog: { status: "pending" },
+            releases: new Map(),
+            skills: [],
+          },
         },
       ]);
     }).pipe(Effect.provide(NodeServices.layer)),
@@ -5550,7 +5578,11 @@ describe("agent browser access", () => {
                 "sources:write",
                 "skills:read",
               ]),
-              skillScope: { releases: new Map(), skills: [] },
+              skillScope: {
+                catalog: { status: "pending" },
+                releases: new Map(),
+                skills: [],
+              },
             },
           ]);
         }).pipe(Effect.provide(NodeServices.layer)),
@@ -5610,6 +5642,7 @@ describe("agent browser access", () => {
         threadId,
         {
           delivery: "mcp",
+          catalogStatus: "complete",
           projectRoot,
           releases: new Map([[releaseKey, BUILT_IN_SKILL_RELEASES[0]!]]),
           skills,
@@ -5631,6 +5664,7 @@ describe("agent browser access", () => {
             "skills:read",
           ]),
           skillScope: {
+            catalog: { status: "pending" },
             releases: new Map(),
             skills: [],
           },

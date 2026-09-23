@@ -91,6 +91,32 @@ describe("Scient skill policy", () => {
     }),
   );
 
+  it.effect("marks a failed persisted-policy read incomplete instead of authoritative empty", () =>
+    Effect.gen(function* () {
+      const baseDir = yield* Effect.promise(fixture);
+      const configLayer = ServerConfig.layerTest(process.cwd(), baseDir).pipe(
+        Layer.provide(NodeServices.layer),
+      );
+      const config = yield* ServerConfig.ServerConfig.pipe(Effect.provide(configLayer));
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(config.stateDir, { recursive: true });
+        await NodeFSP.writeFile(NodePath.join(config.stateDir, "scient-skills.json"), "not-json\n");
+      });
+
+      const complete = yield* Effect.gen(function* () {
+        const policy = yield* ScientSkillPolicy.ScientSkillPolicy;
+        expect(yield* policy.snapshot).toEqual({
+          userSkills: [],
+          projectSkills: [],
+          trustedProjects: [],
+        });
+        return yield* policy.snapshotIsComplete;
+      }).pipe(Effect.provide(ScientSkillPolicy.layer.pipe(Layer.provide(configLayer))));
+
+      expect(complete).toBe(false);
+    }),
+  );
+
   it.effect("records and revokes app-owned trust for one exact project lock", () =>
     Effect.gen(function* () {
       const baseDir = yield* Effect.promise(fixture);

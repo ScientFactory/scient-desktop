@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off -- The server computes a non-authorizing scope freshness digest.
+import * as NodeCrypto from "node:crypto";
+
 import type { SkillRelease } from "@scientfactory/scient-skills";
 
 import type {
@@ -33,6 +36,7 @@ export function prepareScientSkillTurn(
   activeReleases: ReadonlyMap<string, SkillRelease> | undefined,
   projection: ScientSkillTurnProjection = DEFAULT_PROJECTION,
   selectedNames: ReadonlyArray<string> = [],
+  catalogStatus: "complete" | "incomplete" = "complete",
 ): PreparedScientSkillTurn {
   const available = (activeSkills ?? []).filter((skill) => activeReleases?.has(skill.releaseKey));
   const byName = new Map(available.map((skill) => [skill.name, skill] as const));
@@ -60,6 +64,24 @@ export function prepareScientSkillTurn(
             ? 1
             : 0,
   );
+  const catalogDigest = `sha256:${NodeCrypto.createHash("sha256")
+    .update(
+      JSON.stringify(
+        skills.map((skill) => {
+          const release = activeReleases!.get(skill.releaseKey)!;
+          return [
+            release.id,
+            release.version,
+            release.origin,
+            release.digest,
+            skill.name,
+            skill.activationScope,
+            skill.invocationPolicy,
+          ];
+        }),
+      ),
+    )
+    .digest("hex")}`;
   const instructions: string[] = [];
   // Automatic discovery belongs to the stable skill tools, not user input.
   // Only structured, explicit selections need turn-local orientation. Never
@@ -94,6 +116,7 @@ export function prepareScientSkillTurn(
   return {
     input: runtimeInstruction ? [input, runtimeInstruction].filter(Boolean).join("\n\n") : input,
     skillScope: {
+      catalog: { status: catalogStatus, digest: catalogDigest },
       releases: new Map(
         skills.map((skill) => [skill.releaseKey, activeReleases!.get(skill.releaseKey)!] as const),
       ),

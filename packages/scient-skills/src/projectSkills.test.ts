@@ -91,7 +91,7 @@ describe("project-scoped Scient skills", () => {
 
     expect(catalog.releases).toEqual([]);
     expect(catalog.diagnostics).toEqual([
-      expect.objectContaining({ code: "invalid-project", path: ".scient/project.json" }),
+      expect.objectContaining({ code: "not-initialized-project", path: ".scient/project.json" }),
     ]);
   });
 
