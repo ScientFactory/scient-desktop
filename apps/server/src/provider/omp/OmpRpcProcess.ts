@@ -102,7 +102,7 @@ const childEnv = (
   return next;
 };
 
-const redactTail = (
+export const redactOmpDiagnostic = (
   tail: string,
   env: Readonly<Record<string, string | undefined>> | undefined,
 ): string => {
@@ -236,7 +236,7 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
       return {
         code,
         forced,
-        stderrTail: redactTail(yield* Ref.get(stderrTail), options.env),
+        stderrTail: redactOmpDiagnostic(yield* Ref.get(stderrTail), options.env),
       };
     }).pipe(
       Effect.tap((info) => Deferred.succeed(exitInfo, info)),

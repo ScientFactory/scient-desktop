@@ -7,6 +7,7 @@ import * as Stream from "effect/Stream";
 import type { OmpRpcClient, OmpRpcNotification } from "effect-omp-rpc/client";
 import type { OmpRpcEvent } from "effect-omp-rpc/schema";
 import { isRecord } from "effect-omp-rpc/schema";
+import { encodeOmpModelSlug } from "./OmpModel.ts";
 
 import {
   compileOmpCommandCatalog,
@@ -61,6 +62,7 @@ export type OmpSessionUpdate =
       readonly name: string;
       readonly status: "inProgress" | "completed" | "failed";
       readonly detail?: string;
+      readonly data?: unknown;
     }
   | {
       readonly type: "subagent";
@@ -81,6 +83,7 @@ export type OmpSessionUpdate =
   | { readonly type: "question-resolved"; readonly id: string }
   | { readonly type: "questions-cleared"; readonly ids: ReadonlyArray<string> }
   | { readonly type: "compacted" }
+  | { readonly type: "model-changed"; readonly model?: string; readonly thinkingLevel?: string }
   | { readonly type: "warning"; readonly message: string }
   | { readonly type: "error"; readonly message: string }
   | { readonly type: "process-exited" }
@@ -134,7 +137,17 @@ const clip = (value: string | undefined): string | undefined => {
 const detailText = (value: unknown): string | undefined => {
   if (typeof value === "string") return clip(value);
   if (!isRecord(value)) return undefined;
-  return clip(text(value.text) ?? text(value.message) ?? text(value.output));
+  const direct = text(value.text) ?? text(value.message) ?? text(value.output);
+  if (direct) return clip(direct);
+  if (typeof value.content === "string") return clip(value.content);
+  if (Array.isArray(value.content)) {
+    const content = value.content.flatMap((part) => {
+      if (!isRecord(part) || typeof part.text !== "string") return [];
+      return [part.text];
+    });
+    if (content.length > 0) return clip(content.join(""));
+  }
+  return undefined;
 };
 
 const messageText = (message: unknown): string | undefined => {
@@ -254,8 +267,6 @@ const ignoredLifecycleEvents = new Set([
   "auto_retry_end",
   "retry_fallback_applied",
   "retry_fallback_succeeded",
-  "model_changed",
-  "thinking_level_changed",
   "config_update",
   "config_warnings_changed",
   "advisor_cost_changed",
@@ -441,9 +452,9 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         !id ||
         (method !== "select" && method !== "confirm" && method !== "input" && method !== "editor")
       ) {
-        if (id) {
-          yield* input.client.extensionUiResponse({ id, cancelled: true }).pipe(Effect.ignore);
-        }
+        // Notification-style extension UI methods do not expect a response.
+        // In particular, do not acknowledge setWidget/setTitle/open_url as if
+        // they were interactive questions.
         return;
       }
       const options = Array.isArray(event.options)
@@ -477,7 +488,11 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         id,
         method,
         title: text(event.title) ?? "Oh My Pi",
-        message: text(event.message) ?? text(event.placeholder) ?? "Choose a response.",
+        message:
+          text(event.message) ??
+          text(event.placeholder) ??
+          text(event.prefill) ??
+          "Choose a response.",
         options: questionOptions,
       });
     });
@@ -507,6 +522,25 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
           type: "prompt-result",
           ...(event.id ? { requestId: event.id } : {}),
           agentInvoked: event.agentInvoked,
+        });
+        return;
+      }
+      if (event.type === "model_changed" || event.type === "thinking_level_changed") {
+        const state = yield* input.client.getState().pipe(Effect.exit);
+        if (state._tag === "Failure") {
+          yield* publish({
+            type: "warning",
+            message: "Oh My Pi changed model state but did not report a readable state.",
+          });
+          return;
+        }
+        const model = state.value.model
+          ? encodeOmpModelSlug(state.value.model.provider, state.value.model.id)
+          : undefined;
+        yield* publish({
+          type: "model-changed",
+          ...(model ? { model } : {}),
+          ...(state.value.thinkingLevel ? { thinkingLevel: state.value.thinkingLevel } : {}),
         });
         return;
       }
@@ -577,6 +611,9 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
           status:
             event.type === "tool_execution_end" ? (failed ? "failed" : "completed") : "inProgress",
           ...(detail ? { detail } : {}),
+          ...(event.result !== undefined || event.partialResult !== undefined
+            ? { data: event.result ?? event.partialResult }
+            : {}),
         });
         return;
       }

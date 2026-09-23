@@ -418,6 +418,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           status: update.status,
           title: update.name,
           ...(update.detail ? { detail: update.detail } : {}),
+          ...(update.data !== undefined ? { data: update.data } : {}),
         };
         yield* offer({
           type:
@@ -523,6 +524,16 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       if (update.type === "compacted") {
         const base = yield* eventBase(ctx);
         yield* offer({ type: "thread.state.changed", ...base, payload: { state: "compacted" } });
+        return;
+      }
+      if (update.type === "model-changed") {
+        if (update.model) ctx.model = update.model;
+        if (update.thinkingLevel) ctx.thinkingLevel = update.thinkingLevel;
+        ctx.session = {
+          ...ctx.session,
+          ...(update.model ? { model: update.model } : {}),
+          updatedAt: yield* now,
+        };
         return;
       }
       if (update.type === "warning") {

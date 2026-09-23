@@ -4,16 +4,16 @@ import { compileOmpCommandCatalog, ompCommandDecision } from "./OmpCommandPolicy
 
 describe("Oh My Pi command policy", () => {
   const catalog = compileOmpCommandCatalog([
-    { name: "review", description: "Review the diff", aliases: ["rv"] },
+    { name: "help", description: "Show help", aliases: ["h"] },
     { name: "new", aliases: ["n"] },
     { name: "session", description: "Session operations" },
     { name: "compact" },
   ]);
 
   it("advertises useful commands and hides session mutators", () => {
-    expect(catalog.advertised.map((command) => command.name)).toEqual(["review", "compact"]);
-    expect(ompCommandDecision("/review the patch", catalog)).toBe("allowed");
-    expect(ompCommandDecision("/rv", catalog)).toBe("allowed");
+    expect(catalog.advertised.map((command) => command.name)).toEqual(["help", "compact"]);
+    expect(ompCommandDecision("/help the patch", catalog)).toBe("allowed");
+    expect(ompCommandDecision("/h", catalog)).toBe("allowed");
     expect(ompCommandDecision("/compact", catalog)).toBe("allowed");
     expect(ompCommandDecision("plain text", catalog)).toBe("not-a-command");
   });

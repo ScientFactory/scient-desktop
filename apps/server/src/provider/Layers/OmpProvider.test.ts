@@ -57,7 +57,7 @@ const process = (overrides: Partial<OmpRpcProcess> = {}): OmpRpcProcess => ({
   getCommands: () =>
     Effect.succeed({
       commands: [
-        { name: "review", description: "Review" },
+        { name: "help", description: "Help" },
         { name: "compact", description: "Compact" },
         { name: "new", description: "New" },
         { name: "export", description: "Export" },
@@ -99,7 +99,7 @@ describe("Oh My Pi provider status", () => {
       const result = yield* checkOmpProviderStatus(settings, {}, () => Effect.succeed(process()));
       expect(result.status).toBe("ready");
       expect(result.models.map((model) => model.slug)).toEqual(["anthropic/claude-test"]);
-      expect(result.slashCommands?.map((command) => command.name)).toEqual(["review", "compact"]);
+      expect(result.slashCommands?.map((command) => command.name)).toEqual(["help", "compact"]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

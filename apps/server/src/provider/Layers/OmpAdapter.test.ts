@@ -335,7 +335,11 @@ describe("Oh My Pi adapter", () => {
             getModels: () => Effect.succeed({ models: [] }),
             getCommands: () =>
               Effect.succeed({
-                commands: [{ name: "review", description: "Review" }, { name: "new" }],
+                commands: [
+                  { name: "help", description: "Help" },
+                  { name: "compact", description: "Compact" },
+                  { name: "new" },
+                ],
               }),
             setModel: () => Effect.succeed(success("set_model")),
             setThinkingLevel: () => Effect.succeed(success("set_thinking_level")),
@@ -387,10 +391,10 @@ describe("Oh My Pi adapter", () => {
       NodeAssert.match(foreign.message, /another provider instance/);
       yield* adapter.sendTurn({
         threadId,
-        input: "/review\n\n[Scient runtime instruction]",
-        originalInput: "/review the patch",
+        input: "/compact\n\n[Scient runtime instruction]",
+        originalInput: "/compact the patch",
       });
-      NodeAssert.deepEqual(prompts, ["/review the patch"]);
+      NodeAssert.deepEqual(prompts, ["/compact the patch"]);
       yield* adapter.stopAll();
     }).pipe(Effect.provide(NodeServices.layer)),
   );
