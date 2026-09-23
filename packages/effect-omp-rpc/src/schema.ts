@@ -32,10 +32,10 @@ export type OmpRpcImage = typeof OmpRpcImage.Type;
 
 export const OmpRpcReady = Schema.Struct({
   type: Schema.Literal("ready"),
-  protocolVersion: Schema.optional(Schema.Finite),
-  supportedProtocolVersions: Schema.optional(Schema.Array(Schema.Finite)),
-  maxFrameBytes: Schema.optional(Schema.Finite),
-  maxReassembledFrameBytes: Schema.optional(Schema.Finite),
+  protocolVersion: Schema.Literal(1),
+  supportedProtocolVersions: Schema.Array(Schema.Literals([1, 2])),
+  maxFrameBytes: Schema.Finite,
+  maxReassembledFrameBytes: Schema.Finite,
 });
 export type OmpRpcReady = typeof OmpRpcReady.Type;
 
@@ -113,6 +113,7 @@ export const OmpRpcEvent = Schema.Struct({
   assistantMessageEvent: maybeUnknown,
   message: maybeUnknown,
   messages: maybeUnknown,
+  payload: maybeUnknown,
   toolCallId: maybeString,
   toolName: maybeString,
   name: maybeString,
@@ -138,6 +139,11 @@ export const OmpRpcEvent = Schema.Struct({
   targetId: maybeString,
   url: maybeString,
   operation: maybeString,
+  extensionPath: maybeString,
+  event: maybeString,
+  stopReason: maybeString,
+  role: maybeString,
+  content: maybeUnknown,
 });
 export type OmpRpcEvent = typeof OmpRpcEvent.Type;
 
@@ -220,3 +226,29 @@ export const OmpSubagentFrame = Schema.Struct({
   message: maybeString,
 });
 export type OmpSubagentFrame = typeof OmpSubagentFrame.Type;
+
+export const OmpHostToolDefinition = Schema.Struct({
+  name: Schema.String,
+  label: Schema.optional(Schema.String),
+  description: Schema.String,
+  parameters: Schema.Unknown,
+  hidden: Schema.optional(Schema.Boolean),
+  loadMode: Schema.optional(Schema.Literals(["essential", "discoverable"])),
+  readsSkillUris: Schema.optional(Schema.Boolean),
+});
+export type OmpHostToolDefinition = typeof OmpHostToolDefinition.Type;
+
+export const OmpHostUriSchemeDefinition = Schema.Struct({
+  scheme: Schema.String,
+  description: Schema.optional(Schema.String),
+  writable: Schema.optional(Schema.Boolean),
+  immutable: Schema.optional(Schema.Boolean),
+});
+export type OmpHostUriSchemeDefinition = typeof OmpHostUriSchemeDefinition.Type;
+
+export const OmpHostToolUpdate = Schema.Struct({
+  type: Schema.Literal("host_tool_update"),
+  id: Schema.String,
+  partialResult: Schema.Unknown,
+});
+export type OmpHostToolUpdate = typeof OmpHostToolUpdate.Type;

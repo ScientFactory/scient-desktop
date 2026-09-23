@@ -55,8 +55,18 @@ export interface OmpFrameDecoderState {
 export const emptyOmpFrameDecoderState: OmpFrameDecoderState = { pending: null, failed: false };
 
 export type OmpDecodedFrame =
-  | { readonly _tag: "Frame"; readonly value: unknown }
+  | {
+      readonly _tag: "Frame";
+      readonly value: unknown;
+      /** Decoded logical JSON bytes, excluding the JSONL newline. */
+      readonly logicalBytes: number;
+    }
   | { readonly _tag: "ProtocolFailure"; readonly detail: string };
+
+export interface OmpFramePushOptions {
+  /** Physical line size used for an unchunked frame. */
+  readonly logicalBytes?: number;
+}
 
 const safeInteger = (value: unknown): number | undefined =>
   typeof value === "number" && Number.isSafeInteger(value) ? value : undefined;
@@ -89,6 +99,7 @@ export const pushOmpFrame = (
   state: OmpFrameDecoderState,
   value: unknown,
   limits: OmpFrameLimits,
+  options: OmpFramePushOptions = {},
 ): { readonly state: OmpFrameDecoderState; readonly frames: ReadonlyArray<OmpDecodedFrame> } => {
   if (state.failed) {
     return failure("RPC frame decoder has already failed.");
@@ -100,7 +111,16 @@ export const pushOmpFrame = (
     if (!isRecord(value)) {
       return failure("RPC frame must be an object.");
     }
-    return { state, frames: [{ _tag: "Frame", value }] };
+    return {
+      state,
+      frames: [
+        {
+          _tag: "Frame",
+          value,
+          logicalBytes: options.logicalBytes ?? Buffer.byteLength(JSON.stringify(value)),
+        },
+      ],
+    };
   }
 
   const chunkId = value.chunkId;
@@ -182,7 +202,7 @@ export const pushOmpFrame = (
     }
     return {
       state: { pending: null, failed: false },
-      frames: [{ _tag: "Frame", value: parsed }],
+      frames: [{ _tag: "Frame", value: parsed, logicalBytes: receivedBytes }],
     };
   } catch {
     return failure(`RPC chunk sequence ${chunkId} is not one JSON object.`);

@@ -32,6 +32,8 @@ import {
   OmpRpcReady,
   OmpRpcResponse,
   OmpRpcState,
+  OmpHostToolDefinition,
+  OmpHostUriSchemeDefinition,
   type OmpRpcImage,
   type OmpThinkingLevel,
   isRecord,
@@ -91,9 +93,16 @@ export interface OmpRpcClient {
   readonly setSubagentSubscription: (
     level: "off" | "progress" | "events",
   ) => Effect.Effect<OmpRpcResponse, OmpRpcError>;
+  readonly setHostTools: (
+    tools: ReadonlyArray<OmpHostToolDefinition>,
+  ) => Effect.Effect<OmpRpcResponse, OmpRpcError>;
+  readonly setHostUriSchemes: (
+    schemes: ReadonlyArray<OmpHostUriSchemeDefinition>,
+  ) => Effect.Effect<OmpRpcResponse, OmpRpcError>;
   readonly extensionUiResponse: (
     response: Record<string, unknown>,
   ) => Effect.Effect<void, OmpRpcError>;
+  readonly hostToolUpdate: (result: Record<string, unknown>) => Effect.Effect<void, OmpRpcError>;
   readonly hostToolResult: (result: Record<string, unknown>) => Effect.Effect<void, OmpRpcError>;
   readonly hostUriResult: (result: Record<string, unknown>) => Effect.Effect<void, OmpRpcError>;
   readonly close: () => Effect.Effect<void>;
@@ -148,6 +157,7 @@ export const makeOmpRpcClient = Effect.fn("OmpRpcClient.make")(function* (
   const writeLock = yield* Semaphore.make(1);
   const closed = yield* Ref.make(false);
   let queuedCharacters = 0;
+  let pendingChunkBytes = 0;
 
   const failWaiters = (error: OmpRpcError) =>
     Ref.modify(pending, (current) => [Array.from(current.values()), new Map()] as const).pipe(
@@ -180,7 +190,7 @@ export const makeOmpRpcClient = Effect.fn("OmpRpcClient.make")(function* (
 
   const offer = (notification: OmpRpcNotification, size: number) =>
     Effect.suspend(() => {
-      if (queuedCharacters + size > maxQueuedCharacters) {
+      if (queuedCharacters + pendingChunkBytes + size > maxQueuedCharacters) {
         return end(
           new OmpRpcProcessExitedError({ detail: "RPC event buffer exceeded its limit." }),
         ).pipe(Effect.andThen(io.close ?? Effect.void));
@@ -367,15 +377,22 @@ export const makeOmpRpcClient = Effect.fn("OmpRpcClient.make")(function* (
     return Effect.gen(function* () {
       const currentLimits = yield* Ref.get(limits);
       const size = Buffer.byteLength(line);
-      if (size > currentLimits.maxFrameBytes) {
+      // OMP counts the terminating newline as part of the physical frame.
+      if (size + 1 > currentLimits.maxFrameBytes) {
         return yield* fatal("RPC physical frame exceeded the advertised limit.");
       }
       const parsed = yield* decodeJson(line).pipe(Effect.option);
       if (parsed._tag === "None") {
         return yield* fatal("RPC emitted malformed JSON.");
       }
-      const pushed = pushOmpFrame(yield* Ref.get(decoder), parsed.value, currentLimits);
+      const pushed = pushOmpFrame(yield* Ref.get(decoder), parsed.value, currentLimits, {
+        logicalBytes: size,
+      });
+      pendingChunkBytes = pushed.state.pending?.receivedBytes ?? 0;
       yield* Ref.set(decoder, pushed.state);
+      if (queuedCharacters + pendingChunkBytes > maxQueuedCharacters) {
+        return yield* fatal("RPC frame buffer exceeded its limit.");
+      }
       if (pushed.state.failed) {
         const detail =
           pushed.frames.find((frame) => frame._tag === "ProtocolFailure")?.detail ??
@@ -383,7 +400,9 @@ export const makeOmpRpcClient = Effect.fn("OmpRpcClient.make")(function* (
         return yield* fatal(detail);
       }
       yield* Effect.forEach(pushed.frames, (frame) =>
-        frame._tag === "ProtocolFailure" ? fatal(frame.detail) : dispatch(frame.value, size),
+        frame._tag === "ProtocolFailure"
+          ? fatal(frame.detail)
+          : dispatch(frame.value, frame.logicalBytes || size),
       );
     });
   };
@@ -396,7 +415,7 @@ export const makeOmpRpcClient = Effect.fn("OmpRpcClient.make")(function* (
         remainder += chunk;
         const currentLimits = yield* Ref.get(limits);
         if (
-          Buffer.byteLength(remainder) > currentLimits.maxFrameBytes &&
+          Buffer.byteLength(remainder) + 1 > currentLimits.maxFrameBytes &&
           !remainder.includes("\n")
         ) {
           remainder = "";
@@ -404,7 +423,7 @@ export const makeOmpRpcClient = Effect.fn("OmpRpcClient.make")(function* (
         }
         const lines = remainder.split("\n");
         remainder = lines.pop() ?? "";
-        if (Buffer.byteLength(remainder) > currentLimits.maxFrameBytes) {
+        if (Buffer.byteLength(remainder) + 1 > currentLimits.maxFrameBytes) {
           remainder = "";
           return yield* fatal("RPC line exceeded the physical frame limit.");
         }
@@ -503,7 +522,10 @@ export const makeOmpRpcClient = Effect.fn("OmpRpcClient.make")(function* (
       }),
     switchSession: (sessionPath) => command({ type: "switch_session", sessionPath }),
     setSubagentSubscription: (level) => command({ type: "set_subagent_subscription", level }),
+    setHostTools: (tools) => command({ type: "set_host_tools", tools }),
+    setHostUriSchemes: (schemes) => command({ type: "set_host_uri_schemes", schemes }),
     extensionUiResponse: (response) => writeFrame({ type: "extension_ui_response", ...response }),
+    hostToolUpdate: (result) => writeFrame({ type: "host_tool_update", ...result }),
     hostToolResult: (result) => writeFrame({ type: "host_tool_result", ...result }),
     hostUriResult: (result) => writeFrame({ type: "host_uri_result", ...result }),
     close: () =>

@@ -45,7 +45,11 @@ describe("Oh My Pi RPC frames", () => {
       limits,
     );
     expect(decoded.frames).toEqual([
-      { _tag: "Frame", value: { type: "agent_end", isTerminal: true } },
+      {
+        _tag: "Frame",
+        value: { type: "agent_end", isTerminal: true },
+        logicalBytes: Buffer.byteLength(JSON.stringify({ type: "agent_end", isTerminal: true })),
+      },
     ]);
     expect(decoded.state.pending).toBeNull();
     expect(decoded.state.failed).toBe(false);
@@ -83,6 +87,7 @@ describe("Oh My Pi RPC frames", () => {
         expect(decoded.frames[0]).toMatchObject({
           _tag: "Frame",
           value: { type: "agent_end", isTerminal: true },
+          logicalBytes: bytes.byteLength,
         });
       }
     }
