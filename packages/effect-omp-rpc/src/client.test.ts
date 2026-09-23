@@ -237,6 +237,53 @@ describe("Oh My Pi RPC client", () => {
     ),
   );
 
+  it.effect("supports host registration and validates switch-session results", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const stdout = yield* Queue.unbounded<Uint8Array>();
+        const stdin = yield* Queue.unbounded<string>();
+        const client = yield* makeOmpRpcClient({
+          stdout: Stream.fromQueue(stdout),
+          write: (bytes) => Queue.offer(stdin, decoder.decode(bytes)).pipe(Effect.asVoid),
+        });
+        yield* negotiate(stdout, stdin);
+        const hostToolsFiber = yield* client
+          .setHostTools([{ name: "echo", description: "Echo", parameters: {} }])
+          .pipe(Effect.forkScoped);
+        const hostToolsRequest = decodeCommand(yield* Queue.take(stdin));
+        expect(hostToolsRequest.type).toBe("set_host_tools");
+        yield* Queue.offer(
+          stdout,
+          line({
+            id: hostToolsRequest.id,
+            type: "response",
+            command: "set_host_tools",
+            success: true,
+            data: { toolNames: ["echo"] },
+          }),
+        );
+        expect(yield* Fiber.join(hostToolsFiber)).toMatchObject({ success: true });
+
+        const switchFiber = yield* client
+          .switchSession("/state/session.jsonl")
+          .pipe(Effect.forkScoped);
+        const switchRequest = decodeCommand(yield* Queue.take(stdin));
+        expect(switchRequest.type).toBe("switch_session");
+        yield* Queue.offer(
+          stdout,
+          line({
+            id: switchRequest.id,
+            type: "response",
+            command: "switch_session",
+            success: true,
+            data: { cancelled: false },
+          }),
+        );
+        expect(yield* Fiber.join(switchFiber)).toEqual({ cancelled: false });
+      }),
+    ),
+  );
+
   it.effect("terminalizes the client when a response command does not match", () =>
     Effect.scoped(
       Effect.gen(function* () {
