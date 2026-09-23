@@ -332,6 +332,10 @@ function turnEffort(modelSelection: ProviderSendTurnInput["modelSelection"]): st
   );
 }
 
+const canDeliverScientSkills = (adapter: ProviderAdapterShape<unknown>): boolean =>
+  adapter.capabilities.mcpSessionInjection === true &&
+  ScientSkillSession.scientSkillDeliveryForProvider(adapter.provider) === "mcp";
+
 type ProviderServiceMethod<Name extends keyof ProviderService.ProviderService["Service"]> =
   ProviderService.ProviderService["Service"][Name];
 
@@ -967,9 +971,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     threadId: ThreadId,
     adapter: ProviderAdapterShape<unknown>,
   ) {
-    const supportsScientSkills =
-      adapter.capabilities.mcpSessionInjection === true &&
-      ScientSkillSession.scientSkillDeliveryForProvider(adapter.provider) === "mcp";
+    const supportsScientSkills = canDeliverScientSkills(adapter);
     const capabilities = new Set<McpInvocationContext.McpCapability>([
       "pull-requests",
       "documents:build",
@@ -1028,7 +1030,15 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         threadId,
         providerInstanceId,
         capabilities,
-        ...(supportsScientSkills ? { skillScope: { releases: new Map(), skills: [] } } : {}),
+        ...(supportsScientSkills
+          ? {
+              skillScope: {
+                catalog: { status: "pending" as const },
+                releases: new Map(),
+                skills: [],
+              },
+            }
+          : {}),
       });
       if (credential) {
         const deviceEnvironment = capabilities.has("device")
@@ -1825,7 +1835,13 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       );
       const scientTools = scientToolProjectionForProvider(routed.adapter.provider);
       const skillProjection = {
+        skillListToolName: scientTools.name("scient_skills_list"),
         skillLoadToolName: scientTools.name("scient_skill_load"),
+        includeCatalogMarker:
+          canDeliverScientSkills(routed.adapter) &&
+          McpProviderSession.readMcpProviderSession(input.threadId)?.capabilities.has(
+            "skills:read",
+          ) === true,
         providerNativeSkillTool: scientTools.providerNativeSkillTool,
         deferred: scientTools.deferred,
       };
@@ -1835,6 +1851,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         skillPlan.delivery === "mcp" ? skillPlan.releases : new Map(),
         skillProjection,
         parsed.selectedScientSkillNames ?? [],
+        skillPlan.catalogStatus,
       );
       if ((skillTurn.input?.length ?? 0) > PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
         return yield* toValidationError(

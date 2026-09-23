@@ -98,6 +98,7 @@ const copySkillScope = (
 ): McpInvocationContext.McpScientSkillScope => ({
   // Values are immutable SkillRelease snapshots. Preserve their object
   // identity because verified resource bytes are bound to the exact snapshot.
+  ...(skillScope.catalog ? { catalog: { ...skillScope.catalog } } : {}),
   releases: new Map(skillScope.releases),
   skills: skillScope.skills.map((skill) => ({ ...skill })),
 });

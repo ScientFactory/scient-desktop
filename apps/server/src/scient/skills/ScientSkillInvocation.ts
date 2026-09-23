@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off -- The server computes a non-authorizing scope freshness digest.
+import * as NodeCrypto from "node:crypto";
+
 import type { SkillRelease } from "@scientfactory/scient-skills";
 
 import type {
@@ -19,6 +22,8 @@ export interface PreparedScientSkillTurn {
 
 export interface ScientSkillTurnProjection {
   readonly skillLoadToolName: string;
+  readonly skillListToolName?: string;
+  readonly includeCatalogMarker?: boolean;
   readonly providerNativeSkillTool?: boolean;
   readonly deferred?: boolean;
 }
@@ -27,12 +32,16 @@ const DEFAULT_PROJECTION: ScientSkillTurnProjection = {
   skillLoadToolName: "scient_skill_load",
 };
 
+const isNativeSlashCommand = (input: string | undefined): boolean =>
+  input !== undefined && /^\s*\/[A-Za-z][\w-]*(?:\s|$)/u.test(input);
+
 export function prepareScientSkillTurn(
   input: string | undefined,
   activeSkills: ReadonlyArray<AgentSkillDescriptor> | undefined,
   activeReleases: ReadonlyMap<string, SkillRelease> | undefined,
   projection: ScientSkillTurnProjection = DEFAULT_PROJECTION,
   selectedNames: ReadonlyArray<string> = [],
+  catalogStatus: "complete" | "incomplete" = "complete",
 ): PreparedScientSkillTurn {
   const available = (activeSkills ?? []).filter((skill) => activeReleases?.has(skill.releaseKey));
   const byName = new Map(available.map((skill) => [skill.name, skill] as const));
@@ -60,6 +69,25 @@ export function prepareScientSkillTurn(
             ? 1
             : 0,
   );
+  const catalogDigest = `sha256:${NodeCrypto.createHash("sha256")
+    .update(
+      JSON.stringify(
+        skills.map((skill) => {
+          const release = activeReleases!.get(skill.releaseKey)!;
+          return [
+            release.id,
+            release.version,
+            release.origin,
+            release.digest,
+            skill.name,
+            skill.activationScope,
+            skill.invocationPolicy,
+          ];
+        }),
+      ),
+    )
+    .digest("hex")}`;
+  const skillCount = `${skills.length} ${skills.length === 1 ? "skill" : "skills"}`;
   const instructions: string[] = [];
   // Automatic discovery belongs to the stable skill tools, not user input.
   // Only structured, explicit selections need turn-local orientation. Never
@@ -87,13 +115,27 @@ export function prepareScientSkillTurn(
     );
   }
 
-  const runtimeInstruction =
+  const runtimeInstruction = [
+    projection.includeCatalogMarker && input?.trim() && !isNativeSlashCommand(input)
+      ? catalogStatus === "incomplete"
+        ? `[Scient skill scope for this turn is incomplete; emptiness cannot be inferred. Use \`${projection.skillListToolName ?? "scient_skills_list"}\` to discover available Scient-managed skills as needed; results may be partial. Provider-native skills are separate.]`
+        : skills.length === 0
+          ? `[Scient skill scope for this turn is complete and empty (0 skills). No Scient-managed skills are available in this scope; no \`${projection.skillListToolName ?? "scient_skills_list"}\` call is needed. Provider-native skills are separate.]`
+          : `[Scient skill scope for this turn: complete; ${skillCount}; digest ${catalogDigest} (freshness only). Reuse visible summaries only from a full result (\`scope.includesAllSkills\`) with the same digest if sufficient; otherwise call \`${projection.skillListToolName ?? "scient_skills_list"}\`. Provider-native skills are separate.]`
+      : undefined,
     instructions.length > 0
       ? `[Scient selected skills for this turn:\n${instructions.join("\n")}\n]`
-      : undefined;
+      : undefined,
+  ]
+    .filter((instruction): instruction is string => instruction !== undefined)
+    .join("\n\n");
+  const preparedRuntimeInstruction = runtimeInstruction.length > 0 ? runtimeInstruction : undefined;
   return {
-    input: runtimeInstruction ? [input, runtimeInstruction].filter(Boolean).join("\n\n") : input,
+    input: preparedRuntimeInstruction
+      ? [input, preparedRuntimeInstruction].filter(Boolean).join("\n\n")
+      : input,
     skillScope: {
+      catalog: { status: catalogStatus, digest: catalogDigest },
       releases: new Map(
         skills.map((skill) => [skill.releaseKey, activeReleases!.get(skill.releaseKey)!] as const),
       ),

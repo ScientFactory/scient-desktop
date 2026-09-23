@@ -55,6 +55,7 @@ const makeInvocation = (
   releases: ReadonlyArray<SkillRelease>,
   capabilities: ReadonlySet<AgentInvocationContext.OperationCapability> = new Set(["skills:read"]),
   invocationPolicy: "automatic" | "explicit" = "automatic",
+  catalogStatus: "pending" | "complete" | "incomplete" = "complete",
 ) =>
   AgentInvocationContext.AgentInvocationContext.of({
     environmentId: EnvironmentId.make("environment-skills-test"),
@@ -63,6 +64,10 @@ const makeInvocation = (
     providerInstanceId: ProviderInstanceId.make("codex"),
     capabilities,
     skillScope: {
+      catalog: {
+        status: catalogStatus,
+        ...(catalogStatus === "pending" ? {} : { digest: `sha256:${"c".repeat(64)}` }),
+      },
       releases: new Map(releases.map((release) => [skillReleaseKey(release), release] as const)),
       skills: releases.map((release) => ({
         releaseKey: skillReleaseKey(release),
@@ -171,6 +176,11 @@ describe("Scient skills MCP handlers", () => {
             ],
             total: 1,
             nextOffset: null,
+            scope: {
+              status: "complete",
+              digest: `sha256:${"c".repeat(64)}`,
+              includesAllSkills: false,
+            },
             hint: "No keyword matches; showing available skills to browse instead. Load any applicable skill by name. Pagination uses this browse order.",
           });
         }
@@ -179,6 +189,11 @@ describe("Scient skills MCP handlers", () => {
           invocation,
         });
         expect(browsed.skills.map((skill) => skill.name)).toEqual([release.name]);
+        expect(browsed.scope).toEqual({
+          status: "complete",
+          digest: `sha256:${"c".repeat(64)}`,
+          includesAllSkills: true,
+        });
         const loaded = yield* provideContext(loadScientSkillForInvocation({ name: release.name }), {
           catalog,
           invocation,
@@ -192,9 +207,39 @@ describe("Scient skills MCP handlers", () => {
           skills: [],
           total: 0,
           nextOffset: null,
-          hint: "No Scient skills are available in this turn.",
+          scope: {
+            status: "complete",
+            digest: `sha256:${"c".repeat(64)}`,
+            includesAllSkills: true,
+          },
+          hint: "No Scient skills are available in this prepared turn scope.",
         });
       }),
+  );
+
+  it.effect("does not report pending or incomplete discovery as an empty catalog", () =>
+    Effect.gen(function* () {
+      const catalog = yield* Effect.promise(makeCatalogFixture);
+      const pending = yield* provideContext(listScientSkillsForInvocation(), {
+        catalog,
+        invocation: makeInvocation([], new Set(["skills:read"]), "automatic", "pending"),
+      });
+      expect(pending.scope).toEqual({ status: "pending", includesAllSkills: false });
+      expect(pending.hint).toContain("not evidence that no skills are available");
+      expect(pending.hint).not.toContain("No Scient skills are available");
+
+      const incomplete = yield* provideContext(listScientSkillsForInvocation(), {
+        catalog,
+        invocation: makeInvocation([], new Set(["skills:read"]), "automatic", "incomplete"),
+      });
+      expect(incomplete.scope).toEqual({
+        status: "incomplete",
+        digest: `sha256:${"c".repeat(64)}`,
+        includesAllSkills: false,
+      });
+      expect(incomplete.hint).toContain("discovery was incomplete");
+      expect(incomplete.hint).not.toContain("No Scient skills are available");
+    }),
   );
 
   it.effect("denies catalog entries and paths outside the exact turn scope", () =>
@@ -252,6 +297,15 @@ describe("Scient skills MCP handlers", () => {
         new Set(["skills:read"]),
         "explicit",
       );
+
+      const listed = yield* provideContext(listScientSkillsForInvocation(), {
+        catalog,
+        invocation: selectedInvocation,
+      });
+      expect(listed.skills.map((skill) => [skill.name, skill.invocationPolicy])).toEqual([
+        [catalog.releases[0]!.name, "explicit"],
+      ]);
+      expect(listed.scope.includesAllSkills).toBe(true);
 
       const loaded = yield* provideContext(
         loadScientSkillForInvocation({ name: catalog.releases[0]!.name }),

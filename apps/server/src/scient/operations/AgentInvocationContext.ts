@@ -19,9 +19,16 @@ export interface AgentSkillDescriptor {
   readonly invocationPolicy: "automatic" | "explicit";
 }
 
+export type AgentSkillCatalogStatus = "pending" | "complete" | "incomplete";
+
 export interface AgentSkillScope {
   readonly releases: ReadonlyMap<string, SkillRelease>;
   readonly skills: ReadonlyArray<AgentSkillDescriptor>;
+  /** Discovery freshness only; exact releases and skills above remain the authority. */
+  readonly catalog?: {
+    readonly status: AgentSkillCatalogStatus;
+    readonly digest?: string;
+  };
 }
 
 /** Host-authenticated admission context, never decoded from a tool argument. */

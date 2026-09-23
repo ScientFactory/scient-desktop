@@ -2,7 +2,12 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
-import { readScientProjectIdentity } from "@scientfactory/project-init";
+import {
+  inspectScientProject,
+  readScientProjectIdentity,
+  SCIENT_IDENTITY_FILE,
+  SCIENT_TRANSACTION_FILE,
+} from "@scientfactory/project-init";
 
 import type { SkillRelease } from "./model.ts";
 import { loadProjectSkillRelease } from "./release.ts";
@@ -14,6 +19,7 @@ export const MAX_PROJECT_SKILL_BYTES = 25 * 1024 * 1024;
 export interface ProjectSkillDiagnostic {
   readonly code:
     | "invalid-project"
+    | "not-initialized-project"
     | "invalid-skills-directory"
     | "invalid-skill"
     | "project-skill-limit";
@@ -51,31 +57,65 @@ function frozenCatalog(input: {
   });
 }
 
+async function identityFailureCatalog(
+  requestedRoot: string,
+  error: unknown,
+): Promise<ProjectSkillCatalog> {
+  let inspection: Awaited<ReturnType<typeof inspectScientProject>> | undefined;
+  try {
+    inspection = await inspectScientProject(requestedRoot);
+  } catch {
+    // Preserve the original identity error when project inspection also fails.
+  }
+  const notInitialized = inspection?.state === "ordinary";
+  const recoverable = inspection?.state === "recoverable";
+  const issue = inspection?.issues[0];
+  return frozenCatalog({
+    rootPath: inspection?.root ?? requestedRoot,
+    diagnostics: [
+      {
+        code: notInitialized ? "not-initialized-project" : "invalid-project",
+        path: notInitialized
+          ? SCIENT_IDENTITY_FILE
+          : (issue?.path ?? (recoverable ? SCIENT_TRANSACTION_FILE : SCIENT_IDENTITY_FILE)),
+        message:
+          (notInitialized ? "This folder is not an initialized Scient project." : undefined) ??
+          (recoverable
+            ? "Scient project setup is incomplete and must be recovered before skills can be loaded."
+            : undefined) ??
+          issue?.message ??
+          (error instanceof Error ? error.message : "Project identity could not be read."),
+      },
+    ],
+  });
+}
+
 /**
  * Discover only skills in an initialized Scient project. Invalid entries are
  * quarantined independently; no filesystem content is executed or modified.
  */
 export async function loadProjectSkillCatalog(root: string): Promise<ProjectSkillCatalog> {
   const requestedRoot = NodePath.resolve(root);
+  // Skip readScientProjectIdentity's full inspection for the common missing-identity path.
+  try {
+    await NodeFSP.lstat(NodePath.join(requestedRoot, SCIENT_IDENTITY_FILE));
+  } catch (error) {
+    if (isNodeError(error, "ENOENT")) {
+      return identityFailureCatalog(
+        requestedRoot,
+        new Error("This folder is not an initialized Scient project.", { cause: error }),
+      );
+    }
+    return identityFailureCatalog(requestedRoot, error);
+  }
+
   let rootPath: string;
   let projectId: string;
   try {
     rootPath = await NodeFSP.realpath(requestedRoot);
     projectId = (await readScientProjectIdentity(rootPath)).projectId;
   } catch (error) {
-    return frozenCatalog({
-      rootPath: requestedRoot,
-      diagnostics: [
-        {
-          code: "invalid-project",
-          path: ".scient/project.json",
-          message:
-            error instanceof Error
-              ? error.message
-              : "This folder is not an initialized Scient project.",
-        },
-      ],
-    });
+    return identityFailureCatalog(requestedRoot, error);
   }
 
   const skillsRoot = NodePath.join(rootPath, SCIENT_PROJECT_SKILLS_DIRECTORY);

@@ -5043,6 +5043,7 @@ describe("agent browser access", () => {
     threadId: ThreadId,
     skillPlan: ScientSkillSession.ScientSkillSessionPlan = {
       delivery: "none",
+      catalogStatus: "complete",
       releases: new Map(),
       skills: [],
       diagnostics: [],
@@ -5057,6 +5058,9 @@ describe("agent browser access", () => {
       readonly withoutOrchestration?: boolean;
       readonly sendTurn?: boolean;
       readonly withoutMcpSession?: boolean;
+      readonly grantMcpSkillSession?: boolean;
+      readonly stopAfterSend?: boolean;
+      readonly observeSentInput?: (input: string | undefined) => void;
     },
   ) =>
     Effect.gen(function* () {
@@ -5067,6 +5071,10 @@ describe("agent browser access", () => {
         readonly threadId: ThreadId;
         readonly capabilities: ReadonlySet<string>;
         readonly skillScope?: {
+          readonly catalog?: {
+            readonly status: "pending" | "complete" | "incomplete";
+            readonly digest?: string;
+          };
           readonly releases: ReadonlyMap<string, (typeof BUILT_IN_SKILL_RELEASES)[number]>;
           readonly skills: ReadonlyArray<ScientSkillSession.ScientSkillSessionSkill>;
         };
@@ -5142,13 +5150,28 @@ describe("agent browser access", () => {
               ...(request.skillScope
                 ? {
                     skillScope: {
+                      ...(request.skillScope.catalog
+                        ? { catalog: { ...request.skillScope.catalog } }
+                        : {}),
                       releases: new Map(request.skillScope.releases),
                       skills: request.skillScope.skills.map((skill) => ({ ...skill })),
                     },
                   }
                 : {}),
             });
-            return undefined;
+            return options?.grantMcpSkillSession
+              ? {
+                  config: {
+                    environmentId: EnvironmentId.make("test-environment"),
+                    threadId: request.threadId,
+                    providerSessionId: `provider-${String(request.threadId)}`,
+                    providerInstanceId: request.providerInstanceId,
+                    endpoint: "http://127.0.0.1:1/mcp",
+                    authorizationHeader: "Bearer synthetic-test-token",
+                    capabilities: new Set(request.capabilities),
+                  },
+                }
+              : undefined;
           }),
       }).pipe(
         Layer.provide(providerAdapterLayer),
@@ -5208,11 +5231,92 @@ describe("agent browser access", () => {
         });
         if (options?.sendTurn) {
           yield* provider.sendTurn({ threadId, input: "Inspect this project." });
+          options.observeSentInput?.(codex.sendTurn.mock.calls.at(-1)?.[0].input);
         }
+        if (options?.stopAfterSend) yield* provider.stopSession({ threadId });
       }).pipe(Effect.provide(providerLayer));
 
       return issued;
     });
+
+  it.effect("marks a complete empty scope when the provider has Scient skill MCP access", () =>
+    Effect.gen(function* () {
+      const threadId = asThreadId("thread-empty-skill-scope");
+      const sentInputs: Array<string | undefined> = [];
+      const issued = yield* startSessionWith(
+        false,
+        threadId,
+        {
+          delivery: "none",
+          catalogStatus: "complete",
+          releases: new Map(),
+          skills: [],
+          diagnostics: [],
+        },
+        undefined,
+        undefined,
+        CODEX_DRIVER,
+        undefined,
+        {
+          sendTurn: true,
+          grantMcpSkillSession: true,
+          stopAfterSend: true,
+          observeSentInput: (input) => sentInputs.push(input),
+        },
+      );
+
+      assert.include(issued[0]?.capabilities, "skills:read");
+      assert.include(sentInputs[0] ?? "", "complete and empty (0 skills)");
+      assert.include(sentInputs[0] ?? "", "no `scient_skills_list` call is needed");
+      assert.include(sentInputs[0] ?? "", "Provider-native skills are separate");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("omits Scient skill markers without a supported MCP skill capability", () =>
+    Effect.gen(function* () {
+      const unsupportedProvider = ProviderDriverKind.make("future-provider");
+      const unsupportedInputs: Array<string | undefined> = [];
+      const unsupported = yield* startSessionWith(
+        false,
+        asThreadId("thread-unsupported-skill-provider"),
+        {
+          delivery: "unsupported",
+          catalogStatus: "incomplete",
+          releases: new Map(),
+          skills: [],
+          diagnostics: [{ code: "provider-unsupported", message: "Skill MCP is unsupported." }],
+        },
+        undefined,
+        undefined,
+        unsupportedProvider,
+        undefined,
+        {
+          sendTurn: true,
+          observeSentInput: (input) => unsupportedInputs.push(input),
+        },
+      );
+      const noMcpInputs: Array<string | undefined> = [];
+      const noMcp = yield* startSessionWith(
+        false,
+        asThreadId("thread-no-skill-mcp"),
+        undefined,
+        undefined,
+        undefined,
+        CODEX_DRIVER,
+        undefined,
+        {
+          sendTurn: true,
+          withoutMcpSession: true,
+          observeSentInput: (input) => noMcpInputs.push(input),
+        },
+      );
+
+      assert.notInclude(unsupported[0]?.capabilities, "skills:read");
+      assert.lengthOf(noMcp, 0);
+      assert.deepEqual(unsupportedInputs, ["Inspect this project."]);
+      assert.deepEqual(noMcpInputs, ["Inspect this project."]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 
   it.effect("re-resolves and replaces the exact visible skill scope on every turn", () =>
     Effect.gen(function* () {
@@ -5240,6 +5344,7 @@ describe("agent browser access", () => {
       };
       let skillPlan: ScientSkillSession.ScientSkillSessionPlan = {
         delivery: "mcp",
+        catalogStatus: "complete",
         projectRoot,
         releases: new Map([
           [automatic.releaseKey, BUILT_IN_SKILL_RELEASES[0]!],
@@ -5252,6 +5357,10 @@ describe("agent browser access", () => {
         Parameters<ScientSkillSession.ScientSkillSessionPlannerShape["resolve"]>[0]
       > = [];
       const replaced: Array<{
+        readonly catalog?: {
+          readonly status: "pending" | "complete" | "incomplete";
+          readonly digest?: string;
+        };
         readonly releases: ReadonlyMap<string, (typeof BUILT_IN_SKILL_RELEASES)[number]>;
         readonly skills: ReadonlyArray<ScientSkillSession.ScientSkillSessionSkill>;
       }> = [];
@@ -5264,10 +5373,22 @@ describe("agent browser access", () => {
         Layer.provide(SqlitePersistenceMemory),
       );
       const providerLayer = makeProviderServiceLive({
-        issueMcpCredential: () => Effect.succeed(undefined),
+        issueMcpCredential: (request) =>
+          Effect.succeed({
+            config: {
+              environmentId: EnvironmentId.make("test-environment"),
+              threadId: request.threadId,
+              providerSessionId: `provider-${String(request.threadId)}`,
+              providerInstanceId: request.providerInstanceId,
+              endpoint: "http://127.0.0.1:1/mcp",
+              authorizationHeader: "Bearer synthetic-test-token",
+              capabilities: new Set(request.capabilities),
+            },
+          }),
         replaceMcpSkillScope: (_threadId, scope) =>
           Effect.sync(() => {
             replaced.push({
+              ...(scope.catalog ? { catalog: { ...scope.catalog } } : {}),
               releases: new Map(scope.releases),
               skills: scope.skills.map((skill) => ({ ...skill })),
             });
@@ -5308,10 +5429,11 @@ describe("agent browser access", () => {
           runtimeMode: "full-access",
         });
         yield* provider.sendTurn({ threadId, input: "Is this workspace organized?" });
-        assert.equal(codex.sendTurn.mock.calls.at(-1)![0].input, "Is this workspace organized?");
+        assert.include(codex.sendTurn.mock.calls.at(-1)![0].input ?? "", "1 skill; digest");
 
         skillPlan = {
           delivery: "mcp",
+          catalogStatus: "complete",
           projectRoot,
           releases: new Map([[explicit.releaseKey, BUILT_IN_SKILL_RELEASES[1]!]]),
           skills: [explicit],
@@ -5436,6 +5558,7 @@ describe("agent browser access", () => {
           attachments: attachments.map((attachment) => attachment.id),
           omittedContextBlocks: 0,
         });
+        yield* provider.stopSession({ threadId });
       }).pipe(Effect.provide(providerLayer));
 
       assert.equal(codex.startSession.mock.calls.length, 1);
@@ -5451,13 +5574,22 @@ describe("agent browser access", () => {
         replaced.slice(0, 3).map((scope) => new Set(scope.releases.keys())),
         [new Set([automatic.releaseKey]), new Set([explicit.releaseKey]), new Set<string>()],
       );
+      assert.deepEqual(
+        replaced.slice(0, 3).map((scope) => scope.catalog?.status),
+        ["complete", "complete", "complete"],
+      );
+      assert.notEqual(replaced[0]?.catalog?.digest, replaced[1]?.catalog?.digest);
       const sent = codex.sendTurn.mock.calls.map((call) => call[0].input ?? "");
-      assert.equal(sent[0], "Is this workspace organized?");
+      assert.include(sent[0] ?? "", "1 skill; digest");
+      assert.include(sent[0] ?? "", `digest ${replaced[0]?.catalog?.digest}`);
       assert.notInclude(sent[0] ?? "", `{"name":"${explicit.name}"}`);
       assert.include(sent[1] ?? "", `{"name":"${explicit.name}"}`);
+      assert.include(sent[1] ?? "", `digest ${replaced[1]?.catalog?.digest}`);
       assert.notInclude(sent[0] ?? "", automatic.releaseKey);
       assert.notInclude(sent[1] ?? "", explicit.releaseKey);
-      assert.equal(sent[2], "What changed?");
+      assert.include(sent[2] ?? "", "complete and empty (0 skills)");
+      assert.include(sent[2] ?? "", "no `scient_skills_list` call is needed");
+      assert.notInclude(sent[2] ?? "", "Scient selected skills");
       assert.deepEqual(
         codex.sendTurn.mock.calls.slice(0, 3).map((call) => call[0].originalInput),
         ["Is this workspace organized?", "Use $improve carefully.", "What changed?"],
@@ -5481,7 +5613,11 @@ describe("agent browser access", () => {
             "sources:write",
             "skills:read",
           ]),
-          skillScope: { releases: new Map(), skills: [] },
+          skillScope: {
+            catalog: { status: "pending" },
+            releases: new Map(),
+            skills: [],
+          },
         },
       ]);
     }).pipe(Effect.provide(NodeServices.layer)),
@@ -5505,7 +5641,11 @@ describe("agent browser access", () => {
             "sources:write",
             "skills:read",
           ]),
-          skillScope: { releases: new Map(), skills: [] },
+          skillScope: {
+            catalog: { status: "pending" },
+            releases: new Map(),
+            skills: [],
+          },
         },
       ]);
     }).pipe(Effect.provide(NodeServices.layer)),
@@ -5550,7 +5690,11 @@ describe("agent browser access", () => {
                 "sources:write",
                 "skills:read",
               ]),
-              skillScope: { releases: new Map(), skills: [] },
+              skillScope: {
+                catalog: { status: "pending" },
+                releases: new Map(),
+                skills: [],
+              },
             },
           ]);
         }).pipe(Effect.provide(NodeServices.layer)),
@@ -5610,6 +5754,7 @@ describe("agent browser access", () => {
         threadId,
         {
           delivery: "mcp",
+          catalogStatus: "complete",
           projectRoot,
           releases: new Map([[releaseKey, BUILT_IN_SKILL_RELEASES[0]!]]),
           skills,
@@ -5631,6 +5776,7 @@ describe("agent browser access", () => {
             "skills:read",
           ]),
           skillScope: {
+            catalog: { status: "pending" },
             releases: new Map(),
             skills: [],
           },

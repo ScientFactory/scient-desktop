@@ -91,6 +91,42 @@ describe("Scient skill policy", () => {
     }),
   );
 
+  it.effect("keeps failed reads incomplete until an atomic policy write recovers them", () =>
+    Effect.gen(function* () {
+      const baseDir = yield* Effect.promise(fixture);
+      const configLayer = ServerConfig.layerTest(process.cwd(), baseDir).pipe(
+        Layer.provide(NodeServices.layer),
+      );
+      const config = yield* ServerConfig.ServerConfig.pipe(Effect.provide(configLayer));
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(config.stateDir, { recursive: true });
+        await NodeFSP.writeFile(NodePath.join(config.stateDir, "scient-skills.json"), "not-json\n");
+      });
+
+      const { initialState, recoveredState } = yield* Effect.gen(function* () {
+        const policy = yield* ScientSkillPolicy.ScientSkillPolicy;
+        const initialState = yield* policy.readState;
+        yield* policy.setUserSkillActivation(release, true, "automatic");
+        const recoveredState = yield* policy.readState;
+        return { initialState, recoveredState };
+      }).pipe(Effect.provide(ScientSkillPolicy.layer.pipe(Layer.provide(configLayer))));
+
+      expect(initialState).toEqual({
+        snapshot: { userSkills: [], projectSkills: [], trustedProjects: [] },
+        snapshotIsComplete: false,
+      });
+
+      expect(recoveredState).toEqual({
+        snapshot: {
+          userSkills: [{ release, active: true, invocationPolicy: "automatic" }],
+          projectSkills: [],
+          trustedProjects: [],
+        },
+        snapshotIsComplete: true,
+      });
+    }),
+  );
+
   it.effect("records and revokes app-owned trust for one exact project lock", () =>
     Effect.gen(function* () {
       const baseDir = yield* Effect.promise(fixture);
