@@ -279,5 +279,6 @@ export const PROVIDER_DISPLAY_NAMES: Partial<Record<ProviderDriverKind, string>>
   [OPENCODE_DRIVER_KIND]: "OpenCode",
   [DROID_DRIVER_KIND]: "Droid",
   [PI_DRIVER_KIND]: "Pi",
+  [OMP_DRIVER_KIND]: "Oh My Pi",
   [ANTIGRAVITY_DRIVER_KIND]: "Antigravity",
 };

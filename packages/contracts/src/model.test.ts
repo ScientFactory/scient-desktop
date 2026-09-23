@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { compareProviderDriverKinds, PROVIDER_DISPLAY_ORDER } from "./model.ts";
+import {
+  compareProviderDriverKinds,
+  PROVIDER_DISPLAY_NAMES,
+  PROVIDER_DISPLAY_ORDER,
+} from "./model.ts";
 import { ProviderDriverKind } from "./providerInstance.ts";
 
 describe("provider display order", () => {
@@ -16,6 +20,10 @@ describe("provider display order", () => {
       "cursor",
       "grok",
     ]);
+  });
+
+  it("publishes the Oh My Pi display name", () => {
+    expect(PROVIDER_DISPLAY_NAMES[ProviderDriverKind.make("omp")]).toBe("Oh My Pi");
   });
 
   it("places open plugin drivers after first-party providers alphabetically", () => {
