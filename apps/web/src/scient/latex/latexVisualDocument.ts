@@ -543,21 +543,101 @@ function commandArgumentRange(
     : { source: source.slice(opening + 1, close), from: opening + 1, to: close };
 }
 
-function tabularBody(source: string): { source: string; from: number } | null {
+interface TabularBody {
+  readonly source: string;
+  readonly from: number;
+  readonly to: number;
+  readonly environment: string;
+  readonly openingFrom: number;
+  readonly openingTo: number;
+  readonly endingFrom: number;
+  readonly endingTo: number;
+  readonly columnSpec: string;
+}
+
+function requiredArgument(
+  source: string,
+  cursor: number,
+): { source: string; from: number; to: number; next: number } | null {
+  while (/\s/u.test(source[cursor] ?? "")) cursor++;
+  if (source[cursor] !== "{") return null;
+  const close = closingBrace(source, cursor);
+  return close === null
+    ? null
+    : { source: source.slice(cursor + 1, close), from: cursor + 1, to: close, next: close + 1 };
+}
+
+function tabularBody(source: string): TabularBody | null {
   const opening = /\\begin\{(tabularx|tabular|tabulary|longtable)\}/u.exec(source);
   if (!opening) return null;
   const name = opening[1]!;
   let cursor = opening.index + opening[0].length;
-  const argumentsToSkip = name === "tabularx" || name === "tabulary" ? 2 : 1;
-  for (let index = 0; index < argumentsToSkip; index++) {
-    while (/\s/u.test(source[cursor] ?? "")) cursor++;
-    if (source[cursor] !== "{") return null;
-    const close = closingBrace(source, cursor);
-    if (close === null) return null;
-    cursor = close + 1;
+  if (name === "tabularx" || name === "tabulary") {
+    const width = requiredArgument(source, cursor);
+    if (!width) return null;
+    cursor = width.next;
   }
-  const end = source.lastIndexOf(`\\end{${name}}`);
-  return end <= cursor ? null : { source: source.slice(cursor, end), from: cursor };
+  const columnSpec = requiredArgument(source, cursor);
+  if (!columnSpec) return null;
+  cursor = columnSpec.next;
+  const ending = `\\end{${name}}`;
+  const end = source.lastIndexOf(ending);
+  return end <= cursor
+    ? null
+    : {
+        source: source.slice(cursor, end),
+        from: cursor,
+        to: end,
+        environment: name,
+        openingFrom: opening.index,
+        openingTo: cursor,
+        endingFrom: end,
+        endingTo: end + ending.length,
+        columnSpec: columnSpec.source,
+      };
+}
+
+type TableAlignment = "left" | "center" | "right";
+const TABLE_PARAGRAPH_COLUMNS = new Set(["X", "p", "m", "b"]);
+const TABLE_MODIFIER_ALIGNMENTS: readonly (readonly [string, TableAlignment])[] = [
+  ["\\centering", "center"],
+  ["\\raggedleft", "right"],
+  ["\\raggedright", "left"],
+];
+
+function tableAlignments(columnSpec: string, width: number): TableAlignment[] {
+  const alignments: TableAlignment[] = [];
+  let pendingAlignment: TableAlignment | null = null;
+  let depth = 0;
+  for (let index = 0; index < columnSpec.length && alignments.length < width; index++) {
+    const character = columnSpec[index]!;
+    if (depth === 0 && character === ">" && columnSpec[index + 1] === "{") {
+      const close = closingBrace(columnSpec, index + 1);
+      if (close !== null) {
+        const modifier = columnSpec.slice(index + 2, close);
+        pendingAlignment =
+          TABLE_MODIFIER_ALIGNMENTS.find(([command]) => modifier.indexOf(command) >= 0)?.[1] ??
+          null;
+        index = close;
+      }
+    } else if (character === "{") depth++;
+    else if (character === "}") depth = Math.max(0, depth - 1);
+    else if (character === "\\") index++;
+    else if (depth === 0 && character === "l") {
+      alignments.push(pendingAlignment ?? "left");
+      pendingAlignment = null;
+    } else if (depth === 0 && character === "c") {
+      alignments.push(pendingAlignment ?? "center");
+      pendingAlignment = null;
+    } else if (depth === 0 && character === "r") {
+      alignments.push(pendingAlignment ?? "right");
+      pendingAlignment = null;
+    } else if (depth === 0 && TABLE_PARAGRAPH_COLUMNS.has(character)) {
+      alignments.push(pendingAlignment ?? "left");
+      pendingAlignment = null;
+    }
+  }
+  return Array.from({ length: width }, (_, index) => alignments[index] ?? "left");
 }
 
 interface TableSourceSlice {
@@ -659,28 +739,56 @@ function parseTablePreview(source: string): JSONContent | null {
           cell ? { from: cell.from, to: cell.to, original: cell.display } : null,
         ),
         end: body.from + row.to + (row.to < body.source.length ? 2 : 0),
+        terminated: row.to < body.source.length,
       };
     })
-    .filter((row) => row.rows.some(Boolean));
+    .filter((row) => row.terminated || row.rows.some(Boolean));
   const rows = parsedRows.slice(0, 100).map((row) => row.rows);
   const width = Math.max(0, ...rows.map((row) => row.length));
   if (rows.length === 0 || width === 0 || width > 20) return null;
   const editable =
     parsedRows.length <= 100 &&
+    rows.every((row) => row.length === width) &&
     parsedRows.every((row) => row.ranges.every((cell) => cell !== null));
   const captionArgument = commandArgumentRange(source, "caption");
   const captionCell = captionArgument
     ? editableTableCell(captionArgument.source, captionArgument.from)
     : null;
+  const labelArgument = commandArgumentRange(source, "label");
+  const labelCell = labelArgument
+    ? editableTableCell(labelArgument.source, labelArgument.from)
+    : null;
+  const hasFloat = /\\begin\{table\*?\}/u.test(source);
+  const tableStyle = /\\(?:toprule|midrule|bottomrule)\b/u.test(body.source)
+    ? "booktabs"
+    : /\\hline\b/u.test(body.source) || body.columnSpec.includes("|")
+      ? "grid"
+      : "plain";
+  const tableKind =
+    body.environment === "tabularx" || body.environment === "tabulary"
+      ? "stretch"
+      : body.environment === "longtable"
+        ? "long"
+        : "fixed";
   return {
     type: "latexRichPreview",
     attrs: {
       kind: "table",
       raw: source,
-      caption: captionCell?.display ?? previewText(commandArgument(source, "caption") ?? "Table"),
+      caption: captionCell?.display ?? previewText(commandArgument(source, "caption") ?? ""),
+      label: labelCell?.display ?? previewText(commandArgument(source, "label") ?? ""),
       rows,
       cellRanges: editable ? parsedRows.map((row) => row.ranges) : null,
       rowIds: rows.map((_, index) => `table-row-${index}`),
+      columnIds: Array.from({ length: width }, (_, index) => `table-column-${index}`),
+      columnAlignments: tableAlignments(body.columnSpec, width),
+      tableStyle,
+      tableKind,
+      hasHeader:
+        rows.length > 1 &&
+        (/\\midrule\b/u.test(body.source) ||
+          splitTable(body.source, "row")[0]?.source.includes("\\textbf") === true),
+      tableCanonical: false,
       sourceMeta: editable
         ? {
             captionRange: captionCell
@@ -688,6 +796,17 @@ function parseTablePreview(source: string): JSONContent | null {
               : null,
             insertAt: parsedRows.at(-1)!.end,
             originalRowCount: rows.length,
+            bodyFrom: body.from,
+            bodyTo: body.to,
+            openingFrom: body.openingFrom,
+            openingTo: body.openingTo,
+            endingFrom: body.endingFrom,
+            endingTo: body.endingTo,
+            hasFloat,
+            outerInsertAt: body.openingFrom,
+            labelRange: labelCell
+              ? { from: labelCell.from, to: labelCell.to, original: labelCell.display }
+              : null,
           }
         : null,
       editable,
@@ -814,6 +933,98 @@ function serializeInline(nodes: readonly JSONContent[] | undefined): string {
     .join("");
 }
 
+function canonicalTableColumnSpec(
+  alignments: readonly TableAlignment[],
+  kind: string,
+  style: string,
+): string {
+  const columns = alignments.map((alignment) => {
+    if (kind !== "stretch") return alignment === "center" ? "c" : alignment === "right" ? "r" : "l";
+    if (alignment === "center") return ">{\\centering\\arraybackslash}X";
+    if (alignment === "right") return ">{\\raggedleft\\arraybackslash}X";
+    return ">{\\raggedright\\arraybackslash}X";
+  });
+  return style === "grid" ? `|${columns.join("|")}|` : columns.join(" ");
+}
+
+function canonicalTableBody(
+  rows: readonly (readonly string[])[],
+  style: string,
+  hasHeader: boolean,
+  eol: string,
+): string {
+  const serializedRows = rows.map((row, rowIndex) => {
+    const cells = row.map((cell) => {
+      const value = escapeText(cell);
+      return hasHeader && rowIndex === 0 ? `\\textbf{${value}}` : value;
+    });
+    return `${cells.join(" & ")} \\\\`;
+  });
+  if (style === "booktabs") {
+    const lines = ["\\toprule"];
+    serializedRows.forEach((row, index) => {
+      lines.push(row);
+      if (hasHeader && index === 0) lines.push("\\midrule");
+    });
+    lines.push("\\bottomrule");
+    return `${eol}${lines.join(eol)}${eol}`;
+  }
+  if (style === "grid") {
+    const lines = ["\\hline"];
+    for (const row of serializedRows) lines.push(row, "\\hline");
+    return `${eol}${lines.join(eol)}${eol}`;
+  }
+  return `${eol}${serializedRows.join(eol)}${eol}`;
+}
+
+export type LatexVisualTablePreset = "plain" | "booktabs" | "grid" | "stretch";
+
+export function latexVisualTableSource(
+  rowCount: number,
+  columnCount: number,
+  preset: LatexVisualTablePreset,
+): string {
+  const safeRows = Math.max(1, Math.min(20, Math.trunc(rowCount)));
+  const safeColumns = Math.max(1, Math.min(12, Math.trunc(columnCount)));
+  const rows = Array.from({ length: safeRows }, (_, rowIndex) =>
+    Array.from({ length: safeColumns }, (_, columnIndex) =>
+      rowIndex === 0 ? `Column ${columnIndex + 1}` : "",
+    ),
+  );
+  const kind = preset === "stretch" ? "stretch" : "fixed";
+  const style = preset === "stretch" ? "booktabs" : preset;
+  const alignments = Array.from({ length: safeColumns }, () => "left" as const);
+  const columnSpec = canonicalTableColumnSpec(alignments, kind, style);
+  const environment = kind === "stretch" ? "tabularx" : "tabular";
+  const opening =
+    kind === "stretch"
+      ? `\\begin{${environment}}{\\textwidth}{${columnSpec}}`
+      : `\\begin{${environment}}{${columnSpec}}`;
+  return [
+    "\\begin{table}[htbp]",
+    "\\centering",
+    "\\caption{Table title}",
+    opening,
+    canonicalTableBody(rows, style, true, "\n").trim(),
+    `\\end{${environment}}`,
+    "\\end{table}",
+  ].join("\n");
+}
+
+function tableRows(value: unknown): string[][] | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  const rows = value.map((row) => (Array.isArray(row) ? row : null));
+  const width = rows[0]?.length ?? 0;
+  if (
+    width === 0 ||
+    rows.some(
+      (row) => row === null || row.length !== width || row.some((cell) => typeof cell !== "string"),
+    )
+  )
+    return null;
+  return rows as string[][];
+}
+
 export function serializeLatexVisualBlock(node: JSONContent): string | null {
   if (node.type === "paragraph") return serializeInline(node.content) || "\\par";
   if (node.type === "heading") {
@@ -929,11 +1140,107 @@ export function serializeLatexVisualBlock(node: JSONContent): string | null {
       return sourceMeta.head + chunks.join("") + sourceMeta.tail;
     }
     if (node.attrs.kind !== "table") return raw;
-    const rows = Array.isArray(node.attrs.rows) ? node.attrs.rows : null;
+    const rows = tableRows(node.attrs.rows);
     const ranges = Array.isArray(node.attrs.cellRanges) ? node.attrs.cellRanges : null;
     const sourceMeta = node.attrs.sourceMeta;
+    if (!rows) return null;
+    if (node.attrs.tableCanonical === true) {
+      if (
+        !sourceMeta ||
+        typeof sourceMeta !== "object" ||
+        !("bodyFrom" in sourceMeta) ||
+        !("bodyTo" in sourceMeta) ||
+        !("openingFrom" in sourceMeta) ||
+        !("openingTo" in sourceMeta) ||
+        !("endingFrom" in sourceMeta) ||
+        !("endingTo" in sourceMeta) ||
+        !("captionRange" in sourceMeta) ||
+        !("labelRange" in sourceMeta) ||
+        !("hasFloat" in sourceMeta) ||
+        typeof sourceMeta.bodyFrom !== "number" ||
+        typeof sourceMeta.bodyTo !== "number" ||
+        typeof sourceMeta.openingFrom !== "number" ||
+        typeof sourceMeta.openingTo !== "number" ||
+        typeof sourceMeta.endingFrom !== "number" ||
+        typeof sourceMeta.endingTo !== "number" ||
+        typeof sourceMeta.hasFloat !== "boolean"
+      )
+        return null;
+      const style = ["plain", "booktabs", "grid"].includes(String(node.attrs.tableStyle))
+        ? String(node.attrs.tableStyle)
+        : "plain";
+      const kind = ["fixed", "stretch", "long"].includes(String(node.attrs.tableKind))
+        ? String(node.attrs.tableKind)
+        : "fixed";
+      const alignments = Array.isArray(node.attrs.columnAlignments)
+        ? node.attrs.columnAlignments.map((alignment) =>
+            alignment === "center" || alignment === "right" ? alignment : "left",
+          )
+        : [];
+      if (alignments.length !== rows[0]!.length) return null;
+      const eol = raw.includes("\r\n") ? "\r\n" : "\n";
+      const environment =
+        kind === "stretch" ? "tabularx" : kind === "long" ? "longtable" : "tabular";
+      const columnSpec = canonicalTableColumnSpec(alignments, kind, style);
+      const caption = typeof node.attrs.caption === "string" ? node.attrs.caption : "";
+      const label = typeof node.attrs.label === "string" ? node.attrs.label : "";
+      let insertedMetadata = "";
+      if (sourceMeta.hasFloat && sourceMeta.captionRange === null && caption)
+        insertedMetadata += `\\caption{${escapeText(caption)}}${eol}`;
+      if (sourceMeta.hasFloat && sourceMeta.labelRange === null && label)
+        insertedMetadata += `\\label{${escapeText(label)}}${eol}`;
+      const opening =
+        insertedMetadata +
+        (kind === "stretch"
+          ? `\\begin{${environment}}{\\textwidth}{${columnSpec}}`
+          : `\\begin{${environment}}{${columnSpec}}`);
+      const replacements: { from: number; to: number; value: string }[] = [
+        { from: sourceMeta.openingFrom, to: sourceMeta.openingTo, value: opening },
+        {
+          from: sourceMeta.bodyFrom,
+          to: sourceMeta.bodyTo,
+          value: canonicalTableBody(rows, style, node.attrs.hasHeader === true, eol),
+        },
+        {
+          from: sourceMeta.endingFrom,
+          to: sourceMeta.endingTo,
+          value: `\\end{${environment}}`,
+        },
+      ];
+      for (const [rangeName, value] of [
+        ["captionRange", caption],
+        ["labelRange", label],
+      ] as const) {
+        const range = sourceMeta[rangeName];
+        if (range === null) continue;
+        if (
+          !range ||
+          typeof range !== "object" ||
+          !("from" in range) ||
+          !("to" in range) ||
+          typeof range.from !== "number" ||
+          typeof range.to !== "number"
+        )
+          return null;
+        replacements.push({ from: range.from, to: range.to, value: escapeText(value) });
+      }
+      replacements.sort((left, right) => right.from - left.from);
+      let serialized = raw;
+      for (const replacement of replacements) {
+        if (
+          replacement.from < 0 ||
+          replacement.to < replacement.from ||
+          replacement.to > raw.length
+        )
+          return null;
+        serialized =
+          serialized.slice(0, replacement.from) +
+          replacement.value +
+          serialized.slice(replacement.to);
+      }
+      return serialized;
+    }
     if (
-      !rows ||
       !ranges ||
       rows.length < ranges.length ||
       !sourceMeta ||
@@ -997,6 +1304,31 @@ export function serializeLatexVisualBlock(node: JSONContent): string | null {
           from: captionRange.from,
           to: captionRange.to,
           value: escapeText(caption),
+        });
+    }
+    const label = node.attrs.label;
+    const labelRange = "labelRange" in sourceMeta ? sourceMeta.labelRange : null;
+    if (labelRange !== null) {
+      if (
+        !labelRange ||
+        typeof labelRange !== "object" ||
+        !("from" in labelRange) ||
+        !("to" in labelRange) ||
+        !("original" in labelRange) ||
+        typeof labelRange.from !== "number" ||
+        typeof labelRange.to !== "number" ||
+        typeof labelRange.original !== "string" ||
+        typeof label !== "string" ||
+        labelRange.from < 0 ||
+        labelRange.to < labelRange.from ||
+        labelRange.to > raw.length
+      )
+        return null;
+      if (label !== labelRange.original)
+        replacements.push({
+          from: labelRange.from,
+          to: labelRange.to,
+          value: escapeText(label),
         });
     }
     const width = Array.isArray(rows[0]) ? rows[0].length : 0;
@@ -1063,7 +1395,14 @@ function comparableNode(node: JSONContent): ComparableVisualNode {
               key === "editable" ||
               key === "sourceMeta" ||
               key === "itemIds" ||
-              key === "rowIds")) ||
+              key === "rowIds" ||
+              key === "columnIds" ||
+              key === "tableCanonical" ||
+              (node.attrs?.kind !== "table" &&
+                (key === "columnAlignments" ||
+                  key === "tableStyle" ||
+                  key === "tableKind" ||
+                  key === "hasHeader")))) ||
           value === null ||
           value === undefined
         )

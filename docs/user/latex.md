@@ -43,11 +43,20 @@ pixel-identical to that PDF. Compile errors preserve the last successful PDF.
 
 Description lists and common `tabular`, `tabularx`, `tabulary`, and `longtable`
 structures have visual editors. In a description list, edit labels and bodies
-directly or add and remove items. In a supported table, edit its caption and
-cells or add rows. Scient changes only the corresponding source ranges and
-preserves environment options, column specifications, rules, labels, spacing,
-and formatting wrappers. A table containing structural cell content, such as
-nested commands, math, or `\multicolumn`, stays protected and shows
+directly or add and remove items. In a supported table, type directly in cells
+and use Tab to move through the grid; Tab from the last cell adds a row. The
+contextual table toolbar adds, removes, and reorders rows or columns, aligns the
+selected column, toggles a header, and changes between simple, booktabs, and
+full-grid styles or content/page width. Captions and reference labels are also
+editable when the table has a float wrapper. The toolbar's Table picker inserts
+a chosen grid size and style.
+
+Ordinary cell, caption, and label typing changes only the corresponding source
+ranges. Structural operations deliberately normalize only the supported table's
+`tabular` region so that its dimensions, column specification, and rules remain
+consistent; the surrounding document remains untouched. A table containing
+structural cell content, such as nested commands, math, or `\multicolumn`, stays
+protected and shows
 **Protected source · edit in Source**. Other unsupported structures, including
 custom macros and equation labels or tags, appear as protected source blocks.
 The visual editor does not silently normalize or discard them. A visual edit

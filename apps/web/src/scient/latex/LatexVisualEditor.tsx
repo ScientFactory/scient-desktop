@@ -23,11 +23,13 @@ import { readVisualDraft, clearVisualDraft } from "./visualDrafts";
 
 import {
   applyLatexVisualDocumentChange,
+  latexVisualTableSource,
   latexVisualMathSource,
   parseLatexVisualMathSource,
   parseStructuredMathEnvironment,
   projectLatexVisualDocument,
   type LatexVisualDocument,
+  type LatexVisualTablePreset,
 } from "./latexVisualDocument";
 
 const LatexSourceAttributes = Extension.create({
@@ -448,6 +450,8 @@ function withStableKeys<T>(values: T[], serialize: (value: T) => string) {
 function LatexRichPreviewView({ node, selected, updateAttributes, editor }: NodeViewProps) {
   const editorEditable = useEditorEditable(editor);
   const generatedId = useRef(0);
+  const tableRoot = useRef<HTMLElement | null>(null);
+  const [selectedCell, setSelectedCell] = useState({ row: 0, column: 0 });
   const kind = node.attrs.kind === "table" ? "table" : "description";
   const items = Array.isArray(node.attrs.items)
     ? (node.attrs.items as { label?: unknown; body?: unknown }[])
@@ -461,7 +465,16 @@ function LatexRichPreviewView({ node, selected, updateAttributes, editor }: Node
   const rowIds = Array.isArray(node.attrs.rowIds)
     ? (node.attrs.rowIds as unknown[]).map(String)
     : [];
-  const caption = String(node.attrs.caption ?? "Table");
+  const columnIds = Array.isArray(node.attrs.columnIds)
+    ? (node.attrs.columnIds as unknown[]).map(String)
+    : [];
+  const columnAlignments = Array.isArray(node.attrs.columnAlignments)
+    ? (node.attrs.columnAlignments as unknown[]).map((alignment) =>
+        alignment === "center" || alignment === "right" ? alignment : "left",
+      )
+    : [];
+  const caption = String(node.attrs.caption ?? "");
+  const tableLabel = String(node.attrs.label ?? "");
   const structureEditable = node.attrs.editable === true;
   const tableEditable = kind === "table" && structureEditable;
   const descriptionEditable = kind === "description" && structureEditable;
@@ -469,7 +482,11 @@ function LatexRichPreviewView({ node, selected, updateAttributes, editor }: Node
     node.attrs.sourceMeta && typeof node.attrs.sourceMeta === "object"
       ? (node.attrs.sourceMeta as Record<string, unknown>)
       : null;
-  const captionEditable = tableEditable && sourceMeta !== null && sourceMeta.captionRange !== null;
+  const hasTableFloat = sourceMeta?.hasFloat === true;
+  const captionEditable =
+    tableEditable && sourceMeta !== null && (sourceMeta.captionRange !== null || hasTableFloat);
+  const labelEditable =
+    tableEditable && sourceMeta !== null && (sourceMeta.labelRange !== null || hasTableFloat);
   const nextGeneratedId = (prefix: string) => {
     generatedId.current += 1;
     return `${prefix}-${generatedId.current}`;
@@ -514,13 +531,113 @@ function LatexRichPreviewView({ node, selected, updateAttributes, editor }: Node
     nextRows[rowIndex]![cellIndex] = value;
     updateAttributes({ rows: nextRows });
   };
-  const addTableRow = () => {
-    if (!editorEditable || !tableEditable || rows.length === 0) return;
-    const width = rows[0]!.length;
-    updateAttributes({
-      rows: [...rows, Array.from({ length: width }, (_, index) => (index === 0 ? "New row" : ""))],
-      rowIds: [...rowIds, nextGeneratedId("table-new")],
+  const updateTableStructure = (attributes: Record<string, unknown>) => {
+    if (!editorEditable || !tableEditable) return;
+    updateAttributes({ ...attributes, tableCanonical: true });
+  };
+  const focusTableCell = (row: number, column: number) => {
+    requestAnimationFrame(() => {
+      tableRoot.current
+        ?.querySelector<HTMLInputElement>(`[data-table-cell="${row}-${column}"]`)
+        ?.focus();
     });
+  };
+  const addTableRow = (after = selectedCell.row) => {
+    if (!editorEditable || !tableEditable || rows.length === 0) return;
+    const insertion = Math.min(rows.length, Math.max(0, after + 1));
+    const nextRows = rows.map((row) => [...row]);
+    const nextRowIds = [...rowIds];
+    nextRows.splice(
+      insertion,
+      0,
+      Array.from({ length: rows[0]!.length }, () => ""),
+    );
+    nextRowIds.splice(insertion, 0, nextGeneratedId("table-row"));
+    setSelectedCell({ row: insertion, column: 0 });
+    updateTableStructure({ rows: nextRows, rowIds: nextRowIds });
+    focusTableCell(insertion, 0);
+  };
+  const removeTableRow = () => {
+    if (rows.length <= 1) return;
+    const row = Math.min(selectedCell.row, rows.length - 1);
+    const nextRows = rows.filter((_, index) => index !== row);
+    const nextRowIds = rowIds.filter((_, index) => index !== row);
+    const nextSelection = { row: Math.min(row, nextRows.length - 1), column: selectedCell.column };
+    setSelectedCell(nextSelection);
+    updateTableStructure({ rows: nextRows, rowIds: nextRowIds });
+    focusTableCell(nextSelection.row, nextSelection.column);
+  };
+  const addTableColumn = (after = selectedCell.column) => {
+    if (rows.length === 0) return;
+    const insertion = Math.min(rows[0]!.length, Math.max(0, after + 1));
+    const nextRows = rows.map((row) => {
+      const next = [...row];
+      next.splice(insertion, 0, "");
+      return next;
+    });
+    const nextColumnIds = [...columnIds];
+    const nextAlignments = [...columnAlignments];
+    nextColumnIds.splice(insertion, 0, nextGeneratedId("table-column"));
+    nextAlignments.splice(insertion, 0, "left");
+    setSelectedCell({ row: selectedCell.row, column: insertion });
+    updateTableStructure({
+      rows: nextRows,
+      columnIds: nextColumnIds,
+      columnAlignments: nextAlignments,
+    });
+    focusTableCell(selectedCell.row, insertion);
+  };
+  const removeTableColumn = () => {
+    const width = rows[0]?.length ?? 0;
+    if (width <= 1) return;
+    const column = Math.min(selectedCell.column, width - 1);
+    const nextRows = rows.map((row) => row.filter((_, index) => index !== column));
+    const nextColumnIds = columnIds.filter((_, index) => index !== column);
+    const nextAlignments = columnAlignments.filter((_, index) => index !== column);
+    const nextSelection = { row: selectedCell.row, column: Math.min(column, width - 2) };
+    setSelectedCell(nextSelection);
+    updateTableStructure({
+      rows: nextRows,
+      columnIds: nextColumnIds,
+      columnAlignments: nextAlignments,
+    });
+    focusTableCell(nextSelection.row, nextSelection.column);
+  };
+  const moveTableRow = (direction: -1 | 1) => {
+    const from = selectedCell.row;
+    const to = from + direction;
+    if (to < 0 || to >= rows.length) return;
+    const nextRows = rows.map((row) => [...row]);
+    const nextRowIds = [...rowIds];
+    [nextRows[from], nextRows[to]] = [nextRows[to]!, nextRows[from]!];
+    [nextRowIds[from], nextRowIds[to]] = [nextRowIds[to]!, nextRowIds[from]!];
+    setSelectedCell({ row: to, column: selectedCell.column });
+    updateTableStructure({ rows: nextRows, rowIds: nextRowIds });
+    focusTableCell(to, selectedCell.column);
+  };
+  const moveTableColumn = (direction: -1 | 1) => {
+    const from = selectedCell.column;
+    const to = from + direction;
+    const width = rows[0]?.length ?? 0;
+    if (to < 0 || to >= width) return;
+    const nextRows = rows.map((row) => {
+      const next = [...row];
+      [next[from], next[to]] = [next[to]!, next[from]!];
+      return next;
+    });
+    const nextColumnIds = [...columnIds];
+    const nextAlignments = [...columnAlignments];
+    [nextColumnIds[from], nextColumnIds[to]] = [nextColumnIds[to]!, nextColumnIds[from]!];
+    const movedAlignment = nextAlignments[from]!;
+    nextAlignments[from] = nextAlignments[to]!;
+    nextAlignments[to] = movedAlignment;
+    setSelectedCell({ row: selectedCell.row, column: to });
+    updateTableStructure({
+      rows: nextRows,
+      columnIds: nextColumnIds,
+      columnAlignments: nextAlignments,
+    });
+    focusTableCell(selectedCell.row, to);
   };
   return (
     <NodeViewWrapper
@@ -594,24 +711,197 @@ function LatexRichPreviewView({ node, selected, updateAttributes, editor }: Node
           ) : null}
         </>
       ) : (
-        <figure>
+        <figure ref={tableRoot} data-table-style={String(node.attrs.tableStyle ?? "plain")}>
+          {tableEditable ? (
+            <div className="scient-latex-table-toolbar" role="toolbar" aria-label="Table tools">
+              <label>
+                Style
+                <select
+                  aria-label="Table style"
+                  disabled={!editorEditable}
+                  value={String(node.attrs.tableStyle ?? "plain")}
+                  onChange={(event) => updateTableStructure({ tableStyle: event.target.value })}
+                >
+                  <option value="plain">Simple</option>
+                  <option value="booktabs">Booktabs</option>
+                  <option value="grid">Full grid</option>
+                </select>
+              </label>
+              <label>
+                Width
+                <select
+                  aria-label="Table width behavior"
+                  disabled={!editorEditable || node.attrs.tableKind === "long"}
+                  value={String(node.attrs.tableKind ?? "fixed")}
+                  onChange={(event) => updateTableStructure({ tableKind: event.target.value })}
+                >
+                  <option value="fixed">Fit content</option>
+                  <option value="stretch">Fit page</option>
+                  {node.attrs.tableKind === "long" ? <option value="long">Multipage</option> : null}
+                </select>
+              </label>
+              <button
+                aria-pressed={node.attrs.hasHeader === true}
+                disabled={!editorEditable}
+                onClick={() => updateTableStructure({ hasHeader: node.attrs.hasHeader !== true })}
+                type="button"
+              >
+                Header row
+              </button>
+              <span className="scient-latex-table-toolbar-separator" />
+              <button
+                aria-label="Move selected row up"
+                disabled={!editorEditable || selectedCell.row === 0}
+                onClick={() => moveTableRow(-1)}
+                type="button"
+              >
+                Row ↑
+              </button>
+              <button
+                aria-label="Move selected row down"
+                disabled={!editorEditable || selectedCell.row >= rows.length - 1}
+                onClick={() => moveTableRow(1)}
+                type="button"
+              >
+                Row ↓
+              </button>
+              <button disabled={!editorEditable} onClick={() => addTableRow()} type="button">
+                + Row
+              </button>
+              <button
+                disabled={!editorEditable || rows.length <= 1}
+                onClick={removeTableRow}
+                type="button"
+              >
+                − Row
+              </button>
+              <span className="scient-latex-table-toolbar-separator" />
+              <button
+                aria-label="Move selected column left"
+                disabled={!editorEditable || selectedCell.column === 0}
+                onClick={() => moveTableColumn(-1)}
+                type="button"
+              >
+                Col ←
+              </button>
+              <button
+                aria-label="Move selected column right"
+                disabled={!editorEditable || selectedCell.column >= (rows[0]?.length ?? 1) - 1}
+                onClick={() => moveTableColumn(1)}
+                type="button"
+              >
+                Col →
+              </button>
+              <button disabled={!editorEditable} onClick={() => addTableColumn()} type="button">
+                + Column
+              </button>
+              <button
+                disabled={!editorEditable || (rows[0]?.length ?? 0) <= 1}
+                onClick={removeTableColumn}
+                type="button"
+              >
+                − Column
+              </button>
+              <label>
+                Align
+                <select
+                  aria-label="Selected column alignment"
+                  disabled={!editorEditable}
+                  value={columnAlignments[selectedCell.column] ?? "left"}
+                  onChange={(event) => {
+                    const next = [...columnAlignments];
+                    next[selectedCell.column] = event.target
+                      .value as (typeof columnAlignments)[number];
+                    updateTableStructure({ columnAlignments: next });
+                  }}
+                >
+                  <option value="left">Left</option>
+                  <option value="center">Center</option>
+                  <option value="right">Right</option>
+                </select>
+              </label>
+            </div>
+          ) : null}
           <figcaption>
             {captionEditable ? (
               <input
                 aria-label="Table caption"
                 disabled={!editorEditable}
+                placeholder="Add a table caption"
                 value={caption}
-                onChange={(event) => updateAttributes({ caption: event.currentTarget.value })}
+                onChange={(event) => {
+                  const nextCaption = event.currentTarget.value;
+                  if (sourceMeta?.captionRange === null)
+                    updateTableStructure({ caption: nextCaption });
+                  else updateAttributes({ caption: nextCaption });
+                }}
               />
             ) : (
-              caption
+              caption || "Table"
             )}
           </figcaption>
+          {labelEditable ? (
+            <label className="scient-latex-table-label">
+              Reference label
+              <input
+                aria-label="Table reference label"
+                disabled={!editorEditable}
+                placeholder="tab:results"
+                value={tableLabel}
+                onChange={(event) => {
+                  const nextLabel = event.currentTarget.value;
+                  if (sourceMeta?.labelRange === null) updateTableStructure({ label: nextLabel });
+                  else updateAttributes({ label: nextLabel });
+                }}
+              />
+            </label>
+          ) : null}
           <div className="scient-latex-rich-table-scroll">
             <table>
+              {tableEditable ? (
+                <thead aria-label="Column controls">
+                  <tr>
+                    <th className="scient-latex-table-corner" />
+                    {rows[0]?.map((_, columnIndex) => (
+                      <th
+                        className="scient-latex-table-column-handle"
+                        data-selected={selectedCell.column === columnIndex || undefined}
+                        key={columnIds[columnIndex] ?? `column-${columnIndex}`}
+                      >
+                        <button
+                          aria-label={`Select table column ${columnIndex + 1}`}
+                          onClick={() =>
+                            setSelectedCell({ row: selectedCell.row, column: columnIndex })
+                          }
+                          type="button"
+                        >
+                          {columnIndex + 1}
+                        </button>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+              ) : null}
               <tbody>
                 {keyedRows.map(({ index: rowIndex, key, value: row }) => (
                   <tr key={key}>
+                    {tableEditable ? (
+                      <th
+                        className="scient-latex-table-row-handle"
+                        data-selected={selectedCell.row === rowIndex || undefined}
+                        scope="row"
+                      >
+                        <button
+                          aria-label={`Select table row ${rowIndex + 1}`}
+                          onClick={() =>
+                            setSelectedCell({ row: rowIndex, column: selectedCell.column })
+                          }
+                          type="button"
+                        >
+                          {rowIndex + 1}
+                        </button>
+                      </th>
+                    ) : null}
                     {(tableEditable
                       ? row.map((cell, index) => ({
                           index,
@@ -623,24 +913,61 @@ function LatexRichPreviewView({ node, selected, updateAttributes, editor }: Node
                       const content = tableEditable ? (
                         <input
                           aria-label={`Table row ${rowIndex + 1} column ${cellIndex + 1}`}
+                          data-table-cell={`${rowIndex}-${cellIndex}`}
                           disabled={!editorEditable}
                           value={cell}
+                          onFocus={() => setSelectedCell({ row: rowIndex, column: cellIndex })}
                           onChange={(event) =>
                             updateCell(rowIndex, cellIndex, event.currentTarget.value)
                           }
                           onKeyDown={(event) => {
                             if (event.key === "Escape") event.currentTarget.blur();
+                            if (event.key !== "Tab") return;
+                            const width = row.length;
+                            const current = rowIndex * width + cellIndex;
+                            const next = current + (event.shiftKey ? -1 : 1);
+                            if (next < 0) return;
+                            event.preventDefault();
+                            if (next >= rows.length * width) {
+                              addTableRow(rows.length - 1);
+                              return;
+                            }
+                            const nextCell = {
+                              row: Math.floor(next / width),
+                              column: next % width,
+                            };
+                            setSelectedCell(nextCell);
+                            focusTableCell(nextCell.row, nextCell.column);
                           }}
                         />
                       ) : (
                         cell
                       );
-                      return rowIndex === 0 ? (
-                        <th key={cellKey} scope="col">
+                      return node.attrs.hasHeader === true && rowIndex === 0 ? (
+                        <th
+                          data-align={columnAlignments[cellIndex] ?? "left"}
+                          data-selected={
+                            selectedCell.row === rowIndex && selectedCell.column === cellIndex
+                              ? true
+                              : undefined
+                          }
+                          key={cellKey}
+                          scope="col"
+                        >
                           {content}
                         </th>
                       ) : (
-                        <td key={cellKey}>{content}</td>
+                        <td
+                          data-align={columnAlignments[cellIndex] ?? "left"}
+                          data-selected={
+                            selectedCell.row === rowIndex && selectedCell.column === cellIndex
+                              ? true
+                              : undefined
+                          }
+                          key={cellKey}
+                        >
+                          {content}
+                        </td>
                       );
                     })}
                   </tr>
@@ -649,10 +976,9 @@ function LatexRichPreviewView({ node, selected, updateAttributes, editor }: Node
             </table>
           </div>
           {tableEditable ? (
-            <div className="scient-latex-structure-actions">
-              <button disabled={!editorEditable} onClick={addTableRow} type="button">
-                Add row
-              </button>
+            <div className="scient-latex-table-hint">
+              Tab moves between cells; Tab in the last cell adds a row. Structure controls normalize
+              only this supported table.
             </div>
           ) : null}
         </figure>
@@ -769,8 +1095,15 @@ const LatexRichPreview = Node.create({
       sourceMeta: { default: null, rendered: false },
       itemIds: { default: null, rendered: false },
       rowIds: { default: null, rendered: false },
+      columnIds: { default: null, rendered: false },
+      columnAlignments: { default: null },
+      tableStyle: { default: "plain" },
+      tableKind: { default: "fixed" },
+      hasHeader: { default: false },
+      tableCanonical: { default: false, rendered: false },
       editable: { default: false, rendered: false },
       caption: { default: null },
+      label: { default: null },
       sourceId: { default: null, rendered: false },
     };
   },
@@ -841,6 +1174,9 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   const editorRef = useRef<ReturnType<typeof useEditor>>(null);
   const [, refreshToolbar] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
+  const [tablePreset, setTablePreset] = useState<LatexVisualTablePreset>("booktabs");
+  const [tablePickerSize, setTablePickerSize] = useState({ rows: 3, columns: 3 });
+  const tablePicker = useRef<HTMLDetailsElement | null>(null);
   const [summary, setSummary] = useState({
     supported: initial.supportedBlocks,
     raw: initial.rawBlocks,
@@ -999,6 +1335,14 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       .insertContent({ type: "latexDisplayMath", attrs: { tex, wrapper: "bracket" } })
       .run();
 
+  const insertTable = (rows: number, columns: number) => {
+    const source = latexVisualTableSource(rows, columns, tablePreset);
+    const table = projectLatexVisualDocument(source).content.content?.[0];
+    if (!table) return;
+    editor?.chain().focus().insertContent(table).run();
+    if (tablePicker.current) tablePicker.current.open = false;
+  };
+
   return (
     <div
       className="scient-latex-visual-workspace"
@@ -1126,6 +1470,58 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
             <option value="cases">Cases</option>
             <option value="aligned">Aligned equations</option>
           </select>
+        </div>
+        <div className="scient-latex-toolbar-group" aria-label="Insert table">
+          <details
+            className="scient-latex-table-picker"
+            onToggle={(event) => {
+              if (readOnly) event.currentTarget.open = false;
+            }}
+            ref={tablePicker}
+          >
+            <summary aria-disabled={readOnly} aria-label="Insert table">
+              Table
+            </summary>
+            <div className="scient-latex-table-picker-popover">
+              <label>
+                Table style
+                <select
+                  aria-label="New table style"
+                  disabled={readOnly}
+                  value={tablePreset}
+                  onChange={(event) =>
+                    setTablePreset(event.currentTarget.value as LatexVisualTablePreset)
+                  }
+                >
+                  <option value="plain">Simple</option>
+                  <option value="booktabs">Booktabs</option>
+                  <option value="grid">Full grid</option>
+                  <option value="stretch">Fit page</option>
+                </select>
+              </label>
+              <div className="scient-latex-table-picker-size">
+                {tablePickerSize.rows} × {tablePickerSize.columns}
+              </div>
+              <div className="scient-latex-table-picker-grid">
+                {Array.from({ length: 25 }, (_, index) => {
+                  const row = Math.floor(index / 5) + 1;
+                  const column = (index % 5) + 1;
+                  const active = row <= tablePickerSize.rows && column <= tablePickerSize.columns;
+                  return (
+                    <button
+                      aria-label={`Insert ${row} by ${column} table`}
+                      data-active={active || undefined}
+                      disabled={readOnly}
+                      key={`${row}-${column}`}
+                      onClick={() => insertTable(row, column)}
+                      onMouseEnter={() => setTablePickerSize({ rows: row, columns: column })}
+                      type="button"
+                    />
+                  );
+                })}
+              </div>
+            </div>
+          </details>
         </div>
         <div className="scient-latex-toolbar-spacer" />
         <button className="scient-latex-source-button" type="button" onClick={props.onOpenSource}>

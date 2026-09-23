@@ -64,6 +64,70 @@
   border-radius: 7px;
   background: var(--background);
 }
+.scient-latex-table-picker {
+  position: relative;
+}
+.scient-latex-table-picker > summary {
+  list-style: none;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 4px 8px;
+  color: var(--foreground);
+  font: 11px/1.4 var(--font-sans);
+  cursor: pointer;
+}
+.scient-latex-table-picker > summary::-webkit-details-marker {
+  display: none;
+}
+.scient-latex-table-picker > summary:hover,
+.scient-latex-table-picker[open] > summary {
+  border-color: var(--border);
+  background: var(--muted);
+}
+.scient-latex-table-picker-popover {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 5px);
+  left: 0;
+  width: 190px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 10px;
+  background: var(--background);
+  box-shadow: 0 10px 28px rgb(15 23 42 / 18%);
+}
+.scient-latex-table-picker-popover label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted-foreground);
+  font: 10px/1.4 var(--font-sans);
+}
+.scient-latex-table-picker-popover select {
+  width: 100%;
+}
+.scient-latex-table-picker-size {
+  padding: 9px 0 6px;
+  color: var(--foreground);
+  text-align: center;
+  font: 11px/1.4 var(--font-sans);
+}
+.scient-latex-table-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 3px;
+}
+.scient-latex-table-picker-grid button {
+  aspect-ratio: 1;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  padding: 0;
+  background: var(--background);
+}
+.scient-latex-table-picker-grid button[data-active="true"] {
+  border-color: #6f9dcc;
+  background: #dcecfb;
+}
 
 .scient-latex-writing-toolbar button,
 .scient-latex-writing-toolbar select {
@@ -554,10 +618,10 @@
 }
 .scient-latex-rich-preview figure {
   margin: 0;
-  padding: 11px 13px 14px;
+  padding: 0 13px 12px;
 }
 .scient-latex-rich-preview figcaption {
-  margin: 0 0 9px;
+  margin: 10px 0 8px;
   text-align: center;
   font-size: 0.92em;
   font-weight: 600;
@@ -568,61 +632,192 @@
   text-align: center;
   font-weight: 600;
 }
+.scient-latex-table-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 5px;
+  margin: 0 -13px;
+  padding: 7px 9px;
+  border-bottom: 1px solid #dfe5ec;
+  background: #f8fafc;
+  font: 10px/1.35 var(--font-sans);
+}
+.scient-latex-table-toolbar label {
+  display: grid;
+  gap: 2px;
+  color: #65768a;
+}
+.scient-latex-table-toolbar select,
+.scient-latex-table-toolbar button {
+  min-height: 26px;
+  box-sizing: border-box;
+  border: 1px solid #cbd5df;
+  border-radius: 4px;
+  padding: 3px 7px;
+  background: #fff;
+  color: #34465a;
+  font: 11px/1.4 var(--font-sans);
+}
+.scient-latex-table-toolbar button[aria-pressed="true"] {
+  border-color: #7ca4cf;
+  background: #eaf3fc;
+  color: #204f7e;
+}
+.scient-latex-table-toolbar button:hover:not(:disabled) {
+  border-color: #86a9cf;
+  background: #f2f7fc;
+}
+.scient-latex-table-toolbar-separator {
+  align-self: stretch;
+  width: 1px;
+  margin: 1px 2px;
+  background: #d9e0e8;
+}
+.scient-latex-table-label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  margin: -3px 0 9px;
+  color: #718096;
+  font: 10px/1.4 var(--font-sans);
+}
+.scient-latex-table-label input {
+  width: min(260px, 60%);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 3px 6px;
+  background: transparent;
+  color: #526477;
+  font: 11px/1.4 var(--font-mono);
+}
+.scient-latex-table-label input:hover,
+.scient-latex-table-label input:focus {
+  border-color: #cbd5e1;
+  outline: none;
+  background: #fff;
+}
 .scient-latex-rich-table-scroll {
   max-width: 100%;
-  overflow-x: auto;
+  padding: 2px;
+  overflow: auto;
 }
 .scient-latex-rich-preview table {
-  width: 100%;
+  width: calc(100% - 1px);
   border-collapse: collapse;
-  font-size: 0.78em;
+  table-layout: fixed;
+  font-size: 0.84em;
   line-height: 1.4;
 }
 .scient-latex-rich-preview th,
 .scient-latex-rich-preview td {
-  min-width: 110px;
-  padding: 7px 8px;
+  min-width: 96px;
+  padding: 0;
   border-bottom: 1px solid #dfe4ea;
   text-align: left;
   vertical-align: top;
 }
+.scient-latex-rich-preview td[data-align="center"],
+.scient-latex-rich-preview th[data-align="center"] {
+  text-align: center;
+}
+.scient-latex-rich-preview td[data-align="right"],
+.scient-latex-rich-preview th[data-align="right"] {
+  text-align: right;
+}
 .scient-latex-rich-preview td input,
 .scient-latex-rich-preview th input {
   width: 100%;
+  min-height: 34px;
   min-width: 0;
-  margin: -3px -4px;
-  padding: 3px 4px;
-  border: 1px solid transparent;
-  border-radius: 4px;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 0;
   background: transparent;
   color: inherit;
   font: inherit;
   font-weight: inherit;
   line-height: inherit;
+  text-align: inherit;
 }
 .scient-latex-rich-preview td input:hover,
 .scient-latex-rich-preview th input:hover {
-  border-color: #cbd5e1;
-  background: #fff;
+  background: #f7fafc;
 }
 .scient-latex-rich-preview td input:focus,
 .scient-latex-rich-preview th input:focus {
-  border-color: #6b9acb;
-  outline: 2px solid #dceafb;
+  outline: none;
   background: #fff;
+}
+.scient-latex-rich-preview td[data-selected="true"],
+.scient-latex-rich-preview th[data-selected="true"] {
+  position: relative;
+  z-index: 1;
+  box-shadow: inset 0 0 0 2px #6495c7;
 }
 .scient-latex-rich-preview td input:disabled,
 .scient-latex-rich-preview th input:disabled {
   cursor: default;
 }
 .scient-latex-rich-preview th {
-  border-top: 2px solid #58697c;
-  border-bottom: 1px solid #8996a5;
   background: #f7f9fb;
   font-weight: 700;
 }
-.scient-latex-rich-preview tr:last-child td {
+.scient-latex-rich-preview
+  figure[data-table-style="booktabs"]
+  tbody
+  tr:first-child
+  > :not(.scient-latex-table-row-handle) {
+  border-top: 2px solid #58697c;
+}
+.scient-latex-rich-preview
+  figure[data-table-style="booktabs"]
+  tbody
+  tr:last-child
+  > :not(.scient-latex-table-row-handle) {
   border-bottom: 2px solid #58697c;
+}
+.scient-latex-rich-preview figure[data-table-style="grid"] tbody td,
+.scient-latex-rich-preview
+  figure[data-table-style="grid"]
+  tbody
+  th:not(.scient-latex-table-row-handle) {
+  border: 1px solid #aeb9c5;
+}
+.scient-latex-table-column-handle,
+.scient-latex-table-row-handle,
+.scient-latex-table-corner {
+  min-width: 25px !important;
+  width: 25px;
+  border: 0 !important;
+  background: transparent !important;
+  text-align: center !important;
+}
+.scient-latex-table-column-handle button,
+.scient-latex-table-row-handle button {
+  width: 23px;
+  height: 23px;
+  border: 0;
+  border-radius: 4px;
+  padding: 0;
+  background: transparent;
+  color: #8a98a8;
+  font: 9px/1 var(--font-sans);
+}
+.scient-latex-table-column-handle button:hover,
+.scient-latex-table-row-handle button:hover,
+.scient-latex-table-column-handle[data-selected="true"] button,
+.scient-latex-table-row-handle[data-selected="true"] button {
+  background: #e5f0fb;
+  color: #376b9e;
+}
+.scient-latex-table-hint {
+  padding: 7px 2px 0;
+  color: #8290a0;
+  font: 9px/1.4 var(--font-sans);
 }
 .scient-latex-structure-actions {
   display: flex;

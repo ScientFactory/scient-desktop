@@ -239,11 +239,51 @@ Theory & Proofs \\\\
       container.querySelector<HTMLInputElement>("input[aria-label='Table row 2 column 2']"),
     ).toBe(evidence);
     const addRow = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
-      (button) => button.textContent === "Add row",
+      (button) => button.textContent === "+ Row",
     )!;
     await act(async () => addRow.click());
-    expect(current).toContain("New row &  \\\\");
+    expect(current).toContain(" &  \\\\");
     expect(container.querySelector("input[aria-label='Table row 3 column 1']")).not.toBeNull();
+    const addColumn = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent === "+ Column",
+    )!;
+    await act(async () => addColumn.click());
+    expect(container.querySelector("input[aria-label='Table row 1 column 3']")).not.toBeNull();
+    const style = container.querySelector<HTMLSelectElement>("select[aria-label='Table style']")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(
+        style,
+        "grid",
+      );
+      style.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(current).toContain("\\hline");
+    const reference = container.querySelector<HTMLInputElement>(
+      "input[aria-label='Table reference label']",
+    )!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+        reference,
+        "tab:research",
+      );
+      reference.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(current).toContain("\\label{tab:research}");
+  });
+
+  it("inserts a table from the document toolbar picker", async () => {
+    await mount("Before");
+    const tableSummary = container.querySelector<HTMLElement>(
+      "summary[aria-label='Insert table']",
+    )!;
+    await act(async () => tableSummary.click());
+    const insert = container.querySelector<HTMLButtonElement>(
+      "button[aria-label='Insert 3 by 4 table']",
+    )!;
+    await act(async () => insert.click());
+    expect(current).toContain("\\begin{table}[htbp]");
+    expect(current).toContain("\\begin{tabular}");
+    expect(container.querySelector("input[aria-label='Table row 3 column 4']")).not.toBeNull();
   });
 
   it("rejects a destructive transaction spanning protected source", async () => {

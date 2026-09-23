@@ -9,9 +9,11 @@ bounded command completion. It also expands safe citation and reference
 commands, refines the writing toolbar, and projects description lists and
 common table environments as visual structure editors. Description labels and
 bodies support direct editing plus item insertion and removal. The safe table
-subset supports caption and cell editing plus row insertion through bounded
-source ranges while preserving the outer LaTeX structure; structurally complex
-cells fail closed to a protected preview.
+subset supports direct grid editing, keyboard navigation, caption and label
+editing, table insertion, row and column operations, alignment, header, rule
+style, and width controls. Text edits use bounded source ranges; structural
+operations regenerate only the understood tabular region and preserve the outer
+document. Structurally complex cells fail closed to a protected preview.
 Broader adapter coverage, post-build measurements and exact browser/PDF parity
 remain future scoped work.
 

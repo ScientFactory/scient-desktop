@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   adoptLatexVisualContent,
   applyLatexVisualDocumentChange,
+  latexVisualTableSource,
   latexVisualMathSource,
   parseLatexVisualMathSource,
   parseStructuredMathEnvironment,
@@ -267,6 +268,65 @@ Systems & Prototypes~and measurements \\\\
     );
     expect(changedAgain?.source).toContain("Theory & Proofs \\& verified models");
     expect(changedAgain?.source).toContain("Engineering & Prototypes~and measurements");
+  });
+
+  it("round-trips structural table edits through the supported table model", () => {
+    const source = document(`\\begin{table}[htbp]
+\\centering
+\\caption{Research options.}
+\\label{tab:areas}
+\\begin{tabular}{ll}
+\\toprule
+\\textbf{Area} & \\textbf{Evidence} \\\\
+\\midrule
+Theory & Proofs \\\\
+\\bottomrule
+\\end{tabular}
+\\end{table}`);
+    const projection = projectLatexVisualDocument(source);
+    const nodes = structuredClone(projection.content.content!);
+    Object.assign(nodes[0]!.attrs!, {
+      rows: [
+        ["Area", "Evidence", "Owner"],
+        ["Theory", "Proofs & models", "Ada"],
+        ["Systems", "Measurements", "Grace"],
+      ],
+      rowIds: ["row-1", "row-2", "row-3"],
+      columnIds: ["column-1", "column-2", "column-3"],
+      columnAlignments: ["left", "center", "right"],
+      tableStyle: "grid",
+      tableKind: "stretch",
+      hasHeader: true,
+      tableCanonical: true,
+      caption: "Research areas",
+      label: "tab:research-areas",
+    });
+    const changed = edit(source, nodes);
+    expect(changed).not.toBeNull();
+    expect(changed?.source).toContain("\\caption{Research areas}");
+    expect(changed?.source).toContain("\\label{tab:research-areas}");
+    expect(changed?.source).toContain("\\begin{tabularx}{\\textwidth}");
+    expect(changed?.source).toContain("\\hline");
+    expect(changed?.source).not.toContain("\\toprule");
+    expect(changed?.source).toContain("Theory & Proofs \\& models & Ada");
+    expect(changed?.projection.blocks[0]!.node.attrs).toMatchObject({
+      tableStyle: "grid",
+      tableKind: "stretch",
+      hasHeader: true,
+      columnAlignments: ["left", "center", "right"],
+    });
+  });
+
+  it("creates editable table sources for the table picker presets", () => {
+    for (const preset of ["plain", "booktabs", "grid", "stretch"] as const) {
+      const source = latexVisualTableSource(3, 4, preset);
+      const projection = projectLatexVisualDocument(document(source));
+      const block = projection.blocks[0]!;
+      const rows = block.node.attrs?.rows as string[][];
+      expect(block.editable, preset).toBe(true);
+      expect(rows, preset).toHaveLength(3);
+      expect(rows[0], preset).toHaveLength(4);
+    }
   });
 
   it("keeps structurally complex table cells protected", () => {
