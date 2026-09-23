@@ -9,33 +9,6 @@ import type { ScientReleaseNote } from "./model";
  */
 export const SCIENT_RELEASE_NOTES = [
   {
-    version: "0.6.17",
-    publishedAt: "2026-09-23",
-    format: "paragraphs",
-    headline: "Better provider updates and LaTeX projects.",
-    highlights: [
-      {
-        id: "managed-codex-updates-0617",
-        title: "Check for Codex updates in Scient",
-        description:
-          "When an update is available for your Scient-managed Codex installation, you can install it in Scient without waiting for an app update.",
-      },
-      {
-        id: "newly-discovered-models-0617",
-        title: "New models show up automatically",
-        description:
-          "Newly discovered models are available in the picker by default; your existing hidden-model choices stay unchanged.",
-      },
-      {
-        id: "latex-included-sources-0617",
-        title: "Build complete LaTeX projects",
-        description:
-          "Opening a LaTeX file included by another file now builds the complete document from the project's main file.",
-      },
-    ],
-    alsoIncluded: "Plus smaller reliability improvements throughout the app.",
-  },
-  {
     version: "0.6.16",
     publishedAt: "2026-09-22",
     format: "paragraphs",
