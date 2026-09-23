@@ -4,6 +4,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeUtil from "node:util";
 
 const git = (cwd, args, options = {}) => {
   const result = NodeChildProcess.spawnSync("git", args, {
@@ -22,6 +23,47 @@ const output = (cwd, args, options) => git(cwd, args, options).stdout.trim();
 const isAncestor = (cwd, older, newer) =>
   git(cwd, ["merge-base", "--is-ancestor", older, newer], { allowConflict: true }).status === 0;
 const nulPaths = (value) => value.split("\0").filter(Boolean);
+const isImplementationPath = (path) => !/\.(test|spec)\.[cm]?[jt]sx?$/u.test(path);
+
+function impactSignals(root, previous, target, paths) {
+  const signals = [];
+  const report = (id, affectedPaths, suggestedCheck) => {
+    if (affectedPaths.length > 0) signals.push({ id, paths: affectedPaths, suggestedCheck });
+  };
+  const qualityPaths = paths.filter(
+    (path) =>
+      path === "vite.config.ts" ||
+      path === ".github/workflows/ci.yml" ||
+      (isImplementationPath(path) && /^scripts\/(lint|check|verify)-/u.test(path)),
+  );
+  if (paths.includes("package.json")) {
+    try {
+      const before = JSON.parse(output(root, ["show", `${previous}:package.json`]));
+      const after = JSON.parse(output(root, ["show", `${target}:package.json`]));
+      if (!NodeUtil.isDeepStrictEqual(before.scripts, after.scripts))
+        qualityPaths.push("package.json");
+    } catch {
+      // A changed or removed manifest needs review, not a failed read-only plan.
+      qualityPaths.push("package.json");
+    }
+  }
+  report("quality-policy", qualityPaths, "Inspect changed gates; run affected static checks early");
+  report(
+    "shared-web-ui",
+    paths.filter(
+      (path) => isImplementationPath(path) && path.startsWith("apps/web/src/components/ui/"),
+    ),
+    "Trace changed primitive APIs into Scient consumers; consider early web lint and typecheck",
+  );
+  report(
+    "shared-contracts",
+    paths.filter(
+      (path) => isImplementationPath(path) && path.startsWith("packages/contracts/src/"),
+    ),
+    "Trace producers and clients; consider early affected-package typechecks",
+  );
+  return signals;
+}
 
 function argumentsFor(argv) {
   const [command, ...rest] = argv;
@@ -30,9 +72,9 @@ function argumentsFor(argv) {
   const allowed = new Set(["--base", "--target", "--format", "--worktree", "--branch"]);
   for (let i = 0; i < rest.length; i += 1) {
     const flag = rest[i];
-    if (flag === "--historical") {
+    if (flag === "--historical" || flag === "--existing") {
       if (command !== "plan" || Object.hasOwn(args, flag)) {
-        throw new Error("--historical is a plan-only flag and may be supplied once");
+        throw new Error(`${flag} is a plan-only flag and may be supplied once`);
       }
       args[flag] = true;
       continue;
@@ -49,6 +91,9 @@ function argumentsFor(argv) {
   }
   if (command === "plan" && (args["--worktree"] || args["--branch"])) {
     throw new Error("--worktree and --branch apply only to start");
+  }
+  if (args["--historical"] && args["--existing"]) {
+    throw new Error("--historical and --existing cannot be combined");
   }
   if (command === "start" && (!args["--worktree"] || !args["--branch"])) {
     throw new Error("start requires --worktree and --branch");
@@ -130,7 +175,26 @@ export function inspectAlignment(argv, { cwd = process.cwd() } = {}) {
   if (output(root, ["remote", "get-url", "--push", "upstream"]) !== "DISABLED") {
     throw new Error("Upstream push URL must be DISABLED");
   }
-  if (args["--historical"]) {
+  if (args["--existing"]) {
+    const branch = output(root, ["branch", "--show-current"]);
+    const head = output(root, ["rev-parse", "HEAD"]);
+    if (
+      git(root, ["rev-parse", "--verify", "-q", "MERGE_HEAD"], { allowConflict: true }).status === 0
+    ) {
+      throw new Error("Finish the current merge before planning an extension");
+    }
+    if (branch !== state.lastRefreshBranch || !branch.startsWith("codex/") || base !== head) {
+      throw new Error("--existing requires HEAD of the recorded codex/ alignment branch");
+    }
+    const merge = state.lastRefreshMerge;
+    if (typeof merge !== "string" || !isAncestor(root, merge, base)) {
+      throw new Error("Existing branch lacks its recorded upstream merge");
+    }
+    const parents = output(root, ["rev-list", "--parents", "-n", "1", merge]).split(" ");
+    if (parents.length !== 3 || parents[2] !== previous) {
+      throw new Error("Recorded upstream merge does not have the integration tip as second parent");
+    }
+  } else if (args["--historical"]) {
     if (!isAncestor(root, base, ownedMain)) {
       throw new Error("Historical base is not in current origin/main history");
     }
@@ -167,6 +231,8 @@ export function inspectAlignment(argv, { cwd = process.cwd() } = {}) {
     root,
     sourceCheckoutDirty,
     historicalReplay: args["--historical"] === true,
+    existingBranch: args["--existing"] === true,
+    ownedMainCatchUpRequired: !isAncestor(root, ownedMain, base),
     base,
     previous,
     target,
@@ -176,6 +242,7 @@ export function inspectAlignment(argv, { cwd = process.cwd() } = {}) {
     commits,
     nearestTag,
     officialPaths,
+    impactSignals: impactSignals(root, previous, target, officialPaths),
     overlappingPaths: overlaps,
     referenceOverlaps: overlaps.filter((path) => path.startsWith(".repos/")).length,
     predictedConflicts: conflicts.paths,
@@ -262,12 +329,32 @@ function printPlan(plan, result) {
       `${plan.predictedConflicts.length} predicted conflict paths.\n`,
   );
   if (plan.sourceCheckoutDirty) {
-    process.stdout.write("Source checkout is dirty; it will not be changed by this helper.\n");
+    process.stdout.write(
+      "Source checkout is dirty; this plan uses committed history only and will not change it.\n",
+    );
   }
   if (plan.historicalReplay) {
     process.stdout.write("Historical replay only; this base cannot be used with start.\n");
   }
+  if (plan.existingBranch) {
+    process.stdout.write(
+      "Existing alignment branch; extend it in place after reviewing this plan.\n",
+    );
+    if (plan.ownedMainCatchUpRequired) {
+      process.stdout.write(
+        "Owned main has commits not in this branch; review one catch-up before final qualification.\n",
+      );
+    }
+  }
   for (const commit of plan.commits) process.stdout.write(`  ${commit}\n`);
+  if (plan.impactSignals.length > 0) {
+    process.stdout.write("Advisory downstream-impact signals (not conflicts or blockers):\n");
+    for (const signal of plan.impactSignals) {
+      process.stdout.write(
+        `  ${signal.id}: ${signal.paths.length} changed paths; ${signal.suggestedCheck}.\n`,
+      );
+    }
+  }
   process.stdout.write("Overlaps (review even when Git merges cleanly):\n");
   for (const path of plan.overlappingPaths) {
     if (!path.startsWith(".repos/")) process.stdout.write(`  ${path}\n`);
