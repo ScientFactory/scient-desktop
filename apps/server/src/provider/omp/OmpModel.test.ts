@@ -15,6 +15,13 @@ describe("Oh My Pi model slugs", () => {
     expect(decodeOmpModelSlug(slug ?? "")).toEqual({ provider: "openai", modelId: "gpt-5" });
   });
 
+  it("accepts native model ids containing reserved characters", () => {
+    expect(decodeOmpModelSlug("ollama/gemma4:12b-it-qat")).toEqual({
+      provider: "ollama",
+      modelId: "gemma4:12b-it-qat",
+    });
+  });
+
   it("rejects a slug that is not one canonical segment pair", () => {
     expect(decodeOmpModelSlug("openai")).toBeUndefined();
     expect(decodeOmpModelSlug("openai/gpt/5")).toBeUndefined();

@@ -21,7 +21,9 @@ export const decodeOmpModelSlug = (
     const provider = decodeURIComponent(slug.slice(0, delimiter));
     const modelId = decodeURIComponent(slug.slice(delimiter + 1));
     if (!validSegment(provider) || !validSegment(modelId)) return undefined;
-    if (encodeOmpModelSlug(provider, modelId) !== slug) return undefined;
+    const canonical = encodeOmpModelSlug(provider, modelId);
+    const raw = `${provider}/${modelId}`;
+    if (canonical !== slug && raw !== slug) return undefined;
     return { provider, modelId };
   } catch {
     return undefined;
