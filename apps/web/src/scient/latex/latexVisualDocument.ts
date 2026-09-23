@@ -38,7 +38,7 @@ const DEFAULT_LAYOUT_PROFILE: LatexVisualLayoutProfile = {
   marginRightIn: 1,
   marginBottomIn: 1,
   marginLeftIn: 1,
-  lineHeight: 1.45,
+  lineHeight: 1.2,
   paragraphIndentEm: 1.5,
   paragraphGapEm: 0,
 };
@@ -78,6 +78,7 @@ export function latexVisualLayoutProfile(source: string): LatexVisualLayoutProfi
   const margin = (side: string) =>
     latexLengthInches(geometryOptions.get(side) ?? "") ?? allMargin ?? 1;
   const lineSpread = Number(/\\linespread\{([^{}]+)\}/u.exec(preamble)?.[1] ?? "1");
+  const defaultLineHeight = baseFontPt === 11 ? 13.6 / 11 : baseFontPt === 12 ? 14.5 / 12 : 1.2;
   const parindent = latexLengthEm(
     /\\setlength\{\\parindent\}\{([^{}]+)\}/u.exec(preamble)?.[1] ?? "",
     baseFontPt,
@@ -95,7 +96,10 @@ export function latexVisualLayoutProfile(source: string): LatexVisualLayoutProfi
     marginRightIn: margin("right"),
     marginBottomIn: margin("bottom"),
     marginLeftIn: margin("left"),
-    lineHeight: Number.isFinite(lineSpread) && lineSpread > 0 ? 1.45 * lineSpread : 1.45,
+    lineHeight:
+      Number.isFinite(lineSpread) && lineSpread > 0
+        ? defaultLineHeight * lineSpread
+        : defaultLineHeight,
     paragraphIndentEm: parindent === null ? 1.5 : parindent,
     paragraphGapEm: parskip === null ? 0 : parskip,
   };

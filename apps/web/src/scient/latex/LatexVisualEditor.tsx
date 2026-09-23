@@ -21,6 +21,7 @@ import { EditorState, Plugin } from "@tiptap/pm/state";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { LatexMathField, type LatexMathFieldHandle } from "./LatexMathField";
 import { mathSourceCompletions, type MathSourceCompletion } from "./latexMathCompletion";
+import { planLatexVisualPagination } from "./latexVisualPagination";
 import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
 import { useAssetUrlState } from "~/assets/assetUrls";
 import { readVisualDraft, clearVisualDraft } from "./visualDrafts";
@@ -916,10 +917,14 @@ function LatexRichPreviewView({
     );
   }
   if (kind === "pagebreak") {
+    const command =
+      String(node.attrs.raw ?? "").trim() === "\\clearpage" ? "\\clearpage" : "\\newpage";
     return (
-      <NodeViewWrapper className="scient-latex-page-break" contentEditable={false}>
-        <span>Page break</span>
-      </NodeViewWrapper>
+      <NodeViewWrapper
+        aria-label={`${command} page break`}
+        className="scient-latex-page-break"
+        contentEditable={false}
+      />
     );
   }
   if (kind === "figure") {
@@ -1623,6 +1628,8 @@ const MATH_INSERTIONS = {
   aligned: "\\begin{aligned}\na &= b + c \\\\\nd &= e + f\n\\end{aligned}",
 } as const;
 
+const DOCUMENT_ZOOM_LEVELS = [0.5, 0.75, 1, 1.25, 1.5, 2] as const;
+
 export interface LatexVisualEditorProps {
   readonly draftKey: string;
   readonly fileRevision: string;
@@ -1677,6 +1684,10 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     supported: initial.supportedBlocks,
     raw: initial.rawBlocks,
   });
+  const [pageCount, setPageCount] = useState(1);
+  const [zoomMode, setZoomMode] = useState<"fit" | number>("fit");
+  const [fitZoom, setFitZoom] = useState(1);
+  const visualScroll = useRef<HTMLDivElement | null>(null);
 
   useLayoutEffect(() => {
     onEdit.current = props.onEdit;
@@ -1886,9 +1897,12 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     if (node.type.name === "bulletList" || node.type.name === "orderedList") return "List";
     return "Body text";
   })();
+  const pageHeight = layout.paper === "a4" ? 1123 : 1056;
+  const pageGap = 32;
   const paperStyle = {
     "--scient-latex-paper-width": layout.paper === "a4" ? "794px" : "816px",
-    "--scient-latex-paper-min-height": layout.paper === "a4" ? "1123px" : "1056px",
+    "--scient-latex-paper-height": `${pageHeight}px`,
+    "--scient-latex-page-gap": `${pageGap}px`,
     "--scient-latex-margin-top": `${layout.marginTopIn}in`,
     "--scient-latex-margin-right": `${layout.marginRightIn}in`,
     "--scient-latex-margin-bottom": `${layout.marginBottomIn}in`,
@@ -1898,6 +1912,160 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     "--scient-latex-par-indent": `${layout.paragraphIndentEm}em`,
     "--scient-latex-par-gap": `${layout.paragraphGapEm}em`,
   } as CSSProperties;
+
+  useLayoutEffect(() => {
+    if (!editor) return;
+    const root = editor.view.dom as HTMLElement;
+    let frame = 0;
+    let paginating = false;
+    let observer: ResizeObserver | null = null;
+    const marginTop = layout.marginTopIn * 96;
+    const marginBottom = layout.marginBottomIn * 96;
+
+    const restoreNaturalLayout = (child: HTMLElement) => {
+      const original = child.dataset.latexPaginationMarginTop;
+      if (original === undefined) {
+        child.dataset.latexPaginationMarginTop = child.style.marginTop || "__unset__";
+      } else if (original === "__unset__") {
+        child.style.removeProperty("margin-top");
+      } else {
+        child.style.marginTop = original;
+      }
+      child.style.removeProperty("--scient-latex-page-break-space");
+      child.style.removeProperty("--scient-latex-page-break-marker");
+      child.removeAttribute("data-latex-page");
+    };
+
+    const topWithinEditor = (element: HTMLElement) => {
+      const documentTop = (target: HTMLElement) => {
+        let top = 0;
+        let current: HTMLElement | null = target;
+        while (current) {
+          top += current.offsetTop;
+          current = current.offsetParent as HTMLElement | null;
+        }
+        return top;
+      };
+      return documentTop(element) - documentTop(root);
+    };
+
+    const paginationUnits = () =>
+      [...root.children].flatMap((node) => {
+        if (!(node instanceof HTMLElement)) return [];
+        if (node.classList.contains("scient-latex-toc-preview")) {
+          const heading = node.querySelector<HTMLElement>(":scope > h2");
+          const entries = [...node.querySelectorAll<HTMLElement>(":scope > ol > li")];
+          if (!heading || entries.length === 0) return [{ element: node, bottomElement: node }];
+          return [
+            { element: heading, bottomElement: entries[0]! },
+            ...entries.slice(1).map((element) => ({ element, bottomElement: element })),
+          ];
+        }
+        if (node.matches('.scient-latex-rich-preview[data-kind="description"]')) {
+          const items = [...node.querySelectorAll<HTMLElement>(":scope > dl > div")];
+          if (items.length > 0)
+            return items.map((element) => ({ element, bottomElement: element }));
+        }
+        if (node.matches("ul, ol")) {
+          const items = [...node.querySelectorAll<HTMLElement>(":scope > li")];
+          if (items.length > 0)
+            return items.map((element) => ({ element, bottomElement: element }));
+        }
+        return [{ element: node, bottomElement: node }];
+      });
+
+    const paginate = () => {
+      if (paginating) return;
+      paginating = true;
+      for (const element of root.querySelectorAll<HTMLElement>(
+        "[data-latex-pagination-margin-top]",
+      ))
+        restoreNaturalLayout(element);
+      const units = paginationUnits();
+      for (const unit of units) restoreNaturalLayout(unit.element);
+      const naturalMargins = units.map(
+        ({ element }) => Number.parseFloat(getComputedStyle(element).marginTop) || 0,
+      );
+      const blocks = units.map(({ element, bottomElement }) => ({
+        top: topWithinEditor(element),
+        bottom: topWithinEditor(bottomElement) + bottomElement.offsetHeight,
+        explicitBreak: element.classList.contains("scient-latex-page-break"),
+      }));
+      const plan = planLatexVisualPagination(blocks, {
+        pageHeight,
+        pageGap,
+        marginTop,
+        marginBottom,
+      });
+      plan.placements.forEach((placement, index) => {
+        const child = units[index]?.element;
+        if (!child) return;
+        child.dataset.latexPage = String(placement.page + 1);
+        if (child.classList.contains("scient-latex-page-break")) {
+          child.style.setProperty("--scient-latex-page-break-space", `${placement.offset}px`);
+          child.style.setProperty(
+            "--scient-latex-page-break-marker",
+            `${placement.markerOffset ?? 0}px`,
+          );
+        } else if (placement.offset > 0) {
+          child.style.marginTop = `${naturalMargins[index]! + placement.offset}px`;
+        }
+        observer?.observe(child);
+      });
+      root.style.setProperty(
+        "--scient-latex-document-height",
+        `${plan.pageCount * pageHeight + (plan.pageCount - 1) * pageGap}px`,
+      );
+      setPageCount((current) => (current === plan.pageCount ? current : plan.pageCount));
+      paginating = false;
+    };
+    const schedule = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(paginate);
+    };
+    observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(schedule);
+    observer?.observe(root);
+    editor.on("update", schedule);
+    schedule();
+    return () => {
+      cancelAnimationFrame(frame);
+      observer?.disconnect();
+      editor.off("update", schedule);
+      for (const child of root.querySelectorAll<HTMLElement>(
+        "[data-latex-pagination-margin-top]",
+      )) {
+        restoreNaturalLayout(child);
+        delete child.dataset.latexPaginationMarginTop;
+      }
+    };
+  }, [editor, layout.marginBottomIn, layout.marginTopIn, pageHeight]);
+
+  useLayoutEffect(() => {
+    const scroll = visualScroll.current;
+    if (!scroll) return;
+    const updateFitZoom = () => {
+      const available = Math.max(1, scroll.clientWidth - 96);
+      setFitZoom(Math.min(2, Math.max(0.35, available / (layout.paper === "a4" ? 794 : 816))));
+    };
+    updateFitZoom();
+    const observer =
+      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updateFitZoom);
+    observer?.observe(scroll);
+    return () => observer?.disconnect();
+  }, [layout.paper]);
+
+  const zoom = zoomMode === "fit" ? fitZoom : zoomMode;
+  const paperWidth = layout.paper === "a4" ? 794 : 816;
+  const pageStackHeight = pageCount * pageHeight + (pageCount - 1) * pageGap;
+  const stageHeight = 25 + pageStackHeight;
+  const changeZoom = (direction: -1 | 1) => {
+    const current = zoom;
+    const levels = direction > 0 ? DOCUMENT_ZOOM_LEVELS : DOCUMENT_ZOOM_LEVELS.toReversed();
+    const next = levels.find((level) =>
+      direction > 0 ? level > current + 0.01 : level < current - 0.01,
+    );
+    if (next !== undefined) setZoomMode(next);
+  };
 
   return (
     <div
@@ -1930,6 +2098,30 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
           <span>Source-backed LaTeX document</span>
         </div>
         <div className="scient-latex-writing-header-actions">
+          <div className="scient-latex-zoom-controls" role="group" aria-label="Document zoom">
+            <button aria-label="Zoom out" onClick={() => changeZoom(-1)} type="button">
+              −
+            </button>
+            <select
+              aria-label="Document zoom level"
+              value={zoomMode}
+              onChange={(event) =>
+                setZoomMode(
+                  event.currentTarget.value === "fit" ? "fit" : Number(event.currentTarget.value),
+                )
+              }
+            >
+              <option value="fit">Fit</option>
+              {DOCUMENT_ZOOM_LEVELS.map((level) => (
+                <option key={level} value={level}>
+                  {Math.round(level * 100)}%
+                </option>
+              ))}
+            </select>
+            <button aria-label="Zoom in" onClick={() => changeZoom(1)} type="button">
+              +
+            </button>
+          </div>
           <button
             aria-expanded={navigationOpen}
             onClick={() => setNavigationOpen((value) => !value)}
@@ -2159,6 +2351,9 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
             type="button"
           >
             Figure
+          </button>
+          <button disabled={readOnly} onClick={() => insertVisualSource("\\newpage")} type="button">
+            Page break
           </button>
         </div>
         <div
@@ -2409,11 +2604,35 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
             </details>
           </aside>
         ) : null}
-        <div className="scient-latex-visual-scroll">
-          <div className="scient-latex-page-stage" style={paperStyle}>
-            <div className="scient-latex-page-ruler" aria-hidden="true" />
-            <div className="scient-latex-visual-paper">
-              <EditorContent editor={editor} />
+        <div className="scient-latex-visual-scroll" ref={visualScroll}>
+          <div
+            className="scient-latex-page-zoom-frame"
+            style={{ width: paperWidth * zoom, height: stageHeight * zoom }}
+          >
+            <div
+              className="scient-latex-page-stage"
+              style={
+                {
+                  ...paperStyle,
+                  transform: `scale(${zoom})`,
+                } as CSSProperties
+              }
+            >
+              <div className="scient-latex-page-ruler" aria-hidden="true" />
+              <div className="scient-latex-visual-paper">
+                <div className="scient-latex-page-stack" aria-hidden="true">
+                  {Array.from({ length: pageCount }, (_, index) => (
+                    <div
+                      className="scient-latex-page-sheet"
+                      key={index}
+                      style={{ top: index * (pageHeight + pageGap) }}
+                    >
+                      <span>Page {index + 1}</span>
+                    </div>
+                  ))}
+                </div>
+                <EditorContent editor={editor} />
+              </div>
             </div>
           </div>
         </div>
@@ -2423,6 +2642,9 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
         <span>Editing: {selectionContext}</span>
         <span>
           {layout.documentClass} · {layout.baseFontPt}pt · {layout.paper.toUpperCase()}
+        </span>
+        <span>
+          {pageCount} {pageCount === 1 ? "page" : "pages"}
         </span>
         <span>
           {summary.supported} visual {summary.supported === 1 ? "block" : "blocks"}

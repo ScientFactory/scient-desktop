@@ -71,6 +71,30 @@
 .scient-latex-writing-header-actions button:hover {
   background: var(--accent);
 }
+.scient-latex-zoom-controls {
+  display: flex;
+  align-items: center;
+}
+.scient-latex-writing-header-actions .scient-latex-zoom-controls button {
+  min-width: 28px;
+  border-radius: 0;
+  padding-inline: 6px;
+}
+.scient-latex-writing-header-actions .scient-latex-zoom-controls button:first-child {
+  border-radius: 6px 0 0 6px;
+}
+.scient-latex-writing-header-actions .scient-latex-zoom-controls button:last-child {
+  border-radius: 0 6px 6px 0;
+}
+.scient-latex-zoom-controls select {
+  min-height: 28px;
+  border: solid var(--border);
+  border-width: 1px 0;
+  padding: 3px 5px;
+  background: var(--background);
+  color: var(--foreground);
+  font: 11px/1.4 var(--font-sans);
+}
 
 .scient-latex-ribbon-tabs {
   display: flex;
@@ -417,9 +441,15 @@
     ),
     color-mix(in srgb, var(--muted) 68%, var(--background));
 }
-.scient-latex-page-stage {
-  width: min(100%, var(--scient-latex-paper-width, 816px));
+.scient-latex-page-zoom-frame {
+  position: relative;
+  flex: none;
   margin: 0 auto;
+}
+.scient-latex-page-stage {
+  width: var(--scient-latex-paper-width, 816px);
+  margin: 0;
+  transform-origin: top left;
 }
 .scient-latex-page-ruler {
   height: 18px;
@@ -439,23 +469,57 @@
 }
 
 .scient-latex-visual-paper {
+  position: relative;
   width: 100%;
-  min-height: var(--scient-latex-paper-min-height, 1056px);
+  min-height: var(--scient-latex-paper-height, 1056px);
   margin: 0 auto;
   box-sizing: border-box;
-  padding: var(--scient-latex-margin-top, 1in) var(--scient-latex-margin-right, 1in)
-    var(--scient-latex-margin-bottom, 1in) var(--scient-latex-margin-left, 1in);
-  background: #fff;
   color: #20232a;
+  color-scheme: light;
+}
+
+.scient-latex-page-stack {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.scient-latex-page-sheet {
+  position: absolute;
+  width: 100%;
+  height: var(--scient-latex-paper-height, 1056px);
+  box-sizing: border-box;
   border: 1px solid #d9dce1;
   border-radius: 3px;
+  background: #fff;
   box-shadow: 0 8px 32px #00000014;
-  color-scheme: light;
+}
+
+.scient-latex-page-sheet > span {
+  position: absolute;
+  top: 7px;
+  right: -50px;
+  padding: 2px 5px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--muted) 82%, var(--background));
+  color: #9aa4b1;
+  font: 9px/1.2 var(--font-sans);
+  letter-spacing: 0.04em;
+}
+
+.scient-latex-visual-paper > .tiptap {
+  position: relative;
+  z-index: 1;
 }
 
 .scient-latex-visual-document {
   counter-reset: scient-section;
-  min-height: 880px;
+  width: 100%;
+  min-height: var(--scient-latex-document-height, var(--scient-latex-paper-height, 1056px));
+  box-sizing: border-box;
+  padding: var(--scient-latex-margin-top, 1in) var(--scient-latex-margin-right, 1in)
+    var(--scient-latex-margin-bottom, 1in) var(--scient-latex-margin-left, 1in);
   outline: none;
   font:
     var(--scient-latex-font-size, 10pt) / var(--scient-latex-line-height, 1.45) "KaTeX_Main",
@@ -477,8 +541,8 @@
 }
 .scient-latex-visual-document > h1 {
   counter-reset: scient-subsection;
-  margin: 1.2em 0 0.65em;
-  font-size: 1.65em;
+  margin: 1.5em 0 0.7em;
+  font-size: 1.44em;
   font-weight: 700;
   line-height: 1.25;
 }
@@ -491,7 +555,7 @@
 .scient-latex-visual-document > h2 {
   counter-reset: scient-subsubsection;
   margin: 1.2em 0 0.65em;
-  font-size: 1.3em;
+  font-size: 1.2em;
   font-weight: 700;
   line-height: 1.3;
 }
@@ -835,8 +899,11 @@
   display: grid;
   justify-items: center;
   gap: 0.45em;
-  margin: 2em 0 3em;
+  margin: 5em 0 2.5em;
   text-align: center;
+}
+.scient-latex-visual-document > .scient-latex-title-preview:first-child {
+  margin-top: 5em;
 }
 .scient-latex-title-preview input {
   width: min(100%, 42rem);
@@ -856,7 +923,7 @@
 }
 .scient-latex-title-preview input[aria-label="Document author"],
 .scient-latex-title-preview input[aria-label="Document date"] {
-  font-size: 1.2em;
+  font-size: 1em;
   line-height: 1.25;
 }
 .scient-latex-title-preview input:hover,
@@ -886,13 +953,18 @@
 }
 .scient-latex-abstract-preview {
   margin: 1.8em auto;
-  max-width: 88%;
+  max-width: 82%;
 }
 .scient-latex-abstract-preview h2,
 .scient-latex-toc-preview h2 {
   margin: 0 0 0.6em;
   font-size: 1.05em;
   text-align: center;
+}
+.scient-latex-toc-preview h2 {
+  margin-bottom: 0.35em;
+  font-size: 1.44em;
+  text-align: left;
 }
 .scient-latex-abstract-preview h2::before,
 .scient-latex-toc-preview h2::before {
@@ -930,7 +1002,7 @@
 }
 .scient-latex-toc-preview ol {
   display: grid;
-  gap: 0.3em;
+  gap: 0;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -939,6 +1011,8 @@
   display: grid;
   grid-template-columns: 3.6em minmax(0, 1fr);
   gap: 0.5em;
+  font-size: 0.95em;
+  line-height: 1.15;
 }
 .scient-latex-toc-preview li[data-level="2"] {
   padding-left: 1.5em;
@@ -948,28 +1022,21 @@
   font-size: 0.94em;
 }
 .scient-latex-page-break {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 2.5em -0.45in;
+  position: relative;
+  display: block;
+  height: var(--scient-latex-page-break-space, 0);
+  min-height: 0;
+  margin: 0;
   color: #8290a1;
   font: 9px/1.4 var(--font-sans);
   text-transform: uppercase;
   letter-spacing: 0.08em;
 }
-.scient-latex-page-break::before,
-.scient-latex-page-break::after {
-  height: 1px;
-  flex: 1;
-  background: #dbe1e8;
-  content: "";
-}
-
 .scient-latex-rich-preview {
   margin: 1.4em 0;
   border: 1px solid transparent;
   border-radius: 7px;
-  background: #fff;
+  background: transparent;
   overflow: hidden;
 }
 .scient-latex-rich-preview:focus-within {

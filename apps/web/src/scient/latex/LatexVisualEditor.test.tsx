@@ -111,6 +111,39 @@ describe("writing editor source transactions", () => {
     expect(current).toContain("\\(x^2\\)");
   });
 
+  it("inserts a source-backed explicit page break", async () => {
+    await mount("First page");
+    const pageBreak = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent === "Page break",
+    );
+    expect(pageBreak).toBeDefined();
+    await act(async () => pageBreak!.click());
+    expect(current).toContain("\\newpage");
+    expect(
+      editor()
+        .getJSON()
+        .content?.some((node) => node.attrs?.kind === "pagebreak"),
+    ).toBe(true);
+  });
+
+  it("zooms the fixed paper without changing LaTeX", async () => {
+    await mount("Stable page");
+    const zoom = container.querySelector<HTMLSelectElement>(
+      "select[aria-label='Document zoom level']",
+    )!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(zoom, "0.5");
+      zoom.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(zoom.value).toBe("0.5");
+    expect(
+      container
+        .querySelector<HTMLElement>(".scient-latex-page-stage")
+        ?.style.getPropertyValue("transform"),
+    ).toBe("scale(0.5)");
+    expect(writes).not.toHaveBeenCalled();
+  });
+
   it("shows editable front matter and marks only starred headings as unnumbered", async () => {
     current = `\\documentclass{article}
 \\title{Research Guide}

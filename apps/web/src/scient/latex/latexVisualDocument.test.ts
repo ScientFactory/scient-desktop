@@ -147,7 +147,7 @@ A concise introduction.
       dateEnabled: true,
       dateMode: "default",
     });
-    expect(title.attrs?.date).not.toBe("Today");
+    expect(title?.attrs?.date).not.toBe("Today");
 
     const withAuthor = structuredClone(projection.content.content!);
     withAuthor[0]!.attrs = {
@@ -490,7 +490,7 @@ Text
     });
     expect(profile.marginLeftIn).toBeCloseTo(3 / 2.54);
     expect(profile.marginRightIn).toBeCloseTo(2 / 2.54);
-    expect(profile.lineHeight).toBeCloseTo(1.74);
+    expect(profile.lineHeight).toBeCloseTo(1.45);
     expect(profile.paragraphGapEm).toBeGreaterThan(0);
   });
 
