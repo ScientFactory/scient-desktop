@@ -161,7 +161,7 @@ A read-only quota feed outside this environment's provider CLIs, configured unde
 
 #### Model manifest
 
-The per-driver list of current model slugs that decides which models land in the model picker's legacy section. Bundled at `apps/server/src/provider/model-manifest.json` and refreshed at runtime from the same file on `main`, so classification updates ship as commits instead of releases. See the [provider architecture][16] model manifest section.
+Scient-owned catalog and per-model visibility policy. Explicit `legacy` entries feed the model picker's Legacy section; unknown discovered models remain visible by default, with provider-native legacy flags preserved. Bundled at `apps/server/src/provider/model-manifest.json` and refreshed at runtime from the same file on `main`, so classification updates ship as commits instead of releases. See the [provider architecture][16] model manifest section.
 
 ### Checkpointing
 
