@@ -1217,10 +1217,10 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         validation("respondToUserInput", "Choose one of Oh My Pi's offered answers."),
       );
     }
-    ctx.runtime.removeQuestion(id);
     const response =
       pending.method === "confirm" ? { id, confirmed: value === "true" } : { id, value };
     return ctx.client.extensionUiResponse(response).pipe(
+      Effect.tap(() => Effect.sync(() => ctx.runtime.removeQuestion(id))),
       Effect.tap(() =>
         eventBase(ctx).pipe(
           Effect.flatMap((base) =>
