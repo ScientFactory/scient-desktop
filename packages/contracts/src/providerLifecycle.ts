@@ -132,6 +132,8 @@ export const ProviderRuntimeSummary = Schema.Struct({
   target: TrimmedNonEmptyString,
   actions: Schema.Array(ProviderManagedRuntimeAction),
   managedVersion: Schema.NullOr(TrimmedNonEmptyString),
+  /** Latest qualified catalog version when `update` is currently available. */
+  availableManagedVersion: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
   previousManagedVersion: Schema.NullOr(TrimmedNonEmptyString),
   operation: Schema.NullOr(ProviderRuntimeOperation),
   message: TrimmedNonEmptyString,
