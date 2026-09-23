@@ -43,7 +43,11 @@ it("keeps the public LaTeX build contract narrow, paced, and evidence-bearing", 
   const failure = JSON.stringify(Tool.getJsonSchemaFromSchema(ScientLatexBuildTool.failureSchema));
 
   expect(input.type).toBe("object");
-  expect(Object.keys(input.properties ?? {})).toEqual(["sourcePath", "outputPath"]);
+  expect(Object.keys(input.properties ?? {})).toEqual([
+    "sourcePath",
+    "rootSourcePath",
+    "outputPath",
+  ]);
   expect(input.required).toEqual(["sourcePath", "outputPath"]);
   expect(output).toContain("in-progress");
   expect(output).toContain("retryAfterMs");

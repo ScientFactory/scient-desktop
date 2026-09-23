@@ -217,6 +217,7 @@ import {
   selectThreadRightPanelState,
   type HtmlFilePresentationRequest,
   type LatexFilePresentationRequest,
+  type OpenFileOptions,
   type RightPanelSurface,
   useRightPanelStore,
 } from "../rightPanelStore";
@@ -5044,16 +5045,15 @@ function ChatViewContent(props: ChatViewProps) {
     [activeThreadRef, runAfterPendingFileSave],
   );
   const openFileSourceSurfaceNow = useCallback(
-    (relativePath: string, line?: number) => {
+    (relativePath: string, line?: number, options?: OpenFileOptions) => {
       if (!activeThreadRef || activeWorkspaceRoot === undefined) return;
-      useRightPanelStore
-        .getState()
-        .openFile(
-          activeThreadRef,
-          relativePath,
-          line,
-          shouldOpenInBrowserByDefault(relativePath) ? { htmlPreviewMode: "source" } : undefined,
-        );
+      const openOptions = {
+        ...(shouldOpenInBrowserByDefault(relativePath)
+          ? { htmlPreviewMode: "source" as const }
+          : {}),
+        ...options,
+      };
+      useRightPanelStore.getState().openFile(activeThreadRef, relativePath, line, openOptions);
     },
     [activeThreadRef, activeWorkspaceRoot],
   );
@@ -5063,9 +5063,9 @@ function ChatViewContent(props: ChatViewProps) {
     openSource: openFileSourceSurfaceNow,
   });
   const openFileSourceSurface = useCallback(
-    (relativePath: string, line?: number) => {
+    (relativePath: string, line?: number, options?: OpenFileOptions) => {
       runAfterPendingFileSave(`file:${relativePath}`, () => {
-        openFileSourceSurfaceNow(relativePath, line);
+        openFileSourceSurfaceNow(relativePath, line, options);
       });
     },
     [openFileSourceSurfaceNow, runAfterPendingFileSave],
@@ -10628,6 +10628,11 @@ function ChatViewContent(props: ChatViewProps) {
           latexPresentationRequest={
             renderedRightPanelSurface.kind === "file"
               ? (renderedRightPanelSurface.latexPresentationRequest ?? null)
+              : null
+          }
+          latexRootRelativePath={
+            renderedRightPanelSurface.kind === "file"
+              ? (renderedRightPanelSurface.latexRootRelativePath ?? null)
               : null
           }
           onOpenFile={openFileSurface}

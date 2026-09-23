@@ -448,6 +448,33 @@ const awaitTerminal = (service: LatexBuildService["Service"], input: LatexBuildI
   });
 
 describe("LatexBuildService", () => {
+  it.effect("resolves an included source through the service before a build is requested", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        compiles: [],
+        files: {
+          "main.tex": String.raw`\documentclass{article}\begin{document}\input{chapters/results}\end{document}`,
+          "chapters/results.tex": "Results.",
+        },
+      });
+
+      const result = yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        return yield* service.resolveDocument({
+          workspaceRoot: harness.workspaceRoot,
+          sourceRelativePath: "chapters/results.tex",
+        });
+      }).pipe(Effect.provide(harness.serviceLayer));
+
+      expect(result).toMatchObject({
+        _tag: "resolved",
+        sourceRelativePath: "chapters/results.tex",
+        rootRelativePath: "main.tex",
+        reason: "static-dependency",
+      });
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.live("leads the compiler's PATH with the distribution Scient installed", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;

@@ -862,6 +862,77 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("retains an explicitly selected LaTeX root with the navigated source", () => {
+    useRightPanelStore
+      .getState()
+      .openFile(refA, "chapters/results.tex", 18, { latexRootRelativePath: "paper/main.tex" });
+
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces,
+    ).toEqual([
+      {
+        id: "file:chapters/results.tex",
+        kind: "file",
+        relativePath: "chapters/results.tex",
+        revealLine: 18,
+        revealRequestId: 1,
+        latexRootRelativePath: "paper/main.tex",
+      },
+    ]);
+    expect(
+      migratePersistedRightPanelState({
+        byThreadKey: {
+          "env-1:thread-A": {
+            isOpen: true,
+            activeSurfaceId: "file:chapters/results.tex",
+            surfaces: [
+              {
+                id: "file:chapters/results.tex",
+                kind: "file",
+                relativePath: "chapters/results.tex",
+                revealLine: 18,
+                revealRequestId: 1,
+                latexRootRelativePath: "paper/main.tex",
+              },
+            ],
+          },
+        },
+      }).byThreadKey["env-1:thread-A"]?.surfaces,
+    ).toMatchObject([{ latexRootRelativePath: "paper/main.tex" }]);
+  });
+
+  it("drops invalid persisted LaTeX roots during migration", () => {
+    for (const invalidRoot of [
+      "../outside.tex",
+      "C:/outside.tex",
+      "C:relative.tex",
+      String.raw`\\server\share\root.tex`,
+    ]) {
+      const migrated = migratePersistedRightPanelState({
+        byThreadKey: {
+          "env-1:thread-A": {
+            isOpen: true,
+            activeSurfaceId: "file:chapter.tex",
+            surfaces: [
+              {
+                id: "file:chapter.tex",
+                kind: "file",
+                relativePath: "chapter.tex",
+                revealLine: null,
+                revealRequestId: 1,
+                latexRootRelativePath: invalidRoot,
+              },
+            ],
+          },
+        },
+      });
+
+      expect(migrated.byThreadKey["env-1:thread-A"]?.surfaces[0]).not.toHaveProperty(
+        "latexRootRelativePath",
+      );
+    }
+  });
+
   it("carries and consumes a one-shot LaTeX Split presentation request", () => {
     useRightPanelStore
       .getState()
