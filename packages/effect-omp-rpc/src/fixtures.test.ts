@@ -49,7 +49,7 @@ describe("OMP v18.2.8 recorded fixtures", () => {
   });
 
   it("decodes the real subagent payload shape", () => {
-    const frame = Schema.decodeUnknownSync(OmpSubagentFrame)({
+    const frame = Schema.decodeSync(OmpSubagentFrame)({
       type: "subagent_lifecycle",
       payload: {
         id: "sub-1",
