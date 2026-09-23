@@ -71,7 +71,11 @@ export const ScientQueueWorkerLive = Layer.effect(
       const item =
         doc.items.find((entry) => entry.state !== "editing" && entry.steerRequested) ??
         doc.items.find((entry) => entry.state !== "editing");
-      if (!item || (!item.steerRequested && (doc.blocked || doc.awaitingCompletion || doc.paused)))
+      if (
+        !item ||
+        (!item.steerRequested &&
+          (doc.blocked || (doc.awaitingCompletion && !item.sendRequested) || doc.paused))
+      )
         return;
       const target = yield* query.getThreadDetailById(id);
       if (Option.isNone(target) || target.value.deletedAt !== null) return;

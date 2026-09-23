@@ -40,6 +40,7 @@ export const ScientThreadQueueItem = Schema.Struct({
   threadId: Schema.optional(ThreadId),
   editToken: Schema.optional(Schema.String),
   steerRequested: Schema.optional(Schema.Boolean),
+  sendRequested: Schema.optional(Schema.Boolean),
   state: Schema.optional(Schema.Literals(["waiting", "editing"])),
   modelSelection: Schema.optional(ModelSelection),
   runtimeMode: Schema.optional(RuntimeMode),
@@ -116,7 +117,7 @@ export type ScientThreadQueueReorderRequest = typeof ScientThreadQueueReorderReq
 
 export const ScientThreadQueueControlRequest = Schema.Struct({
   threadId: ThreadId,
-  action: Schema.Literals(["edit", "resume", "steer", "stash"]),
+  action: Schema.Literals(["edit", "resume", "steer", "stash", "send"]),
   queueItemId: Schema.optional(ScientThreadQueueItemId),
   editToken: Schema.optional(Schema.String),
 });

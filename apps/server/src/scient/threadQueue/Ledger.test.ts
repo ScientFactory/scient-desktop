@@ -6,10 +6,12 @@ import {
   TurnId,
   ComposerContextId,
   type OrchestrationCommand,
+  type OrchestrationThread,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "@effect/vitest";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
@@ -27,9 +29,13 @@ import { enqueueQueue, controlQueue, reorderQueue, updateQueue } from "./operati
 const threadId = ThreadId.make("queue-owner");
 const otherThreadId = ThreadId.make("other-thread");
 const now = "2026-09-04T12:00:00.000Z";
-const layer = Layer.mergeAll(SqlitePersistenceMemory, Layer.mock(ProjectionSnapshotQuery)({})).pipe(
-  Layer.provide(NodeServices.layer),
-);
+const layer = Layer.mergeAll(
+  SqlitePersistenceMemory,
+  Layer.mock(ProjectionSnapshotQuery)({
+    getThreadDetailById: () =>
+      Effect.succeed(Option.some({ session: null } as OrchestrationThread)),
+  }),
+).pipe(Layer.provide(NodeServices.layer));
 const run = <A, E>(effect: Effect.Effect<A, E, SqlClient.SqlClient | ProjectionSnapshotQuery>) =>
   effect.pipe(Effect.provide(layer));
 const transaction = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
@@ -348,6 +354,138 @@ describe("server queue ordering and admission", () => {
       }),
     ),
   );
+  it.effect("does not steer a waiting message into a turn that has already failed", () =>
+    run(
+      Effect.gen(function* () {
+        yield* enqueue("A");
+        yield* adopt("failed-steer");
+        yield* change((doc) =>
+          controlQueue({ threadId, action: "steer", queueItemId: "qitem_A" }, doc),
+        );
+        yield* finalizeQueueTurn(threadId, "failed-steer", false, "answer");
+        yield* finalizeQueueTurn(threadId, "failed-steer", true, "checkpoint");
+        const waiting = yield* readQueue(threadId);
+        expect(waiting.awaitingCompletion).toBe(true);
+        expect(waiting.items[0]?.steerRequested).toBe(false);
+        expect(
+          Exit.isFailure(
+            yield* Effect.exit(
+              transaction(observeQueueCommand(command("A", waiting.revision), undefined)),
+            ),
+          ),
+        ).toBe(true);
+      }),
+    ),
+  );
+  it.effect.each(["answer", "checkpoint"] as const)(
+    "treats a failed checkpoint as settled, not a failed answer, when %s settles first",
+    (first) =>
+      run(
+        Effect.gen(function* () {
+          yield* enqueue("A");
+          yield* adopt("completed");
+          yield* finalizeQueueTurn(threadId, "completed", first === "answer", first);
+          expect((yield* readQueue(threadId)).blocked).toBe(true);
+          yield* finalizeQueueTurn(
+            threadId,
+            "completed",
+            first !== "answer",
+            first === "answer" ? "checkpoint" : "answer",
+          );
+          const ready = yield* readQueue(threadId);
+          expect(ready.blocked).toBe(false);
+          expect(ready.awaitingCompletion).toBe(false);
+          expect(ready.items).toHaveLength(1);
+          yield* finalizeQueueTurn(threadId, "completed", false, "checkpoint");
+          expect((yield* readQueue(threadId)).awaitingCompletion).toBe(false);
+        }),
+      ),
+  );
+  it.effect(
+    "sends only the selected head after a failed turn, and retains the rest until success",
+    () =>
+      run(
+        Effect.gen(function* () {
+          yield* enqueue("A");
+          yield* enqueue("B");
+          yield* adopt("failed");
+          yield* finalizeQueueTurn(threadId, "failed", false, "answer");
+          yield* finalizeQueueTurn(threadId, "failed", true, "checkpoint");
+          const waiting = yield* readQueue(threadId);
+          expect(waiting.awaitingCompletion).toBe(true);
+          expect(
+            Exit.isFailure(
+              yield* Effect.exit(
+                change((doc) =>
+                  controlQueue({ threadId, action: "send", queueItemId: "qitem_B" }, doc),
+                ),
+              ),
+            ),
+          ).toBe(true);
+          const requested = yield* change((doc) =>
+            controlQueue({ threadId, action: "send", queueItemId: "qitem_A" }, doc),
+          );
+          expect(requested.items[0]?.sendRequested).toBe(true);
+          expect(Exit.isFailure(yield* Effect.exit(ordinaryStart()))).toBe(true);
+          const retry = yield* change((doc) =>
+            controlQueue({ threadId, action: "send", queueItemId: "qitem_A" }, doc),
+          );
+          expect(retry.items[0]?.sendRequested).toBe(true);
+          yield* transaction(observeQueueCommand(command("A", retry.revision), undefined));
+          expect((yield* readQueue(threadId)).items.map((item) => item.text)).toEqual(["B"]);
+          yield* adopt("recovery");
+          yield* finalizeQueueTurn(threadId, "recovery", true, "answer");
+          expect((yield* readQueue(threadId)).blocked).toBe(true);
+          yield* finalizeQueueTurn(threadId, "recovery", true, "checkpoint");
+          expect((yield* readQueue(threadId)).awaitingCompletion).toBe(false);
+        }),
+      ),
+  );
+  it.effect("cancels an unadmitted Send on Stop or reorder", () =>
+    run(
+      Effect.gen(function* () {
+        yield* enqueue("A");
+        yield* enqueue("B");
+        yield* stop();
+        const requested = yield* change((doc) =>
+          controlQueue({ threadId, action: "send", queueItemId: "qitem_A" }, doc),
+        );
+        yield* change((doc) =>
+          reorderQueue({ threadId, queueItemIds: ["qitem_B", "qitem_A"] }, doc),
+        );
+        expect((yield* readQueue(threadId)).items.every((item) => !item.sendRequested)).toBe(true);
+        expect(
+          Exit.isFailure(
+            yield* Effect.exit(
+              transaction(observeQueueCommand(command("A", requested.revision), undefined)),
+            ),
+          ),
+        ).toBe(true);
+        yield* change((doc) =>
+          controlQueue({ threadId, action: "send", queueItemId: "qitem_B" }, doc),
+        );
+        yield* stop();
+        expect((yield* readQueue(threadId)).items.every((item) => !item.sendRequested)).toBe(true);
+      }),
+    ),
+  );
+  it.effect("Steer cancels a competing unadmitted Send", () =>
+    run(
+      Effect.gen(function* () {
+        yield* enqueue("A");
+        yield* enqueue("B");
+        yield* stop();
+        yield* change((doc) =>
+          controlQueue({ threadId, action: "send", queueItemId: "qitem_A" }, doc),
+        );
+        const steered = yield* change((doc) =>
+          controlQueue({ threadId, action: "steer", queueItemId: "qitem_B" }, doc),
+        );
+        expect(steered.items[0]?.sendRequested).toBe(false);
+        expect(steered.items[1]?.steerRequested).toBe(true);
+      }),
+    ),
+  );
   it.effect("makes enqueue and requeue retry safe even after delivery has consumed the item", () =>
     run(
       Effect.gen(function* () {
@@ -421,6 +559,27 @@ describe("server queue ordering and admission", () => {
         expect(result.turnId).toBe("finishing");
       }),
     ),
+  );
+  it.effect(
+    "Retry re-attempts a paused explicit Send without releasing the failed-turn barrier",
+    () =>
+      run(
+        Effect.gen(function* () {
+          yield* enqueue("A");
+          yield* stop();
+          yield* change((doc) =>
+            controlQueue({ threadId, action: "send", queueItemId: "qitem_A" }, doc),
+          );
+          const requested = yield* readQueue(threadId);
+          yield* writeQueue(threadId, { ...requested, paused: "Queue paused: dispatch failed" });
+          const retried = yield* change((doc) => controlQueue({ threadId, action: "resume" }, doc));
+          expect(retried.paused).toBeNull();
+          expect(retried.awaitingCompletion).toBe(true);
+          expect(retried.items[0]?.sendRequested).toBe(true);
+          yield* transaction(observeQueueCommand(command("A", retried.revision), undefined));
+          expect((yield* readQueue(threadId)).items).toHaveLength(0);
+        }),
+      ),
   );
   it.effect("rejects a receipt ID reused by another thread", () =>
     run(

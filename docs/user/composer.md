@@ -64,7 +64,9 @@ above the composer. The server keeps its order across navigation and restarts,
 then sends it after the current turn finishes successfully. Use **Steer** on a
 queued message to send it into the running turn, or edit, reorder, or delete it
 from the queue. Stopping a turn preserves queued messages until later work
-finishes successfully.
+finishes successfully. When the thread is idle after a failed or stopped turn,
+**Send** on the first waiting message starts that message directly; the other
+messages keep their order. Reorder first if you want to send a different one.
 
 In **Settings → General → Follow-up behavior**, choose **Queue** to keep this
 behavior or **Steer** to send new messages immediately. **Send shortcut**
@@ -549,7 +551,9 @@ and attachments through the usual stash menu.
 answer runs first; the queue waits until it finishes successfully, then advances
 one message at a time. Restarting work or the server does not send queued messages
 by itself. A failed answer also leaves the remaining queue waiting for later
-successful work. No extra **Retry** is needed after that answer finishes.
+successful work. You can instead click **Send** on the first waiting message;
+the rest of the queue continues after its answer succeeds. No extra **Retry**
+is needed after that answer finishes.
 
 **Retry** is for a queue delivery error; it cannot bypass a running answer or
 release messages waiting after Stop. If an ordinary Send races another start,

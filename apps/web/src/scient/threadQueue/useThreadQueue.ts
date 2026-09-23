@@ -38,6 +38,7 @@ export function useThreadQueue(input: {
     ids: ReadonlyArray<string>;
     sequence: number;
   } | null>(null);
+  const [pendingSend, setPendingSend] = useState<{ key: string; itemId: string } | null>(null);
   const reorderSequence = useRef(0);
   const reorderTail = useRef<Promise<unknown>>(Promise.resolve());
   const refreshInFlight = useRef<string | null>(null);
@@ -153,11 +154,12 @@ export function useThreadQueue(input: {
     );
   };
   const control = (
-    action: "edit" | "resume" | "steer",
+    action: "edit" | "resume" | "steer" | "send",
     queueItemId?: string,
     editToken?: string,
   ) => {
     const target = scope();
+    if (action === "send" && queueItemId) setPendingSend({ key, itemId: queueItemId });
     return mutate(() =>
       controlThreadQueue(target.environmentId, {
         threadId: target.threadId,
@@ -165,7 +167,12 @@ export function useThreadQueue(input: {
         ...(queueItemId ? { queueItemId } : {}),
         ...(editToken ? { editToken } : {}),
       }),
-    );
+    ).finally(() => {
+      if (action === "send" && queueItemId)
+        setPendingSend((pending) =>
+          pending?.key === key && pending.itemId === queueItemId ? null : pending,
+        );
+    });
   };
   const snapshot = state.key === key ? state.snapshot : null;
   const visibleItems = snapshot?.items.filter((item) => item.state !== "editing") ?? [];
@@ -184,6 +191,7 @@ export function useThreadQueue(input: {
         : null,
     paused: snapshot?.paused ?? null,
     awaitingCompletion: snapshot?.awaitingCompletion ?? false,
+    pendingSendItemId: pendingSend?.key === key ? pendingSend.itemId : null,
     enqueue,
     update,
     remove,

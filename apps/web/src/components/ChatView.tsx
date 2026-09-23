@@ -1679,7 +1679,13 @@ function ChatViewContent(props: ChatViewProps) {
   const ordinaryComposerTarget: ScopedThreadRef | DraftId =
     routeKind === "server" ? routeThreadRef : props.draftId;
   const queueEditsReady = useQueueEditSessions((state) => state.ready);
-  const queueEditStorageError = useQueueEditSessions((state) => state.error);
+  const queueEditStorageError = useQueueEditSessions((state) =>
+    state.error &&
+    (state.error.targetKey === null ||
+      state.error.targetKey === composerTargetKey(ordinaryComposerTarget))
+      ? state.error.message
+      : null,
+  );
   const queueEdit = useQueueEditSessions(
     (state) => state.sessions[composerTargetKey(ordinaryComposerTarget)],
   );
@@ -8615,7 +8621,19 @@ function ChatViewContent(props: ChatViewProps) {
               ...queueSettings,
               attachments: queueAttachmentsResult.value,
             });
-            await finishQueueEdit(queueEdit, draftSnapshotForSend ?? undefined);
+            const lateChangesStashed = await finishQueueEdit(
+              queueEdit,
+              draftSnapshotForSend ?? undefined,
+            );
+            if (lateChangesStashed)
+              toastManager.add(
+                stackedThreadToast({
+                  type: "info",
+                  title: "Message queued",
+                  description: "Changes received during sending were kept in your prompt stash.",
+                  data: { threadRef: queueEdit.originalTarget, dismissAfterVisibleMs: 8000 },
+                }),
+              );
           } else {
             const queuePayload = {
               ...queueSettings,
@@ -10938,17 +10956,23 @@ function ChatViewContent(props: ChatViewProps) {
                       <ThreadQueueStrip
                         items={threadQueue.items}
                         error={threadQueue.error ?? queueEditStorageError}
-                        threadBusy={phase === "running"}
-                        dispatchingItemId={null}
+                        threadBusy={phase === "running" || phase === "connecting"}
+                        supportsExplicitSend={
+                          serverConfigs.get(environmentId)?.environment.capabilities
+                            .threadQueueExplicitSend === true
+                        }
+                        awaitingCompletion={threadQueue.awaitingCompletion}
+                        paused={threadQueue.paused !== null}
+                        dispatchingItemId={threadQueue.pendingSendItemId}
+                        onSend={(item) => {
+                          void threadQueue.control("send", item.queueItemId).catch(() => {});
+                        }}
                         onSteer={(item) => {
                           void threadQueue.control("steer", item.queueItemId).catch(() => {});
                         }}
+                        retryable={threadQueue.paused !== null}
                         onRetry={() => {
-                          void (
-                            threadQueue.paused
-                              ? threadQueue.control("resume")
-                              : threadQueue.refresh()
-                          ).catch(() => {});
+                          void threadQueue.control("resume").catch(() => {});
                         }}
                         onEdit={editQueuedItem}
                         onDelete={deleteQueuedItem}

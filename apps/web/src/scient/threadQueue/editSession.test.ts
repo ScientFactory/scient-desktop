@@ -77,9 +77,27 @@ beforeEach(async () => {
     await finishQueueEdit(session);
   useComposerDraftStore.setState({ draftsByThreadKey: {} });
   vi.mocked(controlThreadQueue).mockResolvedValue({ threadId: target.threadId, items: [] });
+  useQueueEditSessions.setState({ error: null });
 });
 
 describe("queue edit handoff", () => {
+  it("reports late changes as a successful stash without setting a global error", async () => {
+    useComposerDraftStore.getState().setPrompt(target, "ordinary draft");
+    await beginQueueEdit(target, item);
+    const session = useQueueEditSessions.getState().sessions[composerTargetKey(target)]!;
+    const submitted = useComposerDraftStore.getState().getComposerDraft(session.editTarget)!;
+    useComposerDraftStore.getState().setPrompt(session.editTarget, "late transcript");
+    expect(await finishQueueEdit(session, submitted)).toBe(true);
+    expect(useQueueEditSessions.getState().error).toBeNull();
+    expect(useQueueEditSessions.getState().sessions[session.key]).toBeUndefined();
+    expect(
+      usePromptStashStore
+        .getState()
+        .entries.some((entry) => entry.queueEditKey === session.journalKey),
+    ).toBe(true);
+    expect((await readQueueEditJournal(session.journalKey))?.edited.prompt).toBe("late transcript");
+    expect(useComposerDraftStore.getState().getComposerDraft(other)?.prompt).toBeUndefined();
+  });
   it("updates terminal chips on the hidden draft without registering a new project draft or touching the ordinary composer", async () => {
     const store = useComposerDraftStore.getState();
     store.setPrompt(target, "ordinary");
