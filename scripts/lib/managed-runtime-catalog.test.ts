@@ -81,7 +81,7 @@ describe("managed runtime policy transitions", () => {
       });
     });
     expect(result.changedProviders).toEqual(["codex"]);
-    expect(result.catalog.providers.codex?.contractRevision).toBe(2);
+    expect(result.catalog.providers.codex?.contractRevision).toBe(3);
     expect(result.catalog.providers.codex?.version).toBe(codex.version);
     expect(requested).toHaveLength(2 + Object.keys(codex.artifacts).length);
     expect(current.providers.codex?.contractRevision).toBe(1);
@@ -102,10 +102,18 @@ describe("managed runtime policy transitions", () => {
     expect(() => validateManagedRuntimeCandidate(decoded, "codex")).toThrow(
       /current managed runtime contract/u,
     );
+    const revisionTwo = validateManagedRuntimeCatalog({
+      ...decoded,
+      providers: { codex: { ...historical, contractRevision: 2 } },
+    });
+    expect(revisionTwo.providers.codex?.contractRevision).toBe(2);
+    expect(() => validateManagedRuntimeCandidate(revisionTwo, "codex")).toThrow(
+      /current managed runtime contract/u,
+    );
     expect(() =>
       validateManagedRuntimeCatalog({
         ...decoded,
-        providers: { codex: { ...historical, contractRevision: 2 } },
+        providers: { codex: { ...historical, contractRevision: 3 } },
       }),
     ).toThrow(/unapproved target/u);
   });
@@ -156,7 +164,7 @@ describe("managed runtime policy transitions", () => {
     ).toThrow(/every app-approved target/u);
   });
 
-  it.each([0, 3, 999])("rejects unknown Codex contract %s", (contractRevision) => {
+  it.each([0, 4, 999])("rejects unknown Codex contract %s", (contractRevision) => {
     expect(() =>
       validateManagedRuntimeCatalog({
         ...currentCatalog,
