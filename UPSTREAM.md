@@ -45,10 +45,10 @@ official `main` only after its untouched baseline passed. That historical
 revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
-The accepted T3 alignment is recorded in
+The current T3 alignment is recorded in
 [`docs/internals/2026-09-23-upstream-sync-d7819c1881.md`](docs/internals/2026-09-23-upstream-sync-d7819c1881.md)
-and in `upstream-state.json`. PR #350 is the same open alignment, extended as a
-candidate through `f5ef0ddb90a8c36584e181b1913e7b8a5df30ffc`: 72 official
+and in `upstream-state.json`. PR #350 is the same open alignment, extended through
+`f5ef0ddb90a8c36584e181b1913e7b8a5df30ffc`: 72 official
 commits from `aff9318bf46beaf05cc7155b428d3f0b8711efd2`, including 42 added
 since the d781 checkpoint. The candidate preserves the initial history merge
 `719f452a4633af276ed9f5e219ced8de43863d49` and later official merge commits
@@ -59,9 +59,9 @@ is `ea6af93176134c52d76eadc7a33cc5fabeb714d7`, incorporating fetched
 or replacing the official merge history.
 
 The full local workspace test run had one load-sensitive Markdown performance
-threshold miss; its isolated rerun passed. Until the full gate is green,
-`upstream-state.json` and the accepted integration pointer remain at
-`d7819c18813fa03b033cc1c9472c9acc0ffc0618`.
+threshold miss; its isolated rerun and the clean CI workspace gate both passed
+without changing the test or threshold. The final CI check and web-layout
+failures were repaired on the same branch and passed in the next CI run.
 
 Automated qualification and source review passed. The alignment is delivered
 as an unmerged draft PR for review; release publication remains separate. The
