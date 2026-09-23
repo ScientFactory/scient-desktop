@@ -58,9 +58,11 @@ const versionCache = new Map<string, { readonly version: string; readonly expire
 const versionCacheKey = (
   command: string,
   env: Readonly<Record<string, string | undefined>>,
+  binaryPathFingerprint: string,
 ): string =>
   JSON.stringify([
     command,
+    binaryPathFingerprint,
     env.PATH ?? "",
     env.HOME ?? "",
     env.USERPROFILE ?? "",
@@ -148,7 +150,7 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
     .pipe(Effect.catch(() => Effect.succeed(resolvedBinary)));
   const binaryPathFingerprint = ompBinaryFingerprint(canonicalBinary, env.PATH);
   const now = yield* Clock.currentTimeMillis;
-  const cacheKey = versionCacheKey(options.command, env);
+  const cacheKey = versionCacheKey(options.command, env, binaryPathFingerprint);
   const cached = versionCache.get(cacheKey);
   const version = yield* Effect.gen(function* () {
     if (cached && cached.expiresAt > now) return cached.version;
