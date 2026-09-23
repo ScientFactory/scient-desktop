@@ -361,11 +361,27 @@ Theory & Proofs \\\\
       );
       key.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    const insert = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
-      (button) => button.textContent === "Insert" && !button.disabled,
-    )!;
+    const insert = [
+      ...container.querySelectorAll<HTMLButtonElement>("[aria-label='Insert reference'] button"),
+    ].find((button) => button.textContent === "Insert" && !button.disabled)!;
     await act(async () => insert.click());
     expect(current).toContain("\\ref{sec:target}");
+  });
+
+  it("organizes source-backed tools into a writing ribbon and document navigation", async () => {
+    await mount("\\section{Methods}\nThe method remains editable.");
+    const insertTab = [...container.querySelectorAll<HTMLButtonElement>("[role='tab']")].find(
+      (button) => button.textContent === "Insert",
+    )!;
+    expect(insertTab.getAttribute("aria-selected")).toBe("false");
+    await act(async () => insertTab.click());
+    expect(insertTab.getAttribute("aria-selected")).toBe("true");
+    expect(container.querySelector<HTMLElement>("[aria-label='Insert mathematics']")!.hidden).toBe(
+      false,
+    );
+    expect(container.querySelector("[aria-label='Document navigation']")?.textContent).toContain(
+      "Methods",
+    );
   });
 
   it("rejects a destructive transaction spanning protected source", async () => {

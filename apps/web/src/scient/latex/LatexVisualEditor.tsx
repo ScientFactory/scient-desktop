@@ -1443,8 +1443,12 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     change: NonNullable<ReturnType<typeof applyLatexVisualDocumentChange>>;
   } | null>(null);
   const editorRef = useRef<ReturnType<typeof useEditor>>(null);
-  const [, refreshToolbar] = useState(0);
+  const [editorRevision, refreshToolbar] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
+  const [activeRibbon, setActiveRibbon] = useState<"home" | "insert" | "references" | "layout">(
+    "home",
+  );
+  const [navigationOpen, setNavigationOpen] = useState(true);
   const [tablePreset, setTablePreset] = useState<LatexVisualTablePreset>("booktabs");
   const [tablePickerSize, setTablePickerSize] = useState({ rows: 3, columns: 3 });
   const [referenceCommand, setReferenceCommand] = useState("ref");
@@ -1644,6 +1648,34 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     ...new Set([...props.source.matchAll(/\\label\{([^{}]+)\}/gu)].map((match) => match[1]!)),
   ];
   const layout = latexVisualLayoutProfile(props.source);
+  void editorRevision;
+  const outline: { level: number; position: number; title: string }[] = [];
+  editor?.state.doc.descendants((node, position) => {
+    if (node.type.name !== "heading") return;
+    outline.push({
+      level: Number(node.attrs.level ?? 1),
+      position,
+      title: node.textContent.trim() || "Untitled heading",
+    });
+  });
+  const selectionContext = (() => {
+    if (!editor) return "Document";
+    const selection = editor.state.selection as typeof editor.state.selection & {
+      readonly node?: ProseMirrorNode;
+    };
+    const node = selection.node ?? selection.$from.parent;
+    if (node.type.name === "latexInlineMath" || node.type.name === "latexDisplayMath")
+      return "Equation";
+    if (node.type.name === "latexRichPreview") {
+      const kind = String(node.attrs.kind ?? "object");
+      return kind === "scientific"
+        ? String(node.attrs.environment ?? "Statement")
+        : kind[0]!.toUpperCase() + kind.slice(1);
+    }
+    if (node.type.name === "heading") return `Heading ${String(node.attrs.level ?? 1)}`;
+    if (node.type.name === "bulletList" || node.type.name === "orderedList") return "List";
+    return "Body text";
+  })();
   const paperStyle = {
     "--scient-latex-paper-width": layout.paper === "a4" ? "794px" : "816px",
     "--scient-latex-paper-min-height": layout.paper === "a4" ? "1123px" : "1056px",
@@ -1682,8 +1714,48 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
           </button>
         </div>
       )}
-      <div className="scient-latex-writing-toolbar" role="toolbar" aria-label="Document formatting">
-        <div className="scient-latex-toolbar-group" aria-label="Text style">
+      <div className="scient-latex-writing-header">
+        <div>
+          <strong>Writing canvas</strong>
+          <span>Source-backed LaTeX document</span>
+        </div>
+        <div className="scient-latex-writing-header-actions">
+          <button
+            aria-expanded={navigationOpen}
+            onClick={() => setNavigationOpen((value) => !value)}
+            type="button"
+          >
+            {navigationOpen ? "Hide navigation" : "Show navigation"}
+          </button>
+          <button className="scient-latex-source-button" type="button" onClick={props.onOpenSource}>
+            Edit LaTeX
+          </button>
+        </div>
+      </div>
+      <div className="scient-latex-ribbon-tabs" role="tablist" aria-label="Writing tools">
+        {(["home", "insert", "references", "layout"] as const).map((section) => (
+          <button
+            aria-selected={activeRibbon === section}
+            key={section}
+            onClick={() => setActiveRibbon(section)}
+            role="tab"
+            type="button"
+          >
+            {section[0]!.toUpperCase() + section.slice(1)}
+          </button>
+        ))}
+      </div>
+      <div
+        className="scient-latex-writing-toolbar"
+        data-ribbon={activeRibbon}
+        role="toolbar"
+        aria-label="Document formatting"
+      >
+        <div
+          className="scient-latex-toolbar-group"
+          aria-label="Text style"
+          hidden={activeRibbon !== "home"}
+        >
           <select
             aria-label="Paragraph style"
             disabled={readOnly || recovery !== null || !editor}
@@ -1749,7 +1821,11 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
             </ScientTooltip>
           ))}
         </div>
-        <div className="scient-latex-toolbar-group" aria-label="Insert mathematics">
+        <div
+          className="scient-latex-toolbar-group"
+          aria-label="Insert mathematics"
+          hidden={activeRibbon !== "insert"}
+        >
           <button
             type="button"
             disabled={readOnly}
@@ -1785,7 +1861,11 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
             <option value="aligned">Aligned equations</option>
           </select>
         </div>
-        <div className="scient-latex-toolbar-group" aria-label="Insert table">
+        <div
+          className="scient-latex-toolbar-group"
+          aria-label="Insert table"
+          hidden={activeRibbon !== "insert"}
+        >
           <details
             className="scient-latex-table-picker"
             onToggle={(event) => {
@@ -1837,7 +1917,11 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
             </div>
           </details>
         </div>
-        <div className="scient-latex-toolbar-group" aria-label="Insert scientific object">
+        <div
+          className="scient-latex-toolbar-group"
+          aria-label="Insert scientific object"
+          hidden={activeRibbon !== "insert"}
+        >
           <select
             aria-label="Insert scientific statement"
             disabled={readOnly}
@@ -1867,7 +1951,11 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
             Figure
           </button>
         </div>
-        <div className="scient-latex-toolbar-group" aria-label="Insert reference">
+        <div
+          className="scient-latex-toolbar-group"
+          aria-label="Insert reference"
+          hidden={activeRibbon !== "references"}
+        >
           <select
             aria-label="Reference command"
             disabled={readOnly}
@@ -1917,7 +2005,11 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
             Insert
           </button>
         </div>
-        <div className="scient-latex-toolbar-group" aria-label="Document layout">
+        <div
+          className="scient-latex-toolbar-group"
+          aria-label="Document layout"
+          hidden={activeRibbon !== "layout"}
+        >
           <details
             className="scient-latex-layout-picker"
             onToggle={(event) => {
@@ -2022,46 +2114,110 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
             </div>
           </details>
         </div>
-        <div className="scient-latex-toolbar-spacer" />
-        <button className="scient-latex-source-button" type="button" onClick={props.onOpenSource}>
-          Source
-        </button>
+        <div className="scient-latex-ribbon-description">
+          {activeRibbon === "home"
+            ? "Write and format the document body"
+            : activeRibbon === "insert"
+              ? "Add equations, tables, statements and figures"
+              : activeRibbon === "references"
+                ? "Insert source-backed citations and cross-references"
+                : "Change page and paragraph settings in LaTeX"}
+        </div>
       </div>
-      <div className="scient-latex-visual-summary" role="status">
-        <span>{readOnly ? "Read-only" : "Writing view · approximate layout"}</span>
-        <span>
-          {layout.documentClass} · {layout.baseFontPt}pt · {layout.paper.toUpperCase()}
-        </span>
-        <span>
-          {summary.supported} visual {summary.supported === 1 ? "block" : "blocks"}
-        </span>
-        {summary.raw > 0 ? (
-          <span>
-            {summary.raw} source-only {summary.raw === 1 ? "block" : "blocks"}
-          </span>
-        ) : null}
-      </div>
-      <details className="scient-latex-writing-help">
-        <summary>What can I edit here?</summary>
-        <p>
-          Write text, headings, formatting, lists, citations, references and equations directly.
-          Click rendered math to edit it with the contextual math bar. Its compact popover shows the
-          complete LaTeX, changes inline, centered and numbered forms, and completes common commands
-          or environments with Tab. Insert matrices, cases and aligned equations from the Insert
-          menu, or type a complete supported environment to convert it. Source-only blocks stay
-          protected. Page breaks, numbering, packages and macro output are verified in PDF after
-          Rebuild.
-        </p>
-      </details>
       {notice === null ? null : (
         <div className="scient-latex-visual-notice" role="alert">
           {notice}
         </div>
       )}
-      <div className="scient-latex-visual-scroll">
-        <div className="scient-latex-visual-paper" style={paperStyle}>
-          <EditorContent editor={editor} />
+      <div className="scient-latex-visual-body" data-navigation={navigationOpen || undefined}>
+        {navigationOpen ? (
+          <aside className="scient-latex-document-navigation" aria-label="Document navigation">
+            <div className="scient-latex-navigation-section">
+              <strong>Document</strong>
+              <span>{props.relativePath?.split(/[\\/]/u).at(-1) ?? "LaTeX document"}</span>
+            </div>
+            <nav aria-label="Document outline">
+              <div className="scient-latex-navigation-heading">Outline</div>
+              {outline.length === 0 ? (
+                <p>Add headings to build an outline.</p>
+              ) : (
+                outline.map((heading) => (
+                  <button
+                    key={`${heading.position}-${heading.title}`}
+                    onClick={() =>
+                      editor
+                        ?.chain()
+                        .focus()
+                        .setTextSelection(heading.position + 1)
+                        .scrollIntoView()
+                        .run()
+                    }
+                    style={{ "--outline-level": heading.level } as CSSProperties}
+                    type="button"
+                  >
+                    {heading.title}
+                  </button>
+                ))
+              )}
+            </nav>
+            <div className="scient-latex-navigation-heading">Quick insert</div>
+            <div className="scient-latex-quick-insert">
+              <button
+                disabled={readOnly}
+                onClick={() => insertDisplayMath(MATH_INSERTIONS.equation)}
+                type="button"
+              >
+                Equation
+              </button>
+              <button disabled={readOnly} onClick={() => insertTable(3, 3)} type="button">
+                Table
+              </button>
+              <button
+                disabled={readOnly}
+                onClick={() => {
+                  const source = latexVisualScientificSource("claim");
+                  if (source) insertVisualSource(source);
+                }}
+                type="button"
+              >
+                Claim
+              </button>
+              <button
+                disabled={readOnly}
+                onClick={() => insertVisualSource(latexVisualFigureSource())}
+                type="button"
+              >
+                Figure
+              </button>
+            </div>
+            <details className="scient-latex-writing-help">
+              <summary>Editing boundaries</summary>
+              <p>
+                Text and supported scientific objects edit LaTeX directly. Protected source remains
+                lossless. Rebuild verifies packages, macros, numbering, floats and final pagination.
+              </p>
+            </details>
+          </aside>
+        ) : null}
+        <div className="scient-latex-visual-scroll">
+          <div className="scient-latex-page-stage" style={paperStyle}>
+            <div className="scient-latex-page-ruler" aria-hidden="true" />
+            <div className="scient-latex-visual-paper">
+              <EditorContent editor={editor} />
+            </div>
+          </div>
         </div>
+      </div>
+      <div className="scient-latex-visual-summary" role="status">
+        <span>{readOnly ? "Read-only" : "Saved to LaTeX"}</span>
+        <span>Editing: {selectionContext}</span>
+        <span>
+          {layout.documentClass} · {layout.baseFontPt}pt · {layout.paper.toUpperCase()}
+        </span>
+        <span>
+          {summary.supported} visual {summary.supported === 1 ? "block" : "blocks"}
+          {summary.raw > 0 ? ` · ${summary.raw} protected` : ""}
+        </span>
       </div>
     </div>
   );

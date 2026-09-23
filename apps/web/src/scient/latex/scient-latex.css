@@ -26,11 +26,90 @@
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  background: color-mix(in srgb, var(--muted) 52%, var(--background));
+}
+
+.scient-latex-writing-header {
+  display: flex;
+  min-height: 44px;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 7px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--background);
+  font-family: var(--font-sans);
+}
+.scient-latex-writing-header > div:first-child {
+  display: grid;
+  min-width: 0;
+}
+.scient-latex-writing-header strong {
+  color: var(--foreground);
+  font-size: 13px;
+  font-weight: 650;
+}
+.scient-latex-writing-header span {
+  color: var(--muted-foreground);
+  font-size: 10px;
+}
+.scient-latex-writing-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.scient-latex-writing-header-actions button {
+  min-height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 9px;
+  background: var(--background);
+  color: var(--foreground);
+  font: 11px/1.4 var(--font-sans);
+}
+.scient-latex-writing-header-actions button:hover {
+  background: var(--accent);
+}
+
+.scient-latex-ribbon-tabs {
+  display: flex;
+  flex: none;
+  align-items: end;
+  gap: 2px;
+  min-height: 31px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--background);
+}
+.scient-latex-ribbon-tabs button {
+  position: relative;
+  min-height: 30px;
+  border: 0;
+  padding: 5px 12px;
+  background: transparent;
+  color: var(--muted-foreground);
+  font: 11px/1.4 var(--font-sans);
+}
+.scient-latex-ribbon-tabs button[aria-selected="true"] {
+  color: var(--foreground);
+  font-weight: 650;
+}
+.scient-latex-ribbon-tabs button[aria-selected="true"]::after {
+  position: absolute;
+  right: 8px;
+  bottom: -1px;
+  left: 8px;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--primary);
+  content: "";
 }
 
 .scient-latex-writing-help {
-  padding: 5px 12px;
-  border-bottom: 1px solid var(--border);
+  margin-top: auto;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
   color: var(--muted-foreground);
   font: 11px/1.6 var(--font-sans);
 }
@@ -45,14 +124,22 @@
 .scient-latex-writing-toolbar {
   display: flex;
   flex: none;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 7px;
-  padding: 7px 12px;
+  min-height: 48px;
+  padding: 6px 12px;
   border-bottom: 1px solid var(--border);
   background: color-mix(in srgb, var(--background) 94%, var(--muted));
-  box-shadow: 0 1px 3px #00000008;
+  box-shadow: 0 2px 5px #0000000a;
   font: 12px/1.5 var(--font-sans);
+}
+.scient-latex-ribbon-description {
+  margin-left: auto;
+  padding: 0 6px;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  white-space: nowrap;
 }
 
 .scient-latex-toolbar-group {
@@ -63,6 +150,9 @@
   border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
   border-radius: 7px;
   background: var(--background);
+}
+.scient-latex-toolbar-group[hidden] {
+  display: none;
 }
 .scient-latex-table-picker {
   position: relative;
@@ -213,22 +303,143 @@
   background: var(--background);
   color: var(--muted-foreground);
 }
+.scient-latex-visual-workspace > .scient-latex-visual-summary {
+  flex: none;
+  padding: 5px 12px;
+  border-top: 1px solid var(--border);
+  border-bottom: 0;
+  background: var(--background);
+}
 .scient-latex-visual-notice {
   padding: 8px 12px;
   background: var(--muted);
   font-size: 12px;
 }
 
+.scient-latex-visual-body {
+  display: grid;
+  min-height: 0;
+  flex: 1;
+  grid-template-columns: minmax(0, 1fr);
+}
+.scient-latex-visual-body[data-navigation="true"] {
+  grid-template-columns: 208px minmax(0, 1fr);
+}
+.scient-latex-document-navigation {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  overflow: auto;
+  border-right: 1px solid var(--border);
+  background: color-mix(in srgb, var(--background) 97%, var(--muted));
+  color: var(--foreground);
+  font-family: var(--font-sans);
+}
+.scient-latex-navigation-section {
+  display: grid;
+  gap: 2px;
+  padding: 13px 12px 11px;
+  border-bottom: 1px solid var(--border);
+}
+.scient-latex-navigation-section strong {
+  font-size: 11px;
+}
+.scient-latex-navigation-section span {
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scient-latex-document-navigation nav {
+  padding: 8px 7px 12px;
+}
+.scient-latex-navigation-heading {
+  padding: 8px 11px 5px;
+  color: var(--muted-foreground);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.scient-latex-document-navigation nav p {
+  margin: 5px 10px;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  line-height: 1.45;
+}
+.scient-latex-document-navigation nav button {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  border: 0;
+  border-radius: 5px;
+  padding: 5px 7px 5px calc(7px + (var(--outline-level, 1) - 1) * 11px);
+  background: transparent;
+  color: var(--foreground);
+  font: 11px/1.35 var(--font-sans);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scient-latex-document-navigation nav button:hover {
+  background: var(--accent);
+}
+.scient-latex-quick-insert {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+  padding: 2px 11px 12px;
+}
+.scient-latex-quick-insert button {
+  min-height: 31px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--background);
+  color: var(--foreground);
+  font: 10px/1.3 var(--font-sans);
+}
+.scient-latex-quick-insert button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--border) 55%, var(--primary));
+  background: var(--accent);
+}
+
 .scient-latex-visual-scroll {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 28px clamp(12px, 4%, 48px) 64px;
-  background: color-mix(in srgb, var(--muted) 65%, var(--background));
+  padding: 18px clamp(12px, 4%, 48px) 64px;
+  background:
+    radial-gradient(
+      circle at 50% 0,
+      color-mix(in srgb, var(--background) 78%, transparent),
+      transparent 38%
+    ),
+    color-mix(in srgb, var(--muted) 68%, var(--background));
+}
+.scient-latex-page-stage {
+  width: min(100%, var(--scient-latex-paper-width, 816px));
+  margin: 0 auto;
+}
+.scient-latex-page-ruler {
+  height: 18px;
+  margin: 0 0 7px;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: 4px;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      transparent 0,
+      transparent 9px,
+      color-mix(in srgb, var(--muted-foreground) 26%, transparent) 9px,
+      color-mix(in srgb, var(--muted-foreground) 26%, transparent) 10px
+    ),
+    color-mix(in srgb, var(--background) 95%, var(--muted));
+  box-shadow: 0 1px 2px #0000000a;
 }
 
 .scient-latex-visual-paper {
-  width: min(100%, var(--scient-latex-paper-width, 816px));
+  width: 100%;
   min-height: var(--scient-latex-paper-min-height, 1056px);
   margin: 0 auto;
   box-sizing: border-box;
@@ -237,8 +448,8 @@
   background: #fff;
   color: #20232a;
   border: 1px solid #d9dce1;
-  border-radius: 2px;
-  box-shadow: 0 3px 18px #0000000d;
+  border-radius: 3px;
+  box-shadow: 0 8px 32px #00000014;
   color-scheme: light;
 }
 
@@ -589,17 +800,21 @@
 
 .scient-latex-rich-preview {
   margin: 1.4em 0;
-  border: 1px solid #d7dde5;
+  border: 1px solid transparent;
   border-radius: 7px;
-  background: #fbfcfe;
+  background: #fff;
   overflow: hidden;
+}
+.scient-latex-rich-preview:hover,
+.scient-latex-rich-preview:focus-within {
+  border-color: #d7dde5;
 }
 .scient-latex-rich-preview[data-selected="true"] {
   border-color: #8eb1d8;
   box-shadow: 0 0 0 2px #dceafb;
 }
 .scient-latex-rich-preview-label {
-  display: flex;
+  display: none;
   justify-content: space-between;
   gap: 12px;
   padding: 6px 10px;
@@ -607,6 +822,11 @@
   background: #f3f6fa;
   color: #68798c;
   font: 10px/1.5 var(--font-sans);
+}
+.scient-latex-rich-preview:hover > .scient-latex-rich-preview-label,
+.scient-latex-rich-preview:focus-within > .scient-latex-rich-preview-label,
+.scient-latex-rich-preview[data-selected="true"] > .scient-latex-rich-preview-label {
+  display: flex;
 }
 .scient-latex-rich-preview-label > :first-child {
   color: #35465a;
@@ -695,7 +915,7 @@
   font-weight: 600;
 }
 .scient-latex-table-toolbar {
-  display: flex;
+  display: none;
   flex-wrap: wrap;
   align-items: end;
   gap: 5px;
@@ -704,6 +924,10 @@
   border-bottom: 1px solid #dfe5ec;
   background: #f8fafc;
   font: 10px/1.35 var(--font-sans);
+}
+.scient-latex-rich-preview[data-selected="true"] .scient-latex-table-toolbar,
+.scient-latex-rich-preview:focus-within .scient-latex-table-toolbar {
+  display: flex;
 }
 .scient-latex-table-toolbar label {
   display: grid;
@@ -882,7 +1106,7 @@
   font: 9px/1.4 var(--font-sans);
 }
 .scient-latex-object-toolbar {
-  display: flex;
+  display: none;
   flex-wrap: wrap;
   align-items: end;
   gap: 6px;
@@ -890,6 +1114,10 @@
   border-bottom: 1px solid #dfe5ec;
   background: #f8fafc;
   font: 10px/1.35 var(--font-sans);
+}
+.scient-latex-rich-preview[data-selected="true"] > .scient-latex-object-toolbar,
+.scient-latex-rich-preview:focus-within > .scient-latex-object-toolbar {
+  display: flex;
 }
 .scient-latex-object-toolbar label,
 .scient-latex-object-field {
@@ -1027,6 +1255,21 @@
 }
 
 @media (max-width: 720px) {
+  .scient-latex-visual-body[data-navigation="true"] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .scient-latex-document-navigation {
+    display: none;
+  }
+  .scient-latex-ribbon-description {
+    display: none;
+  }
+  .scient-latex-writing-toolbar {
+    overflow-x: auto;
+  }
+  .scient-latex-writing-header-actions > button:first-child {
+    display: none;
+  }
   .scient-latex-rich-preview dl > div {
     grid-template-columns: 1fr;
     gap: 2px;

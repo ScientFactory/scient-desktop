@@ -8,8 +8,12 @@ between them, and drag the divider in split view to resize either side.
 ## Write visually, verify with TeX
 
 Visual is a source-derived writing canvas, not an editable PDF. You can start
-writing before installing or running TeX. Its toolbar supports paragraphs,
-three heading levels, bold, italic, lists, undo/redo and inserting equations.
+writing before installing or running TeX. The canvas uses a document workspace
+with Home, Insert, References and Layout ribbon sections, a collapsible outline,
+quick insertion for common scientific objects, a page ruler and a contextual
+status bar. Home supports paragraphs, three heading levels, bold, italic, lists,
+undo and redo. Insert adds equations, tables, statements and figures without
+requiring their LaTeX syntax to be typed first.
 Math normally stays rendered in the document. Click a formula to open an
 anchored editor showing its complete LaTeX, including `$`, `$$`, `\(`, `\[`, or
 the surrounding equation environment. The compact editor changes between
