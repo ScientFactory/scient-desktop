@@ -16,20 +16,24 @@ Scient starts one `omp --mode rpc --approval-mode yolo` process for each convers
 and profile left empty, that process uses the server's normal Oh My Pi home and credentials. Every
 Oh My Pi instance with an empty home shares that login. Set **Oh My Pi home**
 (`PI_CODING_AGENT_DIR`) or **Oh My Pi profile** (`OMP_PROFILE`) on an instance to give it a separate
-agent directory. Scient stores only the session transcript path it can prove sits in its own
-per-conversation session directory. If Oh My Pi writes the transcript somewhere else, the live
+agent directory; choose one, not both, because a named OMP profile owns its agent directory. Scient
+passes an explicit per-conversation `--session-dir` and stores only the session transcript path it
+can prove sits in that directory. If Oh My Pi writes the transcript somewhere else, the live
 conversation can continue, and Scient will say that the conversation cannot be resumed.
 
 The first version supports **Full access** only. The launch always passes `--approval-mode yolo`.
-That flag matches the pinned Oh My Pi 18.2.8 interface and has not been confirmed by a live `omp`
-run inside Scient. It is not an operating-system sandbox. Scient does not register its project or
+That flag matches the pinned Oh My Pi 18.2.8 interface. The launch, protocol negotiation, model
+catalog, and session-directory behavior were qualified against the official macOS arm64 release;
+Scient still does not claim that every model, extension, or provider backend is qualified. It is
+not an operating-system sandbox. Scient does not register its project or
 scientific tools with this provider.
 
 ## What you can do
 
-- Send text and images, and see streamed replies and Oh My Pi tool activity.
+- Send text and images when the selected model advertises image input, and see streamed replies and
+  Oh My Pi tool activity.
 - Switch models in the same conversation when Oh My Pi reports them.
-- Answer Oh My Pi's select, confirm, and input questions in Scient.
+- Answer Oh My Pi's select, confirm, input, and editor questions in Scient.
 - Steer a running turn, and stop it. Stop closes that conversation's process. On macOS and Linux
   the process runs in its own process group and stop signals that group, escalating to a forced
   stop. On Windows, stop uses `taskkill /T /F`. Scient has not verified that against a live Oh My
@@ -41,21 +45,22 @@ scientific tools with this provider.
   not create a separate thread for each subagent.
 - Send `/compact` when this conversation's command list includes it. Scient does not show a compact
   button for Oh My Pi, because native compaction has not been confirmed against a live `omp`.
-- See Oh My Pi's command names in the provider snapshot. Session-changing commands such as
-  `/new`, `/fresh`, `/clear`, `/delete`, `/fork`, and `/resume` are hidden and rejected. Scient does
-  not import those commands or skills into its own skill library. The settings list comes from a
-  probe that adds `--no-session --no-tools --no-extensions --no-skills --no-rules`. Those flags match
-  the Oh My Pi 18.2.8 flag table and have not been confirmed by a live `omp` run inside Scient. A
-  running conversation uses the command list from that process, including later updates.
+- See only explicitly qualified Oh My Pi command names in the provider snapshot. Session,
+  export, sharing, model, configuration, and extension commands are hidden and rejected even when
+  OMP discovers them. Scient does not import those commands or skills into its own skill library.
+  The settings list comes from a probe that adds `--no-session --no-tools --no-extensions
+--no-skills --no-rules`; a running conversation validates against its live command catalog.
 
 Rollback, fork, and Scient-managed installation are not available.
 
 ## Resume
 
 A resumed conversation reopens only the session file recorded for that provider instance and
-directory. Scient stores that file under a hashed directory, not the raw thread id. The cursor also
-records the last Oh My Pi request id when one exists. Scient does not use that id to skip a prompt,
+identity. Scient stores that file under a hashed directory, not the raw thread id. The cursor also
+records the workspace, effective home/profile scope, resolved executable identity, launch policy,
+protocol, and last Oh My Pi request id when one exists. Scient does not use that id to skip a prompt,
 so sending the same prompt again can run the work again. Resume checks that the file is a readable
-regular file inside that directory after resolving symlinks. A cursor from another instance, another
-executable, another major Oh My Pi version, or an unreadable path is rejected. Patch updates inside
+regular file inside that directory after resolving symlinks. A cursor from another instance,
+workspace, home/profile, executable, protocol, major Oh My Pi version, or unreadable path is
+rejected. Patch updates inside
 the same major version can resume.

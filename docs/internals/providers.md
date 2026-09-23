@@ -457,13 +457,16 @@ orchestration types. The adapter owns the process and the turn mapping.
 
 - The executable is user-installed `omp` 18.2.8 or newer. Launch arguments are `--mode rpc` and
   `--approval-mode yolo`. Scient does not download Oh My Pi or call `login` during discovery.
-- One process serves one thread. Stop closes that process only. The child session directory is
-  `PI_CODING_AGENT_SESSION_DIR`; `--session-dir` is not passed.
+- One process serves one thread. Stop closes that process only. The child receives an explicit
+  `--session-dir` under Scient's per-instance/per-thread state root; the legacy session environment
+  variable is retained only as a compatibility fallback in the process environment.
 - A prompt response is acceptance. Completion is a local prompt, or a terminal `agent_end` confirmed
   idle with `get_state`. Process exit during a turn is a failure.
-- Resume cursors must match the provider instance and stay inside Scient's session directory.
-- Subagent frames stay on the parent turn. Native compact reports a compacted thread. Command names
-  can be listed and are not imported as Scient skills.
+- Resume cursors must match the provider instance, workspace, effective OMP home/profile, executable,
+  protocol, and launch policy, and must stay inside Scient's session directory.
+- Subagent frames stay on the parent turn and preserve native IDs. Native compact reports a compacted
+  thread only when OMP confirms success. Only explicitly qualified commands are exposed; discovered
+  session, export, sharing, model, configuration, and extension commands are rejected.
 - Awareness and Scient skill delivery are unsupported. Unexpected host-tool calls are rejected.
   Full access is the only runtime mode. There is no Orchestration V2 adapter.
 

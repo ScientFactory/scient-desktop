@@ -475,9 +475,9 @@ Oh My Pi's external provider is a Scient-owned seam. `packages/effect-omp-rpc` i
 `apps/server/src/provider/omp`, `Drivers/OmpDriver.ts`, `Layers/OmpAdapter.ts`,
 `Layers/OmpProvider.ts`, and `textGeneration/OmpTextGeneration.ts` own process, cursor, and turn
 mapping. Settings, awareness, skill delivery, analytics, and the provider picker mounts are the
-integration points. `scient-omp-seams.json` is the ownership inventory for those paths. It is not an
-input to `alignment:seams:check`, which stays limited to the onboarding, skills, analysis, and LaTeX
-mounts. Do not fold this provider into Pi's RPC client, and do not add an Orchestration V2 adapter
+integration points. `scient-omp-seams.json` is the ownership inventory for those paths and is
+checked by `alignment:seams:check` alongside the existing onboarding, skills, analysis, and LaTeX
+seams. Do not fold this provider into Pi's RPC client, and do not add an Orchestration V2 adapter
 until that upstream work is in the official range.
 
 Review previews preserve the source Git index timestamp when preparing a temporary
