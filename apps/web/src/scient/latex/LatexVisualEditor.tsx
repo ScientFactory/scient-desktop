@@ -1918,7 +1918,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     const root = editor.view.dom as HTMLElement;
     let frame = 0;
     let paginating = false;
-    let observer: ResizeObserver | null = null;
+    let disposed = false;
     const marginTop = layout.marginTopIn * 96;
     const marginBottom = layout.marginBottomIn * 96;
 
@@ -2010,7 +2010,6 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
         } else if (placement.offset > 0) {
           child.style.marginTop = `${naturalMargins[index]! + placement.offset}px`;
         }
-        observer?.observe(child);
       });
       root.style.setProperty(
         "--scient-latex-document-height",
@@ -2020,16 +2019,20 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       paginating = false;
     };
     const schedule = () => {
+      if (disposed) return;
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(paginate);
     };
-    observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(schedule);
-    observer?.observe(root);
+    const scheduleAfterAssetsLoad = () => schedule();
+    root.addEventListener("load", scheduleAfterAssetsLoad, true);
     editor.on("update", schedule);
     schedule();
+    void document.fonts?.ready.then(schedule);
+    void customElements.whenDefined("math-field").then(schedule);
     return () => {
+      disposed = true;
       cancelAnimationFrame(frame);
-      observer?.disconnect();
+      root.removeEventListener("load", scheduleAfterAssetsLoad, true);
       editor.off("update", schedule);
       for (const child of root.querySelectorAll<HTMLElement>(
         "[data-latex-pagination-margin-top]",

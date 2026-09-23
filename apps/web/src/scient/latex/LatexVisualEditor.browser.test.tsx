@@ -1,6 +1,7 @@
-import { act, type ReactNode } from "react";
-import { createRoot } from "react-dom/client";
+import { type ReactNode } from "react";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { page } from "vitest/browser";
 
 vi.mock("~/scient/presentation/ScientTooltip", () => ({
   ScientTooltip: ({ children }: { children: ReactNode }) => children,
@@ -75,35 +76,40 @@ The boundaries between areas are flexible.
 
 describe("visual LaTeX page layout", () => {
   let container: HTMLDivElement;
-  let root: ReturnType<typeof createRoot>;
+  let root: Root;
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    await page.viewport(1400, 900);
     container = document.createElement("div");
     Object.assign(container.style, { width: "1200px", height: "900px" });
     document.body.append(container);
     root = createRoot(container);
   });
 
-  afterEach(async () => {
-    await act(async () => root.unmount());
+  afterEach(() => {
+    root.unmount();
     container.remove();
   });
 
   it("keeps content out of gaps and honors the explicit break after Contents", async () => {
-    await act(async () => {
-      root.render(
-        <LatexVisualEditor
-          draftKey="browser-pagination-test"
-          fileRevision="r1"
-          source={source}
-          disabled={false}
-          onEditingChange={() => {}}
-          onOpenSource={() => {}}
-          onEdit={() => true}
-        />,
-      );
-    });
-    await act(async () => new Promise((resolve) => setTimeout(resolve, 250)));
+    root.render(
+      <LatexVisualEditor
+        draftKey="browser-pagination-test"
+        fileRevision="r1"
+        source={source}
+        disabled={false}
+        onEditingChange={() => {}}
+        onOpenSource={() => {}}
+        onEdit={() => true}
+      />,
+    );
+    await expect
+      .poll(() =>
+        container
+          .querySelector<HTMLElement>(".scient-latex-page-break")
+          ?.style.getPropertyValue("--scient-latex-page-break-space"),
+      )
+      .not.toBe("");
 
     const sheets = [...container.querySelectorAll<HTMLElement>(".scient-latex-page-sheet")].map(
       (sheet) => sheet.getBoundingClientRect(),
