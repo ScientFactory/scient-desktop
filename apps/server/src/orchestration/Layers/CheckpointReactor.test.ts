@@ -521,10 +521,11 @@ describe("CheckpointReactor", () => {
           Effect.gen(function* () {
             const sql = yield* SqlClient.SqlClient;
             const rows = yield* sql<{
+              readonly answer_done: number;
               readonly checkpoint_done: number;
               readonly successful: number;
             }>`
-              SELECT checkpoint_done, successful
+              SELECT answer_done, checkpoint_done, successful
               FROM scient_queue_finalization
               WHERE turn_id = ${turnId}
             `;
@@ -1142,11 +1143,12 @@ describe("CheckpointReactor", () => {
     });
     await harness.drain();
 
-    // An aborted turn captures its edits, but the queue barrier still records
-    // the outcome as unsuccessful so it cannot advance automatic delivery.
+    // The reactor only settles the checkpoint half. Answer ingestion must still
+    // record the aborted answer as unsuccessful before the queue can advance.
     const completion = await harness.readQueueFinalization("turn-abort");
+    expect(completion?.answer_done).toBe(0);
     expect(completion?.checkpoint_done).toBe(1);
-    expect(completion?.successful).toBe(0);
+    expect(completion?.successful).toBe(1);
   });
 
   it("refreshes local git status state on turn completion using the session cwd", async () => {

@@ -32,7 +32,7 @@ const isQueueOperationError = Schema.is(ScientThreadQueueOperationError);
 export const useQueueEditSessions = create<{
   sessions: Record<string, EditSession>;
   ready: boolean;
-  error: string | null;
+  error: { message: string; targetKey: string | null } | null;
 }>(() => ({ sessions: {}, ready: false, error: null }));
 const lanes = new Map<string, Promise<void>>();
 function save(session: EditSession | string) {
@@ -110,7 +110,10 @@ export function loadQueueEdits() {
     } catch (cause) {
       useQueueEditSessions.setState({
         ready: true,
-        error: `Queue editing storage is unavailable: ${String(cause)}`,
+        error: {
+          message: `Queue editing storage is unavailable: ${String(cause)}`,
+          targetKey: null,
+        },
       });
     }
   })());
@@ -208,11 +211,7 @@ export async function finishQueueEdit(session: EditSession, submitted?: Composer
     useComposerDraftStore.getState().getComposerDraft(session.editTarget) !== submitted
   ) {
     await stashQueueEdit(session);
-    useQueueEditSessions.setState({
-      error:
-        "The message was queued. Changes received during sending were kept in your prompt stash.",
-    });
-    return;
+    return true;
   }
   ending.add(session.journalKey);
   try {
@@ -228,6 +227,7 @@ export async function finishQueueEdit(session: EditSession, submitted?: Composer
   });
   ending.delete(session.journalKey);
   releaseEditLease(session.key);
+  return false;
 }
 useComposerDraftStore.subscribe((state, previous) => {
   for (const session of [
@@ -243,7 +243,12 @@ useComposerDraftStore.subscribe((state, previous) => {
     )
       continue;
     void save({ ...session, ordinary, edited }).catch((cause) =>
-      useQueueEditSessions.setState({ error: `Queue edit could not be saved: ${String(cause)}` }),
+      useQueueEditSessions.setState({
+        error: {
+          message: `Queue edit could not be saved: ${String(cause)}`,
+          targetKey: session.key,
+        },
+      }),
     );
   }
 });

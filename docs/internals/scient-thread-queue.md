@@ -15,7 +15,8 @@ and manual product acceptance are separate; no visual acceptance is implied.
   that races a busy thread or waiting queue; the draft remains available and
   sending again queues it. It never silently becomes steering.
 - Each waiting message starts individually after the preceding turn's answer
-  ingestion **and** checkpoint finalization finish. A session's `ready` status
+  ingestion **and** checkpoint finalization settles. A failed checkpoint does not
+  make a successfully delivered answer unsuccessful. A session's `ready` status
   alone is insufficient. Provider thinking, tool work, and intermediate output
   do not advance the queue.
 - Explicit Cmd/Ctrl+Enter and a row's Steer action retain their existing meaning.
@@ -42,6 +43,12 @@ and manual product acceptance are separate; no visual acceptance is implied.
   work, becoming idle, reconnecting, or restarting the server never releases the queue.
   Only a later successfully finalized answer makes the next waiting item eligible.
   An unsuccessful answer waits for later successful work in the same way.
+- When idle after Stop or an unsuccessful answer, the first waiting row offers
+  **Send**. This explicitly requests that existing message as a new ordinary
+  turn through the server-owned worker. The remaining items wait for its answer
+  and checkpoint settlement; reorder first to choose another message. Stop and
+  reorder cancel an unadmitted Send request. Older connected servers do not
+  advertise `threadQueueExplicitSend`, so their clients do not offer this action.
 - Retry applies to a pre-admission delivery error. It cannot bypass an active
   finalization barrier or the requirement for a successful answer after Stop.
   No Retry or additional confirmation is needed after later successful completion.
@@ -57,7 +64,7 @@ and manual product acceptance are separate; no visual acceptance is implied.
 | File            | Responsibility                                                             |
 | --------------- | -------------------------------------------------------------------------- |
 | `Ledger.ts`     | Typed SQL document, caps, revisions, admission checks, completion barriers |
-| `operations.ts` | Enqueue, edit, requeue, stash, delete, reorder, resume, explicit steer     |
+| `operations.ts` | Enqueue, edit, requeue, stash, delete, reorder, resume, Send, steer        |
 | `Worker.ts`     | Scoped background sender and restart reconciliation                        |
 | `signals.ts`    | Runtime-local wakeup hints keyed by SQL client identity                    |
 | `http.ts`       | Authentication, authorization, transactional mutation, revision reads      |
@@ -78,8 +85,9 @@ migration. Its tables share the orchestration database and transaction:
   committed edit token. Receipts survive consumption and deletion so a lost
   response cannot recreate an already accepted message.
 - `scient_queue_finalization`: independent answer/checkpoint markers by thread
-  and durable turn ID. Duplicate markers are harmless; failure is sticky for that
-  turn. Stop writes `successful = 0` in the same transaction as the waiting state,
+  and durable turn ID. Duplicate markers are harmless; answer failure is sticky
+  for that turn, while checkpoint failure only records that its attempt settled.
+  Stop writes `successful = 0` in the same transaction as the waiting state,
   revoking that turn's eligibility even if a late success arrives. Existing durable
   turn identities are reused; no second execution-ID system or new SQL table is needed.
 
@@ -109,8 +117,9 @@ and retains an empty migration tombstone so an old JSON file cannot resurrect it
    The checkpoint reactor signals after checkpoint capture or its valid skip
    path. Both matching markers are required to release delivery. A stale turn's
    completion cannot release a newer turn.
-6. A successful release wakes the next item. Unsuccessful finalization leaves the
-   queue waiting for a later successful answer; a pre-admission error remains retryable.
+6. A successful answer with a settled checkpoint wakes the next item. An
+   unsuccessful answer leaves the queue waiting for later successful work; a
+   pre-admission error remains retryable.
 
 New queue entries capture model/options, runtime mode, and interaction mode.
 Admission applies those settings through the existing orchestration events
@@ -149,18 +158,19 @@ The lifecycle transitions are:
 | New ordinary/automation start admitted                    | true      | Preserved            | Preserved                            |
 | Provider adopts that start                                | true      | Preserved            | Preserved; eligible turn ID recorded |
 | Session becomes ready, or only one finalizer finishes     | Unchanged | Unchanged            | Preserved                            |
-| Both finalizers succeed for the eligible turn             | false     | false                | Next item becomes eligible           |
-| Finalization fails                                        | false     | true                 | Preserved                            |
+| Answer succeeds and checkpoint settles                    | false     | false                | Next item becomes eligible           |
+| Answer fails after checkpoint settles                     | false     | true                 | Preserved                            |
 | Aborted turn for the eligible turn                        | false     | true                 | Preserved                            |
-| Worker admits the next waiting item                       | true      | false                | Exactly that item consumed           |
+| Worker admits the next eligible item                      | true      | Preserved            | Exactly that item consumed           |
 
-An aborted turn signals both finalizers as unsuccessful, so it ends the barrier
-the same way a failed answer does rather than leaving delivery blocked with no
-terminal signal. The eligible-turn check still applies: an abort naming any
+An aborted turn records an unsuccessful answer and settled checkpoint, so it
+ends the barrier without advancing delivery or remaining blocked indefinitely.
+The eligible-turn check still applies: an abort naming any
 other turn cannot release the current one.
 
-Stop clears the eligible turn ID and cancels any unadmitted Steer request,
-retaining that message in its slot. A new explicit Steer action remains available.
+Stop clears the eligible turn ID and cancels any unadmitted Send or Steer request,
+retaining that message in its slot. Finalization also cancels an unadmitted
+Steer aimed at the completed turn. New explicit actions remain available.
 A late running notification while waiting with no admitted start also invalidates that notification's turn ID; it cannot rearm
 an interrupted pending start. Running notifications for failed/invalidated or
 already completed turn IDs are ignored by the ledger. New work enters through

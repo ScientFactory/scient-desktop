@@ -47,6 +47,8 @@ function QueueRow(props: {
   readonly canReorder: boolean;
   readonly threadBusy: boolean;
   readonly dispatching: boolean;
+  readonly canSend: boolean;
+  readonly onSend: (item: ScientThreadQueueItem) => void;
   readonly onSteer: (item: ScientThreadQueueItem) => void;
   readonly onEdit: (item: ScientThreadQueueItem) => void;
   readonly onDelete: (item: ScientThreadQueueItem) => void;
@@ -97,6 +99,17 @@ function QueueRow(props: {
               </span>
             </Button>
           )}
+          {props.canSend && (
+            <Button
+              type="button"
+              size="micro"
+              variant="ghost-muted"
+              disabled={props.dispatching || props.item.sendRequested}
+              onClick={() => props.onSend(props.item)}
+            >
+              Send
+            </Button>
+          )}
           <Button
             type="button"
             size="icon-micro"
@@ -132,9 +145,13 @@ export function ThreadQueueStrip(props: {
   readonly items: ReadonlyArray<ScientThreadQueueItem>;
   readonly error: string | null;
   readonly threadBusy: boolean;
+  readonly supportsExplicitSend: boolean;
+  readonly awaitingCompletion: boolean;
+  readonly paused: boolean;
   readonly dispatchingItemId: ScientThreadQueueItemId | null;
+  readonly onSend: (item: ScientThreadQueueItem) => void;
   readonly onSteer: (item: ScientThreadQueueItem) => void;
-  readonly retryItemId?: ScientThreadQueueItemId;
+  readonly retryable: boolean;
   readonly onRetry?: () => void;
   readonly onEdit: (item: ScientThreadQueueItem) => void;
   readonly onDelete: (item: ScientThreadQueueItem) => void;
@@ -170,7 +187,7 @@ export function ThreadQueueStrip(props: {
           role="alert"
         >
           <span className="min-w-0 flex-1 truncate">{props.error}</span>
-          {!props.threadBusy && props.onRetry && (
+          {!props.threadBusy && props.retryable && props.onRetry && (
             <Button
               type="button"
               size="compact"
@@ -195,13 +212,22 @@ export function ThreadQueueStrip(props: {
               items={props.items.map((item) => item.queueItemId)}
               strategy={verticalListSortingStrategy}
             >
-              {props.items.map((item) => (
+              {props.items.map((item, index) => (
                 <QueueRow
                   key={item.queueItemId}
                   item={item}
                   canReorder={props.items.length > 1}
                   threadBusy={props.threadBusy}
+                  canSend={
+                    index === 0 &&
+                    props.supportsExplicitSend &&
+                    !props.threadBusy &&
+                    props.awaitingCompletion &&
+                    !props.paused &&
+                    !props.items.some((entry) => entry.steerRequested)
+                  }
                   dispatching={props.dispatchingItemId === item.queueItemId}
+                  onSend={props.onSend}
                   onSteer={props.onSteer}
                   onEdit={props.onEdit}
                   onDelete={props.onDelete}

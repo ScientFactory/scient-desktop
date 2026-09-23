@@ -31,7 +31,7 @@ import { OrchestrationEngineService } from "../../orchestration/Services/Orchest
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ScientQueueWorker, ScientQueueWorkerLive } from "./Worker.ts";
 import { readQueue, writeQueue, finalizeQueueTurn } from "./Ledger.ts";
-import { enqueueQueue } from "./operations.ts";
+import { controlQueue, enqueueQueue } from "./operations.ts";
 
 const engineLayer = Layer.mergeAll(
   OrchestrationEngineLive.pipe(
@@ -72,6 +72,106 @@ const messageContext: OrchestrationMessageContext = {
     },
   ],
 };
+
+it.effect(
+  "delivers an explicitly sent waiting message without a client, then resumes after checkpoint failure",
+  () =>
+    Effect.gen(function* () {
+      const engine = yield* OrchestrationEngineService;
+      const sql = yield* SqlClient.SqlClient;
+      const worker = yield* ScientQueueWorker;
+      yield* engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("send-project"),
+        projectId,
+        title: "Queue test",
+        workspaceRoot: "/tmp",
+        createdAt: now,
+      });
+      yield* engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("send-thread"),
+        threadId,
+        projectId,
+        title: "Queue",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdAt: now,
+      });
+      const starts = yield* Queue.unbounded<string>();
+      const events = yield* engine.subscribeDomainEvents;
+      yield* events.pipe(
+        Stream.runForEach((event) =>
+          event.type === "thread.turn-start-requested"
+            ? Queue.offer(starts, event.payload.messageId).pipe(Effect.asVoid)
+            : Effect.void,
+        ),
+        Effect.forkScoped,
+      );
+      yield* sql.withTransaction(
+        Effect.gen(function* () {
+          let doc = yield* readQueue(threadId);
+          for (const id of ["A", "B"])
+            doc = yield* enqueueQueue(
+              { threadId, queueItemId: `qitem_${id}`, text: id, attachments: [] },
+              doc,
+            );
+          yield* writeQueue(threadId, { ...doc, awaitingCompletion: true });
+        }),
+      );
+      yield* sql.withTransaction(
+        Effect.gen(function* () {
+          const doc = yield* readQueue(threadId);
+          yield* writeQueue(
+            threadId,
+            yield* controlQueue({ threadId, action: "send", queueItemId: "qitem_A" }, doc),
+          );
+        }),
+      );
+      // The explicit request is durable even when no worker or browser is open yet.
+      yield* worker.start;
+      expect(yield* Queue.take(starts).pipe(Effect.timeout("5 seconds"))).toBe("queue:qitem_A");
+      expect((yield* readQueue(threadId)).items.map((item) => item.text)).toEqual(["B"]);
+      yield* engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("send-running"),
+        threadId,
+        createdAt: now,
+        session: {
+          threadId,
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "full-access",
+          activeTurnId: TurnId.make("sent-turn"),
+          lastError: null,
+          updatedAt: now,
+        },
+      });
+      yield* engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("send-ready"),
+        threadId,
+        createdAt: now,
+        session: {
+          threadId,
+          status: "ready",
+          providerName: "codex",
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: now,
+        },
+      });
+      yield* finalizeQueueTurn(threadId, "sent-turn", true, "answer");
+      expect((yield* readQueue(threadId)).items.map((item) => item.text)).toEqual(["B"]);
+      yield* finalizeQueueTurn(threadId, "sent-turn", false, "checkpoint");
+      expect(yield* Queue.take(starts).pipe(Effect.timeout("5 seconds"))).toBe("queue:qitem_B");
+      expect((yield* readQueue(threadId)).items).toEqual([]);
+    }).pipe(Effect.provide(testLayer)),
+);
 
 it.effect.each([
   "normal",
