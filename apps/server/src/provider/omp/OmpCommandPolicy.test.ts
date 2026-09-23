@@ -25,4 +25,20 @@ describe("Oh My Pi command policy", () => {
     expect(ompCommandDecision("/session info", catalog)).toBe("allowed");
     expect(ompCommandDecision("/unknown", catalog)).toBe("unavailable");
   });
+
+  it("rejects aliases and side-effecting commands even when discovered", () => {
+    const expanded = compileOmpCommandCatalog([
+      { name: "new", aliases: ["n"] },
+      { name: "export", aliases: ["save"] },
+      { name: "share", aliases: ["publish"] },
+      { name: "model", aliases: ["m"] },
+      { name: "custom-extension-command" },
+    ]);
+    expect(ompCommandDecision("/n", expanded)).toBe("mutator");
+    expect(ompCommandDecision("/save", expanded)).toBe("mutator");
+    expect(ompCommandDecision("/publish", expanded)).toBe("mutator");
+    expect(ompCommandDecision("/m", expanded)).toBe("mutator");
+    expect(ompCommandDecision("/custom-extension-command", expanded)).toBe("mutator");
+    expect(expanded.advertised).toEqual([]);
+  });
 });

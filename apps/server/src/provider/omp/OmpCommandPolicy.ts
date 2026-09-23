@@ -11,9 +11,30 @@ export const OMP_SESSION_MUTATOR_COMMANDS = [
   "pin",
   "login",
   "logout",
+  "restart",
+  "export",
+  "dump",
+  "share",
+  "model",
+  "provider",
+  "thinking",
+  "fast",
+  "tools",
+  "config",
+  "settings",
+  "permissions",
+  "approval",
 ] as const;
 
+/**
+ * Only commands whose effects are understood by this provider are eligible.
+ * Discovery is not permission: an extension, skill, or user command is not
+ * trusted merely because OMP reports it.
+ */
+export const OMP_QUALIFIED_COMMANDS = ["help", "status", "compact", "todos", "review"] as const;
+
 const mutators = new Set<string>(OMP_SESSION_MUTATOR_COMMANDS);
+const qualified = new Set<string>(OMP_QUALIFIED_COMMANDS);
 
 export interface OmpCatalogCommand {
   readonly name: string;
@@ -39,9 +60,9 @@ const clean = (value: string | undefined): string | undefined => {
 };
 
 /**
- * Advertise every discovered command except ones that replace, delete, fork,
- * or authenticate the Oh My Pi session. `/session info` stays available.
- * Other `/session` forms are rejected at send time.
+ * Advertise only the qualified command set. Aliases are included only when
+ * their canonical command is qualified; an alias can never bypass a blocked
+ * canonical command.
  */
 export const compileOmpCommandCatalog = (
   commands: ReadonlyArray<OmpCatalogCommand>,
@@ -57,11 +78,13 @@ export const compileOmpCommandCatalog = (
       const trimmed = clean(alias);
       if (trimmed) known.add(trimmed);
     }
-    if (mutators.has(name) || name === "session") continue;
+    if (!qualified.has(name) || mutators.has(name) || name === "session") continue;
     allowed.add(name);
     for (const alias of command.aliases ?? []) {
       const trimmed = clean(alias);
-      if (trimmed && !mutators.has(trimmed)) allowed.add(trimmed);
+      if (trimmed && !mutators.has(trimmed) && !qualified.has(trimmed)) {
+        allowed.add(trimmed);
+      }
     }
     const description = clean(command.description);
     advertised.push(description ? { name, description } : { name });
