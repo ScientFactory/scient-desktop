@@ -157,6 +157,19 @@ describe("writing editor source transactions", () => {
       title.dispatchEvent(new Event("input", { bubbles: true }));
     });
     expect(current).toContain("\\title{A Better Guide}");
+    await act(async () => title.focus());
+    const removeAuthor = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent === "Remove author",
+    )!;
+    await act(async () => removeAuthor.click());
+    expect(current).not.toContain("\\author{");
+    expect(container.querySelector("input[aria-label='Document author']")).toBeNull();
+    const hideDate = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent === "Hide date",
+    )!;
+    await act(async () => hideDate.click());
+    expect(current).toContain("\\date{}");
+    expect(container.querySelector("input[aria-label='Document date']")).toBeNull();
   });
 
   it("opens complete math source without replacing the rendered equation", async () => {

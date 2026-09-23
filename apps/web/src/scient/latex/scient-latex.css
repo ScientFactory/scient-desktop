@@ -831,10 +831,11 @@
 }
 
 .scient-latex-title-preview {
+  position: relative;
   display: grid;
   justify-items: center;
-  gap: 0.35em;
-  margin: 1.5em 0 2.4em;
+  gap: 0.45em;
+  margin: 2em 0 3em;
   text-align: center;
 }
 .scient-latex-title-preview input {
@@ -848,19 +849,40 @@
   text-align: center;
 }
 .scient-latex-title-preview input:first-child {
-  font-size: 2em;
+  margin-bottom: 0.75em;
+  font-size: 1.728em;
   font-weight: 700;
   line-height: 1.2;
 }
-.scient-latex-title-preview input:nth-child(2) {
-  margin-top: 0.45em;
-  font-size: 1.15em;
+.scient-latex-title-preview input[aria-label="Document author"],
+.scient-latex-title-preview input[aria-label="Document date"] {
+  font-size: 1.2em;
+  line-height: 1.25;
 }
 .scient-latex-title-preview input:hover,
 .scient-latex-title-preview input:focus {
   border-color: #a8c1dc;
   outline: none;
   background: #f8fbff;
+}
+.scient-latex-title-controls {
+  position: absolute;
+  top: -2.2em;
+  right: 0;
+  display: flex;
+  gap: 5px;
+  font: 10px/1.4 var(--font-sans);
+}
+.scient-latex-title-controls button {
+  border: 1px solid #cad5e1;
+  border-radius: 5px;
+  padding: 4px 7px;
+  background: #fff;
+  color: #4b6077;
+}
+.scient-latex-title-controls button:hover:not(:disabled) {
+  border-color: #83a7ce;
+  background: #f2f7fc;
 }
 .scient-latex-abstract-preview {
   margin: 1.8em auto;
@@ -925,6 +947,23 @@
   padding-left: 3em;
   font-size: 0.94em;
 }
+.scient-latex-page-break {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 2.5em -0.45in;
+  color: #8290a1;
+  font: 9px/1.4 var(--font-sans);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.scient-latex-page-break::before,
+.scient-latex-page-break::after {
+  height: 1px;
+  flex: 1;
+  background: #dbe1e8;
+  content: "";
+}
 
 .scient-latex-rich-preview {
   margin: 1.4em 0;
@@ -973,6 +1012,23 @@
 .scient-latex-rich-preview dl > div:last-child {
   border-bottom: 0;
 }
+.scient-latex-rich-preview[data-description-style="nextline"] dl > div {
+  display: block;
+  padding: 0.55em 0;
+}
+.scient-latex-rich-preview[data-description-style="nextline"] dd {
+  margin-top: 0.16em;
+  margin-left: var(--scient-description-left-margin, 8em);
+}
+.scient-latex-rich-preview[data-description-style="nextline"] dt input {
+  width: auto;
+  min-width: 12em;
+  max-width: 100%;
+  field-sizing: content;
+}
+.scient-latex-rich-preview[data-description-style="nextline"] .scient-latex-structure-remove {
+  margin-left: var(--scient-description-left-margin, 8em);
+}
 .scient-latex-rich-preview dt {
   font-weight: 700;
 }
@@ -996,10 +1052,12 @@
   font-weight: 700;
 }
 .scient-latex-rich-preview dd textarea {
-  min-height: 3.2em;
+  min-height: 1.55em;
   padding: 4px 5px;
   line-height: 1.55;
   resize: none;
+  overflow: hidden;
+  field-sizing: content;
 }
 .scient-latex-rich-preview dt input:hover,
 .scient-latex-rich-preview dd textarea:hover,

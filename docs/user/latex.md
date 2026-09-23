@@ -51,16 +51,22 @@ these controls update explicit LaTeX preamble settings rather than maintaining
 private visual-only state.
 
 Standard `\title`, `\author`, and `\date` metadata appears as the document's
-title block at `\maketitle` and can be edited in place. Plain abstract text is
-also shown and edited as an abstract rather than as a source card. Numbered
-sections, subsections, and subsubsections display their expected hierarchy in
-the canvas; starred headings remain unnumbered. `\tableofcontents` is represented
-as generated content and remains authoritative in the compiled PDF.
+title block at `\maketitle` and can be edited in place. Empty authors and dates
+are not shown. Selecting the title reveals controls to add or remove them; an
+omitted date follows LaTeX's default and displays the current date, while
+`\date{}` hides it. Plain abstract text is also shown and edited as an abstract
+rather than as a source card. Numbered sections, subsections, and subsubsections
+display their expected hierarchy in the canvas; starred headings remain
+unnumbered. `\tableofcontents` is represented as generated content and remains
+authoritative in the compiled PDF. `\newpage` and `\clearpage` appear as compact
+page-break markers instead of raw-source cards.
 
 Description lists and common `tabular`, `tabularx`, `tabulary`, and `longtable`
 structures have visual editors. When inactive they read like document content;
 selection and keyboard focus reveal their structural controls. In a description
-list, edit labels and bodies directly or add and remove items. In a supported table, type directly in cells
+list, edit labels and bodies directly or add and remove items. Common enumitem
+layout such as `style=nextline` and an explicit `leftmargin` is reflected in the
+canvas. In a supported table, type directly in cells
 and use Tab to move through the grid; Tab from the last cell adds a row. The
 contextual table toolbar adds, removes, and reorders rows or columns, aligns the
 selected column, toggles a header, and changes between simple, booktabs, and

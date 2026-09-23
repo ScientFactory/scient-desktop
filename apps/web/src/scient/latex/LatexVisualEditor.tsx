@@ -491,6 +491,14 @@ function withStableKeys<T>(values: T[], serialize: (value: T) => string) {
   });
 }
 
+function visualTodayLabel(): string {
+  return new Intl.DateTimeFormat("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  }).format(new Date());
+}
+
 interface LatexVisualWorkspace {
   readonly environmentId: EnvironmentId | null;
   readonly cwd: string | null;
@@ -591,6 +599,7 @@ function LatexRichPreviewView({
   const tableRoot = useRef<HTMLElement | null>(null);
   const [selectedCell, setSelectedCell] = useState({ row: 0, column: 0 });
   const [objectActive, setObjectActive] = useState(false);
+  const [addingAuthor, setAddingAuthor] = useState(false);
   const kind = String(node.attrs.kind ?? "description");
   const items = Array.isArray(node.attrs.items)
     ? (node.attrs.items as { label?: unknown; body?: unknown }[])
@@ -780,11 +789,19 @@ function LatexRichPreviewView({
     focusTableCell(selectedCell.row, to);
   };
   if (kind === "title") {
+    const authorEnabled = node.attrs.authorEnabled === true;
+    const showAuthor = authorEnabled || addingAuthor;
+    const dateEnabled = node.attrs.dateEnabled !== false;
     return (
       <NodeViewWrapper
         className="scient-latex-title-preview"
         data-selected={selected || undefined}
         contentEditable={false}
+        onFocusCapture={() => setObjectActive(true)}
+        onBlurCapture={(event: FocusEvent<HTMLElement>) => {
+          if (!event.currentTarget.contains(event.relatedTarget as globalThis.Node | null))
+            setObjectActive(false);
+        }}
       >
         <input
           aria-label="Document title"
@@ -793,20 +810,68 @@ function LatexRichPreviewView({
           value={String(node.attrs.title ?? "")}
           onChange={(event) => updateAttributes({ title: event.currentTarget.value })}
         />
-        <input
-          aria-label="Document author"
-          disabled={!editorEditable}
-          placeholder="Author"
-          value={String(node.attrs.author ?? "")}
-          onChange={(event) => updateAttributes({ author: event.currentTarget.value })}
-        />
-        <input
-          aria-label="Document date"
-          disabled={!editorEditable}
-          placeholder="Date"
-          value={String(node.attrs.date ?? "")}
-          onChange={(event) => updateAttributes({ date: event.currentTarget.value })}
-        />
+        {showAuthor ? (
+          <input
+            autoFocus={addingAuthor}
+            aria-label="Document author"
+            disabled={!editorEditable}
+            placeholder="Author"
+            value={String(node.attrs.author ?? "")}
+            onBlur={(event) => {
+              if (!event.currentTarget.value) setAddingAuthor(false);
+            }}
+            onChange={(event) => {
+              const author = event.currentTarget.value;
+              if (!author) {
+                setAddingAuthor(false);
+                updateAttributes({ author: "", authorEnabled: false });
+                return;
+              }
+              setAddingAuthor(false);
+              updateAttributes({ author, authorEnabled: true });
+            }}
+          />
+        ) : null}
+        {dateEnabled ? (
+          <input
+            aria-label="Document date"
+            disabled={!editorEditable}
+            placeholder="Date"
+            value={String(node.attrs.date ?? "")}
+            onChange={(event) =>
+              updateAttributes({ date: event.currentTarget.value, dateMode: "explicit" })
+            }
+          />
+        ) : null}
+        {controlsVisible ? (
+          <div className="scient-latex-title-controls" role="toolbar" aria-label="Title details">
+            <button
+              disabled={!editorEditable}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => {
+                if (authorEnabled) updateAttributes({ author: "", authorEnabled: false });
+                else setAddingAuthor((adding) => !adding);
+              }}
+              type="button"
+            >
+              {authorEnabled ? "Remove author" : addingAuthor ? "Cancel author" : "Add author"}
+            </button>
+            <button
+              disabled={!editorEditable}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() =>
+                updateAttributes(
+                  dateEnabled
+                    ? { date: "", dateEnabled: false, dateMode: "hidden" }
+                    : { date: visualTodayLabel(), dateEnabled: true, dateMode: "today" },
+                )
+              }
+              type="button"
+            >
+              {dateEnabled ? "Hide date" : "Add date"}
+            </button>
+          </div>
+        ) : null}
       </NodeViewWrapper>
     );
   }
@@ -847,6 +912,13 @@ function LatexRichPreviewView({
         ) : (
           <p>The table of contents will be generated from numbered headings.</p>
         )}
+      </NodeViewWrapper>
+    );
+  }
+  if (kind === "pagebreak") {
+    return (
+      <NodeViewWrapper className="scient-latex-page-break" contentEditable={false}>
+        <span>Page break</span>
       </NodeViewWrapper>
     );
   }
@@ -1007,8 +1079,18 @@ function LatexRichPreviewView({
     <NodeViewWrapper
       className="scient-latex-rich-preview"
       data-kind={kind}
+      data-description-style={
+        kind === "description" ? String(node.attrs.descriptionStyle ?? "standard") : undefined
+      }
       data-selected={selected || undefined}
       contentEditable={false}
+      style={
+        kind === "description" && typeof node.attrs.descriptionLeftMargin === "string"
+          ? ({
+              "--scient-description-left-margin": node.attrs.descriptionLeftMargin,
+            } as CSSProperties)
+          : undefined
+      }
       onFocusCapture={() => setObjectActive(true)}
       onBlurCapture={(event: FocusEvent<HTMLElement>) => {
         if (!event.currentTarget.contains(event.relatedTarget as globalThis.Node | null))
@@ -1047,7 +1129,7 @@ function LatexRichPreviewView({
                     <textarea
                       aria-label={`Description item ${index + 1} body`}
                       disabled={!editorEditable}
-                      rows={2}
+                      rows={1}
                       value={String(item.body ?? "")}
                       onChange={(event) =>
                         updateDescriptionItem(index, "body", event.currentTarget.value)
@@ -1485,7 +1567,12 @@ const LatexRichPreview = Node.create<LatexVisualWorkspace>({
       title: { default: null },
       author: { default: null },
       date: { default: null },
+      authorEnabled: { default: false },
+      dateEnabled: { default: true },
+      dateMode: { default: "default" },
       tocEntries: { default: null, rendered: false },
+      descriptionStyle: { default: "standard" },
+      descriptionLeftMargin: { default: null },
       body: { default: null },
       path: { default: null },
       figureWidth: { default: null },

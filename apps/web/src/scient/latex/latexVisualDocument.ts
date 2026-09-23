@@ -582,6 +582,8 @@ function nextBlockEnd(body: string, from: number): number {
     const close = findDelimiter(body, "$$", from + 2);
     return close < 0 ? body.length : close + 2;
   }
+  const standalone = /^\\(?:maketitle|tableofcontents|newpage|clearpage)\b/u.exec(body.slice(from));
+  if (standalone) return from + standalone[0].length;
   if (/^\\(?:section|subsection|subsubsection)\*?\{/u.test(body.slice(from))) {
     const opening = body.indexOf("{", from);
     const close = closingBrace(body, opening);
@@ -634,7 +636,7 @@ function previewText(source: string): string {
 }
 
 function parseDescriptionPreview(source: string): JSONContent | null {
-  const opening = /^\\begin\{description\}(?:\[[^\]]*\])?/u.exec(source);
+  const opening = /^\\begin\{description\}(?:\[([^\]]*)\])?/u.exec(source);
   const ending = source.lastIndexOf("\\end{description}");
   if (!opening || ending < opening[0].length) return null;
   const bodyFrom = opening[0].length;
@@ -676,6 +678,13 @@ function parseDescriptionPreview(source: string): JSONContent | null {
       itemIds: originalItems.map((entry) => entry.id),
       caption: null,
       rows: null,
+      descriptionStyle: /(?:^|,)\s*style\s*=\s*nextline(?:\s*,|$)/u.test(opening[1] ?? "")
+        ? "nextline"
+        : "standard",
+      descriptionLeftMargin:
+        /(?:^|,)\s*leftmargin\s*=\s*((?:\d+(?:\.\d*)?|\.\d+)\s*(?:in|cm|mm|pt|em))(?:\s*,|$)/u
+          .exec(opening[1] ?? "")?.[1]
+          ?.replace(/\s+/gu, "") ?? null,
       editable,
       sourceMeta: {
         head: source.slice(0, bodyFrom + matches[0]!.index!),
@@ -686,14 +695,42 @@ function parseDescriptionPreview(source: string): JSONContent | null {
   };
 }
 
-function titleMetadata(source: string): { title: string; author: string; date: string } {
-  const read = (command: string) => {
-    const value = commandArgument(source, command);
-    if (value === null) return "";
-    if (command === "date" && value.trim() === "\\today") return "Today";
-    return previewText(value);
+function currentDateLabel(): string {
+  return new Intl.DateTimeFormat("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  }).format(new Date());
+}
+
+function titleMetadata(source: string): {
+  title: string;
+  author: string;
+  authorEnabled: boolean;
+  date: string;
+  dateEnabled: boolean;
+  dateMode: "default" | "today" | "explicit" | "hidden";
+} {
+  const title = commandArgument(source, "title");
+  const author = commandArgument(source, "author");
+  const date = commandArgument(source, "date");
+  const dateMode =
+    date === null
+      ? "default"
+      : date.trim() === "\\today"
+        ? "today"
+        : date.trim() === ""
+          ? "hidden"
+          : "explicit";
+  return {
+    title: title === null ? "" : previewText(title),
+    author: author === null ? "" : previewText(author),
+    authorEnabled: author !== null && author.trim() !== "",
+    date:
+      dateMode === "default" || dateMode === "today" ? currentDateLabel() : previewText(date ?? ""),
+    dateEnabled: dateMode !== "hidden",
+    dateMode,
   };
-  return { title: read("title"), author: read("author"), date: read("date") };
 }
 
 function parseDocumentFrontMatter(source: string, documentSource: string): JSONContent | null {
@@ -712,6 +749,12 @@ function parseDocumentFrontMatter(source: string, documentSource: string): JSONC
     return {
       type: "latexRichPreview",
       attrs: { kind: "toc", raw: source, editable: true },
+    };
+  }
+  if (/^\\(?:newpage|clearpage)$/u.test(source.trim())) {
+    return {
+      type: "latexRichPreview",
+      attrs: { kind: "pagebreak", raw: source, editable: true },
     };
   }
   const opening = /^\\begin\{abstract\}/u.exec(source);
@@ -1591,7 +1634,7 @@ export function serializeLatexVisualBlock(node: JSONContent): string | null {
   if (node.type === "latexRichPreview") {
     const raw = String(node.attrs?.raw ?? "");
     if (node.attrs?.editable !== true) return raw;
-    if (node.attrs.kind === "title" || node.attrs.kind === "toc") return raw;
+    if (["title", "toc", "pagebreak"].includes(String(node.attrs.kind))) return raw;
     if (node.attrs.kind === "abstract") {
       if (typeof node.attrs.body !== "string") return null;
       const eol = raw.includes("\r\n") ? "\r\n" : "\n";
@@ -1958,7 +2001,10 @@ function comparableNode(node: JSONContent): ComparableVisualNode {
               (node.attrs?.kind !== "scientific" && key === "environment") ||
               (!["scientific", "title"].includes(String(node.attrs?.kind)) && key === "title") ||
               (!["scientific", "abstract"].includes(String(node.attrs?.kind)) && key === "body") ||
-              (node.attrs?.kind !== "title" && (key === "author" || key === "date")) ||
+              (node.attrs?.kind !== "title" &&
+                ["author", "authorEnabled", "date", "dateEnabled", "dateMode"].includes(key)) ||
+              (node.attrs?.kind !== "description" &&
+                ["descriptionStyle", "descriptionLeftMargin"].includes(key)) ||
               (node.attrs?.kind !== "table" &&
                 (key === "columnAlignments" ||
                   key === "tableStyle" ||
@@ -2103,34 +2149,87 @@ function ensureFigurePackage(source: string, shouldInsert: boolean, eol: string)
   return source.slice(0, begin) + boundary + `\\usepackage{graphicx}${eol}` + source.slice(begin);
 }
 
+function preambleCommandRange(
+  source: string,
+  command: string,
+): { from: number; to: number } | null {
+  const match = new RegExp(`\\\\${command}\\s*\\{`, "u").exec(source);
+  if (!match) return null;
+  const opening = match.index + match[0].lastIndexOf("{");
+  const close = closingBrace(source, opening);
+  if (close === null) return null;
+  let to = close + 1;
+  while (source[to] === " " || source[to] === "\t") to++;
+  if (source.startsWith("\r\n", to)) to += 2;
+  else if (source[to] === "\n") to++;
+  return { from: match.index, to };
+}
+
+function setPreambleCommandArgument(
+  source: string,
+  command: string,
+  value: string,
+  eol: string,
+): string | null {
+  const begin = source.indexOf("\\begin{document}");
+  if (begin < 0) return null;
+  const range = commandArgumentRange(source.slice(0, begin), command);
+  if (range) return source.slice(0, range.from) + value + source.slice(range.to);
+  return replaceOrInsertPreambleLine(
+    source,
+    new RegExp("(?!)", "u"),
+    `\\${command}{${value}}`,
+    begin,
+    eol,
+  );
+}
+
+function removePreambleCommand(source: string, command: string): string {
+  const begin = source.indexOf("\\begin{document}");
+  if (begin < 0) return source;
+  const range = preambleCommandRange(source.slice(0, begin), command);
+  return range === null ? source : source.slice(0, range.from) + source.slice(range.to);
+}
+
 function updateTitleMetadata(
   source: string,
   previous: JSONContent,
   node: JSONContent,
 ): string | null {
-  const begin = source.indexOf("\\begin{document}");
-  if (begin < 0) return null;
-  const values = ["title", "author", "date"] as const;
-  if (values.some((key) => typeof node.attrs?.[key] !== "string")) return null;
+  if (
+    typeof node.attrs?.title !== "string" ||
+    typeof node.attrs?.author !== "string" ||
+    typeof node.attrs?.authorEnabled !== "boolean" ||
+    typeof node.attrs?.date !== "string" ||
+    typeof node.attrs?.dateEnabled !== "boolean" ||
+    !["default", "today", "explicit", "hidden"].includes(String(node.attrs?.dateMode))
+  )
+    return null;
   const eol = source.includes("\r\n") ? "\r\n" : "\n";
   let changed = source;
-  for (const key of values) {
-    const value = String(node.attrs?.[key] ?? "");
-    if (value === String(previous.attrs?.[key] ?? "")) continue;
-    const changedBegin = changed.indexOf("\\begin{document}");
-    const preamble = changed.slice(0, changedBegin);
-    const range = commandArgumentRange(preamble, key);
-    if (range) {
-      changed = changed.slice(0, range.from) + escapeText(value) + changed.slice(range.to);
-    } else {
-      changed = replaceOrInsertPreambleLine(
-        changed,
-        new RegExp("(?!)", "u"),
-        `\\${key}{${escapeText(value)}}`,
-        changedBegin,
-        eol,
-      );
-    }
+  if (node.attrs.title !== previous.attrs?.title)
+    changed =
+      setPreambleCommandArgument(changed, "title", escapeText(node.attrs.title), eol) ?? changed;
+  if (node.attrs.authorEnabled !== previous.attrs?.authorEnabled) {
+    changed = node.attrs.authorEnabled
+      ? (setPreambleCommandArgument(changed, "author", escapeText(node.attrs.author), eol) ??
+        changed)
+      : removePreambleCommand(changed, "author");
+  } else if (node.attrs.authorEnabled && node.attrs.author !== previous.attrs?.author) {
+    changed =
+      setPreambleCommandArgument(changed, "author", escapeText(node.attrs.author), eol) ?? changed;
+  }
+  if (
+    node.attrs.dateMode !== previous.attrs?.dateMode ||
+    (node.attrs.dateMode === "explicit" && node.attrs.date !== previous.attrs?.date)
+  ) {
+    const dateValue =
+      node.attrs.dateMode === "hidden"
+        ? ""
+        : node.attrs.dateMode === "today" || node.attrs.dateMode === "default"
+          ? "\\today"
+          : escapeText(node.attrs.date);
+    changed = setPreambleCommandArgument(changed, "date", dateValue, eol) ?? changed;
   }
   return changed;
 }

@@ -99,6 +99,7 @@ A concise introduction.
 \\end{abstract}
 
 \\tableofcontents
+\\newpage
 \\end{document}
 `;
     const projection = projectLatexVisualDocument(source);
@@ -107,6 +108,7 @@ A concise introduction.
       "title",
       "abstract",
       "toc",
+      "pagebreak",
     ]);
     const nodes = structuredClone(projection.content.content!);
     nodes[0]!.attrs = { ...nodes[0]!.attrs, title: "A Better Guide" };
@@ -128,6 +130,40 @@ A concise introduction.
     expect(abstractChange?.source).toContain(
       "\\begin{abstract}\nA revised introduction.\n\\end{abstract}",
     );
+  });
+
+  it("models optional author and date metadata using LaTeX maketitle defaults", () => {
+    const source = `\\documentclass{article}
+\\title{Untitled Author}
+\\begin{document}
+\\maketitle
+\\end{document}
+`;
+    const projection = projectLatexVisualDocument(source);
+    const title = projection.content.content?.[0];
+    expect(title).toBeDefined();
+    expect(title?.attrs).toMatchObject({
+      authorEnabled: false,
+      dateEnabled: true,
+      dateMode: "default",
+    });
+    expect(title.attrs?.date).not.toBe("Today");
+
+    const withAuthor = structuredClone(projection.content.content!);
+    withAuthor[0]!.attrs = {
+      ...withAuthor[0]!.attrs,
+      author: "Nati",
+      authorEnabled: true,
+      date: "",
+      dateEnabled: false,
+      dateMode: "hidden",
+    };
+    const changed = applyLatexVisualDocumentChange(source, projection, {
+      type: "doc",
+      content: withAuthor,
+    });
+    expect(changed?.source).toContain("\\author{Nati}");
+    expect(changed?.source).toContain("\\date{}");
   });
 
   it("round-trips nested lists and empty list items", () => {
@@ -224,6 +260,10 @@ A concise introduction.
     const projection = projectLatexVisualDocument(source);
     expect(projection.blocks[0]!.node.type).toBe("latexRichPreview");
     expect(projection.blocks[0]!.editable).toBe(true);
+    expect(projection.blocks[0]!.node.attrs).toMatchObject({
+      descriptionStyle: "nextline",
+      descriptionLeftMargin: "2.7cm",
+    });
     expect(projection.blocks[0]!.node.attrs?.items).toEqual([
       { label: "Algorithms", body: "Design algorithms and prove their correctness." },
       {
