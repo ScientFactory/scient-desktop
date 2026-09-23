@@ -64,7 +64,10 @@ separate from the verified private-runtime actions below.
 
 When provider update checks are enabled, Scient checks its qualified stable-release catalog when the
 app starts, periodically while it remains open, and when you click **Install**, **Update**, or **Repair**.
-A newly qualified release can appear as **Update** without restarting Scient. Clicking **Install** or
+A newly qualified release can appear as **Update** without restarting Scient. **Refresh providers** in
+Settings also checks the catalog immediately without changing its normal automatic schedule. If a
+Scient-managed runtime has an update, Scient shows a notice that opens that provider in the correct
+environment in Settings; installing remains your choice. Clicking **Install** or
 **Update** starts the operation directly, without a second confirmation. In Settings, it runs without
 opening the management card: the button shows **Installing**, **Updating**, or **Verifying**, with a
 small download percentage when available. Click that button to open details. A **Failed** button opens

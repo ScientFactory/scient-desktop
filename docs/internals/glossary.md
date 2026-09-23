@@ -161,7 +161,7 @@ A read-only quota feed outside this environment's provider CLIs, configured unde
 
 #### Model manifest
 
-The per-driver list of current model slugs that decides which models land in the model picker's legacy section. Bundled at `apps/server/src/provider/model-manifest.json` and refreshed at runtime from the same file on `main`, so classification updates ship as commits instead of releases. See the [provider architecture][16] model manifest section.
+Scient-owned catalog and per-model visibility policy. Explicit `legacy` entries feed the model picker's Legacy section; unknown discovered models remain visible by default, with provider-native legacy flags preserved. Bundled at `apps/server/src/provider/model-manifest.json` and refreshed at runtime from the same file on `main`, so classification updates ship as commits instead of releases. See the [provider architecture][16] model manifest section.
 
 ### Checkpointing
 
@@ -169,7 +169,7 @@ Checkpointing captures workspace state over time so the app can diff turns and r
 
 #### Checkpoint
 
-A saved snapshot of a thread workspace at a particular turn. In practice it is a hidden Git ref in [CheckpointStore.ts][19] plus a projected summary from [ProjectionCheckpoints.ts][21]. Capture and lifecycle work happen in [CheckpointReactor.ts][6].
+A saved snapshot of a thread workspace at a particular turn. In practice it is a hidden Git ref in [CheckpointStore.ts][19] plus checkpoint metadata projected by [ProjectionPipeline.ts][11]. Capture and lifecycle work happen in [CheckpointReactor.ts][6].
 
 #### Checkpoint ref
 
@@ -258,7 +258,6 @@ See [composer context references](./composer-context-references.md) for the cont
 [18]: ../user/permission-modes.md
 [19]: ../../apps/server/src/checkpointing/CheckpointStore.ts
 [20]: ../../apps/server/src/checkpointing/CheckpointDiffQuery.ts
-[21]: ../../apps/server/src/persistence/Services/ProjectionCheckpoints.ts
 [22]: ../../apps/server/src/checkpointing/Utils.ts
 [23]: ../../apps/server/src/checkpointing/Diffs.ts
 [24]: ./overview.md

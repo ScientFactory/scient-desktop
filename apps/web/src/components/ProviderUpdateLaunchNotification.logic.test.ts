@@ -11,6 +11,7 @@ import { AsyncResult } from "effect/unstable/reactivity";
 import {
   buildLocalEnvironmentUpdateGroups,
   canOneClickUpdateProviderCandidate,
+  collectManagedRuntimeUpdateCandidates,
   collectProviderUpdateCandidates,
   collectProviderUpdateOutcomeSnapshots,
   collectUpdatedProviderSnapshots,
@@ -23,10 +24,12 @@ import {
   getProviderUpdateRejectedToastView,
   getProviderUpdateSidebarPillView,
   hasOneClickUpdateProviderCandidate,
-  isProviderUpdateCandidate,
+  isManagedRuntimeUpdateCandidate,
   isProviderSettingsUpdateCandidate,
+  isProviderUpdateCandidate,
   isTerminalProviderUpdatePhase,
   localEnvironmentUpdateNotificationKey,
+  managedRuntimeUpdateNotificationKey,
   providerUpdateNotificationKey,
   resolveEnvironmentUpdateRowStatus,
   shouldShowPrimaryProviderUpdateToast,
@@ -56,6 +59,9 @@ function provider(input: {
   readonly updateState?: ServerProvider["updateState"];
   readonly advisoryStatus?: NonNullable<ServerProvider["versionAdvisory"]>["status"];
   readonly runtimeSource?: "scient_managed" | "system";
+  readonly runtimeActions?: ReadonlyArray<"install" | "update" | "repair" | "remove">;
+  readonly managedVersion?: string | null;
+  readonly availableManagedVersion?: string | null;
 }): ServerProvider {
   const result: ServerProvider = {
     instanceId: input.instanceId ?? instanceId(String(input.driver)),
@@ -79,8 +85,12 @@ function provider(input: {
               source: input.runtimeSource,
               supportTier: "fully_assisted",
               target: "darwin-arm64",
-              actions: [],
-              managedVersion: input.runtimeSource === "scient_managed" ? "1.0.0" : null,
+              actions: input.runtimeActions ?? [],
+              managedVersion:
+                input.runtimeSource === "scient_managed" ? (input.managedVersion ?? "1.0.0") : null,
+              availableManagedVersion:
+                input.availableManagedVersion ??
+                (input.runtimeActions?.includes("update") ? "1.1.0" : null),
               previousManagedVersion: null,
               operation: null,
               message: "Runtime ready.",
@@ -132,6 +142,88 @@ describe("provider update launch notification logic", () => {
     expect(
       isProviderUpdateCandidate(provider({ driver: driver("codex"), runtimeSource: "system" })),
     ).toBe(true);
+  });
+
+  it("detects managed updates only from active Scient lifecycle capabilities", () => {
+    const managed = provider({
+      driver: driver("codex"),
+      runtimeSource: "scient_managed",
+      runtimeActions: ["update", "repair", "remove"],
+      managedVersion: "0.155.1",
+      availableManagedVersion: "0.156.1",
+    });
+    expect(isManagedRuntimeUpdateCandidate(managed)).toBe(true);
+    expect(
+      isManagedRuntimeUpdateCandidate({
+        ...managed,
+        enabled: false,
+      }),
+    ).toBe(false);
+    expect(
+      isManagedRuntimeUpdateCandidate({
+        ...managed,
+        connection: {
+          ...managed.connection!,
+          runtime: { ...managed.connection!.runtime!, actions: ["repair", "remove"] },
+        },
+      }),
+    ).toBe(false);
+    expect(
+      isManagedRuntimeUpdateCandidate({
+        ...managed,
+        connection: {
+          ...managed.connection!,
+          runtime: {
+            ...managed.connection!.runtime!,
+            operation: {
+              operationId: "op-update",
+              action: "update",
+              status: "downloading",
+              startedAt: checkedAt,
+              finishedAt: null,
+              message: "Downloading update.",
+            },
+          },
+        },
+      }),
+    ).toBe(false);
+  });
+
+  it("keys managed update prompts by local environment, instance, and installed version", () => {
+    const managed = provider({
+      driver: driver("codex"),
+      runtimeSource: "scient_managed",
+      runtimeActions: ["update"],
+      managedVersion: "0.155.1",
+      availableManagedVersion: "0.156.1",
+    });
+    const groups = buildLocalEnvironmentUpdateGroups([
+      {
+        environmentId: "local:windows" as EnvironmentId,
+        label: "Windows",
+        isPrimary: true,
+        connectionState: "ready",
+        providers: [managed, provider({ driver: driver("cursor"), runtimeSource: "system" })],
+      },
+    ]).groups;
+    const candidates = collectManagedRuntimeUpdateCandidates(groups);
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]).toMatchObject({
+      environmentLabel: "Windows",
+      installedVersion: "0.155.1",
+      availableVersion: "0.156.1",
+      provider: { driver: "codex" },
+    });
+    expect(managedRuntimeUpdateNotificationKey(candidates)).toContain("managed-runtime:");
+    expect(
+      managedRuntimeUpdateNotificationKey([
+        {
+          ...candidates[0]!,
+          availableVersion: "0.157.0",
+        },
+      ]),
+    ).not.toBe(managedRuntimeUpdateNotificationKey(candidates));
+    expect(managedRuntimeUpdateNotificationKey([])).toBeNull();
   });
 
   it("deduplicates multi-instance provider candidates by driver", () => {

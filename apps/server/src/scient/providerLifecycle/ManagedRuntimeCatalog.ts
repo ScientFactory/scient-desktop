@@ -353,6 +353,8 @@ export interface ManagedRuntimeCatalogService {
   readonly current: Effect.Effect<ManagedRuntimeCatalogData>;
   /** TTL-gated remote refresh; always falls back to the last good catalog. */
   readonly refresh: Effect.Effect<ManagedRuntimeCatalogData>;
+  /** Explicit user refresh; bypasses the automatic TTL and retry windows. */
+  readonly refreshNow: Effect.Effect<ManagedRuntimeCatalogData>;
   /** Acquire a process-scoped stream of authoritative catalog changes. */
   readonly subscribeChanges: Effect.Effect<
     Stream.Stream<ManagedRuntimeCatalogChange>,
@@ -369,6 +371,7 @@ export interface ManagedRuntimeCatalogChange {
 const bundledOnlyService: ManagedRuntimeCatalogService = {
   current: Effect.succeed(BUNDLED_MANAGED_RUNTIME_CATALOG),
   refresh: Effect.succeed(BUNDLED_MANAGED_RUNTIME_CATALOG),
+  refreshNow: Effect.succeed(BUNDLED_MANAGED_RUNTIME_CATALOG),
   subscribeChanges: Effect.succeed(Stream.empty),
 };
 
@@ -430,13 +433,13 @@ export const makeWithOptions = (options?: { readonly startBackgroundRefresh?: bo
         Effect.catchCause(() => Effect.void),
       );
 
-    const refresh = Effect.fn("ManagedRuntimeCatalog.refresh")(function* () {
+    const refresh = Effect.fn("ManagedRuntimeCatalog.refresh")(function* (force: boolean) {
       yield* ensureDiskCacheLoaded;
       const now = yield* Clock.currentTimeMillis;
       const isWithin = (sinceMs: number | null, windowMs: number) =>
         sinceMs !== null && now >= sinceMs && now - sinceMs < windowMs;
-      if (isWithin(fetchedAtMs, CATALOG_TTL_MS)) return catalog;
-      if (isWithin(lastAttemptMs, CATALOG_RETRY_MS)) return catalog;
+      if (!force && isWithin(fetchedAtMs, CATALOG_TTL_MS)) return catalog;
+      if (!force && isWithin(lastAttemptMs, CATALOG_RETRY_MS)) return catalog;
 
       const settings = yield* settingsService.getSettings.pipe(
         Effect.catchCause(() => Effect.succeed(null)),
@@ -484,7 +487,8 @@ export const makeWithOptions = (options?: { readonly startBackgroundRefresh?: bo
       return catalog;
     });
 
-    const guardedRefresh = refreshSemaphore.withPermits(1)(refresh());
+    const guardedRefresh = refreshSemaphore.withPermits(1)(refresh(false));
+    const guardedRefreshNow = refreshSemaphore.withPermits(1)(refresh(true));
     if (options?.startBackgroundRefresh !== false) {
       // Acquire the settings subscription before starting either fiber so an
       // enable transition cannot fall into a startup gap.
@@ -508,6 +512,7 @@ export const makeWithOptions = (options?: { readonly startBackgroundRefresh?: bo
     return ManagedRuntimeCatalog.of({
       current: ensureDiskCacheLoaded.pipe(Effect.map(() => catalog)),
       refresh: guardedRefresh,
+      refreshNow: guardedRefreshNow,
       subscribeChanges: PubSub.subscribe(changesPubSub).pipe(Effect.map(Stream.fromSubscription)),
     });
   });
