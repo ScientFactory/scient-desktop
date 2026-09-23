@@ -40,6 +40,11 @@ approximate: page breaks, floats, numbering, references, package output and
 arbitrary macro expansion require TeX. Rebuild, then select PDF or Split to
 inspect exact output. A successful build never means the browser canvas is
 pixel-identical to that PDF. Compile errors preserve the last successful PDF.
+The canvas reads safe document-class, paper, base-font, `geometry`, paragraph
+indentation, paragraph spacing and line-spacing settings from the preamble.
+Use **Layout** to change paper size, base font size, margins and paragraph style;
+these controls update explicit LaTeX preamble settings rather than maintaining
+private visual-only state.
 
 Description lists and common `tabular`, `tabularx`, `tabulary`, and `longtable`
 structures have visual editors. In a description list, edit labels and bodies
@@ -63,8 +68,23 @@ The visual editor does not silently normalize or discard them. A visual edit
 cannot delete across a protected preview or source block. Open an included file
 to edit its contents; the established root still controls the PDF build.
 
+The **Statement** menu inserts theorem, claim, lemma, proposition, corollary,
+definition, example, remark and proof environments. Their type, optional title,
+body and reference label are editable together in a semantic card. When a newly
+inserted statement has no preamble declaration, Scient adds a standard
+`\newtheorem` or `\newenvironment` declaration so the source remains compilable.
+
+The **Figure** action inserts a real `figure` and `\includegraphics` structure,
+adds `graphicx` when needed, and resolves its project-relative image through the
+workspace asset service. Edit its path, width, placement, alignment, caption and
+label from the card, or delete the whole figure. Direct external-file import and
+asset deletion are separate workspace operations and are not implied by deleting
+the LaTeX figure.
+
 Common citation and reference commands, including author/year and page
-references, are editable as keys, not resolved bibliography output. Preamble,
+references, are editable as keys, not resolved bibliography output. The
+reference toolbar suggests labels already present in the document and inserts
+the selected LaTeX command at the writing cursor. Preamble,
 macro and global-layout edits show a rebuild
 notice. After a crash or interrupted save, a recovered draft is offered as
 copyable source, never automatically written over a newer file.

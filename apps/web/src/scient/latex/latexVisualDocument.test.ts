@@ -3,11 +3,15 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   adoptLatexVisualContent,
   applyLatexVisualDocumentChange,
+  latexVisualFigureSource,
+  latexVisualLayoutProfile,
+  latexVisualScientificSource,
   latexVisualTableSource,
   latexVisualMathSource,
   parseLatexVisualMathSource,
   parseStructuredMathEnvironment,
   projectLatexVisualDocument,
+  updateLatexVisualLayoutSource,
 } from "./latexVisualDocument";
 import { latexPreviewRebuildReason } from "./latexPreviewPolicy";
 
@@ -327,6 +331,122 @@ Theory & Proofs \\\\
       expect(rows, preset).toHaveLength(3);
       expect(rows[0], preset).toHaveLength(4);
     }
+  });
+
+  it("edits a supported figure as a complete visual object", () => {
+    const source = document(latexVisualFigureSource());
+    const projection = projectLatexVisualDocument(source);
+    expect(projection.blocks[0]!.node.attrs).toMatchObject({
+      kind: "figure",
+      path: "figures/image.png",
+      figureWidth: "0.8\\textwidth",
+      figurePlacement: "htbp",
+      figureAlignment: "center",
+      caption: "Figure caption",
+      label: "fig:image",
+      editable: true,
+    });
+    const nodes = structuredClone(projection.content.content!);
+    Object.assign(nodes[0]!.attrs!, {
+      path: "images/result.pdf",
+      figureWidth: "\\linewidth",
+      figureAlignment: "left",
+      caption: "Measured result & uncertainty",
+      label: "fig:result",
+    });
+    const changed = edit(source, nodes);
+    expect(changed?.source).toContain("\\raggedright");
+    expect(changed?.source).toContain("\\includegraphics[width=\\linewidth]{images/result.pdf}");
+    expect(changed?.source).toContain("\\caption{Measured result \\& uncertainty}");
+    expect(changed?.projection.blocks[0]!.node.attrs?.editable).toBe(true);
+    const unsafe = structuredClone(projection.content.content!);
+    unsafe[0]!.attrs!.figureWidth = "1],angle=90";
+    expect(edit(source, unsafe)).toBeNull();
+  });
+
+  it("edits theorem-like scientific blocks and converts their semantic type", () => {
+    const block = latexVisualScientificSource("claim")!;
+    const source = document(block);
+    const projection = projectLatexVisualDocument(source);
+    expect(projection.blocks[0]!.node.attrs).toMatchObject({
+      kind: "scientific",
+      environment: "claim",
+      title: "Title",
+      body: "Statement.",
+      editable: true,
+    });
+    const nodes = structuredClone(projection.content.content!);
+    Object.assign(nodes[0]!.attrs!, {
+      environment: "theorem",
+      title: "Main result",
+      body: "Every supported edit round-trips.",
+      label: "thm:main",
+    });
+    const changed = edit(source, nodes);
+    expect(changed?.source).toContain("\\newtheorem{theorem}{Theorem}");
+    expect(changed?.source).toContain(
+      "\\begin{theorem}[Main result]\n\\label{thm:main}\nEvery supported edit round-trips.\n\\end{theorem}",
+    );
+  });
+
+  it("projects safe document layout settings without executing the preamble", () => {
+    const profile = latexVisualLayoutProfile(`\\documentclass[12pt,a4paper]{report}
+\\usepackage[margin=2cm,left=3cm]{geometry}
+\\linespread{1.2}
+\\setlength{\\parindent}{0pt}
+\\setlength{\\parskip}{6pt}
+\\begin{document}
+Text
+\\end{document}`);
+    expect(profile).toMatchObject({
+      documentClass: "report",
+      paper: "a4",
+      baseFontPt: 12,
+      paragraphIndentEm: 0,
+    });
+    expect(profile.marginLeftIn).toBeCloseTo(3 / 2.54);
+    expect(profile.marginRightIn).toBeCloseTo(2 / 2.54);
+    expect(profile.lineHeight).toBeCloseTo(1.74);
+    expect(profile.paragraphGapEm).toBeGreaterThan(0);
+  });
+
+  it("updates supported layout settings while preserving unrelated preamble options", () => {
+    const source = `\\documentclass[twoside,11pt]{article}
+\\usepackage[colorlinks]{hyperref}
+\\begin{document}
+Text
+\\end{document}`;
+    const changed = updateLatexVisualLayoutSource(source, {
+      paper: "a4",
+      baseFontPt: 12,
+      margin: "2.5cm",
+      paragraphStyle: "spaced",
+    });
+    expect(changed).toContain("\\documentclass[12pt,a4paper,twoside]{article}");
+    expect(changed).toContain("\\usepackage[colorlinks]{hyperref}");
+    expect(changed).toContain("\\usepackage[margin=2.5cm]{geometry}");
+    expect(changed).toContain("\\setlength{\\parindent}{0pt}");
+    expect(changed).toContain("\\setlength{\\parskip}{0.75em}");
+    expect(changed).toContain("Text");
+    expect(
+      updateLatexVisualLayoutSource(source, {
+        paper: "letter",
+        baseFontPt: 10,
+        margin: "wide",
+        paragraphStyle: "indented",
+      }),
+    ).toBeNull();
+    expect(
+      updateLatexVisualLayoutSource(
+        "\\documentclass{article}\\begin{document}Text\\end{document}",
+        {
+          paper: "letter",
+          baseFontPt: 10,
+          margin: "1in",
+          paragraphStyle: "indented",
+        },
+      ),
+    ).toContain("\\documentclass[10pt,letterpaper]{article}\n\\usepackage[margin=1in]{geometry}");
   });
 
   it("keeps structurally complex table cells protected", () => {

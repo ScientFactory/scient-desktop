@@ -12,6 +12,9 @@ vi.mock("./LatexMathField", () => ({
 vi.mock("~/scient/presentation/ScientTooltip", () => ({
   ScientTooltip: ({ children }: { children: ReactNode }) => children,
 }));
+vi.mock("~/assets/assetUrls", () => ({
+  useAssetUrlState: () => ({ _tag: "Failure", refresh: vi.fn() }),
+}));
 import { LatexVisualEditor } from "./LatexVisualEditor";
 import { mathSourceCompletions } from "./latexMathCompletion";
 
@@ -284,6 +287,85 @@ Theory & Proofs \\\\
     expect(current).toContain("\\begin{table}[htbp]");
     expect(current).toContain("\\begin{tabular}");
     expect(container.querySelector("input[aria-label='Table row 3 column 4']")).not.toBeNull();
+  });
+
+  it("inserts and edits theorem-like scientific statements", async () => {
+    await mount("Before");
+    const insertion = container.querySelector<HTMLSelectElement>(
+      "select[aria-label='Insert scientific statement']",
+    )!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(
+        insertion,
+        "claim",
+      );
+      insertion.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    const title = container.querySelector<HTMLInputElement>(
+      "input[aria-label='Scientific statement title']",
+    )!;
+    const body = container.querySelector<HTMLTextAreaElement>(
+      "textarea[aria-label='Scientific statement body']",
+    )!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+        title,
+        "Central claim",
+      );
+      title.dispatchEvent(new Event("input", { bubbles: true }));
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(
+        body,
+        "The visual source remains authoritative.",
+      );
+      body.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(current).toContain("\\newtheorem{claim}{Claim}");
+    expect(current).toContain("\\begin{claim}[Central claim]");
+    expect(current).toContain("The visual source remains authoritative.");
+  });
+
+  it("inserts, edits and deletes a visual figure", async () => {
+    await mount("Before");
+    const figure = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent === "Figure",
+    )!;
+    await act(async () => figure.click());
+    expect(current).toContain("\\usepackage{graphicx}");
+    const path = container.querySelector<HTMLInputElement>(
+      "input[aria-label='Figure image path']",
+    )!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+        path,
+        "images/result.png",
+      );
+      path.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(current).toContain("\\includegraphics[width=0.8\\textwidth]{images/result.png}");
+    const remove = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent === "Delete figure",
+    )!;
+    await act(async () => remove.click());
+    expect(current).not.toContain("\\begin{figure}");
+  });
+
+  it("inserts a source-backed reference from the writing toolbar", async () => {
+    await mount("Target \\label{sec:target}");
+    const key = container.querySelector<HTMLInputElement>(
+      "input[aria-label='Reference or citation key']",
+    )!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+        key,
+        "sec:target",
+      );
+      key.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const insert = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent === "Insert" && !button.disabled,
+    )!;
+    await act(async () => insert.click());
+    expect(current).toContain("\\ref{sec:target}");
   });
 
   it("rejects a destructive transaction spanning protected source", async () => {

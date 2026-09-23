@@ -17,6 +17,170 @@ export interface LatexVisualDocument {
   readonly rawBlocks: number;
 }
 
+export interface LatexVisualLayoutProfile {
+  readonly documentClass: string;
+  readonly paper: "a4" | "letter";
+  readonly baseFontPt: 10 | 11 | 12;
+  readonly marginTopIn: number;
+  readonly marginRightIn: number;
+  readonly marginBottomIn: number;
+  readonly marginLeftIn: number;
+  readonly lineHeight: number;
+  readonly paragraphIndentEm: number;
+  readonly paragraphGapEm: number;
+}
+
+const DEFAULT_LAYOUT_PROFILE: LatexVisualLayoutProfile = {
+  documentClass: "article",
+  paper: "letter",
+  baseFontPt: 10,
+  marginTopIn: 1,
+  marginRightIn: 1,
+  marginBottomIn: 1,
+  marginLeftIn: 1,
+  lineHeight: 1.45,
+  paragraphIndentEm: 1.5,
+  paragraphGapEm: 0,
+};
+
+function latexLengthInches(value: string): number | null {
+  const match = /^\s*(-?(?:\d+(?:\.\d*)?|\.\d+))\s*(in|cm|mm|pt)\s*$/u.exec(value);
+  if (!match) return null;
+  const amount = Number(match[1]);
+  if (!Number.isFinite(amount)) return null;
+  const scale =
+    match[2] === "in" ? 1 : match[2] === "cm" ? 1 / 2.54 : match[2] === "mm" ? 1 / 25.4 : 1 / 72.27;
+  return amount * scale;
+}
+
+function latexLengthEm(value: string, baseFontPt: number): number | null {
+  const em = /^\s*(-?(?:\d+(?:\.\d*)?|\.\d+))\s*em\s*$/u.exec(value);
+  if (em) return Number(em[1]);
+  const inches = latexLengthInches(value);
+  return inches === null ? null : inches / (baseFontPt / 72.27);
+}
+
+export function latexVisualLayoutProfile(source: string): LatexVisualLayoutProfile {
+  const preambleEnd = source.indexOf("\\begin{document}");
+  const preamble = preambleEnd < 0 ? source : source.slice(0, preambleEnd);
+  const documentClass = /\\documentclass(?:\[([^\]]*)\])?\{([^{}]+)\}/u.exec(preamble);
+  const classOptions = documentClass?.[1]?.split(",").map((option) => option.trim()) ?? [];
+  const baseFontPt = classOptions.includes("12pt") ? 12 : classOptions.includes("11pt") ? 11 : 10;
+  const paper = classOptions.includes("a4paper") ? "a4" : "letter";
+  const geometry = /\\usepackage\[([^\]]*)\]\{geometry\}/u.exec(preamble)?.[1] ?? "";
+  const geometryOptions = new Map(
+    geometry
+      .split(",")
+      .map((option) => option.trim().split("=", 2) as [string, string | undefined])
+      .filter((entry): entry is [string, string] => Boolean(entry[0] && entry[1])),
+  );
+  const allMargin = latexLengthInches(geometryOptions.get("margin") ?? "");
+  const margin = (side: string) =>
+    latexLengthInches(geometryOptions.get(side) ?? "") ?? allMargin ?? 1;
+  const lineSpread = Number(/\\linespread\{([^{}]+)\}/u.exec(preamble)?.[1] ?? "1");
+  const parindent = latexLengthEm(
+    /\\setlength\{\\parindent\}\{([^{}]+)\}/u.exec(preamble)?.[1] ?? "",
+    baseFontPt,
+  );
+  const parskip = latexLengthEm(
+    /\\setlength\{\\parskip\}\{([^{}]+)\}/u.exec(preamble)?.[1] ?? "",
+    baseFontPt,
+  );
+  return {
+    ...DEFAULT_LAYOUT_PROFILE,
+    documentClass: documentClass?.[2]?.trim() || "article",
+    paper,
+    baseFontPt,
+    marginTopIn: margin("top"),
+    marginRightIn: margin("right"),
+    marginBottomIn: margin("bottom"),
+    marginLeftIn: margin("left"),
+    lineHeight: Number.isFinite(lineSpread) && lineSpread > 0 ? 1.45 * lineSpread : 1.45,
+    paragraphIndentEm: parindent === null ? 1.5 : parindent,
+    paragraphGapEm: parskip === null ? 0 : parskip,
+  };
+}
+
+export interface LatexVisualLayoutUpdate {
+  readonly paper: "a4" | "letter";
+  readonly baseFontPt: 10 | 11 | 12;
+  readonly margin: string;
+  readonly paragraphStyle: "indented" | "spaced";
+}
+
+function replaceOrInsertPreambleLine(
+  source: string,
+  pattern: RegExp,
+  value: string,
+  insertionAt: number,
+  eol: string,
+): string {
+  const match = pattern.exec(source.slice(0, insertionAt));
+  if (match)
+    return source.slice(0, match.index) + value + source.slice(match.index + match[0].length);
+  const boundary = insertionAt > 0 && !/[\r\n]/u.test(source[insertionAt - 1]!) ? eol : "";
+  return source.slice(0, insertionAt) + boundary + value + eol + source.slice(insertionAt);
+}
+
+export function updateLatexVisualLayoutSource(
+  source: string,
+  update: LatexVisualLayoutUpdate,
+): string | null {
+  if (!/^(?:\d+(?:\.\d*)?|\.\d+)\s*(?:in|cm|mm|pt)$/u.test(update.margin)) return null;
+  const documentClass = /\\documentclass(?:\[([^\]]*)\])?\{([^{}]+)\}/u.exec(source);
+  const begin = source.indexOf("\\begin{document}");
+  if (!documentClass || begin < 0 || documentClass.index > begin) return null;
+  const eol = source.includes("\r\n") ? "\r\n" : "\n";
+  const options = (documentClass[1] ?? "")
+    .split(",")
+    .map((option) => option.trim())
+    .filter(Boolean)
+    .filter((option) => !/^(?:10|11|12)pt$/u.test(option) && !/^(?:a4|letter)paper$/u.test(option));
+  options.unshift(`${update.baseFontPt}pt`, `${update.paper}paper`);
+  let changed =
+    source.slice(0, documentClass.index) +
+    `\\documentclass[${options.join(",")}]{${documentClass[2]}}` +
+    source.slice(documentClass.index + documentClass[0].length);
+  const changedBegin = changed.indexOf("\\begin{document}");
+  const geometryPattern = /\\usepackage\[([^\]]*)\]\{geometry\}/u;
+  const geometry = geometryPattern.exec(changed.slice(0, changedBegin));
+  if (geometry) {
+    const retained = geometry[1]!
+      .split(",")
+      .map((option) => option.trim())
+      .filter((option) => option && !/^(?:margin|top|right|bottom|left)\s*=/u.test(option));
+    retained.unshift(`margin=${update.margin.replace(/\s+/gu, "")}`);
+    changed = changed.replace(geometryPattern, `\\usepackage[${retained.join(",")}]{geometry}`);
+  } else {
+    const insertionAt = changed.indexOf("\\begin{document}");
+    const boundary = insertionAt > 0 && !/[\r\n]/u.test(changed[insertionAt - 1]!) ? eol : "";
+    changed =
+      changed.slice(0, insertionAt) +
+      boundary +
+      `\\usepackage[margin=${update.margin.replace(/\s+/gu, "")}]{geometry}${eol}` +
+      changed.slice(insertionAt);
+  }
+  const paragraphIndent = update.paragraphStyle === "spaced" ? "0pt" : "1.5em";
+  const paragraphGap = update.paragraphStyle === "spaced" ? "0.75em" : "0pt";
+  let insertionAt = changed.indexOf("\\begin{document}");
+  changed = replaceOrInsertPreambleLine(
+    changed,
+    /\\setlength\{\\parindent\}\{[^{}]+\}/u,
+    `\\setlength{\\parindent}{${paragraphIndent}}`,
+    insertionAt,
+    eol,
+  );
+  insertionAt = changed.indexOf("\\begin{document}");
+  changed = replaceOrInsertPreambleLine(
+    changed,
+    /\\setlength\{\\parskip\}\{[^{}]+\}/u,
+    `\\setlength{\\parskip}{${paragraphGap}}`,
+    insertionAt,
+    eol,
+  );
+  return changed;
+}
+
 const INLINE_MARKS: Readonly<Record<string, string>> = {
   textbf: "bold",
   textit: "italic",
@@ -815,8 +979,222 @@ function parseTablePreview(source: string): JSONContent | null {
   };
 }
 
+const SCIENTIFIC_ENVIRONMENTS = new Set([
+  "theorem",
+  "lemma",
+  "proposition",
+  "corollary",
+  "claim",
+  "definition",
+  "example",
+  "remark",
+  "proof",
+]);
+
+interface OptionalArgumentRange {
+  readonly source: string;
+  readonly from: number;
+  readonly to: number;
+  readonly end: number;
+}
+
+function optionalArgumentRange(source: string, cursor: number): OptionalArgumentRange | null {
+  while (/\s/u.test(source[cursor] ?? "")) cursor++;
+  if (source[cursor] !== "[") return null;
+  const close = source.indexOf("]", cursor + 1);
+  if (close < 0 || source.slice(cursor + 1, close).includes("[")) return null;
+  return { source: source.slice(cursor + 1, close), from: cursor + 1, to: close, end: close + 1 };
+}
+
+function commandFullRange(
+  source: string,
+  command: string,
+): { source: string; from: number; to: number; argument: OptionalArgumentRange } | null {
+  const match = new RegExp(`\\\\${command}\\s*\\{`, "u").exec(source);
+  if (!match) return null;
+  const opening = match.index + match[0].lastIndexOf("{");
+  const close = closingBrace(source, opening);
+  if (close === null) return null;
+  return {
+    source: source.slice(match.index, close + 1),
+    from: match.index,
+    to: close + 1,
+    argument: {
+      source: source.slice(opening + 1, close),
+      from: opening + 1,
+      to: close,
+      end: close + 1,
+    },
+  };
+}
+
+function parseScientificEnvironment(source: string): JSONContent | null {
+  const opening = /^\\begin\{([A-Za-z*]+)\}/u.exec(source);
+  const environment = opening?.[1] ?? "";
+  if (!opening || !SCIENTIFIC_ENVIRONMENTS.has(environment)) return null;
+  const titleRange = optionalArgumentRange(source, opening[0].length);
+  const openingTo = titleRange?.end ?? opening[0].length;
+  const endingSource = `\\end{${environment}}`;
+  const endingFrom = source.lastIndexOf(endingSource);
+  if (endingFrom < openingTo) return null;
+  const interior = source.slice(openingTo, endingFrom);
+  const labelCommand = commandFullRange(interior, "label");
+  const bodySource = labelCommand
+    ? interior.slice(0, labelCommand.from) +
+      " ".repeat(labelCommand.to - labelCommand.from) +
+      interior.slice(labelCommand.to)
+    : interior;
+  const body = editableTableCell(bodySource, openingTo);
+  const title = titleRange ? editableTableCell(titleRange.source, titleRange.from) : null;
+  const label = labelCommand
+    ? editableTableCell(labelCommand.argument.source, openingTo + labelCommand.argument.from)
+    : null;
+  const editable =
+    body !== null &&
+    (titleRange === null || title !== null) &&
+    (labelCommand === null || label !== null) &&
+    !/\\[A-Za-z]+/u.test(bodySource);
+  return {
+    type: "latexRichPreview",
+    attrs: {
+      kind: "scientific",
+      raw: source,
+      environment,
+      title: title?.display ?? previewText(titleRange?.source ?? ""),
+      body: body?.display ?? previewText(bodySource),
+      label: label?.display ?? previewText(labelCommand?.argument.source ?? ""),
+      editable,
+      sourceMeta: editable
+        ? {
+            originalEnvironment: environment,
+            openingTo,
+            endingFrom,
+            titleRange: title ? { from: title.from, to: title.to, original: title.display } : null,
+            bodyRange: body ? { from: body.from, to: body.to, original: body.display } : null,
+            labelCommandRange: labelCommand
+              ? {
+                  from: openingTo + labelCommand.from,
+                  to: openingTo + labelCommand.to,
+                  argumentFrom: openingTo + labelCommand.argument.from,
+                  argumentTo: openingTo + labelCommand.argument.to,
+                  original: label?.display ?? "",
+                }
+              : null,
+          }
+        : null,
+    },
+  };
+}
+
+function graphicsWidth(options: string): string {
+  return (
+    options
+      .split(",")
+      .map((option) => option.trim())
+      .find((option) => option.startsWith("width="))
+      ?.slice("width=".length) ?? ""
+  );
+}
+
+function parseFigurePreview(source: string): JSONContent | null {
+  const opening = /^\\begin\{(figure\*?)\}(?:\[([^\]]*)\])?/u.exec(source);
+  if (!opening) return null;
+  const environment = opening[1]!;
+  const endingSource = `\\end{${environment}}`;
+  const endingFrom = source.lastIndexOf(endingSource);
+  if (endingFrom < opening[0].length) return null;
+  const include = /\\includegraphics(?:\[([^\]]*)\])?\s*\{/u.exec(source);
+  if (!include || source.slice(include.index + include[0].length).includes("\\includegraphics"))
+    return null;
+  const pathOpening = include.index + include[0].lastIndexOf("{");
+  const pathClose = closingBrace(source, pathOpening);
+  if (pathClose === null || pathClose > endingFrom) return null;
+  const path = editableTableCell(source.slice(pathOpening + 1, pathClose), pathOpening + 1);
+  const captionRange = commandArgumentRange(source, "caption");
+  const labelRange = commandArgumentRange(source, "label");
+  const caption = captionRange ? editableTableCell(captionRange.source, captionRange.from) : null;
+  const label = labelRange ? editableTableCell(labelRange.source, labelRange.from) : null;
+  const options = include[1] ?? "";
+  const captionCommand = commandFullRange(source, "caption");
+  const labelCommand = commandFullRange(source, "label");
+  const known = [
+    { from: 0, to: opening[0].length },
+    { from: include.index, to: pathClose + 1 },
+    ...(captionCommand ? [{ from: captionCommand.from, to: captionCommand.to }] : []),
+    ...(labelCommand ? [{ from: labelCommand.from, to: labelCommand.to }] : []),
+    { from: endingFrom, to: endingFrom + endingSource.length },
+  ].sort((left, right) => right.from - left.from);
+  let residual = source;
+  for (const range of known) residual = residual.slice(0, range.from) + residual.slice(range.to);
+  residual = residual.replace(/\\(?:centering|raggedleft|raggedright)\b/gu, "").trim();
+  const editable =
+    path !== null &&
+    (captionRange === null || caption !== null) &&
+    (labelRange === null || label !== null) &&
+    residual === "";
+  const alignment = /\\raggedleft\b/u.test(source)
+    ? "right"
+    : /\\raggedright\b/u.test(source)
+      ? "left"
+      : "center";
+  return {
+    type: "latexRichPreview",
+    attrs: {
+      kind: "figure",
+      raw: source,
+      path: path?.display ?? previewText(source.slice(pathOpening + 1, pathClose)),
+      caption: caption?.display ?? previewText(captionRange?.source ?? ""),
+      label: label?.display ?? previewText(labelRange?.source ?? ""),
+      figureWidth: graphicsWidth(options),
+      figureOptions: options,
+      figurePlacement: opening[2] ?? "",
+      figureAlignment: alignment,
+      figureStarred: environment.endsWith("*"),
+      editable,
+      sourceMeta: editable
+        ? {
+            pathRange: { from: path!.from, to: path!.to, original: path!.display },
+            captionRange: caption
+              ? { from: caption.from, to: caption.to, original: caption.display }
+              : null,
+            labelRange: label ? { from: label.from, to: label.to, original: label.display } : null,
+            includeFrom: include.index,
+            includeTo: pathClose + 1,
+            outerInsertAt: include.index,
+            originalOptions: options,
+            originalPlacement: opening[2] ?? "",
+            openingFrom: 0,
+            openingTo: opening[0].length,
+          }
+        : null,
+    },
+  };
+}
+
+export function latexVisualScientificSource(environment: string): string | null {
+  if (!SCIENTIFIC_ENVIRONMENTS.has(environment)) return null;
+  const title = environment === "proof" ? "" : "[Title]";
+  return `\\begin{${environment}}${title}\nStatement.\n\\end{${environment}}`;
+}
+
+export function latexVisualFigureSource(): string {
+  return [
+    "\\begin{figure}[htbp]",
+    "\\centering",
+    "\\includegraphics[width=0.8\\textwidth]{figures/image.png}",
+    "\\caption{Figure caption}",
+    "\\label{fig:image}",
+    "\\end{figure}",
+  ].join("\n");
+}
+
 function parseRichPreview(source: string): JSONContent | null {
-  return parseDescriptionPreview(source) ?? parseTablePreview(source);
+  return (
+    parseDescriptionPreview(source) ??
+    parseTablePreview(source) ??
+    parseFigurePreview(source) ??
+    parseScientificEnvironment(source)
+  );
 }
 
 function classifyBlock(source: string, depth: number): JSONContent | null {
@@ -1025,6 +1403,86 @@ function tableRows(value: unknown): string[][] | null {
   return rows as string[][];
 }
 
+function safeLatexArgument(value: unknown): string | null {
+  if (typeof value !== "string" || /[{}%\r\n]/u.test(value)) return null;
+  return value.trim();
+}
+
+function safeLatexLabel(value: unknown): string | null {
+  const argument = safeLatexArgument(value);
+  return argument !== null && !/[\s\\]/u.test(argument) ? argument : null;
+}
+
+function safeGraphicsWidth(value: unknown): string | null {
+  const argument = safeLatexArgument(value);
+  return argument !== null &&
+    argument.indexOf(",") < 0 &&
+    argument.indexOf("[") < 0 &&
+    argument.indexOf("]") < 0
+    ? argument
+    : null;
+}
+
+function figureOptionsWithWidth(options: string, width: string): string {
+  const retained = options
+    .split(",")
+    .map((option) => option.trim())
+    .filter((option) => option && !option.startsWith("width="));
+  if (width) retained.unshift(`width=${width}`);
+  return retained.join(",");
+}
+
+function serializeScientificPreview(node: JSONContent): string | null {
+  const environment = safeLatexArgument(node.attrs?.environment);
+  if (!environment || !SCIENTIFIC_ENVIRONMENTS.has(environment)) return null;
+  const title = typeof node.attrs?.title === "string" ? node.attrs.title : "";
+  const body = typeof node.attrs?.body === "string" ? node.attrs.body : null;
+  const label = safeLatexLabel(node.attrs?.label ?? "");
+  if (body === null || label === null) return null;
+  const eol = String(node.attrs?.raw ?? "").includes("\r\n") ? "\r\n" : "\n";
+  return [
+    `\\begin{${environment}}${title ? `[${escapeText(title)}]` : ""}`,
+    ...(label ? [`\\label{${label}}`] : []),
+    escapeText(body),
+    `\\end{${environment}}`,
+  ].join(eol);
+}
+
+function serializeFigurePreview(node: JSONContent): string | null {
+  const path = safeLatexArgument(node.attrs?.path);
+  const width = safeGraphicsWidth(node.attrs?.figureWidth ?? "");
+  const placement = safeLatexArgument(node.attrs?.figurePlacement ?? "");
+  const label = safeLatexLabel(node.attrs?.label ?? "");
+  const caption = typeof node.attrs?.caption === "string" ? node.attrs.caption : "";
+  const originalOptions =
+    typeof node.attrs?.figureOptions === "string" ? node.attrs.figureOptions : "";
+  if (
+    path === null ||
+    width === null ||
+    placement === null ||
+    label === null ||
+    !/^[htbpH!]*$/u.test(placement)
+  )
+    return null;
+  const environment = node.attrs?.figureStarred === true ? "figure*" : "figure";
+  const alignment =
+    node.attrs?.figureAlignment === "left"
+      ? "\\raggedright"
+      : node.attrs?.figureAlignment === "right"
+        ? "\\raggedleft"
+        : "\\centering";
+  const options = figureOptionsWithWidth(originalOptions, width);
+  const eol = String(node.attrs?.raw ?? "").includes("\r\n") ? "\r\n" : "\n";
+  return [
+    `\\begin{${environment}}${placement ? `[${placement}]` : ""}`,
+    alignment,
+    `\\includegraphics${options ? `[${options}]` : ""}{${path}}`,
+    ...(caption ? [`\\caption{${escapeText(caption)}}`] : []),
+    ...(label ? [`\\label{${label}}`] : []),
+    `\\end{${environment}}`,
+  ].join(eol);
+}
+
 export function serializeLatexVisualBlock(node: JSONContent): string | null {
   if (node.type === "paragraph") return serializeInline(node.content) || "\\par";
   if (node.type === "heading") {
@@ -1051,6 +1509,8 @@ export function serializeLatexVisualBlock(node: JSONContent): string | null {
   if (node.type === "latexRichPreview") {
     const raw = String(node.attrs?.raw ?? "");
     if (node.attrs?.editable !== true) return raw;
+    if (node.attrs.kind === "scientific") return serializeScientificPreview(node);
+    if (node.attrs.kind === "figure") return serializeFigurePreview(node);
     if (node.attrs.kind === "description") {
       const items = Array.isArray(node.attrs.items) ? node.attrs.items : null;
       const itemIds = Array.isArray(node.attrs.itemIds) ? node.attrs.itemIds : null;
@@ -1398,6 +1858,16 @@ function comparableNode(node: JSONContent): ComparableVisualNode {
               key === "rowIds" ||
               key === "columnIds" ||
               key === "tableCanonical" ||
+              (node.attrs?.kind === "figure" && key === "figureOptions") ||
+              (node.attrs?.kind !== "figure" &&
+                (key === "path" ||
+                  key === "figureWidth" ||
+                  key === "figureOptions" ||
+                  key === "figurePlacement" ||
+                  key === "figureAlignment" ||
+                  key === "figureStarred")) ||
+              (node.attrs?.kind !== "scientific" &&
+                (key === "environment" || key === "title" || key === "body")) ||
               (node.attrs?.kind !== "table" &&
                 (key === "columnAlignments" ||
                   key === "tableStyle" ||
@@ -1482,6 +1952,66 @@ export function adoptLatexVisualContent(
   };
 }
 
+function scientificEnvironments(content: readonly JSONContent[]): Set<string> {
+  return new Set(
+    content
+      .filter((node) => node.type === "latexRichPreview" && node.attrs?.kind === "scientific")
+      .map((node) => String(node.attrs?.environment ?? ""))
+      .filter((environment) => SCIENTIFIC_ENVIRONMENTS.has(environment)),
+  );
+}
+
+function ensureScientificEnvironmentDeclarations(
+  source: string,
+  environments: ReadonlySet<string>,
+  eol: string,
+): string {
+  if (environments.size === 0) return source;
+  const begin = source.indexOf("\\begin{document}");
+  if (begin < 0) return source;
+  const preamble = source.slice(0, begin);
+  const declarations: string[] = [];
+  for (const environment of environments) {
+    const declared = new RegExp(
+      `\\\\(?:newtheorem|newenvironment)\\s*\\{${environment}\\}`,
+      "u",
+    ).test(preamble);
+    if (
+      declared ||
+      (environment === "proof" && /\\usepackage(?:\[[^\]]*\])?\{amsthm\}/u.test(preamble))
+    )
+      continue;
+    if (environment === "proof") {
+      declarations.push(
+        "\\newenvironment{proof}{\\par\\noindent\\textit{Proof.}\\ }{\\hfill\\rule{0.6em}{0.6em}\\par}",
+      );
+      continue;
+    }
+    const label = environment[0]!.toUpperCase() + environment.slice(1);
+    declarations.push(`\\newtheorem{${environment}}{${label}}`);
+  }
+  if (declarations.length === 0) return source;
+  const boundary = begin > 0 && !/[\r\n]/u.test(source[begin - 1]!) ? eol : "";
+  const insertion = [`% Scient visual statement environments`, ...declarations, ""].join(eol);
+  return source.slice(0, begin) + boundary + insertion + source.slice(begin);
+}
+
+function richPreviewCount(content: readonly JSONContent[], kind: string): number {
+  return content.filter((node) => node.type === "latexRichPreview" && node.attrs?.kind === kind)
+    .length;
+}
+
+function ensureFigurePackage(source: string, shouldInsert: boolean, eol: string): string {
+  if (!shouldInsert) return source;
+  const begin = source.indexOf("\\begin{document}");
+  if (begin < 0) return source;
+  const preamble = source.slice(0, begin);
+  if (/\\(?:usepackage|RequirePackage)(?:\[[^\]]*\])?\{[^{}]*\bgraphicx\b[^{}]*\}/u.test(preamble))
+    return source;
+  const boundary = begin > 0 && !/[\r\n]/u.test(source[begin - 1]!) ? eol : "";
+  return source.slice(0, begin) + boundary + `\\usepackage{graphicx}${eol}` + source.slice(begin);
+}
+
 export function applyLatexVisualDocumentChange(
   source: string,
   projection: LatexVisualDocument,
@@ -1521,7 +2051,23 @@ export function applyLatexVisualDocumentChange(
     if (prefix === previous.length) replacement = eol + eol + replacement;
     else replacement += eol + eol;
   }
-  const changedSource = source.slice(0, from) + replacement + source.slice(to);
+  let changedSource = source.slice(0, from) + replacement + source.slice(to);
+  changedSource = ensureFigurePackage(
+    changedSource,
+    richPreviewCount(next, "figure") >
+      richPreviewCount(
+        previous.map((block) => block.node),
+        "figure",
+      ),
+    eol,
+  );
+  const previousEnvironments = scientificEnvironments(previous.map((block) => block.node));
+  const addedEnvironments = new Set(
+    [...scientificEnvironments(next)].filter(
+      (environment) => !previousEnvironments.has(environment),
+    ),
+  );
+  changedSource = ensureScientificEnvironmentDeclarations(changedSource, addedEnvironments, eol);
   // Reject a transaction that the supported projection cannot round-trip.
   const projected = projectLatexVisualDocument(changedSource);
   if (roundTripSignature(projected.content) !== roundTripSignature(nextContent)) return null;

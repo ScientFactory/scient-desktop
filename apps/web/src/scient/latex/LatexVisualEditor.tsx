@@ -11,23 +11,30 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type CSSProperties,
 } from "react";
 import { createPortal } from "react-dom";
+import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
 
 import { EditorState, Plugin } from "@tiptap/pm/state";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { LatexMathField, type LatexMathFieldHandle } from "./LatexMathField";
 import { mathSourceCompletions, type MathSourceCompletion } from "./latexMathCompletion";
 import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
+import { useAssetUrlState } from "~/assets/assetUrls";
 import { readVisualDraft, clearVisualDraft } from "./visualDrafts";
 
 import {
   applyLatexVisualDocumentChange,
+  latexVisualFigureSource,
+  latexVisualLayoutProfile,
+  latexVisualScientificSource,
   latexVisualTableSource,
   latexVisualMathSource,
   parseLatexVisualMathSource,
   parseStructuredMathEnvironment,
   projectLatexVisualDocument,
+  updateLatexVisualLayoutSource,
   type LatexVisualDocument,
   type LatexVisualTablePreset,
 } from "./latexVisualDocument";
@@ -447,12 +454,106 @@ function withStableKeys<T>(values: T[], serialize: (value: T) => string) {
   });
 }
 
-function LatexRichPreviewView({ node, selected, updateAttributes, editor }: NodeViewProps) {
+interface LatexVisualWorkspace {
+  readonly environmentId: EnvironmentId | null;
+  readonly cwd: string | null;
+  readonly relativePath: string | null;
+}
+
+function normalizeFigurePath(sourceRelativePath: string, figurePath: string): string | null {
+  if (/^(?:[A-Za-z][A-Za-z0-9+.-]*:|[A-Za-z]:[\\/]|[\\/])/u.test(figurePath)) return null;
+  const directory = sourceRelativePath.replaceAll("\\", "/").split("/").slice(0, -1);
+  const segments = [...directory, ...figurePath.replaceAll("\\", "/").split("/")];
+  const normalized: string[] = [];
+  for (const segment of segments) {
+    if (!segment || segment === ".") continue;
+    if (segment === "..") {
+      if (normalized.length === 0) return null;
+      normalized.pop();
+    } else normalized.push(segment);
+  }
+  return normalized.length > 0 ? normalized.join("/") : null;
+}
+
+function visualFigureWidth(width: string): string | undefined {
+  const relative = /^\s*(?:(\d+(?:\.\d*)?|\.\d+)\s*)?\\(?:textwidth|linewidth)\s*$/u.exec(width);
+  if (relative) return `${Math.min(1, Number(relative[1] ?? "1")) * 100}%`;
+  const absolute = /^\s*(\d+(?:\.\d*)?|\.\d+)\s*(in|cm|mm|pt)\s*$/u.exec(width);
+  return absolute ? `${absolute[1]}${absolute[2]}` : undefined;
+}
+
+function LatexFigureImage(props: {
+  readonly alt: string;
+  readonly path: string;
+  readonly width: string;
+  readonly workspace: LatexVisualWorkspace;
+}) {
+  const relativePath =
+    props.workspace.relativePath === null
+      ? null
+      : normalizeFigurePath(props.workspace.relativePath, props.path);
+  const resource = useMemo<AssetResource | null>(
+    () =>
+      props.workspace.cwd === null || relativePath === null
+        ? null
+        : {
+            _tag: "workspace-file",
+            cwd: props.workspace.cwd,
+            relativePath,
+          },
+    [props.workspace.cwd, relativePath],
+  );
+  const asset = useAssetUrlState(props.workspace.environmentId, resource);
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const style = { width: visualFigureWidth(props.width) };
+  if (asset._tag === "Success" && failedUrl !== asset.url)
+    return (
+      <img
+        alt={props.alt || props.path}
+        draggable={false}
+        onError={() => setFailedUrl(asset.url)}
+        src={asset.url}
+        style={style}
+      />
+    );
+  const failed = asset._tag === "Failure" || failedUrl !== null;
+  return (
+    <div
+      className="scient-latex-figure-placeholder"
+      role="img"
+      aria-label={props.alt || props.path}
+      style={style}
+    >
+      <span>{failed ? "Image preview unavailable" : "Loading image preview…"}</span>
+      <code>{props.path || "Choose a project image"}</code>
+      {failed ? (
+        <button
+          onClick={() => {
+            setFailedUrl(null);
+            asset.refresh();
+          }}
+          type="button"
+        >
+          Retry
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function LatexRichPreviewView({
+  node,
+  selected,
+  updateAttributes,
+  editor,
+  deleteNode,
+  workspace,
+}: NodeViewProps & { readonly workspace: LatexVisualWorkspace }) {
   const editorEditable = useEditorEditable(editor);
   const generatedId = useRef(0);
   const tableRoot = useRef<HTMLElement | null>(null);
   const [selectedCell, setSelectedCell] = useState({ row: 0, column: 0 });
-  const kind = node.attrs.kind === "table" ? "table" : "description";
+  const kind = String(node.attrs.kind ?? "description");
   const items = Array.isArray(node.attrs.items)
     ? (node.attrs.items as { label?: unknown; body?: unknown }[])
     : [];
@@ -639,6 +740,159 @@ function LatexRichPreviewView({ node, selected, updateAttributes, editor }: Node
     });
     focusTableCell(selectedCell.row, to);
   };
+  if (kind === "figure") {
+    const figureEditable = structureEditable && editorEditable;
+    return (
+      <NodeViewWrapper
+        className="scient-latex-rich-preview scient-latex-figure-preview"
+        data-selected={selected || undefined}
+        contentEditable={false}
+      >
+        <div className="scient-latex-rich-preview-label">
+          <span>Figure</span>
+          <span>{structureEditable ? "Editable LaTeX figure" : "Protected source"}</span>
+        </div>
+        <div className="scient-latex-object-toolbar" role="toolbar" aria-label="Figure tools">
+          <label>
+            Alignment
+            <select
+              aria-label="Figure alignment"
+              disabled={!figureEditable}
+              value={String(node.attrs.figureAlignment ?? "center")}
+              onChange={(event) => updateAttributes({ figureAlignment: event.currentTarget.value })}
+            >
+              <option value="left">Left</option>
+              <option value="center">Center</option>
+              <option value="right">Right</option>
+            </select>
+          </label>
+          <label>
+            Placement
+            <input
+              aria-label="Figure placement"
+              disabled={!figureEditable}
+              value={String(node.attrs.figurePlacement ?? "")}
+              onChange={(event) => updateAttributes({ figurePlacement: event.currentTarget.value })}
+            />
+          </label>
+          <label>
+            Width
+            <input
+              aria-label="Figure width"
+              disabled={!figureEditable}
+              value={String(node.attrs.figureWidth ?? "")}
+              onChange={(event) => updateAttributes({ figureWidth: event.currentTarget.value })}
+            />
+          </label>
+          <button disabled={!figureEditable} onClick={deleteNode} type="button">
+            Delete figure
+          </button>
+        </div>
+        <figure data-align={String(node.attrs.figureAlignment ?? "center")}>
+          <LatexFigureImage
+            alt={String(node.attrs.caption ?? "")}
+            path={String(node.attrs.path ?? "")}
+            width={String(node.attrs.figureWidth ?? "")}
+            workspace={workspace}
+          />
+          <label className="scient-latex-object-field">
+            Image path
+            <input
+              aria-label="Figure image path"
+              disabled={!figureEditable}
+              value={String(node.attrs.path ?? "")}
+              onChange={(event) => updateAttributes({ path: event.currentTarget.value })}
+            />
+          </label>
+          <figcaption>
+            <input
+              aria-label="Figure caption"
+              disabled={!figureEditable}
+              placeholder="Add a figure caption"
+              value={String(node.attrs.caption ?? "")}
+              onChange={(event) => updateAttributes({ caption: event.currentTarget.value })}
+            />
+          </figcaption>
+          <label className="scient-latex-table-label">
+            Reference label
+            <input
+              aria-label="Figure reference label"
+              disabled={!figureEditable}
+              placeholder="fig:result"
+              value={String(node.attrs.label ?? "")}
+              onChange={(event) => updateAttributes({ label: event.currentTarget.value })}
+            />
+          </label>
+        </figure>
+      </NodeViewWrapper>
+    );
+  }
+  if (kind === "scientific") {
+    const scientificEditable = structureEditable && editorEditable;
+    return (
+      <NodeViewWrapper
+        className="scient-latex-rich-preview scient-latex-scientific-preview"
+        data-environment={String(node.attrs.environment ?? "theorem")}
+        data-selected={selected || undefined}
+        contentEditable={false}
+      >
+        <div className="scient-latex-rich-preview-label">
+          <span>Scientific statement</span>
+          <button disabled={!scientificEditable} onClick={deleteNode} type="button">
+            Delete
+          </button>
+        </div>
+        <div className="scient-latex-scientific-heading">
+          <select
+            aria-label="Scientific statement type"
+            disabled={!scientificEditable}
+            value={String(node.attrs.environment ?? "theorem")}
+            onChange={(event) => updateAttributes({ environment: event.currentTarget.value })}
+          >
+            {[
+              "theorem",
+              "lemma",
+              "proposition",
+              "corollary",
+              "claim",
+              "definition",
+              "example",
+              "remark",
+              "proof",
+            ].map((environment) => (
+              <option key={environment} value={environment}>
+                {environment[0]!.toUpperCase() + environment.slice(1)}
+              </option>
+            ))}
+          </select>
+          <input
+            aria-label="Scientific statement title"
+            disabled={!scientificEditable}
+            placeholder="Optional title"
+            value={String(node.attrs.title ?? "")}
+            onChange={(event) => updateAttributes({ title: event.currentTarget.value })}
+          />
+        </div>
+        <textarea
+          aria-label="Scientific statement body"
+          disabled={!scientificEditable}
+          rows={4}
+          value={String(node.attrs.body ?? "")}
+          onChange={(event) => updateAttributes({ body: event.currentTarget.value })}
+        />
+        <label className="scient-latex-object-field">
+          Reference label
+          <input
+            aria-label="Scientific statement reference label"
+            disabled={!scientificEditable}
+            placeholder="thm:main"
+            value={String(node.attrs.label ?? "")}
+            onChange={(event) => updateAttributes({ label: event.currentTarget.value })}
+          />
+        </label>
+      </NodeViewWrapper>
+    );
+  }
   return (
     <NodeViewWrapper
       className="scient-latex-rich-preview"
@@ -1080,11 +1334,14 @@ const LatexRawBlock = Node.create({
   },
 });
 
-const LatexRichPreview = Node.create({
+const LatexRichPreview = Node.create<LatexVisualWorkspace>({
   name: "latexRichPreview",
   group: "block",
   atom: true,
   selectable: true,
+  addOptions() {
+    return { environmentId: null, cwd: null, relativePath: null };
+  },
   addAttributes() {
     return {
       kind: { default: "description" },
@@ -1104,6 +1361,15 @@ const LatexRichPreview = Node.create({
       editable: { default: false, rendered: false },
       caption: { default: null },
       label: { default: null },
+      environment: { default: null },
+      title: { default: null },
+      body: { default: null },
+      path: { default: null },
+      figureWidth: { default: null },
+      figureOptions: { default: null, rendered: false },
+      figurePlacement: { default: null },
+      figureAlignment: { default: null },
+      figureStarred: { default: false },
       sourceId: { default: null, rendered: false },
     };
   },
@@ -1114,11 +1380,14 @@ const LatexRichPreview = Node.create({
     return ["div", { ...HTMLAttributes, "data-latex-rich-preview": "" }];
   },
   addNodeView() {
-    return ReactNodeViewRenderer(LatexRichPreviewView);
+    const workspace = this.options;
+    return ReactNodeViewRenderer((props) => (
+      <LatexRichPreviewView {...props} workspace={workspace} />
+    ));
   },
 });
 
-const extensions = [
+const baseExtensions = [
   StarterKit.configure({
     heading: { levels: [1, 2, 3] },
     blockquote: false,
@@ -1134,7 +1403,6 @@ const extensions = [
   LatexDisplayMath,
   LatexInlineCommand,
   LatexRawBlock,
-  LatexRichPreview,
 ];
 
 const MATH_INSERTIONS = {
@@ -1153,6 +1421,9 @@ export interface LatexVisualEditorProps {
   readonly onEdit: (expected: string, next: string) => boolean;
   readonly onEditingChange: (editing: boolean) => void;
   readonly onOpenSource: () => void;
+  readonly environmentId?: EnvironmentId | undefined;
+  readonly cwd?: string | undefined;
+  readonly relativePath?: string | undefined;
   readonly registerFinishEditing?: (finish: (() => void) | null) => void;
 }
 
@@ -1176,6 +1447,17 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   const [notice, setNotice] = useState<string | null>(null);
   const [tablePreset, setTablePreset] = useState<LatexVisualTablePreset>("booktabs");
   const [tablePickerSize, setTablePickerSize] = useState({ rows: 3, columns: 3 });
+  const [referenceCommand, setReferenceCommand] = useState("ref");
+  const [referenceTarget, setReferenceTarget] = useState("");
+  const [layoutDraft, setLayoutDraft] = useState(() => {
+    const profile = latexVisualLayoutProfile(props.source);
+    return {
+      paper: profile.paper,
+      baseFontPt: profile.baseFontPt,
+      margin: `${Math.round(profile.marginTopIn * 100) / 100}in`,
+      paragraphStyle: profile.paragraphGapEm > 0 ? ("spaced" as const) : ("indented" as const),
+    };
+  });
   const tablePicker = useRef<HTMLDetailsElement | null>(null);
   const [summary, setSummary] = useState({
     supported: initial.supportedBlocks,
@@ -1228,9 +1510,20 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     handleUpdateRef.current = handleUpdate;
   }, [handleUpdate]);
 
+  const richPreviewExtension = useMemo(
+    () =>
+      LatexRichPreview.configure({
+        environmentId: props.environmentId ?? null,
+        cwd: props.cwd ?? null,
+        relativePath: props.relativePath ?? null,
+      }),
+    [props.cwd, props.environmentId, props.relativePath],
+  );
+
   const guardedExtensions = useMemo(
     () => [
-      ...extensions,
+      ...baseExtensions,
+      richPreviewExtension,
       Extension.create({
         name: "latexSourceGuard",
         addProseMirrorPlugins() {
@@ -1276,7 +1569,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
         },
       }),
     ],
-    [],
+    [richPreviewExtension],
   );
 
   const editor = useEditor({
@@ -1335,6 +1628,11 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       .insertContent({ type: "latexDisplayMath", attrs: { tex, wrapper: "bracket" } })
       .run();
 
+  const insertVisualSource = (source: string) => {
+    const node = projectLatexVisualDocument(source).content.content?.[0];
+    if (node) editor?.chain().focus().insertContent(node).run();
+  };
+
   const insertTable = (rows: number, columns: number) => {
     const source = latexVisualTableSource(rows, columns, tablePreset);
     const table = projectLatexVisualDocument(source).content.content?.[0];
@@ -1342,6 +1640,22 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     editor?.chain().focus().insertContent(table).run();
     if (tablePicker.current) tablePicker.current.open = false;
   };
+  const labels = [
+    ...new Set([...props.source.matchAll(/\\label\{([^{}]+)\}/gu)].map((match) => match[1]!)),
+  ];
+  const layout = latexVisualLayoutProfile(props.source);
+  const paperStyle = {
+    "--scient-latex-paper-width": layout.paper === "a4" ? "794px" : "816px",
+    "--scient-latex-paper-min-height": layout.paper === "a4" ? "1123px" : "1056px",
+    "--scient-latex-margin-top": `${layout.marginTopIn}in`,
+    "--scient-latex-margin-right": `${layout.marginRightIn}in`,
+    "--scient-latex-margin-bottom": `${layout.marginBottomIn}in`,
+    "--scient-latex-margin-left": `${layout.marginLeftIn}in`,
+    "--scient-latex-font-size": `${layout.baseFontPt}pt`,
+    "--scient-latex-line-height": String(layout.lineHeight),
+    "--scient-latex-par-indent": `${layout.paragraphIndentEm}em`,
+    "--scient-latex-par-gap": `${layout.paragraphGapEm}em`,
+  } as CSSProperties;
 
   return (
     <div
@@ -1523,6 +1837,191 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
             </div>
           </details>
         </div>
+        <div className="scient-latex-toolbar-group" aria-label="Insert scientific object">
+          <select
+            aria-label="Insert scientific statement"
+            disabled={readOnly}
+            value=""
+            onChange={(event) => {
+              const source = latexVisualScientificSource(event.currentTarget.value);
+              if (source) insertVisualSource(source);
+              event.currentTarget.value = "";
+            }}
+          >
+            <option value="">Statement…</option>
+            <option value="theorem">Theorem</option>
+            <option value="claim">Claim</option>
+            <option value="lemma">Lemma</option>
+            <option value="proposition">Proposition</option>
+            <option value="corollary">Corollary</option>
+            <option value="definition">Definition</option>
+            <option value="example">Example</option>
+            <option value="remark">Remark</option>
+            <option value="proof">Proof</option>
+          </select>
+          <button
+            disabled={readOnly}
+            onClick={() => insertVisualSource(latexVisualFigureSource())}
+            type="button"
+          >
+            Figure
+          </button>
+        </div>
+        <div className="scient-latex-toolbar-group" aria-label="Insert reference">
+          <select
+            aria-label="Reference command"
+            disabled={readOnly}
+            value={referenceCommand}
+            onChange={(event) => setReferenceCommand(event.currentTarget.value)}
+          >
+            <option value="ref">Reference</option>
+            <option value="eqref">Equation reference</option>
+            <option value="autoref">Automatic reference</option>
+            <option value="pageref">Page reference</option>
+            <option value="cite">Citation</option>
+            <option value="citet">Text citation</option>
+            <option value="citep">Parenthetical citation</option>
+          </select>
+          <input
+            aria-label="Reference or citation key"
+            disabled={readOnly}
+            list="scient-latex-labels"
+            placeholder="label or citation key"
+            value={referenceTarget}
+            onChange={(event) => setReferenceTarget(event.currentTarget.value)}
+          />
+          <datalist id="scient-latex-labels">
+            {labels.map((label) => (
+              <option key={label} value={label} />
+            ))}
+          </datalist>
+          <button
+            disabled={readOnly || !referenceTarget || /[{}\\%]/u.test(referenceTarget)}
+            onClick={() => {
+              editor
+                ?.chain()
+                .focus()
+                .insertContent({
+                  type: "latexInlineCommand",
+                  attrs: {
+                    name: referenceCommand,
+                    argument: referenceTarget,
+                    raw: `\\${referenceCommand}{${referenceTarget}}`,
+                  },
+                })
+                .run();
+              setReferenceTarget("");
+            }}
+            type="button"
+          >
+            Insert
+          </button>
+        </div>
+        <div className="scient-latex-toolbar-group" aria-label="Document layout">
+          <details
+            className="scient-latex-layout-picker"
+            onToggle={(event) => {
+              if (readOnly) {
+                event.currentTarget.open = false;
+                return;
+              }
+              if (!event.currentTarget.open) return;
+              const profile = latexVisualLayoutProfile(props.source);
+              setLayoutDraft({
+                paper: profile.paper,
+                baseFontPt: profile.baseFontPt,
+                margin: `${Math.round(profile.marginTopIn * 100) / 100}in`,
+                paragraphStyle: profile.paragraphGapEm > 0 ? "spaced" : "indented",
+              });
+            }}
+          >
+            <summary aria-disabled={readOnly}>Layout</summary>
+            <div className="scient-latex-layout-popover">
+              <label>
+                Paper
+                <select
+                  disabled={readOnly}
+                  value={layoutDraft.paper}
+                  onChange={(event) =>
+                    setLayoutDraft((value) => ({
+                      ...value,
+                      paper: event.currentTarget.value as "a4" | "letter",
+                    }))
+                  }
+                >
+                  <option value="letter">Letter</option>
+                  <option value="a4">A4</option>
+                </select>
+              </label>
+              <label>
+                Base font
+                <select
+                  disabled={readOnly}
+                  value={layoutDraft.baseFontPt}
+                  onChange={(event) =>
+                    setLayoutDraft((value) => ({
+                      ...value,
+                      baseFontPt: Number(event.currentTarget.value) as 10 | 11 | 12,
+                    }))
+                  }
+                >
+                  <option value={10}>10 pt</option>
+                  <option value={11}>11 pt</option>
+                  <option value={12}>12 pt</option>
+                </select>
+              </label>
+              <label>
+                Margins
+                <input
+                  aria-label="Document margin"
+                  disabled={readOnly}
+                  value={layoutDraft.margin}
+                  onChange={(event) =>
+                    setLayoutDraft((value) => ({ ...value, margin: event.currentTarget.value }))
+                  }
+                />
+              </label>
+              <label>
+                Paragraphs
+                <select
+                  disabled={readOnly}
+                  value={layoutDraft.paragraphStyle}
+                  onChange={(event) =>
+                    setLayoutDraft((value) => ({
+                      ...value,
+                      paragraphStyle: event.currentTarget.value as "indented" | "spaced",
+                    }))
+                  }
+                >
+                  <option value="indented">First-line indent</option>
+                  <option value="spaced">Space between paragraphs</option>
+                </select>
+              </label>
+              <button
+                disabled={readOnly}
+                onClick={() => {
+                  const expected = currentSource.current;
+                  const next = updateLatexVisualLayoutSource(expected, layoutDraft);
+                  if (next === null) {
+                    setNotice("Use a margin such as 1in, 2.5cm, 20mm, or 72pt.");
+                    return;
+                  }
+                  if (!onEdit.current(expected, next)) {
+                    setNotice("The source changed elsewhere. Layout was not applied.");
+                    return;
+                  }
+                  currentSource.current = next;
+                  installProjection(projectLatexVisualDocument(next), true);
+                  setNotice(null);
+                }}
+                type="button"
+              >
+                Apply layout
+              </button>
+              <p>Changes document-class options and explicit preamble lengths.</p>
+            </div>
+          </details>
+        </div>
         <div className="scient-latex-toolbar-spacer" />
         <button className="scient-latex-source-button" type="button" onClick={props.onOpenSource}>
           Source
@@ -1530,6 +2029,9 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       </div>
       <div className="scient-latex-visual-summary" role="status">
         <span>{readOnly ? "Read-only" : "Writing view · approximate layout"}</span>
+        <span>
+          {layout.documentClass} · {layout.baseFontPt}pt · {layout.paper.toUpperCase()}
+        </span>
         <span>
           {summary.supported} visual {summary.supported === 1 ? "block" : "blocks"}
         </span>
@@ -1557,7 +2059,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
         </div>
       )}
       <div className="scient-latex-visual-scroll">
-        <div className="scient-latex-visual-paper">
+        <div className="scient-latex-visual-paper" style={paperStyle}>
           <EditorContent editor={editor} />
         </div>
       </div>

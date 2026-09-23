@@ -13,7 +13,12 @@ subset supports direct grid editing, keyboard navigation, caption and label
 editing, table insertion, row and column operations, alignment, header, rule
 style, and width controls. Text edits use bounded source ranges; structural
 operations regenerate only the understood tabular region and preserve the outer
-document. Structurally complex cells fail closed to a protected preview.
+document. Structurally complex cells fail closed to a protected preview. The
+candidate also includes source-backed figure cards with real workspace asset
+resolution, semantic theorem/claim-style cards, label-aware reference insertion,
+and a bounded document-layout editor. Required `graphicx` and statement
+declarations are inserted only for newly created objects; existing preamble
+choices and unrelated options remain authoritative.
 Broader adapter coverage, post-build measurements and exact browser/PDF parity
 remain future scoped work.
 

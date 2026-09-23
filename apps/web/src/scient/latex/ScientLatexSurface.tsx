@@ -1073,6 +1073,9 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
             source={props.contents}
             draftKey={visualDraftKey}
             fileRevision={props.revision}
+            environmentId={props.environmentId}
+            cwd={props.cwd}
+            relativePath={props.relativePath}
             disabled={props.truncated || props.saveResolution !== null}
             onEdit={handleVisualEdit}
             onEditingChange={handleVisualEditingChange}
