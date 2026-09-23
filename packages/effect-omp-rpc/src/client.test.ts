@@ -284,6 +284,20 @@ describe("Oh My Pi RPC client", () => {
     ),
   );
 
+  it.effect("terminalizes the client when the ready frame is invalid", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const stdout = yield* Queue.unbounded<Uint8Array>();
+        const client = yield* makeOmpRpcClient({
+          stdout: Stream.fromQueue(stdout),
+          write: () => Effect.void,
+        });
+        yield* Queue.offer(stdout, line({ type: "ready", protocolVersion: 1 }));
+        expect(yield* client.ready.pipe(Effect.flip)).toBeInstanceOf(OmpRpcProtocolError);
+      }),
+    ),
+  );
+
   it.effect("terminalizes the client when a response command does not match", () =>
     Effect.scoped(
       Effect.gen(function* () {

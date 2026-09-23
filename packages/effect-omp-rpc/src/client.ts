@@ -296,13 +296,13 @@ export const makeOmpRpcClient = Effect.fn("OmpRpcClient.make")(function* (
     if (value.type === "ready") {
       return decodeReady(value).pipe(
         Effect.matchEffect({
-          onFailure: (cause) =>
-            Deferred.fail(ready, protocol("RPC ready frame is invalid.", cause)).pipe(
-              Effect.andThen(
-                Deferred.fail(negotiated, protocol("RPC ready frame is invalid.", cause)),
-              ),
-              Effect.asVoid,
-            ),
+          onFailure: (cause) => {
+            const error = protocol("RPC ready frame is invalid.", cause);
+            return Deferred.fail(ready, error).pipe(
+              Effect.andThen(Deferred.fail(negotiated, error)),
+              Effect.andThen(fatal("RPC ready frame is invalid.")),
+            );
+          },
           onSuccess: (frame) =>
             Ref.set(limits, defaultOmpFrameLimits(frame)).pipe(
               Effect.andThen(Deferred.succeed(ready, frame)),
@@ -320,7 +320,12 @@ export const makeOmpRpcClient = Effect.fn("OmpRpcClient.make")(function* (
                       true,
                     ).pipe(
                       Effect.matchEffect({
-                        onFailure: (cause) => Deferred.fail(negotiated, cause),
+                        onFailure: (cause) =>
+                          Deferred.fail(negotiated, cause).pipe(
+                            Effect.andThen(
+                              fatal(`RPC protocol negotiation failed: ${cause.message}`),
+                            ),
+                          ),
                         onSuccess: () => Deferred.succeed(negotiated, undefined),
                       }),
                     ),
