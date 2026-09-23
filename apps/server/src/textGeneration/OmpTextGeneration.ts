@@ -52,6 +52,30 @@ const assistantDelta = (notification: OmpRpcNotification): string | undefined =>
   return update.delta;
 };
 
+const messageRole = (message: unknown): string | undefined =>
+  isRecord(message) && typeof message.role === "string" ? message.role.toLowerCase() : undefined;
+
+const messageText = (message: unknown): string | undefined => {
+  if (!isRecord(message)) return undefined;
+  if (typeof message.content === "string") return message.content;
+  if (!Array.isArray(message.content)) return undefined;
+  const text = message.content
+    .flatMap((part) =>
+      isRecord(part) && part.type === "text" && typeof part.text === "string" ? [part.text] : [],
+    )
+    .join("");
+  return text || undefined;
+};
+
+const lastAssistantText = (messages: unknown): string | undefined => {
+  if (!Array.isArray(messages)) return undefined;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (messageRole(message) === "assistant") return messageText(message);
+  }
+  return undefined;
+};
+
 export const makeOmpTextGeneration = Effect.fn("makeOmpTextGeneration")(function* (
   settings: OmpSettings,
   environment: NodeJS.ProcessEnv = process.env,
@@ -103,6 +127,7 @@ export const makeOmpTextGeneration = Effect.fn("makeOmpTextGeneration")(function
         );
         const output = yield* Ref.make("");
         const exhausted = yield* Ref.make(false);
+        let currentMessageHasDelta = false;
         const settled = yield* Deferred.make<void, TextGenerationError>();
         yield* client.events.pipe(
           Stream.runForEach((notification) => {
@@ -122,8 +147,37 @@ export const makeOmpTextGeneration = Effect.fn("makeOmpTextGeneration")(function
               ).pipe(Effect.asVoid);
             }
             const event = notification.event;
+            if (event.type === "prompt_result" && event.agentInvoked === false) {
+              return Deferred.fail(
+                settled,
+                new TextGenerationError({
+                  operation: input.operation,
+                  detail: "Oh My Pi finished the prompt without a model response.",
+                }),
+              ).pipe(Effect.asVoid);
+            }
+            if (event.type === "message_start" && messageRole(event.message) === "assistant") {
+              currentMessageHasDelta = false;
+              return Effect.void;
+            }
+            if (event.type === "message_end" && messageRole(event.message) === "assistant") {
+              const stopReasonLength =
+                isRecord(event.message) && event.message.stopReason === "length";
+              const text = currentMessageHasDelta ? undefined : messageText(event.message);
+              currentMessageHasDelta = false;
+              return Ref.set(exhausted, stopReasonLength).pipe(
+                Effect.andThen(
+                  text ? Ref.update(output, (current) => current + text) : Effect.void,
+                ),
+              );
+            }
             if (event.type === "agent_end" && event.isTerminal !== false) {
-              return Ref.get(exhausted).pipe(
+              const fallback = lastAssistantText(event.messages);
+              return Ref.get(output).pipe(
+                Effect.flatMap((current) =>
+                  !current && fallback ? Ref.set(output, fallback) : Effect.void,
+                ),
+                Effect.andThen(Ref.get(exhausted)),
                 Effect.flatMap((tokenLimit) =>
                   tokenLimit
                     ? Deferred.fail(
@@ -139,15 +193,12 @@ export const makeOmpTextGeneration = Effect.fn("makeOmpTextGeneration")(function
                 Effect.asVoid,
               );
             }
-            if (
-              event.type === "message_end" &&
-              isRecord(event.message) &&
-              event.message.stopReason === "length"
-            ) {
-              return Ref.set(exhausted, true);
-            }
             const delta = assistantDelta(notification);
-            return delta ? Ref.update(output, (current) => current + delta) : Effect.void;
+            if (delta) {
+              currentMessageHasDelta = true;
+              return Ref.update(output, (current) => current + delta);
+            }
+            return Effect.void;
           }),
           Effect.matchCauseEffect({
             onFailure: (cause) =>
