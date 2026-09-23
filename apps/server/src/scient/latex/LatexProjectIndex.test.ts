@@ -161,6 +161,30 @@ describe("resolveLatexDocument", () => {
     });
   });
 
+  it("bounds total graph traversal across a document with many repeated dependencies", async () => {
+    const repeatedInputs = String.raw`\input{missing}`.repeat(10_000);
+    const helpers = Object.fromEntries(
+      Array.from({ length: 11 }, (_, index) => [`helper-${index}.tex`, repeatedInputs]),
+    );
+    const helperReferences = Array.from(
+      { length: 11 },
+      (_, index) => `\\input{helper-${index}}`,
+    ).join("");
+    const root = await workspace({
+      "main.tex": `\\documentclass{article}\\input{chapter}${helperReferences}`,
+      "chapter.tex": "Chapter text.",
+      ...helpers,
+    });
+
+    const result = await resolveLatexDocument({
+      workspaceRoot: root,
+      sourceRelativePath: "chapter.tex",
+    });
+
+    expect(result).toMatchObject({ _tag: "unresolved", complete: false });
+    expect(result.incompleteReasons).toContain("scan-limit");
+  });
+
   it("rejects absolute and workspace-escaping source paths", async () => {
     const root = await workspace({
       "main.tex": String.raw`\documentclass{article}\begin{document}\end{document}`,

@@ -458,6 +458,7 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                         htmlPresentationRequest: _transientHtmlPresentationRequest,
                         latexPresentationRequest: _transientLatexPresentationRequest,
                         fileCitation: _transientFileCitation,
+                        latexRootRelativePath: persistedLatexRootRelativePath,
                         ...persistentSurface
                       } = surface;
                       const revealLine =
@@ -472,13 +473,13 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                           ? surface.revealRequestId
                           : 0;
                       const latexRootRelativePath =
-                        typeof surface.latexRootRelativePath === "string" &&
-                        surface.latexRootRelativePath.length > 0 &&
-                        surface.latexRootRelativePath.length <= 4_096 &&
-                        !surface.latexRootRelativePath.includes("\0") &&
-                        !/^(?:\/|[A-Za-z]:[\\/])/u.test(surface.latexRootRelativePath) &&
-                        !surface.latexRootRelativePath.split(/[\\/]/u).includes("..")
-                          ? surface.latexRootRelativePath
+                        typeof persistedLatexRootRelativePath === "string" &&
+                        persistedLatexRootRelativePath.length > 0 &&
+                        persistedLatexRootRelativePath.length <= 4_096 &&
+                        !persistedLatexRootRelativePath.includes("\0") &&
+                        !/^(?:[\\/]|[A-Za-z]:)/u.test(persistedLatexRootRelativePath) &&
+                        !persistedLatexRootRelativePath.split(/[\\/]/u).includes("..")
+                          ? persistedLatexRootRelativePath
                           : undefined;
                       return [
                         {

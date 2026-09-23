@@ -69,7 +69,8 @@ roots remain explicit choices. Dynamic TeX inputs and incomplete scans never
 produce a guessed root; when known documents are available, the UI offers them
 for explicit selection. The index skips symlinks and generated/dependency
 directories, and is bounded to 2,000 TeX files, 20,000 directory entries, 1 MiB
-per source, 24 MiB total source text, and 32 directory levels. It strips TeX
+per source, 24 MiB total source text, 32 directory levels, and 100,000 graph
+steps across candidate roots. It strips TeX
 comments and common literal environments before recognizing dependency
 commands; unsupported inclusion forms, paths outside the workspace, and
 reachable references through skipped symlinks make discovery incomplete. It

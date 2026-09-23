@@ -20,6 +20,7 @@ const MAX_TOTAL_SOURCE_BYTES = 24 * 1_048_576;
 const MAX_DIRECTORY_DEPTH = 32;
 const MAX_CANDIDATES = 64;
 const MAX_DEPENDENCY_DIRECTIVES_PER_SOURCE = 10_000;
+const MAX_GRAPH_STEPS = 100_000;
 
 const IGNORED_DIRECTORIES = new Set([
   ".git",
@@ -409,6 +410,7 @@ function rootContainsSource(
   workspaceRoot: string,
   root: IndexedLatexSource,
   sourceRelativePath: string,
+  budget: { steps: number },
 ): {
   readonly contains: boolean;
   readonly incompleteReasons: ReadonlySet<ScientLatexResolutionIncompleteReason>;
@@ -425,7 +427,14 @@ function rootContainsSource(
   };
   enqueue(root.relativePath, null);
   let contains = false;
+  const takeStep = (): boolean => {
+    budget.steps += 1;
+    if (budget.steps <= MAX_GRAPH_STEPS) return true;
+    incompleteReasons.add("scan-limit");
+    return false;
+  };
   while (pending.length > 0) {
+    if (!takeStep()) break;
     const { relativePath, importBase } = pending.pop()!;
     if (relativePath === sourceRelativePath) {
       contains = true;
@@ -435,6 +444,7 @@ function rootContainsSource(
     if (source === undefined) continue;
     for (const reason of source.incompleteReasons) incompleteReasons.add(reason);
     for (const directive of source.directives) {
+      if (!takeStep()) return { contains, incompleteReasons };
       const target = dependencyTargets({ workspaceRoot, rootDirectory, importBase }, directive);
       if (target === null) {
         incompleteReasons.add("unsupported-command");
@@ -519,14 +529,23 @@ export async function resolveLatexDocument(
     string,
     { evidence: Set<ScientLatexRootEvidenceKind>; self: boolean }
   >();
+  // Bound the total work across every possible root, including import-base variants.
+  const graphBudget = { steps: 0 };
 
   for (const root of index.sources.values()) {
     if (!root.documentRoot || root.relativePath === sourceRelativePath) continue;
-    const relation = rootContainsSource(index, workspaceRoot, root, sourceRelativePath);
+    const relation = rootContainsSource(
+      index,
+      workspaceRoot,
+      root,
+      sourceRelativePath,
+      graphBudget,
+    );
     for (const reason of relation.incompleteReasons) incompleteReasons.add(reason);
     if (relation.contains) {
       addCandidate(candidates, root.relativePath, "static-dependency", true);
     }
+    if (graphBudget.steps > MAX_GRAPH_STEPS) break;
   }
   if (candidates.size === 0 && incompleteReasons.size > 0) {
     for (const root of index.sources.values()) {

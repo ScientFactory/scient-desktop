@@ -901,6 +901,38 @@ describe("rightPanelStore", () => {
     ).toMatchObject([{ latexRootRelativePath: "paper/main.tex" }]);
   });
 
+  it("drops invalid persisted LaTeX roots during migration", () => {
+    for (const invalidRoot of [
+      "../outside.tex",
+      "C:/outside.tex",
+      "C:relative.tex",
+      String.raw`\\server\share\root.tex`,
+    ]) {
+      const migrated = migratePersistedRightPanelState({
+        byThreadKey: {
+          "env-1:thread-A": {
+            isOpen: true,
+            activeSurfaceId: "file:chapter.tex",
+            surfaces: [
+              {
+                id: "file:chapter.tex",
+                kind: "file",
+                relativePath: "chapter.tex",
+                revealLine: null,
+                revealRequestId: 1,
+                latexRootRelativePath: invalidRoot,
+              },
+            ],
+          },
+        },
+      });
+
+      expect(migrated.byThreadKey["env-1:thread-A"]?.surfaces[0]).not.toHaveProperty(
+        "latexRootRelativePath",
+      );
+    }
+  });
+
   it("carries and consumes a one-shot LaTeX Split presentation request", () => {
     useRightPanelStore
       .getState()
