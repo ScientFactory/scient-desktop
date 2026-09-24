@@ -81,6 +81,11 @@ export const OmpSwitchSessionResult = Schema.Struct({
 });
 export type OmpSwitchSessionResult = typeof OmpSwitchSessionResult.Type;
 
+export const OmpNegotiateResult = Schema.Struct({
+  protocolVersion: Schema.Literal(2),
+});
+export type OmpNegotiateResult = typeof OmpNegotiateResult.Type;
+
 export const OmpRpcState = Schema.Struct({
   model: Schema.optional(
     Schema.Struct({
@@ -240,7 +245,7 @@ export type OmpHostUriResult = typeof OmpHostUriResult.Type;
 
 export const OmpExtensionUiRequest = Schema.Struct({
   type: Schema.Literal("extension_ui_request"),
-  id: Schema.String,
+  id: maybeString,
   method: Schema.String,
   title: maybeString,
   message: maybeString,

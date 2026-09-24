@@ -26,6 +26,7 @@ import {
 } from "./frames.ts";
 import {
   OMP_RPC_PROTOCOL_V2,
+  OmpNegotiateResult,
   OmpRpcAvailableCommands,
   OmpRpcAvailableModels,
   OmpRpcEvent,
@@ -126,6 +127,7 @@ const encoder = new TextEncoder();
 const decodeReady = Schema.decodeUnknownEffect(OmpRpcReady);
 const decodeState = Schema.decodeUnknownEffect(OmpRpcState);
 const decodeSwitchSession = Schema.decodeUnknownEffect(OmpSwitchSessionResult);
+const decodeNegotiate = Schema.decodeUnknownEffect(OmpNegotiateResult);
 const decodeModels = Schema.decodeUnknownEffect(OmpRpcAvailableModels);
 const decodeCommands = Schema.decodeUnknownEffect(OmpRpcAvailableCommands);
 const decodeResponse = Schema.decodeUnknownEffect(OmpRpcResponse);
@@ -333,7 +335,17 @@ export const makeOmpRpcClient = Effect.fn("OmpRpcClient.make")(function* (
                               fatal(`RPC protocol negotiation failed: ${cause.message}`),
                             ),
                           ),
-                        onSuccess: () => Deferred.succeed(negotiated, undefined),
+                        onSuccess: (response) =>
+                          decodeNegotiate(response.data ?? {}).pipe(
+                            Effect.flatMap(() => Deferred.succeed(negotiated, undefined)),
+                            Effect.catch((cause) =>
+                              Effect.gen(function* () {
+                                const detail = `RPC protocol negotiation returned an invalid result: ${cause}`;
+                                yield* Deferred.fail(negotiated, protocol(detail));
+                                return yield* fatal(detail);
+                              }),
+                            ),
+                          ),
                       }),
                     ),
                     scope,

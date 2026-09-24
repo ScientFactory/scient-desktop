@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { makeOmpRpcClient } from "./client.ts";
+import { OmpNegotiateResult } from "./schema.ts";
 import { OmpRpcCommandError, OmpRpcProcessExitedError, OmpRpcProtocolError } from "./errors.ts";
 
 const encoder = new TextEncoder();
@@ -310,6 +311,44 @@ describe("Oh My Pi RPC client", () => {
           }),
         );
         expect(yield* Fiber.join(switchFiber)).toEqual({ cancelled: false });
+      }),
+    ),
+  );
+
+  it.effect("rejects an invalid protocol negotiation result", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        expect(() =>
+          Schema.decodeUnknownSync(OmpNegotiateResult)({ protocolVersion: 1 }),
+        ).toThrow();
+        const stdout = yield* Queue.unbounded<Uint8Array>();
+        const stdin = yield* Queue.unbounded<string>();
+        const seen = yield* Queue.unbounded<string>();
+        const client = yield* makeOmpRpcClient({
+          stdout: Stream.fromQueue(stdout),
+          write: (bytes) => Queue.offer(stdin, decoder.decode(bytes)).pipe(Effect.asVoid),
+        });
+        yield* client.events.pipe(
+          Stream.runForEach((notification) =>
+            Queue.offer(seen, notification._tag).pipe(Effect.asVoid),
+          ),
+          Effect.forkScoped,
+        );
+        const state = yield* client.getState().pipe(Effect.flip, Effect.forkScoped);
+        yield* Queue.offer(stdout, line(readyFrame));
+        const request = decodeCommand(yield* Queue.take(stdin));
+        yield* Queue.offer(
+          stdout,
+          line({
+            id: request.id,
+            type: "response",
+            command: "negotiate_protocol",
+            success: true,
+            data: { protocolVersion: 1 },
+          }),
+        );
+        expect(yield* Fiber.join(state)).toBeInstanceOf(OmpRpcProtocolError);
+        expect(yield* Queue.take(seen)).toBe("ProtocolFailure");
       }),
     ),
   );
