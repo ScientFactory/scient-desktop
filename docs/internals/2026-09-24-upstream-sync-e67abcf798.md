@@ -46,7 +46,8 @@ worktree has no unresolved index entries and no conflict markers.
 - **Provider compatibility (`d4cd7d5c33`):** adopt per-harness compatibility
   ranges (codex, claudeAgent, cursor, grok, antigravity, opencode) and the
   cursor/antigravity version normalization, composed with Scient's existing
-  manifest entries.
+  manifest entries. The reviewed Scient Pi floor is recorded separately; Droid
+  remains an exempt Factory-owned ACP release channel.
 - **Server/relay (`e4eb9977f0`):** adopt the restart `startedAt` gate that stops
   replaying old agent alerts, composed with Scient's relay snapshot behavior.
 - **Web/UI and a11y fixes:** composer chip-ring clipping (`9030a60eaf`), brain
@@ -71,8 +72,11 @@ Conflict resolutions:
   pipeline.
 - `.github/VOUCHED.td` — **Scient-owned**: retained Scient's deliberate trust
   list; upstream's mirrored contributor list is not adopted.
-- `docs/user/updating.md` — composition: kept Scient's `## Troubleshooting`
-  support copy and appended upstream's expanded `## Mobile updates` section.
+- `docs/user/updating.md` — retained Scient's `## Troubleshooting` support
+  copy and did not adopt upstream's `## Mobile updates` instructions while
+  Scient's mobile publication hold remains active. The upstream mobile source
+  and contracts remain in history and compile-clean, but no unsupported mobile
+  update path is advertised to users.
 - `apps/web/src/components/ui/switch.tsx` — adopt upstream's a11y mechanics
   (only pass `aria-checked` when mixed); preserve Scient's `motion` prop.
 - `apps/server/src/provider/model-manifest.json` — keep Scient's model entries,
@@ -109,6 +113,30 @@ Semantic issues found beyond Git's textual conflicts:
   seam keeps Scient's release identity rather than T3's. Upstream mobile code is
   unchanged.
 
+## Post-alignment review corrections
+
+A follow-up review of the exact composed candidate found and fixed four
+composition/qualification defects before the branch was considered ready:
+
+- The upstream OTel test assumed `T3CODE_OTEL_SDK_DISABLED=false` could
+  re-enable an endpoint inside Scient's fail-closed safety envelope. The shared
+  loader still tests the override; the server composition test now asserts that
+  Scient's safety envelope remains authoritative.
+- Upstream's “every built-in harness” compatibility assertion crossed Scient's
+  Droid/Pi drivers. Added the documented Pi floor (`0.84.4`), explicitly exempt
+  Droid's Factory-owned ACP release channel, and corrected the registry reload
+  expectation to retain the composed compatibility advisory.
+- The upstream mobile update instructions were not exposed while Scient's
+  mobile publication hold is active. The mobile source remains in history, but
+  the unsupported user-facing section was removed from `docs/user/updating.md`.
+- Two inherited tests depended on ambient process state or asserted more than
+  their named seam. The analytics default test now supplies an empty config
+  provider, and the desktop-artifact test identifies the primary executable
+  rather than rejecting the legitimate server self-containment probe.
+
+These changes do not alter the upstream merge ancestry or weaken any safety
+or release guard.
+
 ## Protected boundaries
 
 - Scient product identity, provider authority/lifecycle, scientific behavior,
@@ -125,8 +153,7 @@ Semantic issues found beyond Git's textual conflicts:
 
 ## Verification
 
-Performed on the composed candidate `0ab3e990ea` (plus the follow-up
-documentation commits):
+Performed on the composed candidate and the review-corrected working tree:
 
 - `pnpm alignment:seams:check --base 66650fd93196b635ba56c3a4130fad5fb6d5a82d
 --upstream-ref e67abcf798f8c4d8458755e3b4dde02c2c1f628b --snapshot index` —
@@ -137,8 +164,10 @@ documentation commits):
   existing advisory warnings remain, e.g. React Compiler suggestions in
   `ChatView.tsx`).
 - `pnpm run typecheck` — passed across all workspace projects, 0 errors.
-- `pnpm run test` — **8,051 tests passed / 45 skipped**, with **one pre-existing
-  failure** (see qualification below).
+- `pnpm run test` — **passed across all workspaces**. The server package passed
+  533 files / 7,746 tests (22 files / 73 tests skipped); the desktop-artifact
+  package passed 38 files / 494 tests. No test failures remain in the final
+  local run.
 - `pnpm run build` — passed (existing non-fatal `x11`/CommonJS `import.meta`/
   large-chunk warnings).
 - `pnpm run test:desktop-smoke` — passed.
@@ -148,13 +177,10 @@ documentation commits):
   SwiftLint, ktlint, and detekt unavailable and skipped).
 - `git diff --check` and `git diff --cached --check` — clean.
 
-### Qualification of the one failing test
-
-`scripts/build-desktop-artifact.test.ts > skips the primary native probe for
-cross-architecture Windows payloads` fails in this environment. It fails
-**identically on the pristine owned base `66650fd931`**, so it is a
-pre-existing, environment-dependent failure and not caused by this alignment.
-No assertion was weakened and the affected files were not touched by the merge.
+The original hosted CI run for the pre-review head exposed the three server
+composition failures described above. They were reproduced locally, corrected,
+and covered by the final local suite; the follow-up hosted run remains the
+final external qualification.
 
 ## Publication boundary
 

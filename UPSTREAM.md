@@ -63,9 +63,9 @@ The alignment retained Scient's release pipeline and trust list, composed the
 OTel kill switch with Scient's fail-closed safety envelope, adopted the
 interactive 3D device workspace and visible-browser preview ownership, and
 restored a Scient-identity `cliRelease` seam for mobile environment maintenance.
-One environment-dependent `scripts/build-desktop-artifact` test fails
-identically on the owned base and is therefore pre-existing, not an alignment
-defect; no assertion was weakened.
+The alignment review also corrected inherited test isolation issues (ambient
+analytics configuration and an over-broad desktop-artifact probe assertion);
+no known local test failure remains on the reviewed candidate.
 
 Automated qualification and source review passed; release publication remains separate. The
 [preceding alignment](docs/internals/2026-09-22-upstream-sync-aff9318bf4.md),

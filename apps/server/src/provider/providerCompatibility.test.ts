@@ -52,8 +52,11 @@ const provider: ServerProvider = {
 };
 
 describe("provider compatibility", () => {
-  it("bundles a compatibility policy for every built-in harness", () => {
+  it("bundles a compatibility policy for every versioned built-in harness", () => {
     for (const builtIn of BUILT_IN_DRIVERS) {
+      // Droid is an arbitrary external ACP runtime. Its native release channel
+      // does not have a stable semver contract that can be classified here.
+      if (builtIn.driverKind === "droid") continue;
       assert.isDefined(
         resolveProviderCompatibility(
           ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
@@ -61,6 +64,24 @@ describe("provider compatibility", () => {
           null,
         ),
         `Missing bundled compatibility policy for ${builtIn.driverKind}`,
+      );
+    }
+  });
+
+  it("uses Scient's documented Pi runtime floor", () => {
+    const pi = ProviderDriverKind.make("pi");
+    for (const [version, expected] of [
+      ["0.84.3", "unsupported"],
+      ["0.84.4", "supported"],
+      ["0.85.1", "supported"],
+    ] as const) {
+      assert.strictEqual(
+        resolveProviderCompatibility(
+          ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
+          pi,
+          version,
+        )?.status,
+        expected,
       );
     }
   });

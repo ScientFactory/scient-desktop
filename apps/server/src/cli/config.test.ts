@@ -810,7 +810,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     }),
   );
 
-  it.effect("lets T3CODE_OTEL_SDK_DISABLED=false override an ambient OTEL_SDK_DISABLED=true", () =>
+  it.effect("parses T3 OTel override but preserves Scient's safety envelope", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -856,8 +856,10 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         ),
       );
 
+      // The shared loader honors the T3 override, but Scient's fail-closed
+      // safety envelope still prevents the endpoint from being exported.
       expect(resolved.otelEnvironment.disabled).toBe(false);
-      expect(resolved.otlpTracesUrl).toBe("http://localhost:4318/v1/traces");
+      expect(resolved.otlpTracesUrl).toBeUndefined();
     }),
   );
 

@@ -2560,7 +2560,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             assert.strictEqual(strictRefreshError.operation, "refresh");
             assert.strictEqual(strictRefreshError.instanceId, codexInstanceId);
             assert.deepStrictEqual(yield* registry.reloadInstance(codexInstanceId), [
-              cachedProvider,
+              withBundledCompatibility(cachedProvider),
             ]);
             const strictReloadError = yield* registry
               .reloadInstanceStrict(codexInstanceId)
