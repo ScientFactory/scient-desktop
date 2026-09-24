@@ -152,7 +152,11 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
   const events = yield* Queue.bounded<ProviderRuntimeEvent>(OMP_EVENT_QUEUE_CAPACITY);
   const binaryFingerprint = ompBinaryFingerprint(options.binaryPath, options.environment.PATH);
   const effectiveHomeIdentity =
-    options.homePath?.trim() || options.environment.PI_CODING_AGENT_DIR?.trim() || "";
+    options.homePath?.trim() ||
+    options.environment.PI_CODING_AGENT_DIR?.trim() ||
+    options.environment.HOME?.trim() ||
+    options.environment.USERPROFILE?.trim() ||
+    "";
   const effectiveProfileIdentity =
     options.profile?.trim() ||
     options.environment.OMP_PROFILE?.trim() ||

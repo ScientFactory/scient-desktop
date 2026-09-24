@@ -215,7 +215,7 @@ export const OmpHostToolResult = Schema.Struct({
   type: Schema.Literal("host_tool_result"),
   id: Schema.String,
   isError: maybeBoolean,
-  result: maybeUnknown,
+  result: Schema.Unknown,
 });
 export type OmpHostToolResult = typeof OmpHostToolResult.Type;
 
@@ -240,6 +240,9 @@ export const OmpHostUriResult = Schema.Struct({
   id: Schema.String,
   isError: maybeBoolean,
   error: maybeString,
+  content: maybeString,
+  contentType: maybeString,
+  notes: maybeUnknown,
 });
 export type OmpHostUriResult = typeof OmpHostUriResult.Type;
 
@@ -263,6 +266,7 @@ export const OmpExtensionUiResponse = Schema.Struct({
   value: maybeString,
   confirmed: maybeBoolean,
   cancelled: maybeBoolean,
+  timedOut: maybeBoolean,
 });
 export type OmpExtensionUiResponse = typeof OmpExtensionUiResponse.Type;
 
