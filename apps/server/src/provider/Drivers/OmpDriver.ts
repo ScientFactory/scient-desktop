@@ -29,7 +29,11 @@ import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import { OMP_AGENT_DIR_ENV, OMP_PROFILE_ENV } from "../omp/OmpRpcProcess.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
-import { ompMaintenance, withOmpReleaseVersion } from "../omp/OmpMaintenance.ts";
+import {
+  ompMaintenance,
+  shapeOmpExternalAdvisory,
+  withOmpReleaseVersion,
+} from "../omp/OmpMaintenance.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   makeCachedProviderMaintenanceResolution,
@@ -166,6 +170,18 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
                 enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
               }),
             ),
+            Effect.map((enriched) => {
+              const advisory = enriched.versionAdvisory;
+              if (!advisory) return enriched;
+              return {
+                ...enriched,
+                versionAdvisory: shapeOmpExternalAdvisory({
+                  currentVersion: advisory.currentVersion,
+                  latestVersion: advisory.latestVersion,
+                  checkedAt: advisory.checkedAt,
+                }),
+              };
+            }),
             Effect.provideService(HttpClient.HttpClient, httpClient),
             Effect.flatMap(publishSnapshot),
           ),

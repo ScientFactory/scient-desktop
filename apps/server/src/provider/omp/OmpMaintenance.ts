@@ -1,11 +1,13 @@
-import { ProviderDriverKind } from "@t3tools/contracts";
+import { ProviderDriverKind, type ServerProviderVersionAdvisory } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
 
 import { collectUint8StreamText } from "../../stream/collectUint8StreamText.ts";
+import { ompMajorCompatible } from "./OmpSessionCursor.ts";
 import {
+  createProviderVersionAdvisory,
   makeManualOnlyProviderMaintenanceCapabilities,
   ProviderVersionCache,
   resolvePackageManagedProviderMaintenance,
@@ -34,10 +36,34 @@ export function parseOmpReleaseVersion(source: string): string | null {
   return tag ? `${tag[1]}.${tag[2]}.${tag[3]}` : null;
 }
 
+export const OMP_EXTERNAL_UPDATE_MESSAGE =
+  "A newer stable Oh My Pi release is available. This installation is managed outside Scient. Update it with Oh My Pi or the tool that installed it.";
+
+const stableRelease = (version: string | null): string | null => {
+  if (!version) return null;
+  return parseOmpReleaseVersion(version) === version ? version : null;
+};
+
 /**
- * Package-owned installs keep that package manager's update command. Every other
- * located binary stays discovery-only: no command, and no npm package name that
- * would make the advisory fetch the registry instead of GitHub.
+ * A routine notice is a newer stable release in the same major. A prerelease
+ * install and a future major stay unqualified.
+ */
+export const ompRoutineLatestVersion = (
+  currentVersion: string | null,
+  latestVersion: string | null,
+): string | null => {
+  const latest = stableRelease(latestVersion);
+  if (!latest) return null;
+  const current = stableRelease(currentVersion);
+  if (current && !ompMajorCompatible(current, latest)) return null;
+  if (currentVersion && !current) return null;
+  return latest;
+};
+
+/**
+ * Package and Homebrew installs keep their channel's latest version. The
+ * update command is removed: Oh My Pi's own updater owns native packages.
+ * Anything else is discovered from GitHub and also cannot be executed.
  */
 export const ompMaintenance: ProviderMaintenanceCapabilitiesResolver = {
   resolve: Effect.fn("ompMaintenance.resolve")(function* (context) {
@@ -49,12 +75,32 @@ export const ompMaintenance: ProviderMaintenanceCapabilitiesResolver = {
       },
       context,
     );
-    if (packaged.update) return packaged;
+    if (packaged.update) return { ...packaged, update: null };
     return makeManualOnlyProviderMaintenanceCapabilities({
       provider: ProviderDriverKind.make("omp"),
       packageName: null,
     });
   }),
+};
+
+export const shapeOmpExternalAdvisory = (input: {
+  readonly currentVersion: string | null;
+  readonly latestVersion: string | null;
+  readonly checkedAt?: string | null;
+}): ServerProviderVersionAdvisory => {
+  const advisory = createProviderVersionAdvisory({
+    driver: ProviderDriverKind.make("omp"),
+    currentVersion: input.currentVersion,
+    latestVersion: ompRoutineLatestVersion(input.currentVersion, input.latestVersion),
+    checkedAt: input.checkedAt,
+    maintenanceCapabilities: makeManualOnlyProviderMaintenanceCapabilities({
+      provider: ProviderDriverKind.make("omp"),
+      packageName: null,
+    }),
+  });
+  return advisory.status === "behind_latest"
+    ? { ...advisory, message: OMP_EXTERNAL_UPDATE_MESSAGE }
+    : advisory;
 };
 
 /**

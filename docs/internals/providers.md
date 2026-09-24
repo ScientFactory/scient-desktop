@@ -457,9 +457,10 @@ orchestration types. The adapter owns the process and the turn mapping.
 
 - The executable is user-installed `omp` 18.2.8 or newer. Launch arguments are `--mode rpc` and
   `--approval-mode yolo`. Scient does not download Oh My Pi or call `login` during discovery.
-  Update checks compare a package install with that package channel and any other located binary
-  with the latest GitHub release. Only a proven Bun, npm, pnpm, or Homebrew install gets an update
-  command. A release binary or custom path is notice-only.
+  Update checks are read-only. A Bun, npm, pnpm, or Homebrew install is compared with that
+  channel's stable version. Any other located binary is compared with the latest stable GitHub
+  release. A different major or a prerelease is not offered as a routine update, and Scient does
+  not run an update command.
 - One process serves one thread. Stop closes that process only. The child receives an explicit
   `--session-dir` under Scient's per-instance/per-thread state root; the legacy session environment
   variable is retained only as a compatibility fallback in the process environment.

@@ -9,10 +9,12 @@ import {
   type ProviderMaintenanceResolutionContext,
 } from "../providerMaintenance.ts";
 import {
+  OMP_EXTERNAL_UPDATE_MESSAGE,
   OMP_LATEST_RELEASE_URL,
   OMP_NPM_PACKAGE,
   ompMaintenance,
   parseOmpReleaseVersion,
+  shapeOmpExternalAdvisory,
   withOmpReleaseVersion,
 } from "./OmpMaintenance.ts";
 
@@ -29,30 +31,40 @@ it.effect("parses Oh My Pi release tags", () =>
     expect(parseOmpReleaseVersion("v18.2.8")).toBe("18.2.8");
     expect(parseOmpReleaseVersion('{"tag_name":"v18.3.0"}')).toBe("18.3.0");
     expect(parseOmpReleaseVersion('{"tag_name":"nightly"}')).toBeNull();
+    expect(parseOmpReleaseVersion("18.3.0-beta.1")).toBeNull();
+  }),
+);
+
+it.effect("notices a same-major release without offering a command", () =>
+  Effect.sync(() => {
+    const advisory = shapeOmpExternalAdvisory({
+      currentVersion: "18.2.8",
+      latestVersion: "18.3.0",
+    });
+    expect(advisory.status).toBe("behind_latest");
+    expect(advisory.canUpdate).toBe(false);
+    expect(advisory.updateCommand).toBeNull();
+    expect(advisory.message).toBe(OMP_EXTERNAL_UPDATE_MESSAGE);
+    expect(
+      shapeOmpExternalAdvisory({ currentVersion: "18.2.8", latestVersion: "19.0.0" }).status,
+    ).toBe("unknown");
+    expect(
+      shapeOmpExternalAdvisory({ currentVersion: "18.3.0-beta.1", latestVersion: "18.3.0" }).status,
+    ).toBe("unknown");
   }),
 );
 
 it.layer(NodeServices.layer)("Oh My Pi update discovery", (it) => {
-  it.effect("offers a Bun global update for the official package", () =>
+  it.effect("discovers a Bun or npm install without an executable command", () =>
     Effect.gen(function* () {
-      const result = yield* ompMaintenance.resolve(context("/home/test/.bun/bin/omp"));
-      expect(result.packageName).toBe(OMP_NPM_PACKAGE);
-      expect(result.update).toMatchObject({
-        executable: "bun",
-        args: ["i", "-g", `${OMP_NPM_PACKAGE}@latest`],
-        lockKey: "bun-global",
-      });
-    }),
-  );
-
-  it.effect("offers an npm update only for the global package prefix", () =>
-    Effect.gen(function* () {
-      const result = yield* ompMaintenance.resolve(
+      const bun = yield* ompMaintenance.resolve(context("/home/test/.bun/bin/omp"));
+      const npm = yield* ompMaintenance.resolve(
         context("/opt/omp/lib/node_modules/@oh-my-pi/pi-coding-agent/bin/omp"),
       );
-      expect(result.update?.executable).toBe("npm");
-      expect(result.update?.args).toContain("/opt/omp");
-      expect(result.update?.args).toContain(`${OMP_NPM_PACKAGE}@latest`);
+      expect(bun.packageName).toBe(OMP_NPM_PACKAGE);
+      expect(bun.update).toBeNull();
+      expect(npm.packageName).toBe(OMP_NPM_PACKAGE);
+      expect(npm.update).toBeNull();
     }),
   );
 
