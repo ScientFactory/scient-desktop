@@ -79,8 +79,13 @@ import {
 
 const PROVIDER = ProviderDriverKind.make("omp");
 const OMP_MAX_PROMPT_IMAGE_BYTES = 512 * 1024;
-/** Canonical provider events are lossless; backpressure is safer than dropping conversation state. */
-const OMP_EVENT_QUEUE_CAPACITY = 4096;
+/**
+ * Provider events are lossless. The adapter queue must not apply backpressure
+ * to the runtime consumer: sendTurn can be waiting for turn.started while
+ * holding the thread lock, so a full bounded queue would deadlock the session.
+ * The RPC client still enforces its 16 MiB logical-frame budget before frames
+ * reach this queue.
+ */
 const OMP_READY_TIMEOUT = "8 seconds";
 const OMP_CANCEL_DEADLINE = "3 seconds";
 
@@ -149,7 +154,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
   const makeProcess = options.makeProcess ?? makeOmpRpcProcess;
   const sessions = new Map<ThreadId, SessionContext>();
   const threadLocks = yield* SynchronizedRef.make(new Map<ThreadId, Semaphore.Semaphore>());
-  const events = yield* Queue.bounded<ProviderRuntimeEvent>(OMP_EVENT_QUEUE_CAPACITY);
+  const events = yield* Queue.unbounded<ProviderRuntimeEvent>();
   const binaryFingerprint = ompBinaryFingerprint(options.binaryPath, options.environment.PATH);
   const effectiveHomeIdentity =
     options.homePath?.trim() ||
