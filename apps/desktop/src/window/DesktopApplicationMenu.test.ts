@@ -246,4 +246,27 @@ describe("DesktopApplicationMenu", () => {
       assert.equal(yield* Deferred.await(selectedAction), "zoom-in");
     }),
   );
+
+  it.effect("routes Reload and Force Reload through the app renderer", () =>
+    Effect.gen(function* () {
+      for (const [label, action, accelerator] of [
+        ["Reload", "reload-main", "CmdOrCtrl+R"],
+        ["Force Reload", "force-reload-main", "Shift+CmdOrCtrl+R"],
+      ]) {
+        const selectedAction = yield* Deferred.make<string>();
+        const applicationMenuTemplate =
+          yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
+        yield* configureMenu(selectedAction, applicationMenuTemplate);
+        const template = yield* Deferred.await(applicationMenuTemplate);
+        const viewMenu = template.find((item) => item.label === "View");
+        if (!Array.isArray(viewMenu?.submenu)) throw new Error("Expected View menu.");
+        const item = viewMenu.submenu.find((entry) => entry.label === label);
+        assert.equal(item?.accelerator, accelerator);
+        assert.isUndefined(item?.role);
+        if (typeof item?.click !== "function") throw new Error(`Expected ${label} click handler.`);
+        item.click({} as Electron.MenuItem, {} as Electron.BrowserWindow, {} as KeyboardEvent);
+        assert.equal(yield* Deferred.await(selectedAction), action);
+      }
+    }),
+  );
 });

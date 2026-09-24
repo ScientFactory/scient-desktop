@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as NodeEvents from "node:events";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as FileSystem from "effect/FileSystem";
@@ -29,6 +30,7 @@ import {
   getLocalEnvironmentBootstraps,
   getWindowFullscreenState,
   pasteAsText,
+  reloadMainWindow,
   pickProjectFavicon,
   probeRemoteEditors,
 } from "./window.ts";
@@ -212,6 +214,42 @@ describe("pasteAsText", () => {
       );
     },
   );
+});
+
+describe("reloadMainWindow", () => {
+  it.effect("reloads only the requesting main renderer, with the selected cache policy", () => {
+    const reload = vi.fn();
+    const reloadIgnoringCache = vi.fn();
+    const contents = Object.assign(new NodeEvents.EventEmitter(), {
+      id: 42,
+      isDestroyed: () => false,
+      reload,
+      reloadIgnoringCache,
+      send: vi.fn(),
+    });
+    const window = {
+      webContents: contents,
+      isDestroyed: () => false,
+    } as unknown as Electron.BrowserWindow;
+    return Effect.gen(function* () {
+      assert.isFalse(yield* reloadMainWindow.handler(true, { sender: { id: 99 } }));
+      assert.equal(reload.mock.calls.length, 0);
+      assert.equal(reloadIgnoringCache.mock.calls.length, 0);
+
+      assert.isTrue(yield* reloadMainWindow.handler(false, { sender: { id: 42 } }));
+      assert.equal(reload.mock.calls.length, 1);
+      contents.emit("did-start-navigation");
+      assert.isTrue(yield* reloadMainWindow.handler(true, { sender: { id: 42 } }));
+      assert.equal(reloadIgnoringCache.mock.calls.length, 1);
+      contents.emit("will-prevent-unload");
+      assert.deepEqual(contents.send.mock.calls, [["desktop:reload-blocked"]]);
+      assert.equal(contents.listenerCount("will-prevent-unload"), 0);
+    }).pipe(
+      Effect.provide(
+        Layer.mock(ElectronWindow.ElectronWindow)({ main: Effect.succeed(Option.some(window)) }),
+      ),
+    );
+  });
 });
 
 describe("pickProjectFavicon", () => {
