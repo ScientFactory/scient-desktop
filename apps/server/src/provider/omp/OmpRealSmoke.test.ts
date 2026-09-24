@@ -73,71 +73,74 @@ describe("real OMP qualification", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("completes a real model turn when explicitly requested", () =>
-    Effect.gen(function* () {
-      const binary = process.env.OMP_QUALIFY_BINARY;
-      if (!binary || process.env.OMP_QUALIFY_FULL_TURN !== "1") return;
-      const root = NodePath.join(NodeOS.tmpdir(), `scient-omp-turn-real-${process.pid}`);
-      NodeFS.rmSync(root, { recursive: true, force: true });
-      NodeFS.mkdirSync(root, { recursive: true });
-      const environment = {
-        ...process.env,
-        HOME: NodePath.join(root, "home"),
-        PI_CODING_AGENT_DIR: NodePath.join(root, "home", "agent"),
-      };
-      NodeFS.mkdirSync(environment.HOME, { recursive: true });
-      const instanceId = ProviderInstanceId.make("omp-real-turn-smoke");
-      const adapter = yield* makeOmpAdapter({
-        binaryPath: binary,
-        providerInstanceId: instanceId,
-        stateDir: NodePath.join(root, "state"),
-        attachmentsDir: NodePath.join(root, "attachments"),
-        environment,
-      });
-      const threadId = ThreadId.make("real-omp-turn-thread");
-      yield* adapter.startSession({ threadId, cwd: root, runtimeMode: "full-access" });
-      const terminal = yield* Deferred.make<unknown>();
-      yield* adapter.streamEvents.pipe(
-        Stream.runForEach((event) =>
-          Effect.gen(function* () {
-            if (event.type === "turn.completed" || event.type === "turn.aborted") {
-              yield* Deferred.succeed(terminal, event);
-            }
-          }),
-        ),
-        Effect.forkScoped,
-      );
-      yield* adapter.sendTurn({
-        threadId,
-        input: "Reply with exactly QUALIFIED_OMP.",
-        modelSelection: createModelSelection(instanceId, "ollama/gemma4:12b-it-qat"),
-      });
-      expect(yield* Deferred.await(terminal)).toMatchObject({
-        type: "turn.completed",
-        payload: { state: "completed" },
-      });
-      const resumeCursor = (yield* adapter.listSessions()).find(
-        (session) => session.threadId === threadId,
-      )?.resumeCursor;
-      expect(resumeCursor).toBeDefined();
-      yield* adapter.stopAll();
-      expect(yield* adapter.hasSession(threadId)).toBe(false);
-      const resumedAdapter = yield* makeOmpAdapter({
-        binaryPath: binary,
-        providerInstanceId: instanceId,
-        stateDir: NodePath.join(root, "state"),
-        attachmentsDir: NodePath.join(root, "attachments"),
-        environment,
-      });
-      const resumed = yield* resumedAdapter.startSession({
-        threadId,
-        cwd: root,
-        runtimeMode: "full-access",
-        resumeCursor,
-      });
-      expect(resumed.status).toBe("ready");
-      yield* resumedAdapter.stopAll();
-      NodeFS.rmSync(root, { recursive: true, force: true });
-    }).pipe(Effect.provide(NodeServices.layer)),
+  it.effect(
+    "completes a real model turn when explicitly requested",
+    () =>
+      Effect.gen(function* () {
+        const binary = process.env.OMP_QUALIFY_BINARY;
+        if (!binary || process.env.OMP_QUALIFY_FULL_TURN !== "1") return;
+        const root = NodePath.join(NodeOS.tmpdir(), `scient-omp-turn-real-${process.pid}`);
+        NodeFS.rmSync(root, { recursive: true, force: true });
+        NodeFS.mkdirSync(root, { recursive: true });
+        const environment = {
+          ...process.env,
+          HOME: NodePath.join(root, "home"),
+          PI_CODING_AGENT_DIR: NodePath.join(root, "home", "agent"),
+        };
+        NodeFS.mkdirSync(environment.HOME, { recursive: true });
+        const instanceId = ProviderInstanceId.make("omp-real-turn-smoke");
+        const adapter = yield* makeOmpAdapter({
+          binaryPath: binary,
+          providerInstanceId: instanceId,
+          stateDir: NodePath.join(root, "state"),
+          attachmentsDir: NodePath.join(root, "attachments"),
+          environment,
+        });
+        const threadId = ThreadId.make("real-omp-turn-thread");
+        yield* adapter.startSession({ threadId, cwd: root, runtimeMode: "full-access" });
+        const terminal = yield* Deferred.make<unknown>();
+        yield* adapter.streamEvents.pipe(
+          Stream.runForEach((event) =>
+            Effect.gen(function* () {
+              if (event.type === "turn.completed" || event.type === "turn.aborted") {
+                yield* Deferred.succeed(terminal, event);
+              }
+            }),
+          ),
+          Effect.forkScoped,
+        );
+        yield* adapter.sendTurn({
+          threadId,
+          input: "Reply with exactly QUALIFIED_OMP.",
+          modelSelection: createModelSelection(instanceId, "ollama/gemma4:12b-it-qat"),
+        });
+        expect(yield* Deferred.await(terminal)).toMatchObject({
+          type: "turn.completed",
+          payload: { state: "completed" },
+        });
+        const resumeCursor = (yield* adapter.listSessions()).find(
+          (session) => session.threadId === threadId,
+        )?.resumeCursor;
+        expect(resumeCursor).toBeDefined();
+        yield* adapter.stopAll();
+        expect(yield* adapter.hasSession(threadId)).toBe(false);
+        const resumedAdapter = yield* makeOmpAdapter({
+          binaryPath: binary,
+          providerInstanceId: instanceId,
+          stateDir: NodePath.join(root, "state"),
+          attachmentsDir: NodePath.join(root, "attachments"),
+          environment,
+        });
+        const resumed = yield* resumedAdapter.startSession({
+          threadId,
+          cwd: root,
+          runtimeMode: "full-access",
+          resumeCursor,
+        });
+        expect(resumed.status).toBe("ready");
+        yield* resumedAdapter.stopAll();
+        NodeFS.rmSync(root, { recursive: true, force: true });
+      }).pipe(Effect.provide(NodeServices.layer)),
+    300_000,
   );
 });
