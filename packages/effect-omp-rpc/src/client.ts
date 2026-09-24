@@ -253,7 +253,11 @@ export const makeOmpRpcClient = Effect.fn("OmpRpcClient.make")(function* (
         Effect.matchEffect({
           onFailure: () => fatal("RPC response failed schema decoding."),
           onSuccess: (response) => {
-            if (response.id === undefined) return Effect.void;
+            if (response.id === undefined) {
+              return response.command === "parse"
+                ? Effect.void
+                : fatal("RPC response omitted the request id.");
+            }
             const responseId = response.id;
             return takeWaiter(responseId).pipe(
               Effect.flatMap((waiter) => {

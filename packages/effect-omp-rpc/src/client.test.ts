@@ -328,6 +328,32 @@ describe("Oh My Pi RPC client", () => {
     ),
   );
 
+  it.effect("terminalizes the client when a known response omits its id", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const stdout = yield* Queue.unbounded<Uint8Array>();
+        const stdin = yield* Queue.unbounded<string>();
+        const seen = yield* Queue.unbounded<string>();
+        const client = yield* makeOmpRpcClient({
+          stdout: Stream.fromQueue(stdout),
+          write: (bytes) => Queue.offer(stdin, decoder.decode(bytes)).pipe(Effect.asVoid),
+        });
+        yield* client.events.pipe(
+          Stream.runForEach((notification) =>
+            Queue.offer(seen, notification._tag).pipe(Effect.asVoid),
+          ),
+          Effect.forkScoped,
+        );
+        const state = yield* client.getState().pipe(Effect.flip, Effect.forkScoped);
+        yield* negotiate(stdout, stdin);
+        const request = decodeCommand(yield* Queue.take(stdin));
+        yield* Queue.offer(stdout, line({ type: "response", command: "get_state", success: true }));
+        expect(yield* Fiber.join(state)).toBeInstanceOf(OmpRpcProcessExitedError);
+        expect(yield* Queue.take(seen)).toBe("ProtocolFailure");
+      }),
+    ),
+  );
+
   it.effect("terminalizes the client when a response command does not match", () =>
     Effect.scoped(
       Effect.gen(function* () {
