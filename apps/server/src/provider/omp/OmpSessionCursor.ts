@@ -96,6 +96,8 @@ export const parseOmpSessionCursor = (
     readonly identity: OmpResumeIdentity;
     readonly ompVersion?: string;
     readonly rpcProtocolVersion: number;
+    /** The adapter resolves the executable immediately before parsing the cursor. */
+    readonly deferBinaryIdentity?: boolean;
   },
 ): Effect.Effect<OmpSessionCursor, string> =>
   decodeCursor(value).pipe(
@@ -104,7 +106,10 @@ export const parseOmpSessionCursor = (
       if (cursor.providerInstanceId !== input.identity.providerInstanceId) {
         return Effect.fail("Oh My Pi resume cursor belongs to a different provider instance.");
       }
-      if (cursor.binaryPathFingerprint !== input.identity.binaryPathFingerprint) {
+      if (
+        !input.deferBinaryIdentity &&
+        cursor.binaryPathFingerprint !== input.identity.binaryPathFingerprint
+      ) {
         return Effect.fail("Oh My Pi resume cursor was written by a different executable.");
       }
       if (cursor.workspaceFingerprint !== ompWorkspaceFingerprint(input.identity.workspace)) {
@@ -119,7 +124,10 @@ export const parseOmpSessionCursor = (
       if (cursor.launchPolicyFingerprint !== ompLaunchPolicyFingerprint()) {
         return Effect.fail("Oh My Pi resume cursor was written with a different launch policy.");
       }
-      if (cursor.stateScopeFingerprint !== ompStateScopeFingerprint(input.identity)) {
+      if (
+        !input.deferBinaryIdentity &&
+        cursor.stateScopeFingerprint !== ompStateScopeFingerprint(input.identity)
+      ) {
         return Effect.fail("Oh My Pi resume cursor does not match this session scope.");
       }
       if (cursor.rpcProtocolVersion !== input.rpcProtocolVersion) {

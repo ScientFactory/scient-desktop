@@ -100,6 +100,32 @@ describe("Oh My Pi session cursor", () => {
     }),
   );
 
+  it.effect("can defer executable identity until the process resolves it", () =>
+    Effect.gen(function* () {
+      const current = identity();
+      const cursor = makeOmpSessionCursor({
+        identity: current,
+        sessionFile: "/state/omp/thread/session.jsonl",
+        ompVersion: "18.2.8",
+        rpcProtocolVersion: 2,
+      });
+      const unresolved = { ...current, binaryPathFingerprint: "unresolved-command" };
+      expect(
+        yield* parseOmpSessionCursor(cursor, {
+          identity: unresolved,
+          rpcProtocolVersion: 2,
+          deferBinaryIdentity: true,
+        }),
+      ).toBeDefined();
+      expect(
+        yield* parseOmpSessionCursor(cursor, {
+          identity: unresolved,
+          rpcProtocolVersion: 2,
+        }).pipe(Effect.flip),
+      ).toContain("executable");
+    }),
+  );
+
   it.effect("records a request id without treating it as replay suppression", () =>
     Effect.gen(function* () {
       const current = identity();

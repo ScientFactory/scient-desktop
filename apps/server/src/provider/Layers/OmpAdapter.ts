@@ -65,6 +65,7 @@ import {
   ompBinaryFingerprint,
   ompMajorCompatible,
   ompSessionDirectoryKey,
+  ompStateScopeFingerprint,
   parseOmpSessionCursor,
   sessionFileInsideRoot,
   type OmpResumeIdentity,
@@ -708,6 +709,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
               ? yield* parseOmpSessionCursor(input.resumeCursor, {
                   identity: baseResumeIdentity,
                   rpcProtocolVersion: OMP_RPC_PROTOCOL_V2,
+                  deferBinaryIdentity: true,
                 }).pipe(Effect.mapError((issue) => validation("startSession", issue)))
               : undefined;
             if (cursor) {
@@ -733,10 +735,14 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
                   binaryPathFingerprint: client.binaryPathFingerprint,
                 }
               : baseResumeIdentity;
-            if (cursor && cursor.binaryPathFingerprint !== resumeIdentity.binaryPathFingerprint) {
+            if (
+              cursor &&
+              (cursor.binaryPathFingerprint !== resumeIdentity.binaryPathFingerprint ||
+                cursor.stateScopeFingerprint !== ompStateScopeFingerprint(resumeIdentity))
+            ) {
               return yield* validation(
                 "startSession",
-                "Oh My Pi resume cursor was written by a different executable.",
+                "Oh My Pi resume cursor was written by a different executable or session scope.",
               );
             }
             const ctx: SessionContext = {

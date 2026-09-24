@@ -116,12 +116,27 @@ describe("real OMP qualification", () => {
         type: "turn.completed",
         payload: { state: "completed" },
       });
-      expect(
-        (yield* adapter.listSessions()).find((session) => session.threadId === threadId)
-          ?.resumeCursor,
-      ).toBeDefined();
+      const resumeCursor = (yield* adapter.listSessions()).find(
+        (session) => session.threadId === threadId,
+      )?.resumeCursor;
+      expect(resumeCursor).toBeDefined();
       yield* adapter.stopAll();
       expect(yield* adapter.hasSession(threadId)).toBe(false);
+      const resumedAdapter = yield* makeOmpAdapter({
+        binaryPath: binary,
+        providerInstanceId: instanceId,
+        stateDir: NodePath.join(root, "state"),
+        attachmentsDir: NodePath.join(root, "attachments"),
+        environment,
+      });
+      const resumed = yield* resumedAdapter.startSession({
+        threadId,
+        cwd: root,
+        runtimeMode: "full-access",
+        resumeCursor,
+      });
+      expect(resumed.status).toBe("ready");
+      yield* resumedAdapter.stopAll();
       NodeFS.rmSync(root, { recursive: true, force: true });
     }).pipe(Effect.provide(NodeServices.layer)),
   );
