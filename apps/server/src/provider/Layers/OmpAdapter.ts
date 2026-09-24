@@ -178,8 +178,6 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         Effect.map((lock) => [lock, new Map(locks).set(threadId, lock)] as const),
       );
     });
-  const withThreadLock = <A, E, R>(threadId: ThreadId, effect: Effect.Effect<A, E, R>) =>
-    Effect.flatMap(getThreadLock(threadId), (lock) => lock.withPermit(effect));
   const releaseThreadLock = (threadId: ThreadId, expected: Semaphore.Semaphore) =>
     SynchronizedRef.update(threadLocks, (locks) => {
       if (sessions.has(threadId) || locks.get(threadId) !== expected) return locks;
@@ -187,6 +185,16 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       next.delete(threadId);
       return next;
     });
+  const withThreadLock = <A, E, R>(threadId: ThreadId, effect: Effect.Effect<A, E, R>) =>
+    Effect.flatMap(getThreadLock(threadId), (lock) =>
+      lock
+        .withPermit(effect)
+        .pipe(
+          Effect.onExit((exit) =>
+            exit._tag === "Failure" ? releaseThreadLock(threadId, lock) : Effect.void,
+          ),
+        ),
+    );
   const locally = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
