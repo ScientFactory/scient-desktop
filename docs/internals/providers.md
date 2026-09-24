@@ -464,12 +464,16 @@ orchestration types. The adapter owns the process and the turn mapping.
   `--session-dir` under Scient's per-instance/per-thread state root; the legacy session environment
   variable is retained only as a compatibility fallback in the process environment.
 - A prompt response is acceptance. Completion is a local prompt, or a terminal `agent_end` confirmed
-  idle with `get_state`. Process exit during a turn is a failure.
+  idle with `get_state`. Stop first requests an abort; the process remains available when OMP
+  confirms an idle terminal state, and forced process termination produces an uncertain outcome.
+  Process exit during a turn is an uncertain failure.
 - Resume cursors must match the provider instance, workspace, effective OMP home/profile, executable,
   protocol, and launch policy, and must stay inside Scient's session directory.
 - Subagent frames stay on the parent turn and preserve native IDs. Native compact reports a compacted
   thread only when OMP confirms success. Only explicitly qualified commands are exposed; discovered
-  session, export, sharing, model, configuration, and extension commands are rejected.
+  session, export, sharing, model, configuration, and extension commands are rejected. The
+  v18.2.8 runtime exposes context usage through `get_state`, not a standalone event, so OMP does not
+  advertise a context-window projection yet.
 - Awareness and Scient skill delivery are unsupported. Unexpected host-tool calls are rejected.
   Full access is the only runtime mode. There is no Orchestration V2 adapter.
 

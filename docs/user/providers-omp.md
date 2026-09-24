@@ -35,7 +35,9 @@ scientific tools with this provider.
 - Send text and images when the selected model advertises image input, and see streamed replies and
   Oh My Pi tool activity.
 - Switch models in the same conversation when Oh My Pi reports them.
-- Answer Oh My Pi's select, confirm, input, and editor questions in Scient.
+- Answer Oh My Pi's select, confirm, input, and editor questions in Scient. If an extension asks
+  Scient to open a browser URL, the URL is shown as a safe clickable action in the thread; Scient
+  does not open it automatically.
 - Steer a running turn, and stop it. Stop first asks Oh My Pi to abort and keeps the conversation
   process alive when OMP confirms the turn reached an idle terminal state. If OMP does not settle
   within the cancellation deadline, Scient closes that conversation's process. On macOS and Linux
@@ -52,10 +54,13 @@ scientific tools with this provider.
 - See only explicitly qualified Oh My Pi command names in the provider snapshot. Session,
   export, sharing, model, configuration, and extension commands are hidden and rejected even when
   OMP discovers them. Scient does not import those commands or skills into its own skill library.
-  The settings list comes from a probe that adds `--no-session --no-tools --no-extensions
---no-skills --no-rules`; a running conversation validates against its live command catalog.
+  The settings list is a conservative built-in list from a probe that adds `--no-session --no-tools
+--no-extensions --no-skills --no-rules`; a running conversation validates against its live
+  profile-specific catalog without publishing that catalog globally.
 
-Rollback, fork, and Scient-managed installation are not available.
+Rollback, fork, and Scient-managed installation are not available. Scient does not inject a
+private system prompt or awareness block into OMP; no project or OMP-home configuration file is
+written for that purpose.
 
 ## Resume
 

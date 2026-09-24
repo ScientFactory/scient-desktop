@@ -280,7 +280,7 @@ describe("Oh My Pi session runtime", () => {
       const harness = yield* runtimeHarness();
       yield* Queue.offer(harness.events, {
         _tag: "Event",
-        event: { type: "future_event", value: 1 },
+        event: { type: "future_event", raw: { value: 1 } },
       });
       expect(yield* takeUpdate(harness.updates)).toMatchObject({
         type: "warning",
@@ -288,7 +288,7 @@ describe("Oh My Pi session runtime", () => {
       });
       yield* Queue.offer(harness.events, {
         _tag: "Event",
-        event: { type: "future_event", value: 2 },
+        event: { type: "future_event", raw: { value: 2 } },
       });
       expect(yield* Queue.poll(harness.updates)).toMatchObject({ _tag: "None" });
       yield* Scope.close(harness.scope, Exit.void);
