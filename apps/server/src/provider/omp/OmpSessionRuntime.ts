@@ -404,7 +404,10 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     });
 
   const confirmIdle = Effect.gen(function* () {
-    if (turn.phase !== "draining") return;
+    if (turn.phase !== "draining") {
+      pendingDrainState = undefined;
+      return;
+    }
     if (pendingDrainState !== undefined) {
       const state = pendingDrainState;
       pendingDrainState = undefined;
