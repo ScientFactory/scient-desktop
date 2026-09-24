@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 
 import { toastManager } from "~/components/ui/toast";
 import {
@@ -37,6 +37,10 @@ export function useDesktopReloadGuard(
   options: PendingSurfaceDepartureOptions,
   describeAttention: (id: string) => string | undefined,
 ): void {
+  const currentRef = useRef({ pendingSurfaceIds, options });
+  useLayoutEffect(() => {
+    currentRef.current = { pendingSurfaceIds, options };
+  }, [pendingSurfaceIds, options]);
   const runAfterPendingSave = usePendingSurfaceDeparture(pendingSurfaceIds, {
     ...options,
     onAttention: (id) => {
@@ -54,6 +58,7 @@ export function useDesktopReloadGuard(
   useEffect(() => {
     const handler = (reload: () => void) => {
       const finish = () => {
+        const { pendingSurfaceIds, options } = currentRef.current;
         const pending = options.getPendingSurfaceIds?.() ?? pendingSurfaceIds;
         if (pending.size > 0) {
           runAfterPendingSave([...pending], finish);
@@ -67,5 +72,5 @@ export function useDesktopReloadGuard(
     return () => {
       if (beforeReload === handler) beforeReload = null;
     };
-  }, [options, pendingSurfaceIds, runAfterPendingSave]);
+  }, [runAfterPendingSave]);
 }

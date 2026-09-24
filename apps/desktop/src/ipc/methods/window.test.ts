@@ -238,9 +238,11 @@ describe("reloadMainWindow", () => {
 
       assert.isTrue(yield* reloadMainWindow.handler(false, { sender: { id: 42 } }));
       assert.equal(reload.mock.calls.length, 1);
-      contents.emit("did-start-navigation");
+      contents.emit("did-finish-load");
+      assert.equal(contents.listenerCount("will-prevent-unload"), 0);
       assert.isTrue(yield* reloadMainWindow.handler(true, { sender: { id: 42 } }));
       assert.equal(reloadIgnoringCache.mock.calls.length, 1);
+      contents.emit("did-start-navigation");
       contents.emit("will-prevent-unload");
       assert.deepEqual(contents.send.mock.calls, [["desktop:reload-blocked"]]);
       assert.equal(contents.listenerCount("will-prevent-unload"), 0);

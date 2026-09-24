@@ -27,6 +27,39 @@ afterEach(async () => {
 });
 
 describe("desktop reload", () => {
+  it.each([false, true])(
+    "rechecks the latest render while another file becomes pending (getter: %s)",
+    async (withGetter) => {
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      const reloadMainWindow = vi.fn(async () => true);
+      Object.defineProperty(window, "desktopBridge", {
+        configurable: true,
+        value: { reloadMainWindow },
+      });
+      const onFlush = vi.fn();
+      const host = document.createElement("div");
+      document.body.append(host);
+      const root = createRoot(host);
+      mountedRoots.push(root);
+      function Harness({ pending }: { pending: ReadonlySet<string> }) {
+        useDesktopReloadGuard(
+          pending,
+          { onFlush, ...(withGetter ? { getPendingSurfaceIds: () => pending } : {}) },
+          () => undefined,
+        );
+        return null;
+      }
+
+      await act(() => root.render(<Harness pending={new Set(["first"])} />));
+      await act(() => requestDesktopReload(false));
+      await act(() => root.render(<Harness pending={new Set(["second"])} />));
+      expect(reloadMainWindow).not.toHaveBeenCalled();
+      expect(onFlush).toHaveBeenLastCalledWith(["second"]);
+      await act(() => root.render(<Harness pending={new Set()} />));
+      expect(reloadMainWindow).toHaveBeenCalledExactlyOnceWith(false);
+    },
+  );
+
   it("waits for live pending files to save before reloading the main window", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     const reloadMainWindow = vi.fn(async () => true);

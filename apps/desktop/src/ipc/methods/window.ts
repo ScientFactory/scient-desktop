@@ -69,13 +69,13 @@ export const reloadMainWindow = DesktopIpc.makeIpcMethod({
       contents.send(IpcChannels.RELOAD_BLOCKED_CHANNEL);
       cleanup();
     };
-    const started = () => cleanup();
+    const finished = () => cleanup();
     const cleanup = () => {
       contents.off("will-prevent-unload", blocked);
-      contents.off("did-start-navigation", started);
+      contents.off("did-finish-load", finished);
     };
     contents.on("will-prevent-unload", blocked);
-    contents.on("did-start-navigation", started);
+    contents.on("did-finish-load", finished);
     yield* Effect.forkDetach(Effect.sleep("5 seconds").pipe(Effect.tap(Effect.sync(cleanup))));
     try {
       if (ignoreCache) contents.reloadIgnoringCache();
