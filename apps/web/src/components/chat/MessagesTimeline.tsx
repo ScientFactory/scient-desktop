@@ -4788,6 +4788,7 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
       workEntryRawCommand(workEntry) ||
       workEntry.command?.trim() ||
       workEntry.detail?.trim() ||
+      workEntry.externalUrl ||
       workEntry.changedFiles?.length ||
       viewedImage,
     );
@@ -4934,6 +4935,19 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
       ) : null}
       {expanded && workEntry.questionAnswer ? (
         <QuestionAnswerHistory answer={workEntry.questionAnswer} />
+      ) : null}
+      {expanded && workEntry.externalUrl ? (
+        <div className="mt-1 ms-7 cursor-default" onClick={stopRowToggle}>
+          <a
+            className="text-sm text-primary underline underline-offset-2"
+            href={workEntry.externalUrl.href}
+            target="_blank"
+            rel="noreferrer"
+            onClick={stopRowToggle}
+          >
+            Open Oh My Pi browser action
+          </a>
+        </div>
       ) : null}
       {expanded && canExpand && expandedBody && !workEntry.questionAnswer ? (
         <div

@@ -3,7 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import { ProviderInstanceId, ThreadId, type ProviderRuntimeEvent } from "@t3tools/contracts";
 import { describe, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -152,6 +152,32 @@ describe("Oh My Pi adapter", () => {
       NodeAssert.ok(other.resumeCursor);
 
       const started = yield* adapter.sendTurn({ threadId, input: "Explain the result." });
+      const openUrlWarnings = yield* Queue.unbounded<ProviderRuntimeEvent>();
+      yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) =>
+          event.type === "runtime.warning"
+            ? Queue.offer(openUrlWarnings, event).pipe(Effect.asVoid)
+            : Effect.void,
+        ),
+        Effect.forkScoped,
+      );
+      yield* Queue.offer(firstEvents, {
+        _tag: "Event",
+        event: {
+          type: "extension_ui_request",
+          method: "open_url",
+          url: "https://example.com/authorize",
+          launchUrl: "http://127.0.0.1:43199/launch",
+        },
+      });
+      NodeAssert.deepEqual((yield* Queue.take(openUrlWarnings)).payload, {
+        message: "Oh My Pi requested a browser action.",
+        detail: {
+          kind: "open-url",
+          url: "https://example.com/authorize",
+          launchUrl: "http://127.0.0.1:43199/launch",
+        },
+      });
       yield* Queue.offer(firstEvents, {
         _tag: "Event",
         event: { type: "agent_end", isTerminal: false, messages: [] },

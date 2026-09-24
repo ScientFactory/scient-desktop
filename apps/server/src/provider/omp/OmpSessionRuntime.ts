@@ -83,6 +83,12 @@ export type OmpSessionUpdate =
     }
   | { readonly type: "question-resolved"; readonly id: string }
   | { readonly type: "questions-cleared"; readonly ids: ReadonlyArray<string> }
+  | {
+      readonly type: "open-url";
+      readonly url: string;
+      readonly launchUrl?: string;
+      readonly instructions?: string;
+    }
   | { readonly type: "compacted" }
   | { readonly type: "model-changed"; readonly model?: string; readonly thinkingLevel?: string }
   | { readonly type: "warning"; readonly message: string }
@@ -270,6 +276,7 @@ const ignoredLifecycleEvents = new Set([
   "turn_end",
   "auto_retry_start",
   "auto_retry_end",
+  "auto_compaction_start",
   "retry_fallback_applied",
   "retry_fallback_succeeded",
   "config_update",
@@ -481,6 +488,20 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
           yield* publish({ type: "question-resolved", id: target });
         return;
       }
+      if (method === "open_url") {
+        const url = text(event.url);
+        if (url) {
+          const launchUrl = text(event.launchUrl);
+          const instructions = text(event.instructions);
+          yield* publish({
+            type: "open-url",
+            url,
+            ...(launchUrl ? { launchUrl } : {}),
+            ...(instructions ? { instructions } : {}),
+          });
+        }
+        return;
+      }
       if (
         !id ||
         (method !== "select" && method !== "confirm" && method !== "input" && method !== "editor")
@@ -623,6 +644,20 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         } else if (update.type === "thinking_delta" && delta.length > 0) {
           const messageId = yield* ensureAssistant();
           yield* publish({ type: "reasoning-delta", messageId, delta });
+        }
+        return;
+      }
+      if (event.type === "tool_stream_update") {
+        const toolCallId = text(event.toolCallId);
+        if (toolCallId) {
+          yield* publish({
+            type: "tool",
+            phase: "updated",
+            toolCallId,
+            name: "tool",
+            status: "inProgress",
+            data: event.update,
+          });
         }
         return;
       }

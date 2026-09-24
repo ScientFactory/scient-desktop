@@ -275,6 +275,29 @@ describe("Oh My Pi session runtime", () => {
     }),
   );
 
+  it.effect("surfaces extension browser actions without treating them as questions", () =>
+    Effect.gen(function* () {
+      const harness = yield* runtimeHarness();
+      yield* Queue.offer(harness.events, {
+        _tag: "Event",
+        event: {
+          type: "extension_ui_request",
+          method: "open_url",
+          url: "https://example.com/authorize",
+          launchUrl: "http://127.0.0.1:1234/launch",
+          instructions: "Finish sign-in",
+        },
+      });
+      expect(yield* takeUpdate(harness.updates)).toMatchObject({
+        type: "open-url",
+        url: "https://example.com/authorize",
+        launchUrl: "http://127.0.0.1:1234/launch",
+        instructions: "Finish sign-in",
+      });
+      yield* Scope.close(harness.scope, Exit.void);
+    }),
+  );
+
   it.effect("settles an accepted turn as cancelled when abort wins before agent start", () =>
     Effect.gen(function* () {
       const harness = yield* runtimeHarness();

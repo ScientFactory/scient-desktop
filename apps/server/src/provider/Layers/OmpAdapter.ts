@@ -220,6 +220,15 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
 
   const validation = (operation: string, issue: string) =>
     new ProviderAdapterValidationError({ provider: PROVIDER, operation, issue });
+  const externalHttpUrl = (value: string | undefined): string | undefined => {
+    if (!value) return undefined;
+    try {
+      const url = new URL(value);
+      return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : undefined;
+    } catch {
+      return undefined;
+    }
+  };
   const request = (method: string, detail: string, cause?: unknown) => {
     const normalized = detail.replace(/\s+/gu, " ").trim();
     const safeDetail = normalized.length > 512 ? `${normalized.slice(0, 512)}…` : normalized;
@@ -544,6 +553,33 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
             payload: { answers: {} },
           });
         }
+        return;
+      }
+      if (update.type === "open-url") {
+        const url = externalHttpUrl(update.url);
+        if (!url) {
+          const base = yield* eventBase(ctx);
+          yield* offer({
+            type: "runtime.warning",
+            ...base,
+            payload: { message: "Oh My Pi requested an invalid browser URL." },
+          });
+          return;
+        }
+        const launchUrl = externalHttpUrl(update.launchUrl);
+        const base = yield* eventBase(ctx);
+        yield* offer({
+          type: "runtime.warning",
+          ...base,
+          payload: {
+            message: update.instructions ?? "Oh My Pi requested a browser action.",
+            detail: {
+              kind: "open-url",
+              url,
+              ...(launchUrl ? { launchUrl } : {}),
+            },
+          },
+        });
         return;
       }
       if (update.type === "compacted") {

@@ -118,6 +118,7 @@ export interface WorkLogEntry {
   toolCallId?: string;
   label: string;
   detail?: string;
+  externalUrl?: { readonly href: string };
   viewedImagePath?: string;
   command?: string;
   rawCommand?: string;
@@ -682,6 +683,19 @@ function scientSkillUsageLabel(itemValue: unknown): string | null {
 }
 const decodeQuestionAttachmentAnswer = Schema.decodeUnknownOption(UserInputAttachmentAnswerPayload);
 
+function externalOpenUrl(payload: Record<string, unknown> | null): string | null {
+  const detail = asRecord(payload?.detail);
+  if (detail?.kind !== "open-url") return null;
+  const value = asTrimmedString(detail.url);
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
 function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWorkLogEntry {
   const cachedEntry = derivedWorkLogEntryByActivity.get(activity);
   if (cachedEntry) {
@@ -750,6 +764,11 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     ) {
       entry.detail = message;
     }
+  }
+  const externalUrl = externalOpenUrl(payload);
+  if (externalUrl) {
+    entry.externalUrl = { href: externalUrl };
+    entry.detail = [entry.detail, externalUrl].filter(Boolean).join("\n\n");
   }
   if (viewedImagePath) {
     entry.viewedImagePath = viewedImagePath;

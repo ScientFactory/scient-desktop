@@ -134,6 +134,7 @@ export const OmpRpcEvent = Schema.Struct({
   args: maybeUnknown,
   isError: maybeBoolean,
   partialResult: maybeUnknown,
+  update: maybeUnknown,
   result: maybeUnknown,
   arguments: maybeUnknown,
   output: maybeString,
