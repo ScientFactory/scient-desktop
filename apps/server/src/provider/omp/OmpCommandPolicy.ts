@@ -94,7 +94,7 @@ export const compileOmpCommandCatalog = (
 
 const ompSlashCommandName = (input: string): string | undefined => {
   if (!input.startsWith("/")) return undefined;
-  return clean(input.slice(1).split(" ", 1)[0]);
+  return clean(input.slice(1).split(/\s/u, 1)[0]);
 };
 
 export type OmpCommandDecision = "not-a-command" | "allowed" | "mutator" | "unavailable";
@@ -108,7 +108,7 @@ export const ompCommandDecision = (
   if (name === "session") {
     if (!catalog.known.has("session")) return "unavailable";
     const rest = input.slice("/session".length).trim();
-    return rest === "info" || rest.startsWith("info ") ? "allowed" : "mutator";
+    return rest === "info" || /^info\s/u.test(rest) ? "allowed" : "mutator";
   }
   if (mutators.has(name)) return "mutator";
   if (catalog.allowed.has(name)) return "allowed";

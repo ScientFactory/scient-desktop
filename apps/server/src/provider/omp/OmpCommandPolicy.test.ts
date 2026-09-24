@@ -23,6 +23,7 @@ describe("Oh My Pi command policy", () => {
     expect(ompCommandDecision("/n", catalog)).toBe("mutator");
     expect(ompCommandDecision("/session delete", catalog)).toBe("mutator");
     expect(ompCommandDecision("/session info", catalog)).toBe("allowed");
+    expect(ompCommandDecision("/session\tinfo", catalog)).toBe("allowed");
     expect(ompCommandDecision("/unknown", catalog)).toBe("unavailable");
   });
 
