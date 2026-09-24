@@ -179,8 +179,10 @@ Performed on the composed candidate and the review-corrected working tree:
 
 The original hosted CI run for the pre-review head exposed the three server
 composition failures described above. They were reproduced locally, corrected,
-and covered by the final local suite; the follow-up hosted run remains the
-final external qualification.
+and covered by the final local suite. The follow-up hosted run for review
+commit `99d5cdb84e53159fd7068e3a1dfed02b8224f121` passed every required check;
+mobile EAS preview and hosted web deployment remained intentionally skipped by
+Scient's publication holds.
 
 ## Publication boundary
 
