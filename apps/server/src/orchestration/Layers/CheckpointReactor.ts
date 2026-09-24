@@ -403,17 +403,17 @@ const make = Effect.gen(function* () {
     function* (event: Extract<ProviderRuntimeEvent, { type: "turn.completed" | "turn.aborted" }>) {
       const turnId = toTurnId(event.turnId);
       if (!turnId) {
-        return;
+        return "not-applicable" as const;
       }
 
       const thread = yield* resolveThreadDetail(event.threadId);
       if (!thread) {
-        return;
+        return "not-applicable" as const;
       }
 
       // When a primary turn is active, only that turn may produce completion checkpoints.
       if (thread.session?.activeTurnId && !sameId(thread.session.activeTurnId, turnId)) {
-        return;
+        return "not-applicable" as const;
       }
 
       // Only skip if a real (non-placeholder) checkpoint already exists for this turn.
@@ -424,7 +424,7 @@ const make = Effect.gen(function* () {
           (checkpoint) => checkpoint.turnId === turnId && checkpoint.status !== "missing",
         )
       ) {
-        return;
+        return "already-captured" as const;
       }
 
       const projects = yield* resolveThreadProjects(thread.projectId);
@@ -435,7 +435,7 @@ const make = Effect.gen(function* () {
         preferSessionRuntime: true,
       });
       if (!checkpointCwd) {
-        return;
+        return "unavailable" as const;
       }
 
       // If a placeholder checkpoint exists for this turn, reuse its turn count
@@ -464,6 +464,7 @@ const make = Effect.gen(function* () {
         assistantMessageId: existingPlaceholder?.assistantMessageId ?? undefined,
         createdAt: event.createdAt,
       });
+      return "captured" as const;
     },
   );
 
@@ -972,55 +973,66 @@ const make = Effect.gen(function* () {
 
     if (event.type === "turn.completed" || event.type === "turn.aborted") {
       const turnId = toTurnId(event.turnId);
-      const thread = yield* resolveThreadDetail(event.threadId);
-      const startedTurnId = startedTurns.get(event.threadId);
-      const isTrackedTurn = sameId(startedTurnId, turnId);
-      if (isTrackedTurn) startedTurns.delete(event.threadId);
-      if (event.type === "turn.completed") {
-        yield* statusRefreshWorker.enqueue(event);
-      }
-      if (
-        turnId !== null &&
-        thread !== undefined &&
-        thread.projectId !== null &&
-        (isTrackedTurn ||
-          sameId(thread.session?.activeTurnId, turnId) ||
-          (startedTurnId === undefined && !thread.session?.activeTurnId))
-      ) {
-        pending.delete(event.threadId);
-        yield* pullRequests.refreshAfterTurn(thread.projectId);
-      }
-      if (
-        event.type === "turn.aborted" &&
-        !isTrackedTurn &&
-        !sameId(thread?.session?.activeTurnId, turnId)
-      )
-        return;
-      // Capture edits from aborted turns too, but do not treat abort as successful
-      // queue delivery. Both queue barrier halves still settle for tracked turns.
-      let checkpointSuccessful = event.type === "turn.completed";
-      yield* captureCheckpointFromTurnCompletion(event).pipe(
-        Effect.tapError(() =>
-          Effect.sync(() => {
-            checkpointSuccessful = false;
-          }),
-        ),
-        Effect.catch((error) =>
-          Effect.flatMap(nowIso, (createdAt) =>
-            appendCaptureFailureActivity({
-              threadId: event.threadId,
-              turnId,
-              detail: error.message,
-              createdAt,
-            }).pipe(Effect.catch(() => Effect.void)),
+      // The checkpoint barrier must settle even when projection lookup, status
+      // refresh, or PR refresh fails before capture can begin. Answer success
+      // (not checkpoint success) determines whether queued messages continue.
+      yield* Effect.gen(function* () {
+        const startedTurnId = startedTurns.get(event.threadId);
+        const isTrackedTurn = sameId(startedTurnId, turnId);
+        if (isTrackedTurn) startedTurns.delete(event.threadId);
+        const thread = yield* resolveThreadDetail(event.threadId);
+        if (event.type === "turn.completed") {
+          yield* statusRefreshWorker.enqueue(event);
+        }
+        if (
+          turnId !== null &&
+          thread !== undefined &&
+          thread.projectId !== null &&
+          (isTrackedTurn ||
+            sameId(thread.session?.activeTurnId, turnId) ||
+            (startedTurnId === undefined && !thread.session?.activeTurnId))
+        ) {
+          pending.delete(event.threadId);
+          yield* pullRequests.refreshAfterTurn(thread.projectId);
+        }
+        if (
+          event.type === "turn.aborted" &&
+          !isTrackedTurn &&
+          !sameId(thread?.session?.activeTurnId, turnId)
+        )
+          return;
+        const outcome = yield* captureCheckpointFromTurnCompletion(event).pipe(
+          Effect.catch((error) =>
+            Effect.flatMap(nowIso, (createdAt) =>
+              appendCaptureFailureActivity({
+                threadId: event.threadId,
+                turnId,
+                detail: error.message,
+                createdAt,
+              }).pipe(
+                Effect.catch(() => Effect.void),
+                Effect.as("failed" as const),
+              ),
+            ),
           ),
+        );
+        if (outcome === "unavailable" || outcome === "failed") {
+          yield* Effect.logInfo("checkpoint capture settled without a rewind point", {
+            threadId: event.threadId,
+            turnId,
+            outcome,
+          });
+        }
+      }).pipe(
+        Effect.ensuring(
+          turnId === null
+            ? Effect.void
+            : finalizeQueueTurn(event.threadId, turnId, true, "checkpoint").pipe(
+                Effect.provideService(SqlClient.SqlClient, queueSql),
+                Effect.orDie,
+              ),
         ),
       );
-      if (turnId)
-        yield* finalizeQueueTurn(event.threadId, turnId, checkpointSuccessful, "checkpoint").pipe(
-          Effect.provideService(SqlClient.SqlClient, queueSql),
-          Effect.orDie,
-        );
       return;
     }
   });
