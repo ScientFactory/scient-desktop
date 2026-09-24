@@ -344,7 +344,10 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           yield* offer({
             type: "turn.completed",
             ...stamped,
-            payload: { state: "failed", errorMessage: "Oh My Pi failed this turn." },
+            payload: {
+              state: "failed",
+              errorMessage: update.detail ?? "Oh My Pi failed this turn.",
+            },
           });
         } else {
           yield* offer({ type: "turn.completed", ...stamped, payload: { state: "completed" } });
@@ -420,7 +423,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       if (update.type === "tool") {
         const itemId =
           ctx.toolItems.get(update.toolCallId) ??
-          RuntimeItemId.make(`omp-tool:${update.toolCallId}`);
+          RuntimeItemId.make(`omp-tool:${ctx.turnId ?? "turn"}:${update.toolCallId}`);
         ctx.toolItems.set(update.toolCallId, itemId);
         const base = yield* eventBase(ctx);
         const payload = {
@@ -997,9 +1000,9 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
             : ctx.model;
           if (
             input.attachments?.some((attachment) => attachment.type === "image") &&
-            requestedModel &&
-            ctx.knownModels.has(requestedModel) &&
-            !ctx.imageModels.has(requestedModel)
+            (!requestedModel ||
+              !ctx.knownModels.has(requestedModel) ||
+              !ctx.imageModels.has(requestedModel))
           ) {
             return yield* validation(
               "sendTurn",

@@ -236,6 +236,27 @@ describe("Oh My Pi session runtime", () => {
     }),
   );
 
+  it.effect("preserves the provider failure detail", () =>
+    Effect.gen(function* () {
+      const harness = yield* runtimeHarness();
+      yield* harness.runtime.begin("turn-failure");
+      yield* takeUpdate(harness.updates);
+      yield* harness.runtime.accepted("prompt-failure", true);
+      yield* Queue.offer(harness.events, {
+        _tag: "AsyncCommandFailure",
+        id: "prompt-failure",
+        command: "prompt",
+        error: "provider scheduling failed",
+      });
+      expect(yield* takeUpdate(harness.updates)).toMatchObject({
+        type: "turn-outcome",
+        outcome: "failed",
+        detail: "provider scheduling failed",
+      });
+      yield* Scope.close(harness.scope, Exit.void);
+    }),
+  );
+
   it.effect("settles a missing-id local prompt_result", () =>
     Effect.gen(function* () {
       const harness = yield* runtimeHarness();

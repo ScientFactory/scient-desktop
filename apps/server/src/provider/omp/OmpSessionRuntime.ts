@@ -48,6 +48,7 @@ export type OmpSessionUpdate =
   | {
       readonly type: "turn-outcome";
       readonly outcome: OmpTurnOutcome;
+      readonly detail?: string;
       readonly requestId?: string;
       readonly source?: "process" | "unconfirmed";
     }
@@ -127,6 +128,9 @@ export interface OmpSessionRuntime {
 
 const text = (value: unknown): string | undefined =>
   typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+
+const rawText = (value: unknown): string | undefined =>
+  typeof value === "string" && value.length > 0 ? value : undefined;
 
 const clip = (value: string | undefined): string | undefined => {
   const trimmed = value?.trim();
@@ -291,6 +295,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
   let activeAssistantInitialText = "";
   let activeAssistantHasDelta = false;
   let assistantMessageSeen = false;
+  let failureDetail: string | undefined;
   let drainRetries = 0;
   let drainRetryPending = false;
   let pendingDrainState: OmpRpcState | undefined;
@@ -337,6 +342,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         outcome,
         ...(requestId ? { requestId } : {}),
         ...(source ? { source } : {}),
+        ...(outcome === "failed" && failureDetail ? { detail: failureDetail } : {}),
       });
       if (turnSettled) {
         yield* Deferred.succeed(turnSettled, undefined);
@@ -654,7 +660,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         yield* publish({
           type: "subagent",
           id,
-          title: subagentTitle(event) ?? (status === "inProgress" ? "Subagent" : "Subagent"),
+          title: subagentTitle(event) ?? "Subagent",
           status,
           ...(detail ? { detail } : {}),
         });
@@ -662,7 +668,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       }
       if (event.type === "subagent_event") return;
       if (event.type === "command_output" && turnIsOpen(turn)) {
-        const output = text(event.output) ?? text(event.text) ?? text(event.delta);
+        const output = rawText(event.output) ?? rawText(event.text) ?? rawText(event.delta);
         if (output) yield* publish({ type: "command-output", delta: output });
         return;
       }
@@ -733,6 +739,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         return;
       }
       if (notification._tag === "AsyncCommandFailure") {
+        failureDetail = notification.error;
         yield* applySignal({ type: "prompt-failed", requestId: notification.id });
         return;
       }
@@ -751,6 +758,8 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         assistantMessageSeen = false;
         drainRetries = 0;
         drainRetryPending = false;
+        pendingDrainState = undefined;
+        failureDetail = undefined;
         yield* applySignal({ type: "begin" });
         yield* publish({ type: "turn-started", turnId: item.turnId });
         yield* Deferred.succeed(item.done, undefined);
