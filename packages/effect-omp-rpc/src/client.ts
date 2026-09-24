@@ -546,7 +546,7 @@ export const makeOmpRpcClient = Effect.fn("OmpRpcClient.make")(function* (
     hostUriResult: (result) => writeFrame({ type: "host_uri_result", ...result }),
     close: () =>
       (io.close ?? Effect.void).pipe(
-        Effect.andThen(end(new OmpRpcProcessExitedError({ detail: "RPC client closed." }))),
+        Effect.ensuring(end(new OmpRpcProcessExitedError({ detail: "RPC client closed." }))),
         Effect.ignore,
       ),
   };

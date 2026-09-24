@@ -6,7 +6,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { makeOmpRpcClient } from "./client.ts";
-import { OmpRpcCommandError, OmpRpcProtocolError } from "./errors.ts";
+import { OmpRpcCommandError, OmpRpcProcessExitedError, OmpRpcProtocolError } from "./errors.ts";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -233,6 +233,36 @@ describe("Oh My Pi RPC client", () => {
         const failed = yield* client.prompt({ message: "x".repeat(2_000_000) }).pipe(Effect.flip);
         expect(failed).toBeInstanceOf(OmpRpcProtocolError);
         expect(yield* Queue.size(stdin)).toBe(0);
+      }),
+    ),
+  );
+
+  it.effect("ends the event stream even when transport close fails", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const stdout = yield* Queue.unbounded<Uint8Array>();
+        const stdin = yield* Queue.unbounded<string>();
+        const client = yield* makeOmpRpcClient({
+          stdout: Stream.fromQueue(stdout),
+          write: (bytes) => Queue.offer(stdin, decoder.decode(bytes)).pipe(Effect.asVoid),
+          close: Effect.fail(new OmpRpcProcessExitedError({ detail: "close failed" })),
+        });
+        yield* negotiate(stdout, stdin);
+        const state = yield* client.getState().pipe(Effect.forkScoped);
+        const request = decodeCommand(yield* Queue.take(stdin));
+        yield* Queue.offer(
+          stdout,
+          line({
+            id: request.id,
+            type: "response",
+            command: "get_state",
+            success: true,
+            data: { sessionId: "session-1", isStreaming: false },
+          }),
+        );
+        yield* Fiber.join(state);
+        yield* client.close();
+        expect(yield* client.events.pipe(Stream.runCollect)).toEqual([]);
       }),
     ),
   );
