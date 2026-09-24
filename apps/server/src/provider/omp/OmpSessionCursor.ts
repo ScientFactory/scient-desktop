@@ -66,8 +66,19 @@ export const ompLaunchPolicyFingerprint = (): string =>
 export const ompSessionDirectoryKey = (instanceId: string, threadId: string): string =>
   NodeCrypto.createHash("sha256").update(`${instanceId}\0${threadId}`).digest("hex").slice(0, 32);
 
-export const ompBinaryFingerprint = (binaryPath: string, pathValue?: string): string =>
-  fingerprint(["binary", NodePath.resolve(binaryPath), pathValue ?? ""]);
+/**
+ * A Scient-managed binary lives under `versions/<release>/`. Resume identity
+ * keeps the managed family and drops that release directory, so a qualified
+ * update can reopen the same session. A custom or system binary stays exact.
+ */
+export const ompBinaryFingerprint = (binaryPath: string, pathValue?: string): string => {
+  const resolved = NodePath.resolve(binaryPath).replaceAll("\\", "/");
+  const managed = resolved.replace(
+    /\/provider-runtimes\/omp\/versions\/[^/]+\//u,
+    "/provider-runtimes/omp/versions/current/",
+  );
+  return fingerprint(["binary", managed, pathValue ?? ""]);
+};
 
 /** Resume across patch versions of the same major. A different major is refused. */
 export const ompMajorCompatible = (stored: string, running: string): boolean => {

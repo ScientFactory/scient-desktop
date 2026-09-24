@@ -25,6 +25,17 @@ const identity = (overrides: Partial<OmpResumeIdentity> = {}): OmpResumeIdentity
 });
 
 describe("Oh My Pi session cursor", () => {
+  it("keeps a Scient-managed binary identity across qualified versions", () => {
+    const current = ompBinaryFingerprint(
+      "/Library/Scient/provider-runtimes/omp/versions/18.2.8/darwin-arm64/omp",
+    );
+    const next = ompBinaryFingerprint(
+      "/Library/Scient/provider-runtimes/omp/versions/18.3.0/darwin-arm64/omp",
+    );
+    expect(current).toBe(next);
+    expect(ompBinaryFingerprint("/usr/local/bin/omp")).not.toBe(current);
+  });
+
   it("keeps a session file inside its directory and rejects lexical escapes", () => {
     expect(sessionFileInsideRoot("/state/omp/thread", "/state/omp/thread/session.jsonl")).toBe(
       "session.jsonl",

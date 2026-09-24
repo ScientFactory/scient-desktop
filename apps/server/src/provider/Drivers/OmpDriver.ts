@@ -1,9 +1,4 @@
-import {
-  OmpSettings,
-  ProviderDriverKind,
-  type ProviderConnectionSummary,
-  type ServerProvider,
-} from "@t3tools/contracts";
+import { OmpSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -15,6 +10,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { BackgroundPolicy } from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { makeOmpManagedRuntimeResolution } from "../../scient/providerLifecycle/OmpManagedRuntimeActions.ts";
 import { makeOmpTextGeneration } from "../../textGeneration/OmpTextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeOmpAdapter } from "../Layers/OmpAdapter.ts";
@@ -37,6 +33,7 @@ import {
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   makeCachedProviderMaintenanceResolution,
+  makeManualOnlyProviderMaintenanceCapabilities,
   resolveProviderMaintenanceCapabilitiesEffect,
 } from "../providerMaintenance.ts";
 import {
@@ -48,18 +45,6 @@ import { withInstanceIdentity } from "./instanceIdentity.ts";
 
 const DRIVER_KIND = ProviderDriverKind.make("omp");
 const decodeSettings = Schema.decodeSync(OmpSettings);
-
-const manualRuntime = {
-  source: "system",
-  supportTier: "manual_or_advanced_only",
-  target: "current-platform",
-  actions: [],
-  managedVersion: null,
-  previousManagedVersion: null,
-  operation: null,
-  message:
-    "Scient uses the Oh My Pi executable you install. It does not download, update, or sign in to Oh My Pi.",
-} as const satisfies NonNullable<ProviderConnectionSummary["runtime"]>;
 
 export type OmpDriverEnv =
   | BackgroundPolicy
@@ -97,6 +82,17 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
       }
       if (home.length > 0) processEnv[OMP_AGENT_DIR_ENV] = expandHomePath(home);
       if (profile.length > 0) processEnv[OMP_PROFILE_ENV] = profile;
+      const managedRuntime = yield* makeOmpManagedRuntimeResolution({
+        settings: effectiveConfig,
+        baseDir: serverConfig.baseDir,
+        environment: processEnv,
+        spawner,
+        managedInstallationAllowed: serverConfig.mode === "desktop",
+      });
+      const launchConfig = {
+        ...effectiveConfig,
+        binaryPath: managedRuntime.effectiveBinaryPath,
+      } satisfies OmpSettings;
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
         instanceId,
@@ -114,11 +110,11 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
           methods: [],
           canDisconnect: false,
           operation: null,
-          runtime: manualRuntime,
+          runtime: managedRuntime.summary,
         },
       });
       const adapter = yield* makeOmpAdapter({
-        binaryPath: effectiveConfig.binaryPath,
+        binaryPath: launchConfig.binaryPath,
         providerInstanceId: instanceId,
         stateDir: serverConfig.stateDir,
         attachmentsDir: serverConfig.attachmentsDir,
@@ -129,16 +125,24 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
       );
-      const textGeneration = yield* makeOmpTextGeneration(effectiveConfig, processEnv).pipe(
+      const textGeneration = yield* makeOmpTextGeneration(launchConfig, processEnv).pipe(
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
       );
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
       const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
-        resolveProviderMaintenanceCapabilitiesEffect(ompMaintenance, {
-          binaryPath: effectiveConfig.binaryPath,
-          env: processEnv,
-        }).pipe(
+        (managedRuntime.usesManagedPath
+          ? Effect.succeed(
+              makeManualOnlyProviderMaintenanceCapabilities({
+                provider: DRIVER_KIND,
+                packageName: null,
+              }),
+            )
+          : resolveProviderMaintenanceCapabilitiesEffect(ompMaintenance, {
+              binaryPath: launchConfig.binaryPath,
+              env: processEnv,
+            })
+        ).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.provideService(FileSystem.FileSystem, fs),
           Effect.provideService(Path.Path, path),
@@ -151,7 +155,7 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
         haveSettingsChanged: haveProviderSnapshotSettingsChanged,
         initialSnapshot: (settings) =>
           makePendingOmpProvider(settings.provider).pipe(Effect.map(stamp)),
-        checkProvider: checkOmpProviderStatus(effectiveConfig, processEnv).pipe(
+        checkProvider: checkOmpProviderStatus(launchConfig, processEnv).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.provideService(FileSystem.FileSystem, fs),
           Effect.provideService(Path.Path, path),
@@ -160,10 +164,12 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
         enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
           resolveMaintenance().pipe(
             Effect.flatMap((capabilities) =>
-              withOmpReleaseVersion(
-                capabilities,
-                settings.enableProviderUpdateChecks !== false && currentSnapshot.enabled,
-              ),
+              managedRuntime.usesManagedPath
+                ? Effect.succeed(capabilities)
+                : withOmpReleaseVersion(
+                    capabilities,
+                    settings.enableProviderUpdateChecks !== false && currentSnapshot.enabled,
+                  ),
             ),
             Effect.flatMap((capabilities) =>
               enrichProviderSnapshotWithVersionAdvisory(currentSnapshot, capabilities, {
@@ -205,7 +211,7 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
         enabled,
         snapshot,
         snapshotForCwd: (cwd) =>
-          checkOmpProviderStatus(effectiveConfig, processEnv, undefined, cwd).pipe(
+          checkOmpProviderStatus(launchConfig, processEnv, undefined, cwd).pipe(
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
             Effect.provideService(FileSystem.FileSystem, fs),
             Effect.provideService(Path.Path, path),

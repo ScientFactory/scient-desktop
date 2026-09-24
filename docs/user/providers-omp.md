@@ -6,7 +6,9 @@ interface. It does not embed Oh My Pi's Bun SDK, and it does not run Oh My Pi th
 Oh My Pi keeps its own home, credentials, skills, extensions, and model sign-in. Scient does not
 download Oh My Pi or offer a universal sign-in. When provider update checks are on, Scient notices a
 newer stable release in the same major version. It does not run Oh My Pi's updater or a package
-manager. Update that installation with Oh My Pi or the tool that installed it. Enable Oh My Pi
+manager. Update that installation with Oh My Pi or the tool that installed it. On the desktop app for
+macOS Apple silicon, Scient can also install a private Oh My Pi 18.2.8. That copy updates only
+when a reviewed catalog release is newer, and only after you click Update. Enable Oh My Pi
 only after `omp` 18.2.8 or newer is installed and available to the Scient server.
 
 ## Setup
