@@ -29,9 +29,11 @@ import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import { OMP_AGENT_DIR_ENV, OMP_PROFILE_ENV } from "../omp/OmpRpcProcess.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
+import { ompMaintenance, withOmpReleaseVersion } from "../omp/OmpMaintenance.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
-  makeManualOnlyProviderMaintenanceCapabilities,
+  makeCachedProviderMaintenanceResolution,
+  resolveProviderMaintenanceCapabilitiesEffect,
 } from "../providerMaintenance.ts";
 import {
   haveProviderSnapshotSettingsChanged,
@@ -42,10 +44,6 @@ import { withInstanceIdentity } from "./instanceIdentity.ts";
 
 const DRIVER_KIND = ProviderDriverKind.make("omp");
 const decodeSettings = Schema.decodeSync(OmpSettings);
-const MAINTENANCE = makeManualOnlyProviderMaintenanceCapabilities({
-  provider: DRIVER_KIND,
-  packageName: null,
-});
 
 const manualRuntime = {
   source: "system",
@@ -132,8 +130,18 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
         Effect.provideService(Path.Path, path),
       );
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
+      const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
+        resolveProviderMaintenanceCapabilitiesEffect(ompMaintenance, {
+          binaryPath: effectiveConfig.binaryPath,
+          env: processEnv,
+        }).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, path),
+        ),
+      );
       const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<OmpSettings>>({
-        resolveMaintenance: () => Effect.succeed(MAINTENANCE),
+        resolveMaintenance,
         getSettings: snapshotSettings.getSettings,
         streamSettings: snapshotSettings.streamSettings,
         haveSettingsChanged: haveProviderSnapshotSettingsChanged,
@@ -146,9 +154,18 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
           Effect.map(stamp),
         ),
         enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
-          enrichProviderSnapshotWithVersionAdvisory(currentSnapshot, MAINTENANCE, {
-            enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
-          }).pipe(
+          resolveMaintenance().pipe(
+            Effect.flatMap((capabilities) =>
+              withOmpReleaseVersion(
+                capabilities,
+                settings.enableProviderUpdateChecks !== false && currentSnapshot.enabled,
+              ),
+            ),
+            Effect.flatMap((capabilities) =>
+              enrichProviderSnapshotWithVersionAdvisory(currentSnapshot, capabilities, {
+                enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
+              }),
+            ),
             Effect.provideService(HttpClient.HttpClient, httpClient),
             Effect.flatMap(publishSnapshot),
           ),

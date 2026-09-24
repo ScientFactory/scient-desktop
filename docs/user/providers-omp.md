@@ -4,8 +4,10 @@ Oh My Pi is an external coding agent. Scient talks to the `omp` executable over 
 interface. It does not embed Oh My Pi's Bun SDK, and it does not run Oh My Pi through ACP.
 
 Oh My Pi keeps its own home, credentials, skills, extensions, and model sign-in. Scient does not
-download Oh My Pi, update it, or offer a universal sign-in. Enable it only after `omp` 18.2.8 or
-newer is installed and available to the Scient server.
+download Oh My Pi or offer a universal sign-in. When provider update checks are on, Scient notices a
+newer release. A Bun, npm, pnpm, or Homebrew install can then be updated with that installer's own
+command. A GitHub release binary or a custom path only shows the newer version. Enable Oh My Pi
+only after `omp` 18.2.8 or newer is installed and available to the Scient server.
 
 ## Setup
 
