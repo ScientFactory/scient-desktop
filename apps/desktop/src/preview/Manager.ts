@@ -570,7 +570,6 @@ export const isPreviewRefreshShortcut = (input: Electron.Input): boolean =>
   input.type === "keyDown" &&
   input.key.toLowerCase() === "r" &&
   (input.meta || input.control) &&
-  !input.shift &&
   !input.alt;
 
 export const isPreviewEditingShortcut = (
@@ -2025,9 +2024,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       if (isPreviewRefreshShortcut(input)) {
         event.preventDefault();
         runFork(
-          attempt({ operation: "shortcut.refresh", tabId, webContentsId: wc.id }, () =>
-            wc.reload(),
-          ).pipe(Effect.ignore),
+          attempt({ operation: "shortcut.refresh", tabId, webContentsId: wc.id }, () => {
+            if (input.shift) wc.reloadIgnoringCache();
+            else wc.reload();
+          }).pipe(Effect.ignore),
         );
         return;
       }
