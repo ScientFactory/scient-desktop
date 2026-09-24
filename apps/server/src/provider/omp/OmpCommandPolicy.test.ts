@@ -34,6 +34,7 @@ describe("Oh My Pi command policy", () => {
       { name: "share", aliases: ["publish"] },
       { name: "model", aliases: ["m"] },
       { name: "custom-extension-command" },
+      { name: "compact", source: "extension" },
     ]);
     expect(ompCommandDecision("/n", expanded)).toBe("mutator");
     expect(ompCommandDecision("/save", expanded)).toBe("mutator");
@@ -41,5 +42,6 @@ describe("Oh My Pi command policy", () => {
     expect(ompCommandDecision("/m", expanded)).toBe("mutator");
     expect(ompCommandDecision("/custom-extension-command", expanded)).toBe("mutator");
     expect(expanded.advertised).toEqual([]);
+    expect(ompCommandDecision("/compact", expanded)).toBe("mutator");
   });
 });

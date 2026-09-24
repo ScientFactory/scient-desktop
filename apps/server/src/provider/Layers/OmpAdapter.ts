@@ -211,13 +211,16 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
 
   const validation = (operation: string, issue: string) =>
     new ProviderAdapterValidationError({ provider: PROVIDER, operation, issue });
-  const request = (method: string, detail: string, cause?: unknown) =>
-    new ProviderAdapterRequestError({
+  const request = (method: string, detail: string, cause?: unknown) => {
+    const normalized = detail.replace(/\s+/gu, " ").trim();
+    const safeDetail = normalized.length > 512 ? `${normalized.slice(0, 512)}…` : normalized;
+    return new ProviderAdapterRequestError({
       provider: PROVIDER,
       method,
-      detail: ompUserDetail(detail),
+      detail: ompUserDetail(safeDetail || "The Oh My Pi request failed."),
       ...(cause === undefined ? {} : { cause }),
     });
+  };
   const refs = (ctx: SessionContext, providerItemId?: string) => {
     const providerRequestId = ctx.requestId?.trim();
     const itemId = providerItemId?.trim();

@@ -38,6 +38,7 @@ const qualified = new Set<string>(OMP_QUALIFIED_COMMANDS);
 
 export interface OmpCatalogCommand {
   readonly name: string;
+  readonly source?: string | undefined;
   readonly description?: string | undefined;
   readonly aliases?: ReadonlyArray<string> | undefined;
 }
@@ -78,7 +79,14 @@ export const compileOmpCommandCatalog = (
       const trimmed = clean(alias);
       if (trimmed) known.add(trimmed);
     }
-    if (!qualified.has(name) || mutators.has(name) || name === "session") continue;
+    if (
+      !qualified.has(name) ||
+      mutators.has(name) ||
+      name === "session" ||
+      (command.source !== undefined && command.source !== "builtin")
+    ) {
+      continue;
+    }
     allowed.add(name);
     for (const alias of command.aliases ?? []) {
       const trimmed = clean(alias);

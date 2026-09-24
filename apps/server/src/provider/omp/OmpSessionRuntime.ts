@@ -252,6 +252,7 @@ const commandRecords = (value: unknown): ReadonlyArray<OmpCatalogCommand> | unde
     return [
       {
         name: entry.name,
+        ...(typeof entry.source === "string" ? { source: entry.source } : {}),
         ...(typeof entry.description === "string" ? { description: entry.description } : {}),
         ...(Array.isArray(entry.aliases)
           ? { aliases: entry.aliases.filter((alias): alias is string => typeof alias === "string") }
@@ -589,6 +590,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       }
       if (event.type === "message_start" && turnIsOpen(turn)) {
         if (isAssistantMessage(event.message)) {
+          if (activeAssistantMessageId) yield* finishAssistant();
           yield* ensureAssistant();
           activeAssistantInitialText = messageText(event.message) ?? "";
         }
@@ -742,7 +744,10 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         return;
       }
       if (notification._tag === "AsyncCommandFailure") {
-        failureDetail = notification.error;
+        failureDetail =
+          notification.error.length > 512
+            ? `${notification.error.slice(0, 512)}…`
+            : notification.error;
         yield* applySignal({ type: "prompt-failed", requestId: notification.id });
         return;
       }
