@@ -21,6 +21,7 @@ import {
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { normalizeModelSlug } from "@t3tools/shared/model";
 import type { McpCapability } from "../../mcp/McpInvocationContext.ts";
+import type { ProviderTurnEndConfirmation } from "../Services/ProviderAdapter.ts";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -202,6 +203,11 @@ export interface CodexSessionRuntimeShape {
   readonly compactThread: Effect.Effect<void, CodexSessionRuntimeError>;
   readonly interruptTurn: (turnId?: TurnId) => Effect.Effect<void, CodexSessionRuntimeError>;
   readonly readThread: Effect.Effect<CodexThreadSnapshot, CodexSessionRuntimeError>;
+  /**
+   * Provider-side answer to "is this thread still executing a turn?".
+   * Distinct from `getSession`, which only mirrors ingested notifications.
+   */
+  readonly readThreadActivity: Effect.Effect<ProviderTurnEndConfirmation, CodexSessionRuntimeError>;
   readonly rollbackThread: (
     numTurns: number,
   ) => Effect.Effect<CodexThreadSnapshot, CodexSessionRuntimeError>;
@@ -1188,6 +1194,19 @@ const CodexThreadHistoryMetadata = Schema.Struct({
     historyMode: Schema.optionalKey(Schema.Literals(["legacy", "paginated"])),
   }),
 });
+
+/**
+ * Thread status as the app-server reports it. `active` is the only value that
+ * proves a turn is still running; `idle` and `notLoaded` both mean this
+ * provider is not executing a turn for the thread. `systemError` proves
+ * nothing, so it stays unknown.
+ */
+const CodexThreadActivity = Schema.Struct({
+  thread: Schema.Struct({
+    status: EffectCodexSchema.V2ThreadReadResponse__ThreadStatus,
+  }),
+});
+const decodeCodexThreadActivity = Schema.decodeUnknownEffect(CodexThreadActivity);
 const CodexTurnsPage = Schema.Struct({
   data: Schema.Array(EffectCodexSchema.V2ThreadReadResponse__Turn),
   nextCursor: Schema.NullOr(Schema.String),
@@ -1210,6 +1229,35 @@ const readCodexHistoryMode = Effect.fn("readCodexHistoryMode")(function* (
     ),
   );
   return metadata.thread.historyMode;
+});
+
+/**
+ * Ask the app-server whether it is still executing a turn for this thread.
+ *
+ * This deliberately crosses the process boundary instead of reading the
+ * runtime's mirrored session state: a cancellation is only "confirmed" when
+ * the provider itself says so. Callers bound this call and treat a failure as
+ * unknown.
+ */
+export const readCodexThreadActivity = Effect.fn("readCodexThreadActivity")(function* (
+  client: CodexHistoryClient,
+  threadId: string,
+): Effect.fn.Return<ProviderTurnEndConfirmation, CodexErrors.CodexAppServerError> {
+  const response = yield* client.raw.request("thread/read", { threadId, includeTurns: false });
+  const activity = yield* decodeCodexThreadActivity(response).pipe(
+    Effect.mapError((error) =>
+      CodexErrors.CodexAppServerRequestError.invalidPayload("thread/read", "decode-payload", error),
+    ),
+  );
+  switch (activity.thread.status.type) {
+    case "active":
+      return "active";
+    case "idle":
+    case "notLoaded":
+      return "ended";
+    default:
+      return "unknown";
+  }
 });
 
 export const readCodexThread = Effect.fn("readCodexThread")(function* (
@@ -1283,7 +1331,7 @@ export const makeCodexSessionRuntime = (
 > =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const runtimeScope = yield* Scope.Scope;
+    const runtimeScope = yield* Scope.fork(yield* Scope.Scope, "sequential");
     const crypto = yield* Crypto.Crypto;
     const events = yield* Queue.unbounded<ProviderEvent>();
     const pendingApprovalsRef = yield* Ref.make(new Map<ApprovalRequestId, PendingApproval>());
@@ -2458,12 +2506,20 @@ export const makeCodexSessionRuntime = (
     });
 
     const close = Effect.gen(function* () {
-      const alreadyClosed = yield* Ref.getAndSet(closedRef, true);
-      if (alreadyClosed) {
-        return;
-      }
+      yield* Ref.set(closedRef, true);
       yield* settlePendingApprovals("cancel");
       yield* settlePendingUserInputs({});
+      yield* Scope.close(runtimeScope, Exit.void);
+      yield* child.exitCode.pipe(
+        // Signal termination has no numeric exit code. It still proves shutdown
+        // when the process handle has observed exit; a live/unknown child does not.
+        Effect.catch((error) =>
+          child.isRunning.pipe(
+            Effect.flatMap((running) => (running ? Effect.fail(error) : Effect.void)),
+          ),
+        ),
+        Effect.orDie,
+      );
       yield* updateSession(sessionRef, {
         status: "closed",
         activeTurnId: undefined,
@@ -2473,7 +2529,6 @@ export const makeCodexSessionRuntime = (
           Effect.logError("Failed to emit Codex session closed event.", { cause }),
         ),
       );
-      yield* Scope.close(runtimeScope, Exit.void);
       yield* Queue.shutdown(serverNotifications);
       yield* Queue.shutdown(events);
     });
@@ -2587,6 +2642,10 @@ export const makeCodexSessionRuntime = (
       readThread: Effect.gen(function* () {
         const providerThreadId = yield* readProviderThreadId;
         return yield* readCodexThread(client, providerThreadId);
+      }),
+      readThreadActivity: Effect.gen(function* () {
+        const providerThreadId = yield* readProviderThreadId;
+        return yield* readCodexThreadActivity(client, providerThreadId);
       }),
       rollbackThread: (numTurns) =>
         Effect.gen(function* () {

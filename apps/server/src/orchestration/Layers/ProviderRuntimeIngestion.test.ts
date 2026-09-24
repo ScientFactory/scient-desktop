@@ -665,6 +665,42 @@ describe("ProviderRuntimeIngestion", () => {
     expect(completion?.successful).toBe(0);
   });
 
+  it("keeps refusing a terminal event that names another turn, leaving the session running", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-guard-started"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: asTurnId("turn-active"),
+    });
+    await waitForThread(
+      harness.readModel,
+      (thread) => thread.session?.activeTurnId === "turn-active",
+    );
+
+    // A late terminal event for a different turn must not end the turn that is
+    // actually running. The protection is deliberate; the stop operation is
+    // what guarantees a thread cannot stay stuck in this state forever.
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-guard-stale-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: asTurnId("turn-older"),
+      payload: { state: "completed" },
+    });
+    await harness.drain();
+
+    const session = (await harness.readThreadShell()).session;
+    expect(session?.status).toBe("running");
+    expect(session?.activeTurnId).toBe("turn-active");
+  });
+
   it("does not let a superseded turn's completion signal the queue barrier", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

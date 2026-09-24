@@ -1636,6 +1636,8 @@ export const ClientOrchestrationCommand = Schema.Union([
 export type ClientOrchestrationCommand = typeof ClientOrchestrationCommand.Type;
 
 const ThreadSessionSetCommand = Schema.Struct({
+  // Recovery writes are compare-and-set inside the serialized command decider.
+  expectedSession: Schema.optional(OrchestrationSession),
   type: Schema.Literal("thread.session.set"),
   commandId: CommandId,
   threadId: ThreadId,

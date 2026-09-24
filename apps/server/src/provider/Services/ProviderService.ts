@@ -32,7 +32,7 @@ import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
 
 import type { ProviderServiceError } from "../Errors.ts";
-import type { ProviderAdapterCapabilities } from "./ProviderAdapter.ts";
+import type { ProviderAdapterCapabilities, ProviderTurnStop } from "./ProviderAdapter.ts";
 import type { ProviderInstanceRoutingInfo } from "./ProviderAdapterRegistry.ts";
 
 /**
@@ -87,6 +87,12 @@ export interface ProviderServiceShape {
   readonly stopSession: (
     input: ProviderStopSessionInput,
   ) => Effect.Effect<void, ProviderServiceError>;
+
+  /** Capture the currently bound runtime without recovering or starting a session. */
+  readonly captureTurnStop?: (input: {
+    readonly threadId: ThreadId;
+    readonly providerInstanceId?: ProviderInstanceId;
+  }) => Effect.Effect<ProviderTurnStop<ProviderServiceError>, ProviderServiceError>;
 
   /**
    * List active provider sessions.

@@ -31,11 +31,13 @@ import {
   ThreadId,
   ProviderSendTurnInput,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as NodeCrypto from "node:crypto";
 import * as Crypto from "effect/Crypto";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -92,6 +94,14 @@ const isCodexResumeCursorSchema = Schema.is(CodexResumeCursorSchema);
 
 const PROVIDER = ProviderDriverKind.make("codex");
 
+/**
+ * Bound for the provider-side "is this thread still working?" probe used to
+ * verify a cancellation. The app-server answers from local state, so this only
+ * needs to outlast a busy transport; exceeding it means "unknown", never
+ * "ended".
+ */
+const CODEX_TURN_END_CONFIRMATION_TIMEOUT = "5 seconds";
+
 export interface CodexAdapterLiveOptions {
   readonly instanceId?: ProviderInstanceId;
   readonly environment?: NodeJS.ProcessEnv;
@@ -113,6 +123,9 @@ interface CodexAdapterSessionContext {
   readonly eventFiber: Fiber.Fiber<void, never>;
   readonly turnTokenUsage: CodexTurnTokenUsageState;
   stopped: boolean;
+  closing: boolean;
+  closeFiber?: Fiber.Fiber<void>;
+  turnEpoch: number;
 }
 
 type CodexCumulativeTokenUsage = {
@@ -2295,6 +2308,8 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       : undefined);
   const managedNativeEventLogger =
     options?.nativeEventLogger === undefined ? nativeEventLogger : undefined;
+  const adapterScope = yield* Scope.make("sequential");
+  yield* Effect.addFinalizer(() => Scope.close(adapterScope, Exit.void));
   const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
   const sessions = new Map<ThreadId, CodexAdapterSessionContext>();
 
@@ -2311,6 +2326,8 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
 
         const existing = sessions.get(input.threadId);
         if (existing && !existing.stopped) {
+          // A follow-up arriving during verified teardown joins its cleanup;
+          // it must neither replace the runtime early nor fail just for arriving then.
           yield* Effect.suspend(() => stopSessionInternal(existing));
         }
 
@@ -2533,6 +2550,8 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           eventFiber,
           turnTokenUsage,
           stopped: false,
+          closing: false,
+          turnEpoch: 0,
         });
         sessionScopeTransferred = true;
 
@@ -2574,6 +2593,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     );
 
     const session = yield* requireSession(input.threadId);
+    session.turnEpoch += 1;
     const reasoningEffort =
       input.modelSelection?.instanceId === boundInstanceId
         ? getModelSelectionStringOptionValue(input.modelSelection, "reasoningEffort")
@@ -2602,7 +2622,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
 
   const requireSession = Effect.fn("requireSession")(function* (threadId: ThreadId) {
     const session = sessions.get(threadId);
-    if (!session || session.stopped) {
+    if (!session || session.stopped || session.closing) {
       return yield* new ProviderAdapterSessionNotFoundError({
         provider: PROVIDER,
         threadId,
@@ -2725,15 +2745,32 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
 
   const stopSessionInternal = Effect.fn("stopSessionInternal")(function* (
     session: CodexAdapterSessionContext,
+    onStopped: Effect.Effect<void> = Effect.void,
   ) {
     if (session.stopped) {
       return;
     }
-    session.stopped = true;
-    sessions.delete(session.threadId);
-    yield* session.runtime.close.pipe(Effect.ignore);
-    yield* Effect.ignore(Scope.close(session.scope, Exit.void));
-    yield* Fiber.interrupt(session.eventFiber).pipe(Effect.ignore);
+    // One owned teardown keeps running if a caller stops waiting. Join the same
+    // result on retries; neither timeout nor failure removes runtime ownership.
+    if (session.closeFiber === undefined) {
+      session.closing = true;
+      session.closeFiber = yield* Effect.gen(function* () {
+        yield* session.runtime.close;
+        yield* onStopped;
+        yield* Scope.close(session.scope, Exit.void);
+        yield* Fiber.interrupt(session.eventFiber);
+        session.stopped = true;
+        if (sessions.get(session.threadId) === session) sessions.delete(session.threadId);
+      }).pipe(
+        Effect.onError(() =>
+          Effect.sync(() => {
+            delete session.closeFiber;
+          }),
+        ),
+        Effect.forkIn(adapterScope),
+      );
+    }
+    yield* Fiber.join(session.closeFiber);
   });
 
   const stopSession: CodexAdapterShape["stopSession"] = (threadId) =>
@@ -2744,6 +2781,59 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       }
       yield* stopSessionInternal(session);
     });
+
+  const captureTurnStop: NonNullable<CodexAdapterShape["captureTurnStop"]> = Effect.fn(
+    "captureTurnStop",
+  )(function* (threadId) {
+    const session = sessions.get(threadId);
+    if (!session || session.stopped) {
+      return yield* new ProviderAdapterSessionNotFoundError({ provider: PROVIDER, threadId });
+    }
+    const epoch = session.turnEpoch;
+    const turnId = (yield* session.runtime.getSession).activeTurnId;
+    const owns = (allowEnded = false) =>
+      Effect.gen(function* () {
+        const current = yield* session.runtime.getSession;
+        return (
+          sessions.get(threadId) === session &&
+          !session.stopped &&
+          session.turnEpoch === epoch &&
+          (current.activeTurnId === turnId || (allowEnded && current.activeTurnId === undefined))
+        );
+      });
+    return {
+      interrupt: Effect.gen(function* () {
+        if (session.closing || !(yield* owns()) || turnId === undefined) return;
+        yield* session.runtime
+          .interruptTurn(turnId)
+          .pipe(
+            Effect.mapError((cause) => mapCodexRuntimeError(threadId, "turn/interrupt", cause)),
+          );
+      }),
+      confirm: Effect.gen(function* () {
+        if (session.closing || !(yield* owns(true))) return "unknown" as const;
+        const result = yield* session.runtime.readThreadActivity.pipe(
+          Effect.timeoutOption(CODEX_TURN_END_CONFIRMATION_TIMEOUT),
+          Effect.map(Option.getOrElse(() => "unknown" as const)),
+          Effect.catchCause((cause) =>
+            Cause.hasInterruptsOnly(cause)
+              ? Effect.interrupt
+              : Effect.logWarning("codex turn-end confirmation failed", {
+                  threadId,
+                  cause: Cause.pretty(cause),
+                }).pipe(Effect.as("unknown" as const)),
+          ),
+        );
+        return !session.closing && (yield* owns(true)) ? result : ("unknown" as const);
+      }),
+      stop: (onStopped) =>
+        Effect.gen(function* () {
+          if (!(yield* owns())) return false;
+          yield* stopSessionInternal(session, onStopped);
+          return true;
+        }),
+    };
+  });
 
   const listSessions: CodexAdapterShape["listSessions"] = () =>
     Effect.forEach(
@@ -2756,13 +2846,26 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     Effect.succeed(Boolean(sessions.get(threadId) && !sessions.get(threadId)?.stopped));
 
   const stopAll: CodexAdapterShape["stopAll"] = () =>
-    Effect.forEach(Array.from(sessions.values()), stopSessionInternal, {
+    Effect.forEach(Array.from(sessions.values()), (session) => stopSessionInternal(session), {
       concurrency: 1,
       discard: true,
     }).pipe(Effect.asVoid);
 
   yield* Effect.acquireRelease(Effect.void, () =>
-    stopAll().pipe(
+    Effect.forEach(
+      Array.from(sessions.values()),
+      (session) =>
+        stopSessionInternal(session).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("codex teardown failed during adapter disposal", {
+              threadId: session.threadId,
+              cause: Cause.pretty(cause),
+            }),
+          ),
+          Effect.ensuring(Scope.close(session.scope, Exit.void)),
+        ),
+      { discard: true },
+    ).pipe(
       Effect.andThen(Queue.shutdown(runtimeEventQueue)),
       Effect.andThen(managedNativeEventLogger?.close() ?? Effect.void),
       Effect.ignore,
@@ -2786,6 +2889,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     respondToRequest,
     respondToUserInput,
     stopSession,
+    captureTurnStop,
     listSessions,
     hasSession,
     stopAll,
