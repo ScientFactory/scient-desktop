@@ -111,11 +111,14 @@ const maybeBoolean = Schema.optional(Schema.Boolean);
 const maybeUnknown = Schema.optional(Schema.Unknown);
 
 /**
- * One decoded stdout event. Excess fields are ignored. Response frames use
- * `OmpRpcResponse` instead, and a failed decode of a response is fatal.
+ * Normalized projection consumed by the server adapter. The client validates
+ * the wire frame with `OmpRpcKnownEvent` before constructing this projection;
+ * keeping this small structural projection avoids making every adapter branch
+ * depend on the complete upstream event union.
  */
 export const OmpRpcEvent = Schema.Struct({
   type: Schema.String,
+  raw: maybeUnknown,
   id: maybeString,
   isTerminal: maybeBoolean,
   agentInvoked: maybeBoolean,
@@ -128,6 +131,7 @@ export const OmpRpcEvent = Schema.Struct({
   toolCallId: maybeString,
   toolName: maybeString,
   name: maybeString,
+  args: maybeUnknown,
   isError: maybeBoolean,
   partialResult: maybeUnknown,
   result: maybeUnknown,
@@ -150,6 +154,8 @@ export const OmpRpcEvent = Schema.Struct({
   error: maybeString,
   targetId: maybeString,
   url: maybeString,
+  launchUrl: maybeString,
+  instructions: maybeString,
   operation: maybeString,
   extensionPath: maybeString,
   event: maybeString,
@@ -188,12 +194,89 @@ export const OmpMessageEndEvent = Schema.Struct({
 });
 export type OmpMessageEndEvent = typeof OmpMessageEndEvent.Type;
 
+export const OmpAgentStartEvent = Schema.Struct({ type: Schema.Literal("agent_start") });
+export type OmpAgentStartEvent = typeof OmpAgentStartEvent.Type;
+
 export const OmpAgentEndEvent = Schema.Struct({
   type: Schema.Literal("agent_end"),
   messages: Schema.Array(Schema.Unknown),
   isTerminal: maybeBoolean,
 });
 export type OmpAgentEndEvent = typeof OmpAgentEndEvent.Type;
+
+export const OmpTurnStartEvent = Schema.Struct({ type: Schema.Literal("turn_start") });
+export type OmpTurnStartEvent = typeof OmpTurnStartEvent.Type;
+
+export const OmpTurnEndEvent = Schema.Struct({
+  type: Schema.Literal("turn_end"),
+  message: OmpAgentMessage,
+  toolResults: Schema.optional(Schema.Array(Schema.Unknown)),
+});
+export type OmpTurnEndEvent = typeof OmpTurnEndEvent.Type;
+
+export const OmpToolExecutionStartEvent = Schema.Struct({
+  type: Schema.Literal("tool_execution_start"),
+  toolCallId: Schema.String,
+  toolName: Schema.String,
+  args: maybeUnknown,
+  arguments: maybeUnknown,
+  intent: maybeString,
+});
+export type OmpToolExecutionStartEvent = typeof OmpToolExecutionStartEvent.Type;
+
+export const OmpToolExecutionUpdateEvent = Schema.Struct({
+  type: Schema.Literal("tool_execution_update"),
+  toolCallId: Schema.String,
+  toolName: Schema.String,
+  args: maybeUnknown,
+  arguments: maybeUnknown,
+  partialResult: maybeUnknown,
+});
+export type OmpToolExecutionUpdateEvent = typeof OmpToolExecutionUpdateEvent.Type;
+
+export const OmpToolExecutionEndEvent = Schema.Struct({
+  type: Schema.Literal("tool_execution_end"),
+  toolCallId: Schema.String,
+  toolName: Schema.String,
+  result: Schema.Unknown,
+  isError: maybeBoolean,
+});
+export type OmpToolExecutionEndEvent = typeof OmpToolExecutionEndEvent.Type;
+
+export const OmpToolStreamUpdateEvent = Schema.Struct({
+  type: Schema.Literal("tool_stream_update"),
+  toolCallId: Schema.String,
+  update: Schema.Unknown,
+});
+export type OmpToolStreamUpdateEvent = typeof OmpToolStreamUpdateEvent.Type;
+
+export const OmpPromptResultEvent = Schema.Struct({
+  type: Schema.Literal("prompt_result"),
+  id: maybeString,
+  agentInvoked: Schema.Boolean,
+});
+export type OmpPromptResultEvent = typeof OmpPromptResultEvent.Type;
+
+export const OmpAvailableCommandsUpdateEvent = Schema.Struct({
+  type: Schema.Literal("available_commands_update"),
+  commands: Schema.Array(OmpRpcCommandDescriptor),
+});
+export type OmpAvailableCommandsUpdateEvent = typeof OmpAvailableCommandsUpdateEvent.Type;
+
+export const OmpSessionInfoUpdateEvent = Schema.Struct({
+  type: Schema.Literal("session_info_update"),
+  sessionFile: maybeString,
+  sessionId: maybeString,
+});
+export type OmpSessionInfoUpdateEvent = typeof OmpSessionInfoUpdateEvent.Type;
+
+export const OmpExtensionErrorEvent = Schema.Struct({
+  type: Schema.Literal("extension_error"),
+  error: Schema.String,
+  extensionPath: maybeString,
+  event: maybeString,
+});
+export type OmpExtensionErrorEvent = typeof OmpExtensionErrorEvent.Type;
 
 export const OmpHostToolCall = Schema.Struct({
   type: Schema.Literal("host_tool_call"),
@@ -257,18 +340,15 @@ export const OmpExtensionUiRequest = Schema.Struct({
   options: maybeUnknown,
   optionDetails: maybeUnknown,
   targetId: maybeString,
+  url: maybeString,
+  launchUrl: maybeString,
+  instructions: maybeString,
+  widgetKey: maybeString,
+  widgetLines: maybeUnknown,
+  widgetPlacement: maybeString,
+  notifyType: maybeString,
 });
 export type OmpExtensionUiRequest = typeof OmpExtensionUiRequest.Type;
-
-export const OmpExtensionUiResponse = Schema.Struct({
-  type: Schema.Literal("extension_ui_response"),
-  id: Schema.String,
-  value: maybeString,
-  confirmed: maybeBoolean,
-  cancelled: maybeBoolean,
-  timedOut: maybeBoolean,
-});
-export type OmpExtensionUiResponse = typeof OmpExtensionUiResponse.Type;
 
 export const OmpSubagentProgress = Schema.Struct({
   id: Schema.String,
@@ -283,16 +363,16 @@ export const OmpSubagentLifecyclePayload = Schema.Struct({
   agent: maybeString,
   agentSource: maybeString,
   description: maybeString,
-  index: Schema.Finite,
+  index: Schema.optional(Schema.Finite),
   parentToolCallId: maybeString,
   sessionFile: maybeString,
 });
 export type OmpSubagentLifecyclePayload = typeof OmpSubagentLifecyclePayload.Type;
 
 export const OmpSubagentProgressPayload = Schema.Struct({
-  index: Schema.Finite,
-  agent: Schema.String,
-  agentSource: Schema.String,
+  index: Schema.optional(Schema.Finite),
+  agent: maybeString,
+  agentSource: maybeString,
   task: maybeString,
   assignment: maybeString,
   parentToolCallId: maybeString,
@@ -316,6 +396,80 @@ export const OmpSubagentFrame = Schema.Union([
   }),
 ]);
 export type OmpSubagentFrame = typeof OmpSubagentFrame.Type;
+
+const OmpLifecycleEvent = Schema.Struct({
+  type: Schema.Literals([
+    "auto_compaction_start",
+    "auto_compaction_end",
+    "compaction_end",
+    "auto_retry_start",
+    "auto_retry_end",
+    "retry_fallback_applied",
+    "retry_fallback_succeeded",
+    "config_update",
+    "config_warnings_changed",
+    "advisor_cost_changed",
+    "advisor_yielded",
+    "ttsr_triggered",
+    "todo_reminder",
+    "todo_auto_clear",
+    "notice",
+    "goal_updated",
+    "model_changed",
+    "thinking_level_changed",
+    "command_output",
+  ]),
+  error: maybeString,
+  aborted: maybeBoolean,
+  willRetry: maybeBoolean,
+  output: maybeString,
+  text: maybeString,
+});
+export type OmpLifecycleEvent = typeof OmpLifecycleEvent.Type;
+
+export const OmpRpcKnownEvent = Schema.Union([
+  OmpAgentStartEvent,
+  OmpAgentEndEvent,
+  OmpTurnStartEvent,
+  OmpTurnEndEvent,
+  OmpMessageStartEvent,
+  OmpMessageUpdateEvent,
+  OmpMessageEndEvent,
+  OmpToolExecutionStartEvent,
+  OmpToolExecutionUpdateEvent,
+  OmpToolExecutionEndEvent,
+  OmpToolStreamUpdateEvent,
+  OmpPromptResultEvent,
+  OmpAvailableCommandsUpdateEvent,
+  OmpSessionInfoUpdateEvent,
+  OmpExtensionUiRequest,
+  OmpExtensionErrorEvent,
+  OmpHostToolCall,
+  OmpHostToolCancel,
+  OmpHostToolResult,
+  OmpHostUriRequest,
+  OmpHostUriCancel,
+  OmpHostUriResult,
+  OmpSubagentFrame,
+  OmpLifecycleEvent,
+]);
+export type OmpRpcKnownEvent = typeof OmpRpcKnownEvent.Type;
+
+export const OmpRpcUnknownEvent = Schema.Struct({
+  type: Schema.String,
+  raw: Schema.Unknown,
+});
+export type OmpRpcUnknownEvent = typeof OmpRpcUnknownEvent.Type;
+
+export const OmpExtensionUiResponse = Schema.Struct({
+  type: Schema.Literal("extension_ui_response"),
+  id: Schema.String,
+  value: maybeString,
+  confirmed: maybeBoolean,
+  cancelled: maybeBoolean,
+  timedOut: maybeBoolean,
+});
+export type OmpExtensionUiResponse = typeof OmpExtensionUiResponse.Type;
 
 export const OmpHostToolDefinition = Schema.Struct({
   name: Schema.String,

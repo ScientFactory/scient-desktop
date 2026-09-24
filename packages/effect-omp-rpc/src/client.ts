@@ -30,6 +30,7 @@ import {
   OmpRpcAvailableCommands,
   OmpRpcAvailableModels,
   OmpRpcEvent,
+  OmpRpcKnownEvent,
   OmpRpcReady,
   OmpRpcResponse,
   OmpRpcState,
@@ -131,12 +132,84 @@ const decodeNegotiate = Schema.decodeUnknownEffect(OmpNegotiateResult);
 const decodeModels = Schema.decodeUnknownEffect(OmpRpcAvailableModels);
 const decodeCommands = Schema.decodeUnknownEffect(OmpRpcAvailableCommands);
 const decodeResponse = Schema.decodeUnknownEffect(OmpRpcResponse);
-const decodeEvent = Schema.decodeUnknownEffect(OmpRpcEvent);
+const decodeKnownEvent = Schema.decodeUnknownEffect(OmpRpcKnownEvent);
+const decodeEventProjection = Schema.decodeUnknownEffect(OmpRpcEvent);
 const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 const encodeJson = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 
 const protocol = (detail: string, cause?: unknown) =>
   new OmpRpcProtocolError({ detail, ...(cause === undefined ? {} : { cause }) });
+
+const ompKnownEventTypes = new Set([
+  "agent_start",
+  "agent_end",
+  "turn_start",
+  "turn_end",
+  "message_start",
+  "message_update",
+  "message_end",
+  "tool_execution_start",
+  "tool_execution_update",
+  "tool_execution_end",
+  "tool_stream_update",
+  "prompt_result",
+  "available_commands_update",
+  "session_info_update",
+  "extension_ui_request",
+  "extension_error",
+  "host_tool_call",
+  "host_tool_cancel",
+  "host_tool_result",
+  "host_uri_request",
+  "host_uri_cancel",
+  "host_uri_result",
+  "subagent_lifecycle",
+  "subagent_progress",
+  "subagent_event",
+  "auto_compaction_start",
+  "auto_compaction_end",
+  "compaction_end",
+  "auto_retry_start",
+  "auto_retry_end",
+  "retry_fallback_applied",
+  "retry_fallback_succeeded",
+  "config_update",
+  "config_warnings_changed",
+  "advisor_cost_changed",
+  "advisor_yielded",
+  "ttsr_triggered",
+  "todo_reminder",
+  "todo_auto_clear",
+  "notice",
+  "goal_updated",
+  "model_changed",
+  "thinking_level_changed",
+  "command_output",
+]);
+
+const decodeOmpEvent = (value: unknown) =>
+  Effect.gen(function* () {
+    if (!isRecord(value) || typeof value.type !== "string") {
+      return yield* protocol("RPC event omitted its type.");
+    }
+    const type = value.type;
+    if (!ompKnownEventTypes.has(type)) {
+      return yield* decodeEventProjection({ type, raw: value }).pipe(
+        Effect.mapError((cause) =>
+          protocol(`RPC unknown event ${type} could not be projected.`, cause),
+        ),
+      );
+    }
+    const decoded = yield* decodeKnownEvent(value).pipe(
+      Effect.mapError((cause) => protocol(`RPC ${type} event failed schema decoding.`, cause)),
+    );
+    if (decoded.type === "extension_ui_request" && decoded.method === "open_url" && !decoded.url) {
+      return yield* protocol("RPC open_url event omitted its URL.");
+    }
+    return yield* decodeEventProjection(decoded).pipe(
+      Effect.mapError((cause) => protocol(`RPC ${type} event could not be projected.`, cause)),
+    );
+  });
 
 interface QueuedNotification {
   readonly notification: OmpRpcNotification;
@@ -357,9 +430,10 @@ export const makeOmpRpcClient = Effect.fn("OmpRpcClient.make")(function* (
         }),
       );
     }
-    return decodeEvent(value).pipe(
+    return decodeOmpEvent(value).pipe(
       Effect.matchEffect({
-        onFailure: () => fatal("RPC event failed schema decoding."),
+        onFailure: (cause) =>
+          fatal(isProtocolError(cause) ? cause.message : "RPC event failed schema decoding."),
         onSuccess: (event) => offer({ _tag: "Event", event }, size),
       }),
     );

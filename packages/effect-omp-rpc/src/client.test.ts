@@ -214,9 +214,62 @@ describe("Oh My Pi RPC client", () => {
         expect(yield* Queue.take(seen)).toBe("agent_start");
         yield* Queue.offer(
           stdout,
-          line({ type: "agent_end", isTerminal: true, title: "y".repeat(180) }),
+          line({ type: "agent_end", isTerminal: true, messages: [], title: "y".repeat(180) }),
         );
         expect(yield* Queue.take(seen)).toBe("agent_end");
+      }),
+    ),
+  );
+
+  it.effect("fails closed when a known event is missing required identity fields", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const stdout = yield* Queue.unbounded<Uint8Array>();
+        const seen = yield* Queue.unbounded<string>();
+        const client = yield* makeOmpRpcClient({
+          stdout: Stream.fromQueue(stdout),
+          write: () => Effect.void,
+        });
+        yield* client.events.pipe(
+          Stream.runForEach((notification) =>
+            Queue.offer(
+              seen,
+              notification._tag === "Event" ? notification.event.type : notification._tag,
+            ).pipe(Effect.asVoid),
+          ),
+          Effect.forkScoped,
+        );
+        yield* Queue.offer(stdout, line(readyFrame));
+        yield* Queue.offer(
+          stdout,
+          line({ type: "subagent_lifecycle", payload: { status: "running" } }),
+        );
+        expect(yield* Queue.take(seen)).toBe("ProtocolFailure");
+        expect(yield* client.events.pipe(Stream.runCollect)).toEqual([]);
+      }),
+    ),
+  );
+
+  it.effect("keeps an unknown event as an explicit raw variant", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const stdout = yield* Queue.unbounded<Uint8Array>();
+        const seen = yield* Queue.unbounded<unknown>();
+        const client = yield* makeOmpRpcClient({
+          stdout: Stream.fromQueue(stdout),
+          write: () => Effect.void,
+        });
+        yield* client.events.pipe(
+          Stream.runForEach((notification) => Queue.offer(seen, notification).pipe(Effect.asVoid)),
+          Effect.forkScoped,
+        );
+        yield* Queue.offer(stdout, line(readyFrame));
+        yield* Queue.offer(stdout, line({ type: "future_event", payload: { value: 7 } }));
+        expect(yield* Queue.take(seen)).toMatchObject({
+          _tag: "Event",
+          event: { type: "future_event", raw: { type: "future_event", payload: { value: 7 } } },
+        });
+        expect(yield* client.ready).toMatchObject({ type: "ready" });
       }),
     ),
   );
