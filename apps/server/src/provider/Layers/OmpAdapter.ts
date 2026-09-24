@@ -1193,21 +1193,23 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
             }
             if (!ctx.turnId) return;
             yield* ctx.runtime.requestCancel();
-            // The abort response means the command was written. Acknowledgement is
-            // a later terminal agent_end plus an idle session. Past this deadline
-            // the process is killed and the outcome stays uncertain.
-            const [aborted, settled] = yield* Effect.all(
-              [
-                ctx.client.abort().pipe(Effect.timeout(OMP_CANCEL_DEADLINE), Effect.exit),
-                ctx.runtime
-                  .awaitTurnSettled()
-                  .pipe(Effect.timeout(OMP_CANCEL_DEADLINE), Effect.option),
-              ],
-              { concurrency: "unbounded" },
-            );
-            if (settled._tag === "None") {
+            // Abort is graceful first. If OMP accepts it before an agent starts,
+            // confirm the local cancellation immediately; otherwise wait for the
+            // terminal event plus idle-state barrier. Past the deadline the
+            // process is killed and the outcome stays uncertain.
+            const cancellation = yield* Effect.gen(function* () {
+              const aborted = yield* ctx.client
+                .abort()
+                .pipe(Effect.timeout(OMP_CANCEL_DEADLINE), Effect.exit);
+              if (aborted._tag === "Success") yield* ctx.runtime.confirmCancel();
+              yield* ctx.runtime.awaitTurnSettled();
+              return aborted;
+            }).pipe(Effect.timeout(OMP_CANCEL_DEADLINE), Effect.option);
+            if (cancellation._tag === "None") {
               yield* stopSessionUnlocked(threadId);
-            } else if (aborted._tag === "Failure") {
+              return;
+            }
+            if (cancellation.value._tag === "Failure") {
               const base = yield* eventBase(ctx);
               yield* offer({
                 type: "runtime.warning",

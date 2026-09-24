@@ -34,12 +34,14 @@ scientific tools with this provider.
   Oh My Pi tool activity.
 - Switch models in the same conversation when Oh My Pi reports them.
 - Answer Oh My Pi's select, confirm, input, and editor questions in Scient.
-- Steer a running turn, and stop it. Stop closes that conversation's process. On macOS and Linux
-  the process runs in its own process group and stop signals that group, escalating to a forced
-  stop. On Windows, stop uses `taskkill /T /F`. Scient has not verified that against a live Oh My
-  Pi child-process tree. If the turn is still open when the process ends, Scient records the
-  outcome as uncertain and names the Oh My Pi request id. A turn Oh My Pi itself reports as failed
-  stays a failure. A stop Oh My Pi acknowledges stays a cancellation.
+- Steer a running turn, and stop it. Stop first asks Oh My Pi to abort and keeps the conversation
+  process alive when OMP confirms the turn reached an idle terminal state. If OMP does not settle
+  within the cancellation deadline, Scient closes that conversation's process. On macOS and Linux
+  the process runs in its own process group and forced stop signals that group. On Windows, stop
+  uses `taskkill /T /F`; Scient has not verified that against a live Oh My Pi child-process tree.
+  If the turn is still open when the process ends, Scient records the outcome as uncertain and
+  names the Oh My Pi request id. A turn Oh My Pi itself reports as failed stays a failure. A stop
+  Oh My Pi acknowledges stays a cancellation.
 - See subagent activity in the same conversation when Oh My Pi accepts subagent updates. If that
   command is missing, the conversation still starts and subagent updates stay hidden. Scient does
   not create a separate thread for each subagent.

@@ -274,4 +274,21 @@ describe("Oh My Pi session runtime", () => {
       yield* Scope.close(harness.scope, Exit.void);
     }),
   );
+
+  it.effect("settles an accepted turn as cancelled when abort wins before agent start", () =>
+    Effect.gen(function* () {
+      const harness = yield* runtimeHarness();
+      yield* harness.runtime.begin("turn-cancel-before-start");
+      yield* takeUpdate(harness.updates);
+      yield* harness.runtime.accepted("prompt-cancel", true);
+      yield* harness.runtime.requestCancel();
+      yield* harness.runtime.confirmCancel();
+      expect(yield* takeUpdate(harness.updates)).toMatchObject({
+        type: "turn-outcome",
+        outcome: "interrupted",
+      });
+      expect(yield* harness.runtime.awaitTurnSettled()).toBeUndefined();
+      yield* Scope.close(harness.scope, Exit.void);
+    }),
+  );
 });
