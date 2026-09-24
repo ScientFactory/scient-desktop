@@ -197,9 +197,12 @@ Performed on the composed candidate and the review-corrected working tree:
 The original hosted CI run for the pre-review head exposed the three server
 composition failures described above. They were reproduced locally, corrected,
 and covered by the final local suite. The follow-up hosted run for review
-commit `99d5cdb84e53159fd7068e3a1dfed02b8224f121` passed every required check;
-mobile EAS preview and hosted web deployment remained intentionally skipped by
-Scient's publication holds.
+commit `99d5cdb84e53159fd7068e3a1dfed02b8224f121` passed every required check.
+On the post-catch-up head, the first hosted CI attempt hit a transient npm
+registry failure during macOS managed-Python setup; the failed jobs were
+rerun without changing the compute gate, and the second attempt passed every
+required check. Mobile EAS preview and hosted web deployment remained
+intentionally skipped by Scient's publication holds.
 
 ## Publication boundary
 
