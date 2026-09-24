@@ -275,6 +275,26 @@ describe("Oh My Pi session runtime", () => {
     }),
   );
 
+  it.effect("warns once for an unknown event type without ending the session", () =>
+    Effect.gen(function* () {
+      const harness = yield* runtimeHarness();
+      yield* Queue.offer(harness.events, {
+        _tag: "Event",
+        event: { type: "future_event", value: 1 },
+      });
+      expect(yield* takeUpdate(harness.updates)).toMatchObject({
+        type: "warning",
+        message: expect.stringContaining("future_event"),
+      });
+      yield* Queue.offer(harness.events, {
+        _tag: "Event",
+        event: { type: "future_event", value: 2 },
+      });
+      expect(yield* Queue.poll(harness.updates)).toMatchObject({ _tag: "None" });
+      yield* Scope.close(harness.scope, Exit.void);
+    }),
+  );
+
   it.effect("surfaces extension browser actions without treating them as questions", () =>
     Effect.gen(function* () {
       const harness = yield* runtimeHarness();
