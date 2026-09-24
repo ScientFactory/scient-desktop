@@ -59,10 +59,10 @@ const process = (overrides: Partial<OmpRpcProcess> = {}): OmpRpcProcess => ({
   getCommands: () =>
     Effect.succeed({
       commands: [
-        { name: "help", description: "Help" },
-        { name: "compact", description: "Compact" },
-        { name: "new", description: "New" },
-        { name: "export", description: "Export" },
+        { name: "help", description: "Help", source: "builtin" },
+        { name: "compact", description: "Compact", source: "builtin" },
+        { name: "new", description: "New", source: "builtin" },
+        { name: "export", description: "Export", source: "builtin" },
       ],
     }),
   setModel: () => Effect.succeed(response("set_model")),

@@ -83,7 +83,7 @@ export const compileOmpCommandCatalog = (
       !qualified.has(name) ||
       mutators.has(name) ||
       name === "session" ||
-      (command.source !== undefined && command.source !== "builtin")
+      command.source !== "builtin"
     ) {
       continue;
     }

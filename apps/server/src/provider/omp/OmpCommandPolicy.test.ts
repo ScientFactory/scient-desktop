@@ -4,10 +4,10 @@ import { compileOmpCommandCatalog, ompCommandDecision } from "./OmpCommandPolicy
 
 describe("Oh My Pi command policy", () => {
   const catalog = compileOmpCommandCatalog([
-    { name: "help", description: "Show help", aliases: ["h"] },
-    { name: "new", aliases: ["n"] },
-    { name: "session", description: "Session operations" },
-    { name: "compact" },
+    { name: "help", description: "Show help", aliases: ["h"], source: "builtin" },
+    { name: "new", aliases: ["n"], source: "builtin" },
+    { name: "session", description: "Session operations", source: "builtin" },
+    { name: "compact", source: "builtin" },
   ]);
 
   it("advertises useful commands and hides session mutators", () => {
@@ -29,12 +29,13 @@ describe("Oh My Pi command policy", () => {
 
   it("rejects aliases and side-effecting commands even when discovered", () => {
     const expanded = compileOmpCommandCatalog([
-      { name: "new", aliases: ["n"] },
-      { name: "export", aliases: ["save"] },
-      { name: "share", aliases: ["publish"] },
-      { name: "model", aliases: ["m"] },
-      { name: "custom-extension-command" },
+      { name: "new", aliases: ["n"], source: "builtin" },
+      { name: "export", aliases: ["save"], source: "builtin" },
+      { name: "share", aliases: ["publish"], source: "builtin" },
+      { name: "model", aliases: ["m"], source: "builtin" },
+      { name: "custom-extension-command", source: "extension" },
       { name: "compact", source: "extension" },
+      { name: "help" },
     ]);
     expect(ompCommandDecision("/n", expanded)).toBe("mutator");
     expect(ompCommandDecision("/save", expanded)).toBe("mutator");
@@ -42,6 +43,7 @@ describe("Oh My Pi command policy", () => {
     expect(ompCommandDecision("/m", expanded)).toBe("mutator");
     expect(ompCommandDecision("/custom-extension-command", expanded)).toBe("mutator");
     expect(expanded.advertised).toEqual([]);
+    expect(ompCommandDecision("/help", expanded)).toBe("mutator");
     expect(ompCommandDecision("/compact", expanded)).toBe("mutator");
   });
 });

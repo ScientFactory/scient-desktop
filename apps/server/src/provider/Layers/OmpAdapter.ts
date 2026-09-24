@@ -928,10 +928,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           }
           const decision = ompCommandDecision(nativeText, ctx.runtime.catalog());
           if (decision === "mutator") {
-            return yield* validation(
-              "sendTurn",
-              "That Oh My Pi command changes session state Scient does not own yet.",
-            );
+            return yield* validation("sendTurn", "Scient does not forward that Oh My Pi command.");
           }
           if (decision === "unavailable") {
             return yield* validation(

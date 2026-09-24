@@ -339,9 +339,9 @@ describe("Oh My Pi adapter", () => {
             getCommands: () =>
               Effect.succeed({
                 commands: [
-                  { name: "help", description: "Help" },
-                  { name: "compact", description: "Compact" },
-                  { name: "new" },
+                  { name: "help", description: "Help", source: "builtin" },
+                  { name: "compact", description: "Compact", source: "builtin" },
+                  { name: "new", source: "builtin" },
                 ],
               }),
             setModel: () => Effect.succeed(success("set_model")),
@@ -378,7 +378,7 @@ describe("Oh My Pi adapter", () => {
       const mutator = yield* adapter
         .sendTurn({ threadId, input: "/new", originalInput: "/new" })
         .pipe(Effect.flip);
-      NodeAssert.match(mutator.message, /does not own/);
+      NodeAssert.match(mutator.message, /does not forward/);
       const unknown = yield* adapter.sendTurn({ threadId, input: "/nope" }).pipe(Effect.flip);
       NodeAssert.match(unknown.message, /not available/);
       const foreign = yield* adapter
