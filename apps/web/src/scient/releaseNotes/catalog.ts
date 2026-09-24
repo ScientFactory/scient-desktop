@@ -9,6 +9,58 @@ import type { ScientReleaseNote } from "./model";
  */
 export const SCIENT_RELEASE_NOTES = [
   {
+    version: "0.6.17",
+    publishedAt: "2026-09-24",
+    format: "paragraphs",
+    headline: "More dependable agents and richer scientific work.",
+    highlights: [
+      {
+        id: "stop-queue-recovery-0617",
+        title: "Stop and queue recover more cleanly",
+        description:
+          "Stop recovery is more reliable, reduces stale Thinking states, and lets waiting messages be recovered and sent after a failed or stopped turn.",
+      },
+      {
+        id: "reload-preserves-edits-0617",
+        title: "Reload without losing edits",
+        description:
+          "View reloads protect pending file saves, surface files that still need attention, and leave Browser-tab shortcuts focused on the Browser.",
+      },
+      {
+        id: "device-3d-workspace-0617",
+        title: "Explore devices in 3D",
+        description:
+          "Supported devices gain interactive 3D models with touch, orbit, trackpad, screenshots, and a flat-view fallback.",
+      },
+      {
+        id: "visible-browser-automation-0617",
+        title: "Agents use the visible browser tab",
+        description:
+          "New browser sessions prefer the tab you can see, preserving its page, cookies, and interaction context.",
+      },
+      {
+        id: "latex-project-root-0617",
+        title: "Build complete LaTeX projects",
+        description:
+          "Opening an included source resolves the project root and builds the complete document, including related files.",
+      },
+      {
+        id: "models-provider-updates-0617",
+        title: "See new models and provider updates sooner",
+        description:
+          "Newly discovered models appear by default, while Scient-managed Codex updates are surfaced with a clear path to install them.",
+      },
+      {
+        id: "provider-settings-flow-0617",
+        title: "More coherent provider and settings flows",
+        description:
+          "Provider compatibility guidance, shared sign-in flows, and clearer settings scope and navigation make common actions easier to understand.",
+      },
+    ],
+    alsoIncluded:
+      "Accessibility and CSV fixes, previous-worktree branch details, fewer duplicate alerts after restarts, SnapShot polish, Pi tool-result correctness, telemetry safety controls, and other reliability improvements.",
+  },
+  {
     version: "0.6.16",
     publishedAt: "2026-09-22",
     format: "paragraphs",
