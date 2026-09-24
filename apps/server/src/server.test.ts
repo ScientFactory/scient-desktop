@@ -252,6 +252,7 @@ import {
 } from "../integration/TransferBudgetReport.integration.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import { DEFAULT_SIGNAL_EXPORT, otlpSerializationLayer } from "@t3tools/shared/observability";
+import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 
 const defaultProjectId = ProjectId.make("project-default");
 const defaultThreadId = ThreadId.make("thread-default");
@@ -620,6 +621,7 @@ const buildAppUnderTest = (options?: {
       otlpTracesExport: { ...DEFAULT_SIGNAL_EXPORT },
       otlpMetricsExport: { ...DEFAULT_SIGNAL_EXPORT },
       otlpLogsExport: { ...DEFAULT_SIGNAL_EXPORT },
+      otelEnvironment: OtelEnvironment.none,
       mode: "desktop",
       port: 0,
       host: "127.0.0.1",

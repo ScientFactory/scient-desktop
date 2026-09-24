@@ -46,22 +46,29 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current T3 alignment is recorded in
-[`docs/internals/2026-09-23-upstream-sync-d7819c1881.md`](docs/internals/2026-09-23-upstream-sync-d7819c1881.md)
-and in `upstream-state.json`. PR #350 merged this alignment into Scient `main`,
-extending it through `f5ef0ddb90a8c36584e181b1913e7b8a5df30ffc`: 72 official
-commits from `aff9318bf46beaf05cc7155b428d3f0b8711efd2`, including 42 added
-since the d781 checkpoint. The merge preserves the initial history merge
-`719f452a4633af276ed9f5e219ced8de43863d49` and later official merge commits
+[`docs/internals/2026-09-24-upstream-sync-e67abcf798.md`](docs/internals/2026-09-24-upstream-sync-e67abcf798.md)
+and in `upstream-state.json`. Scient PR #365 carries this alignment, extending
+the integration through `e67abcf798f8c4d8458755e3b4dde02c2c1f628b`: 15 official
+commits from `f5ef0ddb90a8c36584e181b1913e7b8a5df30ffc`, merged onto owned base
+`66650fd93196b635ba56c3a4130fad5fb6d5a82d` as
+`0ab3e990eaff85c92ecc206cce965414ffe7c1b5` (first parent owned base, second
+parent the exact official target). The branch also contains owned-main
+catch-up `0c10a40a5d885beedd0d59fdbb10e277f397cadf`, whose second parent is
+latest owned `main` at `5872cc9841e1d8274b6d9b99a11308c5f48b04b1`. The
+preceding alignment (PR #350) remains
+literal ancestry, preserving its initial history merge
+`719f452a4633af276ed9f5e219ced8de43863d49`, later official merge commits
 `f741668a6d31ec6681d6324a0f6a7b97f205f06e` and
-`34f081f99f368f9eaca0af29266ec13530956f77`. The latest owned-main catch-up
-is `ea6af93176134c52d76eadc7a33cc5fabeb714d7`, incorporating fetched
-`origin/main` at `a86cec5fd747fe7937241649bc6a500e2d64516a` without replaying
-or replacing the official merge history.
+`34f081f99f368f9eaca0af29266ec13530956f77`, and its owned-main catch-up
+`ea6af93176134c52d76eadc7a33cc5fabeb714d7`.
 
-The full local workspace test run had one load-sensitive Markdown performance
-threshold miss; its isolated rerun and the clean CI workspace gate both passed
-without changing the test or threshold. The final CI check and web-layout
-failures were repaired on the same branch and passed in the next CI run.
+The alignment retained Scient's release pipeline and trust list, composed the
+OTel kill switch with Scient's fail-closed safety envelope, adopted the
+interactive 3D device workspace and visible-browser preview ownership, and
+restored a Scient-identity `cliRelease` seam for mobile environment maintenance.
+The alignment review also corrected inherited test isolation issues (ambient
+analytics configuration and an over-broad desktop-artifact probe assertion);
+no known local test failure remains on the reviewed candidate.
 
 Automated qualification and source review passed; release publication remains separate. The
 [preceding alignment](docs/internals/2026-09-22-upstream-sync-aff9318bf4.md),

@@ -4,6 +4,7 @@ import {
   makeTraceSink,
   otlpSerializationLayer,
 } from "@t3tools/shared/observability";
+import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import {
   parsePersistedServerObservabilitySettings,
   type PersistedServerObservabilitySettings,
@@ -354,12 +355,18 @@ const readPersistedObservabilitySettings: Effect.Effect<
  * resolve traces against one revision of the file and logs against another.
  */
 const resolveOtlpEndpoints = Effect.gen(function* () {
+  const otel = yield* OtelEnvironment.load;
+  if (otel.disabled) {
+    return { traces: undefined, metrics: undefined, logs: undefined, warnings: otel.warnings };
+  }
+
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   if (environment.safetyEnvelopeEnabled && !SCIENT_DESKTOP_IDENTITY.outboundTelemetryEnabled) {
     return {
       traces: undefined,
       metrics: undefined,
       logs: undefined,
+      warnings: otel.warnings,
     };
   }
   const persisted = yield* readPersistedObservabilitySettings;
@@ -367,6 +374,7 @@ const resolveOtlpEndpoints = Effect.gen(function* () {
     traces: Option.getOrUndefined(environment.otlpTracesUrl) ?? persisted.otlpTracesUrl,
     metrics: Option.getOrUndefined(environment.otlpMetricsUrl) ?? persisted.otlpMetricsUrl,
     logs: Option.getOrUndefined(environment.otlpLogsUrl) ?? persisted.otlpLogsUrl,
+    warnings: otel.warnings,
   };
 });
 
@@ -679,7 +687,12 @@ const telemetryLayer = Layer.unwrap(
     //         resource,
     //       }).pipe(Layer.provide(serializationLayer));
 
-    return Layer.mergeAll(loggerLayer, tracerLayer);
+    // Logged once the loggers above are installed, so the warnings use them.
+    const otelWarningsLayer = Layer.effectDiscard(
+      Effect.forEach(endpoints.warnings, (warning) => Effect.logWarning(warning)),
+    );
+
+    return otelWarningsLayer.pipe(Layer.provideMerge(Layer.mergeAll(loggerLayer, tracerLayer)));
   }),
 );
 
