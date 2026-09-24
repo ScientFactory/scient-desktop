@@ -5,7 +5,12 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
-import { ProviderInstanceId, ThreadId, type ProviderRuntimeEvent } from "@t3tools/contracts";
+import {
+  ApprovalRequestId,
+  ProviderInstanceId,
+  ThreadId,
+  type ProviderRuntimeEvent,
+} from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -604,6 +609,72 @@ describe("Oh My Pi production qualification seams", () => {
       ).toBe(true);
       const snapshot = yield* adapter.listSessions();
       expect(snapshot[0]?.status).toBe("ready");
+      yield* adapter.stopAll();
+      NodeFS.rmSync(root, { recursive: true, force: true });
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("answers extension confirm and select requests through the adapter", () =>
+    Effect.gen(function* () {
+      const root = makeRoot("extension-input");
+      const events = yield* Queue.unbounded<OmpRpcNotification, Cause.Done>();
+      const responses: Array<Record<string, unknown>> = [];
+      const adapter = yield* makeAdapter({
+        root,
+        instanceId: ProviderInstanceId.make("omp-qualification-extension-input"),
+        makeProcess: (options) =>
+          Effect.sync(() =>
+            makeClient({
+              events,
+              sessionDir: options.sessionDir ?? root,
+              overrides: {
+                extensionUiResponse: (response) => {
+                  responses.push(response);
+                  return Effect.void;
+                },
+              },
+            }),
+          ),
+      });
+      const runtimeEvents = yield* collectRuntimeEvents(adapter);
+      const threadId = ThreadId.make("omp-extension-input");
+      yield* adapter.startSession({ threadId, cwd: root, runtimeMode: "full-access" });
+      yield* Queue.offer(events, {
+        _tag: "Event",
+        event: {
+          type: "extension_ui_request",
+          id: "confirm-1",
+          method: "confirm",
+          title: "Confirm",
+          message: "Continue?",
+        },
+      });
+      yield* takeMatching(runtimeEvents, (event) => event.type === "user-input.requested").pipe(
+        Effect.timeout("2 seconds"),
+      );
+      yield* adapter.respondToUserInput(threadId, ApprovalRequestId.make("confirm-1"), {
+        "confirm-1": "true",
+      });
+      yield* Queue.offer(events, {
+        _tag: "Event",
+        event: {
+          type: "extension_ui_request",
+          id: "select-1",
+          method: "select",
+          title: "Choose",
+          options: ["one", "two"],
+        },
+      });
+      yield* takeMatching(runtimeEvents, (event) => event.type === "user-input.requested").pipe(
+        Effect.timeout("2 seconds"),
+      );
+      yield* adapter.respondToUserInput(threadId, ApprovalRequestId.make("select-1"), {
+        "select-1": "two",
+      });
+      expect(responses).toEqual([
+        { id: "confirm-1", confirmed: true },
+        { id: "select-1", value: "two" },
+      ]);
       yield* adapter.stopAll();
       NodeFS.rmSync(root, { recursive: true, force: true });
     }).pipe(Effect.provide(NodeServices.layer)),
