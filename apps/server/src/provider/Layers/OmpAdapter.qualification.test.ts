@@ -397,6 +397,46 @@ describe("Oh My Pi production qualification seams", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("does not deadlock a new turn when the desktop event reader is stalled", () =>
+    Effect.gen(function* () {
+      const root = makeRoot("event-backpressure");
+      const events = yield* Queue.unbounded<OmpRpcNotification, Cause.Done>();
+      const adapter = yield* makeAdapter({
+        root,
+        instanceId: ProviderInstanceId.make("omp-qualification-event-backpressure"),
+        makeProcess: (options) =>
+          Effect.sync(() => makeClient({ events, sessionDir: options.sessionDir ?? root })),
+      });
+      const threadId = ThreadId.make("omp-event-backpressure");
+      yield* adapter.startSession({ threadId, cwd: root, runtimeMode: "full-access" });
+      yield* Effect.forEach(
+        Array.from({ length: 5_000 }, (_, index) => index),
+        (index) =>
+          Queue.offer(events, {
+            _tag: "Event",
+            event: {
+              type: "tool_execution_update",
+              toolCallId: `queued-${index}`,
+              toolName: "queued-tool",
+              partialResult: { index },
+            },
+          }).pipe(Effect.asVoid),
+        { discard: true },
+      );
+      yield* Effect.forEach(
+        Array.from({ length: 100 }, (_, index) => index),
+        () => Effect.yieldNow,
+        { discard: true },
+      );
+      const turn = yield* adapter
+        .sendTurn({ threadId, input: "start after a stalled reader" })
+        .pipe(Effect.timeout("2 seconds"), TestClock.withLive);
+      expect(turn.turnId.length).toBeGreaterThan(0);
+      yield* adapter.stopAll();
+      NodeFS.rmSync(root, { recursive: true, force: true });
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("switches model and thinking level between settled turns", () =>
     Effect.gen(function* () {
       const root = makeRoot("model-switch");
