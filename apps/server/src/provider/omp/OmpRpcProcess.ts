@@ -144,10 +144,10 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
   const resolvedBinary = yield* resolveCommandPath(options.command, {
     env,
     bypassCache: true,
-  }).pipe(Effect.catch(() => Effect.succeed(options.command)));
+  }).pipe(Effect.orElseSucceed(() => options.command));
   const canonicalBinary = yield* fs
     .realPath(resolvedBinary)
-    .pipe(Effect.catch(() => Effect.succeed(resolvedBinary)));
+    .pipe(Effect.orElseSucceed(() => resolvedBinary));
   const binaryPathFingerprint = ompBinaryFingerprint(canonicalBinary, env.PATH);
   const now = yield* Clock.currentTimeMillis;
   const cacheKey = versionCacheKey(options.command, env, binaryPathFingerprint);
