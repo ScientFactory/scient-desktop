@@ -288,6 +288,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
   let turn = initialOmpTurnState;
   let assistantMessageSequence = 0;
   let activeAssistantMessageId: string | undefined;
+  let activeAssistantInitialText = "";
   let activeAssistantHasDelta = false;
   let assistantMessageSeen = false;
   let drainRetries = 0;
@@ -312,7 +313,15 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     Effect.gen(function* () {
       const messageId = activeAssistantMessageId;
       if (!messageId) return;
+      if (!activeAssistantHasDelta && activeAssistantInitialText) {
+        yield* publish({
+          type: "assistant-delta",
+          messageId,
+          delta: activeAssistantInitialText,
+        });
+      }
       activeAssistantMessageId = undefined;
+      activeAssistantInitialText = "";
       activeAssistantHasDelta = false;
       yield* publish({ type: "assistant-completed", messageId });
     });
@@ -403,6 +412,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       if (activeAssistantMessageId) return activeAssistantMessageId;
       const nextId = messageId ?? `message-${++assistantMessageSequence}`;
       activeAssistantMessageId = nextId;
+      activeAssistantInitialText = "";
       activeAssistantHasDelta = false;
       assistantMessageSeen = true;
       yield* publish({ type: "assistant-started", messageId: nextId });
@@ -511,6 +521,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
           const fallback = lastAssistantText(event.messages);
           if (fallback) {
             const messageId = yield* ensureAssistant();
+            activeAssistantHasDelta = true;
             yield* publish({ type: "assistant-delta", messageId, delta: fallback });
             yield* finishAssistant();
           }
@@ -557,13 +568,16 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       if (event.type === "message_start" && turnIsOpen(turn)) {
         if (isAssistantMessage(event.message)) {
           yield* ensureAssistant();
+          activeAssistantInitialText = messageText(event.message) ?? "";
         }
         return;
       }
       if (event.type === "message_end" && turnIsOpen(turn)) {
         if (!isAssistantMessage(event.message)) return;
         const messageId = yield* ensureAssistant();
-        const fallback = activeAssistantHasDelta ? undefined : messageText(event.message);
+        const fallback = activeAssistantHasDelta
+          ? undefined
+          : (messageText(event.message) ?? activeAssistantInitialText);
         if (fallback && fallback.length > 0) {
           activeAssistantHasDelta = true;
           yield* publish({ type: "assistant-delta", messageId, delta: fallback });
@@ -718,6 +732,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         turnSettled = yield* Deferred.make<void>();
         assistantMessageSequence = 0;
         activeAssistantMessageId = undefined;
+        activeAssistantInitialText = "";
         activeAssistantHasDelta = false;
         assistantMessageSeen = false;
         drainRetries = 0;

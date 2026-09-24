@@ -203,6 +203,38 @@ describe("Oh My Pi session runtime", () => {
     }),
   );
 
+  it.effect("reconciles an assistant message that lacks message_end", () =>
+    Effect.gen(function* () {
+      const harness = yield* runtimeHarness();
+      yield* harness.runtime.begin("turn-fallback");
+      yield* takeUpdate(harness.updates);
+      yield* harness.runtime.accepted("prompt-fallback", true);
+      yield* Queue.offer(harness.events, {
+        _tag: "Event",
+        event: {
+          type: "message_start",
+          message: { role: "assistant", content: "complete fallback" },
+        },
+      });
+      yield* Queue.offer(harness.events, {
+        _tag: "Event",
+        event: { type: "agent_end", messages: [], isTerminal: true },
+      });
+      expect(yield* takeUpdate(harness.updates)).toMatchObject({ type: "assistant-started" });
+      expect(yield* takeUpdate(harness.updates)).toMatchObject({ type: "session-info" });
+      expect(yield* takeUpdate(harness.updates)).toMatchObject({
+        type: "assistant-delta",
+        delta: "complete fallback",
+      });
+      expect(yield* takeUpdate(harness.updates)).toMatchObject({ type: "assistant-completed" });
+      expect(yield* takeUpdate(harness.updates)).toMatchObject({
+        type: "turn-outcome",
+        outcome: "completed",
+      });
+      yield* Scope.close(harness.scope, Exit.void);
+    }),
+  );
+
   it.effect("settles a missing-id local prompt_result", () =>
     Effect.gen(function* () {
       const harness = yield* runtimeHarness();
