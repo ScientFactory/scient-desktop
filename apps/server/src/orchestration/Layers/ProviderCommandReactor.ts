@@ -6,6 +6,7 @@ import {
   type ModelSelection,
   type OrchestrationEvent,
   ProviderDriverKind,
+  type ProviderInstanceId,
   type ProjectId,
   type OrchestrationSession,
   ThreadId,
@@ -18,6 +19,7 @@ import { projectComposerContextForProvider } from "@t3tools/shared/composerConte
 import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -126,6 +128,30 @@ function providerErrorLabel(value: string | undefined): string {
   const normalized = value?.trim();
   return normalized && normalized.length > 0 ? normalized : "unknown";
 }
+
+/**
+ * Bounds for one stop operation, in milliseconds.
+ *
+ * Mutable only so tests can drive escalation without waiting on wall-clock
+ * time; production code never writes to it. `deadlineMillis` covers the whole
+ * operation, including the interrupt request, so a transport that never answers
+ * the RPC cannot outlive the user's Stop. The value is generous on purpose:
+ * Codex may spend ~10s interrupting a child-agent fleet before the parent turn,
+ * and escalating early would stop work the provider was about to finish.
+ */
+export const stopOperationTimings: {
+  deadlineMillis: number;
+  interruptTimeoutMillis: number;
+  pollIntervalMillis: number;
+  sessionTimeoutMillis: number;
+  confirmTimeoutMillis: number;
+} = {
+  deadlineMillis: 30_000,
+  interruptTimeoutMillis: 10_000,
+  pollIntervalMillis: 500,
+  sessionTimeoutMillis: 10_000,
+  confirmTimeoutMillis: 8_000,
+};
 
 export function providerErrorLabelFromInstanceHint(input: {
   readonly instanceId?: string | undefined;
@@ -1634,6 +1660,253 @@ const make = Effect.gen(function* () {
     );
   });
 
+  /**
+   * One accepted Stop, tracked until it reaches a terminal outcome.
+   *
+   * A Stop is a user-initiated terminal action, so the system that accepted it
+   * owns its completion. The captured identity is what lets delayed recovery
+   * act only on the session and turn it was started for: if the thread moved
+   * on to another turn or another provider session in the meantime, the
+   * operation stands down instead of stopping someone else's work.
+   */
+  type PendingStopOperation = {
+    readonly operationId: string;
+    readonly threadId: ThreadId;
+    readonly providerInstanceId: ProviderInstanceId | null;
+    readonly turnId: TurnId | null;
+    /** Mutable: the interrupt outcome decides how long this operation waits. */
+    deadlineAtMillis: number;
+  };
+
+  /**
+   * Bounds for one stop operation, in milliseconds.
+   *
+   * Exported so tests can drive the escalation without waiting on wall-clock
+   * time; production callers never mutate it. `deadlineMillis` covers the whole
+   * operation, including the interrupt request, so a transport that never
+   * answers the RPC cannot outlive the user's Stop. It is generous because
+   * Codex may spend ~10s interrupting a child-agent fleet before the parent
+   * turn, and a premature escalation would stop work the provider was about
+   * to finish on its own.
+   */
+
+  const pendingStopOperations = new Map<ThreadId, PendingStopOperation>();
+
+  type StopOutcome =
+    | "settled"
+    | "confirmed-ended"
+    | "session-stopped"
+    | "unconfirmed"
+    | "abandoned";
+
+  /**
+   * Whether this operation is still the one that owns the thread's work.
+   *
+   * Ownership is deliberately narrow: same provider session, and the same
+   * still-running turn. A newer turn, a rebound provider instance, or a
+   * session that already left `running` all mean this operation must not act.
+   */
+  const stopOperationStillOwns = (
+    operation: PendingStopOperation,
+    session: OrchestrationSession | null | undefined,
+  ): boolean => {
+    if (session === null || session === undefined) {
+      return false;
+    }
+    // A session without a bound instance is captured as null; compare the same
+    // normalized shape so an unbound session is not mistaken for a replaced one.
+    if ((session.providerInstanceId ?? null) !== operation.providerInstanceId) {
+      return false;
+    }
+    if (session.status !== "running" && session.status !== "starting") {
+      return false;
+    }
+    return session.activeTurnId === operation.turnId;
+  };
+
+  const confirmProviderTurnEnded = (operation: PendingStopOperation) =>
+    providerService.confirmTurnEnd === undefined
+      ? Effect.succeed("unknown" as const)
+      : providerService.confirmTurnEnd({ threadId: operation.threadId }).pipe(
+          Effect.timeoutOption(stopOperationTimings.confirmTimeoutMillis),
+          // A probe that never answers is unknown, never proof of a stop.
+          Effect.map(Option.match({ onNone: () => "unknown" as const, onSome: (value) => value })),
+        );
+
+  /**
+   * Wait for the provider's own terminal event to land, bounded by the
+   * operation deadline.
+   *
+   * `ended` means the captured turn stopped running without our help, so a turn
+   * that finished on its own is never relabelled as stopped by us. `moved-on`
+   * means the thread is no longer ours to act on. `deadline` means the provider
+   * never said anything, which is the case this whole operation exists for.
+   */
+  const waitForStopToSettle = (operation: PendingStopOperation) =>
+    Effect.gen(function* () {
+      for (;;) {
+        const session = (yield* resolveThreadShell(operation.threadId))?.session;
+        if (!stopOperationStillOwns(operation, session)) {
+          const turnIsStillOurs =
+            session !== null && session !== undefined && session.activeTurnId === operation.turnId;
+          return turnIsStillOurs ? ("moved-on" as const) : ("ended" as const);
+        }
+        const now = yield* Clock.currentTimeMillis;
+        if (now >= operation.deadlineAtMillis) {
+          return "deadline" as const;
+        }
+        yield* Effect.sleep(stopOperationTimings.pollIntervalMillis);
+      }
+    });
+
+  /**
+   * Publish the terminal session only when the captured turn is still the one
+   * running. The re-read is what keeps a slow recovery from stopping a turn
+   * that started after this operation was created.
+   */
+  const settleStoppedSession = (operation: PendingStopOperation, lastError: string | null) =>
+    Effect.gen(function* () {
+      const latest = yield* resolveThreadShell(operation.threadId);
+      if (!stopOperationStillOwns(operation, latest?.session)) {
+        return false;
+      }
+      const stoppedAt = DateTime.formatIso(yield* DateTime.now);
+      yield* setThreadSession({
+        threadId: operation.threadId,
+        session: {
+          ...latest!.session!,
+          status: "stopped",
+          activeTurnId: null,
+          lastError,
+          updatedAt: stoppedAt,
+        },
+        createdAt: stoppedAt,
+      });
+      return true;
+    });
+
+  const runStopOperation = Effect.fnUntraced(function* (
+    operation: PendingStopOperation,
+    interruptDetail: string | null,
+  ) {
+    const startedAt = yield* Clock.currentTimeMillis;
+    yield* Effect.logInfo("provider stop operation started", {
+      operationId: operation.operationId,
+      threadId: operation.threadId,
+      turnId: operation.turnId,
+      providerInstanceId: operation.providerInstanceId,
+    });
+
+    // A turn that ends on its own while we are stopping it is a success, not
+    // something to escalate against.
+    const waitOutcome = yield* waitForStopToSettle(operation);
+    if (waitOutcome === "ended") {
+      yield* Effect.logInfo("provider stop operation settled without escalation", {
+        operationId: operation.operationId,
+        threadId: operation.threadId,
+        turnId: operation.turnId,
+      });
+      return "settled" as const;
+    }
+    if (waitOutcome === "moved-on") {
+      yield* Effect.logInfo("provider stop operation stood down; thread moved on", {
+        operationId: operation.operationId,
+        threadId: operation.threadId,
+        turnId: operation.turnId,
+      });
+      return "abandoned" as const;
+    }
+
+    // Deadline reached. Everything below acts only while this operation still
+    // owns the thread's running turn.
+    const beforeEscalation = (yield* resolveThreadShell(operation.threadId))?.session;
+    if (!stopOperationStillOwns(operation, beforeEscalation)) {
+      yield* Effect.logInfo("provider stop operation stood down; thread moved on", {
+        operationId: operation.operationId,
+        threadId: operation.threadId,
+        turnId: operation.turnId,
+      });
+      return "abandoned" as const;
+    }
+
+    // Ask the provider itself before tearing anything down. `unknown` is not
+    // permission to claim a clean stop, but the user did ask for a stop, so an
+    // unresolved answer escalates to a scoped shutdown rather than stalling.
+    const confirmation = yield* confirmProviderTurnEnded(operation);
+    yield* Effect.logInfo("provider stop operation asked the provider for turn state", {
+      operationId: operation.operationId,
+      threadId: operation.threadId,
+      turnId: operation.turnId,
+      confirmation,
+    });
+    if (confirmation === "ended") {
+      const settled = yield* settleStoppedSession(operation, interruptDetail);
+      return settled ? ("confirmed-ended" as const) : ("abandoned" as const);
+    }
+
+    const stopResult = yield* providerService.stopSession({ threadId: operation.threadId }).pipe(
+      Effect.timeoutOption(stopOperationTimings.sessionTimeoutMillis),
+      Effect.tapError((error) =>
+        Effect.logWarning("provider stop operation failed to stop the session", {
+          operationId: operation.operationId,
+          threadId: operation.threadId,
+          turnId: operation.turnId,
+          error,
+        }),
+      ),
+      Effect.match({
+        onFailure: () => "failed" as const,
+        onSuccess: (outcome) =>
+          Option.isNone(outcome) ? ("timed-out" as const) : ("stopped" as const),
+      }),
+    );
+
+    if (stopResult === "stopped") {
+      const settled = yield* settleStoppedSession(operation, interruptDetail);
+      if (!settled) {
+        return "abandoned" as const;
+      }
+      // A stop that needed the session torn down is worth saying out loud, and
+      // it carries the reason the plain interrupt did not finish the job.
+      yield* appendProviderFailureActivity({
+        threadId: operation.threadId,
+        kind: "provider.turn.interrupt.failed",
+        summary: "Provider turn interrupt failed",
+        detail:
+          interruptDetail ??
+          "The provider did not end the turn in time, so Scient stopped the agent session.",
+        turnId: operation.turnId,
+        createdAt: DateTime.formatIso(yield* DateTime.now),
+      });
+      return "session-stopped" as const;
+    }
+
+    // Shutdown could not be confirmed. Publishing a terminal session here would
+    // be a claim we cannot support, and the thread queue reads a non-running
+    // session as "safe to start the next item" — so an unconfirmed stop must
+    // leave the session running and say so, instead of guessing.
+    yield* Effect.logWarning("provider stop operation could not confirm the agent stopped", {
+      operationId: operation.operationId,
+      threadId: operation.threadId,
+      turnId: operation.turnId,
+      confirmation,
+      stopResult,
+      elapsedMillis: (yield* Clock.currentTimeMillis) - startedAt,
+    });
+    yield* appendProviderFailureActivity({
+      threadId: operation.threadId,
+      kind: "provider.turn.interrupt.failed",
+      summary: "Could not confirm the agent stopped",
+      detail:
+        interruptDetail === null
+          ? "Scient asked the agent to stop and tried to end its session, but the provider never confirmed the turn ended. The turn may still be running."
+          : `Scient asked the agent to stop, but the provider never confirmed the turn ended. The turn may still be running. (${interruptDetail})`,
+      turnId: operation.turnId,
+      createdAt: DateTime.formatIso(yield* DateTime.now),
+    });
+    return "unconfirmed" as const;
+  });
+
   const processTurnInterruptRequested = Effect.fn("processTurnInterruptRequested")(function* (
     event: Extract<ProviderIntentEvent, { type: "thread.turn-interrupt-requested" }>,
   ) {
@@ -1657,80 +1930,105 @@ const make = Effect.gen(function* () {
       });
     }
 
-    const recoverInterruptFailure = (cause: Cause.Cause<unknown>) => {
-      if (Cause.hasInterruptsOnly(cause)) {
-        return Effect.interrupt;
-      }
+    // Repeated Stops on a thread that is already being stopped join the
+    // in-flight operation instead of starting a second one; otherwise a user
+    // pressing Stop twice would race two escalations against each other.
+    if (pendingStopOperations.has(event.payload.threadId)) {
+      return;
+    }
 
-      const detail = formatFailureDetail(cause);
-      return Effect.gen(function* () {
-        const latestThread = yield* resolveThreadShell(event.payload.threadId);
-        const latestSession = latestThread?.session;
-        if (
-          !latestSession ||
-          latestSession.status === "stopped" ||
-          latestSession.status === "ready" ||
-          (event.payload.turnId !== undefined &&
-            latestSession.activeTurnId !== null &&
-            latestSession.activeTurnId !== event.payload.turnId)
-        ) {
-          return;
-        }
+    const operationId = yield* crypto.randomUUIDv4;
+    const nowMillis = yield* Clock.currentTimeMillis;
+    const operation: PendingStopOperation = {
+      operationId,
+      threadId: event.payload.threadId,
+      providerInstanceId: session.providerInstanceId ?? null,
+      turnId: session.activeTurnId,
+      // Set from the interrupt outcome below; a deadline in the past means
+      // "escalate now".
+      deadlineAtMillis: nowMillis,
+    };
+    pendingStopOperations.set(event.payload.threadId, operation);
 
-        yield* providerService.stopSession({ threadId: event.payload.threadId }).pipe(
-          Effect.catchCause((stopCause) => {
-            if (Cause.hasInterruptsOnly(stopCause)) {
-              return Effect.interrupt;
-            }
-            return Effect.logWarning(
-              "provider command reactor failed to stop session after interrupt failure",
-              {
-                threadId: event.payload.threadId,
-                cause: Cause.pretty(stopCause),
-                originalCause: Cause.pretty(cause),
-              },
-            );
+    // Orchestration turn ids are not provider turn ids, so interrupt by
+    // session. Everything from here runs in its own fiber: the interrupt
+    // request is bounded, and a provider that never answers must not stall the
+    // reactor while it waits — terminal events for every thread keep flowing.
+    type InterruptAttempt =
+      | { readonly kind: "sent" }
+      | { readonly kind: "timed-out" }
+      | { readonly kind: "failed"; readonly detail: string };
+
+    const runOwnedStopOperation = Effect.fnUntraced(function* () {
+      const interruptAttempt = yield* providerService
+        .interruptTurn({ threadId: operation.threadId })
+        .pipe(
+          Effect.timeoutOption(stopOperationTimings.interruptTimeoutMillis),
+          // Interruption is not a typed failure, so it propagates untouched and
+          // the registry entry is released by the ensuring below.
+          Effect.match({
+            onFailure: (error) =>
+              ({
+                kind: "failed",
+                detail: formatFailureDetail(Cause.fail(error)),
+              }) as InterruptAttempt,
+            onSuccess: (outcome) =>
+              (Option.isNone(outcome)
+                ? { kind: "timed-out" }
+                : { kind: "sent" }) as InterruptAttempt,
           }),
         );
-        const stoppedThread = yield* resolveThreadShell(event.payload.threadId);
-        const stoppedSession = stoppedThread?.session;
-        if (
-          !stoppedSession ||
-          stoppedSession.status === "stopped" ||
-          stoppedSession.status === "ready" ||
-          (event.payload.turnId !== undefined &&
-            stoppedSession.activeTurnId !== null &&
-            stoppedSession.activeTurnId !== event.payload.turnId)
-        ) {
-          return;
+      if (interruptAttempt.kind === "timed-out") {
+        yield* Effect.logWarning("provider interrupt request did not answer before its bound", {
+          operationId,
+          threadId: operation.threadId,
+          turnId: operation.turnId,
+        });
+      }
+      const interruptDetail = interruptAttempt.kind === "failed" ? interruptAttempt.detail : null;
+      // A request that never reached the provider leaves the turn running, so
+      // there is nothing to wait for: escalate on the next check. A request that
+      // was delivered gets the full grace window, because a turn that is about
+      // to finish must settle itself rather than be reported as stopped.
+      const attemptFinishedAt = yield* Clock.currentTimeMillis;
+      operation.deadlineAtMillis =
+        interruptAttempt.kind === "failed"
+          ? attemptFinishedAt
+          : attemptFinishedAt + stopOperationTimings.deadlineMillis;
+
+      return yield* runStopOperation(operation, interruptDetail);
+    });
+
+    yield* runOwnedStopOperation().pipe(
+      Effect.tap((outcome: StopOutcome) =>
+        Effect.logInfo("provider stop operation finished", {
+          operationId,
+          threadId: operation.threadId,
+          turnId: operation.turnId,
+          outcome,
+        }),
+      ),
+      // Releasing the registry entry is what lets a later Stop try again,
+      // including after an unconfirmed attempt.
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (pendingStopOperations.get(operation.threadId)?.operationId === operationId) {
+            pendingStopOperations.delete(operation.threadId);
+          }
+        }),
+      ),
+      Effect.catchCause((cause) => {
+        if (Cause.hasInterruptsOnly(cause)) {
+          return Effect.interrupt;
         }
-
-        yield* setThreadSession({
-          threadId: event.payload.threadId,
-          session: {
-            ...stoppedSession,
-            status: "stopped",
-            activeTurnId: null,
-            lastError: detail,
-            updatedAt: event.payload.createdAt,
-          },
-          createdAt: event.payload.createdAt,
+        return Effect.logWarning("provider stop operation ended unexpectedly", {
+          operationId,
+          threadId: operation.threadId,
+          cause: Cause.pretty(cause),
         });
-        yield* appendProviderFailureActivity({
-          threadId: event.payload.threadId,
-          kind: "provider.turn.interrupt.failed",
-          summary: "Provider turn interrupt failed",
-          detail,
-          turnId: event.payload.turnId ?? null,
-          createdAt: event.payload.createdAt,
-        });
-      });
-    };
-
-    // Orchestration turn ids are not provider turn ids, so interrupt by session.
-    yield* providerService
-      .interruptTurn({ threadId: event.payload.threadId })
-      .pipe(Effect.catchCause(recoverInterruptFailure));
+      }),
+      Effect.forkScoped,
+    );
   });
 
   const processApprovalResponseRequested = Effect.fn("processApprovalResponseRequested")(function* (

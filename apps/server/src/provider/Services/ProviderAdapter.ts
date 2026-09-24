@@ -27,6 +27,19 @@ import type * as Stream from "effect/Stream";
 
 export type ProviderSessionModelSwitchMode = "in-session" | "unsupported";
 
+/**
+ * What a provider says about a thread when asked, in provider terms, whether
+ * it is still executing a turn.
+ *
+ * - `ended`: the provider itself reports no turn running for this thread.
+ * - `active`: the provider reports a turn still running.
+ * - `unknown`: the provider could not be asked, or its answer was unusable.
+ *
+ * `unknown` is never evidence of termination. Callers that need proof of a
+ * stopped turn must treat it as unconfirmed.
+ */
+export type ProviderTurnEndConfirmation = "ended" | "active" | "unknown";
+
 export type ProviderAdapterSendTurnInput = ProviderSendTurnInput & {
   /** Server-owned user text before model-directed attachment/skill augmentation.
    * Native commands may need their exact arguments; never decoded from client input. */
@@ -124,6 +137,20 @@ export interface ProviderAdapterShape<TError> {
    * Stop one provider session.
    */
   readonly stopSession: (threadId: ThreadId) => Effect.Effect<void, TError>;
+
+  /**
+   * Ask the provider, in provider terms, whether this thread is still
+   * executing a turn. Used to verify a cancellation instead of inferring it
+   * from the absence of an event.
+   *
+   * Omission means the adapter cannot confirm; callers must read that as
+   * `unknown` rather than as proof that the turn ended. Implementations must
+   * bound the call and must not answer from adapter-side bookkeeping that only
+   * mirrors the event stream.
+   */
+  readonly confirmTurnEnd?: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ProviderTurnEndConfirmation, TError>;
 
   /**
    * List currently active provider sessions for this adapter.

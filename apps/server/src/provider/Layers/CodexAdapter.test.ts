@@ -39,6 +39,7 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";
 import type { CodexAdapterShape } from "../Services/CodexAdapter.ts";
+import type { ProviderTurnEndConfirmation } from "../Services/ProviderAdapter.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
 import {
   type CodexSessionRuntimeOptions,
@@ -88,6 +89,10 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
 
   public readonly interruptTurnImpl = vi.fn((_turnId?: TurnId): Promise<void> =>
     Promise.resolve(undefined),
+  );
+
+  public readonly readThreadActivityImpl = vi.fn((): Promise<ProviderTurnEndConfirmation> =>
+    Promise.resolve("ended"),
   );
 
   public readonly readThreadImpl = vi.fn((): Promise<CodexThreadSnapshot> =>
@@ -141,6 +146,8 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
   }
 
   readThread = Effect.promise(() => this.readThreadImpl());
+
+  readThreadActivity = Effect.promise(() => this.readThreadActivityImpl());
 
   rollbackThread(numTurns: number) {
     return Effect.promise(() => this.rollbackThreadImpl(numTurns));
@@ -2776,6 +2783,33 @@ scopedLifecycleLayer("CodexAdapterLive scoped lifecycle", (it) => {
         asThreadId("thread-stop"),
       ]);
       NodeAssert.equal(yield* adapter.hasSession(asThreadId("thread-stop")), false);
+    }),
+  );
+
+  it.effect("confirms a turn end from the app-server, not from adapter bookkeeping", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-confirm"),
+        runtimeMode: "full-access",
+      });
+      const runtime = scopedLifecycleRuntimeFactory.lastRuntime;
+      NodeAssert.ok(runtime);
+
+      runtime.readThreadActivityImpl.mockResolvedValueOnce("active");
+      NodeAssert.equal(yield* adapter.confirmTurnEnd!(asThreadId("thread-confirm")), "active");
+      runtime.readThreadActivityImpl.mockResolvedValueOnce("ended");
+      NodeAssert.equal(yield* adapter.confirmTurnEnd!(asThreadId("thread-confirm")), "ended");
+
+      // A probe that cannot answer must not read as proof of a stop.
+      runtime.readThreadActivityImpl.mockRejectedValueOnce(new Error("transport closed"));
+      NodeAssert.equal(yield* adapter.confirmTurnEnd!(asThreadId("thread-confirm")), "unknown");
+
+      // Once the adapter holds no runtime for the thread, this provider is not
+      // executing a turn for it.
+      yield* adapter.stopSession(asThreadId("thread-confirm"));
+      NodeAssert.equal(yield* adapter.confirmTurnEnd!(asThreadId("thread-confirm")), "ended");
     }),
   );
 });

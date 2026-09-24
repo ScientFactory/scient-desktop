@@ -4,6 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import {
+  type InternalOrchestrationCommand,
   ModelSelection,
   ProviderRuntimeEvent,
   ProviderSession,
@@ -52,6 +53,8 @@ import {
   ProviderService,
   type ProviderServiceShape,
 } from "../../provider/Services/ProviderService.ts";
+import type { ProviderTurnEndConfirmation } from "../../provider/Services/ProviderAdapter.ts";
+import { stopOperationTimings } from "./ProviderCommandReactor.ts";
 import { ProviderAuthService } from "../../provider/Services/ProviderAuthService.ts";
 import { makeProviderRegistryLayer } from "../../provider/testUtils/providerRegistryMock.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
@@ -187,6 +190,8 @@ describe("ProviderCommandReactor", () => {
     readonly afterTurnStartDispatch?: () => Effect.Effect<void>;
     readonly compactThreadEffect?: () => Effect.Effect<void, ProviderAdapterRequestError>;
     readonly interruptTurnEffect?: () => Effect.Effect<void, ProviderAdapterRequestError>;
+    /** Provider-side answer for turn-end verification; omitted means "unknown". */
+    readonly confirmTurnEnd?: ProviderTurnEndConfirmation;
     readonly stopSessionEffect?: () => Effect.Effect<void, ProviderAdapterRequestError>;
     readonly startSessionEffect?: (
       session: ProviderSession,
@@ -283,6 +288,12 @@ describe("ProviderCommandReactor", () => {
     );
     const compactThread = vi.fn((_: ThreadId) => input?.compactThreadEffect?.() ?? Effect.void);
     const interruptTurn = vi.fn((_: unknown) => input?.interruptTurnEffect?.() ?? Effect.void);
+    // Present only when the test wants to exercise provider-side verification;
+    // an adapter that cannot answer is the default everywhere else.
+    const confirmTurnEnd =
+      input?.confirmTurnEnd === undefined
+        ? undefined
+        : vi.fn(() => Effect.succeed(input.confirmTurnEnd!));
     const respondToRequest = vi.fn<ProviderServiceShape["respondToRequest"]>(() => Effect.void);
     const respondToUserInput = vi.fn<ProviderServiceShape["respondToUserInput"]>(() => Effect.void);
     const stopSession = vi.fn((stopInput: unknown) =>
@@ -369,6 +380,7 @@ describe("ProviderCommandReactor", () => {
       sendTurn: sendTurn as ProviderServiceShape["sendTurn"],
       compactThread,
       interruptTurn: interruptTurn as ProviderServiceShape["interruptTurn"],
+      ...(confirmTurnEnd === undefined ? {} : { confirmTurnEnd }),
       respondToRequest: respondToRequest as ProviderServiceShape["respondToRequest"],
       respondToUserInput: respondToUserInput as ProviderServiceShape["respondToUserInput"],
       stopSession: stopSession as ProviderServiceShape["stopSession"],
@@ -3816,7 +3828,7 @@ describe("ProviderCommandReactor", () => {
   });
 
   effectIt.effect(
-    "stops a running session and records the failure when provider interrupt fails",
+    "does not claim a stopped session when both the interrupt and the shutdown fail",
     () =>
       Effect.gen(function* () {
         const harness = yield* Effect.promise(() =>
@@ -3860,6 +3872,82 @@ describe("ProviderCommandReactor", () => {
         yield* harness.engine.dispatch({
           type: "thread.turn.interrupt",
           commandId: CommandId.make("cmd-turn-interrupt-provider-failure"),
+          threadId: ThreadId.make("thread-1"),
+          turnId: asTurnId("turn-1"),
+          createdAt: now,
+        });
+
+        // The recovery notice is the last thing this operation publishes, so
+        // waiting for it is waiting for the operation's outcome.
+        yield* Effect.promise(() =>
+          waitFor(async () => {
+            const thread = (await harness.readModel()).threads.find(
+              (entry) => entry.id === ThreadId.make("thread-1"),
+            );
+            return (
+              thread?.activities.some(
+                (activity) => activity.kind === "provider.turn.interrupt.failed",
+              ) ?? false
+            );
+          }),
+        );
+
+        const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
+          (entry) => entry.id === ThreadId.make("thread-1"),
+        );
+        // Neither the interrupt nor the shutdown could be confirmed, so the
+        // session must keep saying it is running rather than claim a stop that
+        // may not have happened.
+        expect(thread?.session).toMatchObject({
+          status: "running",
+          activeTurnId: asTurnId("turn-1"),
+        });
+        expect(
+          thread?.activities.find((activity) => activity.kind === "provider.turn.interrupt.failed"),
+        ).toMatchObject({
+          summary: "Could not confirm the agent stopped",
+        });
+        expect(harness.stopSession).toHaveBeenCalledWith({ threadId: ThreadId.make("thread-1") });
+      }),
+  );
+
+  effectIt.effect(
+    "settles a running session when the shutdown succeeds after a failed interrupt",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() =>
+          createHarness({
+            interruptTurnEffect: () =>
+              Effect.fail(
+                new ProviderAdapterRequestError({
+                  provider: "codex",
+                  method: "thread.interrupt",
+                  detail: "provider session disappeared",
+                }),
+              ),
+          }),
+        );
+        const now = "2026-01-01T00:00:00.000Z";
+
+        yield* harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("cmd-session-set-interrupt-failed-stop-ok"),
+          threadId: ThreadId.make("thread-1"),
+          session: {
+            threadId: ThreadId.make("thread-1"),
+            status: "running",
+            providerName: "codex",
+            runtimeMode: "approval-required",
+            activeTurnId: asTurnId("turn-1"),
+            lastError: null,
+            updatedAt: now,
+          },
+          createdAt: now,
+        });
+
+        yield* harness.engine.dispatch({
+          type: "thread.turn.interrupt",
+          commandId: CommandId.make("cmd-turn-interrupt-failed-stop-ok"),
           threadId: ThreadId.make("thread-1"),
           turnId: asTurnId("turn-1"),
           createdAt: now,
@@ -3931,7 +4019,14 @@ describe("ProviderCommandReactor", () => {
         createdAt: now,
       });
 
-      yield* Effect.promise(() => harness.drain());
+      yield* Effect.promise(() =>
+        waitFor(async () => {
+          const thread = (await harness.readModel()).threads.find(
+            (entry) => entry.id === ThreadId.make("thread-1"),
+          );
+          return thread?.session?.status === "stopped";
+        }),
+      );
 
       const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
         (entry) => entry.id === ThreadId.make("thread-1"),
@@ -3947,6 +4042,271 @@ describe("ProviderCommandReactor", () => {
       ).toMatchObject({ payload: { detail: "provider session disappeared" } });
     }),
   );
+
+  describe("stop operation convergence", () => {
+    const withFastTimings = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      Effect.gen(function* () {
+        const previous = { ...stopOperationTimings };
+        stopOperationTimings.deadlineMillis = 40;
+        stopOperationTimings.interruptTimeoutMillis = 40;
+        stopOperationTimings.pollIntervalMillis = 5;
+        stopOperationTimings.sessionTimeoutMillis = 40;
+        stopOperationTimings.confirmTimeoutMillis = 40;
+        return yield* effect.pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              Object.assign(stopOperationTimings, previous);
+            }),
+          ),
+        );
+      });
+
+    const runningSessionCommand = (commandId: string, turnId: TurnId) => {
+      const now = "2026-01-01T00:00:00.000Z";
+      return {
+        type: "thread.session.set",
+        commandId: CommandId.make(commandId),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: turnId,
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      } as const satisfies InternalOrchestrationCommand;
+    };
+
+    effectIt.effect("settles without stopping the session when the turn ends on its own", () =>
+      withFastTimings(
+        Effect.gen(function* () {
+          const harness = yield* Effect.promise(() => createHarness());
+          yield* harness.engine.dispatch(
+            runningSessionCommand("cmd-session-set-stop-op-1", asTurnId("turn-1")),
+          );
+          const now = "2026-01-01T00:00:00.000Z";
+
+          yield* harness.engine.dispatch({
+            type: "thread.turn.interrupt",
+            commandId: CommandId.make("cmd-turn-interrupt-natural"),
+            threadId: ThreadId.make("thread-1"),
+            turnId: asTurnId("turn-1"),
+            createdAt: now,
+          });
+          yield* Effect.promise(() => waitFor(() => harness.interruptTurn.mock.calls.length === 1));
+          // The provider reports the turn end the normal way.
+          yield* harness.engine.dispatch({
+            type: "thread.session.set",
+            commandId: CommandId.make("cmd-session-set-natural-end"),
+            threadId: ThreadId.make("thread-1"),
+            session: {
+              threadId: ThreadId.make("thread-1"),
+              status: "ready",
+              providerName: "codex",
+              runtimeMode: "approval-required",
+              activeTurnId: null,
+              lastError: null,
+              updatedAt: now,
+            },
+            createdAt: now,
+          });
+
+          const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
+            (entry) => entry.id === ThreadId.make("thread-1"),
+          );
+          expect(thread?.session?.status).toBe("ready");
+          // A turn that finished by itself must never be escalated against.
+          expect(harness.stopSession).not.toHaveBeenCalled();
+        }),
+      ),
+    );
+
+    effectIt.effect("settles from provider confirmation without stopping the session", () =>
+      withFastTimings(
+        Effect.gen(function* () {
+          const harness = yield* Effect.promise(() => createHarness({ confirmTurnEnd: "ended" }));
+          yield* harness.engine.dispatch(
+            runningSessionCommand("cmd-session-set-stop-op-2", asTurnId("turn-1")),
+          );
+          const now = "2026-01-01T00:00:00.000Z";
+
+          yield* harness.engine.dispatch({
+            type: "thread.turn.interrupt",
+            commandId: CommandId.make("cmd-turn-interrupt-confirmed"),
+            threadId: ThreadId.make("thread-1"),
+            turnId: asTurnId("turn-1"),
+            createdAt: now,
+          });
+
+          yield* Effect.promise(() =>
+            waitFor(async () => {
+              const thread = (await harness.readModel()).threads.find(
+                (entry) => entry.id === ThreadId.make("thread-1"),
+              );
+              return thread?.session?.status === "stopped";
+            }),
+          );
+
+          const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
+            (entry) => entry.id === ThreadId.make("thread-1"),
+          );
+          expect(thread?.session).toMatchObject({ status: "stopped", activeTurnId: null });
+          // The provider said the turn was gone; tearing the session down would
+          // be a stronger action than the evidence supports.
+          expect(harness.stopSession).not.toHaveBeenCalled();
+        }),
+      ),
+    );
+
+    effectIt.effect("escalates when the provider still reports the turn as active", () =>
+      withFastTimings(
+        Effect.gen(function* () {
+          const harness = yield* Effect.promise(() => createHarness({ confirmTurnEnd: "active" }));
+          yield* harness.engine.dispatch(
+            runningSessionCommand("cmd-session-set-stop-op-3", asTurnId("turn-1")),
+          );
+          const now = "2026-01-01T00:00:00.000Z";
+
+          yield* harness.engine.dispatch({
+            type: "thread.turn.interrupt",
+            commandId: CommandId.make("cmd-turn-interrupt-still-active"),
+            threadId: ThreadId.make("thread-1"),
+            turnId: asTurnId("turn-1"),
+            createdAt: now,
+          });
+
+          yield* Effect.promise(() => waitFor(() => harness.stopSession.mock.calls.length === 1));
+          expect(harness.stopSession).toHaveBeenCalledWith({ threadId: ThreadId.make("thread-1") });
+        }),
+      ),
+    );
+
+    effectIt.effect("does not stop a session that was replaced while waiting", () =>
+      withFastTimings(
+        Effect.gen(function* () {
+          const harness = yield* Effect.promise(() => createHarness());
+          yield* harness.engine.dispatch(
+            runningSessionCommand("cmd-session-set-stop-op-4", asTurnId("turn-1")),
+          );
+          const now = "2026-01-01T00:00:00.000Z";
+
+          yield* harness.engine.dispatch({
+            type: "thread.turn.interrupt",
+            commandId: CommandId.make("cmd-turn-interrupt-replaced"),
+            threadId: ThreadId.make("thread-1"),
+            turnId: asTurnId("turn-1"),
+            createdAt: now,
+          });
+          yield* Effect.promise(() => waitFor(() => harness.interruptTurn.mock.calls.length === 1));
+
+          // A newer turn takes the thread while the stop operation waits.
+          yield* harness.engine.dispatch({
+            type: "thread.session.set",
+            commandId: CommandId.make("cmd-session-set-replacement"),
+            threadId: ThreadId.make("thread-1"),
+            session: {
+              threadId: ThreadId.make("thread-1"),
+              status: "running",
+              providerName: "codex",
+              runtimeMode: "approval-required",
+              activeTurnId: asTurnId("turn-2"),
+              lastError: null,
+              updatedAt: now,
+            },
+            createdAt: now,
+          });
+
+          // Give the operation time to reach its deadline and stand down. The
+          // reactor runs on the real clock, so wait in real time rather than
+          // on the test clock's sleep.
+          const stoodDownAt = Date.now();
+          yield* Effect.promise(() => waitFor(() => Date.now() - stoodDownAt >= 300));
+          const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
+            (entry) => entry.id === ThreadId.make("thread-1"),
+          );
+          expect(thread?.session).toMatchObject({
+            status: "running",
+            activeTurnId: asTurnId("turn-2"),
+          });
+          expect(harness.stopSession).not.toHaveBeenCalled();
+        }),
+      ),
+    );
+
+    effectIt.effect("joins repeated Stops instead of escalating twice", () =>
+      withFastTimings(
+        Effect.gen(function* () {
+          const harness = yield* Effect.promise(() => createHarness());
+          yield* harness.engine.dispatch(
+            runningSessionCommand("cmd-session-set-stop-op-5", asTurnId("turn-1")),
+          );
+          const now = "2026-01-01T00:00:00.000Z";
+
+          yield* harness.engine.dispatch({
+            type: "thread.turn.interrupt",
+            commandId: CommandId.make("cmd-turn-interrupt-repeat-1"),
+            threadId: ThreadId.make("thread-1"),
+            turnId: asTurnId("turn-1"),
+            createdAt: now,
+          });
+          yield* Effect.promise(() => waitFor(() => harness.interruptTurn.mock.calls.length === 1));
+          yield* harness.engine.dispatch({
+            type: "thread.turn.interrupt",
+            commandId: CommandId.make("cmd-turn-interrupt-repeat-2"),
+            threadId: ThreadId.make("thread-1"),
+            turnId: asTurnId("turn-1"),
+            createdAt: now,
+          });
+          const settledAt = Date.now();
+          yield* Effect.promise(() => waitFor(() => Date.now() - settledAt >= 300));
+
+          // The second Stop joined the first operation instead of starting its
+          // own, so there is still exactly one interrupt and at most one
+          // escalation.
+          expect(harness.interruptTurn).toHaveBeenCalledTimes(1);
+          expect(harness.stopSession.mock.calls.length).toBeLessThanOrEqual(1);
+        }),
+      ),
+    );
+
+    effectIt.effect("still converges when the interrupt request never answers", () =>
+      withFastTimings(
+        Effect.gen(function* () {
+          const harness = yield* Effect.promise(() =>
+            createHarness({
+              interruptTurnEffect: () => Effect.never,
+            }),
+          );
+          yield* harness.engine.dispatch(
+            runningSessionCommand("cmd-session-set-stop-op-6", asTurnId("turn-1")),
+          );
+          const now = "2026-01-01T00:00:00.000Z";
+
+          yield* harness.engine.dispatch({
+            type: "thread.turn.interrupt",
+            commandId: CommandId.make("cmd-turn-interrupt-never-answers"),
+            threadId: ThreadId.make("thread-1"),
+            turnId: asTurnId("turn-1"),
+            createdAt: now,
+          });
+
+          // The hung request must not outlive the operation's bound.
+          yield* Effect.promise(() =>
+            waitFor(async () => {
+              const thread = (await harness.readModel()).threads.find(
+                (entry) => entry.id === ThreadId.make("thread-1"),
+              );
+              return thread?.session?.status === "stopped";
+            }),
+          );
+          expect(harness.stopSession).toHaveBeenCalledWith({ threadId: ThreadId.make("thread-1") });
+        }),
+      ),
+    );
+  });
 
   effectIt.effect("does not overwrite a session that became ready while an interrupt failed", () =>
     Effect.gen(function* () {
@@ -4009,7 +4369,19 @@ describe("ProviderCommandReactor", () => {
         createdAt: now,
       });
 
-      yield* Effect.promise(() => harness.drain());
+      // The stop operation owns the interrupt call now, so wait for the turn to
+      // actually settle before asserting that nothing overwrote it.
+      yield* Effect.promise(() =>
+        waitFor(async () => {
+          const thread = (await harness.readModel()).threads.find(
+            (entry) => entry.id === ThreadId.make("thread-1"),
+          );
+          return thread?.session?.status === "ready";
+        }),
+      );
+      // Give the operation its chance to (wrongly) act on the settled session.
+      const settledAt = Date.now();
+      yield* Effect.promise(() => waitFor(() => Date.now() - settledAt >= 300));
 
       const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
         (entry) => entry.id === ThreadId.make("thread-1"),

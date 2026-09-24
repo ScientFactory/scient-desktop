@@ -39,6 +39,7 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -2248,6 +2249,50 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     },
   );
 
+  /**
+   * Provider-side confirmation that a thread is no longer executing a turn.
+   *
+   * Adapters that cannot answer in provider terms report `unknown`; that is
+   * deliberately not the same as `ended`, so a cancellation that could not be
+   * verified never presents itself as confirmed.
+   */
+  const confirmTurnEnd = Effect.fn("confirmTurnEnd")(function* (input: {
+    readonly threadId: ThreadId;
+  }) {
+    const routed = yield* resolveRoutableSession({
+      threadId: input.threadId,
+      operation: "ProviderService.confirmTurnEnd",
+      allowRecovery: false,
+    }).pipe(
+      Effect.catchCause((cause) => {
+        if (Cause.hasInterruptsOnly(cause)) {
+          return Effect.interrupt;
+        }
+        return Effect.succeed(null);
+      }),
+    );
+    // A session that cannot be routed was never asked. Reporting "ended" here
+    // would assert provider state we did not observe, so this stays unknown and
+    // the caller escalates on its own evidence.
+    if (routed === null) {
+      return "unknown" as const;
+    }
+    const confirm = routed.adapter.confirmTurnEnd;
+    if (confirm === undefined) {
+      return "unknown" as const;
+    }
+    return yield* confirm(routed.threadId).pipe(
+      Effect.catchCause((cause) => {
+        if (Cause.hasInterruptsOnly(cause)) {
+          return Effect.interrupt;
+        }
+        return Effect.logWarning("provider turn-end confirmation failed").pipe(
+          Effect.as("unknown" as const),
+        );
+      }),
+    );
+  });
+
   const listSessions: ProviderServiceMethod<"listSessions"> = Effect.fn("listSessions")(
     function* () {
       const currentAdapters = yield* getAdapterEntries;
@@ -2562,6 +2607,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     respondToRequest,
     respondToUserInput,
     stopSession,
+    confirmTurnEnd,
     listSessions,
     getCapabilities,
     getInstanceInfo,

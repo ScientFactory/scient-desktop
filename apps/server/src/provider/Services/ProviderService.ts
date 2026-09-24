@@ -32,7 +32,10 @@ import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
 
 import type { ProviderServiceError } from "../Errors.ts";
-import type { ProviderAdapterCapabilities } from "./ProviderAdapter.ts";
+import type {
+  ProviderAdapterCapabilities,
+  ProviderTurnEndConfirmation,
+} from "./ProviderAdapter.ts";
 import type { ProviderInstanceRoutingInfo } from "./ProviderAdapterRegistry.ts";
 
 /**
@@ -87,6 +90,16 @@ export interface ProviderServiceShape {
   readonly stopSession: (
     input: ProviderStopSessionInput,
   ) => Effect.Effect<void, ProviderServiceError>;
+
+  /**
+   * Ask the bound adapter, in provider terms, whether this thread is still
+   * executing a turn. Optional: an adapter that cannot answer leaves this
+   * absent, and callers must read that as `unknown`, never as proof of
+   * termination.
+   */
+  readonly confirmTurnEnd?: (input: {
+    readonly threadId: ThreadId;
+  }) => Effect.Effect<ProviderTurnEndConfirmation, ProviderServiceError>;
 
   /**
    * List active provider sessions.

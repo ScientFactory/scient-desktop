@@ -31,11 +31,13 @@ import {
   ThreadId,
   ProviderSendTurnInput,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as NodeCrypto from "node:crypto";
 import * as Crypto from "effect/Crypto";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -91,6 +93,14 @@ const isCodexSessionRuntimeThreadIdMissingError = Schema.is(
 const isCodexResumeCursorSchema = Schema.is(CodexResumeCursorSchema);
 
 const PROVIDER = ProviderDriverKind.make("codex");
+
+/**
+ * Bound for the provider-side "is this thread still working?" probe used to
+ * verify a cancellation. The app-server answers from local state, so this only
+ * needs to outlast a busy transport; exceeding it means "unknown", never
+ * "ended".
+ */
+const CODEX_TURN_END_CONFIRMATION_TIMEOUT = "5 seconds";
 
 export interface CodexAdapterLiveOptions {
   readonly instanceId?: ProviderInstanceId;
@@ -2731,9 +2741,30 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     }
     session.stopped = true;
     sessions.delete(session.threadId);
-    yield* session.runtime.close.pipe(Effect.ignore);
+    // Teardown stays best-effort — the runtime must come down even when one
+    // step fails — but a swallowed failure is not evidence that the provider
+    // stopped, so it is reported instead of discarded. Callers that need a
+    // confirmed shutdown read these logs; `stopSession` still succeeds because
+    // the scope close below is the authoritative teardown.
+    yield* session.runtime.close.pipe(
+      Effect.tapError((error) =>
+        Effect.logWarning("codex session runtime close failed during stop", {
+          threadId: session.threadId,
+          error,
+        }),
+      ),
+      Effect.ignore,
+    );
     yield* Effect.ignore(Scope.close(session.scope, Exit.void));
-    yield* Fiber.interrupt(session.eventFiber).pipe(Effect.ignore);
+    yield* Fiber.interrupt(session.eventFiber).pipe(
+      Effect.tapError((error) =>
+        Effect.logWarning("codex session event fiber interrupt failed during stop", {
+          threadId: session.threadId,
+          error,
+        }),
+      ),
+      Effect.ignore,
+    );
   });
 
   const stopSession: CodexAdapterShape["stopSession"] = (threadId) =>
@@ -2743,6 +2774,42 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         return;
       }
       yield* stopSessionInternal(session);
+    });
+
+  /**
+   * Provider-side confirmation for cancellation. Reads the app-server's own
+   * view of the thread, bounded so a wedged transport cannot hold up the stop
+   * path; a transport failure answers "unknown", never "ended".
+   */
+  const confirmTurnEnd: NonNullable<CodexAdapterShape["confirmTurnEnd"]> = (threadId) =>
+    Effect.gen(function* () {
+      const session = sessions.get(threadId);
+      if (session === undefined || session.stopped) {
+        // No live runtime for this thread, so this provider is not executing a
+        // turn for it.
+        return "ended" as const;
+      }
+      const confirmation = yield* session.runtime.readThreadActivity.pipe(
+        Effect.timeoutOption(CODEX_TURN_END_CONFIRMATION_TIMEOUT),
+        Effect.map(
+          Option.match({
+            onNone: () => "unknown" as const,
+            onSome: (value) => value,
+          }),
+        ),
+        // A transport that cannot answer proves nothing, so an unreadable
+        // probe reports unknown rather than an error the caller must interpret.
+        Effect.catchCause((cause) => {
+          if (Cause.hasInterruptsOnly(cause)) {
+            return Effect.interrupt;
+          }
+          return Effect.logWarning("codex turn-end confirmation probe failed", {
+            threadId,
+            cause: Cause.pretty(cause),
+          }).pipe(Effect.as("unknown" as const));
+        }),
+      );
+      return confirmation;
     });
 
   const listSessions: CodexAdapterShape["listSessions"] = () =>
@@ -2786,6 +2853,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     respondToRequest,
     respondToUserInput,
     stopSession,
+    confirmTurnEnd,
     listSessions,
     hasSession,
     stopAll,
