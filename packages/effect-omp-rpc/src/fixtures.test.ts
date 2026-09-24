@@ -17,6 +17,16 @@ import {
   OmpSubagentFrame,
 } from "./schema.ts";
 
+const decodeReady = Schema.decodeUnknownSync(OmpRpcReady);
+const decodeEvent = Schema.decodeUnknownSync(OmpRpcEvent);
+const decodeState = Schema.decodeUnknownSync(OmpRpcState);
+const decodeModels = Schema.decodeUnknownSync(OmpRpcAvailableModels);
+const decodeSubagent = Schema.decodeSync(OmpSubagentFrame);
+const decodeMessageStart = Schema.decodeUnknownSync(OmpMessageStartEvent);
+const decodeMessageUpdate = Schema.decodeUnknownSync(OmpMessageUpdateEvent);
+const decodeMessageEnd = Schema.decodeUnknownSync(OmpMessageEndEvent);
+const decodeAgentEnd = Schema.decodeUnknownSync(OmpAgentEndEvent);
+
 const fixtureDirectory = NodePath.resolve(
   NodeURL.fileURLToPath(new URL("../test/fixtures/v18.2.8", import.meta.url)),
 );
@@ -30,26 +40,24 @@ const frames = (name: string): ReadonlyArray<unknown> =>
 describe("OMP v18.2.8 recorded fixtures", () => {
   it("decodes the pinned startup and command frames", () => {
     const values = frames("startup.jsonl");
-    expect(Schema.decodeUnknownSync(OmpRpcReady)(values[0])).toMatchObject({
+    expect(decodeReady(values[0])).toMatchObject({
       supportedProtocolVersions: [1, 2],
     });
-    expect(Schema.decodeUnknownSync(OmpRpcEvent)(values[2])).toMatchObject({
+    expect(decodeEvent(values[2])).toMatchObject({
       type: "available_commands_update",
     });
   });
 
   it("decodes real state and model capabilities", () => {
     const values = frames("state-and-models.jsonl");
-    const state = Schema.decodeUnknownSync(OmpRpcState)((values[0] as { data: unknown }).data);
+    const state = decodeState((values[0] as { data: unknown }).data);
     expect(state.model).toMatchObject({ provider: "ollama", id: "qwen3.6:35b-a3b" });
-    const models = Schema.decodeUnknownSync(OmpRpcAvailableModels)(
-      (values[1] as { data: unknown }).data,
-    );
+    const models = decodeModels((values[1] as { data: unknown }).data);
     expect(models.models[0]?.input).toEqual(["text", "image"]);
   });
 
   it("decodes the real subagent payload shape", () => {
-    const frame = Schema.decodeSync(OmpSubagentFrame)({
+    const frame = decodeSubagent({
       type: "subagent_lifecycle",
       payload: {
         id: "sub-1",
@@ -63,15 +71,13 @@ describe("OMP v18.2.8 recorded fixtures", () => {
 
   it("decodes a complete real assistant turn", () => {
     const values = frames("live-turn.jsonl");
-    expect(Schema.decodeUnknownSync(OmpMessageStartEvent)(values[3]).message.role).toBe("user");
-    expect(Schema.decodeUnknownSync(OmpMessageStartEvent)(values[5]).message.role).toBe(
-      "assistant",
-    );
-    expect(Schema.decodeUnknownSync(OmpMessageUpdateEvent)(values[6])).toMatchObject({
+    expect(decodeMessageStart(values[3]).message.role).toBe("user");
+    expect(decodeMessageStart(values[5]).message.role).toBe("assistant");
+    expect(decodeMessageUpdate(values[6])).toMatchObject({
       type: "message_update",
     });
-    expect(Schema.decodeUnknownSync(OmpMessageEndEvent)(values[8]).message.role).toBe("assistant");
-    expect(Schema.decodeUnknownSync(OmpAgentEndEvent)(values[10])).toMatchObject({
+    expect(decodeMessageEnd(values[8]).message.role).toBe("assistant");
+    expect(decodeAgentEnd(values[10])).toMatchObject({
       type: "agent_end",
       isTerminal: true,
     });
@@ -79,8 +85,8 @@ describe("OMP v18.2.8 recorded fixtures", () => {
 
   it("preserves the real user message lifecycle for role-aware mapping", () => {
     const values = frames("prompt-events.jsonl");
-    const messageStart = Schema.decodeUnknownSync(OmpMessageStartEvent)(values[3]);
-    const messageEnd = Schema.decodeUnknownSync(OmpMessageEndEvent)(values[4]);
+    const messageStart = decodeMessageStart(values[3]);
+    const messageEnd = decodeMessageEnd(values[4]);
     expect(messageStart.type).toBe("message_start");
     expect(messageEnd.type).toBe("message_end");
     expect(messageStart.message.role).toBe("user");
