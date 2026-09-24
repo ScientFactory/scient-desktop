@@ -4,12 +4,11 @@ Oh My Pi is an external coding agent. Scient talks to the `omp` executable over 
 interface. It does not embed Oh My Pi's Bun SDK, and it does not run Oh My Pi through ACP.
 
 Oh My Pi keeps its own home, credentials, skills, extensions, and model sign-in. Scient does not
-download Oh My Pi or offer a universal sign-in. When provider update checks are on, Scient notices a
-newer stable release in the same major version. It does not run Oh My Pi's updater or a package
-manager. Update that installation with Oh My Pi or the tool that installed it. On the desktop app for
-macOS Apple silicon, Scient can also install a private Oh My Pi 18.2.8. That copy updates only
-when a reviewed catalog release is newer, and only after you click Update. Enable Oh My Pi
-only after `omp` 18.2.8 or newer is installed and available to the Scient server.
+offer a universal sign-in. When provider update checks are on, a system installation shows a newer
+stable release in the same major version. Scient does not run Oh My Pi's updater or a package
+manager for that copy. On the desktop app for macOS Apple silicon, Scient can install a private Oh
+My Pi 18.2.8. That copy updates only when a reviewed catalog release is newer, and only after you
+click Update. Enable Oh My Pi only after `omp` 18.2.8 or newer is available to the Scient server.
 
 ## Setup
 
