@@ -47,7 +47,8 @@ const dispatchMenuAction = Effect.fn("desktop.menu.dispatchMenuAction")(function
 ): Effect.fn.Return<void, DesktopWindow.DesktopWindowError, DesktopWindow.DesktopWindow> {
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
   yield* desktopWindow.dispatchMenuAction(action, {
-    reveal: action !== "paste-as-text",
+    reveal:
+      action !== "paste-as-text" && action !== "reload-main" && action !== "force-reload-main",
   });
 });
 
@@ -153,6 +154,10 @@ export const make = Effect.gen(function* () {
     const zoomClick = (direction: DesktopWindow.MainWindowZoomDirection) => () => {
       runMenuEffect(`zoom-${direction}`, zoomMainWindow(direction));
     };
+    const reloadClick = (ignoreCache: boolean) => () => {
+      const action = ignoreCache ? "force-reload-main" : "reload-main";
+      runMenuEffect(action, dispatchMenuAction(action));
+    };
     const template: Electron.MenuItemConstructorOptions[] = [];
 
     if (environment.platform === "darwin") {
@@ -230,8 +235,8 @@ export const make = Effect.gen(function* () {
       {
         label: "View",
         submenu: [
-          { role: "reload" },
-          { role: "forceReload" },
+          { label: "Reload", accelerator: "CmdOrCtrl+R", click: reloadClick(false) },
+          { label: "Force Reload", accelerator: "Shift+CmdOrCtrl+R", click: reloadClick(true) },
           { role: "toggleDevTools" },
           { type: "separator" },
           /*

@@ -140,6 +140,9 @@ import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { isElectron } from "../env";
+import { useDesktopReloadGuard } from "../lib/desktopReload";
+import { projectFileOperationKey } from "@t3tools/client-runtime/state/projects";
+import { markdownPersistenceRegistry } from "../scient/markdownEditor/persistence/markdownPersistenceRegistry";
 import { readLocalApi } from "../localApi";
 import { useDiffPanelStore } from "../diffPanelStore";
 import {
@@ -2642,6 +2645,18 @@ function ChatViewContent(props: ChatViewProps) {
   usePendingSurfaceNavigationBlocker(
     markdownNavigation.pendingSurfaceIds,
     markdownNavigation.departureOptions,
+  );
+  useDesktopReloadGuard(
+    markdownNavigation.pendingSurfaceIds,
+    markdownNavigation.departureOptions,
+    (id) => {
+      const file = markdownPersistenceRegistry
+        .getSnapshot()
+        .find((entry) => projectFileOperationKey(entry) === id);
+      return file
+        ? `Could not save ${file.relativePath} in ${file.cwd}. Resolve its save notice, then try again.`
+        : undefined;
+    },
   );
   const configuredPreviewUrls = useMemo(
     () => getConfiguredPreviewUrls(activeProjectScripts),
