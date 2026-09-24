@@ -35,3 +35,32 @@ export const assertReadableOmpSessionFile = (input: {
       .access(fileReal, { readable: true })
       .pipe(Effect.mapError(() => "Oh My Pi session file is not readable."));
   });
+
+/**
+ * Compare the session identity reported by OMP with the cursor's expected
+ * file after both paths have passed through the filesystem's realpath
+ * resolver. This matters on macOS, where `/tmp` and `/private/tmp` are two
+ * names for the same file.
+ */
+export const ompSessionFilesEqual = (input: {
+  readonly sessionRoot: string;
+  readonly expectedRelativeFile: string;
+  readonly reportedFile: string;
+}) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const rootReal = yield* fs
+      .realPath(input.sessionRoot)
+      .pipe(Effect.mapError(() => "Oh My Pi session directory is not readable."));
+    const expected = yield* fs
+      .realPath(path.resolve(rootReal, input.expectedRelativeFile))
+      .pipe(Effect.mapError(() => "Oh My Pi session file is not readable."));
+    const reportedCandidate = path.isAbsolute(input.reportedFile)
+      ? input.reportedFile
+      : path.resolve(rootReal, input.reportedFile);
+    const reported = yield* fs
+      .realPath(reportedCandidate)
+      .pipe(Effect.mapError(() => "Oh My Pi session file is not readable."));
+    return path.normalize(expected) === path.normalize(reported);
+  });

@@ -58,7 +58,7 @@ import {
   type OmpProcessExit,
   type OmpRpcProcessOptions,
 } from "../omp/OmpRpcProcess.ts";
-import { assertReadableOmpSessionFile } from "../omp/OmpSessionFile.ts";
+import { assertReadableOmpSessionFile, ompSessionFilesEqual } from "../omp/OmpSessionFile.ts";
 import { acquireOmpSessionLock, releaseOmpSessionLock } from "../omp/OmpSessionLock.ts";
 import {
   makeOmpSessionCursor,
@@ -851,10 +851,15 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
               .getState()
               .pipe(Effect.mapError((cause) => request("get_state", cause.message, cause)));
             if (cursor) {
-              const expectedSessionFile = path.resolve(rootReal, cursor.relativeSessionFile);
+              const sameFile = state.sessionFile
+                ? yield* ompSessionFilesEqual({
+                    sessionRoot: rootReal,
+                    expectedRelativeFile: cursor.relativeSessionFile,
+                    reportedFile: state.sessionFile,
+                  }).pipe(Effect.mapError((issue) => request("get_state", issue)))
+                : false;
               if (
-                !state.sessionFile ||
-                path.resolve(state.sessionFile) !== expectedSessionFile ||
+                !sameFile ||
                 (cursor.sessionId !== undefined && state.sessionId !== cursor.sessionId)
               ) {
                 return yield* validation(
