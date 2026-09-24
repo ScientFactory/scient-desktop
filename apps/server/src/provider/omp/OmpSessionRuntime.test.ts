@@ -29,6 +29,7 @@ const makeClient = (events: Queue.Queue<OmpRpcNotification, Cause.Done>) =>
       maxReassembledFrameBytes: 67_108_864,
     }),
     events: Stream.fromQueue(events),
+    flushEvents: () => Queue.offer(events, { _tag: "Drain" }).pipe(Effect.asVoid),
     command: () => Effect.succeed(response("command")),
     prompt: () => Effect.succeed(response("prompt", { agentInvoked: true })),
     steer: () => Effect.succeed(response("steer")),

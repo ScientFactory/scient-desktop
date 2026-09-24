@@ -36,6 +36,7 @@ const process = (overrides: Partial<OmpRpcProcess> = {}): OmpRpcProcess => ({
     maxReassembledFrameBytes: 67_108_864,
   }),
   events: Stream.empty,
+  flushEvents: () => Effect.void,
   command: () => Effect.succeed(response("command")),
   prompt: () => Effect.succeed(response("prompt", { agentInvoked: true })),
   steer: () => Effect.succeed(response("steer")),

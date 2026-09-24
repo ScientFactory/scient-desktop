@@ -148,6 +148,7 @@ export const makeOmpTextGeneration = Effect.fn("makeOmpTextGeneration")(function
                 }),
               ).pipe(Effect.asVoid);
             }
+            if (notification._tag !== "Event") return Effect.void;
             const event = notification.event;
             if (event.type === "prompt_result" && event.agentInvoked === false) {
               return Deferred.fail(

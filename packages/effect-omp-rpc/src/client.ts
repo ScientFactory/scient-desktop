@@ -45,6 +45,7 @@ const isProcessExitedError = Schema.is(OmpRpcProcessExitedError);
 
 export type OmpRpcNotification =
   | { readonly _tag: "Event"; readonly event: OmpRpcEvent }
+  | { readonly _tag: "Drain" }
   | { readonly _tag: "ProtocolFailure"; readonly detail: string }
   | {
       readonly _tag: "AsyncCommandFailure";
@@ -62,6 +63,8 @@ export interface OmpRpcIo {
 export interface OmpRpcClient {
   readonly ready: Effect.Effect<OmpRpcReady, OmpRpcError>;
   readonly events: Stream.Stream<OmpRpcNotification, OmpRpcError>;
+  /** Insert a barrier after all events already emitted by the transport. */
+  readonly flushEvents: () => Effect.Effect<void>;
   readonly command: (
     body: Record<string, unknown> & { readonly type: string },
   ) => Effect.Effect<OmpRpcResponse, OmpRpcError>;
@@ -475,6 +478,8 @@ export const makeOmpRpcClient = Effect.fn("OmpRpcClient.make")(function* (
         return item.notification;
       }),
     ),
+    flushEvents: () =>
+      Queue.offer(events, { notification: { _tag: "Drain" }, size: 0 }).pipe(Effect.asVoid),
     command,
     prompt: (input) =>
       command({

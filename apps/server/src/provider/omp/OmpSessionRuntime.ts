@@ -5,7 +5,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import type { OmpRpcClient, OmpRpcNotification } from "effect-omp-rpc/client";
-import type { OmpRpcEvent } from "effect-omp-rpc/schema";
+import type { OmpRpcEvent, OmpRpcState } from "effect-omp-rpc/schema";
 import { isRecord } from "effect-omp-rpc/schema";
 import { encodeOmpModelSlug } from "./OmpModel.ts";
 
@@ -293,6 +293,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
   let assistantMessageSeen = false;
   let drainRetries = 0;
   let drainRetryPending = false;
+  let pendingDrainState: OmpRpcState | undefined;
   let turnSettled: Deferred.Deferred<void> | undefined;
   let eventSequence = 0;
   const seenUnknownEvents = new Set<string>();
@@ -367,8 +368,43 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         })
       : Effect.void;
 
+  const finishIdleState = (state: OmpRpcState) =>
+    Effect.gen(function* () {
+      yield* sessionInfo(state.sessionFile, state.sessionId);
+      const decision = ompDrainRetry(
+        drainRetries,
+        state.isStreaming === true || state.isCompacting === true,
+      );
+      if (decision === "confirm") {
+        drainRetries = 0;
+        yield* applySignal({ type: "drain-idle" });
+        return;
+      }
+      if (decision === "give-up") {
+        yield* publish({
+          type: "warning",
+          message: "Oh My Pi stayed busy after the turn ended.",
+        });
+        yield* applySignal({ type: "unconfirmed" });
+        return;
+      }
+      if (drainRetryPending) return;
+      drainRetryPending = true;
+      drainRetries += 1;
+      yield* Effect.sleep("250 millis").pipe(
+        Effect.andThen(Queue.offer(inbox, { type: "retry-drain" })),
+        Effect.forkIn(input.scope),
+      );
+    });
+
   const confirmIdle = Effect.gen(function* () {
     if (turn.phase !== "draining") return;
+    if (pendingDrainState !== undefined) {
+      const state = pendingDrainState;
+      pendingDrainState = undefined;
+      yield* finishIdleState(state);
+      return;
+    }
     if ((yield* Queue.size(inbox)) !== 0) return;
     const state = yield* input.client.getState().pipe(Effect.exit);
     if (state._tag === "Failure") {
@@ -380,31 +416,8 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       return;
     }
     if ((yield* Queue.size(inbox)) !== 0) return;
-    yield* sessionInfo(state.value.sessionFile, state.value.sessionId);
-    const decision = ompDrainRetry(
-      drainRetries,
-      state.value.isStreaming === true || state.value.isCompacting === true,
-    );
-    if (decision === "confirm") {
-      drainRetries = 0;
-      yield* applySignal({ type: "drain-idle" });
-      return;
-    }
-    if (decision === "give-up") {
-      yield* publish({
-        type: "warning",
-        message: "Oh My Pi stayed busy after the turn ended.",
-      });
-      yield* applySignal({ type: "unconfirmed" });
-      return;
-    }
-    if (drainRetryPending) return;
-    drainRetryPending = true;
-    drainRetries += 1;
-    yield* Effect.sleep("250 millis").pipe(
-      Effect.andThen(Queue.offer(inbox, { type: "retry-drain" })),
-      Effect.forkIn(input.scope),
-    );
+    pendingDrainState = state.value;
+    yield* input.client.flushEvents();
   });
 
   const ensureAssistant = (messageId?: string) =>
@@ -723,6 +736,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         yield* applySignal({ type: "prompt-failed", requestId: notification.id });
         return;
       }
+      if (notification._tag === "Drain") return;
       yield* applyEvent(notification.event);
     });
 
@@ -784,8 +798,12 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         return;
       }
       if (item.type === "event" && item.notification) {
+        if (item.notification._tag === "Drain") {
+          yield* confirmIdle;
+          return;
+        }
         yield* applyNotification(item.notification);
-        yield* confirmIdle;
+        if (pendingDrainState === undefined) yield* confirmIdle;
       }
     });
 

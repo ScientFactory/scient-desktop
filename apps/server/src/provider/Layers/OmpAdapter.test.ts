@@ -73,6 +73,7 @@ describe("Oh My Pi adapter", () => {
               maxReassembledFrameBytes: 67_108_864,
             }),
             events: Stream.fromQueue(events),
+            flushEvents: () => Queue.offer(events, { _tag: "Drain" }).pipe(Effect.asVoid),
             command: () => Effect.succeed(success("command")),
             prompt: () => Effect.succeed(success("prompt", { agentInvoked: true })),
             steer: () => Effect.succeed(success("steer", { agentInvoked: true })),
@@ -206,6 +207,7 @@ describe("Oh My Pi adapter", () => {
               maxReassembledFrameBytes: 67_108_864,
             }),
             events: Stream.fromQueue(events),
+            flushEvents: () => Queue.offer(events, { _tag: "Drain" }).pipe(Effect.asVoid),
             command: () => Effect.succeed(success("command")),
             prompt: () => Effect.succeed(success("prompt", { agentInvoked: true })),
             steer: () => Effect.succeed(success("steer")),
@@ -312,6 +314,7 @@ describe("Oh My Pi adapter", () => {
               maxReassembledFrameBytes: 67_108_864,
             }),
             events: Stream.fromQueue(events),
+            flushEvents: () => Queue.offer(events, { _tag: "Drain" }).pipe(Effect.asVoid),
             command: () => Effect.succeed(success("command")),
             prompt: (input: { readonly message: string }) =>
               Effect.sync(() => {

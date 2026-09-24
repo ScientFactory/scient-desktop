@@ -322,7 +322,6 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         ctx.assistantItemIds.clear();
         ctx.activeAssistantItemId = undefined;
         ctx.toolItems.clear();
-        ctx.subagentSeen.clear();
         const base = yield* eventBase(ctx);
         yield* offer({ type: "turn.started", ...base, payload: {} });
         ctx.session = {
@@ -1250,7 +1249,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       return Effect.fail(request("extension_ui_response", "This question is no longer active."));
     const raw = answers[id];
     const value = Array.isArray(raw) ? raw[0] : raw;
-    if (typeof value !== "string" || value.length === 0) {
+    if (typeof value !== "string" || (value.length === 0 && pending.method !== "editor")) {
       return Effect.fail(validation("respondToUserInput", "Oh My Pi requires an answer."));
     }
     if (pending.allowedValues && !pending.allowedValues.includes(value)) {
