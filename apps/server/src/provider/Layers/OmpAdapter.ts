@@ -1224,10 +1224,10 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           threadId,
           Effect.gen(function* () {
             const ctx = yield* requireSession(threadId);
+            if (!ctx.turnId) return;
             if (turnId && ctx.turnId !== turnId) {
               return yield* validation("interruptTurn", "No matching active Oh My Pi turn.");
             }
-            if (!ctx.turnId) return;
             yield* ctx.runtime.requestCancel();
             // Abort is graceful first. If OMP accepts it before an agent starts,
             // confirm the local cancellation immediately; otherwise wait for the

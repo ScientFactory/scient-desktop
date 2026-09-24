@@ -204,6 +204,46 @@ describe("Oh My Pi production qualification seams", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("does not kill a process when cancellation arrives after settlement", () =>
+    Effect.gen(function* () {
+      const root = makeRoot("settled-cancel");
+      const events = yield* Queue.unbounded<OmpRpcNotification, Cause.Done>();
+      let shutdowns = 0;
+      const adapter = yield* makeAdapter({
+        root,
+        instanceId: ProviderInstanceId.make("omp-qualification-settled-cancel"),
+        makeProcess: (options) =>
+          Effect.sync(() =>
+            makeClient({
+              events,
+              sessionDir: options.sessionDir ?? root,
+              shutdown: Effect.sync(() => {
+                shutdowns += 1;
+                return { code: 0, forced: false, stderrTail: "" };
+              }),
+            }),
+          ),
+      });
+      const threadId = ThreadId.make("omp-settled-cancel");
+      yield* adapter.startSession({ threadId, cwd: root, runtimeMode: "full-access" });
+      const turn = yield* adapter.sendTurn({ threadId, input: "finish first" });
+      yield* Queue.offer(events, { _tag: "Event", event: { type: "agent_start" } });
+      yield* Queue.offer(events, {
+        _tag: "Event",
+        event: { type: "agent_end", messages: [], isTerminal: true },
+      });
+      yield* takeMatching(
+        yield* collectRuntimeEvents(adapter),
+        (event) => event.type === "turn.completed",
+      ).pipe(Effect.timeout("2 seconds"));
+      yield* adapter.interruptTurn(threadId, turn.turnId);
+      expect(shutdowns).toBe(0);
+      expect(yield* adapter.hasSession(threadId)).toBe(true);
+      yield* adapter.stopAll();
+      NodeFS.rmSync(root, { recursive: true, force: true });
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("kills and marks uncertain when cancellation exceeds the deadline", () =>
     Effect.gen(function* () {
       const root = makeRoot("cancel-deadline");
@@ -314,8 +354,69 @@ describe("Oh My Pi production qualification seams", () => {
         .pipe(Effect.flip);
       expect(mismatchError.message).toMatch(/different session/);
       yield* mismatched.stopAll();
+
+      const resumedEvents = yield* Queue.unbounded<OmpRpcNotification, Cause.Done>();
+      const resumed = yield* makeAdapter({
+        root,
+        instanceId,
+        makeProcess: (options) =>
+          Effect.sync(() =>
+            makeClient({ events: resumedEvents, sessionDir: options.sessionDir ?? root }),
+          ),
+      });
+      const resumedSession = yield* resumed.startSession({
+        threadId,
+        cwd: root,
+        runtimeMode: "full-access",
+        resumeCursor,
+      });
+      expect(resumedSession.status).toBe("ready");
+      yield* resumed.stopAll();
       NodeFS.rmSync(root, { recursive: true, force: true });
     }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "uses steer for a send while a turn is active and leaves follow-up queuing to Scient",
+    () =>
+      Effect.gen(function* () {
+        const root = makeRoot("steer");
+        const events = yield* Queue.unbounded<OmpRpcNotification, Cause.Done>();
+        const calls: string[] = [];
+        const adapter = yield* makeAdapter({
+          root,
+          instanceId: ProviderInstanceId.make("omp-qualification-steer"),
+          makeProcess: (options) =>
+            Effect.sync(() =>
+              makeClient({
+                events,
+                sessionDir: options.sessionDir ?? root,
+                overrides: {
+                  prompt: () => {
+                    calls.push("prompt");
+                    return Effect.succeed(success("prompt", { agentInvoked: true }));
+                  },
+                  steer: () => {
+                    calls.push("steer");
+                    return Effect.succeed(success("steer"));
+                  },
+                  followUp: () => {
+                    calls.push("followUp");
+                    return Effect.succeed(success("follow_up"));
+                  },
+                },
+              }),
+            ),
+        });
+        const threadId = ThreadId.make("omp-steer");
+        yield* adapter.startSession({ threadId, cwd: root, runtimeMode: "full-access" });
+        const first = yield* adapter.sendTurn({ threadId, input: "first" });
+        const second = yield* adapter.sendTurn({ threadId, input: "change direction" });
+        expect(second.turnId).toBe(first.turnId);
+        expect(calls).toEqual(["prompt", "steer"]);
+        yield* adapter.stopAll();
+        NodeFS.rmSync(root, { recursive: true, force: true });
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("does not project a user message into the assistant item", () =>
