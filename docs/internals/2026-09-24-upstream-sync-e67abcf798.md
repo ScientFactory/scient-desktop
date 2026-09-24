@@ -17,6 +17,10 @@ official range; no official commit was omitted, squashed, or replayed.
   **15 official commits**
 - History-preserving merge: `0ab3e990eaff85c92ecc206cce965414ffe7c1b5`
   (first parent owned base; second parent exact official target)
+- Owned-main catch-up merge: `0c10a40a5d885beedd0d59fdbb10e277f397cadf`
+  (first parent the reviewed alignment head `8d80832f0c996b334da6aeb8c280e20926e030a1`;
+  second parent latest owned `origin/main` at
+  `5872cc9841e1d8274b6d9b99a11308c5f48b04b1`)
 - Alignment branch: `codex/t3-sync-e67abcf798-20260924`
 - Draft pull request: ScientFactory/scient-desktop#365
 - `upstream` remains fetch-only; its push URL is `DISABLED`.
@@ -137,6 +141,18 @@ composition/qualification defects before the branch was considered ready:
 These changes do not alter the upstream merge ancestry or weaken any safety
 or release guard.
 
+## Owned-main catch-up review
+
+The later owned-main fetch contained the two latest reliability integrations
+(`#364` reload preservation and `#367` Stop/session convergence). The exact
+owned-main merge was clean: 34 changed paths, three overlap paths, and no
+textual conflicts. The overlap was limited to additive desktop reload IPC
+(`apps/desktop/src/ipc/channels.ts`, `apps/desktop/src/preload.ts`, and
+`packages/contracts/src/ipc.ts`); the alignment's existing trackpad channel,
+3D device wiring, preview ownership, OTel safety boundary, and provider seams
+remain intact. Focused desktop, web reload, contracts, typecheck, lint, seam,
+and full-workspace gates were rerun on the catch-up candidate.
+
 ## Protected boundaries
 
 - Scient product identity, provider authority/lifecycle, scientific behavior,
@@ -164,10 +180,11 @@ Performed on the composed candidate and the review-corrected working tree:
   existing advisory warnings remain, e.g. React Compiler suggestions in
   `ChatView.tsx`).
 - `pnpm run typecheck` — passed across all workspace projects, 0 errors.
-- `pnpm run test` — **passed across all workspaces**. The server package passed
-  533 files / 7,746 tests (22 files / 73 tests skipped); the desktop-artifact
-  package passed 38 files / 494 tests. No test failures remain in the final
-  local run.
+- `pnpm run test` — **passed across all workspaces**. On the post-catch-up
+  candidate, the server package passed 533 files / 7,769 tests (22 files / 73
+  tests skipped), the web package passed 121 files / 1,453 tests (4 files / 43
+  tests skipped), and the scripts package passed 96 files / 1,743 tests. No
+  test failures remain in the final local run.
 - `pnpm run build` — passed (existing non-fatal `x11`/CommonJS `import.meta`/
   large-chunk warnings).
 - `pnpm run test:desktop-smoke` — passed.

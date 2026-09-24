@@ -52,7 +52,10 @@ the integration through `e67abcf798f8c4d8458755e3b4dde02c2c1f628b`: 15 official
 commits from `f5ef0ddb90a8c36584e181b1913e7b8a5df30ffc`, merged onto owned base
 `66650fd93196b635ba56c3a4130fad5fb6d5a82d` as
 `0ab3e990eaff85c92ecc206cce965414ffe7c1b5` (first parent owned base, second
-parent the exact official target). The preceding alignment (PR #350) remains
+parent the exact official target). The branch also contains owned-main
+catch-up `0c10a40a5d885beedd0d59fdbb10e277f397cadf`, whose second parent is
+latest owned `main` at `5872cc9841e1d8274b6d9b99a11308c5f48b04b1`. The
+preceding alignment (PR #350) remains
 literal ancestry, preserving its initial history merge
 `719f452a4633af276ed9f5e219ced8de43863d49`, later official merge commits
 `f741668a6d31ec6681d6324a0f6a7b97f205f06e` and
