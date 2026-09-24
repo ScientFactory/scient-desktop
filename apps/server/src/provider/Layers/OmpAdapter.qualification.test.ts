@@ -142,6 +142,27 @@ const takeMatching = <A>(
     ),
   );
 
+const waitForSessionReady = (
+  adapter: {
+    readonly listSessions: () => Effect.Effect<
+      ReadonlyArray<{ readonly threadId: ThreadId; readonly status: string }>,
+      never,
+      never
+    >;
+  },
+  threadId: ThreadId,
+) =>
+  Effect.gen(function* () {
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const sessions = yield* adapter.listSessions();
+      if (sessions.some((session) => session.threadId === threadId && session.status === "ready")) {
+        return;
+      }
+      yield* Effect.yieldNow;
+    }
+    return yield* Effect.fail("Oh My Pi session did not become ready.");
+  });
+
 const makeAdapter = (input: {
   readonly root: string;
   readonly instanceId: ProviderInstanceId;
@@ -372,6 +393,66 @@ describe("Oh My Pi production qualification seams", () => {
       });
       expect(resumedSession.status).toBe("ready");
       yield* resumed.stopAll();
+      NodeFS.rmSync(root, { recursive: true, force: true });
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("switches model and thinking level between settled turns", () =>
+    Effect.gen(function* () {
+      const root = makeRoot("model-switch");
+      const events = yield* Queue.unbounded<OmpRpcNotification, Cause.Done>();
+      const calls: string[] = [];
+      const instanceId = ProviderInstanceId.make("omp-qualification-model-switch");
+      const adapter = yield* makeAdapter({
+        root,
+        instanceId,
+        makeProcess: (options) =>
+          Effect.sync(() =>
+            makeClient({
+              events,
+              sessionDir: options.sessionDir ?? root,
+              overrides: {
+                setModel: (provider, modelId) => {
+                  calls.push(`model:${provider}/${modelId}`);
+                  return Effect.succeed(success("set_model"));
+                },
+                setThinkingLevel: (level) => {
+                  calls.push(`thinking:${level}`);
+                  return Effect.succeed(success("set_thinking_level"));
+                },
+              },
+            }),
+          ),
+      });
+      const threadId = ThreadId.make("omp-model-switch");
+      yield* adapter.startSession({ threadId, cwd: root, runtimeMode: "full-access" });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "first model",
+        modelSelection: createModelSelection(instanceId, "ollama/gemma4:12b-it-qat", [
+          { id: "thinkingLevel", value: "high" },
+        ]),
+      });
+      yield* Queue.offer(events, { _tag: "Event", event: { type: "agent_start" } });
+      yield* Queue.offer(events, {
+        _tag: "Event",
+        event: { type: "agent_end", messages: [], isTerminal: true },
+      });
+      yield* waitForSessionReady(adapter, threadId);
+      yield* adapter.sendTurn({
+        threadId,
+        input: "second model",
+        modelSelection: createModelSelection(instanceId, "ollama/text-only", [
+          { id: "thinkingLevel", value: "low" },
+        ]),
+      });
+      expect(calls).toEqual([
+        "model:ollama/gemma4:12b-it-qat",
+        "thinking:high",
+        "model:ollama/text-only",
+        "thinking:low",
+      ]);
+      yield* adapter.stopAll();
       NodeFS.rmSync(root, { recursive: true, force: true });
     }).pipe(Effect.provide(NodeServices.layer)),
   );
