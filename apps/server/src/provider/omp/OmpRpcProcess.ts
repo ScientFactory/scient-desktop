@@ -54,7 +54,18 @@ export const OMP_ISOLATED_ARGS = [
 ] as const;
 
 const VERSION_CACHE_MS = 5 * 60 * 1000;
+const MAX_VERSION_CACHE_ENTRIES = 128;
 const versionCache = new Map<string, { readonly version: string; readonly expiresAt: number }>();
+const cacheVersion = (key: string, version: string, now: number): void => {
+  for (const [cachedKey, cached] of versionCache) {
+    if (cached.expiresAt <= now) versionCache.delete(cachedKey);
+  }
+  if (!versionCache.has(key) && versionCache.size >= MAX_VERSION_CACHE_ENTRIES) {
+    const oldest = versionCache.keys().next().value;
+    if (oldest !== undefined) versionCache.delete(oldest);
+  }
+  versionCache.set(key, { version, expiresAt: now + VERSION_CACHE_MS });
+};
 const versionCacheKey = (
   command: string,
   env: Readonly<Record<string, string | undefined>>,
@@ -176,7 +187,7 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
         detail: `Scient requires Oh My Pi ${OMP_MINIMUM_VERSION} or newer. Check the configured executable.`,
       });
     }
-    versionCache.set(cacheKey, { version: parsed, expiresAt: now + VERSION_CACHE_MS });
+    cacheVersion(cacheKey, parsed, now);
     return parsed;
   }).pipe(
     Effect.timeout("4 seconds"),
