@@ -92,7 +92,7 @@ export const shapeOmpExternalAdvisory = (input: {
     driver: ProviderDriverKind.make("omp"),
     currentVersion: input.currentVersion,
     latestVersion: ompRoutineLatestVersion(input.currentVersion, input.latestVersion),
-    checkedAt: input.checkedAt,
+    ...(input.checkedAt === undefined ? {} : { checkedAt: input.checkedAt }),
     maintenanceCapabilities: makeManualOnlyProviderMaintenanceCapabilities({
       provider: ProviderDriverKind.make("omp"),
       packageName: null,
