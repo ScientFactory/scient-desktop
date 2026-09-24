@@ -1009,6 +1009,20 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           }
           const images: Array<OmpRpcImage> = [];
           const filePaths: Array<string> = [];
+          const attachmentsRoot =
+            input.attachments && input.attachments.length > 0
+              ? yield* fs
+                  .realPath(options.attachmentsDir)
+                  .pipe(
+                    Effect.mapError((cause) =>
+                      request(
+                        "prompt",
+                        "Failed to resolve the Scient attachments directory.",
+                        cause,
+                      ),
+                    ),
+                  )
+              : undefined;
           const imageLimit = Math.min(
             PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
             OMP_MAX_PROMPT_IMAGE_BYTES,
@@ -1021,8 +1035,21 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
               });
               if (!attachmentPath)
                 return yield* request("prompt", `Invalid attachment id '${attachment.id}'.`);
+              const attachmentReal = yield* fs
+                .realPath(attachmentPath)
+                .pipe(
+                  Effect.mapError((cause) =>
+                    request("prompt", "Failed to resolve the attachment path.", cause),
+                  ),
+                );
+              if (!attachmentsRoot || !sessionFileInsideRoot(attachmentsRoot, attachmentReal)) {
+                return yield* validation(
+                  "sendTurn",
+                  "Attachment path escapes the Scient attachments directory.",
+                );
+              }
               const info = yield* fs
-                .stat(attachmentPath)
+                .stat(attachmentReal)
                 .pipe(
                   Effect.mapError((cause) =>
                     request("prompt", "Failed to read an attachment.", cause),
@@ -1039,11 +1066,11 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
                 );
               }
               if (attachment.type !== "image") {
-                filePaths.push(attachmentPath);
+                filePaths.push(attachmentReal);
                 return;
               }
               const bytes = yield* fs
-                .readFile(attachmentPath)
+                .readFile(attachmentReal)
                 .pipe(
                   Effect.mapError((cause) =>
                     request("prompt", "Failed to read an image attachment.", cause),
