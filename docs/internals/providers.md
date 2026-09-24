@@ -551,6 +551,32 @@ Provider output comes back as internal commands such as `thread.message.assistan
 `thread.session.set`, which clients observe through `orchestration.subscribeThread`. See
 [overview.md](./overview.md) for the command/event loop.
 
+### Stop ownership and confirmation
+
+Accepting an interrupt command is not evidence that execution ended. The command reactor tracks
+Stop separately from its event worker, with a 30-second provider-wait budget including the interrupt,
+confirmation, and recovery waits. Repeated requests for the same observed turn join; a newer turn's
+Stop is independent. Natural terminal events remain authoritative, and conditional recovery writes
+are checked against the current session inside the serialized command decider.
+
+Adapters may capture a cancellation handle tied to a runtime and native turn. Codex implements
+this with runtime identity, native turn identity, and a generation incremented before submitting
+new work. Its provider-side status probe is bounded; unknown or missing runtime state never
+confirms termination. Session teardown retains ownership until it succeeds, checks process exit
+before announcing closure, and continues under an owned scope if the caller's wait expires.
+Starting a replacement session joins that cleanup before acquiring the thread's runtime.
+A provider-confirmed idle turn leaves its session ready, not stopped.
+
+Other adapters retain native interrupt behavior. Automatic destructive recovery is available only
+through an adapter-owned cancellation handle; shared code must not stop whichever runtime happens
+to occupy a thread later. An unconfirmed result keeps execution state intact and reports the
+failure through the existing activity and session-error surfaces. Stale terminal-event guards
+remain enabled, with bounded diagnostic logging.
+
+Clients combine independent shell and thread-detail streams. The newer session timestamp wins
+between two present sessions, so a late sidebar snapshot cannot resurrect an already-completed
+turn. Equal timestamps and explicit shell session removal retain shell authority.
+
 ## Server-side workers
 
 Provider work flows through three queue-backed workers. All three are built with

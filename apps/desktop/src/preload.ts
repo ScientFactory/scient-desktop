@@ -213,6 +213,13 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.removeListener(IpcChannels.MENU_ACTION_CHANNEL, wrappedListener);
     };
   },
+  reloadMainWindow: (ignoreCache) =>
+    ipcRenderer.invoke(IpcChannels.RELOAD_MAIN_WINDOW_CHANNEL, ignoreCache),
+  onReloadBlocked: (listener) => {
+    const wrappedListener = () => listener();
+    ipcRenderer.on(IpcChannels.RELOAD_BLOCKED_CHANNEL, wrappedListener);
+    return () => ipcRenderer.removeListener(IpcChannels.RELOAD_BLOCKED_CHANNEL, wrappedListener);
+  },
   onSnapShotEvent: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, event: unknown) => {
       if (!isSnapShotEvent(event)) return;

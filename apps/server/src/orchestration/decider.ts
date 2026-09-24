@@ -1,5 +1,6 @@
 import {
   EventId,
+  OrchestrationSession,
   MAX_SCRIPT_ID_LENGTH,
   SCRIPT_RUN_COMMAND_PATTERN,
   MessageId,
@@ -55,6 +56,7 @@ const monogramSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme
 
 const isScriptRunCommand = Schema.is(SCRIPT_RUN_COMMAND_PATTERN);
 
+const sessionsEqual = Schema.toEquivalence(OrchestrationSession);
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const decodeUserInputRequestedPayload = Schema.decodeUnknownOption(UserInputRequestedPayload);
 const threadPullRequestLinksEqual = Schema.toEquivalence(Schema.NullOr(ThreadLinkedPullRequest));
@@ -1934,6 +1936,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      if (
+        command.expectedSession !== undefined &&
+        (thread.session === null || !sessionsEqual(command.expectedSession, thread.session))
+      ) {
+        return [];
+      }
       const sessionSetEvent: Omit<OrchestrationEvent, "sequence"> = {
         ...(yield* withEventBase({
           aggregateKind: "thread",

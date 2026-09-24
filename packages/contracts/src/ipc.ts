@@ -1451,6 +1451,10 @@ export interface DesktopBridge {
   /** Present when the desktop shell can perform an ordered plain-text paste. */
   pasteAsText?: () => Promise<void>;
   onMenuAction: (listener: (action: string) => void) => () => void;
+  /** Optional while older desktop shells can host a newer web client. */
+  reloadMainWindow?: (ignoreCache: boolean) => Promise<boolean>;
+  /** Optional while older desktop shells can host a newer web client. */
+  onReloadBlocked?: (listener: () => void) => () => void;
   onSnapShotEvent?: (listener: (event: DesktopSnapShotEvent) => void) => () => void;
   /**
    * Quit-confirmation hint pushes. Optional: older desktop builds never emit

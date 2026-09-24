@@ -1094,6 +1094,57 @@ const make = Effect.gen(function* () {
   const threadBackgroundLiveness = yield* ThreadBackgroundLivenessService;
   const threadPlanProgress = yield* ThreadPlanProgressService;
   const crypto = yield* Crypto.Crypto;
+  const clock = yield* Clock.Clock;
+
+  /**
+   * Rate limit for refused terminal turn events. A provider that repeats a
+   * late event must not turn diagnostics into a log flood. Write the first
+   * refusal in each window and count repeats for the next report.
+   */
+  const REJECTED_TERMINAL_EVENT_LOG_WINDOW_MS = Duration.toMillis(Duration.seconds(30));
+  const lastRejectedTerminalEventLog = new Map<string, number>();
+  const rejectedTerminalEventCounts = new Map<string, number>();
+  const MAX_TRACKED_REJECTION_KEYS = 512;
+
+  const logRejectedTerminalTurnEvent = (input: {
+    readonly threadId: string;
+    readonly reason: string;
+    readonly eventType: string;
+    readonly eventId: string;
+    readonly eventTurnId: string | null;
+    readonly activeTurnId: string | null;
+  }) =>
+    Effect.gen(function* () {
+      const key = `${input.threadId}\u0000${input.reason}`;
+      const now = yield* clock.currentTimeMillis;
+      const previous = lastRejectedTerminalEventLog.get(key);
+      if (previous !== undefined && now - previous < REJECTED_TERMINAL_EVENT_LOG_WINDOW_MS) {
+        yield* Effect.sync(() => {
+          rejectedTerminalEventCounts.set(key, (rejectedTerminalEventCounts.get(key) ?? 0) + 1);
+        });
+        return;
+      }
+      const suppressed = rejectedTerminalEventCounts.get(key) ?? 0;
+      if (lastRejectedTerminalEventLog.size >= MAX_TRACKED_REJECTION_KEYS) {
+        lastRejectedTerminalEventLog.clear();
+        rejectedTerminalEventCounts.clear();
+      }
+      yield* Effect.sync(() => {
+        lastRejectedTerminalEventLog.set(key, now);
+        if (suppressed > 0) {
+          rejectedTerminalEventCounts.delete(key);
+        }
+      });
+      yield* Effect.logWarning("provider terminal turn event was not applied", {
+        threadId: input.threadId,
+        reason: input.reason,
+        eventType: input.eventType,
+        eventId: input.eventId,
+        eventTurnId: input.eventTurnId,
+        activeTurnId: input.activeTurnId,
+        ...(suppressed > 0 ? { suppressedRepetitions: suppressed } : {}),
+      });
+    });
   const orchestrationEngine = yield* OrchestrationEngineService;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerService = yield* ProviderService;
@@ -2254,6 +2305,26 @@ const make = Effect.gen(function* () {
             return true;
         }
       })();
+
+      // Record rejected terminal events without weakening stale-turn protection.
+      if (
+        !shouldApplyThreadLifecycle &&
+        (event.type === "turn.completed" || event.type === "turn.aborted")
+      ) {
+        const reason = missingTurnForActiveTurn
+          ? "terminal-event-without-turn-id"
+          : conflictsWithActiveTurn
+            ? "terminal-event-for-another-turn"
+            : "terminal-event-without-an-active-turn";
+        yield* logRejectedTerminalTurnEvent({
+          threadId: thread.id,
+          reason,
+          eventType: event.type,
+          eventId: event.eventId,
+          eventTurnId: eventTurnId ?? null,
+          activeTurnId,
+        });
+      }
       const acceptedTurnStartedSourcePlan =
         event.type === "turn.started" && shouldApplyThreadLifecycle
           ? yield* getSourceProposedPlanReferenceForAcceptedTurnStart(thread.id, eventTurnId)

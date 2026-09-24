@@ -23,6 +23,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, vi } from "@effect/vitest";
 
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -39,6 +40,7 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";
 import type { CodexAdapterShape } from "../Services/CodexAdapter.ts";
+import type { ProviderTurnEndConfirmation } from "../Services/ProviderAdapter.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
 import {
   type CodexSessionRuntimeOptions,
@@ -63,7 +65,7 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
   private readonly eventQueue = Effect.runSync(Queue.unbounded<ProviderEvent>());
   private readonly now = "2026-01-01T00:00:00.000Z";
 
-  public readonly startImpl = vi.fn(() =>
+  public readonly startImpl = vi.fn((): Promise<ProviderSession> =>
     Promise.resolve({
       provider: ProviderDriverKind.make("codex"),
       status: "ready" as const,
@@ -88,6 +90,10 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
 
   public readonly interruptTurnImpl = vi.fn((_turnId?: TurnId): Promise<void> =>
     Promise.resolve(undefined),
+  );
+
+  public readonly readThreadActivityImpl = vi.fn((): Promise<ProviderTurnEndConfirmation> =>
+    Promise.resolve("ended"),
   );
 
   public readonly readThreadImpl = vi.fn((): Promise<CodexThreadSnapshot> =>
@@ -141,6 +147,8 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
   }
 
   readThread = Effect.promise(() => this.readThreadImpl());
+
+  readThreadActivity = Effect.promise(() => this.readThreadActivityImpl());
 
   rollbackThread(numTurns: number) {
     return Effect.promise(() => this.rollbackThreadImpl(numTurns));
@@ -2776,6 +2784,133 @@ scopedLifecycleLayer("CodexAdapterLive scoped lifecycle", (it) => {
         asThreadId("thread-stop"),
       ]);
       NodeAssert.equal(yield* adapter.hasSession(asThreadId("thread-stop")), false);
+    }),
+  );
+
+  it.effect("confirms a turn end from the app-server, not from adapter bookkeeping", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-confirm"),
+        runtimeMode: "full-access",
+      });
+      const runtime = scopedLifecycleRuntimeFactory.lastRuntime;
+      NodeAssert.ok(runtime);
+
+      const stop = yield* adapter.captureTurnStop!(asThreadId("thread-confirm"));
+      runtime.readThreadActivityImpl.mockResolvedValueOnce("active");
+      NodeAssert.equal(yield* stop.confirm, "active");
+      runtime.readThreadActivityImpl.mockResolvedValueOnce("ended");
+      NodeAssert.equal(yield* stop.confirm, "ended");
+
+      // A probe that cannot answer must not read as proof of a stop.
+      runtime.readThreadActivityImpl.mockRejectedValueOnce(new Error("transport closed"));
+      NodeAssert.equal(yield* stop.confirm, "unknown");
+
+      // Absence of a runtime is not provider-side evidence of termination.
+      yield* adapter.stopSession(asThreadId("thread-confirm"));
+      NodeAssert.equal(yield* stop.confirm, "unknown");
+    }),
+  );
+});
+
+scopedLifecycleLayer("owned cancellation", (it) => {
+  it.effect("keeps teardown owned when its waiter is interrupted and delays replacement", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const input = {
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("stop-waiter-interrupted"),
+        runtimeMode: "full-access" as const,
+      };
+      yield* adapter.startSession(input);
+      const runtime = scopedLifecycleRuntimeFactory.lastRuntime!;
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const finalized = yield* Deferred.make<void>();
+      runtime.close = Deferred.succeed(started, undefined).pipe(
+        Effect.andThen(Deferred.await(release)),
+        Effect.andThen(runtime.close),
+      );
+      const stop = yield* adapter.captureTurnStop!(input.threadId);
+      const waiting = yield* stop
+        .stop(Deferred.succeed(finalized, undefined).pipe(Effect.asVoid))
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(started);
+      yield* Fiber.interrupt(waiting);
+      NodeAssert.equal(yield* adapter.hasSession(input.threadId), true);
+      const replacement = yield* adapter.startSession(input).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      NodeAssert.equal(scopedLifecycleRuntimeFactory.lastRuntime, runtime);
+      yield* Deferred.succeed(release, undefined);
+      yield* Deferred.await(finalized);
+      yield* Fiber.join(replacement);
+      NodeAssert.notEqual(scopedLifecycleRuntimeFactory.lastRuntime, runtime);
+      yield* adapter.stopSession(input.threadId);
+      NodeAssert.equal(runtime.closeImpl.mock.calls.length, 1);
+      NodeAssert.equal(yield* adapter.hasSession(input.threadId), false);
+    }),
+  );
+
+  it.effect("does not let a captured Stop shut down a replacement runtime", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const input = {
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("stop-replaced"),
+        runtimeMode: "full-access" as const,
+      };
+      yield* adapter.startSession(input);
+      const stop = yield* adapter.captureTurnStop!(input.threadId);
+      yield* adapter.startSession(input);
+      const replacement = scopedLifecycleRuntimeFactory.lastRuntime!;
+      NodeAssert.equal(yield* stop.stop(), false);
+      NodeAssert.equal(yield* stop.confirm, "unknown");
+      NodeAssert.equal(replacement.closeImpl.mock.calls.length, 0);
+    }),
+  );
+
+  it.effect("refuses teardown when a newer native turn arrives during confirmation", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const threadId = asThreadId("stop-native-race");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const runtime = scopedLifecycleRuntimeFactory.lastRuntime!;
+      const session = yield* runtime.getSession;
+      runtime.startImpl.mockResolvedValue({ ...session, activeTurnId: asTurnId("native-1") });
+      const stop = yield* adapter.captureTurnStop!(threadId);
+      runtime.readThreadActivityImpl.mockImplementationOnce(async () => {
+        runtime.startImpl.mockResolvedValue({ ...session, activeTurnId: asTurnId("native-2") });
+        return "active";
+      });
+      NodeAssert.equal(yield* stop.confirm, "unknown");
+      NodeAssert.equal(yield* stop.stop(), false);
+      NodeAssert.equal(runtime.closeImpl.mock.calls.length, 0);
+    }),
+  );
+
+  it.effect("retains failed teardown ownership and never treats it as ended", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const threadId = asThreadId("stop-failed");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const runtime = scopedLifecycleRuntimeFactory.lastRuntime!;
+      const stop = yield* adapter.captureTurnStop!(threadId);
+      runtime.closeImpl.mockRejectedValue(new Error("shutdown failed"));
+      NodeAssert.equal((yield* Effect.exit(stop.stop()))._tag, "Failure");
+      NodeAssert.equal(yield* adapter.hasSession(threadId), true);
+      NodeAssert.equal(yield* stop.confirm, "unknown");
+      NodeAssert.equal((yield* Effect.exit(adapter.stopSession(threadId)))._tag, "Failure");
+      NodeAssert.equal(runtime.closeImpl.mock.calls.length, 2);
     }),
   );
 });
