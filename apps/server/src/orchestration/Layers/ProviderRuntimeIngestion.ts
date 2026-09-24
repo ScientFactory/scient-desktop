@@ -1098,9 +1098,8 @@ const make = Effect.gen(function* () {
 
   /**
    * Rate limit for refused terminal turn events. A provider that repeats a
-   * late event must not turn diagnostics into a log flood, but the first
-   * refusal in a window is the one that explains a stuck thread, so it is
-   * always written and later ones only bump a counter.
+   * late event must not turn diagnostics into a log flood. Write the first
+   * refusal in each window and count repeats for the next report.
    */
   const REJECTED_TERMINAL_EVENT_LOG_WINDOW_MS = Duration.toMillis(Duration.seconds(30));
   const lastRejectedTerminalEventLog = new Map<string, number>();
@@ -2307,12 +2306,7 @@ const make = Effect.gen(function* () {
         }
       })();
 
-      // Why the guard refused a terminal turn event. The guard is doing its job
-      // when a late event arrives, but a refusal is also the only way a thread
-      // can stay "running" forever when a provider never sends the event the
-      // session is waiting for, so every refusal is recorded. Late events are
-      // expected and common, so the warning is rate limited per thread: the
-      // first refusal explains itself, repeats stay countable.
+      // Record rejected terminal events without weakening stale-turn protection.
       if (
         !shouldApplyThreadLifecycle &&
         (event.type === "turn.completed" || event.type === "turn.aborted")

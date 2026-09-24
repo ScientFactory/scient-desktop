@@ -39,7 +39,6 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
-import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -2249,48 +2248,81 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     },
   );
 
-  /**
-   * Provider-side confirmation that a thread is no longer executing a turn.
-   *
-   * Adapters that cannot answer in provider terms report `unknown`; that is
-   * deliberately not the same as `ended`, so a cancellation that could not be
-   * verified never presents itself as confirmed.
-   */
-  const confirmTurnEnd = Effect.fn("confirmTurnEnd")(function* (input: {
-    readonly threadId: ThreadId;
-  }) {
+  const captureTurnStop: NonNullable<ProviderServiceMethod<"captureTurnStop">> = Effect.fn(
+    "captureTurnStop",
+  )(function* (input) {
     const routed = yield* resolveRoutableSession({
       threadId: input.threadId,
-      operation: "ProviderService.confirmTurnEnd",
+      operation: "ProviderService.captureTurnStop",
       allowRecovery: false,
-    }).pipe(
-      Effect.catchCause((cause) => {
-        if (Cause.hasInterruptsOnly(cause)) {
-          return Effect.interrupt;
-        }
-        return Effect.succeed(null);
-      }),
-    );
-    // A session that cannot be routed was never asked. Reporting "ended" here
-    // would assert provider state we did not observe, so this stays unknown and
-    // the caller escalates on its own evidence.
-    if (routed === null) {
-      return "unknown" as const;
+    });
+    if (
+      !routed.isActive ||
+      (input.providerInstanceId !== undefined && input.providerInstanceId !== routed.instanceId)
+    ) {
+      return yield* new ProviderAdapterRequestError({
+        provider: routed.adapter.provider,
+        method: "turn/interrupt",
+        detail: "The provider session changed before Stop could be delivered.",
+      });
     }
-    const confirm = routed.adapter.confirmTurnEnd;
-    if (confirm === undefined) {
-      return "unknown" as const;
-    }
-    return yield* confirm(routed.threadId).pipe(
-      Effect.catchCause((cause) => {
-        if (Cause.hasInterruptsOnly(cause)) {
-          return Effect.interrupt;
-        }
-        return Effect.logWarning("provider turn-end confirmation failed").pipe(
-          Effect.as("unknown" as const),
-        );
-      }),
+    const session = (yield* routed.adapter.listSessions()).find(
+      (session) => session.threadId === routed.threadId,
     );
+    const handle =
+      routed.adapter.captureTurnStop !== undefined
+        ? yield* routed.adapter.captureTurnStop(routed.threadId)
+        : {
+            interrupt: Effect.suspend(() =>
+              routed.adapter.interruptTurn(routed.threadId, session?.activeTurnId),
+            ),
+            confirm: Effect.succeed("unknown" as const),
+            stop: (_onStopped?: Effect.Effect<void>) => Effect.succeed(false),
+          };
+    const capturedMcp = McpProviderSession.readMcpProviderSession(input.threadId);
+    const finalizeStopped = Effect.gen(function* () {
+      // Called while the adapter still holds closing admission for this runtime.
+      // A replaced registry instance or credential belongs to different work.
+      const adapter = yield* registry.getByInstance(routed.instanceId);
+      if (
+        adapter !== routed.adapter ||
+        McpProviderSession.readMcpProviderSession(input.threadId) !== capturedMcp
+      )
+        return;
+      const binding = yield* directory.getBinding(input.threadId);
+      if (Option.isNone(binding) || binding.value.providerInstanceId !== routed.instanceId) return;
+      const pending = pendingCompactions.get(input.threadId);
+      if (pending) yield* settleCompaction(input.threadId, pending, "turn.aborted");
+      timedOutNativeCompactions.delete(input.threadId);
+      yield* clearTurnAnalyticsSession(routed.instanceId, input.threadId);
+      yield* clearMcpSession(input.threadId);
+      yield* directory.upsert({
+        threadId: input.threadId,
+        provider: routed.adapter.provider,
+        providerInstanceId: routed.instanceId,
+        status: "stopped",
+        runtimePayload: {
+          activeTurnId: null,
+          continueAfterServerUpdate: null,
+          continueAfterServerUpdatePrepared: null,
+        },
+      });
+      yield* analytics.record("provider.session.stopped", { provider: routed.adapter.provider });
+    }).pipe(Effect.orDie);
+    return {
+      interrupt: handle.interrupt.pipe(
+        Effect.tap(() =>
+          analytics.record("provider.turn.interrupted", { provider: routed.adapter.provider }),
+        ),
+        withMetrics({
+          counter: providerTurnsTotal,
+          outcomeAttributes: () =>
+            providerMetricAttributes(routed.adapter.provider, { operation: "interrupt" }),
+        }),
+      ),
+      confirm: handle.confirm,
+      stop: () => handle.stop(finalizeStopped),
+    };
   });
 
   const listSessions: ProviderServiceMethod<"listSessions"> = Effect.fn("listSessions")(
@@ -2607,7 +2639,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     respondToRequest,
     respondToUserInput,
     stopSession,
-    confirmTurnEnd,
+    captureTurnStop,
     listSessions,
     getCapabilities,
     getInstanceInfo,

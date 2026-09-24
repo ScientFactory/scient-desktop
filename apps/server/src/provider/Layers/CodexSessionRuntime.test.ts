@@ -19,6 +19,7 @@ import {
   makeMemoryConsolidationNotificationFilter,
   openCodexThread,
   readCodexThread,
+  readCodexThreadActivity,
   rollbackCodexThread,
   toMcpElicitationResponse,
 } from "./CodexSessionRuntime.ts";
@@ -1093,6 +1094,43 @@ describe("openCodexThread", () => {
 
       NodeAssert.ok(isCodexAppServerRequestError(error));
       NodeAssert.equal(error.errorMessage, "timed out waiting for server");
+    }),
+  );
+});
+
+describe("Codex cancellation state probe", () => {
+  for (const [status, expected] of [
+    [{ type: "active", activeFlags: [] }, "active"],
+    [{ type: "idle" }, "ended"],
+    [{ type: "notLoaded" }, "ended"],
+    [{ type: "systemError" }, "unknown"],
+  ] as const) {
+    it.effect(`decodes provider status ${status.type}`, () =>
+      Effect.gen(function* () {
+        const client: Parameters<typeof readCodexThreadActivity>[0] = {
+          request: () => Effect.die("Must use raw thread/read"),
+          raw: {
+            request: (method, params) => {
+              NodeAssert.equal(method, "thread/read");
+              NodeAssert.deepEqual(params, { threadId: "native-thread", includeTurns: false });
+              return Effect.succeed({ thread: { status } });
+            },
+          },
+        };
+        NodeAssert.equal(yield* readCodexThreadActivity(client, "native-thread"), expected);
+      }),
+    );
+  }
+  it.effect("rejects malformed provider responses rather than confirming termination", () =>
+    Effect.gen(function* () {
+      const client: Parameters<typeof readCodexThreadActivity>[0] = {
+        request: () => Effect.die("Must use raw thread/read"),
+        raw: {
+          request: () => Effect.succeed({ thread: { status: { type: "new-unknown-status" } } }),
+        },
+      };
+      const result = yield* Effect.exit(readCodexThreadActivity(client, "native-thread"));
+      NodeAssert.equal(result._tag, "Failure");
     }),
   );
 });

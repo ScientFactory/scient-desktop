@@ -1203,15 +1203,7 @@ const CodexThreadHistoryMetadata = Schema.Struct({
  */
 const CodexThreadActivity = Schema.Struct({
   thread: Schema.Struct({
-    status: Schema.Union([
-      Schema.Struct({ type: Schema.Literal("notLoaded") }),
-      Schema.Struct({ type: Schema.Literal("idle") }),
-      Schema.Struct({ type: Schema.Literal("systemError") }),
-      Schema.Struct({
-        type: Schema.Literal("active"),
-        activeFlags: Schema.Array(Schema.Unknown),
-      }),
-    ]),
+    status: EffectCodexSchema.V2ThreadReadResponse__ThreadStatus,
   }),
 });
 const decodeCodexThreadActivity = Schema.decodeUnknownEffect(CodexThreadActivity);
@@ -1339,7 +1331,7 @@ export const makeCodexSessionRuntime = (
 > =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const runtimeScope = yield* Scope.Scope;
+    const runtimeScope = yield* Scope.fork(yield* Scope.Scope, "sequential");
     const crypto = yield* Crypto.Crypto;
     const events = yield* Queue.unbounded<ProviderEvent>();
     const pendingApprovalsRef = yield* Ref.make(new Map<ApprovalRequestId, PendingApproval>());
@@ -2514,12 +2506,20 @@ export const makeCodexSessionRuntime = (
     });
 
     const close = Effect.gen(function* () {
-      const alreadyClosed = yield* Ref.getAndSet(closedRef, true);
-      if (alreadyClosed) {
-        return;
-      }
+      yield* Ref.set(closedRef, true);
       yield* settlePendingApprovals("cancel");
       yield* settlePendingUserInputs({});
+      yield* Scope.close(runtimeScope, Exit.void);
+      yield* child.exitCode.pipe(
+        // Signal termination has no numeric exit code. It still proves shutdown
+        // when the process handle has observed exit; a live/unknown child does not.
+        Effect.catch((error) =>
+          child.isRunning.pipe(
+            Effect.flatMap((running) => (running ? Effect.fail(error) : Effect.void)),
+          ),
+        ),
+        Effect.orDie,
+      );
       yield* updateSession(sessionRef, {
         status: "closed",
         activeTurnId: undefined,
@@ -2529,7 +2529,6 @@ export const makeCodexSessionRuntime = (
           Effect.logError("Failed to emit Codex session closed event.", { cause }),
         ),
       );
-      yield* Scope.close(runtimeScope, Exit.void);
       yield* Queue.shutdown(serverNotifications);
       yield* Queue.shutdown(events);
     });

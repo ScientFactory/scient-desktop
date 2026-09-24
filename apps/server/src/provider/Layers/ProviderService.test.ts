@@ -493,6 +493,55 @@ function makeProviderServiceLayer(
   };
 }
 
+const ownedStopAdapter = makeFakeCodexAdapter();
+const ownedStop = makeProviderServiceLayer({
+  registry: makeStaticInstanceRegistry([
+    [
+      codexInstanceId,
+      {
+        ...ownedStopAdapter.adapter,
+        captureTurnStop: (threadId) =>
+          Effect.succeed({
+            interrupt: Effect.void,
+            confirm: Effect.succeed("active" as const),
+            stop: (onStopped = Effect.void) =>
+              ownedStopAdapter
+                .stopSession(threadId)
+                .pipe(Effect.andThen(onStopped), Effect.as(true)),
+          }),
+      },
+    ],
+  ]),
+});
+ownedStop.layer("owned cancellation cleanup", (it) => {
+  it.effect("clears durable recovery state when owned teardown succeeds", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      const threadId = asThreadId("owned-stop-cleanup");
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const binding = yield* directory.getBinding(threadId);
+      assert(Option.isSome(binding));
+      yield* directory.upsert({
+        ...binding.value,
+        runtimePayload: { activeTurnId: "turn-1", continueAfterServerUpdate: "turn-1" },
+      });
+      const stop = yield* provider.captureTurnStop!({ threadId });
+      assert.equal(yield* stop.stop(), true);
+      const stopped = yield* directory.getBinding(threadId);
+      assert(Option.isSome(stopped));
+      assert.equal(stopped.value.status, "stopped");
+      assert.propertyVal(stopped.value.runtimePayload, "activeTurnId", null);
+      assert.propertyVal(stopped.value.runtimePayload, "continueAfterServerUpdate", null);
+    }),
+  );
+});
+
 for (const [enabled, completed] of [
   [false, false],
   [true, false],
@@ -1666,6 +1715,43 @@ routing.layer("ProviderServiceLive routing", (it) => {
       routing.claude.startSession.mockClear();
       routing.claude.sendTurn.mockClear();
       routing.claude.stopSession.mockClear();
+    }),
+  );
+
+  it.effect("captures interruption without unsafe fallback teardown or session recovery", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("capture-stop-routing");
+      yield* provider.startSession(threadId, {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId,
+        cwd: fixtureCwd("project"),
+        runtimeMode: "full-access",
+      });
+      const handle = yield* provider.captureTurnStop!({
+        threadId,
+        providerInstanceId: codexInstanceId,
+      });
+      routing.codex.stopSession.mockClear();
+      yield* handle.interrupt;
+      assert.equal(yield* handle.confirm, "unknown");
+      assert.equal(yield* handle.stop(), false);
+      assert.equal(routing.codex.stopSession.mock.calls.length, 0);
+      const mismatch = yield* Effect.exit(
+        provider.captureTurnStop!({
+          threadId,
+          providerInstanceId: claudeAgentInstanceId,
+        }),
+      );
+      assert.equal(mismatch._tag, "Failure");
+      yield* provider.stopSession({ threadId });
+      routing.codex.startSession.mockClear();
+      const missing = yield* Effect.exit(provider.captureTurnStop!({ threadId }));
+      assert.equal(missing._tag, "Failure");
+      assert.equal(routing.codex.startSession.mock.calls.length, 0);
+      routing.codex.stopSession.mockClear();
+      routing.codex.interruptTurn.mockClear();
     }),
   );
 

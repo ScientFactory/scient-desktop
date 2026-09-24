@@ -40,6 +40,17 @@ export type ProviderSessionModelSwitchMode = "in-session" | "unsupported";
  */
 export type ProviderTurnEndConfirmation = "ended" | "active" | "unknown";
 
+/** A cancellation handle bound to one runtime and turn, never re-routed by thread ID. */
+export interface ProviderTurnStop<TError> {
+  readonly interrupt: Effect.Effect<void, TError>;
+  readonly confirm: Effect.Effect<ProviderTurnEndConfirmation, TError>;
+  /**
+   * False means ownership changed or safe teardown is unsupported. Run onStopped
+   * after verified teardown, before releasing the runtime's admission guard.
+   */
+  readonly stop: (onStopped?: Effect.Effect<void>) => Effect.Effect<boolean, TError>;
+}
+
 export type ProviderAdapterSendTurnInput = ProviderSendTurnInput & {
   /** Server-owned user text before model-directed attachment/skill augmentation.
    * Native commands may need their exact arguments; never decoded from client input. */
@@ -138,19 +149,10 @@ export interface ProviderAdapterShape<TError> {
    */
   readonly stopSession: (threadId: ThreadId) => Effect.Effect<void, TError>;
 
-  /**
-   * Ask the provider, in provider terms, whether this thread is still
-   * executing a turn. Used to verify a cancellation instead of inferring it
-   * from the absence of an event.
-   *
-   * Omission means the adapter cannot confirm; callers must read that as
-   * `unknown` rather than as proof that the turn ended. Implementations must
-   * bound the call and must not answer from adapter-side bookkeeping that only
-   * mirrors the event stream.
-   */
-  readonly confirmTurnEnd?: (
+  /** Capture runtime identity before any cancellation RPC can yield. */
+  readonly captureTurnStop?: (
     threadId: ThreadId,
-  ) => Effect.Effect<ProviderTurnEndConfirmation, TError>;
+  ) => Effect.Effect<ProviderTurnStop<TError>, TError>;
 
   /**
    * List currently active provider sessions for this adapter.
