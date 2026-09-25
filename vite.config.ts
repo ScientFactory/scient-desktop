@@ -57,7 +57,6 @@ const SCIENT_LEGACY_WEB_LINT_FILES = [
   "apps/web/src/components/usage/UsageAccountingView.tsx",
   "apps/web/src/components/usage/usageAccountingPresentation.ts",
   "apps/web/src/components/usage/usageChartGeometry.ts",
-  "apps/web/src/components/usage/usagePagePreferences.ts",
   "apps/web/src/components/usage/usageProviders.ts",
 ] as const;
 

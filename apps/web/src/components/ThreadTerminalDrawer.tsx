@@ -1397,8 +1397,8 @@ export default function ThreadTerminalDrawer({
   if (normalizedTerminalIds.length === 0) {
     return (
       <aside
-        data-terminal-owner={isPanel ? "right-panel" : "drawer"}
         data-thread-terminal-drawer
+        data-terminal-owner={isPanel ? "right-panel" : "drawer"}
         className={cn(
           "relative flex min-w-0 flex-col overflow-hidden bg-background",
           isPanel ? "h-full flex-1" : "shrink-0 border-t border-border/80",
@@ -1428,8 +1428,8 @@ export default function ThreadTerminalDrawer({
 
   return (
     <aside
-      data-terminal-owner={isPanel ? "right-panel" : "drawer"}
       data-thread-terminal-drawer
+      data-terminal-owner={isPanel ? "right-panel" : "drawer"}
       className={cn(
         "relative flex min-w-0 flex-col overflow-hidden bg-background",
         isPanel ? "h-full flex-1" : "shrink-0 border-t border-border/80",
