@@ -33,6 +33,11 @@ git status --short
 pnpm dev:desktop
 ```
 
+The Windows desktop runner defaults to bundled web development so Electron can
+load the large renderer without exhausting its per-module request pool. Set
+`T3CODE_BUNDLED_DEV=0` in the launch terminal only when debugging unbundled
+module loading.
+
 Keep that terminal open; it owns the foreground runner and its logs. Read the
 selected ports and `baseDir` from the `[dev-runner]` output, and confirm the
 state belongs to this worktree before testing. Do not launch a second runner
