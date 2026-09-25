@@ -62,7 +62,6 @@ import {
   use,
   useCallback,
   useEffect,
-  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -102,6 +101,7 @@ import {
 } from "../../lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "../../lib/syntaxHighlighting";
 import ChatMarkdown, { ChatMarkdownAssetImage } from "../ChatMarkdown";
+import { ComputerUseAppIcon } from "../Icons";
 import { ScientSymbol } from "../ScientSymbol";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -4162,30 +4162,6 @@ type WorkEntryIconName =
   | "wrench"
   | "x"
   | "zap";
-
-function ComputerUseAppIcon({ className }: { className: string }) {
-  const gradientId = `${useId().replaceAll(":", "")}-computer-use-app-gradient`;
-  return (
-    <svg viewBox="0 0 24 24" className={className} aria-hidden>
-      <defs>
-        <linearGradient id={gradientId} x1="2" y1="2" x2="22" y2="22">
-          <stop offset="0" stopColor="var(--color-computer-use-cyan)" />
-          <stop offset="0.42" stopColor="var(--color-computer-use-blue)" />
-          <stop offset="0.72" stopColor="var(--color-computer-use-violet)" />
-          <stop offset="1" stopColor="var(--color-computer-use-pink)" />
-        </linearGradient>
-      </defs>
-      <rect x="1" y="1" width="22" height="22" rx="5" fill={`url(#${gradientId})`} />
-      <path
-        d="m7.2 6.2 10.5 4.1-4.2 2.1-2 4.7z"
-        fill="var(--color-zinc-25)"
-        stroke="var(--color-computer-use-outline)"
-        strokeWidth="1.1"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
 
 function ToolActivityIconView(props: {
   icon: ToolActivityIcon | undefined;

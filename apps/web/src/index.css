@@ -332,17 +332,20 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 /* Semantic mount hook used by the terminal drawer focus/ownership code. */
 @utility thread-terminal-drawer {
   /* Layout and appearance are supplied by the component's utility classes. */
+  --scient-semantic-hook: 1;
 }
 
 /* The stage background remains a component-layer class; register its name
    for the upstream unknown-class check without moving its theme rules. */
 @utility scient-stage-art {
   /* See the component-layer .scient-stage-art rule below. */
+  --scient-semantic-hook: 1;
 }
 
 /* Semantic hook for the shared rich-math source toolbar. */
 @utility scient-math-source-toolbar {
   /* Layout and appearance are supplied by math-input.css. */
+  --scient-semantic-hook: 1;
 }
 
 /* Small semantic utilities retained from Scient's established visual language. */
