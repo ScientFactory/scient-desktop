@@ -328,7 +328,7 @@ run. Compact context remains visible when it matters, such as for a selection, c
 running execution, or failure. The separate Compute history keeps source labels because it can span
 multiple files.
 
-The separate **Compute** project surface is secondary: use **New compute session** from the
+The separate **Compute** project surface is secondary: use **Scientific computing** from the
 right-panel add menu when you need a kernel that is not tied to the open file, or open project
 history once more than one session exists. It is
 not a second editor and has no generic code composer.

@@ -50,11 +50,11 @@ import type {
   PdfInteractionHost,
 } from "~/scient/pdf/ScientPdfReader";
 import type { RequestedPdfPresentation } from "~/scient/pdf/useScientPdfReader";
+import { usePdfSaveCopy } from "~/scient/pdf/usePdfSaveCopy";
 import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
 
 import { documentBindingChanges } from "./bindingChanges";
 import { LatexVisualEditor } from "./LatexVisualEditor";
-import { latexPreviewRebuildReason } from "./latexPreviewPolicy";
 import { LatexToolchainSetupCard } from "./LatexToolchainSetupCard";
 import { requestLatexForwardSync, requestLatexInverseSync } from "./client";
 import {
@@ -406,7 +406,7 @@ const LatexViewerPane = memo(function LatexViewerPane({
         <LatexPendingViewer label="Building…" />
       ) : (
         <div className="scient-latex-placeholder">
-          <p>Select Rebuild to compile a PDF. Writing and saving do not run TeX.</p>
+          <p>Choose Update PDF to create the typeset document with your local TeX installation.</p>
         </div>
       )}
     </div>
@@ -439,6 +439,8 @@ function sourcePositionFromPointerEvent(
 }
 
 export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
+  const savePdfCopy = usePdfSaveCopy(props.environmentId);
+  const [exportingPdf, setExportingPdf] = useState(false);
   const visualDraftKey = `${props.environmentId}\0${props.cwd}\0${props.relativePath}`;
   const [manualRootSelection, setManualRootSelection] = useState<{
     readonly sourceRelativePath: string;
@@ -670,20 +672,11 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
       ? "split"
       : preferredMode;
   const sourceIdentity = useLatexSourceIdentity(props.contents);
-  const verifiedSource = useRef(props.contents);
   const compiledRevision = build.snapshot?.visualSourceRevisions?.[props.relativePath];
   const pdfMatchesBuffer =
     sourceIdentity !== null &&
     sourceIdentity.revision === compiledRevision &&
     build.snapshot?.state === "succeeded";
-  useEffect(() => {
-    if (pdfMatchesBuffer) verifiedSource.current = props.contents;
-  }, [pdfMatchesBuffer, props.contents]);
-  const rebuildReason = latexPreviewRebuildReason(
-    verifiedSource.current,
-    props.contents,
-    pdfMatchesBuffer,
-  );
   const selectMode = useCallback(
     (next: ScientLatexPreviewMode) => {
       finishVisualEditingRef.current?.();
@@ -856,19 +849,21 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   return (
     <div className="scient-latex-surface" data-latex-layout={mode} dir="ltr">
       <div className="scient-latex-toolbar">
-        <div className="scient-latex-modes" role="group" aria-label="LaTeX preview layout">
+        <strong className="scient-latex-document-name" title={props.relativePath}>
+          {props.relativePath.split(/[\\/]/u).at(-1)}
+        </strong>
+        <select
+          className="scient-latex-view-select"
+          aria-label="Document view"
+          value={mode}
+          onChange={(event) => selectMode(event.target.value as ScientLatexPreviewMode)}
+        >
           {LATEX_PREVIEW_MODES.map((candidate) => (
-            <button
-              key={candidate}
-              type="button"
-              className="scient-latex-mode-button"
-              aria-pressed={mode === candidate}
-              onClick={() => selectMode(candidate)}
-            >
+            <option key={candidate} value={candidate}>
               {LATEX_PREVIEW_MODE_LABELS[candidate]}
-            </button>
+            </option>
           ))}
-        </div>
+        </select>
         <div className="scient-latex-status">
           {resolution.pending || status.busy ? (
             <LoaderCircle
@@ -1012,12 +1007,48 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
             }}
           >
             <RotateCw className="size-3.5" aria-hidden="true" />
-            Rebuild
+            Update PDF
+          </button>
+          <button
+            type="button"
+            className="scient-latex-action"
+            disabled={
+              descriptor === null ||
+              !pdfMatchesBuffer ||
+              status.stale ||
+              status.busy ||
+              visualAwaitingSave ||
+              saveError !== null ||
+              props.saveResolution !== null ||
+              exportingPdf
+            }
+            title={
+              pdfMatchesBuffer && !status.stale
+                ? "Save a PDF copy"
+                : "Update PDF to export the current document"
+            }
+            onClick={async () => {
+              if (!descriptor || !pdfMatchesBuffer || status.stale || exportingPdf) return;
+              setExportingPdf(true);
+              setSyncNotice(null);
+              try {
+                await savePdfCopy(descriptor);
+              } catch (error) {
+                setSyncNotice({
+                  label: "Export failed",
+                  message: error instanceof Error ? error.message : "Could not save the PDF copy.",
+                });
+              } finally {
+                setExportingPdf(false);
+              }
+            }}
+          >
+            {exportingPdf ? "Exporting..." : "Export PDF"}
           </button>
         </div>
       </div>
 
-      {diagnostics.length > 0 && (mode !== "visual" || diagnosticsOpen) ? (
+      {diagnostics.length > 0 && (mode === "source" || mode === "split" || diagnosticsOpen) ? (
         <div className="scient-latex-diagnostics">
           <button
             type="button"
@@ -1059,13 +1090,6 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
         </div>
       ) : null}
 
-      <div className="scient-latex-preview-notice" role="status">
-        <span>
-          {rebuildReason ??
-            "PDF matches the saved source. Writing view remains an approximate layout."}
-        </span>
-        <span>{visualAwaitingSave ? "Saving source…" : "PDF builds only when requested"}</span>
-      </div>
       <div className="scient-latex-content" ref={containerRef}>
         {mode === "visual" ? (
           <LatexVisualEditor

@@ -1,0 +1,203 @@
+diff --git a/mathlive.js b/mathlive.js
+index eae437bb1f9751cc87514f59bc3dec8e2f945743..4453ff68f1f37c6be38de33d3e51940a47cc9e2b 100644
+--- a/mathlive.js
++++ b/mathlive.js
+@@ -25927,36 +25927,47 @@ Note there are a different set of tooltip rules for the keyboard toggle
+     );
+     return makeStruts(box, { classes: "ML__latex" }).toMarkup();
+   }
++  // Keep the menu DOM and its scroll position while cycling through suggestions.
++  const suggestionPopoverContents = new WeakMap();
++  function scrollCurrentSuggestion(panel) {
++    const list = panel.querySelector("ul");
++    const current = panel.querySelector(".ML__popover__current");
++    if (!list || !current) return;
++    const bounds = list.getBoundingClientRect();
++    const row = current.getBoundingClientRect();
++    if (row.top < bounds.top) list.scrollTop -= bounds.top - row.top;
++    else if (row.bottom > bounds.bottom) list.scrollTop += row.bottom - bounds.bottom;
++  }
+   function showSuggestionPopover(mf, suggestions) {
+-    var _a3;
+     if (suggestions.length === 0) {
+       hideSuggestionPopover(mf);
+       return;
+     }
++    const previous = document.getElementById("mathlive-suggestion-popover");
++    const contents = previous && suggestionPopoverContents.get(previous);
++    if (contents && contents.owner === mf &&
++        contents.commands.length === suggestions.length &&
++        suggestions.every((command, index) => command === contents.commands[index])) {
++      const rows = previous.querySelectorAll("li[data-command]");
++      rows.forEach((row, index) => {
++        row.classList.toggle("ML__popover__current", index === mf.suggestionIndex);
++      });
++      scrollCurrentSuggestion(previous);
++      return;
++    }
+     let template = "";
+-    for (const [i, suggestion] of suggestions.entries()) {
+-      const command = suggestion;
+-      const commandMarkup = latexToMarkup(mf, suggestion);
+-      const keybinding = getKeybindingsForCommand(mf.keybindings, command).join(
+-        "<br>"
+-      );
++    for (const [i, command] of suggestions.entries()) {
++      const commandMarkup = latexToMarkup(mf, command);
++      const keybinding = getKeybindingsForCommand(mf.keybindings, command).join("<br>");
+       template += `<li role="button" data-command="${command}" ${i === mf.suggestionIndex ? "class=ML__popover__current" : ""}><span class="ML__popover__latex">${command}</span><span class="ML__popover__command">${commandMarkup}</span>`;
+-      if (keybinding)
+-        template += `<span class="ML__popover__keybinding">${keybinding}</span>`;
++      if (keybinding) template += `<span class="ML__popover__keybinding">${keybinding}</span>`;
+       template += "</li>";
+     }
+     const panel = createSuggestionPopover(mf, `<ul>${template}</ul>`);
+-    if (isSuggestionPopoverVisible()) {
+-      (_a3 = panel.querySelector(".ML__popover__current")) == null ? void 0 : _a3.scrollIntoView({ block: "nearest", inline: "nearest" });
+-    }
+-    setTimeout(() => {
+-      var _a4;
+-      if (panel && !isSuggestionPopoverVisible()) {
+-        panel.classList.add("is-visible");
+-        updateSuggestionPopoverPosition(mf);
+-        (_a4 = panel.querySelector(".ML__popover__current")) == null ? void 0 : _a4.scrollIntoView({ block: "nearest", inline: "nearest" });
+-      }
+-    }, 32);
++    suggestionPopoverContents.set(panel, { owner: mf, commands: suggestions.slice() });
++    panel.classList.add("is-visible");
++    updateSuggestionPopoverPosition(mf);
++    scrollCurrentSuggestion(panel);
+   }
+   function isSuggestionPopoverVisible() {
+     const panel = document.getElementById("mathlive-suggestion-popover");
+@@ -31843,7 +31854,9 @@ Note there are a different set of tooltip rules for the keyboard toggle
+       mathfield.dirty = true;
+       model.announce("replacement");
+     }
+-    mathfield.scrollIntoView();
++    // Cycling suggestions does not move the document caret. Scroll only the list.
++    if (selector !== "nextSuggestion" && selector !== "previousSuggestion")
++      mathfield.scrollIntoView();
+     if (evt.preventDefault) evt.preventDefault();
+     return false;
+   }
+diff --git a/mathlive.mjs b/mathlive.mjs
+index 1b366afaba08162ce304c0495b47abdace20a6c1..a2f4a257db12f84dd44b27eefe86fced2ebbc129 100644
+--- a/mathlive.mjs
++++ b/mathlive.mjs
+@@ -25887,36 +25887,47 @@ function latexToMarkup(mf, latex) {
+   );
+   return makeStruts(box, { classes: "ML__latex" }).toMarkup();
+ }
++// Keep the menu DOM and its scroll position while cycling through suggestions.
++const suggestionPopoverContents = new WeakMap();
++function scrollCurrentSuggestion(panel) {
++  const list = panel.querySelector("ul");
++  const current = panel.querySelector(".ML__popover__current");
++  if (!list || !current) return;
++  const bounds = list.getBoundingClientRect();
++  const row = current.getBoundingClientRect();
++  if (row.top < bounds.top) list.scrollTop -= bounds.top - row.top;
++  else if (row.bottom > bounds.bottom) list.scrollTop += row.bottom - bounds.bottom;
++}
+ function showSuggestionPopover(mf, suggestions) {
+-  var _a3;
+   if (suggestions.length === 0) {
+     hideSuggestionPopover(mf);
+     return;
+   }
++  const previous = document.getElementById("mathlive-suggestion-popover");
++  const contents = previous && suggestionPopoverContents.get(previous);
++  if (contents && contents.owner === mf &&
++      contents.commands.length === suggestions.length &&
++      suggestions.every((command, index) => command === contents.commands[index])) {
++    const rows = previous.querySelectorAll("li[data-command]");
++    rows.forEach((row, index) => {
++      row.classList.toggle("ML__popover__current", index === mf.suggestionIndex);
++    });
++    scrollCurrentSuggestion(previous);
++    return;
++  }
+   let template = "";
+-  for (const [i, suggestion] of suggestions.entries()) {
+-    const command = suggestion;
+-    const commandMarkup = latexToMarkup(mf, suggestion);
+-    const keybinding = getKeybindingsForCommand(mf.keybindings, command).join(
+-      "<br>"
+-    );
++  for (const [i, command] of suggestions.entries()) {
++    const commandMarkup = latexToMarkup(mf, command);
++    const keybinding = getKeybindingsForCommand(mf.keybindings, command).join("<br>");
+     template += `<li role="button" data-command="${command}" ${i === mf.suggestionIndex ? "class=ML__popover__current" : ""}><span class="ML__popover__latex">${command}</span><span class="ML__popover__command">${commandMarkup}</span>`;
+-    if (keybinding)
+-      template += `<span class="ML__popover__keybinding">${keybinding}</span>`;
++    if (keybinding) template += `<span class="ML__popover__keybinding">${keybinding}</span>`;
+     template += "</li>";
+   }
+   const panel = createSuggestionPopover(mf, `<ul>${template}</ul>`);
+-  if (isSuggestionPopoverVisible()) {
+-    (_a3 = panel.querySelector(".ML__popover__current")) == null ? void 0 : _a3.scrollIntoView({ block: "nearest", inline: "nearest" });
+-  }
+-  setTimeout(() => {
+-    var _a4;
+-    if (panel && !isSuggestionPopoverVisible()) {
+-      panel.classList.add("is-visible");
+-      updateSuggestionPopoverPosition(mf);
+-      (_a4 = panel.querySelector(".ML__popover__current")) == null ? void 0 : _a4.scrollIntoView({ block: "nearest", inline: "nearest" });
+-    }
+-  }, 32);
++  suggestionPopoverContents.set(panel, { owner: mf, commands: suggestions.slice() });
++  panel.classList.add("is-visible");
++  updateSuggestionPopoverPosition(mf);
++  scrollCurrentSuggestion(panel);
+ }
+ function isSuggestionPopoverVisible() {
+   const panel = document.getElementById("mathlive-suggestion-popover");
+@@ -31803,7 +31814,9 @@ function onKeystroke(mathfield, evt) {
+     mathfield.dirty = true;
+     model.announce("replacement");
+   }
+-  mathfield.scrollIntoView();
++  // Cycling suggestions does not move the document caret. Scroll only the list.
++  if (selector !== "nextSuggestion" && selector !== "previousSuggestion")
++    mathfield.scrollIntoView();
+   if (evt.preventDefault) evt.preventDefault();
+   return false;
+ }
+diff --git a/package.json b/package.json
+index 0df3630beb8cca77dc467bb2b74e93c52597f997..0fbd8211a7e3e31df384e2bdb05dc7c4bdd0ed3b 100644
+--- a/package.json
++++ b/package.json
+@@ -28,8 +28,8 @@
+     "katex",
+     "mathquill"
+   ],
+-  "main": "./mathlive.min.js",
+-  "module": "./mathlive.min.mjs",
++  "main": "./mathlive.js",
++  "module": "./mathlive.mjs",
+   "types": "./types/mathlive.d.ts",
+   "exports": {
+     "./vue": "./vue-mathlive.mjs",
+@@ -39,8 +39,8 @@
+       "browser": {
+         "production": {
+           "types": "./types/mathlive.d.ts",
+-          "import": "./mathlive.min.mjs",
+-          "require": "./mathlive.min.js"
++          "import": "./mathlive.mjs",
++          "require": "./mathlive.js"
+         },
+         "development": {
+           "types": "./types/mathlive.d.ts",
+@@ -54,8 +54,8 @@
+       },
+       "default": {
+         "types": "./types/mathlive.d.ts",
+-        "import": "./mathlive.min.mjs",
+-        "require": "./mathlive.min.js"
++        "import": "./mathlive.mjs",
++        "require": "./mathlive.js"
+       }
+     },
+     "./ssr": {

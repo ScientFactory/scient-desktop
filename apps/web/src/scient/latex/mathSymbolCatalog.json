@@ -1,0 +1,4357 @@
+[
+  {
+    "category": "functions",
+    "command": "\\arccos"
+  },
+  {
+    "category": "functions",
+    "command": "\\arcsin"
+  },
+  {
+    "category": "functions",
+    "command": "\\arctan"
+  },
+  {
+    "category": "functions",
+    "command": "\\arg"
+  },
+  {
+    "category": "functions",
+    "command": "\\bmod"
+  },
+  {
+    "category": "functions",
+    "command": "\\cos"
+  },
+  {
+    "category": "functions",
+    "command": "\\cosh"
+  },
+  {
+    "category": "functions",
+    "command": "\\cot"
+  },
+  {
+    "category": "functions",
+    "command": "\\coth"
+  },
+  {
+    "category": "functions",
+    "command": "\\csc"
+  },
+  {
+    "category": "functions",
+    "command": "\\deg"
+  },
+  {
+    "category": "functions",
+    "command": "\\det"
+  },
+  {
+    "category": "functions",
+    "command": "\\dim"
+  },
+  {
+    "category": "functions",
+    "command": "\\exp"
+  },
+  {
+    "category": "functions",
+    "command": "\\gcd"
+  },
+  {
+    "category": "functions",
+    "command": "\\hom"
+  },
+  {
+    "category": "functions",
+    "command": "\\inf"
+  },
+  {
+    "category": "functions",
+    "command": "\\ker"
+  },
+  {
+    "category": "functions",
+    "command": "\\lg"
+  },
+  {
+    "category": "functions",
+    "command": "\\lim"
+  },
+  {
+    "category": "functions",
+    "command": "\\liminf"
+  },
+  {
+    "category": "functions",
+    "command": "\\limsup"
+  },
+  {
+    "category": "functions",
+    "command": "\\ln"
+  },
+  {
+    "category": "functions",
+    "command": "\\log"
+  },
+  {
+    "category": "functions",
+    "command": "\\max"
+  },
+  {
+    "category": "functions",
+    "command": "\\min"
+  },
+  {
+    "category": "functions",
+    "command": "\\sec"
+  },
+  {
+    "category": "functions",
+    "command": "\\sin"
+  },
+  {
+    "category": "functions",
+    "command": "\\sinh"
+  },
+  {
+    "category": "functions",
+    "command": "\\sup"
+  },
+  {
+    "category": "functions",
+    "command": "\\tan"
+  },
+  {
+    "category": "functions",
+    "command": "\\tanh"
+  },
+  {
+    "category": "functions",
+    "command": "\\Pr"
+  },
+  {
+    "category": "space",
+    "command": "\\,"
+  },
+  {
+    "category": "space",
+    "command": "\\:"
+  },
+  {
+    "category": "space",
+    "command": "\\;"
+  },
+  {
+    "category": "space",
+    "command": "\\quad"
+  },
+  {
+    "category": "space",
+    "command": "\\qquad"
+  },
+  {
+    "category": "space",
+    "command": "\\!"
+  },
+  {
+    "category": "space",
+    "command": "\\phantom"
+  },
+  {
+    "category": "space",
+    "command": "\\hphantom"
+  },
+  {
+    "category": "space",
+    "command": "\\vphantom"
+  },
+  {
+    "category": "space",
+    "command": "\\smash"
+  },
+  {
+    "category": "space",
+    "command": "\\smasht"
+  },
+  {
+    "category": "space",
+    "command": "\\smashb"
+  },
+  {
+    "category": "space",
+    "command": "\\mathllap"
+  },
+  {
+    "category": "space",
+    "command": "\\mathclap"
+  },
+  {
+    "category": "space",
+    "command": "\\mathrlap"
+  },
+  {
+    "category": "sqrt-square",
+    "command": "\\sqrt"
+  },
+  {
+    "category": "sqrt-square",
+    "command": "\\root"
+  },
+  {
+    "category": "style",
+    "command": "\\displaystyle"
+  },
+  {
+    "category": "style",
+    "command": "\\textstyle"
+  },
+  {
+    "category": "style",
+    "command": "\\scriptstyle"
+  },
+  {
+    "category": "style",
+    "command": "\\scriptscriptstyle"
+  },
+  {
+    "category": "style",
+    "command": "\\mathrel"
+  },
+  {
+    "category": "style",
+    "command": "\\mathbin"
+  },
+  {
+    "category": "style",
+    "command": "\\mathop"
+  },
+  {
+    "category": "style",
+    "command": "\\mathord"
+  },
+  {
+    "category": "frac-square",
+    "command": "\\frac"
+  },
+  {
+    "category": "frac-square",
+    "command": "\\nicefrac"
+  },
+  {
+    "category": "frac-square",
+    "command": "\\unitone"
+  },
+  {
+    "category": "frac-square",
+    "command": "\\unittwo"
+  },
+  {
+    "category": "frac-square",
+    "command": "\\unitfrac"
+  },
+  {
+    "category": "frac-square",
+    "command": "\\unitfracthree"
+  },
+  {
+    "category": "frac-square",
+    "command": "\\tfrac"
+  },
+  {
+    "category": "frac-square",
+    "command": "\\dfrac"
+  },
+  {
+    "category": "frac-square",
+    "command": "\\cfrac"
+  },
+  {
+    "category": "frac-square",
+    "command": "\\cfracleft"
+  },
+  {
+    "category": "frac-square",
+    "command": "\\cfracright"
+  },
+  {
+    "category": "frac-square",
+    "command": "\\binom"
+  },
+  {
+    "category": "frac-square",
+    "command": "\\tbinom"
+  },
+  {
+    "category": "frac-square",
+    "command": "\\dbinom"
+  },
+  {
+    "category": "font",
+    "command": "\\mathrm"
+  },
+  {
+    "category": "font",
+    "command": "\\mathbf"
+  },
+  {
+    "category": "font",
+    "command": "\\boldsymbol"
+  },
+  {
+    "category": "font",
+    "command": "\\mathsf"
+  },
+  {
+    "category": "font",
+    "command": "\\mathit"
+  },
+  {
+    "category": "font",
+    "command": "\\mathtt"
+  },
+  {
+    "category": "font",
+    "command": "\\mathbb"
+  },
+  {
+    "category": "font",
+    "command": "\\mathds"
+  },
+  {
+    "category": "font",
+    "command": "\\mathfrak"
+  },
+  {
+    "category": "font",
+    "command": "\\mathcal"
+  },
+  {
+    "category": "font",
+    "command": "\\mathscr"
+  },
+  {
+    "category": "font",
+    "command": "\\textrm"
+  },
+  {
+    "category": "latex_dots",
+    "command": "\\ldots"
+  },
+  {
+    "category": "latex_dots",
+    "command": "\\cdots"
+  },
+  {
+    "category": "latex_dots",
+    "command": "\\vdots"
+  },
+  {
+    "category": "latex_dots",
+    "command": "\\ddots"
+  },
+  {
+    "category": "latex_dots",
+    "command": "\\iddots",
+    "packages": ["mathdots"]
+  },
+  {
+    "category": "latex_deco",
+    "command": "\\hat"
+  },
+  {
+    "category": "latex_deco",
+    "command": "\\tilde"
+  },
+  {
+    "category": "latex_deco",
+    "command": "\\bar"
+  },
+  {
+    "category": "latex_deco",
+    "command": "\\grave"
+  },
+  {
+    "category": "latex_deco",
+    "command": "\\dot"
+  },
+  {
+    "category": "latex_deco",
+    "command": "\\check"
+  },
+  {
+    "category": "latex_deco",
+    "command": "\\widehat"
+  },
+  {
+    "category": "latex_deco",
+    "command": "\\widetilde"
+  },
+  {
+    "category": "latex_deco",
+    "command": "\\utilde",
+    "packages": ["undertilde"]
+  },
+  {
+    "category": "latex_deco",
+    "command": "\\vec"
+  },
+  {
+    "category": "latex_deco",
+    "command": "\\acute"
+  },
+  {
+    "category": "latex_deco",
+    "command": "\\ddot"
+  },
+  {
+    "category": "latex_deco",
+    "command": "\\dddot",
+    "packages": ["amsmath"]
+  },
+  {
+    "category": "latex_deco",
+    "command": "\\ddddot",
+    "packages": ["amsmath"]
+  },
+  {
+    "category": "latex_deco",
+    "command": "\\breve"
+  },
+  {
+    "category": "latex_deco",
+    "command": "\\mathring"
+  },
+  {
+    "category": "latex_deco",
+    "command": "\\overline"
+  },
+  {
+    "category": "latex_deco",
+    "command": "\\overbrace"
+  },
+  {
+    "category": "latex_deco",
+    "command": "\\overleftarrow"
+  },
+  {
+    "category": "latex_deco",
+    "command": "\\overrightarrow"
+  },
+  {
+    "category": "latex_deco",
+    "command": "\\overleftrightarrow",
+    "packages": ["amsmath"]
+  },
+  {
+    "category": "latex_deco",
+    "command": "\\underline"
+  },
+  {
+    "category": "latex_deco",
+    "command": "\\underbrace"
+  },
+  {
+    "category": "latex_deco",
+    "command": "\\underleftarrow",
+    "packages": ["amsmath"]
+  },
+  {
+    "category": "latex_deco",
+    "command": "\\underrightarrow",
+    "packages": ["amsmath"]
+  },
+  {
+    "category": "latex_deco",
+    "command": "\\underleftrightarrow",
+    "packages": ["amsmath"]
+  },
+  {
+    "category": "latex_deco",
+    "command": "\\cancel"
+  },
+  {
+    "category": "latex_deco",
+    "command": "\\bcancel"
+  },
+  {
+    "category": "latex_deco",
+    "command": "\\xcancel"
+  },
+  {
+    "category": "latex_deco",
+    "command": "\\cancelto"
+  },
+  {
+    "category": "latex_deco",
+    "command": "\\sideset"
+  },
+  {
+    "category": "latex_deco",
+    "command": "\\sidesetr"
+  },
+  {
+    "category": "latex_deco",
+    "command": "\\sidesetl"
+  },
+  {
+    "category": "latex_deco",
+    "command": "\\sidesetn"
+  },
+  {
+    "category": "latex_deco",
+    "command": "\\overset"
+  },
+  {
+    "category": "latex_deco",
+    "command": "\\underset"
+  },
+  {
+    "category": "latex_deco",
+    "command": "\\stackrel"
+  },
+  {
+    "category": "latex_deco",
+    "command": "\\stackrelthree"
+  },
+  {
+    "category": "latex_arrow",
+    "command": "\\leftarrow",
+    "glyph": "←"
+  },
+  {
+    "category": "latex_arrow",
+    "command": "\\rightarrow",
+    "glyph": "→"
+  },
+  {
+    "category": "latex_arrow",
+    "command": "\\downarrow",
+    "glyph": "↓"
+  },
+  {
+    "category": "latex_arrow",
+    "command": "\\uparrow",
+    "glyph": "↑"
+  },
+  {
+    "category": "latex_arrow",
+    "command": "\\updownarrow",
+    "glyph": "↕"
+  },
+  {
+    "category": "latex_arrow",
+    "command": "\\leftrightarrow",
+    "glyph": "↔"
+  },
+  {
+    "category": "latex_arrow",
+    "command": "\\Leftarrow",
+    "glyph": "⇐"
+  },
+  {
+    "category": "latex_arrow",
+    "command": "\\Rightarrow",
+    "glyph": "⇒"
+  },
+  {
+    "category": "latex_arrow",
+    "command": "\\Downarrow",
+    "glyph": "⇓"
+  },
+  {
+    "category": "latex_arrow",
+    "command": "\\Uparrow",
+    "glyph": "⇑"
+  },
+  {
+    "category": "latex_arrow",
+    "command": "\\Updownarrow",
+    "glyph": "⇕"
+  },
+  {
+    "category": "latex_arrow",
+    "command": "\\Leftrightarrow",
+    "glyph": "↔"
+  },
+  {
+    "category": "latex_arrow",
+    "command": "\\Longleftrightarrow",
+    "glyph": "⟺"
+  },
+  {
+    "category": "latex_arrow",
+    "command": "\\Longleftarrow",
+    "glyph": "⟸"
+  },
+  {
+    "category": "latex_arrow",
+    "command": "\\Longrightarrow",
+    "glyph": "⟹"
+  },
+  {
+    "category": "latex_arrow",
+    "command": "\\longleftrightarrow",
+    "glyph": "⟷"
+  },
+  {
+    "category": "latex_arrow",
+    "command": "\\longleftarrow",
+    "glyph": "⟵"
+  },
+  {
+    "category": "latex_arrow",
+    "command": "\\longrightarrow",
+    "glyph": "⟶"
+  },
+  {
+    "category": "latex_arrow",
+    "command": "\\leftharpoondown",
+    "glyph": "↽"
+  },
+  {
+    "category": "latex_arrow",
+    "command": "\\rightharpoondown",
+    "glyph": "⇁"
+  },
+  {
+    "category": "latex_arrow",
+    "command": "\\mapsto",
+    "glyph": "↤"
+  },
+  {
+    "category": "latex_arrow",
+    "command": "\\longmapsto",
+    "glyph": "⟻"
+  },
+  {
+    "category": "latex_arrow",
+    "command": "\\nwarrow",
+    "glyph": "↖"
+  },
+  {
+    "category": "latex_arrow",
+    "command": "\\nearrow",
+    "glyph": "↗"
+  },
+  {
+    "category": "latex_arrow",
+    "command": "\\leftharpoonup",
+    "glyph": "↼"
+  },
+  {
+    "category": "latex_arrow",
+    "command": "\\rightharpoonup",
+    "glyph": "⇀"
+  },
+  {
+    "category": "latex_arrow",
+    "command": "\\hookleftarrow",
+    "glyph": "↩"
+  },
+  {
+    "category": "latex_arrow",
+    "command": "\\hookrightarrow",
+    "glyph": "↪"
+  },
+  {
+    "category": "latex_arrow",
+    "command": "\\swarrow",
+    "glyph": "↙"
+  },
+  {
+    "category": "latex_arrow",
+    "command": "\\searrow",
+    "glyph": "↘"
+  },
+  {
+    "category": "latex_arrow",
+    "command": "\\rightleftharpoons",
+    "glyph": "⇋",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_bop",
+    "command": "\\pm",
+    "glyph": "±"
+  },
+  {
+    "category": "latex_bop",
+    "command": "\\cap",
+    "glyph": "∩"
+  },
+  {
+    "category": "latex_bop",
+    "command": "\\diamond",
+    "glyph": "◊"
+  },
+  {
+    "category": "latex_bop",
+    "command": "\\oplus",
+    "glyph": "⊕"
+  },
+  {
+    "category": "latex_bop",
+    "command": "\\mp",
+    "glyph": "∓"
+  },
+  {
+    "category": "latex_bop",
+    "command": "\\cup",
+    "glyph": "∪"
+  },
+  {
+    "category": "latex_bop",
+    "command": "\\bigtriangleup",
+    "glyph": "△"
+  },
+  {
+    "category": "latex_bop",
+    "command": "\\ominus",
+    "glyph": "⊖"
+  },
+  {
+    "category": "latex_bop",
+    "command": "\\times",
+    "glyph": "×"
+  },
+  {
+    "category": "latex_bop",
+    "command": "\\uplus",
+    "glyph": "⊎"
+  },
+  {
+    "category": "latex_bop",
+    "command": "\\bigtriangledown",
+    "glyph": "▽"
+  },
+  {
+    "category": "latex_bop",
+    "command": "\\otimes",
+    "glyph": "⊗"
+  },
+  {
+    "category": "latex_bop",
+    "command": "\\div",
+    "glyph": "÷"
+  },
+  {
+    "category": "latex_bop",
+    "command": "\\sqcap",
+    "glyph": "⊓"
+  },
+  {
+    "category": "latex_bop",
+    "command": "\\triangleright",
+    "glyph": "▹"
+  },
+  {
+    "category": "latex_bop",
+    "command": "\\oslash",
+    "glyph": "ø"
+  },
+  {
+    "category": "latex_bop",
+    "command": "\\cdot",
+    "glyph": "⋅"
+  },
+  {
+    "category": "latex_bop",
+    "command": "\\sqcup",
+    "glyph": "⊔"
+  },
+  {
+    "category": "latex_bop",
+    "command": "\\triangleleft",
+    "glyph": "◃"
+  },
+  {
+    "category": "latex_bop",
+    "command": "\\odot",
+    "glyph": "⊙"
+  },
+  {
+    "category": "latex_bop",
+    "command": "\\star",
+    "glyph": "★"
+  },
+  {
+    "category": "latex_bop",
+    "command": "\\ast",
+    "glyph": "∗"
+  },
+  {
+    "category": "latex_bop",
+    "command": "\\vee",
+    "glyph": "∨"
+  },
+  {
+    "category": "latex_bop",
+    "command": "\\amalg",
+    "glyph": "⨿"
+  },
+  {
+    "category": "latex_bop",
+    "command": "\\bigcirc",
+    "glyph": "◯"
+  },
+  {
+    "category": "latex_bop",
+    "command": "\\setminus",
+    "glyph": "∖"
+  },
+  {
+    "category": "latex_bop",
+    "command": "\\wedge",
+    "glyph": "∧"
+  },
+  {
+    "category": "latex_bop",
+    "command": "\\dagger",
+    "glyph": "†"
+  },
+  {
+    "category": "latex_bop",
+    "command": "\\circ",
+    "glyph": "○"
+  },
+  {
+    "category": "latex_bop",
+    "command": "\\bullet",
+    "glyph": "•"
+  },
+  {
+    "category": "latex_bop",
+    "command": "\\wr",
+    "glyph": "≀"
+  },
+  {
+    "category": "latex_bop",
+    "command": "\\ddagger",
+    "glyph": "‡"
+  },
+  {
+    "category": "latex_bop",
+    "command": "\\smallint",
+    "glyph": "∫"
+  },
+  {
+    "category": "latex_brel",
+    "command": "\\leq",
+    "glyph": "≤"
+  },
+  {
+    "category": "latex_brel",
+    "command": "\\geq",
+    "glyph": "≥"
+  },
+  {
+    "category": "latex_brel",
+    "command": "\\equiv",
+    "glyph": "≡"
+  },
+  {
+    "category": "latex_brel",
+    "command": "\\models",
+    "glyph": "⊨"
+  },
+  {
+    "category": "latex_brel",
+    "command": "\\prec",
+    "glyph": "≺"
+  },
+  {
+    "category": "latex_brel",
+    "command": "\\succ",
+    "glyph": "≻"
+  },
+  {
+    "category": "latex_brel",
+    "command": "\\sim",
+    "glyph": "∼"
+  },
+  {
+    "category": "latex_brel",
+    "command": "\\perp",
+    "glyph": "⊥"
+  },
+  {
+    "category": "latex_brel",
+    "command": "\\preceq",
+    "glyph": "⪯"
+  },
+  {
+    "category": "latex_brel",
+    "command": "\\succeq",
+    "glyph": "⪰"
+  },
+  {
+    "category": "latex_brel",
+    "command": "\\simeq",
+    "glyph": "≃"
+  },
+  {
+    "category": "latex_brel",
+    "command": "\\mid",
+    "glyph": "∣"
+  },
+  {
+    "category": "latex_brel",
+    "command": "\\ll",
+    "glyph": "≪"
+  },
+  {
+    "category": "latex_brel",
+    "command": "\\gg",
+    "glyph": "≫"
+  },
+  {
+    "category": "latex_brel",
+    "command": "\\asymp",
+    "glyph": "≈"
+  },
+  {
+    "category": "latex_brel",
+    "command": "\\parallel",
+    "glyph": "∥"
+  },
+  {
+    "category": "latex_brel",
+    "command": "\\subset",
+    "glyph": "⊂"
+  },
+  {
+    "category": "latex_brel",
+    "command": "\\supset",
+    "glyph": "⊃"
+  },
+  {
+    "category": "latex_brel",
+    "command": "\\approx",
+    "glyph": "≈"
+  },
+  {
+    "category": "latex_brel",
+    "command": "\\smile",
+    "glyph": "⌣"
+  },
+  {
+    "category": "latex_brel",
+    "command": "\\subseteq",
+    "glyph": "⊆"
+  },
+  {
+    "category": "latex_brel",
+    "command": "\\supseteq",
+    "glyph": "⊇"
+  },
+  {
+    "category": "latex_brel",
+    "command": "\\cong",
+    "glyph": "≅"
+  },
+  {
+    "category": "latex_brel",
+    "command": "\\frown",
+    "glyph": "⌢"
+  },
+  {
+    "category": "latex_brel",
+    "command": "\\sqsubseteq",
+    "glyph": "⊑"
+  },
+  {
+    "category": "latex_brel",
+    "command": "\\sqsupseteq",
+    "glyph": "⊒"
+  },
+  {
+    "category": "latex_brel",
+    "command": "\\doteq",
+    "glyph": "≐"
+  },
+  {
+    "category": "latex_brel",
+    "command": "\\neq",
+    "glyph": "≠"
+  },
+  {
+    "category": "latex_brel",
+    "command": "\\in",
+    "glyph": "∈"
+  },
+  {
+    "category": "latex_brel",
+    "command": "\\ni",
+    "glyph": "∋"
+  },
+  {
+    "category": "latex_brel",
+    "command": "\\propto",
+    "glyph": "∝"
+  },
+  {
+    "category": "latex_brel",
+    "command": "\\notin",
+    "glyph": "∉"
+  },
+  {
+    "category": "latex_brel",
+    "command": "\\vdash",
+    "glyph": "⊢"
+  },
+  {
+    "category": "latex_brel",
+    "command": "\\dashv",
+    "glyph": "⊣"
+  },
+  {
+    "category": "latex_brel",
+    "command": "\\bowtie",
+    "glyph": "mathrel⋈"
+  },
+  {
+    "category": "latex_brel",
+    "command": "\\iff",
+    "glyph": "⟺"
+  },
+  {
+    "category": "latex_brel",
+    "command": "\\not"
+  },
+  {
+    "category": "latex_brel",
+    "command": "\\land",
+    "glyph": "⋀"
+  },
+  {
+    "category": "latex_brel",
+    "command": "\\lor",
+    "glyph": "⋁"
+  },
+  {
+    "category": "latex_brel",
+    "command": "\\lnot",
+    "glyph": "¬"
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\alpha",
+    "glyph": "α"
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\beta",
+    "glyph": "β"
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\gamma",
+    "glyph": "γ"
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\delta",
+    "glyph": "δ"
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\epsilon",
+    "glyph": "ϵ"
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\varepsilon",
+    "glyph": "ε"
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\zeta",
+    "glyph": "ζ"
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\eta",
+    "glyph": "η"
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\theta",
+    "glyph": "θ"
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\vartheta",
+    "glyph": "ϑ"
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\iota",
+    "glyph": "ι"
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\kappa",
+    "glyph": "κ"
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\lambda",
+    "glyph": "λ"
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\mu",
+    "glyph": "μ"
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\nu",
+    "glyph": "ν"
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\xi",
+    "glyph": "ξ"
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\pi",
+    "glyph": "π"
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\varpi",
+    "glyph": "ϖ"
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\rho",
+    "glyph": "ρ"
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\varrho",
+    "glyph": "ϱ"
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\sigma",
+    "glyph": "σ"
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\varsigma",
+    "glyph": "ς"
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\tau",
+    "glyph": "τ"
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\upsilon",
+    "glyph": "υ"
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\phi",
+    "glyph": "ϕ"
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\varphi",
+    "glyph": "φ"
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\chi",
+    "glyph": "χ"
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\psi",
+    "glyph": "ψ"
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\omega",
+    "glyph": "ω"
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\Gamma",
+    "glyph": "Γ"
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\Delta",
+    "glyph": "Δ"
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\Theta",
+    "glyph": "Θ"
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\Lambda",
+    "glyph": "Λ"
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\Xi",
+    "glyph": "Ξ"
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\Pi",
+    "glyph": "Π"
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\Sigma",
+    "glyph": "Σ"
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\Upsilon",
+    "glyph": "Υ"
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\Phi",
+    "glyph": "Φ"
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\Psi",
+    "glyph": "Ψ"
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\Omega",
+    "glyph": "Ω"
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\varGamma",
+    "glyph": "𝛤",
+    "packages": ["amsmath"]
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\varDelta",
+    "glyph": "𝛥",
+    "packages": ["amsmath"]
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\varTheta",
+    "glyph": "𝛩",
+    "packages": ["amsmath"]
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\varLambda",
+    "glyph": "𝛬",
+    "packages": ["amsmath"]
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\varXi",
+    "glyph": "𝛯",
+    "packages": ["amsmath"]
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\varPi",
+    "glyph": "𝛱",
+    "packages": ["amsmath"]
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\varSigma",
+    "glyph": "𝛴",
+    "packages": ["amsmath"]
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\varUpsilon",
+    "glyph": "𝛶",
+    "packages": ["amsmath"]
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\varPhi",
+    "glyph": "𝛷",
+    "packages": ["amsmath"]
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\varPsi",
+    "glyph": "𝛹",
+    "packages": ["amsmath"]
+  },
+  {
+    "category": "latex_greek",
+    "command": "\\varOmega",
+    "glyph": "𝛺",
+    "packages": ["amsmath"]
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\nabla",
+    "glyph": "∇"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\partial",
+    "glyph": "∂"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\infty",
+    "glyph": "∞"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\prime",
+    "glyph": "′"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\ell",
+    "glyph": "ℓ"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\emptyset",
+    "glyph": "∅"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\exists",
+    "glyph": "∃"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\forall",
+    "glyph": "∀"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\imath",
+    "glyph": "ı"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\jmath",
+    "glyph": "ȷ"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\Re",
+    "glyph": "ℜ"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\Im",
+    "glyph": "ℑ"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\aleph",
+    "glyph": "ℵ"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\wp",
+    "glyph": "℘"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\hbar",
+    "glyph": "ℏ",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\angle",
+    "glyph": "∠",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\top",
+    "glyph": "⊤"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\bot",
+    "glyph": "⊥"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\Vert",
+    "glyph": "∥"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\neg",
+    "glyph": "¬"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\flat",
+    "glyph": "♭"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\natural",
+    "glyph": "♮"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\sharp",
+    "glyph": "♯"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\surd",
+    "glyph": "√"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\lhook",
+    "glyph": "↩"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\rhook",
+    "glyph": "↪"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\triangle",
+    "glyph": "▵"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\diamondsuit",
+    "glyph": "♢"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\heartsuit",
+    "glyph": "♡"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\clubsuit",
+    "glyph": "♣"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\spadesuit",
+    "glyph": "♠"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\textrm \\AA"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\textrm \\O"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\mathcircumflex"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\_"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\textdegree",
+    "packages": ["textcomp"],
+    "glyph": "°"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\mathdollar",
+    "glyph": "$"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\mathparagraph",
+    "glyph": "¶"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\mathsection",
+    "glyph": "§"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\mathrm T"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\mathbb N"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\mathbb Z"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\mathbb Q"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\mathbb R"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\mathbb C"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\mathbb H"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\mathcal F"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\mathcal L"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\mathcal H"
+  },
+  {
+    "category": "latex_misc",
+    "command": "\\mathcal O"
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\intop",
+    "glyph": "∫",
+    "packages": ["esint"]
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\int",
+    "glyph": "∫",
+    "packages": ["amsmath"]
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\iint",
+    "glyph": "∬",
+    "packages": ["amsmath"]
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\iintop",
+    "glyph": "∬",
+    "packages": ["esint"]
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\iiint",
+    "glyph": "∭",
+    "packages": ["amsmath"]
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\iiintop",
+    "glyph": "∭",
+    "packages": ["esint"]
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\iiiint",
+    "glyph": "⨌",
+    "packages": ["amsmath"]
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\iiiintop",
+    "glyph": "⨌",
+    "packages": ["esint"]
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\dotsint",
+    "glyph": "∫⋯∫"
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\dotsintop",
+    "glyph": "∫⋯∫",
+    "packages": ["esint"]
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\idotsint",
+    "packages": ["amsmath"]
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\oint",
+    "glyph": "∮",
+    "packages": ["esint"]
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\ointop",
+    "glyph": "∮",
+    "packages": ["esint"]
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\oiint",
+    "glyph": "∯",
+    "packages": ["esint"]
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\oiintop",
+    "glyph": "∯",
+    "packages": ["esint"]
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\ointctrclockwiseop",
+    "glyph": "∳",
+    "packages": ["esint"]
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\ointctrclockwise",
+    "glyph": "∲",
+    "packages": ["esint"]
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\ointclockwiseop",
+    "glyph": "∲",
+    "packages": ["esint"]
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\ointclockwise",
+    "glyph": "∲",
+    "packages": ["esint"]
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\sqint",
+    "glyph": "⨖",
+    "packages": ["esint"]
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\sqintop",
+    "glyph": "⨖",
+    "packages": ["esint"]
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\sqiint",
+    "packages": ["esint"]
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\sqiintop",
+    "packages": ["esint"]
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\fint",
+    "glyph": "⨏",
+    "packages": ["esint"]
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\fintop",
+    "glyph": "⨏",
+    "packages": ["esint"]
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\landupint",
+    "packages": ["esint"]
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\landupintop",
+    "packages": ["esint"]
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\landdownint",
+    "packages": ["esint"]
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\landdownintop",
+    "packages": ["esint"]
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\varint",
+    "glyph": "∫",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\varoint",
+    "glyph": "∮",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\varoiint",
+    "glyph": "∯",
+    "packages": ["esint"]
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\varoiintop",
+    "glyph": "∯",
+    "packages": ["esint"]
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\varointclockwise",
+    "glyph": "∲",
+    "packages": ["esint"]
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\varointclockwiseop",
+    "glyph": "∲",
+    "packages": ["esint"]
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\varointctrclockwise",
+    "glyph": "∳",
+    "packages": ["esint"]
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\varointctrclockwiseop",
+    "glyph": "∳",
+    "packages": ["esint"]
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\sum",
+    "glyph": "∑"
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\prod",
+    "glyph": "∏"
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\coprod",
+    "glyph": "⨿"
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\bigsqcup",
+    "glyph": "⨆"
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\bigotimes",
+    "glyph": "⨂"
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\bigodot",
+    "glyph": "⨀"
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\bigoplus",
+    "glyph": "⨁"
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\bigcap",
+    "glyph": "⋂"
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\bigcup",
+    "glyph": "⋃"
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\biguplus",
+    "glyph": "⨄"
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\bigvee",
+    "glyph": "⋁"
+  },
+  {
+    "category": "latex_varsz",
+    "command": "\\bigwedge",
+    "glyph": "⋀"
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\digamma",
+    "glyph": "ϝ",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\varkappa",
+    "glyph": "ϰ",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\beth",
+    "glyph": "ℶ",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\daleth",
+    "glyph": "ℸ",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\gimel",
+    "glyph": "ℷ",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\ulcorner",
+    "glyph": "⌜",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\urcorner",
+    "glyph": "⌝",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\llcorner",
+    "glyph": "⌞",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\lrcorner",
+    "glyph": "⌟",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\hbar",
+    "glyph": "ℏ",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\hslash",
+    "glyph": "ℏ",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\vartriangle",
+    "glyph": "▵",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\triangledown",
+    "glyph": "▿",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\square",
+    "glyph": "□",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\Square",
+    "glyph": "□",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\CheckedBox",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\XBox",
+    "glyph": "⊠",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\lozenge",
+    "glyph": "◊",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\wasylozenge",
+    "glyph": "⌑",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\circledR",
+    "glyph": "®",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\circledS",
+    "glyph": "Ⓢ",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\measuredangle",
+    "glyph": "∡",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\varangle",
+    "glyph": "∢",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\nexists",
+    "glyph": "∄",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\mho",
+    "glyph": "℧",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\Finv",
+    "glyph": "Ⅎ",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\Game",
+    "glyph": "⅁",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\Bbbk",
+    "glyph": "𝕜",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\backprime",
+    "glyph": "‵",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\varnothing",
+    "glyph": "∅",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\blacktriangle",
+    "glyph": "▴",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\blacktriangledown",
+    "glyph": "▾",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\blacksquare",
+    "glyph": "█",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\blacklozenge",
+    "glyph": "♦",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\bigstar",
+    "glyph": "★",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\sphericalangle",
+    "glyph": "∢",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\complement",
+    "glyph": "∁",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\eth",
+    "glyph": "ð",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\diagup",
+    "glyph": "╱",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\diagdown",
+    "glyph": "╲",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\lightning",
+    "glyph": "☇",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\varcopyright",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\Bowtie",
+    "glyph": "⋈",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\diameter",
+    "glyph": "⌀",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\invdiameter",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\bell",
+    "glyph": "⍾",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\hexagon",
+    "glyph": "⬡",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\varhexagon",
+    "glyph": "⬡",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\pentagon",
+    "glyph": "⬠",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\octagon",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\smiley",
+    "glyph": "☺",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\blacksmiley",
+    "glyph": "☻",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\frownie",
+    "glyph": "☹",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\sun",
+    "glyph": "☼",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\leadsto",
+    "glyph": "⤳",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\Circle",
+    "glyph": "○",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\Leftcircle",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\Rightcircle",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\CIRCLE",
+    "glyph": "●",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\LEFTCIRCLE",
+    "glyph": "◖",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\RIGHTCIRCLE",
+    "glyph": "◗",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\LEFTcircle",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\RIGHTcircle",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\leftturn",
+    "glyph": "⟲",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\rightturn",
+    "glyph": "⟳",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\AC",
+    "glyph": "∿",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\HF",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\VHF",
+    "glyph": "≋",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\photon",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\gluon",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\permil",
+    "glyph": "‰",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\cent",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\yen",
+    "glyph": "¥",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\hexstar",
+    "glyph": "✶",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\varhexstar",
+    "glyph": "✶",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\davidsstar",
+    "glyph": "✡",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\maltese",
+    "glyph": "✠",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\kreuz",
+    "glyph": "✠",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\ataribox",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\checked",
+    "glyph": "✓",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\checkmark",
+    "glyph": "✓",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\eighthnote",
+    "glyph": "♮",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\quarternote",
+    "glyph": "♩",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\halfnote",
+    "glyph": "𝅗𝅥",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\fullnote",
+    "glyph": "𝅝",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\twonotes",
+    "glyph": "♫",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\female",
+    "glyph": "♀",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\male",
+    "glyph": "♂",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\vernal",
+    "glyph": "♈",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\ascnode",
+    "glyph": "☊",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\descnode",
+    "glyph": "☋",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\fullmoon",
+    "glyph": "○",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\newmoon",
+    "glyph": "●",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\leftmoon",
+    "glyph": "☾",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\rightmoon",
+    "glyph": "☽",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\astrosun",
+    "glyph": "☉",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\mercury",
+    "glyph": "☿",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\venus",
+    "glyph": "♀",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\earth",
+    "glyph": "♁",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\mars",
+    "glyph": "♂",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\jupiter",
+    "glyph": "♃",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\saturn",
+    "glyph": "♄",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\uranus",
+    "glyph": "♅",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\neptune",
+    "glyph": "♆",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\pluto",
+    "glyph": "♇",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\aries",
+    "glyph": "♈",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\taurus",
+    "glyph": "♉",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\gemini",
+    "glyph": "♊",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\cancer",
+    "glyph": "♋",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\leo",
+    "glyph": "♌",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\virgo",
+    "glyph": "♍",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\libra",
+    "glyph": "♎",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\scorpio",
+    "glyph": "♏",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\sagittarius",
+    "glyph": "♐",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\capricornus",
+    "glyph": "♑",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\aquarius",
+    "glyph": "♒",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\pisces",
+    "glyph": "♓",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\APLbox",
+    "glyph": "⎕",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\APLcomment",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\APLdown",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\APLdownarrowbox",
+    "glyph": "⍗",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\APLinput",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\APLinv",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\APLleftarrowbox",
+    "glyph": "⍇",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\APLlog",
+    "glyph": "⍟",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\APLrightarrowbox",
+    "glyph": "⍈",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\APLstar",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\APLup",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_misc",
+    "command": "\\APLuparrowbox",
+    "glyph": "⍐",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\dashleftarrow",
+    "glyph": "⤎",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\dashrightarrow",
+    "glyph": "⤏",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\leftleftarrows",
+    "glyph": "⇇",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\leftrightarrows",
+    "glyph": "⇆",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\rightrightarrows",
+    "glyph": "⇉",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\rightleftarrows",
+    "glyph": "⇄",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\Lleftarrow",
+    "glyph": "⇚",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\Rrightarrow",
+    "glyph": "⇛",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\twoheadleftarrow",
+    "glyph": "↞",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\twoheadrightarrow",
+    "glyph": "↠",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\leftarrowtail",
+    "glyph": "↢",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\rightarrowtail",
+    "glyph": "↣",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\looparrowleft",
+    "glyph": "↫",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\looparrowright",
+    "glyph": "↬",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\curvearrowleft",
+    "glyph": "↶",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\curvearrowright",
+    "glyph": "↷",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\circlearrowleft",
+    "glyph": "↺",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\circlearrowright",
+    "glyph": "↻",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\Lsh",
+    "glyph": "↰",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\Rsh",
+    "glyph": "↱",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\upuparrows",
+    "glyph": "⇈",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\downdownarrows",
+    "glyph": "⇊",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\upharpoonleft",
+    "glyph": "↿",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\upharpoonright",
+    "glyph": "↾",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\downharpoonleft",
+    "glyph": "⇃",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\downharpoonright",
+    "glyph": "⇂",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\leftrightharpoons",
+    "glyph": "⇋",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\rightleftharpoons",
+    "glyph": "⇋",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\rightsquigarrow",
+    "glyph": "↝",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\leftrightsquigarrow",
+    "glyph": "↭",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\nleftarrow",
+    "glyph": "↚",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\nrightarrow",
+    "glyph": "↛",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\nleftrightarrow",
+    "glyph": "↮",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\nLeftarrow",
+    "glyph": "⇍",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\nRightarrow",
+    "glyph": "⇏",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\nLeftrightarrow",
+    "glyph": "⇎",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\multimap",
+    "glyph": "⊸",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\shortleftarrow",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\shortrightarrow",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\shortuparrow",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\shortdownarrow",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\leftrightarroweq",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\curlyveedownarrow",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\curlyveeuparrow",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\nnwarrow",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\nnearrow",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\sswarrow",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\ssearrow",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\curlywedgeuparrow",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\curlywedgedownarrow",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\leftrightarrowtriangle",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\leftarrowtriangle",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\rightarrowtriangle",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\Mapsto",
+    "glyph": "⤇",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\mapsfrom",
+    "glyph": "↤",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\Mapsfrom",
+    "glyph": "⤆",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\Longmapsto",
+    "glyph": "⟾",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\longmapsfrom",
+    "glyph": "⟻",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\Longmapsfrom",
+    "glyph": "⟽",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\xleftarrow"
+  },
+  {
+    "category": "latex_ams_arrows",
+    "command": "\\xrightarrow"
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\leqq",
+    "glyph": "≦",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\geqq",
+    "glyph": "≧",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\leqslant",
+    "glyph": "⩽",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\geqslant",
+    "glyph": "⩾",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\eqslantless",
+    "glyph": "⪕",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\eqslantgtr",
+    "glyph": "⪖",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\eqsim",
+    "glyph": "≂",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\lesssim",
+    "glyph": "≲",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\gtrsim",
+    "glyph": "≳",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\apprge",
+    "glyph": "≳",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\apprle",
+    "glyph": "≲",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\lessapprox",
+    "glyph": "⪅",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\gtrapprox",
+    "glyph": "⪆",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\approxeq",
+    "glyph": "≊",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\triangleq",
+    "glyph": "≜",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\lessdot",
+    "glyph": "⋖",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\gtrdot",
+    "glyph": "⋗",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\lll",
+    "glyph": "⋘",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\ggg",
+    "glyph": "⋙",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\lessgtr",
+    "glyph": "≶",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\gtrless",
+    "glyph": "≷",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\lesseqgtr",
+    "glyph": "⋚",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\gtreqless",
+    "glyph": "⋛",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\lesseqqgtr",
+    "glyph": "⪋",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\gtreqqless",
+    "glyph": "⪌",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\eqcirc",
+    "glyph": "≖",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\circeq",
+    "glyph": "≗",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\thicksim",
+    "glyph": "∼",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\thickapprox",
+    "glyph": "≈",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\backsim",
+    "glyph": "∽",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\backsimeq",
+    "glyph": "⋍",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\subseteqq",
+    "glyph": "⫅",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\supseteqq",
+    "glyph": "⫆",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\Subset",
+    "glyph": "⋐",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\Supset",
+    "glyph": "⋑",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\sqsubset",
+    "glyph": "⊏",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\sqsupset",
+    "glyph": "⊐",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\preccurlyeq",
+    "glyph": "≼",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\succcurlyeq",
+    "glyph": "≽",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\curlyeqprec",
+    "glyph": "⋞",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\curlyeqsucc",
+    "glyph": "⋟",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\precsim",
+    "glyph": "≾",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\succsim",
+    "glyph": "≿",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\precapprox",
+    "glyph": "⪷",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\succapprox",
+    "glyph": "⪸",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\vartriangleleft",
+    "glyph": "◃",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\vartriangleright",
+    "glyph": "▹",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\trianglelefteq",
+    "glyph": "⊴",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\trianglerighteq",
+    "glyph": "⊵",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\bumpeq",
+    "glyph": "≏",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\Bumpeq",
+    "glyph": "≎",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\doteqdot",
+    "glyph": "≑",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\risingdotseq",
+    "glyph": "≓",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\fallingdotseq",
+    "glyph": "≒",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\vDash",
+    "glyph": "⊨",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\Vvdash",
+    "glyph": "⊪",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\Vdash",
+    "glyph": "⊩",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\shortmid",
+    "glyph": "∣",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\shortparallel",
+    "glyph": "∥",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\smallsmile",
+    "glyph": "⌣",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\smallfrown",
+    "glyph": "⌢",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\blacktriangleleft",
+    "glyph": "◂",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\blacktriangleright",
+    "glyph": "▸",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\because",
+    "glyph": "∵",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\therefore",
+    "glyph": "∴",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\wasytherefore",
+    "glyph": "∴",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\backepsilon",
+    "glyph": "϶",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\varpropto",
+    "glyph": "∝",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\between",
+    "glyph": "≬",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\pitchfork",
+    "glyph": "⋔",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\trianglelefteqslant",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\trianglerighteqslant",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\inplus",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\niplus",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\subsetplus",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\supsetplus",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\subsetpluseq",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\supsetpluseq",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\minuso",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\baro",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\sslash",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\bbslash",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\moo",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\merge",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\invneg",
+    "glyph": "⌐",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\lbag",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\rbag",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\interleave",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\leftslice",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\rightslice",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\oblong",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\talloblong",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\fatsemi",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\fatslash",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\fatbslash",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\ldotp"
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\cdotp",
+    "glyph": "⋅"
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\colon",
+    "glyph": ":"
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\dblcolon",
+    "packages": ["mathtools"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\vcentcolon",
+    "packages": ["mathtools"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\colonapprox",
+    "glyph": ":≈",
+    "packages": ["mathtools"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\Colonapprox",
+    "glyph": "::≈",
+    "packages": ["mathtools"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\coloneq",
+    "packages": ["mathtools"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\Coloneq",
+    "packages": ["mathtools"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\coloneqq",
+    "glyph": "≔",
+    "packages": ["mathtools"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\Coloneqq",
+    "glyph": "⩴",
+    "packages": ["mathtools"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\colonsim",
+    "glyph": ":∼",
+    "packages": ["mathtools"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\Colonsim",
+    "glyph": "::∼",
+    "packages": ["mathtools"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\eqcolon",
+    "packages": ["mathtools"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\Eqcolon",
+    "packages": ["mathtools"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\eqqcolon",
+    "glyph": "≕",
+    "packages": ["mathtools"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\Eqqcolon",
+    "packages": ["mathtools"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\wasypropto",
+    "glyph": "∝",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\logof",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_rel",
+    "command": "\\Join",
+    "glyph": "⨝",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\nless",
+    "glyph": "≮",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\ngtr",
+    "glyph": "≯",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\nleq",
+    "glyph": "≰",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\ngeq",
+    "glyph": "≱",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\nleqslant",
+    "glyph": "⩽̸",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\ngeqslant",
+    "glyph": "⩾̸",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\nleqq",
+    "glyph": "≦̸",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\ngeqq",
+    "glyph": "≧̸",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\lneq",
+    "glyph": "≰",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\gneq",
+    "glyph": "⪈",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\lneqq",
+    "glyph": "≨",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\gneqq",
+    "glyph": "≩",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\lvertneqq",
+    "glyph": "≨︀",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\gvertneqq",
+    "glyph": "≩︀",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\lnsim",
+    "glyph": "⋦",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\gnsim",
+    "glyph": "⋧",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\lnapprox",
+    "glyph": "⪉",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\gnapprox",
+    "glyph": "⪊",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\nprec",
+    "glyph": "⊀",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\nsucc",
+    "glyph": "⊁",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\npreceq",
+    "glyph": "⋠",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\nsucceq",
+    "glyph": "⋡",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\precneqq",
+    "glyph": "⪵",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\succneqq",
+    "glyph": "⪶",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\precnsim",
+    "glyph": "⋨",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\succnsim",
+    "glyph": "⋩",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\precnapprox",
+    "glyph": "⪹",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\succnapprox",
+    "glyph": "⪺",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\subsetneq",
+    "glyph": "⊊",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\supsetneq",
+    "glyph": "⊋",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\subsetneqq",
+    "glyph": "⫅Œ",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\supsetneqq",
+    "glyph": "⫆Œ",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\nsubseteq",
+    "glyph": "⊈",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\nsubseteqq",
+    "glyph": "⊈",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\nsupseteq",
+    "glyph": "⊉",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\nsupseteqq",
+    "glyph": "⊉",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\nvdash",
+    "glyph": "⊬",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\nvDash",
+    "glyph": "⊭",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\nVDash",
+    "glyph": "⊯",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\nVdash",
+    "glyph": "⊮",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\varsubsetneq",
+    "glyph": "⊊︀",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\varsupsetneq",
+    "glyph": "⊋︀",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\varsubsetneqq",
+    "glyph": "⫋Œ",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\varsupsetneqq",
+    "glyph": "⫌Œ",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\ntriangleleft",
+    "glyph": "⋪",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\ntriangleright",
+    "glyph": "⋫",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\ntrianglelefteq",
+    "glyph": "⋬",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\ntrianglerighteq",
+    "glyph": "⋭",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\ncong",
+    "glyph": "≇",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\nsim",
+    "glyph": "≁",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\nmid",
+    "glyph": "⫮",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\nshortmid",
+    "glyph": "∤",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\nparallel",
+    "glyph": "∦",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\nshortparallel",
+    "glyph": "∦",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\ntrianglelefteqslant",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_nrel",
+    "command": "\\ntrianglerighteqslant",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\dotplus",
+    "glyph": "∔",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\smallsetminus",
+    "glyph": "∖",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\Cap",
+    "glyph": "⋒",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\Cup",
+    "glyph": "⋓",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\barwedge",
+    "glyph": "⌅",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\veebar",
+    "glyph": "⊻",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\doublebarwedge",
+    "glyph": "⌆",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\boxminus",
+    "glyph": "⊟",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\boxtimes",
+    "glyph": "⊠",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\boxdot",
+    "glyph": "⊡",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\boxplus",
+    "glyph": "⊞",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\boxast",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\boxbar",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\boxslash",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\boxbslash",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\boxcircle",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\boxbox",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\boxempty",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\divideontimes",
+    "glyph": "⋇",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\ltimes",
+    "glyph": "⋉",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\rtimes",
+    "glyph": "⋊",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\leftthreetimes",
+    "glyph": "⋋",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\rightthreetimes",
+    "glyph": "⋌",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\curlywedge",
+    "glyph": "⋏",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\curlyvee",
+    "glyph": "⋎",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\circleddash",
+    "glyph": "⊝",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\circledast",
+    "glyph": "⊛",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\circledcirc",
+    "glyph": "⊚",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\centerdot",
+    "glyph": "▪",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\intercal",
+    "glyph": "⊺",
+    "packages": ["amssymb"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\implies",
+    "glyph": "⟹",
+    "packages": ["amsmath"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\impliedby",
+    "glyph": "⟸",
+    "packages": ["amsmath"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\bigcurlyvee",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\bigcurlywedge",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\bigsqcap",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\bigbox",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\bigparallel",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\biginterleave",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\bignplus",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\nplus",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\Yup",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\Ydown",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\Yleft",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\Yright",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\obar",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\obslash",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\ocircle",
+    "glyph": "⊚",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\olessthan",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\ogreaterthan",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\ovee",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\owedge",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\varcurlyvee",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\varcurlywedge",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\vartimes",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\varotimes",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\varoast",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\varobar",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\varodot",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\varoslash",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\varobslash",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\varocircle",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\varoplus",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\varominus",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\varovee",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\varowedge",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\varolessthan",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\varogreaterthan",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_ams_ops",
+    "command": "\\varbigcirc",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_delim",
+    "command": "\\brokenvert",
+    "glyph": "¦",
+    "packages": ["wasysym"]
+  },
+  {
+    "category": "latex_delim",
+    "command": "\\lfloor",
+    "glyph": "⌊"
+  },
+  {
+    "category": "latex_delim",
+    "command": "\\rfloor",
+    "glyph": "⌋"
+  },
+  {
+    "category": "latex_delim",
+    "command": "\\lceil",
+    "glyph": "⌈"
+  },
+  {
+    "category": "latex_delim",
+    "command": "\\rceil",
+    "glyph": "⌉"
+  },
+  {
+    "category": "latex_delim",
+    "command": "\\llbracket",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_delim",
+    "command": "\\rrbracket",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_delim",
+    "command": "\\llfloor",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_delim",
+    "command": "\\rrfloor",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_delim",
+    "command": "\\llceil",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_delim",
+    "command": "\\rrceil",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_delim",
+    "command": "\\Lbag",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_delim",
+    "command": "\\Rbag",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_delim",
+    "command": "\\llparenthesis",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_delim",
+    "command": "\\rrparenthesis",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_delim",
+    "command": "\\binampersand",
+    "packages": ["stmaryrd"]
+  },
+  {
+    "category": "latex_delim",
+    "command": "\\bindnasrepma",
+    "packages": ["stmaryrd"]
+  }
+]

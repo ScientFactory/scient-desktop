@@ -26,10 +26,10 @@ export const LATEX_PREVIEW_MODES = ["source", "split", "visual", "pdf"] as const
 export type ScientLatexPreviewMode = (typeof LATEX_PREVIEW_MODES)[number];
 
 export const LATEX_PREVIEW_MODE_LABELS: Readonly<Record<ScientLatexPreviewMode, string>> = {
-  source: "Source",
-  split: "Split",
-  visual: "Visual",
-  pdf: "PDF",
+  source: "LaTeX source",
+  split: "Source + PDF",
+  visual: "Write",
+  pdf: "PDF preview",
 };
 
 export const DEFAULT_LATEX_PREVIEW_MODE: ScientLatexPreviewMode = "visual";

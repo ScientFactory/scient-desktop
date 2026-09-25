@@ -1,4 +1,12 @@
 import type { JSONContent } from "@tiptap/core";
+import { newMathSymbolPackages } from "./mathSymbols";
+import {
+  latexLengthInches,
+  LATEX_PAPER_SIZES,
+  type LatexVisualLayoutProfile,
+} from "./latexVisualLayout";
+
+export { latexVisualLayoutProfile, type LatexVisualLayoutProfile } from "./latexVisualLayout";
 
 export interface LatexVisualSourceBlock {
   readonly id: string;
@@ -17,96 +25,8 @@ export interface LatexVisualDocument {
   readonly rawBlocks: number;
 }
 
-export interface LatexVisualLayoutProfile {
-  readonly documentClass: string;
-  readonly paper: "a4" | "letter";
-  readonly baseFontPt: 10 | 11 | 12;
-  readonly marginTopIn: number;
-  readonly marginRightIn: number;
-  readonly marginBottomIn: number;
-  readonly marginLeftIn: number;
-  readonly lineHeight: number;
-  readonly paragraphIndentEm: number;
-  readonly paragraphGapEm: number;
-}
-
-const DEFAULT_LAYOUT_PROFILE: LatexVisualLayoutProfile = {
-  documentClass: "article",
-  paper: "letter",
-  baseFontPt: 10,
-  marginTopIn: 1,
-  marginRightIn: 1,
-  marginBottomIn: 1,
-  marginLeftIn: 1,
-  lineHeight: 1.2,
-  paragraphIndentEm: 1.5,
-  paragraphGapEm: 0,
-};
-
-function latexLengthInches(value: string): number | null {
-  const match = /^\s*(-?(?:\d+(?:\.\d*)?|\.\d+))\s*(in|cm|mm|pt)\s*$/u.exec(value);
-  if (!match) return null;
-  const amount = Number(match[1]);
-  if (!Number.isFinite(amount)) return null;
-  const scale =
-    match[2] === "in" ? 1 : match[2] === "cm" ? 1 / 2.54 : match[2] === "mm" ? 1 / 25.4 : 1 / 72.27;
-  return amount * scale;
-}
-
-function latexLengthEm(value: string, baseFontPt: number): number | null {
-  const em = /^\s*(-?(?:\d+(?:\.\d*)?|\.\d+))\s*em\s*$/u.exec(value);
-  if (em) return Number(em[1]);
-  const inches = latexLengthInches(value);
-  return inches === null ? null : inches / (baseFontPt / 72.27);
-}
-
-export function latexVisualLayoutProfile(source: string): LatexVisualLayoutProfile {
-  const preambleEnd = source.indexOf("\\begin{document}");
-  const preamble = preambleEnd < 0 ? source : source.slice(0, preambleEnd);
-  const documentClass = /\\documentclass(?:\[([^\]]*)\])?\{([^{}]+)\}/u.exec(preamble);
-  const classOptions = documentClass?.[1]?.split(",").map((option) => option.trim()) ?? [];
-  const baseFontPt = classOptions.includes("12pt") ? 12 : classOptions.includes("11pt") ? 11 : 10;
-  const paper = classOptions.includes("a4paper") ? "a4" : "letter";
-  const geometry = /\\usepackage\[([^\]]*)\]\{geometry\}/u.exec(preamble)?.[1] ?? "";
-  const geometryOptions = new Map(
-    geometry
-      .split(",")
-      .map((option) => option.trim().split("=", 2) as [string, string | undefined])
-      .filter((entry): entry is [string, string] => Boolean(entry[0] && entry[1])),
-  );
-  const allMargin = latexLengthInches(geometryOptions.get("margin") ?? "");
-  const margin = (side: string) =>
-    latexLengthInches(geometryOptions.get(side) ?? "") ?? allMargin ?? 1;
-  const lineSpread = Number(/\\linespread\{([^{}]+)\}/u.exec(preamble)?.[1] ?? "1");
-  const defaultLineHeight = baseFontPt === 11 ? 13.6 / 11 : baseFontPt === 12 ? 14.5 / 12 : 1.2;
-  const parindent = latexLengthEm(
-    /\\setlength\{\\parindent\}\{([^{}]+)\}/u.exec(preamble)?.[1] ?? "",
-    baseFontPt,
-  );
-  const parskip = latexLengthEm(
-    /\\setlength\{\\parskip\}\{([^{}]+)\}/u.exec(preamble)?.[1] ?? "",
-    baseFontPt,
-  );
-  return {
-    ...DEFAULT_LAYOUT_PROFILE,
-    documentClass: documentClass?.[2]?.trim() || "article",
-    paper,
-    baseFontPt,
-    marginTopIn: margin("top"),
-    marginRightIn: margin("right"),
-    marginBottomIn: margin("bottom"),
-    marginLeftIn: margin("left"),
-    lineHeight:
-      Number.isFinite(lineSpread) && lineSpread > 0
-        ? defaultLineHeight * lineSpread
-        : defaultLineHeight,
-    paragraphIndentEm: parindent === null ? 1.5 : parindent,
-    paragraphGapEm: parskip === null ? 0 : parskip,
-  };
-}
-
 export interface LatexVisualLayoutUpdate {
-  readonly paper: "a4" | "letter";
+  readonly paper: LatexVisualLayoutProfile["paper"];
   readonly baseFontPt: 10 | 11 | 12;
   readonly margin: string;
   readonly paragraphStyle: "indented" | "spaced";
@@ -131,6 +51,14 @@ export function updateLatexVisualLayoutSource(
   update: LatexVisualLayoutUpdate,
 ): string | null {
   if (!/^(?:\d+(?:\.\d*)?|\.\d+)\s*(?:in|cm|mm|pt)$/u.test(update.margin)) return null;
+  const marginInches = latexLengthInches(update.margin);
+  const paper = LATEX_PAPER_SIZES[update.paper];
+  if (
+    marginInches === null ||
+    marginInches <= 0 ||
+    marginInches * 2 >= Math.min(paper.width, paper.height)
+  )
+    return null;
   const documentClass = /\\documentclass(?:\[([^\]]*)\])?\{([^{}]+)\}/u.exec(source);
   const begin = source.indexOf("\\begin{document}");
   if (!documentClass || begin < 0 || documentClass.index > begin) return null;
@@ -139,22 +67,49 @@ export function updateLatexVisualLayoutSource(
     .split(",")
     .map((option) => option.trim())
     .filter(Boolean)
-    .filter((option) => !/^(?:10|11|12)pt$/u.test(option) && !/^(?:a4|letter)paper$/u.test(option));
+    .filter(
+      (option) =>
+        !/^(?:10|11|12)pt$/u.test(option) &&
+        !/^(?:a4|a5|b5|letter|legal|executive)paper$/u.test(option),
+    );
   options.unshift(`${update.baseFontPt}pt`, `${update.paper}paper`);
   let changed =
     source.slice(0, documentClass.index) +
     `\\documentclass[${options.join(",")}]{${documentClass[2]}}` +
     source.slice(documentClass.index + documentClass[0].length);
   const changedBegin = changed.indexOf("\\begin{document}");
+  const layoutOptions = (existing: string) => {
+    const retained = existing
+      .split(/,(?![^{}]*\})/u)
+      .map((option) => option.trim())
+      .filter(
+        (option) =>
+          option &&
+          !/^(?:(?:a4|a5|b5|letter|legal|executive)paper\b|(?:paper|paperwidth|paperheight|margin|hmargin|vmargin|top|right|bottom|left|inner|outer|textwidth|textheight|width|height|total|scale|hscale|vscale)\s*=)/u.test(
+            option,
+          ),
+      );
+    return [
+      `margin=${update.margin.replace(/\s+/gu, "")}`,
+      `${update.paper}paper`,
+      ...retained,
+    ].join(",");
+  };
   const geometryPattern = /\\usepackage\[([^\]]*)\]\{geometry\}/u;
   const geometry = geometryPattern.exec(changed.slice(0, changedBegin));
   if (geometry) {
-    const retained = geometry[1]!
-      .split(",")
-      .map((option) => option.trim())
-      .filter((option) => option && !/^(?:margin|top|right|bottom|left)\s*=/u.test(option));
-    retained.unshift(`margin=${update.margin.replace(/\s+/gu, "")}`);
-    changed = changed.replace(geometryPattern, `\\usepackage[${retained.join(",")}]{geometry}`);
+    changed = changed.replace(
+      geometryPattern,
+      `\\usepackage[${layoutOptions(geometry[1] ?? "")}]{geometry}`,
+    );
+  } else if (
+    /\\usepackage(?:\[[^\]]*\])?\{[^{}]*\bgeometry\b[^{}]*\}/u.test(changed.slice(0, changedBegin))
+  ) {
+    if (!/\\geometry\s*\{/u.test(changed.slice(0, changedBegin)))
+      changed =
+        changed.slice(0, changedBegin) +
+        `\\geometry{${layoutOptions("")}}${eol}` +
+        changed.slice(changedBegin);
   } else {
     const insertionAt = changed.indexOf("\\begin{document}");
     const boundary = insertionAt > 0 && !/[\r\n]/u.test(changed[insertionAt - 1]!) ? eol : "";
@@ -164,6 +119,14 @@ export function updateLatexVisualLayoutSource(
       `\\usepackage[margin=${update.margin.replace(/\s+/gu, "")}]{geometry}${eol}` +
       changed.slice(insertionAt);
   }
+  const geometryEnd = changed.indexOf("\\begin{document}");
+  changed =
+    changed
+      .slice(0, geometryEnd)
+      .replace(
+        /\\geometry\s*\{((?:[^{}]|\{[^{}]*\})*)\}/gu,
+        (_match, options: string) => `\\geometry{${layoutOptions(options)}}`,
+      ) + changed.slice(geometryEnd);
   const paragraphIndent = update.paragraphStyle === "spaced" ? "0pt" : "1.5em";
   const paragraphGap = update.paragraphStyle === "spaced" ? "0.75em" : "0pt";
   let insertionAt = changed.indexOf("\\begin{document}");
@@ -707,6 +670,22 @@ function currentDateLabel(): string {
   }).format(new Date());
 }
 
+// A TeX comment keeps hidden author text restorable across reloads without
+// printing it or depending on this browser's local storage.
+const HIDDEN_AUTHOR_COMMENT = /^% scient-hidden-author: (.*)(?:\r?\n|$)/mu;
+
+function hiddenAuthor(source: string): string {
+  const begin = source.indexOf("\\begin{document}");
+  const match = HIDDEN_AUTHOR_COMMENT.exec(begin < 0 ? source : source.slice(0, begin));
+  if (!match) return "";
+  try {
+    const value: unknown = JSON.parse(match[1]!);
+    return typeof value === "string" ? value : "";
+  } catch {
+    return "";
+  }
+}
+
 function titleMetadata(source: string): {
   title: string;
   author: string;
@@ -728,7 +707,13 @@ function titleMetadata(source: string): {
           : "explicit";
   return {
     title: title === null ? "" : previewText(title),
-    author: author === null ? "" : previewText(author),
+    author:
+      author === null || !author.trim()
+        ? hiddenAuthor(source)
+        : author
+            .split(/\\\\(?:\[[^\]]*\])?/u)
+            .map(previewText)
+            .join("\n"),
     authorEnabled: author !== null && author.trim() !== "",
     date:
       dateMode === "default" || dateMode === "today" ? currentDateLabel() : previewText(date ?? ""),
@@ -894,6 +879,37 @@ function tableAlignments(columnSpec: string, width: number): TableAlignment[] {
   return Array.from({ length: width }, (_, index) => alignments[index] ?? "left");
 }
 
+/** Read presentation from the preserved table source; never serialize it as edits. */
+export function latexVisualTablePresentation(source: string) {
+  const body = tabularBody(source);
+  const prefix = body ? source.slice(0, body.openingFrom) : "";
+  const size =
+    [...prefix.matchAll(/\\(tiny|scriptsize|footnotesize|small|normalsize)\b/gu)].at(-1)?.[1] ??
+    "normalsize";
+  const columnWidths: (number | null)[] = [];
+  const spec = body?.columnSpec ?? "";
+  for (let index = 0; index < spec.length; index++) {
+    const character = spec[index]!;
+    // Skip modifier groups so the letters of \\raggedright are not columns.
+    if (character === "{") {
+      const close = closingBrace(spec, index);
+      if (close === null) break;
+      index = close;
+    } else if (character === "\\") index++;
+    else if ("pmb".includes(character)) {
+      const argument = requiredArgument(spec, index + 1);
+      columnWidths.push(argument ? latexLengthInches(argument.source) : null);
+      if (argument) index = argument.next - 1;
+    } else if ("lcrX".includes(character)) columnWidths.push(null);
+  }
+  return {
+    size,
+    columnWidths,
+    trimLeft: /^\s*@\{\}/u.test(spec),
+    trimRight: /@\{\}\s*$/u.test(spec),
+  };
+}
+
 interface TableSourceSlice {
   readonly source: string;
   readonly from: number;
@@ -949,8 +965,14 @@ function trimSourceRange(source: string, from: number, to: number): [number, num
 
 function editableTableCell(source: string, offset: number): EditableTableCell | null {
   let [from, to] = trimSourceRange(source, 0, source.length);
-  const prefix = TABLE_RULE_PREFIX.exec(source.slice(from, to));
-  if (prefix) [from, to] = trimSourceRange(source, from + prefix[0].length, to);
+  // Retain whitespace after a rule when the first cell is empty. Trimming the
+  // right edge before consuming it puts the insertion point inside the TeX
+  // control word: typing "a" would turn \hline into \hlinea.
+  const prefix = TABLE_RULE_PREFIX.exec(source.slice(from));
+  if (prefix) {
+    const start = from + prefix[0].length;
+    [from, to] = trimSourceRange(source, start, Math.max(start, to));
+  }
   const suffix = TABLE_RULE_SUFFIX.exec(source.slice(from, to));
   if (suffix) [from, to] = trimSourceRange(source, from, from + suffix.index);
 
@@ -1873,7 +1895,15 @@ export function serializeLatexVisualBlock(node: JSONContent): string | null {
         )
           return null;
         if (value === range.original) continue;
-        replacements.push({ from: range.from, to: range.to, value: escapeText(value) });
+        const escaped = escapeText(value);
+        const needsRuleSeparator =
+          range.from === range.to &&
+          /\\(?:toprule|midrule|bottomrule|hline)$/u.test(raw.slice(0, range.from));
+        replacements.push({
+          from: range.from,
+          to: range.to,
+          value: needsRuleSeparator && escaped ? ` ${escaped}` : escaped,
+        });
       }
     }
     const caption = node.attrs.caption;
@@ -2069,6 +2099,31 @@ function roundTripSignature(node: JSONContent): string {
     }
     return {
       ...value,
+      ...(value.type === "latexRichPreview" && value.attrs?.kind === "table"
+        ? {
+            attrs: {
+              ...value.attrs,
+              // The live cell keeps exactly what was typed. Compare the
+              // reparsed TeX using its whitespace semantics, just like prose.
+              ...(Array.isArray(value.attrs.rows)
+                ? {
+                    rows: value.attrs.rows.map((row: unknown) =>
+                      Array.isArray(row)
+                        ? row.map((cell: unknown) =>
+                            typeof cell === "string"
+                              ? cell.replace(/[\t\r\n ]+/gu, " ").trim()
+                              : cell,
+                          )
+                        : row,
+                    ),
+                  }
+                : {}),
+              ...(typeof value.attrs.caption === "string"
+                ? { caption: value.attrs.caption.replace(/[\t\r\n ]+/gu, " ").trim() }
+                : {}),
+            },
+          }
+        : {}),
       ...(value.text === undefined ? {} : { text: value.text.replace(/[\t\r\n ]+/gu, " ") }),
       ...(children
         ? { content: children.filter((child) => child.type !== "text" || child.text !== "") }
@@ -2153,20 +2208,64 @@ function ensureFigurePackage(source: string, shouldInsert: boolean, eol: string)
   return source.slice(0, begin) + boundary + `\\usepackage{graphicx}${eol}` + source.slice(begin);
 }
 
-function preambleCommandRange(
+function mathContent(nodes: readonly JSONContent[]): string {
+  return nodes
+    .map((node) =>
+      node.type === "latexInlineMath" || node.type === "latexDisplayMath"
+        ? String(node.attrs?.tex ?? "")
+        : mathContent(node.content ?? []),
+    )
+    .join("\n");
+}
+
+function ensureMathSymbolPackages(
   source: string,
-  command: string,
-): { from: number; to: number } | null {
-  const match = new RegExp(`\\\\${command}\\s*\\{`, "u").exec(source);
-  if (!match) return null;
-  const opening = match.index + match[0].lastIndexOf("{");
-  const close = closingBrace(source, opening);
-  if (close === null) return null;
-  let to = close + 1;
-  while (source[to] === " " || source[to] === "\t") to++;
-  if (source.startsWith("\r\n", to)) to += 2;
-  else if (source[to] === "\n") to++;
-  return { from: match.index, to };
+  previous: readonly JSONContent[],
+  next: readonly JSONContent[],
+  eol: string,
+): string {
+  const previousMath = mathContent(previous);
+  const nextMath = mathContent(next);
+  const packages = newMathSymbolPackages(previousMath, nextMath);
+  if (!packages.length) return source;
+  const begin = source.indexOf("\\begin{document}");
+  if (begin < 0) return source;
+  const preamble = source.slice(0, begin).replace(/(?<!\\)%[^\r\n]*/gu, "");
+  const loaded = new Set(
+    [
+      ...preamble.matchAll(/\\(?:usepackage|RequirePackage)\s*(?:\[[^\]]*\])?\s*\{([^{}]+)\}/gu),
+    ].flatMap((match) => match[1]!.split(",").map((name) => name.trim())),
+  );
+  // unicode-math supplies the standard math alphabets and AMS symbol repertoire.
+  if (loaded.has("unicode-math"))
+    ["amssymb", "amsfonts", "mathrsfs", "dsfont"].forEach((name) => loaded.add(name));
+  if (loaded.has("mathtools")) loaded.add("amsmath");
+  const missing = packages.filter((name) => !loaded.has(name));
+  // wasysym's safe nointegrals mode keeps its glyphs under private names.
+  // Expose only a requested variant, without changing the document's integrals.
+  const variants = ["varint", "varoint"].filter(
+    (name) =>
+      new RegExp(`\\\\${name}\\b`, "u").test(nextMath) &&
+      !new RegExp(`\\\\${name}\\b`, "u").test(previousMath) &&
+      !preamble.includes(`\\providecommand{\\${name}}`),
+  );
+  const definitions = variants
+    .map((name) => `\\providecommand{\\${name}}{\\csname wasy@${name.slice(3)}\\endcsname}${eol}`)
+    .join("");
+  if (!missing.length && !definitions) return source;
+  // amsmath must precede esint. wasysym's optional integrals otherwise collide
+  // with esint; request only its symbol repertoire when Scient adds the package.
+  const order = ["amsmath", "amssymb", "mathtools", "esint", "wasysym"];
+  missing.sort(
+    (a, b) =>
+      (order.indexOf(a) < 0 ? 99 : order.indexOf(a)) -
+      (order.indexOf(b) < 0 ? 99 : order.indexOf(b)),
+  );
+  const insertion = missing
+    .map((name) => `\\usepackage${name === "wasysym" ? "[nointegrals]" : ""}{${name}}${eol}`)
+    .join("");
+  const boundary = begin > 0 && !/[\r\n]/u.test(source[begin - 1]!) ? eol : "";
+  return source.slice(0, begin) + boundary + insertion + definitions + source.slice(begin);
 }
 
 function setPreambleCommandArgument(
@@ -2188,13 +2287,6 @@ function setPreambleCommandArgument(
   );
 }
 
-function removePreambleCommand(source: string, command: string): string {
-  const begin = source.indexOf("\\begin{document}");
-  if (begin < 0) return source;
-  const range = preambleCommandRange(source.slice(0, begin), command);
-  return range === null ? source : source.slice(0, range.from) + source.slice(range.to);
-}
-
 function updateTitleMetadata(
   source: string,
   previous: JSONContent,
@@ -2211,17 +2303,36 @@ function updateTitleMetadata(
     return null;
   const eol = source.includes("\r\n") ? "\r\n" : "\n";
   let changed = source;
+  const authorSource = node.attrs.author.split(/\r?\n/u).map(escapeText).join(`\\\\${eol}`);
   if (node.attrs.title !== previous.attrs?.title)
     changed =
       setPreambleCommandArgument(changed, "title", escapeText(node.attrs.title), eol) ?? changed;
-  if (node.attrs.authorEnabled !== previous.attrs?.authorEnabled) {
-    changed = node.attrs.authorEnabled
-      ? (setPreambleCommandArgument(changed, "author", escapeText(node.attrs.author), eol) ??
-        changed)
-      : removePreambleCommand(changed, "author");
-  } else if (node.attrs.authorEnabled && node.attrs.author !== previous.attrs?.author) {
+  if (
+    node.attrs.authorEnabled !== previous.attrs?.authorEnabled ||
+    node.attrs.author !== previous.attrs?.author
+  ) {
+    const begin = changed.indexOf("\\begin{document}");
+    if (begin < 0) return null;
+    changed = changed.slice(0, begin).replace(HIDDEN_AUTHOR_COMMENT, "") + changed.slice(begin);
     changed =
-      setPreambleCommandArgument(changed, "author", escapeText(node.attrs.author), eol) ?? changed;
+      setPreambleCommandArgument(
+        changed,
+        "author",
+        node.attrs.authorEnabled ? authorSource : "",
+        eol,
+      ) ?? changed;
+    if (!node.attrs.authorEnabled && node.attrs.author) {
+      // Escape literal backslashes in JSON so this comment cannot resemble a
+      // preamble command to the bounded source scanner.
+      const saved = JSON.stringify(node.attrs.author).replace(/\\\\/gu, "\\u005c");
+      const insertion = changed.indexOf("\\begin{document}");
+      const boundary = insertion > 0 && !/[\r\n]/u.test(changed[insertion - 1]!) ? eol : "";
+      changed =
+        changed.slice(0, insertion) +
+        boundary +
+        `% scient-hidden-author: ${saved}${eol}` +
+        changed.slice(insertion);
+    }
   }
   if (
     node.attrs.dateMode !== previous.attrs?.dateMode ||
@@ -2286,14 +2397,22 @@ export function applyLatexVisualDocumentChange(
   }
   const serialized = newChanged.map(serializeLatexVisualBlock);
   if (serialized.some((value) => value === null)) return null;
-  const from =
-    oldChanged[0]?.from ?? previous[prefix]?.from ?? previous.at(-1)?.to ?? source.length;
-  const to = oldChanged.at(-1)?.to ?? from;
+  let from = oldChanged[0]?.from ?? previous[prefix]?.from ?? previous.at(-1)?.to ?? source.length;
+  let to = oldChanged.at(-1)?.to ?? from;
   const eol = source.includes("\r\n") ? "\r\n" : "\n";
   let replacement = serialized.join("\n\n").replace(/\r?\n/gu, eol);
-  if (oldChanged.length === 0 && replacement) {
-    if (prefix === previous.length) replacement = eol + eol + replacement;
-    else replacement += eol + eol;
+  // Own only whitespace at the edited boundaries. Otherwise inserting/deleting
+  // a block leaves old separators behind and blank lines accumulate over time.
+  if (oldChanged.length !== 1 || newChanged.length !== 1) {
+    const before = previous[prefix - 1];
+    const after = previous[previous.length - suffix];
+    if (before && /^\s*$/u.test(source.slice(before.to, from))) from = before.to;
+    if (after && /^\s*$/u.test(source.slice(to, after.from))) to = after.from;
+    const gap = eol + eol;
+    if (replacement) {
+      if (before && from === before.to) replacement = gap + replacement;
+      if (after && to === after.from) replacement += gap;
+    } else if (before && after && from === before.to && to === after.from) replacement = gap;
   }
   let changedSource = source.slice(0, from) + replacement + source.slice(to);
   changedSource = ensureFigurePackage(
@@ -2303,6 +2422,12 @@ export function applyLatexVisualDocumentChange(
         previous.map((block) => block.node),
         "figure",
       ),
+    eol,
+  );
+  changedSource = ensureMathSymbolPackages(
+    changedSource,
+    previous.map((block) => block.node),
+    next,
     eol,
   );
   const previousEnvironments = scientificEnvironments(previous.map((block) => block.node));

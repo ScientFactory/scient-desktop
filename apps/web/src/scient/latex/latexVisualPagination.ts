@@ -2,6 +2,8 @@ export interface LatexVisualPaginationBlock {
   readonly top: number;
   readonly bottom: number;
   readonly explicitBreak?: boolean;
+  /** Headings and the first/last two lines of a paragraph travel together. */
+  readonly keepWithNext?: boolean;
 }
 
 export interface LatexVisualPaginationOptions {
@@ -23,9 +25,8 @@ export interface LatexVisualPaginationPlan {
 }
 
 /**
- * Plan block-level pagination for the editable canvas. The browser still lays
- * out each block; this inserts only the vertical space needed to keep ordinary
- * blocks inside a page and honor explicit LaTeX page breaks.
+ * Plan pagination over measured lines and indivisible objects. Offsets are
+ * presentation only; the source document contains no generated page breaks.
  */
 export function planLatexVisualPagination(
   blocks: readonly LatexVisualPaginationBlock[],
@@ -37,7 +38,7 @@ export function planLatexVisualPagination(
   let accumulatedOffset = 0;
   const placements: LatexVisualPaginationPlacement[] = [];
 
-  for (const block of blocks) {
+  for (const [index, block] of blocks.entries()) {
     const height = Math.max(0, block.bottom - block.top);
     let top = block.top + accumulatedOffset;
     let bottom = top + height;
@@ -74,9 +75,20 @@ export function planLatexVisualPagination(
       bottom += offset;
     }
 
-    // Keep ordinary editor objects together when they fit on a page. Objects
-    // taller than the printable area remain intact rather than being clipped.
-    if (bottom > pageBottom && top > pageStart + 1 && height <= contentHeight) {
+    let groupEnd = index;
+    while (
+      blocks[groupEnd]?.keepWithNext &&
+      blocks[groupEnd + 1] &&
+      !blocks[groupEnd + 1]!.explicitBreak
+    )
+      groupEnd += 1;
+    const groupHeight = Math.max(height, blocks[groupEnd]!.bottom - block.top);
+    const fittingHeight = groupHeight <= contentHeight ? groupHeight : height;
+    if (
+      top + fittingHeight > pageBottom + 0.5 &&
+      top > pageStart + 1 &&
+      fittingHeight <= contentHeight
+    ) {
       page += 1;
       pageStart = page * stride + options.marginTop;
       pageBottom = page * stride + options.pageHeight - options.marginBottom;
@@ -87,8 +99,9 @@ export function planLatexVisualPagination(
       bottom += pageOffset;
     }
 
-    page = Math.max(page, Math.floor(Math.max(top, bottom - options.marginBottom) / stride));
-    placements.push({ page, offset, markerOffset: null });
+    const startPage = page;
+    page = Math.max(page, Math.floor(Math.max(top, bottom - 0.5) / stride));
+    placements.push({ page: startPage, offset, markerOffset: null });
   }
 
   return { pageCount: Math.max(1, page + 1), placements };

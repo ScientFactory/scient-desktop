@@ -676,7 +676,9 @@ export const make = Effect.gen(function* () {
           );
           yield* Effect.tryPromise({
             try: async () => {
-              const handle = await NodeFSP.open(tempPath, "r");
+              // Windows requires a writable handle to flush file contents.
+              // Keep the flush before exclusive publication of the new file.
+              const handle = await NodeFSP.open(tempPath, "r+");
               try {
                 await handle.sync();
               } finally {
