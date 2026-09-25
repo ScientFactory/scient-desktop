@@ -229,7 +229,7 @@ function fromCatalog(row: (typeof catalog)[number]): MathSymbol {
     preview: latex
       .replaceAll("#0", row.category === "font" ? "A" : "x")
       .replaceAll("{}", "{\\square}"),
-    glyph: row.glyph,
+    ...(row.glyph === undefined ? {} : { glyph: row.glyph }),
     packages,
     search: `${label} ${row.command} ${row.glyph ?? ""} ${categoryLabel}`.toLowerCase(),
   };
@@ -280,12 +280,11 @@ export const MATH_SYMBOLS: readonly MathSymbol[] = [
     preview,
     packages: ["amsmath"],
     search: `${label} ${latex}`.toLowerCase(),
-    action:
-      label === "Superscript"
-        ? "moveToSuperscript"
-        : label === "Subscript"
-          ? "moveToSubscript"
-          : undefined,
+    ...(label === "Superscript"
+      ? { action: "moveToSuperscript" as const }
+      : label === "Subscript"
+        ? { action: "moveToSubscript" as const }
+        : {}),
   })),
   ...catalog.map(fromCatalog),
 ];

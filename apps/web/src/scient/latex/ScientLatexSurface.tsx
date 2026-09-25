@@ -88,7 +88,6 @@ import {
 import { checkpointVisualDraft, confirmVisualDraft, discardVisualDraft } from "./visualDrafts";
 import { useLatexSourceIdentity } from "./visualPdfPublication";
 import { visualStateAfterSaveResolution } from "./visualSaveResolution";
-import { useLatexDocumentResolution } from "./useLatexDocumentResolution";
 
 import "./scient-latex.css";
 
@@ -535,8 +534,14 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
     if (target !== null) notifyLatexBindingChange(target);
   }, [bindingChange, target]);
 
-  const { onSaveConfirmed, onSaveFailure, onSaveResolutionApplied, revealLine, revealRequestId } =
-    props;
+  const {
+    onOpenFileSource,
+    onSaveConfirmed,
+    onSaveFailure,
+    onSaveResolutionApplied,
+    revealLine,
+    revealRequestId,
+  } = props;
   const handleSaveConfirmed = useCallback(
     (path: string, contents: string, revision: string) => {
       setSaveError(null);

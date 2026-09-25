@@ -502,7 +502,7 @@ function LatexMathView({ node, updateAttributes, editor, getPos, selected }: Nod
       contentEditable={false}
       data-selected={selected || editing || undefined}
       data-empty={!attributes.tex.trim() || undefined}
-      onClick={(event) => {
+      onClick={(event: MouseEvent<HTMLElement>) => {
         // MathLive already placed the caret (or drag selection) at the clicked
         // symbol. Only clicks in the surrounding whitespace need help focusing.
         if (
