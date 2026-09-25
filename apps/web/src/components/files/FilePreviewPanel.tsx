@@ -1249,7 +1249,7 @@ function EditableFileEditor({
                         {enableFileComments ? (
                           <button
                             type="button"
-                            className="flex size-5 cursor-pointer items-center justify-center rounded-[4px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                            className="flex size-5 cursor-pointer items-center justify-center rounded-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                             aria-label="Add comment"
                             onClick={() => {
                               const hoveredLine = getHoveredLine();

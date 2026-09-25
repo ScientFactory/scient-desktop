@@ -3453,7 +3453,7 @@ function OpenCommandPaletteDialog(props: {
         setHighlightedItemReason(nextReason);
       }}
       onValueChange={handleQueryChange}
-      panelClassName="flex max-h-[min(28rem,70vh)] flex-col"
+      panelSize="project-picker"
       showBackHint={isSubmenu && !isBrowsing}
       value={query}
     >

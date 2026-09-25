@@ -22,7 +22,7 @@ describe("RedactedSensitiveText", () => {
     const markup = renderAccount();
 
     expect(markup).not.toContain(account);
-    expect(markup).toContain("blur-[2px]");
+    expect(markup).toContain("blur-xs");
   });
 
   it("can show provider account emails initially", () => {

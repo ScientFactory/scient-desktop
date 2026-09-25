@@ -2361,12 +2361,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     });
     const indexExists = yield* fileSystem.exists(indexPath);
     if (indexExists) {
-      const indexStat = yield* fileSystem.stat(indexPath);
+      const { mtime } = yield* fileSystem.stat(indexPath);
       yield* fileSystem.copyFile(indexPath, tempIndexPath);
-      // A newer copy timestamp bypasses Git's racy-clean content check for same-size edits.
-      // Read before copying so a concurrent index replacement can only make this conservative.
-      const indexMtime = Option.getOrElse(indexStat.mtime, () => 0);
-      yield* fileSystem.utimes(tempIndexPath, indexMtime, indexMtime);
+      // A newer copy timestamp hides racily clean edits. Round down before Git reads or rewrites it.
+      const indexTime = Option.isSome(mtime)
+        ? Math.max(0, Math.floor((mtime.value.getTime() - 1) / 1000))
+        : 0;
+      yield* fileSystem.utimes(tempIndexPath, indexTime, indexTime);
     }
     const env = { GIT_INDEX_FILE: tempIndexPath } satisfies NodeJS.ProcessEnv;
     const tempIndexConfig = [
