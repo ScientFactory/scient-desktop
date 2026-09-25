@@ -44,10 +44,14 @@ describe("terminalThemeFromApp", () => {
       "#111": [17, 17, 17, 255],
     };
 
+    let queriedSelector: string | undefined;
     vi.stubGlobal("document", {
       documentElement: root,
       body,
-      querySelector: () => drawer,
+      querySelector: (selector: string) => {
+        queriedSelector = selector;
+        return drawer;
+      },
       createElement: () => ({
         width: 0,
         height: 0,
@@ -90,6 +94,7 @@ describe("terminalThemeFromApp", () => {
     expect(theme.background).toEqual({ r: 0, g: 0, b: 0 });
     expect(theme.foreground).toEqual({ r: 255, g: 255, b: 255 });
     expect(theme.cursor).toEqual({ r: 221, g: 221, b: 221 });
+    expect(queriedSelector).toBe("[data-thread-terminal-drawer]");
   });
 });
 

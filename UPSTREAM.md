@@ -53,10 +53,10 @@ official commits from `e67abcf798f8c4d8458755e3b4dde02c2c1f628b`, merged onto
 owned base `5b214837d5358a117b282b208ddd172c75a2cf00` as
 `b55129b948a647d59b2a96e7f15204d00071a194` (first parent owned base, second
 parent the exact official target). The final reviewed candidate also records
-the narrow composed-web cleanup `e9168a8474f0f29c7c8ec6c0bce4d2603d9672e`.
+the narrow composed-web cleanup `e9168a8474e772a638525945502db0b361230d32`.
 No owned-main catch-up was needed because the frozen base was already the
-current owned `main` tip. The preceding alignment (PR #365) remains literal
-ancestry, including its owned-main catch-up
+current owned `main` tip. The preceding alignment ([PR #365](docs/internals/2026-09-24-upstream-sync-e67abcf798.md))
+remains literal ancestry, including its owned-main catch-up
 `0c10a40a5d885beedd0d59fdbb10e277f397cadf`; all earlier official ancestry
 remains preserved.
 
@@ -66,12 +66,11 @@ provider-lifecycle, identity, scientific, and migration boundaries, and adopts
 upstream reliability, provider, orchestration, desktop-update, theme, and
 shell-terminal improvements at narrow seams. The review also introduced an
 explicit legacy lint boundary for pre-existing Scient scientific/presentation
-surfaces rather than rewriting them during this upstream sync. Automated
-qualification and source review passed; release publication remains separate.
-The [preceding alignment](docs/internals/2026-09-22-upstream-sync-aff9318bf4.md),
-[earlier receipt](docs/internals/2026-09-18-upstream-sync-3fd5d643.md), and all
-earlier official ancestry remain literal history. Later observed upstream tips
-do not move `integrationBase` by themselves.
+surfaces rather than rewriting them wholesale during this upstream sync.
+Automated qualification and source review passed; release publication remains
+separate. The [earlier receipt](docs/internals/2026-09-18-upstream-sync-3fd5d643.md)
+and all earlier official ancestry remain literal history. Later observed
+upstream tips do not move `integrationBase` by themselves.
 
 ## Receiving T3 updates
 
