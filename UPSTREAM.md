@@ -53,7 +53,8 @@ official commits from `e67abcf798f8c4d8458755e3b4dde02c2c1f628b`, merged onto
 owned base `5b214837d5358a117b282b208ddd172c75a2cf00` as
 `b55129b948a647d59b2a96e7f15204d00071a194` (first parent owned base, second
 parent the exact official target). The final reviewed candidate also records
-the narrow composed-web cleanup `e9168a8474e772a638525945502db0b361230d32`.
+the narrow composed-web cleanup `e9168a8474e772a638525945502db0b361230d32`
+and the targeted review cleanup `58e12301c6442a4cccc877d81877b15618a79fd0`.
 No owned-main catch-up was needed because the frozen base was already the
 current owned `main` tip. The preceding alignment ([PR #365](docs/internals/2026-09-24-upstream-sync-e67abcf798.md))
 remains literal ancestry, including its owned-main catch-up
