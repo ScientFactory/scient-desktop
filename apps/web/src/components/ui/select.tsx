@@ -24,6 +24,10 @@ const selectTriggerVariants = cva(
         ghost:
           "border-transparent text-secondary-label focus-visible:ring-2 focus-visible:ring-ring data-pressed:bg-accent [:hover,[data-pressed]]:bg-accent [:hover,[data-pressed]]:text-foreground",
       },
+      width: {
+        default: "",
+        content: "w-auto min-w-0 px-2",
+      },
       size: {
         compact:
           "h-7 gap-1 rounded-[var(--control-radius)] px-[calc(--spacing(2)-1px)] text-xs before:rounded-[calc(var(--control-radius)-1px)] [&_svg:not([class*='size-'])]:size-3.5",
@@ -66,12 +70,14 @@ function SelectTrigger({
 function SelectButton({
   className,
   size = "default",
+  width = "default",
   children,
   render,
   ...props
-}: useRender.ComponentProps<"button"> & Pick<VariantProps<typeof selectTriggerVariants>, "size">) {
+}: useRender.ComponentProps<"button"> &
+  Pick<VariantProps<typeof selectTriggerVariants>, "size" | "width">) {
   const defaultProps = {
-    className: cn(selectTriggerVariants({ size }), className),
+    className: cn(selectTriggerVariants({ size, width }), className),
     "data-slot": "select-trigger",
     type: render ? undefined : ("button" as const),
   };

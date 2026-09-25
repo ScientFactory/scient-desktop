@@ -30,6 +30,32 @@ const RESTRICTED_UI_VARIANT_PATTERNS = [
   },
 ];
 
+/**
+ * Existing Scient-owned presentation surfaces predate the upstream shadcn
+ * enforcement. They intentionally use handcrafted scientific CSS, semantic
+ * mount classes, and established compact type scales. Keep the new checks on
+ * upstream-touched host code, but do not turn this alignment into a broad
+ * visual rewrite of those legacy surfaces. New work should use the strict
+ * rules; this boundary is a measured compatibility follow-up, not a blanket
+ * exemption for the host application.
+ */
+const SCIENT_LEGACY_WEB_LINT_FILES = [
+  "apps/web/src/scient/**",
+  "apps/web/src/components/ProjectFolderDropTarget.tsx",
+  "apps/web/src/components/ScientProjectInitializationDialog.tsx",
+  "apps/web/src/components/chat/ModelPickerContent.tsx",
+  "apps/web/src/components/onboarding/ProjectImportStep.tsx",
+  "apps/web/src/components/onboarding/StepShell.tsx",
+  "apps/web/src/components/preview/PreviewImageSurface.tsx",
+  "apps/web/src/components/preview/PreviewView.tsx",
+  "apps/web/src/components/settings/AddUsageAccountingSourceDialog.tsx",
+  "apps/web/src/components/settings/CustomModelConnectionDialog.tsx",
+  "apps/web/src/components/settings/CustomModelsPanel.tsx",
+  "apps/web/src/components/settings/ModelConnectionEditor.tsx",
+  "apps/web/src/components/settings/VoiceSettingsPanel.tsx",
+  "apps/web/src/components/usage/**",
+] as const;
+
 /** Lucide's pull-request glyphs, which only `pullRequestIcons.tsx` may name. */
 const RESTRICTED_PULL_REQUEST_GLYPH_IMPORTS = {
   name: "lucide-react",
@@ -199,6 +225,24 @@ export default defineConfig({
         rules: { "t3code/no-mobile-uniwind-theme-escape-hatches": "error" },
       },
       {
+        // Every class in web code must be one Tailwind generates: a typo or a class nothing
+        // declares ships silently unstyled. JS hooks use data attributes, not class names.
+        files: ["apps/web/src/**"],
+        rules: { "shadcn/no-unknown-classes": "error" },
+      },
+      {
+        // Colors come from theme tokens so status tones follow custom themes. components/ui
+        // has no findings and stays covered too.
+        files: ["apps/web/src/**"],
+        rules: { "shadcn/no-raw-colors": "error" },
+      },
+      {
+        // Third-party marks (brand logos, the macOS permission panes, Codex's Computer Use
+        // mark) must keep their exact colors, so the files that hold them are exempt.
+        files: ["apps/web/src/components/Icons.tsx", "apps/web/src/components/JetBrainsIcons.tsx"],
+        rules: { "shadcn/no-raw-colors": "off" },
+      },
+      {
         // components/ui exports own their look. App code picks a variant or size instead
         // of restyling with className; layout classes (width, flex, margin, position) stay
         // allowed because placement belongs to the parent. components/ui is for generic
@@ -206,6 +250,43 @@ export default defineConfig({
         files: ["apps/web/src/**"],
         excludeFiles: ["apps/web/src/components/ui/**"],
         rules: {
+          // A className built at runtime on a ui component is one no-restyle cannot read.
+          "shadcn/require-static-classes": "error",
+          // Appearance values come from the theme and Tailwind's scales. Layout stays free
+          // (placement belongs to the parent); the other entries are values no scale can hold.
+          "shadcn/no-arbitrary-values": [
+            "error",
+            {
+              allow: [
+                "layout",
+                // Which properties an element animates is per-element behaviour, like layout,
+                // not a design value; timing curves and durations still come from the theme.
+                "transition",
+                // Overlays that follow their frame's corner, which is set at runtime
+                // (floating preview) or by the element they decorate (composer outline).
+                "rounded-[inherit]",
+                // Inline chips size in em so they scale with the text they sit in
+                // (the composer honours the prompt font-size preference).
+                "gap-[0.33em]",
+                "px-[0.5em]",
+                "rounded-[0.5em]",
+                "text-[0.86em]",
+                // Project icons render from 14px to 48px and keep one proportional corner.
+                "rounded-[25%]",
+                // An emoji project icon fills its container, whatever size the parent gives it.
+                "text-[length:80cqh]",
+                // The platform's own selection colour on a selected composer chip.
+                "bg-[Highlight]",
+                // Brand marks keep their brand colours (Cursor, Grok, Claude).
+                "fill-[#26251E]",
+                "fill-[#EDECEC]",
+                "fill-[#0F0F0F]",
+                "fill-[#F5F5F5]",
+                "fill-[#d97757]",
+                "text-[#d97757]",
+              ],
+            },
+          ],
           "shadcn/no-restyle": [
             "error",
             {
@@ -222,6 +303,22 @@ export default defineConfig({
             },
           ],
         },
+      },
+      {
+        // Legacy Scient surfaces are intentionally outside this upstream
+        // enforcement rollout; see SCIENT_LEGACY_WEB_LINT_FILES above.
+        files: [...SCIENT_LEGACY_WEB_LINT_FILES],
+        rules: {
+          "shadcn/no-unknown-classes": "off",
+          "shadcn/no-raw-colors": "off",
+          "shadcn/no-arbitrary-values": "off",
+          "shadcn/require-static-classes": "off",
+        },
+      },
+      {
+        // The sign-in masthead is T3 brand artwork: fixed gradients, not theme surfaces.
+        files: ["apps/web/src/components/auth/AuthSurfaceShell.tsx"],
+        rules: { "shadcn/no-arbitrary-values": "off" },
       },
       {
         // Shared client code must not call APIs missing from Hermes. Our ESNext

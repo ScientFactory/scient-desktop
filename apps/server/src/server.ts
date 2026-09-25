@@ -41,7 +41,7 @@ import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionD
 import * as ProviderSessionRuntime from "./persistence/ProviderSessionRuntime.ts";
 import { ProviderAdapterRegistryLive } from "./provider/Layers/ProviderAdapterRegistry.ts";
 import * as ModelManifest from "./provider/ModelManifest.ts";
-import * as CodexResetCredit from "./provider/Layers/codexResetCredit.ts";
+import * as ResetCreditCoordinator from "./provider/Layers/resetCreditCoordinator.ts";
 import * as ProviderEventLoggers from "./provider/Layers/ProviderEventLoggers.ts";
 import * as ManagedRuntimeCatalog from "./scient/providerLifecycle/ManagedRuntimeCatalog.ts";
 import { ProviderServiceLive } from "./provider/Layers/ProviderService.ts";
@@ -635,7 +635,7 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
       ProviderEventLoggers.layer,
       ModelManifest.layer,
       ManagedRuntimeCatalog.layer,
-      CodexResetCredit.layer,
+      ResetCreditCoordinator.layer,
     ),
   ),
   // Catalog publication is independent from provider construction. Project

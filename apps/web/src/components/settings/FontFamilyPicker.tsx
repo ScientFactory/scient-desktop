@@ -109,7 +109,7 @@ export function useFontEnumeration(): FontEnumerationState {
  */
 export function FontFamilyPicker({
   ariaLabel,
-  triggerClassName,
+  triggerWidth = "default",
   defaultFamily,
   defaultPreviewFontFamily,
   defaultOptionLabel,
@@ -119,7 +119,7 @@ export function FontFamilyPicker({
   onSelect,
 }: {
   ariaLabel: string;
-  triggerClassName?: string;
+  triggerWidth?: "default" | "content";
   /** What an unset preference renders as, e.g. "Menlo". */
   defaultFamily: string;
   /** CSS stack that an unset preference actually uses. */
@@ -180,7 +180,7 @@ export function FontFamilyPicker({
           </span>
           <span className="flex shrink-0 items-center gap-1.5">
             {isDefault ? (
-              <span className="max-w-28 truncate text-[10px] text-muted-foreground/60">
+              <span className="max-w-28 truncate text-3xs text-muted-foreground/60">
                 Currently {defaultFamily}
               </span>
             ) : null}
@@ -214,7 +214,7 @@ export function FontFamilyPicker({
     >
       <ComboboxTrigger
         aria-label={ariaLabel}
-        render={<SelectButton size="sm" className={triggerClassName} />}
+        render={<SelectButton size="sm" width={triggerWidth} />}
       >
         {getFontPickerDisplayLabel(selectedFamily, defaultOptionLabel)}
       </ComboboxTrigger>
