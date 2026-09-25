@@ -276,13 +276,13 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
         </div>
       ) : null}
       {catalog.connections.length === 0 ? (
-        <Empty className="gap-4 rounded-xl border border-dashed border-border/60 py-10 md:p-10">
+        <Empty size="compact" variant="outlined">
           <EmptyHeader>
             <EmptyMedia variant="icon">
               <BrainCircuitIcon />
             </EmptyMedia>
-            <EmptyTitle className="text-base">No custom models yet</EmptyTitle>
-            <EmptyDescription>
+            <EmptyTitle size="compact">No custom models yet</EmptyTitle>
+            <EmptyDescription size="compact">
               Connect a model through an API key or a local endpoint, then choose which agents can
               use it.
             </EmptyDescription>
@@ -380,32 +380,36 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
                       </p>
                     ) : null}
                     {attachments.some((entry) => entry.assessment?.state === "available") ? (
-                      <Collapsible className="text-xs text-muted-foreground">
-                        <CollapsibleTrigger className="group inline-flex items-center gap-1">
-                          <ChevronRightIcon
-                            aria-hidden="true"
-                            className="size-3 group-data-panel-open:rotate-90"
-                          />
-                          Model limits
-                        </CollapsibleTrigger>
-                        <CollapsiblePanel>
-                          {attachments.map(({ id, name, assessment }) =>
-                            assessment?.state === "available" ? (
-                              assessment.contextWindow ? (
-                                <p key={id}>
-                                  {name}: {assessment.contextWindow.toLocaleString()} context
-                                  {assessment.maxOutputTokens
-                                    ? ", " + assessment.maxOutputTokens.toLocaleString() + " output"
-                                    : ""}
-                                  {assessment.source ? " · " + assessment.source : ""}
-                                </p>
-                              ) : (
-                                <p key={id}>{name}: agent defaults · limits not reported</p>
-                              )
-                            ) : null,
-                          )}
-                        </CollapsiblePanel>
-                      </Collapsible>
+                      <div className="text-xs text-muted-foreground">
+                        <Collapsible>
+                          <CollapsibleTrigger className="group inline-flex items-center gap-1">
+                            <ChevronRightIcon
+                              aria-hidden="true"
+                              className="size-3 group-data-panel-open:rotate-90"
+                            />
+                            Model limits
+                          </CollapsibleTrigger>
+                          <CollapsiblePanel>
+                            {attachments.map(({ id, name, assessment }) =>
+                              assessment?.state === "available" ? (
+                                assessment.contextWindow ? (
+                                  <p key={id}>
+                                    {name}: {assessment.contextWindow.toLocaleString()} context
+                                    {assessment.maxOutputTokens
+                                      ? ", " +
+                                        assessment.maxOutputTokens.toLocaleString() +
+                                        " output"
+                                      : ""}
+                                    {assessment.source ? " · " + assessment.source : ""}
+                                  </p>
+                                ) : (
+                                  <p key={id}>{name}: agent defaults · limits not reported</p>
+                                )
+                              ) : null,
+                            )}
+                          </CollapsiblePanel>
+                        </Collapsible>
+                      </div>
                     ) : null}
                   </div>
                   {attachments.some(
@@ -426,8 +430,7 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
                         render={
                           <Button
                             size="xs"
-                            variant="ghost"
-                            className="text-destructive hover:text-destructive"
+                            variant="ghost-destructive"
                             disabled={busy}
                             aria-label={`Test failed. ${rowNotice.text} Select to try again.`}
                             onClick={() => void runTest(connection, model, testInstance)}

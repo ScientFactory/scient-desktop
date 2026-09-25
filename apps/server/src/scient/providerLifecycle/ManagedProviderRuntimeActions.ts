@@ -305,6 +305,9 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
       target: targetLabel,
       actions: [...policy.actions],
       managedVersion: latestManagedVersion,
+      availableManagedVersion: policy.actions.includes("update")
+        ? (currentArtifact?.version ?? null)
+        : null,
       previousManagedVersion: latest?.previousVersion ?? null,
       operation: null,
       message,

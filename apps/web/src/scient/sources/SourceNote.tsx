@@ -578,72 +578,67 @@ export function useSourceNoteControls(props: {
         <PopoverPopup
           side="bottom"
           align="end"
+          padding="tight"
           className="h-52 w-[min(20rem,calc(100vw-1.5rem))] overflow-hidden"
           style={{ transitionProperty: "scale, opacity" }}
-          viewportClassName="min-h-0 overflow-hidden p-2 [&>[data-current]]:flex [&>[data-current]]:h-full [&>[data-current]]:min-h-0 [&>[data-current]]:flex-col [&>[data-current]]:gap-2"
+          viewportClassName="min-h-0 overflow-hidden [&>[data-current]]:flex [&>[data-current]]:h-full [&>[data-current]]:min-h-0 [&>[data-current]]:flex-col"
         >
-          <div className="grid grid-cols-[1fr_auto_1fr] items-center px-1">
-            <p className="text-sm font-medium">Quick note</p>
-            <div className="flex items-center gap-px">
-              <ScientTooltip content="Bold">
-                <Button
-                  size="icon-xs"
-                  variant="ghost"
-                  className={cn(
-                    "size-[22px]",
-                    activeFormats.bold && "bg-accent text-accent-foreground",
-                  )}
-                  aria-label="Bold"
-                  aria-pressed={activeFormats.bold}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => applyFormat("bold")}
+          <div className="flex h-full min-h-0 flex-col gap-2">
+            <div className="grid grid-cols-[1fr_auto_1fr] items-center px-1">
+              <p className="text-sm font-medium">Quick note</p>
+              <div className="flex items-center gap-px">
+                <ScientTooltip content="Bold">
+                  <Button
+                    size="icon-micro"
+                    variant={activeFormats.bold ? "selected" : "ghost"}
+                    aria-label="Bold"
+                    aria-pressed={activeFormats.bold}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => applyFormat("bold")}
+                  >
+                    <span className="text-xs font-black leading-none" aria-hidden="true">
+                      B
+                    </span>
+                  </Button>
+                </ScientTooltip>
+                <ScientTooltip content="Italic">
+                  <Button
+                    size="icon-micro"
+                    variant={activeFormats.italic ? "selected" : "ghost"}
+                    aria-label="Italic"
+                    aria-pressed={activeFormats.italic}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => applyFormat("italic")}
+                  >
+                    <span className="text-xs font-semibold italic leading-none" aria-hidden="true">
+                      I
+                    </span>
+                  </Button>
+                </ScientTooltip>
+              </div>
+              <ScientTooltip content="Close quick note">
+                <PopoverClose
+                  className="justify-self-end"
+                  render={<Button size="icon-xs" variant="ghost" aria-label="Close quick note" />}
                 >
-                  <span className="text-xs font-black leading-none" aria-hidden="true">
-                    B
-                  </span>
-                </Button>
-              </ScientTooltip>
-              <ScientTooltip content="Italic">
-                <Button
-                  size="icon-xs"
-                  variant="ghost"
-                  className={cn(
-                    "size-[22px]",
-                    activeFormats.italic && "bg-accent text-accent-foreground",
-                  )}
-                  aria-label="Italic"
-                  aria-pressed={activeFormats.italic}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => applyFormat("italic")}
-                >
-                  <span className="text-xs font-semibold italic leading-none" aria-hidden="true">
-                    I
-                  </span>
-                </Button>
+                  <X />
+                </PopoverClose>
               </ScientTooltip>
             </div>
-            <ScientTooltip content="Close quick note">
-              <PopoverClose
-                className="justify-self-end"
-                render={<Button size="icon-xs" variant="ghost" aria-label="Close quick note" />}
-              >
-                <X />
-              </PopoverClose>
-            </ScientTooltip>
+            <SourceNoteEditor
+              autoFocus
+              fillAvailableSpace
+              editorRef={quickNoteEditorRef}
+              value={note.draft}
+              onChange={note.change}
+              onFormatChange={handleFormatChange}
+              onBlur={() => void note.flush()}
+            />
+            <div className="pe-6">
+              <NoteStatusLine status={note.status} error={note.error} />
+            </div>
+            <QuickNoteResizeHandle />
           </div>
-          <SourceNoteEditor
-            autoFocus
-            fillAvailableSpace
-            editorRef={quickNoteEditorRef}
-            value={note.draft}
-            onChange={note.change}
-            onFormatChange={handleFormatChange}
-            onBlur={() => void note.flush()}
-          />
-          <div className="pe-6">
-            <NoteStatusLine status={note.status} error={note.error} />
-          </div>
-          <QuickNoteResizeHandle />
         </PopoverPopup>
       </Popover>
     ),

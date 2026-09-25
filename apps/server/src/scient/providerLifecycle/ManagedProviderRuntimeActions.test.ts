@@ -271,6 +271,11 @@ describe("managed provider runtime policy", () => {
             catalog = available;
             return catalog;
           }),
+          refreshNow: Effect.sync(() => {
+            refreshes++;
+            catalog = available;
+            return catalog;
+          }),
           subscribeChanges: Effect.succeed(Stream.empty),
         });
         const resolution = yield* makeManagedProviderRuntimeResolution({
@@ -327,6 +332,11 @@ describe("managed provider runtime policy", () => {
         expect(refreshes).toBe(3); // install plan, install run, repair plan
         expect(repair.version).toBe(nextVersion);
         expect(repair.catalogRevision).not.toBe(plan.catalogRevision);
+        expect(yield* resolution.actions.getSummary).toMatchObject({
+          actions: ["update", "repair", "remove"],
+          managedVersion: expectedVersion,
+          availableManagedVersion: nextVersion,
+        });
         failSmoke = true;
         yield* resolution.actions
           .run("repair", repair.catalogRevision, () => Effect.void)

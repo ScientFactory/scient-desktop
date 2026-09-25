@@ -51,10 +51,11 @@ floor until a compatible qualified feed is available. Other release families
 continue updating independently. Remote catalog metadata never changes an app's
 installer policy. Keep the legacy main-branch compatibility snapshot unchanged.
 
-Codex contract 2 accommodates the official voice payload introduced in 0.155:
-Unix archives have 52–54 entries, with a reviewed allowance of 128 entries and
-512 MiB expanded data. Windows retains the shared 32-entry, 512 MiB allowance.
-Changing these numbers requires code review and qualification, not a feed edit.
+Codex contract 3 accommodates the official voice payload and reserves bounded
+headroom for later package growth: all Codex targets allow up to 128 entries
+and retain the 512 MiB expanded-data limit. The shared extraction default
+remains 32 entries for other providers. Changing these Codex-specific
+limits requires code review and native qualification, not a feed edit.
 Extraction errors report the entry at rejection, the running entry/byte counts,
 and their limits; the counts are observed so far, not a scan of the entire archive.
 

@@ -177,8 +177,9 @@ export function AuthoringKeybindingsSettings({
       title="Press successive keys for a sequence; Escape cancels"
       value={activeEdit.captured ? activeEdit.draft : ""}
       placeholder="Press shortcut"
+      font="mono"
       size="sm"
-      className="w-44 font-mono border-primary/70 bg-primary/5"
+      className="w-44"
       onKeyDown={(event) => {
         if (event.key === "Tab") return;
         event.preventDefault();
@@ -217,141 +218,143 @@ export function AuthoringKeybindingsSettings({
               ref={setMathOptionsCard}
               align="start"
               aria-label="Math input behavior and preset"
-              className="w-[34rem] max-w-[calc(100vw-2rem)] rounded-xl border border-border/60"
+              className="w-[34rem] max-w-[calc(100vw-2rem)]"
+              padding="none"
               side="bottom"
-              viewportClassName="p-2 [--viewport-inline-padding:--spacing(2)]"
             >
-              <div id="math-input-behavior" className="grid gap-x-3 sm:grid-cols-2">
-                <div>
-                  <SettingsRow
-                    className={MATH_OPTION_ROW_CLASS}
-                    title="Math preset"
-                    control={
-                      <Select
-                        value={snapshot.preferences.mathPreset}
-                        onValueChange={(value) =>
-                          update({ mathPreset: value as KeyboardPreferences["mathPreset"] })
-                        }
-                      >
-                        <SelectTrigger
-                          size="sm"
-                          className="w-44 max-w-full"
-                          aria-label="Math shortcut preset"
+              <div className="p-2">
+                <div id="math-input-behavior" className="grid gap-x-3 sm:grid-cols-2">
+                  <div>
+                    <SettingsRow
+                      className={MATH_OPTION_ROW_CLASS}
+                      title="Math preset"
+                      control={
+                        <Select
+                          value={snapshot.preferences.mathPreset}
+                          onValueChange={(value) =>
+                            update({ mathPreset: value as KeyboardPreferences["mathPreset"] })
+                          }
                         >
-                          <SelectValue>
-                            {snapshot.preferences.mathPreset === "lyx" ? "LyX" : "Minimal"}
-                          </SelectValue>
-                        </SelectTrigger>
-                        <SelectContent
-                          align="start"
-                          alignItemWithTrigger={false}
-                          collisionBoundary={mathOptionsCard ?? undefined}
-                          popupClassName="max-w-(--available-width)"
+                          <SelectTrigger
+                            size="sm"
+                            className="w-44 max-w-full"
+                            aria-label="Math shortcut preset"
+                          >
+                            <SelectValue>
+                              {snapshot.preferences.mathPreset === "lyx" ? "LyX" : "Minimal"}
+                            </SelectValue>
+                          </SelectTrigger>
+                          <SelectContent
+                            align="start"
+                            alignItemWithTrigger={false}
+                            collisionBoundary={mathOptionsCard ?? undefined}
+                            className="max-w-(--available-width)"
+                          >
+                            <SelectItem value="lyx">Supported LyX-style sequences</SelectItem>
+                            <SelectItem value="minimal">
+                              Minimal: palette and equation insertion
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
+                      }
+                    />
+                    <SettingsRow
+                      className={MATH_OPTION_ROW_CLASS}
+                      title="Command completion"
+                      control={
+                        <Select
+                          value={snapshot.preferences.completion}
+                          onValueChange={(value) =>
+                            update({ completion: value as KeyboardPreferences["completion"] })
+                          }
                         >
-                          <SelectItem value="lyx">Supported LyX-style sequences</SelectItem>
-                          <SelectItem value="minimal">
-                            Minimal: palette and equation insertion
-                          </SelectItem>
-                        </SelectContent>
-                      </Select>
-                    }
-                  />
-                  <SettingsRow
-                    className={MATH_OPTION_ROW_CLASS}
-                    title="Command completion"
-                    control={
-                      <Select
-                        value={snapshot.preferences.completion}
-                        onValueChange={(value) =>
-                          update({ completion: value as KeyboardPreferences["completion"] })
-                        }
-                      >
-                        <SelectTrigger
-                          size="sm"
-                          className="w-full sm:w-40"
-                          aria-label="Math command completion"
+                          <SelectTrigger
+                            size="sm"
+                            className="w-full sm:w-40"
+                            aria-label="Math command completion"
+                          >
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent
+                            align="start"
+                            alignItemWithTrigger={false}
+                            collisionBoundary={mathOptionsCard ?? undefined}
+                            className="max-w-(--available-width)"
+                          >
+                            <SelectItem value="space-tab">Space and Tab</SelectItem>
+                            <SelectItem value="tab">Tab only</SelectItem>
+                            <SelectItem value="off">Off</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      }
+                    />
+                  </div>
+                  <div className="border-t border-border/40 sm:border-t-0 sm:border-l sm:pl-3">
+                    <SettingsRow
+                      className={MATH_OPTION_ROW_CLASS}
+                      title="Automatic operators"
+                      control={
+                        <Switch
+                          aria-label="Automatic math operators"
+                          checked={snapshot.preferences.automaticOperators}
+                          onCheckedChange={(checked) => update({ automaticOperators: checked })}
+                        />
+                      }
+                    />
+                    <SettingsRow
+                      className={MATH_OPTION_ROW_CLASS}
+                      title="Enter adds a matrix row"
+                      control={
+                        <Switch
+                          aria-label="Enter adds a matrix row"
+                          checked={snapshot.preferences.matrixEnter}
+                          onCheckedChange={(checked) => update({ matrixEnter: checked })}
+                        />
+                      }
+                    />
+                  </div>
+                  <div className="border-t border-border/40 sm:col-span-2">
+                    <SettingsRow
+                      className={MATH_OPTION_ROW_CLASS}
+                      title="Sequence timeout"
+                      description="Applies to Markdown, Math, and PDF shortcuts."
+                      control={
+                        <Select
+                          value={String(snapshot.preferences.sequenceTimeoutMs)}
+                          onValueChange={(value) => update({ sequenceTimeoutMs: Number(value) })}
                         >
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent
-                          align="start"
-                          alignItemWithTrigger={false}
-                          collisionBoundary={mathOptionsCard ?? undefined}
-                          popupClassName="max-w-(--available-width)"
-                        >
-                          <SelectItem value="space-tab">Space and Tab</SelectItem>
-                          <SelectItem value="tab">Tab only</SelectItem>
-                          <SelectItem value="off">Off</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    }
-                  />
-                </div>
-                <div className="border-t border-border/40 sm:border-t-0 sm:border-l sm:pl-3">
-                  <SettingsRow
-                    className={MATH_OPTION_ROW_CLASS}
-                    title="Automatic operators"
-                    control={
-                      <Switch
-                        aria-label="Automatic math operators"
-                        checked={snapshot.preferences.automaticOperators}
-                        onCheckedChange={(checked) => update({ automaticOperators: checked })}
-                      />
-                    }
-                  />
-                  <SettingsRow
-                    className={MATH_OPTION_ROW_CLASS}
-                    title="Enter adds a matrix row"
-                    control={
-                      <Switch
-                        aria-label="Enter adds a matrix row"
-                        checked={snapshot.preferences.matrixEnter}
-                        onCheckedChange={(checked) => update({ matrixEnter: checked })}
-                      />
-                    }
-                  />
-                </div>
-                <div className="border-t border-border/40 sm:col-span-2">
-                  <SettingsRow
-                    className={MATH_OPTION_ROW_CLASS}
-                    title="Sequence timeout"
-                    description="Applies to Markdown, Math, and PDF shortcuts."
-                    control={
-                      <Select
-                        value={String(snapshot.preferences.sequenceTimeoutMs)}
-                        onValueChange={(value) => update({ sequenceTimeoutMs: Number(value) })}
-                      >
-                        <SelectTrigger
-                          size="sm"
-                          className="w-full sm:w-32"
-                          aria-label="Shortcut sequence timeout"
-                        >
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent
-                          alignItemWithTrigger={false}
-                          collisionBoundary={mathOptionsCard ?? undefined}
-                          popupClassName="max-w-(--available-width)"
-                        >
-                          {[
-                            ...new Set([
-                              1000,
-                              2500,
-                              5000,
-                              10000,
-                              snapshot.preferences.sequenceTimeoutMs,
-                            ]),
-                          ]
-                            .sort((a, b) => a - b)
-                            .map((ms) => (
-                              <SelectItem key={ms} value={String(ms)}>
-                                {ms / 1000} seconds
-                              </SelectItem>
-                            ))}
-                        </SelectContent>
-                      </Select>
-                    }
-                  />
+                          <SelectTrigger
+                            size="sm"
+                            className="w-full sm:w-32"
+                            aria-label="Shortcut sequence timeout"
+                          >
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent
+                            alignItemWithTrigger={false}
+                            collisionBoundary={mathOptionsCard ?? undefined}
+                            className="max-w-(--available-width)"
+                          >
+                            {[
+                              ...new Set([
+                                1000,
+                                2500,
+                                5000,
+                                10000,
+                                snapshot.preferences.sequenceTimeoutMs,
+                              ]),
+                            ]
+                              .sort((a, b) => a - b)
+                              .map((ms) => (
+                                <SelectItem key={ms} value={String(ms)}>
+                                  {ms / 1000} seconds
+                                </SelectItem>
+                              ))}
+                          </SelectContent>
+                        </Select>
+                      }
+                    />
+                  </div>
                 </div>
               </div>
             </PopoverPopup>
@@ -487,11 +490,7 @@ export function AuthoringKeybindingsSettings({
                 <span className="flex items-center gap-2">
                   {command.label}
                   {customized ? (
-                    <Badge
-                      variant="outline"
-                      size="sm"
-                      className="font-normal text-muted-foreground"
-                    >
+                    <Badge variant="outline" size="sm">
                       {disabled ? "Disabled" : "Custom"}
                     </Badge>
                   ) : null}
@@ -525,8 +524,7 @@ export function AuthoringKeybindingsSettings({
                         render={
                           <Button
                             size="icon-sm"
-                            variant="ghost"
-                            className="text-muted-foreground opacity-0 transition-opacity group-focus-within/row:opacity-100 group-hover/row:opacity-100 pointer-coarse:opacity-100"
+                            variant="ghost-muted-row"
                             aria-label={"Actions for " + command.label}
                           />
                         }
@@ -568,8 +566,7 @@ export function AuthoringKeybindingsSettings({
                     ) : (
                       <Button
                         size="icon-xs"
-                        variant="ghost-muted"
-                        className="opacity-0 transition-opacity group-focus-within/row:opacity-100 group-hover/row:opacity-100 pointer-coarse:opacity-100"
+                        variant="ghost-muted-row"
                         aria-label={"Add shortcut for " + command.label}
                         onClick={() => beginEditing(command.id, keys.length, "")}
                       >

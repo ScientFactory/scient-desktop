@@ -29,6 +29,7 @@
     "icons:check": "node scripts/export-brand-icons.ts --check",
     "brand:check": "node scripts/check-scient-brand.ts",
     "analysis:seams:check": "node scripts/verify-scient-analysis-seams.mjs",
+    "compute:qualify:backend": "node apps/server/scripts/qualify-compute-backend.ts",
     "onboarding:seams:check": "node scripts/verify-scient-onboarding-seams.mjs",
     "skills:seams:check": "node scripts/verify-scient-skills-seams.mjs",
     "latex:seams:check": "node scripts/verify-scient-latex-seams.mjs",
@@ -71,6 +72,7 @@
   },
   "devDependencies": {
     "@effect/tsgo": "catalog:",
+    "@shadcn/lint": "0.1.5",
     "@types/node": "catalog:",
     "knip": "6.34.0",
     "typescript": "catalog:",

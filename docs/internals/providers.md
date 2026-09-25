@@ -497,18 +497,24 @@ Scient-managed paths remain manual-only at this generic boundary: their separate
 own discovery, verification, activation, leases, and rollback. Never send a managed binary through
 an inferred system-package update command.
 
-The model picker's legacy section is driven by `apps/server/src/provider/model-manifest.json`, which
-lists the current (non-legacy) model slugs per driver kind. The `ModelManifest` service
-(`apps/server/src/provider/ModelManifest.ts`) refreshes that policy from the same file on Scient's
-`main` branch, so changing a model's classification is a reviewed Scient commit rather than an app
-release. Preference order is remote fetch, then the on-disk copy of the last successful fetch in
-the state directory, then the bundled copy.
+The model picker's legacy section is driven by explicit per-model statuses in
+`apps/server/src/provider/model-manifest.json`. Unknown discovered models are
+visible by default, while known legacy models remain explicitly classified;
+provider-native legacy flags are preserved. The top-level `currentModels` lists
+remain for compatibility and as positive current classifications. The
+`ModelManifest` service (`apps/server/src/provider/ModelManifest.ts`) refreshes
+policy from the same file on Scient's `main` branch, so changing a model's
+classification is a reviewed Scient commit rather than an app release.
+Preference order is remote fetch, then the on-disk copy of the last successful
+fetch in the state directory, then the bundled copy.
 
 Refreshes are TTL-gated, run concurrently with provider probes, respect the
-`enableProviderUpdateChecks` setting, and never fail a provider check. Codex and Claude currently
-apply the classification to every snapshot; driver kinds absent from the manifest have no legacy
-classification. Keep the remote source Scient-owned: pointing it at upstream would let an unrelated
-repository change Scient's model policy outside Scient's review and release boundary.
+`enableProviderUpdateChecks` setting, and never fail a provider check. Codex,
+Claude, and Antigravity apply the classification to snapshots. Claude's
+built-in catalog is manifest-owned; dynamic providers expose unclassified
+discoveries by default. Keep the remote source Scient-owned: pointing it at
+upstream would let an unrelated repository change Scient's model policy
+outside Scient's review and release boundary.
 
 ## Attachment access
 
@@ -544,6 +550,32 @@ The engine persists an event for the command, and a server-side reactor performs
 Provider output comes back as internal commands such as `thread.message.assistant.delta` and
 `thread.session.set`, which clients observe through `orchestration.subscribeThread`. See
 [overview.md](./overview.md) for the command/event loop.
+
+### Stop ownership and confirmation
+
+Accepting an interrupt command is not evidence that execution ended. The command reactor tracks
+Stop separately from its event worker, with a 30-second provider-wait budget including the interrupt,
+confirmation, and recovery waits. Repeated requests for the same observed turn join; a newer turn's
+Stop is independent. Natural terminal events remain authoritative, and conditional recovery writes
+are checked against the current session inside the serialized command decider.
+
+Adapters may capture a cancellation handle tied to a runtime and native turn. Codex implements
+this with runtime identity, native turn identity, and a generation incremented before submitting
+new work. Its provider-side status probe is bounded; unknown or missing runtime state never
+confirms termination. Session teardown retains ownership until it succeeds, checks process exit
+before announcing closure, and continues under an owned scope if the caller's wait expires.
+Starting a replacement session joins that cleanup before acquiring the thread's runtime.
+A provider-confirmed idle turn leaves its session ready, not stopped.
+
+Other adapters retain native interrupt behavior. Automatic destructive recovery is available only
+through an adapter-owned cancellation handle; shared code must not stop whichever runtime happens
+to occupy a thread later. An unconfirmed result keeps execution state intact and reports the
+failure through the existing activity and session-error surfaces. Stale terminal-event guards
+remain enabled, with bounded diagnostic logging.
+
+Clients combine independent shell and thread-detail streams. The newer session timestamp wins
+between two present sessions, so a late sidebar snapshot cannot resurrect an already-completed
+turn. Equal timestamps and explicit shell session removal retain shell authority.
 
 ## Server-side workers
 

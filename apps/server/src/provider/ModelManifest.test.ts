@@ -38,31 +38,48 @@ const model = (overrides: Partial<ServerProviderModel>): ServerProviderModel => 
 });
 
 describe("classifyModels", () => {
-  it("classifies qualified Codex families without changing their wire ids", () => {
-    const manifest: ModelManifestData = { version: 1, currentModels: { codex: ["gpt-test"] } };
+  it("applies explicit Codex family statuses without changing their wire ids", () => {
+    const manifest: ModelManifestData = {
+      version: 1,
+      currentModels: { codex: ["gpt-test"] },
+      providers: {
+        codex: {
+          profiles: {},
+          models: [{ slug: "gpt-old", name: "GPT Old", status: "legacy" }],
+        },
+      },
+    };
     const models = [
       model({ slug: "openai.gpt-test", isLegacy: true }),
       model({ slug: "openai.gpt-old" }),
+      model({ slug: "openai.gpt-new" }),
     ];
     assert.deepStrictEqual(
       classifyModels(models, manifest, CODEX).map((entry) => [entry.slug, entry.isLegacy ?? false]),
       [
         ["openai.gpt-test", false],
         ["openai.gpt-old", true],
+        ["openai.gpt-new", false],
       ],
     );
   });
-  it("flags non-current models, clears stale flags, and skips custom models", () => {
+  it("shows unknown discoveries by default and preserves provider-native legacy status", () => {
     const manifest: ModelManifestData = {
       version: 1,
       currentModels: { codex: ["current-a", "current-b"] },
+      providers: {
+        codex: {
+          profiles: {},
+          models: [{ slug: "catalog-current", name: "Catalog Current", status: "current" }],
+        },
+      },
     };
     const models = [
       model({ slug: "current-a" }),
-      // Stale flag from a previous classification pass must be cleared.
       model({ slug: "current-b", isLegacy: true }),
-      model({ slug: "old-model" }),
-      // Custom models are user-defined and never reclassified.
+      model({ slug: "catalog-current", isLegacy: true }),
+      model({ slug: "new-discovery" }),
+      model({ slug: "provider-legacy", isLegacy: true }),
       model({ slug: "my-own-model", isCustom: true }),
     ];
     assert.deepStrictEqual(
@@ -70,8 +87,44 @@ describe("classifyModels", () => {
       [
         ["current-a", false],
         ["current-b", false],
-        ["old-model", true],
+        ["catalog-current", false],
+        ["new-discovery", false],
+        ["provider-legacy", true],
         ["my-own-model", false],
+      ],
+    );
+  });
+  it("classifies Antigravity effort variants from their explicit family status", () => {
+    const antigravity = ProviderDriverKind.make("antigravity");
+    const manifest: ModelManifestData = {
+      version: 1,
+      currentModels: { antigravity: ["gemini-3.8-flash-high"] },
+      providers: {
+        antigravity: {
+          profiles: {},
+          models: [{ slug: "gemini-3.7-flash", name: "Gemini 3.7 Flash", status: "legacy" }],
+        },
+      },
+    };
+    const models = [
+      model({ slug: "gemini-3.7-flash-low" }),
+      model({ slug: "gemini-3.7-flash-medium" }),
+      model({ slug: "gemini-3.7-flash-high" }),
+      model({ slug: "gemini-3.8-flash-high", isLegacy: true }),
+      model({ slug: "gemini-4.0-flash-high" }),
+    ];
+
+    assert.deepStrictEqual(
+      classifyModels(models, manifest, antigravity).map((entry) => [
+        entry.slug,
+        entry.isLegacy ?? false,
+      ]),
+      [
+        ["gemini-3.7-flash-low", true],
+        ["gemini-3.7-flash-medium", true],
+        ["gemini-3.7-flash-high", true],
+        ["gemini-3.8-flash-high", false],
+        ["gemini-4.0-flash-high", false],
       ],
     );
   });
@@ -342,6 +395,84 @@ const serviceLayers = (input: {
   );
 
 describe("ModelManifest service", () => {
+  it.live("explicit refresh bypasses fresh memory and disk caches", () => {
+    let fetchCount = 0;
+    const updated: ModelManifestData = {
+      ...REMOTE_MANIFEST,
+      currentModels: { codex: ["gpt-reloaded"] },
+    };
+    return Effect.gen(function* () {
+      const service = yield* make;
+      assert.deepStrictEqual(yield* service.refresh, REMOTE_MANIFEST);
+      assert.deepStrictEqual(yield* service.refresh, REMOTE_MANIFEST);
+      assert.strictEqual(fetchCount, 1);
+
+      const rebooted = yield* make;
+      assert.deepStrictEqual(yield* rebooted.refresh, REMOTE_MANIFEST);
+      assert.strictEqual(fetchCount, 1);
+      assert.deepStrictEqual(yield* rebooted.forceRefresh, updated);
+      assert.strictEqual(fetchCount, 2);
+      assert.deepStrictEqual(yield* rebooted.current, updated);
+      assert.deepStrictEqual(yield* (yield* make).current, updated);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        serviceLayers({
+          prefix: "model-manifest-force-refresh-test",
+          response: () => Response.json(fetchCount++ === 0 ? REMOTE_MANIFEST : updated),
+        }),
+      ),
+    );
+  });
+
+  it.live("explicit refresh retries immediately after failure and preserves last-good data", () => {
+    let fetchCount = 0;
+    return Effect.gen(function* () {
+      const service = yield* make;
+      assert.deepStrictEqual(yield* service.refresh, REMOTE_MANIFEST);
+      assert.deepStrictEqual(yield* service.forceRefresh, REMOTE_MANIFEST);
+      assert.deepStrictEqual(yield* service.current, REMOTE_MANIFEST);
+      assert.deepStrictEqual(yield* (yield* make).current, REMOTE_MANIFEST);
+      assert.strictEqual(fetchCount, 2);
+      assert.deepStrictEqual(yield* service.forceRefresh, REMOTE_MANIFEST);
+      assert.strictEqual(fetchCount, 3);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        serviceLayers({
+          prefix: "model-manifest-force-retry-test",
+          response: () =>
+            fetchCount++ === 1
+              ? new Response(null, { status: 503 })
+              : Response.json(REMOTE_MANIFEST),
+        }),
+      ),
+    );
+  });
+
+  it.live("explicit refresh bypasses the retry delay after an initial failure", () => {
+    let fetchCount = 0;
+    return Effect.gen(function* () {
+      const service = yield* make;
+      assert.deepStrictEqual(yield* service.refresh, BUNDLED_MODEL_MANIFEST);
+      assert.deepStrictEqual(yield* service.refresh, BUNDLED_MODEL_MANIFEST);
+      assert.strictEqual(fetchCount, 1);
+      assert.deepStrictEqual(yield* service.forceRefresh, REMOTE_MANIFEST);
+      assert.strictEqual(fetchCount, 2);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        serviceLayers({
+          prefix: "model-manifest-force-initial-retry-test",
+          response: () =>
+            fetchCount++ === 0
+              ? new Response(null, { status: 503 })
+              : Response.json(REMOTE_MANIFEST),
+        }),
+      ),
+    );
+  });
+
   it.live("prefers a fetched manifest over the bundle and caches it to disk", () =>
     Effect.gen(function* () {
       const service = yield* make;
@@ -457,6 +588,7 @@ describe("ModelManifest service", () => {
         ),
       );
       assert.deepStrictEqual(yield* service.refresh, BUNDLED_MODEL_MANIFEST);
+      assert.deepStrictEqual(yield* service.forceRefresh, BUNDLED_MODEL_MANIFEST);
       assert.strictEqual(fetchCount, 0);
     }).pipe(
       Effect.scoped,
@@ -467,6 +599,46 @@ describe("ModelManifest service", () => {
           settings: { enableProviderUpdateChecks: false },
         }),
       ),
+    ),
+  );
+});
+
+it.effect("caches valid compatibility policies and keeps them after a malformed refresh", () => {
+  const remote: ModelManifestData = {
+    ...REMOTE_MANIFEST,
+    compatibility: [
+      {
+        driver: "codex",
+        t3CodeRange: ">=0.0.42",
+        recommendedVersion: "2.0.0",
+        ranges: [{ range: "=2.0.0", status: "supported" }],
+      },
+    ],
+  };
+  let invalid = false;
+  return Effect.gen(function* () {
+    const service = yield* make;
+    assert.deepStrictEqual((yield* service.refresh).compatibility, remote.compatibility);
+    invalid = true;
+    yield* TestClock.adjust("1 hour");
+    assert.deepStrictEqual((yield* service.refresh).compatibility, remote.compatibility);
+    const rebooted = yield* make;
+    assert.deepStrictEqual((yield* rebooted.current).compatibility, remote.compatibility);
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      serviceLayers({
+        prefix: "model-manifest-compatibility-test",
+        response: () =>
+          Response.json(
+            invalid
+              ? {
+                  ...remote,
+                  compatibility: [{ ...remote.compatibility![0], recommendedVersion: "3.0.0" }],
+                }
+              : remote,
+          ),
+      }),
     ),
   );
 });

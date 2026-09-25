@@ -18,7 +18,11 @@ type CommandPaletteContentProps = Omit<ComponentProps<typeof Command>, "children
   readonly footerTrailing?: ReactNode;
   readonly inputAccessory?: ReactNode;
   readonly inputProps: ComponentProps<typeof CommandInput>;
-  readonly panelClassName?: string;
+  /**
+   * How tall the results panel may grow: the palette's list, a taller file list, or the whole
+   * dialog body (for modes that lay out their own status and empty states).
+   */
+  readonly panelSize?: "list" | "tall-list" | "fill" | "project-picker";
   readonly showBackHint?: boolean;
   readonly testId?: string;
 };
@@ -36,7 +40,7 @@ export function CommandPaletteContent({
   footerTrailing,
   inputAccessory,
   inputProps,
-  panelClassName,
+  panelSize = "list",
   showBackHint,
   testId,
   ...commandProps
@@ -60,10 +64,22 @@ export function CommandPaletteContent({
           <CommandInput {...inputProps} ref={inputRef} />
           {inputAccessory}
         </div>
-        <CommandPanel className={panelClassName}>{children}</CommandPanel>
-        <CommandFooter className="gap-3 max-sm:flex-col max-sm:items-start">
+        <CommandPanel
+          className={
+            panelSize === "fill"
+              ? "flex min-h-0 flex-1 flex-col"
+              : panelSize === "tall-list"
+                ? "max-h-[min(34rem,76vh)]"
+                : panelSize === "project-picker"
+                  ? "flex max-h-[min(28rem,70vh)] flex-col"
+                  : "max-h-[min(28rem,70vh)]"
+          }
+        >
+          {children}
+        </CommandPanel>
+        <CommandFooter className="max-sm:flex-col max-sm:items-start">
           <div className="flex items-center gap-3">
-            <KbdGroup className="items-center gap-1.5">
+            <KbdGroup>
               <Kbd>
                 <ArrowUpIcon />
               </Kbd>
@@ -73,18 +89,18 @@ export function CommandPaletteContent({
               <span>Navigate</span>
             </KbdGroup>
             {footerActionLabel !== undefined ? (
-              <KbdGroup className="items-center gap-1.5">
+              <KbdGroup>
                 <Kbd>Enter</Kbd>
                 <span>{footerActionLabel}</span>
               </KbdGroup>
             ) : null}
             {showBackHint ? (
-              <KbdGroup className="items-center gap-1.5">
+              <KbdGroup>
                 <Kbd>Backspace</Kbd>
                 <span>Back</span>
               </KbdGroup>
             ) : null}
-            <KbdGroup className="items-center gap-1.5">
+            <KbdGroup>
               <Kbd>Esc</Kbd>
               <span>{escapeLabel}</span>
             </KbdGroup>

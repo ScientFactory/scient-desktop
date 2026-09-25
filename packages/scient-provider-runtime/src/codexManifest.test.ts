@@ -72,13 +72,12 @@ const reviewedPackages = [
 ] as const;
 
 describe("reviewed Codex runtime manifest", () => {
-  it("allows complete Unix voice bundles without relaxing Windows budgets", () => {
+  it("keeps every reviewed Codex target within the same bounded extraction budget", () => {
     for (const { target } of reviewedPackages) {
-      expect(resolveReviewedCodexArtifact(target)?.extractionLimits).toEqual(
-        target.platform === "win32"
-          ? undefined
-          : { maxEntries: 128, maxExpandedBytes: 512 * 1024 * 1024 },
-      );
+      expect(resolveReviewedCodexArtifact(target)?.extractionLimits).toEqual({
+        maxEntries: 128,
+        maxExpandedBytes: 512 * 1024 * 1024,
+      });
     }
   });
 

@@ -138,11 +138,7 @@ function WorkspaceFilesMenu(props: {
             onValueChange={(value) => props.onViewChange(value as ProjectDirectoryView)}
           >
             {FILE_VISIBILITY_OPTIONS.map((option) => (
-              <MenuRadioItem
-                key={option.value}
-                value={option.value}
-                className="data-highlighted:bg-primary/8 data-highlighted:text-foreground"
-              >
+              <MenuRadioItem key={option.value} value={option.value}>
                 {option.label}
               </MenuRadioItem>
             ))}
@@ -168,7 +164,6 @@ function FileSearchField(props: {
       value={props.value}
       aria-label={props.ariaLabel}
       placeholder="Search files"
-      className="placeholder:text-placeholder/80"
       spellCheck={false}
       autoFocus={autoFocus}
       onChange={(event) => props.onValueChange(event.target.value)}
@@ -184,7 +179,7 @@ function FileSearchField(props: {
     <>
       <InputGroup
         variant="ghost"
-        className="h-7 min-w-0 flex-1 has-[input:focus-visible,textarea:focus-visible]:border-ring has-[input:focus-visible,textarea:focus-visible]:ring-0 @max-[14rem]/file-browser-header:hidden"
+        className="h-7 min-w-0 flex-1 @max-[14rem]/file-browser-header:hidden"
       >
         <InputGroupAddon>
           <SearchIcon aria-hidden className="size-3.5" />
@@ -211,13 +206,11 @@ function FileSearchField(props: {
           align="end"
           alignOffset={8}
           sideOffset={6}
-          viewportClassName="p-0"
-          className="w-48 max-w-[calc(100vw-2rem)] rounded-none! border-0! bg-transparent! p-0 shadow-none! before:hidden"
+          padding="none"
+          surface="bare"
+          className="w-48 max-w-[calc(100vw-2rem)]"
         >
-          <InputGroup
-            variant="ghost"
-            className="h-7 min-w-0 has-[input:focus-visible,textarea:focus-visible]:border-ring has-[input:focus-visible,textarea:focus-visible]:ring-0"
-          >
+          <InputGroup variant="ghost" className="h-7 min-w-0">
             <InputGroupAddon>
               <SearchIcon aria-hidden className="size-3.5" />
             </InputGroupAddon>
@@ -745,8 +738,7 @@ export default function FileBrowserPanel({
           <Button
             type="button"
             variant="ghost"
-            size="sm"
-            className="h-7 px-2 text-foreground"
+            size="compact"
             onClick={() => void treeControllerRef.current?.retry("")}
           >
             Retry

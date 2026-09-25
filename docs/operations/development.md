@@ -154,6 +154,24 @@ revision or working diff and reuse that evidence while the candidate is unchange
 can invalidate a result, rerun the affected check; broad shared-runtime, orchestration, packaging,
 or test-harness changes normally need wider requalification.
 See [ci.yml](../../.github/workflows/ci.yml) for hosted checks.
+The required `Test` check includes applicable native Compute suites. The selector
+in `.github/scripts/compute-ci-gate.mjs` distinguishes these inputs:
+
+- Preview-scanner changes and the real-kernel integration test files run the
+  Linux/macOS/Windows real-kernel matrix, without provisioning managed toolkits.
+- Managed live-test files and the managed `pyproject.toml`/`uv.lock` fixtures run
+  managed Python qualification, without the system-Python matrix.
+- Shared runtime, process ownership, persistence, workspace dependencies, Compute
+  contracts and test infrastructure run both. `ManagedPython*.ts` is shared too:
+  the existing-Python runtime imports it even when not provisioning an environment.
+- Unrelated UI/docs changes run neither. Mixed changes take the union; uncertain
+  diffs and JavaScript dependency lockfile changes retain both suites.
+
+Both suites remain enabled by default for reusable callers and manual dispatch;
+manual dispatch can also select either suite. Relevant pushes to main retain
+post-merge verification of the integrated tree. No cross-revision success cache or
+dependency-lock graph is used to skip checks. This uses the existing required
+`Test` check without separate branch-protection settings for conditional jobs.
 The [manual Windows lane](../../.github/workflows/windows-tests.yml) is available for focused
 Windows investigation while that suite is not a required gate.
 

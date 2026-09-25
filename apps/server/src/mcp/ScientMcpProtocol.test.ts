@@ -9,7 +9,11 @@ import { McpProtocol, McpServer, Tool, Toolkit } from "effect/unstable/ai";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import { HttpBody, HttpClient, HttpRouter, HttpServerRequest } from "effect/unstable/http";
 
-import { McpInvocationContext, type McpInvocationScope } from "./McpInvocationContext.ts";
+import {
+  McpInvocationContext,
+  type McpCapability,
+  type McpInvocationScope,
+} from "./McpInvocationContext.ts";
 import { WorkspaceBindingResolver } from "../scient/projectScope/WorkspaceBindingResolver.ts";
 import { WorkspaceBindingResolutionError } from "../scient/projectScope/WorkspaceBinding.ts";
 import { workspaceResolverForTest } from "../scient/projectScope/WorkspaceBindingTestUtils.ts";
@@ -35,6 +39,19 @@ const HostStatus = Tool.make("host_status", {
   dependencies: [McpInvocationContext],
 });
 const HostToolkit = Toolkit.make(HostStatus);
+const deviceParameters = Schema.Struct({ target: Schema.optional(Schema.String) });
+const makeDeviceTool = <const Name extends string>(name: Name) =>
+  Tool.make(name, {
+    parameters: deviceParameters,
+    success: Schema.String,
+    dependencies: [McpInvocationContext],
+  });
+const DeviceList = makeDeviceTool("device_list");
+const DeviceOpen = makeDeviceTool("device_open");
+const DeviceScreenshot = makeDeviceTool("device_screenshot");
+const DeviceClose = makeDeviceTool("device_close");
+const DeviceToolkit = Toolkit.make(DeviceList, DeviceOpen, DeviceScreenshot, DeviceClose);
+const deviceTools = Object.values(DeviceToolkit.tools);
 
 const scope = (actor: string): McpInvocationScope => ({
   environmentId: EnvironmentId.make("protocol-test"),
@@ -42,10 +59,26 @@ const scope = (actor: string): McpInvocationScope => ({
   providerSessionId: actor,
   providerInstanceId: ProviderInstanceId.make("codex"),
   issuedAt: 1,
-  capabilities: new Set(
-    actor === "browser" ? ["preview"] : actor === "workspace" ? ["sources:read"] : ["skills:read"],
+  capabilities: new Set<McpCapability>(
+    actor === "browser"
+      ? ["preview"]
+      : actor === "workspace"
+        ? ["sources:read"]
+        : actor === "skills"
+          ? ["skills:read"]
+          : actor === "device"
+            ? ["device"]
+            : [],
   ),
-  ...(actor === "skills" ? { skillScope: { skills: [], releases: new Map() } } : {}),
+  ...(actor === "skills"
+    ? {
+        skillScope: {
+          catalog: { status: "complete" as const, digest: `sha256:${"a".repeat(64)}` },
+          skills: [],
+          releases: new Map(),
+        },
+      }
+    : {}),
 });
 
 const decodeToolList = Schema.decodeUnknownEffect(
@@ -72,7 +105,10 @@ const transport = McpServer.layerHttp({
   version: "1",
   path: "/mcp",
   protocols: [ScientMcpProtocol],
-}).pipe(Layer.provide(Auth), Layer.provide(makeScientToolListLayer([HostStatus])));
+}).pipe(
+  Layer.provide(Auth),
+  Layer.provide(makeScientToolListLayer([HostStatus, ...deviceTools], deviceTools)),
+);
 const workspaceToolkit = Toolkit.make(ScientSourcesListTool);
 const routes = Layer.mergeAll(
   Layer.effectDiscard(McpServer.registerToolkit(HostToolkit)).pipe(
@@ -85,6 +121,16 @@ const routes = Layer.mergeAll(
               ? "host-ready"
               : yield* new HostDenied({ message: "Host policy denied this call." });
           }),
+      }),
+    ),
+  ),
+  Layer.effectDiscard(McpServer.registerToolkit(DeviceToolkit)).pipe(
+    Layer.provide(
+      DeviceToolkit.toLayer({
+        device_list: () => Effect.succeed("devices"),
+        device_open: () => Effect.succeed("opened"),
+        device_screenshot: () => Effect.succeed("screenshot"),
+        device_close: () => Effect.succeed("closed"),
       }),
     ),
   ),
@@ -153,7 +199,7 @@ it.effect("isolates concurrent MCP discovery and rejects calls outside each curr
         ),
       });
     const sessions = yield* Effect.forEach(
-      ["browser", "skills"],
+      ["browser", "skills", "device", "none"],
       (actor) =>
         Effect.gen(function* () {
           const initialized = yield* request(actor, "initialize", {
@@ -192,8 +238,17 @@ it.effect("isolates concurrent MCP discovery and rejects calls outside each curr
       "scient_skill_read_resource",
       "scient_skills_list",
     ]);
+    expect(lists[2]?.filter((name) => name.startsWith("device_")).toSorted()).toEqual([
+      "device_close",
+      "device_list",
+      "device_open",
+      "device_screenshot",
+    ]);
+    expect(lists[2]).toContain("host_status");
+    expect(lists[2]).not.toContain("scient_skills_list");
+    expect(lists[3]?.sort()).toEqual(["host_status"]);
     yield* Effect.forEach(
-      Array.from({ length: 64 }, (_, index) => sessions[index % 2]!),
+      Array.from({ length: 64 }, (_, index) => sessions[index % sessions.length]!),
       ({ actor, session }) =>
         Effect.gen(function* () {
           const response = yield* request(actor, "tools/list", {}, session);
@@ -201,9 +256,23 @@ it.effect("isolates concurrent MCP discovery and rejects calls outside each curr
           const body = yield* response.text;
           expect(body.includes('"name":"preview_snapshot"')).toBe(actor === "browser");
           expect(body.includes('"name":"scient_skill_load"')).toBe(actor === "skills");
+          expect(body.includes('"name":"device_list"')).toBe(actor === "device");
+          expect(body.includes('"name":"device_open"')).toBe(actor === "device");
+          expect(body.includes('"name":"device_screenshot"')).toBe(actor === "device");
+          expect(body.includes('"name":"device_close"')).toBe(actor === "device");
         }),
       { concurrency: 8 },
     );
+    // A provider settings change is applied when a fresh or resumed provider session receives
+    // its credential. The same MCP transport session must use that credential's current scope.
+    const deviceTransportSession = sessions[2]!.session;
+    const disabledDeviceList = yield* request("none", "tools/list", {}, deviceTransportSession);
+    const disabledDeviceBody = yield* disabledDeviceList.text;
+    expect(disabledDeviceBody).not.toContain('"name":"device_list"');
+    const enabledDeviceList = yield* request("device", "tools/list", {}, deviceTransportSession);
+    const enabledDeviceBody = yield* enabledDeviceList.text;
+    for (const name of ["device_list", "device_open", "device_screenshot", "device_close"])
+      expect(enabledDeviceBody).toContain(`"name":"${name}"`);
     const denied = yield* request(
       "browser",
       "tools/call",
@@ -276,5 +345,8 @@ it("rejects ambiguous tool ownership at composition", () => {
   );
   expect(() => makeScientToolListLayer([ScientSourcesListTool])).toThrow(
     "Ambiguous MCP tool ownership",
+  );
+  expect(() => makeScientToolListLayer([HostStatus], [DeviceList])).toThrow(
+    "MCP device tool is not declared as a host tool",
   );
 });

@@ -280,6 +280,60 @@ export const ScientLatexInverseSyncResult = Schema.Union([
 ]);
 export type ScientLatexInverseSyncResult = typeof ScientLatexInverseSyncResult.Type;
 
+export const ScientLatexRootEvidenceKind = Schema.Literals([
+  "context",
+  "magic-comment",
+  "self-document",
+  "static-dependency",
+  "project-document",
+]);
+export type ScientLatexRootEvidenceKind = typeof ScientLatexRootEvidenceKind.Type;
+
+export const ScientLatexRootCandidate = Schema.Struct({
+  rootRelativePath: PathString,
+  evidence: Schema.Array(ScientLatexRootEvidenceKind).check(Schema.isMaxLength(8)),
+  independentlyCompilable: Schema.Boolean,
+});
+export type ScientLatexRootCandidate = typeof ScientLatexRootCandidate.Type;
+
+export const ScientLatexResolutionIncompleteReason = Schema.Literals([
+  "scan-limit",
+  "file-too-large",
+  "dynamic-input",
+  "unsupported-command",
+  "unreadable-file",
+]);
+export type ScientLatexResolutionIncompleteReason =
+  typeof ScientLatexResolutionIncompleteReason.Type;
+
+const ScientLatexResolutionShared = {
+  sourceRelativePath: PathString,
+  candidates: Schema.Array(ScientLatexRootCandidate).check(Schema.isMaxLength(64)),
+  complete: Schema.Boolean,
+  incompleteReasons: Schema.Array(ScientLatexResolutionIncompleteReason).check(
+    Schema.isMaxLength(8),
+  ),
+} as const;
+
+export const ScientLatexResolveRequest = Schema.Struct({
+  workspaceRoot: PathString,
+  sourceRelativePath: PathString,
+  /** A root explicitly chosen earlier or carried by navigation from a PDF. */
+  contextRootRelativePath: Schema.optional(PathString),
+});
+export type ScientLatexResolveRequest = typeof ScientLatexResolveRequest.Type;
+
+export const ScientLatexResolveResult = Schema.Union([
+  Schema.TaggedStruct("resolved", {
+    ...ScientLatexResolutionShared,
+    rootRelativePath: PathString,
+    reason: ScientLatexRootEvidenceKind,
+  }),
+  Schema.TaggedStruct("ambiguous", ScientLatexResolutionShared),
+  Schema.TaggedStruct("unresolved", ScientLatexResolutionShared),
+]);
+export type ScientLatexResolveResult = typeof ScientLatexResolveResult.Type;
+
 export const ScientLatexToolchainRequest = Schema.Struct({
   refresh: Schema.Boolean,
 });

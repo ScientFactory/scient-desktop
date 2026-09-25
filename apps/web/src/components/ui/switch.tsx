@@ -12,9 +12,14 @@ import { cn } from "~/lib/utils";
 function Switch({
   className,
   size = "default",
+  motion = "default",
   mixed = false,
   ...props
-}: SwitchPrimitive.Root.Props & { size?: "default" | "sm"; mixed?: boolean }) {
+}: SwitchPrimitive.Root.Props & {
+  size?: "default" | "sm";
+  motion?: "default" | "none";
+  mixed?: boolean;
+}) {
   return (
     <SwitchPrimitive.Root
       className={cn(
@@ -22,12 +27,17 @@ function Switch({
         size === "sm"
           ? "[--thumb-size:--spacing(4)] sm:[--thumb-size:--spacing(3.5)]"
           : "[--thumb-size:--spacing(5)] sm:[--thumb-size:--spacing(4)]",
+        motion === "none" && "transition-none",
         className,
       )}
       data-size={size}
+      data-motion={motion}
       data-slot="switch"
       data-mixed={mixed ? "" : undefined}
-      aria-checked={mixed ? "mixed" : props.checked}
+      // Base UI copies every key we pass, even `undefined`, over its own
+      // aria-checked. Only pass the attribute when mixed so the real state
+      // survives for screen readers.
+      {...(mixed ? { "aria-checked": "mixed" as const } : {})}
       {...props}
     >
       <SwitchPrimitive.Thumb
@@ -35,6 +45,7 @@ function Switch({
           "pointer-events-none block size-[calc(var(--thumb-size)-2px)] shrink-0 origin-left in-[[role=switch]:active,[data-slot=label]:active,[data-slot=field-label]:active]:not-data-disabled:scale-x-110 in-[[role=switch]:active,[data-slot=label]:active,[data-slot=field-label]:active]:rounded-[var(--thumb-size)/calc(var(--thumb-size)*1.1)] rounded-(--thumb-size) bg-background shadow-sm/5 will-change-transform [transition:translate_.15s,border-radius_.15s,scale_.1s_.1s,transform-origin_.15s] data-checked:origin-right data-checked:translate-x-[calc(var(--thumb-size)-4px)]",
           mixed &&
             "translate-x-[calc((var(--thumb-size)-4px)/2)] opacity-70 data-checked:translate-x-[calc((var(--thumb-size)-4px)/2)]",
+          motion === "none" && "transition-none",
         )}
         data-slot="switch-thumb"
       />

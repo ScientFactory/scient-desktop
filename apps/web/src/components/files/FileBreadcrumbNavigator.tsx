@@ -118,7 +118,7 @@ function FileBreadcrumbPickerMenu(props: {
       sideOffset={6}
     >
       <MenuGroup>
-        <MenuGroupLabel className="flex min-w-0 items-center gap-1.5">
+        <MenuGroupLabel className="flex min-w-0 items-center">
           <Tooltip>
             <TooltipTrigger render={<span className="min-w-0 truncate" />}>
               {directoryLabel}
@@ -148,7 +148,7 @@ function FileBreadcrumbPickerMenu(props: {
                   key={entry.path}
                   closeOnClick={entry.kind === "file"}
                   data-current-file={currentFile}
-                  className="data-[current-file=true]:bg-accent/60"
+                  variant={currentFile ? "selected" : "default"}
                   onClick={() => {
                     if (entry.kind === "directory") {
                       browseDirectory(entry.path);

@@ -85,6 +85,7 @@ const resolvePlan = (
   snapshot: ScientSkillPolicy.ScientSkillPolicySnapshot,
   input: Parameters<ScientSkillSession.ScientSkillSessionPlannerShape["resolve"]>[0],
   defaultActiveById?: ReadonlyMap<string, boolean>,
+  snapshotIsComplete = true,
 ) =>
   Effect.gen(function* () {
     const planner = yield* ScientSkillSession.ScientSkillSessionPlanner;
@@ -95,7 +96,7 @@ const resolvePlan = (
         Layer.provide(
           Layer.merge(
             ScientSkillRegistry.layerFromCatalog(catalog, defaultActiveById),
-            ScientSkillPolicy.layerFromSnapshot(snapshot),
+            ScientSkillPolicy.layerFromSnapshot(snapshot, snapshotIsComplete),
           ),
         ),
       ),
@@ -141,6 +142,7 @@ describe("Scient skill session planning", () => {
         },
       );
       expect(untrusted.delivery).toBe("none");
+      expect(untrusted.catalogStatus).toBe("complete");
       expect(untrusted.diagnostics.map((entry) => entry.code)).toContain("project-lock-untrusted");
 
       const trustedSnapshot: ScientSkillPolicy.ScientSkillPolicySnapshot = {
@@ -336,8 +338,64 @@ describe("Scient skill session planning", () => {
         { provider: ProviderDriverKind.make("codex"), projectRoot },
       );
       expect(plan.delivery).toBe("none");
+      expect(plan.catalogStatus).toBe("complete");
       expect(plan.releases).toEqual(new Map());
       expect(plan.diagnostics).toEqual([]);
+    }),
+  );
+
+  it.effect("marks unreadable activation sources as incomplete instead of empty", () =>
+    Effect.gen(function* () {
+      const projectRoot = yield* Effect.promise(() => fixture("scient-invalid-skill-lock-"));
+      yield* Effect.promise(() => initializeScientProject({ root: projectRoot }));
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          NodePath.join(projectRoot, ".scient", "skills.lock.json"),
+          "not-json\n",
+          "utf8",
+        ),
+      );
+
+      const snapshot = { userSkills: [], projectSkills: [], trustedProjects: [] };
+      const invalidLock = yield* resolvePlan({ releases: [], diagnostics: [] }, snapshot, {
+        provider: ProviderDriverKind.make("codex"),
+        projectRoot,
+      });
+      expect(invalidLock.delivery).toBe("none");
+      expect(invalidLock.catalogStatus).toBe("incomplete");
+      expect(invalidLock.diagnostics).toContainEqual(
+        expect.objectContaining({ code: "project-lock-invalid" }),
+      );
+
+      const invalidIdentityRoot = yield* Effect.promise(() =>
+        fixture("scient-invalid-project-identity-"),
+      );
+      yield* Effect.promise(() => initializeScientProject({ root: invalidIdentityRoot }));
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          NodePath.join(invalidIdentityRoot, ".scient", "project.json"),
+          "not-json\n",
+          "utf8",
+        ),
+      );
+      const invalidIdentity = yield* resolvePlan({ releases: [], diagnostics: [] }, snapshot, {
+        provider: ProviderDriverKind.make("codex"),
+        projectRoot: invalidIdentityRoot,
+      });
+      expect(invalidIdentity.catalogStatus).toBe("incomplete");
+      expect(invalidIdentity.diagnostics).toContainEqual(
+        expect.objectContaining({ code: "project-skill-invalid" }),
+      );
+
+      const unreadablePolicy = yield* resolvePlan(
+        { releases: [], diagnostics: [] },
+        snapshot,
+        { provider: ProviderDriverKind.make("codex") },
+        undefined,
+        false,
+      );
+      expect(unreadablePolicy.delivery).toBe("none");
+      expect(unreadablePolicy.catalogStatus).toBe("incomplete");
     }),
   );
 

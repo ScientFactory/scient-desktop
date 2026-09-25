@@ -36,7 +36,9 @@ describe("managed runtime files", () => {
     { platform: "darwin", entries: 54, passes: true },
     { platform: "linux", entries: 128, passes: true },
     { platform: "linux", entries: 129, passes: false },
-    { platform: "win32", entries: 33, passes: false },
+    { platform: "win32", entries: 51, passes: true },
+    { platform: "win32", entries: 128, passes: true },
+    { platform: "win32", entries: 129, passes: false },
   ] as const)(
     "enforces the Codex $platform budget at $entries entries",
     async ({ platform, entries, passes }) => {
@@ -69,6 +71,28 @@ describe("managed runtime files", () => {
         );
     },
   );
+
+  it("keeps the shared Windows extraction default at 32 entries", async () => {
+    const root = await temporaryRoot();
+    const source = NodePath.join(root, "source");
+    const archive = NodePath.join(root, "codex-package.tar.gz");
+    const executablePath = "codex.exe";
+    const members = [executablePath, ...Array.from({ length: 32 }, (_, i) => `voice-library-${i}`)];
+    await NodeFSP.mkdir(source);
+    await Promise.all(members.map((name) => NodeFSP.writeFile(NodePath.join(source, name), "x")));
+    await Tar.c({ cwd: source, file: archive, gzip: true }, members);
+
+    await expect(
+      materializeManagedRuntimeArtifact({
+        archivePath: archive,
+        archiveFormat: "tar.gz",
+        destination: NodePath.join(root, "destination"),
+        executablePath,
+        platform: "win32",
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("33 entries (limit 32)");
+  });
 
   it("verifies exact SHA-256 digests", async () => {
     const root = await temporaryRoot();

@@ -1,5 +1,5 @@
 import { EllipsisIcon, PaletteIcon, RefreshCwIcon } from "lucide-react";
-import { useRef, useState, type ReactNode } from "react";
+import { useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { Button } from "~/components/ui/button";
 import { Menu, MenuItem, MenuTrigger } from "~/components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
@@ -22,13 +22,15 @@ export function ScientImageActionMenu({
   busy,
   run,
   details,
-  triggerClassName,
+  triggerSize = "icon-xs",
+  triggerVariant = "ghost-muted",
 }: {
   readonly actions: readonly ScientImageAction[];
   readonly busy: boolean;
   readonly run: (action: ScientImageAction) => void;
   readonly details?: ReactNode;
-  readonly triggerClassName?: string;
+  readonly triggerSize?: ComponentProps<typeof Button>["size"];
+  readonly triggerVariant?: ComponentProps<typeof Button>["variant"];
 }) {
   const pendingAction = useRef<ScientImageAction | null>(null);
   const [handingOffFocus, setHandingOffFocus] = useState(false);
@@ -54,10 +56,9 @@ export function ScientImageActionMenu({
               render={
                 <Button
                   aria-label="More image actions"
-                  className={cn("chat-markdown-chrome-action", triggerClassName)}
-                  size="icon-xs"
+                  size={triggerSize}
                   type="button"
-                  variant="ghost"
+                  variant={triggerVariant}
                 />
               }
             />

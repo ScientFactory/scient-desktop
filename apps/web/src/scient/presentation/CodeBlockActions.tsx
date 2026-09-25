@@ -1,4 +1,4 @@
-import { CheckIcon, CopyIcon, WrapTextIcon } from "lucide-react";
+import { CheckIcon, CopyIcon, PlayIcon, WrapTextIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -23,11 +23,15 @@ export function CodeBlockActions({
   onWrapChange,
   readCode,
   onCopyFailure,
+  onRunShellCommand,
+  isStreaming = false,
 }: {
   readonly wrapped: boolean;
   readonly onWrapChange: (wrapped: boolean) => void;
   readonly readCode: () => string;
   readonly onCopyFailure?: (cause: unknown) => void;
+  readonly onRunShellCommand?: ((command: string) => void) | undefined;
+  readonly isStreaming?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -41,6 +45,15 @@ export function CodeBlockActions({
   }, []);
   const wrapLabel = wrapped ? "Disable line wrap" : "Wrap lines";
   const copyLabel = copied ? "Copied" : "Copy code";
+  const source = readCode();
+  const command = source.trim();
+  const canRun =
+    onRunShellCommand !== undefined &&
+    !isStreaming &&
+    command.length > 0 &&
+    source.endsWith("\n") &&
+    !command.endsWith("\\") &&
+    !/[\p{Cc}\p{Cf}]/u.test(source.slice(0, -1));
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(readCode());
@@ -70,7 +83,6 @@ export function CodeBlockActions({
               type="button"
               variant="ghost"
               size="icon-xs"
-              className="chat-markdown-chrome-action"
               aria-pressed={wrapped}
               onClick={() => onWrapChange(!wrapped)}
               aria-label={wrapLabel}
@@ -81,6 +93,24 @@ export function CodeBlockActions({
         </TooltipTrigger>
         <TooltipPopup side="top">{wrapLabel}</TooltipPopup>
       </Tooltip>
+      {canRun ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                type="button"
+                variant="ghost-muted"
+                size="icon-xs"
+                onClick={() => onRunShellCommand?.(command)}
+                aria-label="Run in terminal"
+              />
+            }
+          >
+            <PlayIcon className="size-3" />
+          </TooltipTrigger>
+          <TooltipPopup side="top">Run in terminal</TooltipPopup>
+        </Tooltip>
+      ) : null}
       <Tooltip>
         <TooltipTrigger
           render={
@@ -88,7 +118,6 @@ export function CodeBlockActions({
               type="button"
               variant="ghost"
               size="icon-xs"
-              className="chat-markdown-chrome-action"
               onClick={() => void copy()}
               aria-label={copyLabel}
             />

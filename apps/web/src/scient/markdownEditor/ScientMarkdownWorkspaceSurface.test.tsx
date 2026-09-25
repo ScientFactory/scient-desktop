@@ -1149,7 +1149,7 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     const findInput = findBar?.querySelector<HTMLInputElement>("[aria-label='Find text']");
     const findInputGroup = findInput?.closest<HTMLElement>("[data-slot='input-group']");
     expect(findInputGroup).not.toBeNull();
-    expect(findInputGroup?.className).toContain("ring-0");
+    expect(findInputGroup?.className).toContain("shadow-none");
     expect(
       findBar?.querySelector("[aria-label='Match case'] svg")?.classList.contains("size-3.5"),
     ).toBe(true);
@@ -1164,7 +1164,7 @@ describe("ScientMarkdownWorkspaceSurface", () => {
       "[data-slot='input-group']",
     );
     expect(replacementInputGroup).not.toBeNull();
-    expect(replacementInputGroup?.className).toContain("ring-0");
+    expect(replacementInputGroup?.className).toContain("shadow-none");
     expect(
       findBar
         ?.querySelector("[aria-label='Replace current match'] svg")

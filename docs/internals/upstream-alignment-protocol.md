@@ -35,9 +35,9 @@ mobile activation, or a product-policy change.
 Before mutation:
 
 - verify the canonical Scient checkout, current `origin/main`, all worktrees, and dirty state;
-- use the exact fetched `origin/main` as the owned base; fast-forward local `main` only when
-  its checkout is clean and that move is safe. A dirty or independently used local `main`
-  must remain untouched and must not block an isolated alignment;
+- use the exact fetched `origin/main` as the owned base when starting the alignment; fast-forward
+  local `main` only when its checkout is clean and that move is safe. A dirty or independently used
+  local `main` must remain untouched and must not block an isolated alignment;
 - fetch `origin` and the official `upstream` remote, and verify upstream's push URL is `DISABLED`;
 - read `AGENTS.md`, `UPSTREAM.md`, `upstream-state.json`, the D4 bootstrap record, and the latest
   dated alignment receipt;
@@ -62,10 +62,22 @@ pnpm alignment:start --base <owned-base-sha> --target <official-target-sha> \
 It checks that the owned base contains current `origin/main`, the prior integration is in both
 histories, the target belongs to official `upstream/main`, and upstream push remains disabled.
 It reports the complete official commit range, changed paths, all overlapping paths, and predicted
-textual conflicts. `--format json` provides the complete machine-readable inventory.
+textual conflicts. It also highlights changed quality-policy files, shared web UI primitives, and
+shared contracts as **advisory downstream-impact signals**. These are not conflict counts, proof of
+breakage, or blockers: inspect the actual diff and consumers, including Scient files upstream did
+not touch. A changed file outside these categories still requires normal review. `--format json`
+provides the complete machine-readable inventory.
 For read-only qualification against an older base already in current owned history,
 `plan --historical --base <old-sha> --target <old-target-sha>` permits that base;
 `start` never accepts `--historical`.
+For an existing, committed alignment branch, use
+`pnpm alignment:plan --existing --base HEAD --target <new-official-target-sha>` from that
+worktree. This read-only mode requires its recorded upstream merge and branch name and reports
+when owned main needs a later catch-up; it neither verifies PR identity nor creates a worktree.
+Verify the open PR separately. Finish any current merge before using it; do not combine it with
+`--historical`. If a legitimate branch rename makes this advisory plan unavailable, verify its
+ancestry manually and repair the recorded branch name; do not restart the alignment to satisfy
+the helper.
 `start` requires full frozen SHAs, creates a new dedicated worktree, and runs Git's ordinary
 `--no-ff --no-commit --no-rerere-autoupdate` merge. A clean merge remains uncommitted; a conflict
 remains unresolved. It does not stage, advance the cursor, commit, push, or accept a resolution.
@@ -85,6 +97,14 @@ conflicts. This predicts work; it does not prove safety. Auto-merged overlapping
 same semantic review as conflict files because Git can concatenate incompatible assumptions without
 raising a marker. In particular, trace single-owner mounts and coordinator registration through
 their callers; a clean merge can mount the same behavior twice.
+
+Look beyond overlaps when upstream changes a shared API or a quality gate. Trace its untouched
+Scient consumers and the affected server, web, desktop, or mobile entry points. For example, a lint
+rule changing from advisory to mandatory can fail Scient-only files even when Git reports no
+conflict. If a previous receipt records an upstream deprecation, warning ceiling, or migration
+debt, check whether this range enforces it; record the scope and stable replacement API before
+starting a broad rewrite. An impact signal is a prompt for this review, not an instruction to run
+every possible test or to accept an upstream policy without composition.
 
 Git's recorded conflict resolutions (`rerere`) may fill a working-tree file, but `start` leaves
 the index unresolved until the agent inspects and stages it. Reuse is not acceptance evidence.
@@ -125,6 +145,41 @@ Do not resolve a substantial conflict by taking one whole side without checking 
 their callers. Preserve immutable migration order; an upstream migration number that collides with a
 shipped Scient migration must be renumbered, never reused.
 
+### Extend an existing alignment PR
+
+Continue in its current branch and worktree; do **not** use `alignment:start` or create another
+worktree for new upstream commits. Verify the open PR, clean or in-progress merge state, recorded
+integration boundary, and current remotes. Finish and review an in-progress merge before beginning
+another. Freeze one new official target, use the read-only `plan --existing` to inventory it, then
+merge that exact commit with
+`git merge --no-ff --no-commit --no-rerere-autoupdate <target-sha>`. Review the new overlap and
+downstream impact, qualify the composed candidate, and update the same receipt, state, and PR.
+New upstream commits observed while composing are a later extension, not a reason to keep moving
+this pass's target. The user can request another extension on the same PR.
+
+### If owned main advances during the alignment
+
+Keep the reviewed alignment branch and its original upstream merge. Once that merge is committed
+and the worktree is clean, fetch `origin/main`, freeze its new commit ID, and confirm it contains
+the original owned base. Merge that exact owned-main commit into the alignment branch with
+`git merge --no-ff --no-commit --no-rerere-autoupdate <new-owned-main-sha>`. Inspect both sides of
+new conflicts and all overlapping changes, including cleanly merged files, before staging and
+committing the catch-up. A recorded `rerere` resolution is a proposal to review, not acceptance.
+
+This owned-main catch-up preserves the original merge and its official second parent. Do not
+cherry-pick main's commits, replay the upstream merge, or restart on a fresh branch merely because
+main moved. If the upstream merge is still uncommitted, finish and review it before catching up;
+Git cannot begin another merge while it is in progress. If new main already contains the alignment
+or changes its upstream or protected-policy boundary, reassess the branch rather than applying the
+ordinary catch-up mechanically. Recreate the alignment only when its existing merge cannot be
+safely carried forward, and record the reason.
+
+Review the new owned changes against the composed behavior, run focused checks for their overlap,
+then run the final gates and the upstream provenance check against the resulting candidate and
+current owned main. In the receipt, retain the original owned base and upstream merge ID and also
+record the owned-main commit and catch-up merge ID. The catch-up does not advance `integrationBase`
+or replace `lastRefreshMerge` with an owned-main merge.
+
 ## 4. Audit protected seams
 
 Every alignment explicitly reviews:
@@ -151,7 +206,17 @@ entire staged diff for conflict markers, duplicated branches, stale product copy
 changes, and silently reintroduced upstream authority. Regenerate generated artifacts and lockfiles
 from the composed sources; do not hand-edit generated conflict blocks.
 
-The final local gate uses the repository versions of Node and pnpm and includes:
+When a quality rule, shared UI API, or cross-client contract changes, resolve the merge and run the
+**affected broad static check early** (for example web lint or affected-package typecheck), before
+an expensive full test run. Group diagnostics by underlying contract and fix repeated patterns
+coherently. A mechanical edit is safe only with exact preconditions and reviewed behavior; do not
+silence a rule, widen an exception, or create a shared variant solely to make diagnostics disappear.
+Use an existing generic variant when it preserves behavior. Put genuinely reusable appearance in a
+small shared variant or size; keep feature-specific composition feature-owned. Check focus,
+disabled, responsive, pointer, and dark/light behavior when visuals change.
+
+After the upstream merge, expected owned-main catch-up, and code composition stabilize, run the
+complete local gate once using the repository versions of Node and pnpm:
 
 ```text
 pnpm exec vp fmt --check
@@ -164,6 +229,14 @@ pnpm run brand:check
 git diff --cached --check
 git diff --check
 ```
+
+Record the checked revision and results. If later edits change only maintainer documentation or
+formatting, reuse unaffected runtime-test evidence after inspecting the exact diff. For code,
+fixtures, generated inputs, contracts, or dependencies, rerun the checks those edits can affect;
+shared contracts and test setup commonly require wider requalification. Diagnose a single failed
+or load-sensitive lane before rerunning the entire matrix, and report a partial aggregate result
+honestly. Hosted CI still checks the final pushed revision. This ordering does not remove any final
+gate or replace behavioral, visual, or protected-seam review.
 
 The four Scient seam commands now share one snapshot/diff implementation and their existing
 manifests. During composition, run
@@ -189,19 +262,25 @@ interaction review. Automated checks do not establish visual acceptance.
 
 Create a dated receipt under `docs/internals/` that records:
 
-- exact owned base, previous official boundary, target, range, target tag, merge commit, branch, and
-  disabled upstream push boundary;
+- exact owned base, previous official boundary, target, range, target tag, upstream merge commit,
+  any later owned-main catch-up commits, branch, and disabled upstream push boundary;
 - integrated behavior and any activation held behind a tested compatibility or policy gate
   (not omitted upstream commits);
 - every meaningful conflict composition and any semantic issue found after Git's merge;
 - protected-boundary results and temporary compatibility gates;
-- exact verification performed, including skipped platform or live-provider checks; and
+- exact verification performed, including skipped platform or live-provider checks;
+- emerging upstream enforcement/deprecation debt, with a measured scope and follow-up condition
+  when applicable; and
 - the publication boundary.
 
 Only after the history-preserving merge exists and its gate passes should `upstream-state.json` and
 the current pointer in `UPSTREAM.md` advance to that exact target and merge. Push a draft pull request
 for review. Do not merge to `main`, publish, or clean the worktree until review and user acceptance
 authorize those separate actions.
+
+In `UPSTREAM.md`, identify the alignment's Scient pull request by number without describing whether
+the PR is open, draft, or merged. Its current lifecycle is directly checkable on GitHub, and the
+integration record should not need a follow-up edit just to keep that status current.
 
 ## Stop conditions
 

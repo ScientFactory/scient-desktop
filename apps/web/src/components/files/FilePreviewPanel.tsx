@@ -353,7 +353,7 @@ function WorkspaceImagePreview(props: {
     </div>
   ) : (
     <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
-      <Spinner className="size-5" />
+      <Spinner size="lg" />
     </div>
   );
 }
@@ -421,7 +421,7 @@ function WorkspaceBrowserPreview(props: {
   if (assetUrl._tag !== "Success") {
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
-        <Spinner className="size-5" />
+        <Spinner size="lg" />
       </div>
     );
   }
@@ -1250,7 +1250,7 @@ export function EditableFileEditor({
                         {enableFileComments ? (
                           <button
                             type="button"
-                            className="flex size-5 cursor-pointer items-center justify-center rounded-[4px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                            className="flex size-5 cursor-pointer items-center justify-center rounded-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                             aria-label="Add comment"
                             onClick={() => {
                               const hoveredLine = getHoveredLine();
@@ -1762,10 +1762,11 @@ export default function FilePreviewPanel({
           data-surface-subheader
         >
           <ScrollArea
+            radius="none"
             ref={breadcrumbRef}
             hideScrollbars
             scrollFade
-            className="min-w-0 flex-1 rounded-none"
+            className="min-w-0 flex-1"
             data-file-breadcrumbs
           >
             {isHostFile ? (
@@ -2026,7 +2027,7 @@ export default function FilePreviewPanel({
             </div>
           ) : relativePath && file.data === null ? (
             <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
-              <Spinner className="size-5" />
+              <Spinner size="lg" />
             </div>
           ) : relativePath && file.data ? (
             file.data.readOnly && !markdownLease ? (

@@ -116,6 +116,11 @@ describe("ProviderRuntimeSummary", () => {
 
   it("keeps runtime diagnostics optional for older servers and cached snapshots", () => {
     expect(decodeRuntimeSummary(summary)).not.toHaveProperty("diagnostics");
+    expect(decodeRuntimeSummary(summary)).not.toHaveProperty("availableManagedVersion");
+    expect(
+      decodeRuntimeSummary({ ...summary, availableManagedVersion: "0.156.1" })
+        .availableManagedVersion,
+    ).toBe("0.156.1");
   });
 
   it("decodes display-only runtime diagnostics without credential fields", () => {

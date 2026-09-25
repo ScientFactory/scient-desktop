@@ -95,6 +95,7 @@ it.effect("snapshots and returns an isolated exact skill scope", () =>
       providerInstanceId: ProviderInstanceId.make("codex"),
       capabilities: new Set(["skills:read"]),
       skillScope: {
+        catalog: { status: "complete", digest: `sha256:${"d".repeat(64)}` },
         releases: requestedReleases,
         skills: [
           {
@@ -114,6 +115,7 @@ it.effect("snapshots and returns an isolated exact skill scope", () =>
     requestedReleases.clear();
     const first = yield* registry.resolve(token);
     expect(first?.skillScope).toEqual({
+      catalog: { status: "complete", digest: `sha256:${"d".repeat(64)}` },
       releases: new Map([[releaseKey, release]]),
       skills: [
         {
@@ -146,10 +148,12 @@ it.effect("atomically replaces only the target thread's exact skill scope", () =
       threadId,
       providerInstanceId: ProviderInstanceId.make("codex"),
       capabilities: new Set(["skills:read"]),
-      skillScope: { releases: new Map(), skills: [] },
+      skillScope: { catalog: { status: "pending" }, releases: new Map(), skills: [] },
     });
     const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+    expect((yield* registry.resolve(token))?.skillScope?.catalog).toEqual({ status: "pending" });
     const replacement = {
+      catalog: { status: "complete" as const, digest: `sha256:${"e".repeat(64)}` },
       releases: new Map([[releaseKey, release]]),
       skills: [
         {
@@ -169,6 +173,7 @@ it.effect("atomically replaces only the target thread's exact skill scope", () =
     replacement.skills[0]!.name = "mutated";
 
     expect((yield* registry.resolve(token))?.skillScope).toEqual({
+      catalog: { status: "complete", digest: `sha256:${"e".repeat(64)}` },
       releases: new Map([[releaseKey, release]]),
       skills: [
         {

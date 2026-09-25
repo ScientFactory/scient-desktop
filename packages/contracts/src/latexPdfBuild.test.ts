@@ -23,6 +23,20 @@ describe("Scient LaTeX PDF build contract", () => {
     ).toThrow();
   });
 
+  it("accepts an explicit project root when a source is shared between documents", () => {
+    expect(
+      decodeInput({
+        sourcePath: "chapters/results.tex",
+        rootSourcePath: "paper/main.tex",
+        outputPath: "outputs/paper.pdf",
+      }),
+    ).toEqual({
+      sourcePath: "chapters/results.tex",
+      rootSourcePath: "paper/main.tex",
+      outputPath: "outputs/paper.pdf",
+    });
+  });
+
   it("hands the desktop only the resolved project-relative LaTeX root", () => {
     expect(
       decodePresentation({ sourcePath: "paper/chapter.tex", rootSourcePath: "paper/main.tex" }),

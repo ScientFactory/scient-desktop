@@ -1,4 +1,12 @@
-import { ExternalLinkIcon, ChevronRightIcon, RefreshCwIcon, SigmaIcon } from "lucide-react";
+import {
+  ChartNoAxesCombinedIcon,
+  ChevronRightIcon,
+  DatabaseIcon,
+  ExternalLinkIcon,
+  RefreshCwIcon,
+  SigmaIcon,
+  type LucideIcon,
+} from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import * as Schema from "effect/Schema";
 import type {
@@ -28,6 +36,8 @@ import juliaLogo from "~/assets/compute/julia.svg";
 import rLogo from "~/assets/compute/r.svg";
 import rustLogo from "~/assets/compute/rust.svg";
 import spssLogo from "~/assets/compute/spss.svg";
+import octaveLogo from "~/assets/compute/octave.svg";
+import wolframLogo from "~/assets/compute/wolfram.svg";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import {
@@ -76,6 +86,12 @@ const LANGUAGE_LOGOS: Readonly<Record<string, string>> = {
   r: rLogo,
   rust: rustLogo,
   spss: spssLogo,
+  octave: octaveLogo,
+  wolfram: wolframLogo,
+};
+const LANGUAGE_SYMBOLS: Readonly<Record<string, LucideIcon>> = {
+  sql: DatabaseIcon,
+  stata: ChartNoAxesCombinedIcon,
 };
 // Presentation-only previews; these must not become runtime inventory entries.
 const UPCOMING_LANGUAGES = [
@@ -339,8 +355,7 @@ function LanguageRuntimeSummary({
       return (
         <Button
           size="xs"
-          variant="outline"
-          className="text-primary"
+          variant="primary-outline"
           disabled={disabled || (isMatlab && !selectedInstallation)}
           onClick={() => void runtime.act("update")}
         >
@@ -937,6 +952,7 @@ function EnvironmentScientificComputingSettings({
             <SettingsSourceStrip label="Scientific computing languages">
               {languageItems.map((language, index) => {
                 const languageId = language.id;
+                const LanguageSymbol = LANGUAGE_SYMBOLS[languageId] ?? SigmaIcon;
                 return (
                   <SettingsSourceStripItem
                     key={languageId}
@@ -960,7 +976,11 @@ function EnvironmentScientificComputingSettings({
                           )}
                         />
                       ) : (
-                        <SigmaIcon className="size-6 shrink-0" />
+                        <LanguageSymbol
+                          aria-hidden="true"
+                          data-language-icon={languageId}
+                          className="size-6 shrink-0"
+                        />
                       )
                     }
                     onToggle={() => {

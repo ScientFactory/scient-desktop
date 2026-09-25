@@ -142,6 +142,8 @@ export function isProviderUpdateCandidate(
   return (
     provider.enabled &&
     provider.connection?.runtime?.source !== "scient_managed" &&
+    provider.compatibilityAdvisory?.latestVersionStatus !== "broken" &&
+    provider.compatibilityAdvisory?.latestVersionStatus !== "unsupported" &&
     provider.versionAdvisory?.status === "behind_latest" &&
     provider.versionAdvisory.latestVersion !== null
   );
@@ -162,6 +164,8 @@ export function isProviderSettingsUpdateCandidate(
 ): provider is ProviderSettingsUpdateCandidate {
   return (
     provider.enabled &&
+    provider.compatibilityAdvisory?.latestVersionStatus !== "broken" &&
+    provider.compatibilityAdvisory?.latestVersionStatus !== "unsupported" &&
     provider.versionAdvisory?.status === "behind_latest" &&
     provider.versionAdvisory.canUpdate === true &&
     provider.versionAdvisory.updateCommand !== null
@@ -663,6 +667,70 @@ export interface LocalEnvironmentUpdateGroup {
   readonly candidates: ProviderUpdateCandidate[];
   /** Full provider list for this environment, used to derive live update progress. */
   readonly providers: ReadonlyArray<ServerProvider>;
+}
+
+export interface ManagedRuntimeUpdateCandidate {
+  readonly environmentId: EnvironmentId;
+  readonly environmentLabel: string;
+  readonly provider: ServerProvider;
+  readonly installedVersion: string;
+  readonly availableVersion: string | null;
+}
+
+/** Managed-runtime offers use Scient's lifecycle actions, never T3 CLI advisories. */
+export function isManagedRuntimeUpdateCandidate(provider: ServerProvider): boolean {
+  const runtime = provider.connection?.runtime;
+  const operation = runtime?.operation;
+  const operationIsActive =
+    operation !== null &&
+    operation !== undefined &&
+    operation.status !== "succeeded" &&
+    operation.status !== "failed" &&
+    operation.status !== "cancelled";
+
+  return (
+    provider.enabled &&
+    provider.installed &&
+    runtime?.source === "scient_managed" &&
+    runtime.managedVersion !== null &&
+    runtime.actions.includes("update") &&
+    !operationIsActive
+  );
+}
+
+export function collectManagedRuntimeUpdateCandidates(
+  groups: ReadonlyArray<LocalEnvironmentUpdateGroup>,
+): ManagedRuntimeUpdateCandidate[] {
+  return groups.flatMap((group) =>
+    group.providers.flatMap((provider) => {
+      const runtime = provider.connection?.runtime;
+      if (!isManagedRuntimeUpdateCandidate(provider) || runtime?.managedVersion == null) return [];
+      return [
+        {
+          environmentId: group.environmentId,
+          environmentLabel: group.label,
+          provider,
+          installedVersion: runtime.managedVersion,
+          availableVersion: runtime.availableManagedVersion ?? null,
+        },
+      ];
+    }),
+  );
+}
+
+export function managedRuntimeUpdateNotificationKey(
+  candidates: ReadonlyArray<ManagedRuntimeUpdateCandidate>,
+): string | null {
+  const parts = candidates
+    .map(({ environmentId, provider, installedVersion, availableVersion }) => [
+      environmentId,
+      provider.driver,
+      provider.instanceId,
+      installedVersion,
+      availableVersion,
+    ])
+    .toSorted((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+  return parts.length > 0 ? `managed-runtime:${JSON.stringify(parts)}` : null;
 }
 
 /**

@@ -30,18 +30,18 @@ describe("shared raised settings surface", () => {
         disconnect = disconnect;
       },
     );
-    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
-      function (this: HTMLElement) {
-        const panel = this.hasAttribute("data-source-panel");
-        const trigger = this.tagName === "BUTTON";
-        return DOMRect.fromRect({
-          x: trigger ? labelLeft : 0,
-          y: panel ? 80 : 0,
-          width: trigger ? 100 : 600,
-          height: panel ? panelHeight : 60,
-        });
-      },
-    );
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      const panel = this.hasAttribute("data-source-panel");
+      const trigger = this.tagName === "BUTTON";
+      return DOMRect.fromRect({
+        x: trigger ? labelLeft : 0,
+        y: panel ? 80 : 0,
+        width: trigger ? 100 : 600,
+        height: panel ? panelHeight : 60,
+      });
+    });
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);

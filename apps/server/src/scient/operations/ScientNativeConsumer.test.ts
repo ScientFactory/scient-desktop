@@ -29,6 +29,7 @@ it.effect(
         issuedAt: 1,
         capabilities: new Set(["skills:read"]),
         skillScope: {
+          catalog: { status: "complete", digest: `sha256:${"f".repeat(64)}` },
           releases: new Map([[releaseKey, release]]),
           skills: [
             {
@@ -82,7 +83,16 @@ it.effect(
         imitation.toLayer({
           scient_skills_list: () => {
             called = true;
-            return Effect.succeed({ skills: [], total: 0, nextOffset: null });
+            return Effect.succeed({
+              skills: [],
+              total: 0,
+              nextOffset: null,
+              scope: {
+                status: "complete",
+                digest: `sha256:${"0".repeat(64)}`,
+                includesAllSkills: true,
+              },
+            });
           },
         }),
       ),

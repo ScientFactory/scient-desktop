@@ -25,6 +25,15 @@ Read `.repos/effect-smol/LLMS.md` before writing Effect code.
 Architecture details: `docs/internals/overview.md`.
 Terminology: `docs/internals/glossary.md`.
 
+## Shared quality defaults
+
+- Complexity belongs at the adapter boundary. Orchestration stays pure, UI stays dumb.
+- `apps/web/src/components/ui` exports own their look. Pick a `variant` or `size`; do not restyle one with `className`. If none fits and the look is a generic concept, add a variant to the component; a look that belongs to one feature stays in that feature's own component, not in `components/ui`. Layout classes (width, flex, margin, position) belong on the parent. `shadcn/no-restyle` fails lint on violations.
+- Inferred types over annotations. `any` is the enemy.
+- Comments describe how a thing is used, and move when the code moves. To be used mostly to describe functions, not to annotate every line of behavior.
+- Our users drive agents all day and notice a dropped frame, a lying spinner, and a stale label. No continuously repainting animations; they peg the GPU on high-refresh displays.
+- If a rule here fights the task in front of you, say so loudly and get a human sign-off before breaking it.
+
 ## Architectural boundaries
 
 - The server owns execution and workspace access. Clients may connect to another

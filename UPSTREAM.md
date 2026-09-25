@@ -46,17 +46,33 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current T3 alignment is recorded in
-[`docs/internals/2026-09-22-upstream-sync-9a609a4e44.md`](docs/internals/2026-09-22-upstream-sync-9a609a4e44.md)
-and in `upstream-state.json`. It extends the previous alignment through
-`1de563c1491c7d82563e4553bf5bf689ce6adbb9` with the exact 12 official commits
-through `9a609a4e444ba739d6fcd607769d68b679b0bcc5`. The history-preserving
-extension merge is `3af839a2f053e7fff7150023387d1df3761a12f7`, whose second
-parent is that exact official target.
+[`docs/internals/2026-09-25-upstream-sync-d4a33457.md`](docs/internals/2026-09-25-upstream-sync-d4a33457.md)
+and in `upstream-state.json`. Scient PR #369 carries this alignment, extending
+the integration through `d4a33457cb0da797728f4846a9da8592d7d81d36`: 24
+official commits from `e67abcf798f8c4d8458755e3b4dde02c2c1f628b`, merged onto
+owned base `5b214837d5358a117b282b208ddd172c75a2cf00` as
+`b55129b948a647d59b2a96e7f15204d00071a194` (first parent owned base, second
+parent the exact official target). The final reviewed candidate also records
+the narrow composed-web cleanup `e9168a8474e772a638525945502db0b361230d32`,
+the targeted review cleanup `58e12301c6442a4cccc877d81877b15618a79fd0`,
+and the final review cleanup `cc71ec265811be601f452f9311f851ef0a02fb1a`.
+No owned-main catch-up was needed because the frozen base was already the
+current owned `main` tip. The preceding alignment ([PR #365](docs/internals/2026-09-24-upstream-sync-e67abcf798.md))
+remains literal ancestry, including its owned-main catch-up
+`0c10a40a5d885beedd0d59fdbb10e277f397cadf`; all earlier official ancestry
+remains preserved.
 
-Automated qualification and source review passed. The requested PR is the delivery boundary;
-release publication remains separate. The [preceding alignment](docs/internals/2026-09-18-upstream-sync-3fd5d643.md)
-and all earlier official ancestry remain literal history. Later observed upstream tips do not
-move `integrationBase` by themselves.
+This alignment retains Scient's release pipeline and trust list, composes the
+OTel changes with the fail-closed safety envelope, preserves cloud, mobile,
+provider-lifecycle, identity, scientific, and migration boundaries, and adopts
+upstream reliability, provider, orchestration, desktop-update, theme, and
+shell-terminal improvements at narrow seams. The review also introduced an
+explicit legacy lint boundary for pre-existing Scient scientific/presentation
+surfaces rather than rewriting them wholesale during this upstream sync.
+Automated qualification and source review passed; release publication remains
+separate. The [earlier receipt](docs/internals/2026-09-18-upstream-sync-3fd5d643.md)
+and all earlier official ancestry remain literal history. Later observed
+upstream tips do not move `integrationBase` by themselves.
 
 ## Receiving T3 updates
 

@@ -62,18 +62,21 @@ vi.mock("../../components/ui/switch", () => ({
   Switch: ({
     checked,
     disabled,
+    motion,
     onCheckedChange,
     ...props
   }: {
     checked: boolean;
     onCheckedChange: (checked: boolean) => void;
     disabled?: boolean;
+    motion?: "default" | "none";
     className?: string;
   }) => (
     <button
       {...props}
       data-switch=""
       data-checked={checked}
+      data-motion={motion}
       disabled={disabled}
       onClick={() => {
         if (!disabled) onCheckedChange(!checked);
@@ -163,8 +166,7 @@ describe("ExternalSkillsSettings activation", () => {
     expect(switches().map((item) => item.props["data-checked"])).toEqual([false, true]);
     expect(renderer.root.findAllByProps({ "data-status": "Personal · Updating" })).toHaveLength(1);
     expect(switches().map((item) => item.props.disabled)).toEqual([undefined, undefined]);
-    expect(switches()[0]?.props.className).toContain("transition-none");
-    expect(switches()[0]?.props.className).not.toContain("data-disabled:opacity-100");
+    expect(switches()[0]?.props["data-motion"]).toBe("none");
 
     act(() => {
       switches()[0]?.props.onClick();

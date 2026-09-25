@@ -665,6 +665,42 @@ describe("ProviderRuntimeIngestion", () => {
     expect(completion?.successful).toBe(0);
   });
 
+  it("keeps refusing a terminal event that names another turn, leaving the session running", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-guard-started"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: asTurnId("turn-active"),
+    });
+    await waitForThread(
+      harness.readModel,
+      (thread) => thread.session?.activeTurnId === "turn-active",
+    );
+
+    // A late terminal event for a different turn must not end the turn that is
+    // actually running. The protection is deliberate; the stop operation is
+    // what guarantees a thread cannot stay stuck in this state forever.
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-guard-stale-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: asTurnId("turn-older"),
+      payload: { state: "completed" },
+    });
+    await harness.drain();
+
+    const session = (await harness.readThreadShell()).session;
+    expect(session?.status).toBe("running");
+    expect(session?.activeTurnId).toBe("turn-active");
+  });
+
   it("does not let a superseded turn's completion signal the queue barrier", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
@@ -5726,6 +5762,61 @@ describe("splitBufferedAssistantText", () => {
     expect(splitBufferedAssistantText("```\n- one\n- two\n")).toEqual({
       ready: "",
       rest: "```\n- one\n- two\n",
+    });
+  });
+
+  it("holds a heading until the block under it is done", () => {
+    expect(splitBufferedAssistantText("intro\n\n## Setup\n\nInstall it")).toEqual({
+      ready: "intro\n\n",
+      rest: "## Setup\n\nInstall it",
+    });
+    expect(
+      splitBufferedAssistantText("intro\n\n# Plan\n\n## Setup\n\nInstall it.\n\nNext"),
+    ).toEqual({
+      ready: "intro\n\n# Plan\n\n## Setup\n\nInstall it.\n\n",
+      rest: "Next",
+    });
+  });
+
+  it("delivers the paragraph above a heading with no blank line between them", () => {
+    expect(splitBufferedAssistantText("para\n## Setup\n\nInstall")).toEqual({
+      ready: "para\n",
+      rest: "## Setup\n\nInstall",
+    });
+    // A bold line there continues the paragraph, so both stay buffered.
+    expect(splitBufferedAssistantText("para\n**Setup**\n\nInstall")).toEqual({
+      ready: "",
+      rest: "para\n**Setup**\n\nInstall",
+    });
+  });
+
+  it("holds a line of only bold text like a heading", () => {
+    expect(splitBufferedAssistantText("**Risk by area:**\n\n| a |\n|---|\n")).toEqual({
+      ready: "",
+      rest: "**Risk by area:**\n\n| a |\n|---|\n",
+    });
+    expect(splitBufferedAssistantText("**Use *npm* now**\n\nInstall it")).toEqual({
+      ready: "",
+      rest: "**Use *npm* now**\n\nInstall it",
+    });
+    expect(splitBufferedAssistantText("**Note:** read this.\n\nNext")).toEqual({
+      ready: "**Note:** read this.\n\n",
+      rest: "Next",
+    });
+  });
+
+  it("delivers a held heading with its first list item or its whole code block", () => {
+    expect(splitBufferedAssistantText("## Steps\n\n- one\n- tw")).toEqual({
+      ready: "## Steps\n\n- one\n",
+      rest: "- tw",
+    });
+    expect(splitBufferedAssistantText("## Code\n\n```ts\na\n\nb\n")).toEqual({
+      ready: "",
+      rest: "## Code\n\n```ts\na\n\nb\n",
+    });
+    expect(splitBufferedAssistantText("## Code\n\n```ts\na\n```\nafter")).toEqual({
+      ready: "## Code\n\n```ts\na\n```\n",
+      rest: "after",
     });
   });
 });

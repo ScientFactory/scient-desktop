@@ -8,6 +8,7 @@ import type {
   OrchestrationThreadActivity,
   ScopedThreadRef,
 } from "@t3tools/contracts";
+import { compareDateTimeStrings } from "@t3tools/shared/dateTime";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
@@ -61,11 +62,19 @@ export function mergeEnvironmentThread(
     settledAt: shell.settledAt,
     unsettledAt: shell.unsettledAt,
     activeOrderKey: shell.activeOrderKey,
+    autoSettleDisabledAt: shell.autoSettleDisabledAt,
     snoozedUntil: shell.snoozedUntil,
     snoozedAt: shell.snoozedAt,
     pinnedAt: shell.pinnedAt,
     pinOrderKey: shell.pinOrderKey,
-    session: shell.session,
+    // These streams advance independently. A stale shell must not resurrect a
+    // running session after detail has already received its terminal event.
+    session:
+      detail.session !== null &&
+      shell.session !== null &&
+      compareDateTimeStrings(detail.session.updatedAt, shell.session.updatedAt) > 0
+        ? detail.session
+        : shell.session,
   };
 }
 

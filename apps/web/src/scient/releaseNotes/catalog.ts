@@ -9,6 +9,110 @@ import type { ScientReleaseNote } from "./model";
  */
 export const SCIENT_RELEASE_NOTES = [
   {
+    version: "0.6.17",
+    publishedAt: "2026-09-24",
+    format: "paragraphs",
+    headline: "More dependable agents and richer scientific work.",
+    highlights: [
+      {
+        id: "stop-queue-recovery-0617",
+        title: "Stop and queue recover more cleanly",
+        description:
+          "Stop recovery is more reliable, reduces stale Thinking states, and lets waiting messages be recovered and sent after a failed or stopped turn.",
+      },
+      {
+        id: "reload-preserves-edits-0617",
+        title: "Reload without losing edits",
+        description:
+          "View reloads protect pending file saves, surface files that still need attention, and leave Browser-tab shortcuts focused on the Browser.",
+      },
+      {
+        id: "device-3d-workspace-0617",
+        title: "Explore devices in 3D",
+        description:
+          "Supported devices gain interactive 3D models with touch, orbit, trackpad, screenshots, and a flat-view fallback.",
+      },
+      {
+        id: "visible-browser-automation-0617",
+        title: "Agents use the visible browser tab",
+        description:
+          "New browser sessions prefer the tab you can see, preserving its page, cookies, and interaction context.",
+      },
+      {
+        id: "latex-project-root-0617",
+        title: "Build complete LaTeX projects",
+        description:
+          "Opening an included source resolves the project root and builds the complete document, including related files.",
+      },
+      {
+        id: "models-provider-updates-0617",
+        title: "See new models and provider updates sooner",
+        description:
+          "Newly discovered models appear by default, while Scient-managed Codex updates are surfaced with a clear path to install them.",
+      },
+      {
+        id: "provider-settings-flow-0617",
+        title: "More coherent provider and settings flows",
+        description:
+          "Provider compatibility guidance, shared sign-in flows, and clearer settings scope and navigation make common actions easier to understand.",
+      },
+    ],
+    alsoIncluded:
+      "Accessibility and CSV fixes, previous-worktree branch details, fewer duplicate alerts after restarts, SnapShot polish, Pi tool-result correctness, telemetry safety controls, and other reliability improvements.",
+  },
+  {
+    version: "0.6.16",
+    publishedAt: "2026-09-22",
+    format: "paragraphs",
+    headline: "More control over your workspace and providers.",
+    highlights: [
+      {
+        id: "provider-skills-0616",
+        title: "Discover and manage provider skills more reliably",
+        description:
+          "Discover skills when needed instead of adding them to every prompt. Provider catalogs and native activation are more reliable, with state readback after changes.",
+      },
+      {
+        id: "openrouter-spend-0616",
+        title: "Understand OpenRouter usage and spend",
+        description:
+          "Optionally connect a management key to see provider-reported spend, usage, requests, model and key breakdowns, trends, and budgets. Cached or incomplete data is marked.",
+      },
+      {
+        id: "shortcuts-and-math-0616",
+        title: "Customize shortcuts and math input",
+        description:
+          "Markdown, math, and PDF shortcuts share one settings system. Rebind, disable, or restore them without losing editing and undo behavior.",
+      },
+      {
+        id: "scientific-computing-0616",
+        title: "More dependable scientific-computing workflows",
+        description:
+          "Compute sessions protect workspace ownership and runtime lifetimes, keep deferred visualizations offline, and offer clearer Python runtime choices.",
+      },
+      {
+        id: "shared-file-sessions-0616",
+        title: "Safer editing across multiple file views",
+        description:
+          "Shared saving for a file opened in several views reduces conflicting writes, stale revisions, and lost buffers.",
+      },
+      {
+        id: "workspace-layout-0616",
+        title: "A more comfortable workspace",
+        description:
+          "Small windows enlarge once; right panels and file explorers can be narrower while compact search remains usable.",
+      },
+      {
+        id: "appearance-typography-0616",
+        title: "More control over typography",
+        description:
+          "Interface weight choices, clearer font defaults, accurate previews, and improved conversation and Markdown reading scale.",
+      },
+    ],
+    alsoIncluded:
+      "Reliability improvements across pull-request actions, worktrees, updates, the composer, attachments, the sidebar, mobile surfaces, accessibility, and source control.",
+  },
+  {
     version: "0.6.15",
     publishedAt: "2026-09-20",
     format: "paragraphs",

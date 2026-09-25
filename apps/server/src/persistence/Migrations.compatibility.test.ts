@@ -33,6 +33,7 @@ for (const previousId of [49, 50, 52] as const) {
                   [54, "ProjectionThreadMessageContext"],
                   [55, "ProjectionThreadTitleState"],
                   [56, "PullRequestFilesViewed"],
+                  [57, "ProjectionThreadsAutoSettleDisabledAt"],
                 ]
               : [
                   [51, "ProjectionThreadBranchPullRequest"],
@@ -41,6 +42,7 @@ for (const previousId of [49, 50, 52] as const) {
                   [54, "ProjectionThreadMessageContext"],
                   [55, "ProjectionThreadTitleState"],
                   [56, "PullRequestFilesViewed"],
+                  [57, "ProjectionThreadsAutoSettleDisabledAt"],
                 ],
           );
           assert.deepStrictEqual(
@@ -86,6 +88,7 @@ it.layer(Layer.fresh(NodeSqliteClient.layerMemory()))("fresh migration compatibi
         { migration_id: 54, name: "ProjectionThreadMessageContext" },
         { migration_id: 55, name: "ProjectionThreadTitleState" },
         { migration_id: 56, name: "PullRequestFilesViewed" },
+        { migration_id: 57, name: "ProjectionThreadsAutoSettleDisabledAt" },
       ]);
       assert.deepStrictEqual(yield* sql`SELECT * FROM projection_thread_pull_requests`, []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM pull_request_files_viewed`, []);

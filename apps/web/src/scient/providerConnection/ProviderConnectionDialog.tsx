@@ -47,10 +47,6 @@ import {
   providerLifecycleFailureMessage,
 } from "./providerConnectionPresentation";
 import { ProviderRuntimeSection } from "./ProviderRuntimeSection";
-import {
-  DESTRUCTIVE_GHOST_ACTION_CLASS,
-  PRIMARY_GHOST_ACTION_CLASS,
-} from "./providerConnectionActionStyles";
 import { ProviderAuthorizationCodeForm } from "./ProviderAuthorizationCodeForm";
 import {
   AssistedProviderSetupHost,
@@ -106,12 +102,14 @@ function ProbePendingProviderConnectionDialog(props: ProviderConnectionDialogPro
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
       <DialogPopup className="max-w-[26rem]" showCloseButton>
         <DialogHeader>
-          <DialogTitle className="flex flex-wrap items-center gap-2.5">
-            <ProviderConnectionDialogTitle
-              displayName={props.displayName}
-              driver={props.provider.driver}
-              repairSucceededRecently={false}
-            />
+          <DialogTitle>
+            <span className="flex flex-wrap items-center gap-2.5">
+              <ProviderConnectionDialogTitle
+                displayName={props.displayName}
+                driver={props.provider.driver}
+                repairSucceededRecently={false}
+              />
+            </span>
           </DialogTitle>
           <DialogDescription className="sr-only">
             Checking {props.displayName} installation and connection status.
@@ -170,18 +168,20 @@ function DisabledProviderConnectionDialog(props: ProviderConnectionDialogProps) 
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
       <DialogPopup className="max-w-[26rem]" showCloseButton>
         <DialogHeader>
-          <DialogTitle className="flex flex-wrap items-center gap-2.5">
-            <ProviderConnectionDialogTitle
-              displayName={props.displayName}
-              driver={props.provider.driver}
-              repairSucceededRecently={false}
-            />
+          <DialogTitle>
+            <span className="flex flex-wrap items-center gap-2.5">
+              <ProviderConnectionDialogTitle
+                displayName={props.displayName}
+                driver={props.provider.driver}
+                repairSucceededRecently={false}
+              />
+            </span>
           </DialogTitle>
           <DialogDescription className="sr-only">
             Enable {props.displayName} before installing or connecting it.
           </DialogDescription>
         </DialogHeader>
-        <DialogPanel className="space-y-3">
+        <DialogPanel spacing="compact">
           {showManagedRuntime ? (
             <ProviderRuntimeSection
               compact
@@ -245,12 +245,14 @@ function AssistedProviderConnectionDialog(props: ProviderConnectionDialogContent
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
       <DialogPopup className="max-w-[26rem]" initialFocus={titleRef} showCloseButton>
         <DialogHeader>
-          <DialogTitle ref={titleRef} className="flex flex-wrap items-center gap-2.5">
-            <ProviderConnectionDialogTitle
-              displayName={assistedDisplayName}
-              driver={props.provider.driver}
-              repairSucceededRecently={props.repairSucceededRecently}
-            />
+          <DialogTitle ref={titleRef}>
+            <span className="flex flex-wrap items-center gap-2.5">
+              <ProviderConnectionDialogTitle
+                displayName={assistedDisplayName}
+                driver={props.provider.driver}
+                repairSucceededRecently={props.repairSucceededRecently}
+              />
+            </span>
           </DialogTitle>
           <DialogDescription className="sr-only">
             {isPi
@@ -268,7 +270,7 @@ function AssistedProviderConnectionDialog(props: ProviderConnectionDialogContent
                         : "Connect and manage your existing ChatGPT subscription."}
           </DialogDescription>
         </DialogHeader>
-        <DialogPanel className="space-y-3">
+        <DialogPanel spacing="compact">
           {showManagedRuntime ? (
             <ProviderRuntimeSection
               compact
@@ -481,18 +483,20 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogContentP
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
       <DialogPopup className="max-w-md" showCloseButton>
         <DialogHeader>
-          <DialogTitle className="flex flex-wrap items-center gap-2.5">
-            <ProviderConnectionDialogTitle
-              displayName={props.displayName}
-              driver={props.provider.driver}
-              repairSucceededRecently={props.repairSucceededRecently}
-            />
+          <DialogTitle>
+            <span className="flex flex-wrap items-center gap-2.5">
+              <ProviderConnectionDialogTitle
+                displayName={props.displayName}
+                driver={props.provider.driver}
+                repairSucceededRecently={props.repairSucceededRecently}
+              />
+            </span>
           </DialogTitle>
           <DialogDescription className="sr-only">
             Manage the {props.displayName} installation and account connection.
           </DialogDescription>
         </DialogHeader>
-        <DialogPanel className="space-y-3">
+        <DialogPanel spacing="compact">
           <ProviderRuntimeSection
             disabled={pendingAction !== null}
             environmentId={props.environmentId}
@@ -519,8 +523,8 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogContentP
                     <Button
                       type="button"
                       size="sm"
-                      variant="ghost-muted"
-                      className={`me-2 shrink-0 self-end ${DESTRUCTIVE_GHOST_ACTION_CLASS}`}
+                      variant="ghost-destructive-action"
+                      className="me-2 shrink-0 self-end"
                       disabled={isWorking}
                       onClick={() => void disconnect()}
                     >
@@ -577,10 +581,10 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogContentP
                   {operation.authorizationUrl ? (
                     <Button
                       type="button"
-                      className={PRIMARY_GHOST_ACTION_CLASS}
+
                       onClick={() => void openAuthorizationPage(operation.authorizationUrl!)}
                       size="sm"
-                      variant="ghost"
+                      variant="ghost-primary"
                     >
                       <ExternalLinkIcon />
                       {operation.authorizationUrlKind === "manual_fallback"
@@ -647,8 +651,8 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogContentP
             {canCancel ? (
               <Button
                 type="button"
-                variant="ghost-muted"
-                className={DESTRUCTIVE_GHOST_ACTION_CLASS}
+                variant="ghost-destructive-action"
+
                 disabled={isWorking}
                 onClick={() => void cancel()}
               >
@@ -676,12 +680,11 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogContentP
                   </Button>
                 ) : null}
                 <Button
-                  className={PRIMARY_GHOST_ACTION_CLASS}
                   type="button"
                   disabled={isWorking}
                   onClick={() => void start(preferredMethod)}
                   size="sm"
-                  variant="ghost"
+                  variant="ghost-primary"
                 >
                   {pendingAction === "browser" ? (
                     <LoaderIcon className="animate-spin" />

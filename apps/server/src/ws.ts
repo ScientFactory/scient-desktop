@@ -9,6 +9,7 @@ import {
   TextGenerationError,
   supportsModelConnections,
 } from "@t3tools/contracts";
+import { MANAGED_RUNTIME_CATALOG_PROVIDERS } from "@scientfactory/provider-runtime";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as EffectAcpErrors from "effect-acp/errors";
 import { customModelProviderId } from "./customModels.ts";
@@ -143,6 +144,8 @@ import {
   observeRpcStreamEffect as instrumentRpcStreamEffect,
 } from "./observability/RpcInstrumentation.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
+import * as ModelManifest from "./provider/ModelManifest.ts";
+import * as ProviderMaintenance from "./provider/providerMaintenance.ts";
 import * as ProviderService from "./provider/Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "./provider/Services/ProviderSessionDirectory.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
@@ -152,6 +155,8 @@ import { makeProviderInstallation } from "./provider/providerInstallation.ts";
 import * as ProviderConnectionManager from "./scient/providerLifecycle/ProviderConnectionManager.ts";
 import * as ProviderLifecycleCoordinator from "./scient/providerLifecycle/ProviderLifecycleCoordinator.ts";
 import * as ProviderRuntimeManager from "./scient/providerLifecycle/ProviderRuntimeManager.ts";
+import * as ManagedRuntimeCatalog from "./scient/providerLifecycle/ManagedRuntimeCatalog.ts";
+import { reconcileManagedRuntimeProviders } from "./scient/providerLifecycle/ManagedRuntimeCatalogReconciler.ts";
 import { workspaceEntryDisposition } from "./scient/workspace/WorkspaceEntryPolicy.ts";
 import * as GeneratedDocumentStore from "./scient/documentArtifacts/GeneratedDocumentStore.ts";
 import { publishBrowserPdfExport } from "./scient/documentArtifacts/BrowserPdfExportPublication.ts";
@@ -730,6 +735,9 @@ const makeWsRpcLayer = (
         yield* Effect.context<Effect.Services<ReturnType<typeof remoteSshDeviceHosts>>>();
       const portDiscovery = yield* PortScanner.PortDiscovery;
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
+      const modelManifest = yield* ModelManifest.ModelManifest;
+      const providerVersionCache = yield* ProviderMaintenance.ProviderVersionCache;
+      const managedRuntimeCatalog = yield* ManagedRuntimeCatalog.ManagedRuntimeCatalog;
       const providerService = yield* ProviderService.ProviderService;
       const providerSessionDirectory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
@@ -2660,6 +2668,42 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.serverRefreshProviders,
             Effect.gen(function* () {
+              // Only explicit catalog refreshes bypass T3's caches. Workspace
+              // discovery and background status checks retain their timers.
+              if (input.refreshModels) {
+                yield* modelManifest.forceRefresh;
+                const instances = yield* providerInstances.listInstances;
+                yield* Effect.forEach(
+                  instances.filter(
+                    (instance) =>
+                      input.instanceId === undefined || input.instanceId === instance.instanceId,
+                  ),
+                  (instance) =>
+                    Effect.gen(function* () {
+                      yield* instance.invalidateCaches ?? Effect.void;
+                      const maintenance = yield* instance.snapshot.resolveMaintenance({
+                        fresh: true,
+                      });
+                      if (maintenance.packageName)
+                        providerVersionCache.delete(maintenance.packageName);
+                    }),
+                  { concurrency: "unbounded", discard: true },
+                );
+              }
+              if (input.refreshManagedRuntimeCatalog === true) {
+                const before = yield* managedRuntimeCatalog.current;
+                const after = yield* managedRuntimeCatalog.refreshNow;
+                const changedProviders = MANAGED_RUNTIME_CATALOG_PROVIDERS.filter(
+                  (provider) =>
+                    before.providers[provider]?.version !== after.providers[provider]?.version,
+                );
+                if (changedProviders.length > 0) {
+                  // Refresh publishes an async event for the process
+                  // reconciler. Reconcile here too so this explicit RPC
+                  // returns new actions without a UI race.
+                  yield* reconcileManagedRuntimeProviders(changedProviders);
+                }
+              }
               // An untargeted refresh is "re-read everything's status", which
               // includes quota from configured usage-limit sources. Awaited,
               // not forked: the RPC scope closes on return and would
@@ -2823,6 +2867,15 @@ const makeWsRpcLayer = (
             WS_METHODS.providerAuthStart,
             providerAuth.start(input, currentSessionId),
             { "rpc.aggregate": "provider" },
+          ),
+        [WS_METHODS.providerAuthRespond]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.providerAuthRespond,
+            providerAuth.respond(input, currentSessionId),
+            {
+              "rpc.aggregate": "provider",
+              instanceId: input.instanceId,
+            },
           ),
         [WS_METHODS.providerAuthComplete]: (input) =>
           observeRpcEffect(

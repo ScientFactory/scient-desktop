@@ -115,7 +115,7 @@ export function SourceReference(props: { readonly record: SourceRecord }) {
           <SelectTrigger
             size="xs"
             variant="ghost"
-            className="w-auto min-w-0 cursor-pointer gap-1 px-1.5"
+            className="w-auto min-w-0 cursor-pointer"
             aria-label="Reference style"
             onPointerEnter={() => {
               cancelStyleClose();

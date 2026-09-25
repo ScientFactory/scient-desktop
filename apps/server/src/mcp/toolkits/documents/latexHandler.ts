@@ -274,6 +274,10 @@ export const buildScientLatexForInvocation = Effect.fn("ScientLatexBuild.build")
   const authority = yield* resolveDocumentBuildProject().pipe(Effect.mapError(boundaryToolError));
   const { invocation, root } = authority;
   const latexSource = yield* resolveLatexSource(root, input.sourcePath);
+  const selectedRoot =
+    input.rootSourcePath === undefined
+      ? undefined
+      : yield* resolveLatexSource(root, input.rootSourcePath);
   const output = yield* resolveProjectPdfOutput(latexSource.canonicalRoot, input.outputPath).pipe(
     Effect.mapError(boundaryToolError),
   );
@@ -284,6 +288,7 @@ export const buildScientLatexForInvocation = Effect.fn("ScientLatexBuild.build")
     .resolveDocument({
       workspaceRoot: latexSource.canonicalRoot,
       sourceRelativePath: latexSource.sourcePath,
+      ...(selectedRoot === undefined ? {} : { contextRootRelativePath: selectedRoot.sourcePath }),
     })
     .pipe(Effect.mapError((cause) => buildServiceToolError(cause, input)));
   if (resolution._tag !== "resolved") {
@@ -291,9 +296,13 @@ export const buildScientLatexForInvocation = Effect.fn("ScientLatexBuild.build")
     return yield* toolError(
       "build-failed",
       resolution._tag === "ambiguous"
-        ? `The LaTeX source belongs to multiple documents: ${candidates.join(", ")}. Open it from the intended document before building.`
-        : "Scient could not find a complete LaTeX document that includes this source.",
-      { sourcePath: latexSource.sourcePath, outputPath: output.outputPath },
+        ? `The LaTeX source belongs to multiple documents: ${candidates.join(", ")}. Set rootSourcePath to the intended document and retry.`
+        : "Scient could not identify a complete LaTeX root. Set rootSourcePath or add a % !TEX root comment, then retry.",
+      {
+        sourcePath: latexSource.sourcePath,
+        ...(selectedRoot === undefined ? {} : { rootSourcePath: selectedRoot.sourcePath }),
+        outputPath: output.outputPath,
+      },
     );
   }
   const buildInput = {

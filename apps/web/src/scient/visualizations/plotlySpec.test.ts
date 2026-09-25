@@ -67,12 +67,12 @@ describe("parsePlotlySource", () => {
         },
         config: { topojsonURL: "https://example.test/topology/" },
       }),
-      { networkAccess: "allow" },
     );
 
     expect(parsed.hasWebGl).toBe(true);
     expect(parsed.hasMapTiles).toBe(true);
     expect(parsed.hasGeoTopology).toBe(true);
+    expect(parsed.hasNetworkContent).toBe(true);
     expect(parsed.hasFrames).toBe(true);
     expect(parsed.hasMath).toBe(true);
     expect(parsed.externalResources).toEqual([
@@ -90,9 +90,10 @@ describe("parsePlotlySource", () => {
     ["a topology URL", { data: [], config: { topojsonURL: "https://example.test/" } }],
     ["map tiles", { data: [{ type: "scattermap", lat: [31.8], lon: [35.2] }] }],
     ["geo topology", { data: [{ type: "choropleth", locations: ["ISR"], z: [1] }] }],
-  ])("blocks %s before the embedded renderer can request it", (_label, figure) => {
-    expect(() => parsePlotlySource(JSON.stringify(figure))).toThrow(
-      "requires network access, which is blocked",
+  ])("accepts %s and classifies its network requirements", (_label, figure) => {
+    const parsed = parsePlotlySource(JSON.stringify(figure));
+    expect(parsed.externalResources.length > 0 || parsed.hasMapTiles || parsed.hasGeoTopology).toBe(
+      true,
     );
   });
 
@@ -105,17 +106,130 @@ describe("parsePlotlySource", () => {
     );
 
     expect(parsed.externalResources).toEqual([]);
+    expect(parsed.hasNetworkContent).toBe(false);
   });
 
-  it("warns about compatible deprecated Mapbox traces on a network-authorized surface", () => {
+  it("warns about compatible deprecated Mapbox traces", () => {
     const parsed = parsePlotlySource(
       JSON.stringify({ data: [{ type: "scattermapbox", lat: [1], lon: [2] }] }),
-      { networkAccess: "allow" },
     );
 
     expect(parsed.warnings).toHaveLength(1);
     expect(parsed.warnings[0]).toContain("deprecated Mapbox");
     expect(parsed.hasWebGl).toBe(true);
+  });
+
+  it("renders Plotly Express scatter output without treating dormant template defaults as active traces", () => {
+    const parsed = parsePlotlySource(
+      JSON.stringify({
+        data: [
+          { type: "scatter", name: "early", x: [1, 2], y: [3, 4] },
+          { type: "scatter", name: "late", x: [1, 2], y: [4, 5] },
+        ],
+        layout: {
+          template: {
+            data: {
+              choropleth: [{ type: "choropleth" }],
+              scattergeo: [{ type: "scattergeo" }],
+              scattermap: [{ type: "scattermap" }],
+            },
+          },
+        },
+      }),
+    );
+
+    expect(parsed.hasCartesian).toBe(true);
+    expect(parsed.hasGeoTopology).toBe(false);
+    expect(parsed.hasMapTiles).toBe(false);
+    expect(parsed.hasNetworkContent).toBe(false);
+    expect(parsed.externalResources).toEqual([]);
+  });
+
+  it.each<[string, unknown, ReadonlyArray<string>]>([
+    [
+      "an attribute/value image update",
+      {
+        data: [],
+        layout: {
+          updatemenus: [
+            {
+              buttons: [
+                {
+                  method: "relayout",
+                  args: ["images[0].source", "https://example.test/later.png"],
+                },
+              ],
+            },
+          ],
+        },
+      },
+      ["https://example.test/later.png"],
+    ],
+    [
+      "a flattened image update",
+      {
+        data: [],
+        layout: {
+          updatemenus: [
+            {
+              buttons: [
+                {
+                  method: "relayout",
+                  args: [{ "images[0].source": "https://example.test/flattened.png" }],
+                },
+              ],
+            },
+          ],
+        },
+      },
+      ["https://example.test/flattened.png"],
+    ],
+    [
+      "a template image default",
+      {
+        data: [],
+        layout: {
+          template: {
+            layout: { imagedefaults: { source: "https://example.test/default.png" } },
+          },
+        },
+      },
+      ["https://example.test/default.png"],
+    ],
+    [
+      "a framed image",
+      {
+        data: [],
+        frames: [
+          {
+            data: [],
+            layout: { images: [{ source: "https://example.test/frame.png" }] },
+          },
+        ],
+      },
+      ["https://example.test/frame.png"],
+    ],
+  ])("accepts and discloses %s", (_label, figure, resources) => {
+    const parsed = parsePlotlySource(JSON.stringify(figure));
+    expect(parsed.hasNetworkContent).toBe(true);
+    expect(parsed.externalResources).toEqual(resources);
+  });
+
+  it("accepts and discloses a deferred map trace", () => {
+    const parsed = parsePlotlySource(
+      JSON.stringify({
+        data: [{ type: "scatter", x: [1], y: [2] }],
+        layout: {
+          sliders: [
+            {
+              steps: [{ method: "restyle", args: ["type", ["scattermap"]] }],
+            },
+          ],
+        },
+      }),
+    );
+
+    expect(parsed.hasNetworkContent).toBe(true);
   });
 
   it.each([

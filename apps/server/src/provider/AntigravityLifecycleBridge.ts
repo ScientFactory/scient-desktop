@@ -270,6 +270,7 @@ export function makeAntigravityManagedRuntimeActions(input: {
       target,
       actions: [...actions],
       managedVersion: state.installedVersion,
+      availableManagedVersion: updateAvailable ? (asset?.registryVersion ?? null) : null,
       previousManagedVersion: null,
       operation: null,
       message,

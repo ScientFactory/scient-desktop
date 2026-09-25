@@ -1,19 +1,20 @@
 import type { EnvironmentId, ScientLatexResolveResult } from "@t3tools/contracts";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { requestLatexResolution } from "./client";
 
-export interface LatexDocumentResolutionState {
-  readonly pending: boolean;
+interface StoredLatexDocumentResolution {
+  readonly requestKey: string;
   readonly result: ScientLatexResolveResult | null;
   readonly error: string | null;
 }
 
-const INITIAL_STATE: LatexDocumentResolutionState = {
-  pending: true,
-  result: null,
-  error: null,
-};
+export interface LatexDocumentResolutionState extends Omit<
+  StoredLatexDocumentResolution,
+  "requestKey"
+> {
+  readonly pending: boolean;
+}
 
 export function useLatexDocumentResolution(input: {
   readonly environmentId: EnvironmentId;
@@ -23,27 +24,46 @@ export function useLatexDocumentResolution(input: {
   readonly contextRootRelativePath?: string;
 }): LatexDocumentResolutionState {
   const requestRef = useRef(0);
-  const [state, setState] = useState<LatexDocumentResolutionState>(INITIAL_STATE);
+  const [state, setState] = useState<StoredLatexDocumentResolution | null>(null);
+  const request = useMemo(
+    () => ({
+      environmentId: input.environmentId,
+      key: JSON.stringify([
+        input.environmentId,
+        input.workspaceRoot,
+        input.sourceRelativePath,
+        input.sourceRevision,
+        input.contextRootRelativePath ?? null,
+      ]),
+      payload: {
+        workspaceRoot: input.workspaceRoot,
+        sourceRelativePath: input.sourceRelativePath,
+        ...(input.contextRootRelativePath === undefined
+          ? {}
+          : { contextRootRelativePath: input.contextRootRelativePath }),
+      },
+    }),
+    [
+      input.contextRootRelativePath,
+      input.environmentId,
+      input.sourceRelativePath,
+      input.sourceRevision,
+      input.workspaceRoot,
+    ],
+  );
 
   useEffect(() => {
     const requestId = requestRef.current + 1;
     requestRef.current = requestId;
-    setState((current) => ({ ...current, pending: true, error: null }));
-    void requestLatexResolution(input.environmentId, {
-      workspaceRoot: input.workspaceRoot,
-      sourceRelativePath: input.sourceRelativePath,
-      ...(input.contextRootRelativePath === undefined
-        ? {}
-        : { contextRootRelativePath: input.contextRootRelativePath }),
-    })
+    void requestLatexResolution(request.environmentId, request.payload)
       .then((result) => {
         if (requestRef.current !== requestId) return;
-        setState({ pending: false, result, error: null });
+        setState({ requestKey: request.key, result, error: null });
       })
       .catch((error: unknown) => {
         if (requestRef.current !== requestId) return;
         setState({
-          pending: false,
+          requestKey: request.key,
           result: null,
           error: error instanceof Error ? error.message : "LaTeX document resolution failed.",
         });
@@ -51,13 +71,12 @@ export function useLatexDocumentResolution(input: {
     return () => {
       if (requestRef.current === requestId) requestRef.current += 1;
     };
-  }, [
-    input.contextRootRelativePath,
-    input.environmentId,
-    input.sourceRelativePath,
-    input.sourceRevision,
-    input.workspaceRoot,
-  ]);
+  }, [request]);
 
-  return state;
+  const current = state?.requestKey === request.key ? state : null;
+  return {
+    pending: current === null,
+    result: current?.result ?? null,
+    error: current?.error ?? null,
+  };
 }

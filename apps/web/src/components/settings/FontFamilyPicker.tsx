@@ -1,8 +1,7 @@
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
-import { CheckIcon, ChevronDownIcon } from "lucide-react";
+import { CheckIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { isMonospaceFamily, queryInstalledFontFamilies } from "../../appearanceFonts";
-import { cn } from "../../lib/utils";
 import {
   Combobox,
   ComboboxEmpty,
@@ -12,7 +11,7 @@ import {
   ComboboxPopup,
   ComboboxTrigger,
 } from "../ui/combobox";
-import { selectTriggerVariants } from "../ui/select";
+import { SelectButton } from "../ui/select";
 import {
   DEFAULT_FONT_VALUE,
   getFontFamilyPreference,
@@ -110,7 +109,7 @@ export function useFontEnumeration(): FontEnumerationState {
  */
 export function FontFamilyPicker({
   ariaLabel,
-  triggerClassName,
+  triggerWidth = "default",
   defaultFamily,
   defaultPreviewFontFamily,
   defaultOptionLabel,
@@ -120,7 +119,7 @@ export function FontFamilyPicker({
   onSelect,
 }: {
   ariaLabel: string;
-  triggerClassName?: string;
+  triggerWidth?: "default" | "content";
   /** What an unset preference renders as, e.g. "Menlo". */
   defaultFamily: string;
   /** CSS stack that an unset preference actually uses. */
@@ -181,7 +180,7 @@ export function FontFamilyPicker({
           </span>
           <span className="flex shrink-0 items-center gap-1.5">
             {isDefault ? (
-              <span className="max-w-28 truncate text-[10px] text-muted-foreground/60">
+              <span className="max-w-28 truncate text-3xs text-muted-foreground/60">
                 Currently {defaultFamily}
               </span>
             ) : null}
@@ -215,12 +214,9 @@ export function FontFamilyPicker({
     >
       <ComboboxTrigger
         aria-label={ariaLabel}
-        className={cn(selectTriggerVariants({ size: "sm" }), triggerClassName)}
+        render={<SelectButton size="sm" width={triggerWidth} />}
       >
-        <span className="min-w-0 truncate">
-          {getFontPickerDisplayLabel(selectedFamily, defaultOptionLabel)}
-        </span>
-        <ChevronDownIcon className="-me-1 size-3 opacity-50" />
+        {getFontPickerDisplayLabel(selectedFamily, defaultOptionLabel)}
       </ComboboxTrigger>
       <ComboboxPopup align="end" className="flex w-72 flex-col">
         <ComboboxSearchInput
@@ -231,7 +227,7 @@ export function FontFamilyPicker({
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <ComboboxEmpty>No fonts found.</ComboboxEmpty>
           <div className="relative min-h-0 max-h-72 w-full flex-1 overflow-hidden">
-            <ComboboxListVirtualized className="size-full min-w-0 p-0">
+            <ComboboxListVirtualized>
               <LegendList<string>
                 ref={listRef}
                 data={items}

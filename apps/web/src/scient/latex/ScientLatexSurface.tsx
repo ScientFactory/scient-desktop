@@ -57,6 +57,7 @@ import { documentBindingChanges } from "./bindingChanges";
 import { LatexVisualEditor } from "./LatexVisualEditor";
 import { LatexToolchainSetupCard } from "./LatexToolchainSetupCard";
 import { requestLatexForwardSync, requestLatexInverseSync } from "./client";
+import { useLatexDocumentResolution } from "./useLatexDocumentResolution";
 import {
   cancelLatexBuild,
   notifyLatexBindingChange,
@@ -443,12 +444,17 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   const [exportingPdf, setExportingPdf] = useState(false);
   const visualDraftKey = `${props.environmentId}\0${props.cwd}\0${props.relativePath}`;
   const [manualRootSelection, setManualRootSelection] = useState<{
+    readonly environmentId: EnvironmentId;
+    readonly workspaceRoot: string;
     readonly sourceRelativePath: string;
     readonly carriedRootRelativePath: string | null;
     readonly selectedRootRelativePath: string;
   } | null>(null);
   const selectedRootRelativePath =
-    manualRootSelection?.sourceRelativePath === props.relativePath &&
+    manualRootSelection !== null &&
+    manualRootSelection.environmentId === props.environmentId &&
+    manualRootSelection.workspaceRoot === props.cwd &&
+    manualRootSelection.sourceRelativePath === props.relativePath &&
     manualRootSelection.carriedRootRelativePath === props.latexRootRelativePath
       ? manualRootSelection.selectedRootRelativePath
       : (props.latexRootRelativePath ?? undefined);
@@ -802,7 +808,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
             setSyncNotice({ label: syncUnavailableLabel(result.reason), message: result.message });
             return;
           }
-          props.onOpenFileSource(result.relativePath, result.line, {
+          onOpenFileSource(result.relativePath, result.line, {
             latexRootRelativePath: snapshot.rootRelativePath,
           });
         })
@@ -814,7 +820,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
           });
         });
     },
-    [build.snapshot, descriptor, props.cwd, props.environmentId, props.onOpenFileSource],
+    [build.snapshot, descriptor, onOpenFileSource, props.cwd, props.environmentId],
   );
   const syncNavigation = useMemo<PdfSyncNavigation | undefined>(
     () =>
@@ -875,7 +881,9 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
             <span className="scient-latex-status-label">
               {resolution.pending
                 ? "Finding document"
-                : resolution.result?._tag === "ambiguous"
+                : resolution.result?._tag === "ambiguous" ||
+                    (resolution.result?._tag === "unresolved" &&
+                      resolution.result.candidates.length > 0)
                   ? "Choose the document to compile"
                   : (resolution.error ?? "No compiling document found")}
             </span>
@@ -900,7 +908,9 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
               {status.label}
             </span>
           )}
-          {resolution.result?._tag === "ambiguous" ? (
+          {target === null &&
+          (resolution.result?._tag === "ambiguous" || resolution.result?._tag === "unresolved") &&
+          resolution.result.candidates.length > 0 ? (
             <select
               className="scient-latex-root-choice"
               aria-label="Choose LaTeX document to compile"
@@ -908,6 +918,8 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
               onChange={(event) => {
                 if (event.target.value !== "") {
                   setManualRootSelection({
+                    environmentId: props.environmentId,
+                    workspaceRoot: props.cwd,
                     sourceRelativePath: props.relativePath,
                     carriedRootRelativePath: props.latexRootRelativePath,
                     selectedRootRelativePath: event.target.value,
@@ -1075,7 +1087,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
                   diagnostic={row.diagnostic}
                   workspaceRoot={props.cwd}
                   onNavigate={(relativePath, line) =>
-                    props.onOpenFileSource(
+                    onOpenFileSource(
                       relativePath,
                       line,
                       build.snapshot === null

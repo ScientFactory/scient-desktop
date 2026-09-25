@@ -206,6 +206,16 @@ describe.runIf(Boolean(TEST_PYTHON) && NodeProcess.platform !== "win32")(
                   ]);
                 }
               });
+              const waitForLsofProcess = Effect.fn("PortScannerPythonCompute.waitForLsofProcess")(
+                (processId: number) =>
+                  eventually(
+                    scanConfiguredFixture(1).pipe(
+                      Effect.map(() =>
+                        lsofObservedProcess(lsofSnapshots, processId) ? true : null,
+                      ),
+                    ),
+                  ),
+              );
               const waitForExecution = (executionId: ComputeExecutionId) =>
                 eventually(
                   compute.listExecutions({ projectId: PROJECT, sessionId: SESSION }).pipe(
@@ -302,7 +312,7 @@ describe.runIf(Boolean(TEST_PYTHON) && NodeProcess.platform !== "win32")(
                 label: "FIRST",
               });
               yield* scanConfiguredFixture(3);
-              expect(lsofObservedProcess(lsofSnapshots, firstRuntimeProcessId)).toBe(true);
+              yield* waitForLsofProcess(firstRuntimeProcessId);
               expectOnlyFixtureTraffic();
               expect(
                 yield* compute.listOutputs({
@@ -333,8 +343,7 @@ describe.runIf(Boolean(TEST_PYTHON) && NodeProcess.platform !== "win32")(
               yield* eventually(
                 Effect.sync(() => (!processExists(firstRuntimeProcessId) ? true : null)),
               );
-              yield* scanConfiguredFixture(2);
-              expect(lsofObservedProcess(lsofSnapshots, restartedRuntimeProcessId)).toBe(true);
+              yield* waitForLsofProcess(restartedRuntimeProcessId);
               expect((yield* computeOwnedEndpoints.snapshot).protectedLoopbackTcpPorts.size).toBe(
                 5,
               );

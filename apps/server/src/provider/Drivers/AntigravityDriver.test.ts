@@ -34,8 +34,7 @@ import {
 } from "../AntigravityInstallation.ts";
 import {
   ANTIGRAVITY_AUTH_STDOUT_PREFIX,
-  resolveAntigravityProfileDirectory,
-  resolveAntigravityRuntimeTempDirectory,
+  resolveAntigravityInstanceDirectories,
 } from "../antigravityAuthSupport.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import * as ModelManifest from "../ModelManifest.ts";
@@ -109,7 +108,8 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
   );
   const requestLog = path.join(root, "requests.jsonl");
-  const profileDirectory = resolveAntigravityProfileDirectory(config.stateDir, instanceId);
+  const directories = yield* resolveAntigravityInstanceDirectories(config.stateDir, instanceId);
+  const profileDirectory = directories.profile;
   const instancePath = `${path.join(root, "instance-bin")}:${baseEnv.PATH ?? ""}`;
 
   const makeExecutable = Effect.fn("AntigravityDriverTest.makeExecutable")(function* (
@@ -283,6 +283,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     fs,
     path,
     profileDirectory,
+    directories,
     instancePath,
     first,
     second,
@@ -387,9 +388,9 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
           "gemini-test-high",
         ]);
         expect(snapshot.models[0]?.aliases).toContain(ANTIGRAVITY_DEFAULT_MODEL);
-        // The mock catalog is not in the manifest's current list, so it folds
-        // under the legacy section like an old Codex model would.
-        expect(snapshot.models.every((model) => model.isLegacy === true)).toBe(true);
+        // Unknown runtime discoveries remain visible unless explicitly
+        // classified as legacy by the manifest or provider.
+        expect(snapshot.models.every((model) => !model.isLegacy)).toBe(true);
         expect(snapshot.slashCommands.map((command) => command.name)).toEqual(["plan", "logout"]);
         expect(snapshot.supportsTextGeneration).toBe(true);
         h.controls.selected = h.second;
@@ -541,7 +542,7 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
     () =>
       Effect.gen(function* () {
         const h = yield* makeHarness();
-        const tempRoot = resolveAntigravityRuntimeTempDirectory(h.profileDirectory);
+        const tempRoot = h.directories.runtimeTemp;
         yield* h.refresh();
         yield* h.refresh();
         const directories = h.launches.flatMap((launch) =>
@@ -564,12 +565,17 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
         const path = yield* Path.Path;
         const config = yield* ServerConfig;
         const instanceId = ProviderInstanceId.make("antigravity-orphan-sweep");
-        const tempRoot = resolveAntigravityRuntimeTempDirectory(
-          resolveAntigravityProfileDirectory(config.stateDir, instanceId),
+        const directories = yield* resolveAntigravityInstanceDirectories(
+          config.stateDir,
+          instanceId,
         );
-        const orphan = path.join(tempRoot, "run-orphan", "_MEI123", "google3");
-        yield* fs.makeDirectory(orphan, { recursive: true });
-        yield* fs.writeFileString(path.join(orphan, "payload.bin"), "stale");
+        // Older builds unpacked inside the profile.
+        const legacyRoot = path.join(directories.profile, "antigravity-acp", "tmp");
+        for (const root of [directories.runtimeTemp, legacyRoot]) {
+          const orphan = path.join(root, "run-orphan", "_MEI123", "google3");
+          yield* fs.makeDirectory(orphan, { recursive: true });
+          yield* fs.writeFileString(path.join(orphan, "payload.bin"), "stale");
+        }
         yield* AntigravityDriver.create({
           instanceId,
           displayName: "Sweep",
@@ -603,7 +609,8 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
             }),
           ),
         );
-        expect(yield* fs.exists(tempRoot)).toBe(false);
+        expect(yield* fs.exists(directories.runtimeTemp)).toBe(false);
+        expect(yield* fs.exists(legacyRoot)).toBe(false);
       }).pipe(Effect.scoped),
   );
 

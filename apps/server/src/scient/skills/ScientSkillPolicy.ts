@@ -119,6 +119,11 @@ export interface ScientSkillPolicySnapshot {
   readonly trustedProjects: ReadonlyArray<ProjectSkillTrustReceipt>;
 }
 
+export interface ScientSkillPolicyState {
+  readonly snapshot: ScientSkillPolicySnapshot;
+  readonly snapshotIsComplete: boolean;
+}
+
 export class ScientSkillPolicyError extends Schema.TaggedError<ScientSkillPolicyError>()(
   "ScientSkillPolicyError",
   {
@@ -129,7 +134,11 @@ export class ScientSkillPolicyError extends Schema.TaggedError<ScientSkillPolicy
 ) {}
 
 export interface ScientSkillPolicyShape {
+  /** Atomically reads the snapshot and its completeness for turn planning. */
+  readonly readState: Effect.Effect<ScientSkillPolicyState>;
   readonly snapshot: Effect.Effect<ScientSkillPolicySnapshot>;
+  /** False when persisted preferences could not be read and the safe empty fallback was used. */
+  readonly snapshotIsComplete: Effect.Effect<boolean>;
   readonly setUserSkillActivation: (
     release: SkillReleaseRef,
     active: boolean,
@@ -206,9 +215,18 @@ function normalizeSnapshot(snapshot: ScientSkillPolicySnapshot): ScientSkillPoli
   });
 }
 
-function makeSnapshotService(snapshot: ScientSkillPolicySnapshot): ScientSkillPolicyShape {
+function makeSnapshotService(
+  snapshot: ScientSkillPolicySnapshot,
+  snapshotIsComplete = true,
+): ScientSkillPolicyShape {
+  const state: ScientSkillPolicyState = {
+    snapshot: normalizeSnapshot(snapshot),
+    snapshotIsComplete,
+  };
   return {
-    snapshot: Effect.succeed(normalizeSnapshot(snapshot)),
+    readState: Effect.succeed(state),
+    snapshot: Effect.succeed(state.snapshot),
+    snapshotIsComplete: Effect.succeed(state.snapshotIsComplete),
     setUserSkillActivation: () => Effect.void,
     setProjectSkillPreference: () => Effect.void,
     trustProjectLock: (projectRoot) =>
@@ -222,8 +240,8 @@ function makeSnapshotService(snapshot: ScientSkillPolicySnapshot): ScientSkillPo
   };
 }
 
-export const layerFromSnapshot = (snapshot: ScientSkillPolicySnapshot) =>
-  Layer.succeed(ScientSkillPolicy, makeSnapshotService(snapshot));
+export const layerFromSnapshot = (snapshot: ScientSkillPolicySnapshot, snapshotIsComplete = true) =>
+  Layer.succeed(ScientSkillPolicy, makeSnapshotService(snapshot, snapshotIsComplete));
 
 const make = Effect.fn("ScientSkillPolicy.make")(function* () {
   const config = yield* ServerConfig.ServerConfig;
@@ -268,12 +286,19 @@ const make = Effect.fn("ScientSkillPolicy.make")(function* () {
         cause,
       }),
   }).pipe(
+    Effect.map((snapshot) => ({ snapshot, complete: true })),
     Effect.catch((error) =>
-      Effect.logWarning(error.message, { cause: error.cause }).pipe(Effect.as(EMPTY_POLICY)),
+      Effect.logWarning(error.message, { cause: error.cause }).pipe(
+        Effect.as({ snapshot: EMPTY_POLICY, complete: false }),
+      ),
     ),
   );
 
-  const state = yield* Ref.make(yield* load);
+  const initial = yield* load;
+  const state = yield* Ref.make({
+    snapshot: initial.snapshot,
+    snapshotIsComplete: initial.complete,
+  });
   const writePermit = yield* Semaphore.make(1);
 
   const persist = Effect.fn("ScientSkillPolicy.persist")(function* (
@@ -317,11 +342,16 @@ const make = Effect.fn("ScientSkillPolicy.make")(function* () {
           cause,
         }),
     });
-    yield* Ref.set(state, normalized);
+    yield* Ref.set(state, { snapshot: normalized, snapshotIsComplete: true });
   });
 
   const update = (transform: (current: ScientSkillPolicySnapshot) => ScientSkillPolicySnapshot) =>
-    writePermit.withPermits(1)(Ref.get(state).pipe(Effect.map(transform), Effect.flatMap(persist)));
+    writePermit.withPermits(1)(
+      Ref.get(state).pipe(
+        Effect.map(({ snapshot }) => transform(snapshot)),
+        Effect.flatMap(persist),
+      ),
+    );
 
   const inspectProjectLock = (projectRoot: string) =>
     Effect.tryPromise({
@@ -334,8 +364,11 @@ const make = Effect.fn("ScientSkillPolicy.make")(function* () {
         }),
     });
 
+  const readState = Ref.get(state);
   return ScientSkillPolicy.of({
-    snapshot: Ref.get(state),
+    readState,
+    snapshot: Effect.map(readState, ({ snapshot }) => snapshot),
+    snapshotIsComplete: Effect.map(readState, ({ snapshotIsComplete }) => snapshotIsComplete),
     setUserSkillActivation: (release, active, invocationPolicy) =>
       update((current) => ({
         ...current,

@@ -43,8 +43,7 @@ export interface ScientFindBarController {
 }
 
 const findIconClassName = "size-3.5";
-const findInputClassName =
-  "h-7 has-[input:focus-visible]:border-ring has-[input:focus-visible]:ring-0";
+const findInputClassName = "h-7";
 
 /**
  * Compact find & replace strip under the dock. One row while searching;
@@ -141,7 +140,7 @@ export function ScientFindBar({
             }}
           />
           {countLabel !== null ? (
-            <InputGroupAddon align="inline-end" className="pe-2">
+            <InputGroupAddon align="inline-end">
               <span
                 aria-live="polite"
                 className={cn(

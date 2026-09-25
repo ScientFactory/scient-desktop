@@ -19,6 +19,7 @@ import {
   type ComputeProjectExecutionCommandInput,
   type ComputeProjectInput,
   type ComputeProjectSessionCommandInput,
+  type ComputeStopProjectSessionInput,
   type ComputeProjectSessionInput,
   type ComputeStartProjectSessionInput,
   type ComputeSubmitProjectExecutionInput,
@@ -501,7 +502,13 @@ export function makeComputeRpcGateway(input: {
       sessionCommand("interrupt", input.compute.interruptSession),
     ),
     restartSession: inWorkspace("restart", sessionCommand("restart", input.compute.restartSession)),
-    stopSession: inWorkspace("stop", sessionCommand("stop", input.compute.stopSession)),
+    stopSession: inWorkspace(
+      "stop",
+      Effect.fn("ComputeRpcGateway.stop")(function* (request: ComputeStopProjectSessionInput) {
+        const project = yield* projectFor("stop", request.cwd);
+        return yield* input.compute.stopSession({ ...request, projectId: project.projectId });
+      }),
+    ),
     inspectVariables: inWorkspace("variables", inspectVariables),
     subscribeSessions: inWorkspace("subscribe", subscribeSessions),
   };

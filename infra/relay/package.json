@@ -29,6 +29,7 @@
     "@types/node": "catalog:",
     "drizzle-kit": "1.0.0-rc.5-ab785fc",
     "vite": "catalog:",
-    "vite-plus": "catalog:"
+    "vite-plus": "catalog:",
+    "vitest": "4.1.11"
   }
 }

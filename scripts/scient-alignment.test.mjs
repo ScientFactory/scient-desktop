@@ -30,6 +30,10 @@ function fixture({ conflict = true, cleanOverlap = false } = {}) {
     NodePath.join(root, "shared.txt"),
     cleanOverlap ? "first\na\nb\nc\nlast\n" : "base\n",
   );
+  NodeFS.writeFileSync(
+    NodePath.join(root, "package.json"),
+    JSON.stringify({ scripts: { check: "old" }, dependencies: { example: "1.0.0" } }),
+  );
   git("add", ".");
   git("commit", "-qm", "initial");
   const previous = git("rev-parse", "HEAD");
@@ -76,6 +80,7 @@ describe("alignment workflow", () => {
     expect(plan.overlappingPaths).toEqual(["shared.txt"]);
     expect(plan.predictedConflicts).toEqual(["shared.txt"]);
     expect(plan.predictedCleanMerge).toBe(false);
+    expect(plan.impactSignals).toEqual([]);
     expect(f.git("status", "--porcelain=v1")).toBe(before);
     expect(f.git("count-objects", "-v")).toBe(objectsBefore);
     expect(
@@ -177,6 +182,181 @@ describe("alignment workflow", () => {
     expect(plan.predictedCleanMerge).toBe(true);
     expect(plan.predictedConflicts).toEqual([]);
     expect(plan.overlappingPaths).toEqual(["shared.txt"]);
+  });
+
+  it("flags changed quality rules, shared UI, and contracts without calling them conflicts", () => {
+    const f = fixture({ conflict: false });
+    f.git("switch", "-q", "official");
+    for (const path of [
+      "vite.config.ts",
+      "apps/web/src/components/ui/button.tsx",
+      "packages/contracts/src/model.ts",
+    ]) {
+      const file = NodePath.join(f.root, path);
+      NodeFS.mkdirSync(NodePath.dirname(file), { recursive: true });
+      NodeFS.writeFileSync(file, "changed\n");
+    }
+    f.git("add", ".");
+    f.git("commit", "-qm", "change shared policy and APIs");
+    const target = f.git("rev-parse", "HEAD");
+    f.git("update-ref", "refs/remotes/upstream/main", target);
+    f.git("switch", "-q", "main");
+    const plan = inspectAlignment(["plan", "--base", f.base, "--target", target], {
+      cwd: f.root,
+    });
+    expect(plan.impactSignals.map((signal) => signal.id)).toEqual([
+      "quality-policy",
+      "shared-web-ui",
+      "shared-contracts",
+    ]);
+    expect(plan.impactSignals[0].paths).toEqual(["vite.config.ts"]);
+    expect(plan.predictedConflicts).toEqual([]);
+  });
+
+  it("flags script changes but not dependency-only package changes", () => {
+    const f = fixture({ conflict: false });
+    f.git("switch", "-q", "official");
+    const packagePath = NodePath.join(f.root, "package.json");
+    NodeFS.writeFileSync(
+      packagePath,
+      JSON.stringify({ scripts: { check: "old" }, dependencies: { example: "2.0.0" } }),
+    );
+    f.git("add", "package.json");
+    f.git("commit", "-qm", "update dependency");
+    const dependencyTarget = f.git("rev-parse", "HEAD");
+    NodeFS.writeFileSync(
+      packagePath,
+      JSON.stringify({ scripts: { check: "new" }, dependencies: { example: "2.0.0" } }),
+    );
+    f.git("add", "package.json");
+    f.git("commit", "-qm", "change check script");
+    const scriptTarget = f.git("rev-parse", "HEAD");
+    f.git("update-ref", "refs/remotes/upstream/main", scriptTarget);
+    f.git("switch", "-q", "main");
+    expect(
+      inspectAlignment(["plan", "--base", f.base, "--target", dependencyTarget], {
+        cwd: f.root,
+      }).impactSignals,
+    ).toEqual([]);
+    expect(
+      inspectAlignment(["plan", "--base", f.base, "--target", scriptTarget], {
+        cwd: f.root,
+      }).impactSignals[0].paths,
+    ).toEqual(["package.json"]);
+  });
+
+  it("treats a removed root manifest as an advisory signal instead of breaking the plan", () => {
+    const f = fixture({ conflict: false });
+    f.git("switch", "-q", "official");
+    NodeFS.rmSync(NodePath.join(f.root, "package.json"));
+    f.git("add", "-u");
+    f.git("commit", "-qm", "remove root manifest");
+    const target = f.git("rev-parse", "HEAD");
+    f.git("update-ref", "refs/remotes/upstream/main", target);
+    f.git("switch", "-q", "main");
+    expect(
+      inspectAlignment(["plan", "--base", f.base, "--target", target], {
+        cwd: f.root,
+      }).impactSignals[0].paths,
+    ).toEqual(["package.json"]);
+  });
+
+  it("plans a committed alignment extension in the same worktree while main is ahead", () => {
+    const f = fixture({ conflict: false });
+    const worktree = NodePath.join(f.directory, "candidate");
+    const run = (...args) =>
+      NodeChildProcess.execFileSync("git", args, { cwd: worktree, encoding: "utf8" }).trim();
+    startAlignment(
+      inspectAlignment(
+        [
+          "start",
+          "--base",
+          f.base,
+          "--target",
+          f.target,
+          "--worktree",
+          worktree,
+          "--branch",
+          "codex/existing-alignment",
+        ],
+        { cwd: f.root },
+      ),
+    );
+    expect(() =>
+      inspectAlignment(["plan", "--existing", "--base", "HEAD", "--target", f.target], {
+        cwd: worktree,
+      }),
+    ).toThrow(/Finish the current merge/u);
+    run("commit", "-qm", "merge official target");
+    const merge = run("rev-parse", "HEAD");
+    NodeFS.writeFileSync(
+      NodePath.join(worktree, "upstream-state.json"),
+      JSON.stringify({
+        updateMode: "thin-fork-merge",
+        integrationBase: f.target,
+        lastRefreshMerge: merge,
+        lastRefreshBranch: "codex/existing-alignment",
+      }),
+    );
+    run("add", "upstream-state.json");
+    run("commit", "-qm", "record alignment");
+
+    f.git("switch", "-q", "official");
+    NodeFS.writeFileSync(NodePath.join(f.root, "next.txt"), "next official change\n");
+    f.git("add", "next.txt");
+    f.git("commit", "-qm", "next official change");
+    const nextTarget = f.git("rev-parse", "HEAD");
+    f.git("update-ref", "refs/remotes/upstream/main", nextTarget);
+    f.git("switch", "-q", "main");
+    NodeFS.writeFileSync(NodePath.join(f.root, "owned.txt"), "new owned change\n");
+    f.git("add", "owned.txt");
+    f.git("commit", "-qm", "advance owned main");
+    f.git("update-ref", "refs/remotes/origin/main", f.git("rev-parse", "HEAD"));
+
+    const head = run("rev-parse", "HEAD");
+    const plan = inspectAlignment(
+      ["plan", "--existing", "--base", "HEAD", "--target", nextTarget],
+      { cwd: worktree },
+    );
+    expect(plan.existingBranch).toBe(true);
+    expect(plan.ownedMainCatchUpRequired).toBe(true);
+    expect(plan.previous).toBe(f.target);
+    expect(plan.commits).toHaveLength(1);
+    expect(run("rev-parse", "HEAD")).toBe(head);
+    expect(run("status", "--porcelain=v1")).toBe("");
+    expect(() =>
+      inspectAlignment(
+        [
+          "start",
+          "--existing",
+          "--base",
+          head,
+          "--target",
+          nextTarget,
+          "--worktree",
+          NodePath.join(f.directory, "another"),
+          "--branch",
+          "codex/another",
+        ],
+        { cwd: worktree },
+      ),
+    ).toThrow(/plan-only/u);
+    NodeFS.writeFileSync(
+      NodePath.join(worktree, "upstream-state.json"),
+      JSON.stringify({
+        updateMode: "thin-fork-merge",
+        integrationBase: f.target,
+        lastRefreshMerge: merge,
+        lastRefreshBranch: "codex/a-different-pr",
+      }),
+    );
+    run("add", "upstream-state.json");
+    run("commit", "-qm", "record different PR branch");
+    expect(() =>
+      inspectAlignment(["plan", "--existing", "--base", "HEAD", "--target", nextTarget], {
+        cwd: worktree,
+      }),
+    ).toThrow(/recorded codex\/ alignment branch/u);
   });
 
   it("rejects stale or untrusted boundaries before creating a worktree", () => {

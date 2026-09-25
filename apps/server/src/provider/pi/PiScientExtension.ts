@@ -175,7 +175,9 @@ async function piScientExtension(pi: PiExtensionApi): Promise<void> {
                 content.push({ type: "image", data: part.data, mimeType: part.mimeType });
               else content.push({ type: "text", text: JSON.stringify(value) });
             }
-            if (output.structuredContent !== undefined)
+            // MCP content is the model-facing projection when present. Keep
+            // structuredContent only as a fallback for structured-only tools.
+            if (content.length === 0 && output.structuredContent !== undefined)
               content.push({ type: "text", text: JSON.stringify(output.structuredContent) });
             if (output.isError === true)
               content.unshift({ type: "text", text: "Scient tool reported an error:" });

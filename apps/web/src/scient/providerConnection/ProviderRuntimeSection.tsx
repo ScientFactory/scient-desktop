@@ -34,10 +34,6 @@ import {
 } from "./optimisticProviderValue";
 import { ProviderRuntimeDiagnosticsDetails } from "./ProviderRuntimeDiagnostics";
 import {
-  DESTRUCTIVE_GHOST_ACTION_CLASS,
-  PRIMARY_GHOST_ACTION_CLASS,
-} from "./providerConnectionActionStyles";
-import {
   isActiveProviderRuntimeOperation,
   needsManagedRuntimeRecovery,
   providerLifecycleFailureMessage,
@@ -443,10 +439,9 @@ export function ProviderRuntimeSection(props: {
             </span>
           ) : null}
           <Button
-            className={DESTRUCTIVE_GHOST_ACTION_CLASS}
             type="button"
             size="sm"
-            variant={props.compact ? "ghost-muted" : "outline"}
+            variant={props.compact ? "ghost-destructive-action" : "destructive-outline"}
             disabled={isWorking}
             onClick={() => void cancel()}
           >
@@ -517,8 +512,7 @@ export function ProviderRuntimeSection(props: {
           <Button
             type="button"
             size="sm"
-            variant="ghost-muted"
-            className="text-destructive hover:bg-destructive/8 hover:text-destructive"
+            variant="ghost-destructive-action"
             disabled={isWorking}
             onClick={() => void start()}
           >
@@ -590,17 +584,14 @@ export function ProviderRuntimeSection(props: {
                   size={props.compact ? "compact" : "sm"}
                   variant={
                     action === "update" || (action === "install" && !isSystemManagedSwitch)
-                      ? "ghost"
+                      ? "ghost-primary"
                       : props.compact
-                        ? "ghost-muted"
-                        : "outline"
-                  }
-                  className={
-                    action === "update" || (action === "install" && !isSystemManagedSwitch)
-                      ? PRIMARY_GHOST_ACTION_CLASS
-                      : props.compact && action === "remove"
-                        ? "hover:bg-destructive/8 hover:text-destructive"
-                        : undefined
+                        ? action === "remove"
+                          ? "ghost-destructive-action"
+                          : "ghost-muted"
+                        : action === "remove"
+                          ? "destructive-outline"
+                          : "outline"
                   }
                   disabled={isWorking}
                   onClick={() => void requestPlan(action)}
@@ -663,12 +654,12 @@ export function ProviderRuntimeSection(props: {
             />
           </div>
           <Button
-            className={`${PRIMARY_GHOST_ACTION_CLASS} shrink-0`}
+            className="shrink-0"
             disabled={isWorking}
             onClick={() => void requestPlan("update")}
             size="compact"
             type="button"
-            variant="ghost"
+            variant="ghost-primary"
           >
             {pendingAction === "plan" || pendingAction === "start" ? (
               <LoaderIcon className="animate-spin" />

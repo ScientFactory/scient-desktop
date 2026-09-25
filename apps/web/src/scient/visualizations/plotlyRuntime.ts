@@ -3,7 +3,6 @@ import type { Config, Data, Frame, Layout, PlotlyHTMLElement } from "plotly.js";
 import type { ParsedPlotlySource, PlotlyFigureDocument } from "./plotlySpec";
 import { ensurePlotlyMathRuntime } from "./plotlyMathRuntime";
 import { releasePlotlyWebGlContexts } from "./plotlyWebGlContext";
-import { assertPlotlyNetworkDenied } from "./plotlyNetworkPolicy";
 
 export type PlotlyTheme = "light" | "dark";
 export type PlotlySurface = "expanded" | "inline";
@@ -261,7 +260,6 @@ function reactPlotlyFigure(
   root: HTMLElement | PlotlyHTMLElement,
   figure: PlotlyRuntimeFigure,
 ): Promise<PlotlyHTMLElement> {
-  assertPlotlyNetworkDenied(figure);
   // Plotly's object-form API updates data, layout, config, and frames as one
   // figure. The DefinitelyTyped declaration currently omits this overload.
   return (

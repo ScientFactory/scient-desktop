@@ -5,29 +5,31 @@
 # The bridge's own unit tests need nothing but a standard library and so run on
 # every pull request from `ci.yml`. What is here needs `jupyter_client`,
 # `ipykernel`, matplotlib, pandas, and a live subprocess tree, which is why it
-# is path-filtered and dispatchable rather than always on.
+# is conditionally called by CI and remains manually dispatchable.
 #
-# The matrix is deliberately the platforms this suite has been observed to pass
-# on. Windows is absent because it is unverified, not because it is expected to
-# fail: the bridge already degrades to no signal handlers there (an asyncio loop
-# on Windows implements none of them) and falls back to the `shutdown` command,
-# and `interrupt_kernel` takes a different path again. Adding a `windows-2025`
-# entry is the way to find out, and belongs in its own change so that a red
-# result reads as news about Windows rather than as a broken workflow.
+# The real-kernel matrix deliberately spans macOS, Linux, and Windows. Managed
+# Python remains limited to targets with a published, sealed runtime recipe.
 name: Scient Compute Python Kernel
 
 on:
   workflow_call:
+    inputs:
+      real_kernel:
+        type: boolean
+        default: true
+      managed_python:
+        type: boolean
+        default: true
   workflow_dispatch:
-  pull_request:
-    paths:
-      - ".github/workflows/scient-compute-python-kernel.yml"
-      - "apps/server/src/scient/compute/**"
-      - "apps/server/scripts/compute-recipes.ts"
-      - "apps/server/src/preview/PortScanner*"
-      - "apps/server/src/localEndpoints/**"
-      - "apps/server/src/scient/execution/LocalDuplexProcess.ts"
-      - "packages/scient-compute/**"
+    inputs:
+      real_kernel:
+        description: Run the real-kernel OS and Python-version matrix
+        type: boolean
+        default: true
+      managed_python:
+        description: Provision and qualify managed Python toolkits
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -38,6 +40,7 @@ concurrency:
 
 jobs:
   managed_python:
+    if: ${{ inputs.managed_python }}
     name: Managed Python toolkits / ${{ matrix.runner }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
@@ -82,13 +85,14 @@ jobs:
         run: vp test run src/scient/compute/ManagedPythonProduct.live.test.ts src/scient/compute/ComputeRecipe.live.test.ts --maxWorkers=1
 
   real_kernel:
+    if: ${{ inputs.real_kernel }}
     name: Real kernel / ${{ matrix.runner }} / Python ${{ matrix.python }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-24.04, macos-15]
+        runner: [ubuntu-24.04, macos-15, windows-2025]
         # Both ends of the supported range, because the failures this suite
         # catches are version-dependent asyncio and kernel-startup behaviour:
         # 3.10 is the floor the runtime adapter enforces, 3.12 is what a current

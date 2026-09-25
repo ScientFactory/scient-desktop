@@ -2,7 +2,7 @@ import { Brackets, FileText, Search, Unlink } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
-import { Input } from "~/components/ui/input";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/input-group";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "~/components/ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
@@ -198,18 +198,20 @@ export function ScientWikiLinkPicker(props: ScientWikiLinkPickerProps) {
         className="w-80 max-w-[calc(100vw-1rem)]"
         data-keybinding-capture=""
         side="bottom"
-        viewportClassName="p-2"
+        padding="tight"
       >
         <div className="flex flex-col gap-2">
           <div className="flex items-center justify-between px-1">
-            <PopoverTitle className="text-xs font-medium">
+            <PopoverTitle size="compact">
               {editingTarget === null ? "Link to Markdown" : "Edit wiki link"}
             </PopoverTitle>
             <span className="text-[10px] text-muted-foreground">Enter to select</span>
           </div>
-          <div className="relative">
-            <Search className="pointer-events-none absolute start-2 top-1/2 z-10 size-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
+          <InputGroup>
+            <InputGroupAddon>
+              <Search className="size-3.5 text-muted-foreground" />
+            </InputGroupAddon>
+            <InputGroupInput
               ref={inputRef}
               aria-autocomplete="list"
               aria-activedescendant={
@@ -218,7 +220,6 @@ export function ScientWikiLinkPicker(props: ScientWikiLinkPickerProps) {
               aria-controls={listId}
               aria-expanded={open}
               aria-label="Search Markdown files"
-              className="[&_[data-slot=input]]:ps-7"
               placeholder="Search Markdown files…"
               role="combobox"
               size="compact"
@@ -255,7 +256,7 @@ export function ScientWikiLinkPicker(props: ScientWikiLinkPickerProps) {
                 }
               }}
             />
-          </div>
+          </InputGroup>
           <div
             id={listId}
             role="listbox"
@@ -296,10 +297,9 @@ export function ScientWikiLinkPicker(props: ScientWikiLinkPickerProps) {
           {editingTarget !== null ? (
             <div className="border-t border-border pt-1">
               <Button
-                className="text-muted-foreground hover:text-destructive"
                 size="xs"
                 type="button"
-                variant="ghost"
+                variant="ghost-destructive"
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={remove}
               >

@@ -58,6 +58,7 @@ vi.mock("./settingsLayout", async (importOriginal) => {
   };
 });
 
+vi.mock("./SettingsScopeSentence", () => ({ SettingsScopeSentence: () => null }));
 vi.mock("react/compiler-runtime", async () => {
   const { reactHookHarness } = await import("../../test/reactHookHarness");
   return { c: reactHookHarness.useMemoCache };
@@ -230,7 +231,7 @@ describe("EnvironmentProviderSettings routing", () => {
 
     expect(commands.refresh).toHaveBeenCalledWith({
       environmentId,
-      input: { refreshModels: true },
+      input: { refreshModels: true, refreshManagedRuntimeCatalog: true },
     });
 
     const providerCard = visitElements(

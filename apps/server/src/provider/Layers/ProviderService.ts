@@ -332,6 +332,10 @@ function turnEffort(modelSelection: ProviderSendTurnInput["modelSelection"]): st
   );
 }
 
+const canDeliverScientSkills = (adapter: ProviderAdapterShape<unknown>): boolean =>
+  adapter.capabilities.mcpSessionInjection === true &&
+  ScientSkillSession.scientSkillDeliveryForProvider(adapter.provider) === "mcp";
+
 type ProviderServiceMethod<Name extends keyof ProviderService.ProviderService["Service"]> =
   ProviderService.ProviderService["Service"][Name];
 
@@ -967,9 +971,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     threadId: ThreadId,
     adapter: ProviderAdapterShape<unknown>,
   ) {
-    const supportsScientSkills =
-      adapter.capabilities.mcpSessionInjection === true &&
-      ScientSkillSession.scientSkillDeliveryForProvider(adapter.provider) === "mcp";
+    const supportsScientSkills = canDeliverScientSkills(adapter);
     const capabilities = new Set<McpInvocationContext.McpCapability>([
       "pull-requests",
       "documents:build",
@@ -1028,7 +1030,15 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         threadId,
         providerInstanceId,
         capabilities,
-        ...(supportsScientSkills ? { skillScope: { releases: new Map(), skills: [] } } : {}),
+        ...(supportsScientSkills
+          ? {
+              skillScope: {
+                catalog: { status: "pending" as const },
+                releases: new Map(),
+                skills: [],
+              },
+            }
+          : {}),
       });
       if (credential) {
         const deviceEnvironment = capabilities.has("device")
@@ -1825,7 +1835,13 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       );
       const scientTools = scientToolProjectionForProvider(routed.adapter.provider);
       const skillProjection = {
+        skillListToolName: scientTools.name("scient_skills_list"),
         skillLoadToolName: scientTools.name("scient_skill_load"),
+        includeCatalogMarker:
+          canDeliverScientSkills(routed.adapter) &&
+          McpProviderSession.readMcpProviderSession(input.threadId)?.capabilities.has(
+            "skills:read",
+          ) === true,
         providerNativeSkillTool: scientTools.providerNativeSkillTool,
         deferred: scientTools.deferred,
       };
@@ -1835,6 +1851,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         skillPlan.delivery === "mcp" ? skillPlan.releases : new Map(),
         skillProjection,
         parsed.selectedScientSkillNames ?? [],
+        skillPlan.catalogStatus,
       );
       if ((skillTurn.input?.length ?? 0) > PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
         return yield* toValidationError(
@@ -2231,6 +2248,83 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     },
   );
 
+  const captureTurnStop: NonNullable<ProviderServiceMethod<"captureTurnStop">> = Effect.fn(
+    "captureTurnStop",
+  )(function* (input) {
+    const routed = yield* resolveRoutableSession({
+      threadId: input.threadId,
+      operation: "ProviderService.captureTurnStop",
+      allowRecovery: false,
+    });
+    if (
+      !routed.isActive ||
+      (input.providerInstanceId !== undefined && input.providerInstanceId !== routed.instanceId)
+    ) {
+      return yield* new ProviderAdapterRequestError({
+        provider: routed.adapter.provider,
+        method: "turn/interrupt",
+        detail: "The provider session changed before Stop could be delivered.",
+      });
+    }
+    const session = (yield* routed.adapter.listSessions()).find(
+      (session) => session.threadId === routed.threadId,
+    );
+    const handle =
+      routed.adapter.captureTurnStop !== undefined
+        ? yield* routed.adapter.captureTurnStop(routed.threadId)
+        : {
+            interrupt: Effect.suspend(() =>
+              routed.adapter.interruptTurn(routed.threadId, session?.activeTurnId),
+            ),
+            confirm: Effect.succeed("unknown" as const),
+            stop: (_onStopped?: Effect.Effect<void>) => Effect.succeed(false),
+          };
+    const capturedMcp = McpProviderSession.readMcpProviderSession(input.threadId);
+    const finalizeStopped = Effect.gen(function* () {
+      // Called while the adapter still holds closing admission for this runtime.
+      // A replaced registry instance or credential belongs to different work.
+      const adapter = yield* registry.getByInstance(routed.instanceId);
+      if (
+        adapter !== routed.adapter ||
+        McpProviderSession.readMcpProviderSession(input.threadId) !== capturedMcp
+      )
+        return;
+      const binding = yield* directory.getBinding(input.threadId);
+      if (Option.isNone(binding) || binding.value.providerInstanceId !== routed.instanceId) return;
+      const pending = pendingCompactions.get(input.threadId);
+      if (pending) yield* settleCompaction(input.threadId, pending, "turn.aborted");
+      timedOutNativeCompactions.delete(input.threadId);
+      yield* clearTurnAnalyticsSession(routed.instanceId, input.threadId);
+      yield* clearMcpSession(input.threadId);
+      yield* directory.upsert({
+        threadId: input.threadId,
+        provider: routed.adapter.provider,
+        providerInstanceId: routed.instanceId,
+        status: "stopped",
+        runtimePayload: {
+          activeTurnId: null,
+          continueAfterServerUpdate: null,
+          continueAfterServerUpdatePrepared: null,
+        },
+      });
+      yield* analytics.record("provider.session.stopped", { provider: routed.adapter.provider });
+    }).pipe(Effect.orDie);
+    return {
+      interrupt: handle.interrupt.pipe(
+        Effect.tap(() =>
+          analytics.record("provider.turn.interrupted", { provider: routed.adapter.provider }),
+        ),
+        withMetrics({
+          counter: providerTurnsTotal,
+          outcomeAttributes: () =>
+            providerMetricAttributes(routed.adapter.provider, { operation: "interrupt" }),
+        }),
+      ),
+      confirm: handle.confirm,
+      stop: () => handle.stop(finalizeStopped),
+    };
+  });
+
   const listSessions: ProviderServiceMethod<"listSessions"> = Effect.fn("listSessions")(
     function* () {
       const currentAdapters = yield* getAdapterEntries;
@@ -2545,6 +2639,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     respondToRequest,
     respondToUserInput,
     stopSession,
+    captureTurnStop,
     listSessions,
     getCapabilities,
     getInstanceInfo,

@@ -47,6 +47,8 @@ import { useSettingsScope } from "./SettingsScopeContext";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
+import { Kbd, KbdGroup } from "../ui/kbd";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
@@ -136,9 +138,11 @@ function ExpandableHeaderSearch({
   }
 
   return (
-    <div className="relative">
-      <SearchIcon className="pointer-events-none absolute top-1/2 left-2 size-3 -translate-y-1/2 text-muted-foreground" />
-      <Input
+    <InputGroup className="w-44">
+      <InputGroupAddon>
+        <SearchIcon aria-hidden className="size-3" />
+      </InputGroupAddon>
+      <InputGroupInput
         ref={inputRef}
         autoFocus
         type="search"
@@ -156,10 +160,9 @@ function ExpandableHeaderSearch({
         }}
         placeholder="Search shortcuts"
         aria-label="Search shortcuts"
-        className="w-44 [&_[data-slot=input]]:pl-7"
         size="sm"
       />
-    </div>
+    </InputGroup>
   );
 }
 
@@ -246,7 +249,7 @@ function WarningTooltipIcon({
             tabIndex={focusable ? 0 : undefined}
             aria-label={label}
             className={cn(
-              "inline-flex size-5 shrink-0 items-center justify-center rounded-sm text-warning outline-none transition-colors hover:bg-warning/10 focus-visible:ring-[3px] focus-visible:ring-warning/25",
+              "inline-flex size-5 shrink-0 items-center justify-center rounded-sm text-warning outline-none transition-colors hover:bg-warning/10 focus-visible:ring-3 focus-visible:ring-warning/25",
               className,
             )}
           />
@@ -254,9 +257,7 @@ function WarningTooltipIcon({
       >
         <TriangleAlertIcon className="size-3.5" />
       </TooltipTrigger>
-      <TooltipPopup side="top" className="max-w-72 whitespace-normal leading-relaxed">
-        {children}
-      </TooltipPopup>
+      <TooltipPopup side="top">{children}</TooltipPopup>
     </Tooltip>
   );
 }
@@ -313,24 +314,15 @@ function WhenVariableSelect({
 
   return (
     <Select value={value} onValueChange={(nextValue) => nextValue && onChange(nextValue)}>
-      <SelectTrigger size="compact" className="min-w-0 flex-1 font-mono">
-        <SelectValue placeholder="Condition" className="leading-7" />
+      <SelectTrigger size="compact" className="min-w-0 flex-1">
+        <SelectValue placeholder="Condition" />
         {unknownIdentifiers && unknownIdentifiers.length > 0 ? (
           <UnknownWhenVariableWarning identifiers={unknownIdentifiers} focusable={false} />
         ) : null}
       </SelectTrigger>
-      <SelectContent
-        alignItemWithTrigger={false}
-        matchTriggerWidth={false}
-        popupClassName="w-fit"
-        className="max-h-72 w-fit min-w-44"
-      >
+      <SelectContent alignItemWithTrigger={false} matchTriggerWidth={false} className="max-h-72">
         {options.map((option) => (
-          <SelectItem
-            key={option}
-            value={option}
-            className="min-h-7 w-full py-1 font-mono text-[12px]"
-          >
+          <SelectItem key={option} value={option} className="w-full">
             <span className="truncate">{option}</span>
           </SelectItem>
         ))}
@@ -533,18 +525,9 @@ function WhenExpressionNodeEditor({
           <SelectTrigger size="compact" className="w-24">
             <SelectValue />
           </SelectTrigger>
-          <SelectContent
-            alignItemWithTrigger={false}
-            matchTriggerWidth={false}
-            popupClassName="w-fit"
-            className="w-fit min-w-24"
-          >
-            <SelectItem value="and" className="min-h-7 py-1 font-mono text-[12px]">
-              and
-            </SelectItem>
-            <SelectItem value="or" className="min-h-7 py-1 font-mono text-[12px]">
-              or
-            </SelectItem>
+          <SelectContent alignItemWithTrigger={false} matchTriggerWidth={false}>
+            <SelectItem value="and">and</SelectItem>
+            <SelectItem value="or">or</SelectItem>
           </SelectContent>
         </Select>
         <Button type="button" variant="outline" size="compact" onClick={addCondition}>
@@ -662,27 +645,24 @@ function WhenExpressionBuilder({
       </div>
 
       <div className="space-y-1.5">
-        <div className="relative">
-          <Input
+        <InputGroup>
+          <InputGroupInput
             value={expressionDraft}
             onChange={(event) => updateExpressionDraft(event.currentTarget.value)}
             placeholder="Always"
             aria-invalid={Boolean(parseError)}
             aria-label="When expression"
-            className={cn(
-              "h-7 rounded-md font-mono text-[12px] leading-7 sm:h-7 sm:leading-7",
-              unknownIdentifiers.length > 0 && "pr-9",
-              parseError && "border-destructive/70 focus-visible:border-destructive",
-            )}
+            size="compact"
+            font="mono"
           />
           {unknownIdentifiers.length > 0 ? (
-            <span className="absolute inset-y-0 right-2 flex items-center">
+            <InputGroupAddon align="inline-end">
               <UnknownWhenVariableWarning identifiers={unknownIdentifiers} />
-            </span>
+            </InputGroupAddon>
           ) : null}
-        </div>
+        </InputGroup>
         {parseError ? (
-          <div className="flex items-center gap-1.5 text-[11px] text-destructive">
+          <div className="flex items-center gap-1.5 text-2xs text-destructive">
             <CircleXIcon className="size-3.5" />
             {parseError}
           </div>
@@ -712,7 +692,7 @@ function WhenExpressionBuilder({
           </div>
         )}
         {parseError ? (
-          <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-lg border border-destructive/30 bg-background/75 p-4 text-center text-xs text-destructive backdrop-blur-[1px]">
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-lg border border-destructive/30 bg-background/75 p-4 text-center text-xs text-destructive backdrop-blur-px">
             Fix the expression above to continue editing visually.
           </div>
         ) : null}
@@ -867,7 +847,8 @@ function KeybindingKeyControl({
           value={isRecording ? "" : keyDraft}
           placeholder={isRecording ? "Press shortcut" : "Unassigned"}
           size="sm"
-          className={cn("w-44 font-mono", isRecording && "border-primary/70 bg-primary/5")}
+          font="mono"
+          className="w-44"
           onFocus={() => setDraft({ isRecording: true })}
           onBlur={() => setDraft({ isRecording: false })}
           onChange={(event) => setDraft({ keyDraft: event.currentTarget.value })}
@@ -901,12 +882,12 @@ function WhenClauseControl({
           <Button
             variant={expression ? "ghost" : "ghost-muted"}
             size="micro"
-            className="min-w-0 shrink font-mono"
+            className="min-w-0 shrink"
           />
         }
         aria-label={`Edit when clause for ${label}`}
       >
-        <span className="truncate">{expression || "Always"}</span>
+        <span className="truncate font-mono">{expression || "Always"}</span>
         <ChevronDownIcon className="size-3.5 shrink-0 opacity-60" />
       </PopoverTrigger>
       <PopoverContent align="start" sideOffset={6}>
@@ -942,9 +923,8 @@ function KeybindingRowMenu({
         render={
           <Button
             type="button"
-            variant="ghost"
+            variant="ghost-muted"
             size="icon-sm"
-            className="text-muted-foreground hover:text-foreground"
             disabled={isSaving}
             aria-label={`Actions for ${commandLabel(row.command)}`}
           />
@@ -952,7 +932,7 @@ function KeybindingRowMenu({
       >
         <EllipsisIcon className="size-3.5" />
       </MenuTrigger>
-      <MenuPopup align="end" className="min-w-36">
+      <MenuPopup align="end">
         {canReset ? (
           <MenuItem disabled={isSaving} onClick={() => onReset(row)}>
             Reset to default
@@ -971,7 +951,7 @@ function KeybindingRowMenu({
 function KeybindingSourceBadge({ source }: { source: KeybindingRow["source"] }) {
   if (source === "Default") return null;
   return (
-    <Badge variant="outline" size="sm" className="font-normal text-muted-foreground">
+    <Badge variant="outline" size="sm">
       {source}
     </Badge>
   );
@@ -1000,7 +980,7 @@ function KeybindingRowWhen({
 }) {
   return (
     <span className="flex h-6 items-center gap-1.5">
-      <span className="text-[12px] leading-none text-muted-foreground/70">When</span>
+      <span className="text-xs leading-none text-muted-foreground/70">When</span>
       <WhenClauseControl
         label={commandLabel(row.command)}
         expression={editor.whenDraftExpression}
@@ -1149,13 +1129,9 @@ function NewKeybindingCommandSelect({
       <SelectTrigger size="sm" className={className}>
         <SelectValue placeholder="Command" />
       </SelectTrigger>
-      <SelectContent
-        alignItemWithTrigger={false}
-        matchTriggerWidth={false}
-        className="max-h-72 w-fit min-w-56"
-      >
+      <SelectContent alignItemWithTrigger={false} matchTriggerWidth={false} className="max-h-72">
         {commandOptions.map((command) => (
-          <SelectItem key={command} value={command} className="min-h-7 w-full py-1 text-[12px]">
+          <SelectItem key={command} value={command} className="w-full">
             <span className="truncate">{commandLabel(command)}</span>
           </SelectItem>
         ))}
@@ -1181,7 +1157,8 @@ function NewKeybindingKeyInput({
       value={draft.isRecording ? "" : draft.keyDraft}
       placeholder={draft.isRecording ? "Press shortcut" : "Unassigned"}
       size="sm"
-      className={cn("font-mono", draft.isRecording && "border-primary/70 bg-primary/5", className)}
+      font="mono"
+      className={className}
       onFocus={() => draft.setDraft({ isRecording: true })}
       onBlur={() => draft.setDraft({ isRecording: false })}
       onChange={(event) => draft.setDraft({ keyDraft: event.currentTarget.value })}
@@ -1222,9 +1199,8 @@ function NewKeybindingCancelIcon({
         render={
           <Button
             type="button"
-            variant="ghost"
+            variant="ghost-muted"
             size="icon-sm"
-            className="text-muted-foreground hover:text-foreground"
             disabled={isSaving}
             aria-label="Cancel new keybinding"
             onClick={onCancel}
@@ -1249,7 +1225,7 @@ function NewKeybindingSettingsRow(props: NewKeybindingProps) {
       title="New keybinding"
       description={
         <span className="flex h-6 items-center gap-1.5">
-          <span className="text-[12px] leading-none text-muted-foreground/70">When</span>
+          <span className="text-xs leading-none text-muted-foreground/70">When</span>
           <NewKeybindingWhen draft={draft} variables={variables} />
         </span>
       }
@@ -1327,7 +1303,7 @@ function KeybindingsList(props: KeybindingsListProps) {
 /** Browser reservations are additional to OS and native-menu reservations. */
 function BrowserKeybindingNotice() {
   return (
-    <div className="flex items-center gap-2 px-3 py-2.5 text-[12px] leading-[1.45] text-muted-foreground sm:px-4">
+    <div className="flex items-center gap-2 px-3 py-2.5 text-xs leading-compact text-muted-foreground sm:px-4">
       <TriangleAlertIcon className="size-3.5 shrink-0 text-warning" aria-hidden />
       <span>
         Some shortcuts may be claimed by the browser before Scient sees them. Use the desktop app
@@ -1554,7 +1530,7 @@ export function KeybindingsSettingsPanel() {
   const visibleCount =
     selectedSection === "general" ? rows.length + (isAddingBinding ? 1 : 0) : visibleAuthoringCount;
   const bindingsCount = (
-    <span className="text-[11px] text-muted-foreground">
+    <span className="text-2xs text-muted-foreground">
       {visibleCount}{" "}
       {selectedSection === "general"
         ? visibleCount === 1

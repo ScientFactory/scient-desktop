@@ -15,10 +15,13 @@ import type {
 import { isLatexSourcePath, resolveLatexRoot } from "./latexRoot.ts";
 
 const MAX_INDEX_FILES = 2_000;
+const MAX_INDEX_ENTRIES = 20_000;
 const MAX_SOURCE_BYTES = 1_048_576;
 const MAX_TOTAL_SOURCE_BYTES = 24 * 1_048_576;
 const MAX_DIRECTORY_DEPTH = 32;
 const MAX_CANDIDATES = 64;
+const MAX_DEPENDENCY_DIRECTIVES_PER_SOURCE = 10_000;
+const MAX_GRAPH_STEPS = 100_000;
 
 const IGNORED_DIRECTORIES = new Set([
   ".git",
@@ -50,14 +53,16 @@ interface LatexDependencyDirective {
 
 interface IndexedLatexSource {
   readonly relativePath: string;
-  readonly contents: string;
   readonly documentRoot: boolean;
+  readonly explicitRootRelativePath: string | null;
   readonly directives: ReadonlyArray<LatexDependencyDirective>;
+  readonly incompleteReasons: ReadonlySet<ScientLatexResolutionIncompleteReason>;
 }
 
 interface ProjectIndex {
   readonly sources: ReadonlyMap<string, IndexedLatexSource>;
   readonly generation: string;
+  readonly skippedSymlinkPaths: ReadonlySet<string>;
   readonly incompleteReasons: ReadonlySet<ScientLatexResolutionIncompleteReason>;
 }
 
@@ -78,6 +83,29 @@ function escapesWorkspace(relativePath: string): boolean {
 function workspaceRelative(workspaceRoot: string, absolutePath: string): string | null {
   const relative = toPosix(NodePath.relative(workspaceRoot, absolutePath));
   return escapesWorkspace(relative) ? null : relative;
+}
+
+async function isSafeWorkspaceSourceFile(
+  workspaceRoot: string,
+  relativePath: string,
+): Promise<boolean> {
+  if (!isLatexSourcePath(relativePath)) return false;
+  let current = workspaceRoot;
+  for (const segment of toPosix(relativePath).split("/").slice(0, -1)) {
+    current = NodePath.join(current, segment);
+    try {
+      const info = await NodeFSP.lstat(current);
+      if (info.isSymbolicLink() || !info.isDirectory()) return false;
+    } catch {
+      return false;
+    }
+  }
+  try {
+    const info = await NodeFSP.lstat(NodePath.join(workspaceRoot, relativePath));
+    return info.isFile() && !info.isSymbolicLink();
+  } catch {
+    return false;
+  }
 }
 
 /** Removes syntax regions where dependency-looking text is literal rather than executable TeX. */
@@ -123,6 +151,7 @@ function latexDependencySource(source: string): string {
 }
 
 export function parseLatexDependencyDirectives(source: string): {
+  readonly visibleSource: string;
   readonly directives: ReadonlyArray<LatexDependencyDirective>;
   readonly incompleteReasons: ReadonlySet<ScientLatexResolutionIncompleteReason>;
 } {
@@ -130,9 +159,15 @@ export function parseLatexDependencyDirectives(source: string): {
   const directives: LatexDependencyDirective[] = [];
   const matchedCommands: Array<{ readonly from: number; readonly to: number }> = [];
   const incompleteReasons = new Set<ScientLatexResolutionIncompleteReason>();
+  let directiveLimitReached = false;
   const pattern =
     /\\(?:(input|include|subfile)\s*\{([^{}]+)\}|(import|subimport)\s*\{([^{}]+)\}\s*\{([^{}]+)\})/gu;
   for (const match of visible.matchAll(pattern)) {
+    if (matchedCommands.length >= MAX_DEPENDENCY_DIRECTIVES_PER_SOURCE) {
+      incompleteReasons.add("scan-limit");
+      directiveLimitReached = true;
+      break;
+    }
     const simple = match[1] as LatexDependencyDirective["command"] | undefined;
     const imported = match[3] as LatexDependencyDirective["command"] | undefined;
     const command = simple ?? imported;
@@ -140,7 +175,12 @@ export function parseLatexDependencyDirectives(source: string): {
     const directory = imported === undefined ? null : (match[4] ?? "").trim();
     const target = (simple === undefined ? (match[5] ?? "") : (match[2] ?? "")).trim();
     matchedCommands.push({ from: match.index, to: match.index + match[0].length });
-    if (target.includes("\\") || target.includes("#") || directory?.includes("\\") === true) {
+    if (
+      target.includes("\\") ||
+      target.includes("#") ||
+      directory?.includes("\\") === true ||
+      directory?.includes("#") === true
+    ) {
       incompleteReasons.add("dynamic-input");
       continue;
     }
@@ -152,12 +192,25 @@ export function parseLatexDependencyDirectives(source: string): {
   }
 
   const commandPattern = /\\(?:input|include|subfile|import|subimport)\b/gu;
-  for (const match of visible.matchAll(commandPattern)) {
-    if (!matchedCommands.some((range) => match.index >= range.from && match.index < range.to)) {
-      incompleteReasons.add("dynamic-input");
+  if (!directiveLimitReached) {
+    let matchedIndex = 0;
+    for (const match of visible.matchAll(commandPattern)) {
+      while (
+        matchedIndex < matchedCommands.length &&
+        match.index >= matchedCommands[matchedIndex]!.to
+      ) {
+        matchedIndex += 1;
+      }
+      const matched = matchedCommands[matchedIndex];
+      if (matched === undefined || match.index < matched.from || match.index >= matched.to) {
+        incompleteReasons.add("dynamic-input");
+      }
     }
   }
-  return { directives, incompleteReasons };
+  const unsupportedPattern =
+    /\\(?:InputIfFileExists|(?:sub)?(?:input|include)from|subfileinclude)\b/iu;
+  if (unsupportedPattern.test(visible)) incompleteReasons.add("unsupported-command");
+  return { visibleSource: visible, directives, incompleteReasons };
 }
 
 function candidatePath(baseDirectory: string, target: string): string | null {
@@ -173,10 +226,13 @@ async function buildProjectIndex(
   sourceRelativePath: string,
 ): Promise<ProjectIndex> {
   const sources = new Map<string, IndexedLatexSource>();
+  const sourceHashes = new Map<string, string>();
+  const skippedSymlinkPaths = new Set<string>();
   const incompleteReasons = new Set<ScientLatexResolutionIncompleteReason>();
-  const generation = NodeCrypto.createHash("sha256");
   let fileCount = 0;
+  let entryCount = 0;
   let totalBytes = 0;
+  let scanStopped = false;
 
   const addSource = async (absolutePath: string, relativePath: string): Promise<void> => {
     if (sources.has(relativePath)) return;
@@ -187,78 +243,147 @@ async function buildProjectIndex(
       incompleteReasons.add("unreadable-file");
       return;
     }
-    if (!info.isFile() || info.isSymbolicLink()) return;
+    if (info.isSymbolicLink()) {
+      incompleteReasons.add("unreadable-file");
+      return;
+    }
+    if (!info.isFile()) return;
     if (info.size > MAX_SOURCE_BYTES) {
       incompleteReasons.add("file-too-large");
       return;
     }
+    if (info.size > MAX_TOTAL_SOURCE_BYTES - totalBytes) {
+      incompleteReasons.add("scan-limit");
+      scanStopped = true;
+      return;
+    }
     let contents: string;
+    let sourceByteLength = 0;
     try {
-      contents = await NodeFSP.readFile(absolutePath, "utf8");
+      const file = await NodeFSP.open(absolutePath, "r");
+      try {
+        const bytes = Buffer.alloc(Math.min(MAX_SOURCE_BYTES + 1, Math.max(1, info.size + 1)));
+        let bytesRead = 0;
+        while (bytesRead < bytes.byteLength) {
+          const result = await file.read(bytes, bytesRead, bytes.byteLength - bytesRead, bytesRead);
+          if (result.bytesRead === 0) break;
+          bytesRead += result.bytesRead;
+        }
+        if (bytesRead > MAX_SOURCE_BYTES) {
+          incompleteReasons.add("file-too-large");
+          return;
+        }
+        const currentInfo = await file.stat();
+        if (
+          currentInfo.dev !== info.dev ||
+          currentInfo.ino !== info.ino ||
+          currentInfo.size !== info.size ||
+          currentInfo.mtimeMs !== info.mtimeMs ||
+          currentInfo.ctimeMs !== info.ctimeMs ||
+          bytesRead !== info.size
+        ) {
+          incompleteReasons.add("unreadable-file");
+          return;
+        }
+        sourceByteLength = bytesRead;
+        contents = bytes.toString("utf8", 0, bytesRead);
+      } finally {
+        await file.close();
+      }
     } catch {
       incompleteReasons.add("unreadable-file");
       return;
     }
-    totalBytes += Buffer.byteLength(contents);
+    totalBytes += sourceByteLength;
     if (totalBytes > MAX_TOTAL_SOURCE_BYTES) {
       incompleteReasons.add("scan-limit");
+      scanStopped = true;
       return;
     }
     const parsed = parseLatexDependencyDirectives(contents);
-    for (const reason of parsed.incompleteReasons) incompleteReasons.add(reason);
-    const dependencySource = latexDependencySource(contents);
+    sourceHashes.set(relativePath, NodeCrypto.createHash("sha256").update(contents).digest("hex"));
+    const rootResolution = resolveLatexRoot({ relativePath, contents });
     const documentRoot =
-      resolveLatexRoot({ relativePath, contents }).reason === "documentclass" ||
-      /\\begin\s*\{document\}/u.test(dependencySource);
+      rootResolution.reason === "documentclass" ||
+      /\\begin\s*\{document\}/u.test(parsed.visibleSource);
     sources.set(relativePath, {
       relativePath,
-      contents,
       documentRoot,
+      explicitRootRelativePath:
+        rootResolution.reason === "magic-comment" ? rootResolution.rootRelativePath : null,
       directives: parsed.directives,
+      incompleteReasons: parsed.incompleteReasons,
     });
-    generation.update(relativePath).update("\0").update(contents).update("\0");
   };
 
   const sourceAbsolutePath = NodePath.resolve(workspaceRoot, sourceRelativePath);
 
+  // Include the requested source before the bounded project walk. This keeps
+  // the result useful even when the walk hits a limit before reaching it.
+  if (await isSafeWorkspaceSourceFile(workspaceRoot, sourceRelativePath)) {
+    await addSource(sourceAbsolutePath, sourceRelativePath);
+  } else {
+    incompleteReasons.add("unreadable-file");
+  }
+
   const visit = async (directory: string, depth: number): Promise<void> => {
+    if (scanStopped) return;
     if (depth > MAX_DIRECTORY_DEPTH || fileCount >= MAX_INDEX_FILES) {
       incompleteReasons.add("scan-limit");
+      scanStopped = true;
       return;
     }
-    let entries: NodeFS.Dirent<string>[];
+    let entries: NodeFS.Dir;
     try {
-      entries = await NodeFSP.readdir(directory, { withFileTypes: true, encoding: "utf8" });
+      entries = await NodeFSP.opendir(directory, { encoding: "utf8" });
     } catch {
       incompleteReasons.add("unreadable-file");
       return;
     }
-    for (const entry of entries.toSorted((left, right) => left.name.localeCompare(right.name))) {
-      if (fileCount >= MAX_INDEX_FILES) {
-        incompleteReasons.add("scan-limit");
-        return;
+    try {
+      for await (const entry of entries) {
+        entryCount += 1;
+        if (entryCount > MAX_INDEX_ENTRIES) {
+          incompleteReasons.add("scan-limit");
+          scanStopped = true;
+          return;
+        }
+        if (fileCount >= MAX_INDEX_FILES) {
+          incompleteReasons.add("scan-limit");
+          scanStopped = true;
+          return;
+        }
+        const absolutePath = NodePath.join(directory, entry.name);
+        if (entry.isSymbolicLink()) {
+          const relativePath = workspaceRelative(workspaceRoot, absolutePath);
+          if (relativePath !== null) skippedSymlinkPaths.add(relativePath);
+          continue;
+        }
+        if (entry.isDirectory()) {
+          if (!IGNORED_DIRECTORIES.has(entry.name)) await visit(absolutePath, depth + 1);
+          if (scanStopped) return;
+          continue;
+        }
+        if (!entry.isFile()) continue;
+        const relativePath = workspaceRelative(workspaceRoot, absolutePath);
+        if (relativePath === null || !isLatexSourcePath(relativePath)) continue;
+        fileCount += 1;
+        await addSource(absolutePath, relativePath);
+        if (scanStopped) return;
       }
-      if (entry.isSymbolicLink()) continue;
-      const absolutePath = NodePath.join(directory, entry.name);
-      if (entry.isDirectory()) {
-        if (!IGNORED_DIRECTORIES.has(entry.name)) await visit(absolutePath, depth + 1);
-        continue;
-      }
-      if (!entry.isFile()) continue;
-      const relativePath = workspaceRelative(workspaceRoot, absolutePath);
-      if (relativePath === null || !isLatexSourcePath(relativePath)) continue;
-      fileCount += 1;
-      await addSource(absolutePath, relativePath);
+    } catch {
+      incompleteReasons.add("unreadable-file");
     }
   };
   await visit(workspaceRoot, 0);
-  // A bounded scan may stop before the requested source. The source still
-  // belongs in the result, but ordinary generations remain independent of
-  // which member of the same project the user happened to open.
-  await addSource(sourceAbsolutePath, sourceRelativePath);
+  const generation = NodeCrypto.createHash("sha256");
+  for (const [path, hash] of [...sourceHashes].sort(([left], [right]) => left.localeCompare(right))) {
+    generation.update(path).update("\0").update(hash).update("\0");
+  }
   return {
     sources,
     generation: generation.digest("hex").slice(0, 32),
+    skippedSymlinkPaths,
     incompleteReasons,
   };
 }
@@ -294,25 +419,68 @@ function rootContainsSource(
   workspaceRoot: string,
   root: IndexedLatexSource,
   sourceRelativePath: string,
-): boolean {
+  budget: { steps: number },
+): {
+  readonly contains: boolean;
+  readonly incompleteReasons: ReadonlySet<ScientLatexResolutionIncompleteReason>;
+} {
   const rootDirectory = NodePath.dirname(NodePath.resolve(workspaceRoot, root.relativePath));
-  const visited = new Set<string>();
-  const visit = (relativePath: string, importBase: string | null): boolean => {
+  const incompleteReasons = new Set<ScientLatexResolutionIncompleteReason>();
+  const pending: Array<{ readonly relativePath: string; readonly importBase: string | null }> = [];
+  const scheduled = new Set<string>();
+  const enqueue = (relativePath: string, importBase: string | null): void => {
     const identity = `${relativePath}\0${importBase ?? ""}`;
-    if (visited.has(identity)) return false;
-    visited.add(identity);
-    if (relativePath === sourceRelativePath) return true;
-    const source = index.sources.get(relativePath);
-    if (source === undefined) return false;
-    for (const directive of source.directives) {
-      const target = dependencyTargets({ workspaceRoot, rootDirectory, importBase }, directive);
-      if (target === null) continue;
-      const targetRelative = workspaceRelative(workspaceRoot, target.absolutePath);
-      if (targetRelative !== null && visit(targetRelative, target.importBase)) return true;
-    }
+    if (scheduled.has(identity)) return;
+    scheduled.add(identity);
+    pending.push({ relativePath, importBase });
+  };
+  enqueue(root.relativePath, null);
+  let contains = false;
+  const takeStep = (): boolean => {
+    budget.steps += 1;
+    if (budget.steps <= MAX_GRAPH_STEPS) return true;
+    incompleteReasons.add("scan-limit");
     return false;
   };
-  return visit(root.relativePath, null);
+  while (pending.length > 0) {
+    if (!takeStep()) break;
+    const { relativePath, importBase } = pending.pop()!;
+    if (relativePath === sourceRelativePath) {
+      contains = true;
+      continue;
+    }
+    const source = index.sources.get(relativePath);
+    if (source === undefined) continue;
+    for (const reason of source.incompleteReasons) incompleteReasons.add(reason);
+    for (const directive of source.directives) {
+      if (!takeStep()) return { contains, incompleteReasons };
+      const target = dependencyTargets({ workspaceRoot, rootDirectory, importBase }, directive);
+      if (target === null) {
+        incompleteReasons.add("unsupported-command");
+        continue;
+      }
+      const targetRelative = workspaceRelative(workspaceRoot, target.absolutePath);
+      if (targetRelative === null) {
+        incompleteReasons.add("unsupported-command");
+        continue;
+      }
+      let ancestor = targetRelative;
+      let usesSkippedSymlink = false;
+      while (ancestor !== ".") {
+        if (index.skippedSymlinkPaths.has(ancestor)) {
+          incompleteReasons.add("unreadable-file");
+          usesSkippedSymlink = true;
+          break;
+        }
+        const parent = NodePath.posix.dirname(ancestor);
+        if (parent === ancestor) break;
+        ancestor = parent;
+      }
+      if (usesSkippedSymlink) continue;
+      enqueue(targetRelative, target.importBase);
+    }
+  }
+  return { contains, incompleteReasons };
 }
 
 function addCandidate(
@@ -365,26 +533,45 @@ export async function resolveLatexDocument(
 
   const index = await buildProjectIndex(workspaceRoot, sourceRelativePath);
   const source = index.sources.get(sourceRelativePath);
-  const incompleteReasons = [...index.incompleteReasons];
-  const complete = incompleteReasons.length === 0;
+  const incompleteReasons = new Set(index.incompleteReasons);
   const candidates = new Map<
     string,
     { evidence: Set<ScientLatexRootEvidenceKind>; self: boolean }
   >();
+  // Bound the total work across every possible root, including import-base variants.
+  const graphBudget = { steps: 0 };
 
   for (const root of index.sources.values()) {
     if (!root.documentRoot || root.relativePath === sourceRelativePath) continue;
-    if (rootContainsSource(index, workspaceRoot, root, sourceRelativePath)) {
+    const relation = rootContainsSource(
+      index,
+      workspaceRoot,
+      root,
+      sourceRelativePath,
+      graphBudget,
+    );
+    for (const reason of relation.incompleteReasons) incompleteReasons.add(reason);
+    if (relation.contains) {
       addCandidate(candidates, root.relativePath, "static-dependency", true);
     }
+    if (graphBudget.steps > MAX_GRAPH_STEPS) break;
   }
+  if (candidates.size === 0 && incompleteReasons.size > 0) {
+    for (const root of index.sources.values()) {
+      if (root.documentRoot) {
+        addCandidate(candidates, root.relativePath, "project-document", true);
+      }
+    }
+  }
+  if (candidates.size > MAX_CANDIDATES) incompleteReasons.add("scan-limit");
+  const complete = incompleteReasons.size === 0;
 
   const shared = () => ({
     sourceRelativePath,
     candidates: renderedCandidates(candidates),
-    indexGeneration: index.generation || "empty",
+    indexGeneration: index.generation,
     complete,
-    incompleteReasons,
+    incompleteReasons: [...incompleteReasons],
   });
 
   const contextPath = input.contextRootRelativePath;
@@ -393,9 +580,13 @@ export async function resolveLatexDocument(
       workspaceRoot,
       NodePath.resolve(workspaceRoot, contextPath),
     );
-    const contextSource = normalized === null ? undefined : index.sources.get(normalized);
-    if (normalized !== null && contextSource !== undefined) {
-      addCandidate(candidates, normalized, "context", contextSource.documentRoot);
+    if (normalized !== null && (await isSafeWorkspaceSourceFile(workspaceRoot, normalized))) {
+      addCandidate(
+        candidates,
+        normalized,
+        "context",
+        index.sources.get(normalized)?.documentRoot ?? true,
+      );
       return {
         _tag: "resolved",
         ...shared(),
@@ -406,15 +597,18 @@ export async function resolveLatexDocument(
   }
 
   if (source !== undefined) {
-    const local = resolveLatexRoot({ relativePath: sourceRelativePath, contents: source.contents });
-    if (local.reason === "magic-comment") {
+    if (source.explicitRootRelativePath !== null) {
       const rootRelativePath = workspaceRelative(
         workspaceRoot,
-        NodePath.resolve(workspaceRoot, local.rootRelativePath),
+        NodePath.resolve(workspaceRoot, source.explicitRootRelativePath),
       );
-      if (rootRelativePath !== null && index.sources.has(rootRelativePath)) {
-        const root = index.sources.get(rootRelativePath)!;
-        addCandidate(candidates, rootRelativePath, "magic-comment", root.documentRoot);
+      if (
+        rootRelativePath !== null &&
+        (index.sources.has(rootRelativePath) ||
+          (await isSafeWorkspaceSourceFile(workspaceRoot, rootRelativePath)))
+      ) {
+        const root = index.sources.get(rootRelativePath);
+        addCandidate(candidates, rootRelativePath, "magic-comment", root?.documentRoot ?? true);
         return {
           _tag: "resolved",
           ...shared(),
@@ -443,8 +637,6 @@ export async function resolveLatexDocument(
       reason: "static-dependency",
     };
   }
-  return {
-    _tag: inferred.length > 1 ? "ambiguous" : "unresolved",
-    ...shared(),
-  };
+  if (inferred.length > 1) return { _tag: "ambiguous", ...shared() };
+  return { _tag: "unresolved", ...shared() };
 }

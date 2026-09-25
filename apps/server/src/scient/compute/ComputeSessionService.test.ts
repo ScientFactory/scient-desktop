@@ -1,3 +1,5 @@
+// @effect-diagnostics globalTimersInEffect:off -- This host watchdog must remain independent of the Effect test clock.
+import * as NodeTimers from "node:timers";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import {
   ComputeExecutionId,
@@ -466,26 +468,41 @@ const startInput = (
 });
 
 /**
- * Runs the coordinator forward until an expectation holds.
+ * Runs the coordinator forward until an expectation holds or ten seconds of
+ * host time have elapsed.
  *
  * The scripted runtime never sleeps, so every state a test waits for is a fixed
  * number of turns away rather than a duration. Completion still persists to the
  * real filesystem, however, so each retry must yield to both Effect fibers and
- * Node's event loop. This remains deterministic under a test clock without
- * starving the host callback that makes the observed state durable.
+ * Node's event loop. A retry count is not a timeout: under load it can be
+ * exhausted before a filesystem callback runs. The host-time deadline remains
+ * bounded without depending on the Effect test clock.
  */
 const waitUntil = <A, E, R>(check: Effect.Effect<A | null, E, R>) =>
-  Effect.gen(function* () {
-    for (let attempt = 0; attempt < 1000; attempt += 1) {
-      const value = yield* check;
-      if (value !== null) return value;
-      yield* Effect.yieldNow;
-      yield* Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)));
-    }
-    return yield* Effect.die(
-      new Error("The compute session never reached the state the test waited for."),
-    );
-  });
+  Effect.raceFirst(
+    Effect.gen(function* () {
+      for (;;) {
+        const value = yield* check;
+        if (value !== null) return value;
+        yield* Effect.yieldNow;
+        yield* Effect.promise(
+          () => new Promise<void>((resolve) => NodeTimers.setImmediate(resolve)),
+        );
+      }
+    }),
+    Effect.callback<never>((resume) => {
+      const timer = NodeTimers.setTimeout(
+        () =>
+          resume(
+            Effect.die(
+              new Error("The compute session never reached the state the test waited for."),
+            ),
+          ),
+        10_000,
+      );
+      return Effect.sync(() => NodeTimers.clearTimeout(timer));
+    }),
+  );
 
 const sessionAt = (status: ComputeSessionStatus) =>
   Effect.gen(function* () {
@@ -3459,6 +3476,68 @@ describe("compute session generations", () => {
 });
 
 describe("compute session endings", () => {
+  it.effect("rejects idle-only replacement after new work is admitted, without cancelling it", () =>
+    Effect.gen(function* () {
+      const test = yield* harness();
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          const session = yield* start;
+          expect(session.activity).toBe("idle");
+          yield* submit("hold", "running-during-choice");
+          yield* waitUntil(
+            executionAt(ComputeExecutionId.make("running-during-choice"), "running"),
+          );
+          yield* submit("print(1)", "queued-during-choice");
+          const command = {
+            projectId: PROJECT_ID,
+            sessionId: SESSION_ID,
+            expectedGeneration: session.generation,
+          };
+          const error = yield* service
+            .stopSession({ ...command, onlyIfIdle: true })
+            .pipe(Effect.flip);
+          expect(error.reason).toBe("session-not-running");
+          expect(test.closed()).toEqual([]);
+          const executions = yield* service.listExecutions({
+            projectId: PROJECT_ID,
+            sessionId: SESSION_ID,
+          });
+          expect(executions.map((execution) => execution.result?.status).sort()).toEqual([
+            "queued",
+            "running",
+          ]);
+          // Explicit Stop must retain its normal interrupting semantics.
+          expect((yield* service.stopSession(command)).status).toBe("stopped");
+          expect(test.closed()).toEqual([SESSION_ID]);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("allows an idle-only replacement and rejects stale generations", () =>
+    Effect.gen(function* () {
+      const test = yield* harness();
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          const session = yield* start;
+          const command = { projectId: PROJECT_ID, sessionId: SESSION_ID, onlyIfIdle: true };
+          yield* service
+            .stopSession({
+              ...command,
+              expectedGeneration: nextComputeSessionGeneration(session.generation),
+            })
+            .pipe(Effect.flip);
+          expect(test.closed()).toEqual([]);
+          expect(
+            (yield* service.stopSession({ ...command, expectedGeneration: session.generation }))
+              .status,
+          ).toBe("stopped");
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
   it.effect("stops a session, measures what it left behind, and refuses later commands", () =>
     Effect.gen(function* () {
       const test = yield* harness();

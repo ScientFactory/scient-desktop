@@ -129,7 +129,6 @@ function ImageActionButton({
         render={
           <Button
             aria-label={label}
-            className="chat-markdown-chrome-action"
             disabled={disabled}
             onClick={onClick}
             size="icon-xs"
@@ -170,7 +169,6 @@ function InlineImageActionsMenu(props: {
               render={
                 <Button
                   aria-label="More image actions"
-                  className={compact ? "chat-markdown-chrome-action" : undefined}
                   disabled={props.activeAction != null}
                   size={compact ? "icon-xs" : "icon-sm"}
                   type="button"
@@ -249,14 +247,11 @@ function InlineImageDialog(props: {
 }) {
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogPopup
-        bottomStickOnMobile={false}
-        className="scient-visual-dialog flex max-w-none flex-col overflow-hidden"
-      >
-        <DialogHeader className="flex-row items-center gap-3 border-b px-4 py-3 pe-12">
+      <DialogPopup bottomStickOnMobile={false} layout="visual">
+        <DialogHeader layout="visual">
           <div className="min-w-0 flex-1">
-            <DialogTitle className="truncate text-base" dir="auto">
-              {props.alt}
+            <DialogTitle dir="auto" size="compact">
+              <span className="block truncate">{props.alt}</span>
             </DialogTitle>
             <DialogDescription className="sr-only">
               Expanded preview of {props.fileName}. Pinch or Control-scroll to zoom.

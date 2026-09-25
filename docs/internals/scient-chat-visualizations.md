@@ -48,12 +48,13 @@ truncated payload produces a local source error instead of a misleading WebGL
 fallback. Common named light/dark templates and compatible string title
 shorthand are normalized only in the disposable render copy. Source is bounded to 1,000,000 characters,
 500,000 inspected values, 512 traces, and 2,000 frames before the runtime is
-loaded. Embedded Plotly surfaces deny network-backed figures: remote images,
-GeoJSON, map tiles, and geography topology require an inline/static alternative.
-The policy also covers template defaults, deferred button/slider commands, and
-restored view state. Offline interactions and inline raster images remain valid.
-No CSP exception or credential-bearing Scient loader is added. This semantic
-validation is not a separate browser network sandbox.
+loaded. Network-backed Plotly figures retain Plotly's normal browser behavior:
+remote images, GeoJSON, map tiles, geography topology, deferred commands, and
+restored view state may request resources from the viewing device. The card
+labels network content it can identify, but resource classification is
+informational and never rejects an otherwise valid figure. Browser CORS and the
+desktop renderer's existing sandbox still apply; Scient adds no
+credential-bearing resource loader.
 
 Inline Plotly state is captured before a WebGL view is released offscreen and
 when a figure moves to or returns from the expanded dialog. SVG figures remain

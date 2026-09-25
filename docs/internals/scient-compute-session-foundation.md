@@ -39,13 +39,13 @@ through deletion. Failed physical cleanup retains ownership. This coordinates
 Scient-managed automatic cleanup; it is not a filesystem sandbox against external
 deletion or arbitrary user code.
 
-Plotly's embedded deny-network policy inspects nested and flattened attribute
-paths, template image/layer defaults, frames, and both interactive command
-argument sets (including attribute/value updates). Unsupported command methods
-fail closed. The same policy is checked before rendering restored or updated
-figures. Inline raster images and offline interactions remain supported. This
-closes the known policy-validation bypasses; it does not claim a separate browser
-network sandbox or packaged-platform qualification.
+Plotly figures use the same non-blocking browser resource behavior in Compute as
+they do in chat. Known remote resources and active map or geography traces are
+classified for the compact `Network content` disclosure, while initial figures,
+interactive commands, and restored state remain renderable. Structural source,
+trace, frame, nesting, and typed-array bounds remain enforced before Plotly is
+loaded. Browser CORS and the desktop renderer's existing sandbox still apply;
+resource classification is not an authorization boundary.
 
 ### Execution consolidation candidate (2026-09-15)
 
@@ -84,6 +84,26 @@ Stopping the displayed session alone does not cancel independent child runs; clo
 Native batch's normal Cancel acknowledges the request; `waitForExit` is the stricter tab-close
 contract. Exact terminal session reads confirm cleanup rather than merely consulting a receipt.
 Ambiguous start responses keep their reserved identity; they are not permission to replay code.
+
+Environment replacement uses the shared context coordinator, including dependency recovery and
+the file toolbar. The confirmation captures the exact target executable; refreshed availability
+cannot silently retarget it to a later default. Before ending the old namespace, conditional Stop
+checks its generation, ready/idle state, and absence of pending work under the same mutation and
+dispatch locks used for submission. A rejected busy replacement leaves that session usable.
+Ordinary Stop/Close retain their interrupting semantics. Confirmed replacement preserves history,
+never replays a script, and keeps ownership when cleanup or startup is uncertain. Starting the new
+kernel can still fail after confirmed shutdown; the old in-memory namespace cannot be restored.
+
+Project-image discovery retains bounded before/after evidence rather than treating a partial
+workspace inventory as a total failure. Known files require changed observed metadata; a new file
+requires proven absence in a completely inventoried parent or ancestor. Unobserved baseline files
+are not inferred to be new. Entry, depth, time, and unreadable-path gaps are reported independently
+of safely retained figures. Cooperative scan deadlines return partial coverage before baseline
+admission times out, and collection has an outer deadline. Reads are capped and checked against
+the observed identity and state before retention. Existing image validation, workspace containment,
+count/byte budgets, and immutable history remain in force. `project-file` provenance describes a
+workspace observation, not execution-exclusive writer attribution. This does not guarantee complete
+discovery in arbitrary trees or introduce a watcher/index subsystem.
 
 MATLAB Engine's `quit()` can return before its native process exits, including after a
 figure-heavy session. The bridge captures its own native process identity at startup and

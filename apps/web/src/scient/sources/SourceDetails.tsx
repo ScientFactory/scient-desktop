@@ -428,11 +428,10 @@ function AbstractPreview(props: {
           {mode !== "compact" ? (
             <Button
               type="button"
-              size="xs"
-              variant="ghost"
+              size="compact"
+              variant="ghost-muted"
               aria-expanded
               onClick={() => setMode("compact")}
-              className="h-6 cursor-pointer rounded-md px-1.5 text-xs text-muted-foreground hover:bg-muted/55 hover:text-foreground"
             >
               Show less
             </Button>
@@ -440,13 +439,12 @@ function AbstractPreview(props: {
           {mode !== "full" ? (
             <Button
               type="button"
-              size="xs"
-              variant="ghost"
+              size="compact"
+              variant="ghost-muted"
               aria-expanded={mode !== "compact"}
               onClick={() =>
                 setMode(mode === "compact" && hasIntermediatePreview ? "more" : "full")
               }
-              className="h-6 cursor-pointer rounded-md px-1.5 text-xs text-muted-foreground hover:bg-muted/55 hover:text-foreground"
             >
               {mode === "compact" ? "Show more" : "Show full abstract"}
             </Button>
@@ -498,9 +496,9 @@ function SourceTags(props: { readonly tags: ReadonlyArray<string> }) {
       {expanded || overflows ? (
         <Button
           type="button"
-          size="xs"
-          variant="ghost"
-          className="mt-1 h-6 cursor-pointer rounded-md px-1.5 text-xs text-muted-foreground hover:bg-muted/55 hover:text-foreground"
+          size="compact"
+          variant="ghost-muted"
+          className="mt-1"
           aria-expanded={expanded}
           onClick={() => setExpanded((value) => !value)}
         >
@@ -548,15 +546,15 @@ function MetadataRefreshConfirmation(props: {
         align="start"
         sideOffset={8}
         className="w-[18rem] max-w-[calc(100vw-1rem)]"
-        viewportClassName="p-0"
+        padding="none"
         role="alertdialog"
       >
         <div className="p-3">
           <div className="flex items-center gap-2">
             <AlertTriangle className="size-4 shrink-0 text-amber-600" />
-            <PopoverTitle className="text-sm">Refresh metadata?</PopoverTitle>
+            <PopoverTitle>Refresh metadata?</PopoverTitle>
           </div>
-          <PopoverDescription className="mt-1.5 text-xs leading-5">
+          <PopoverDescription className="mt-1.5" size="compact">
             Scient will replace matching metadata fields using this source’s PDF and identifiers.
             Manual edits to those fields may be lost. The PDF stays unchanged.
           </PopoverDescription>

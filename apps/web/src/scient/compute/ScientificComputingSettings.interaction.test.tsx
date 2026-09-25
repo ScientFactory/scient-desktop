@@ -118,20 +118,17 @@ vi.mock("~/state/use-atom-command", () => ({
             : vi.fn(async () => ({ _tag: "Success", value: null })),
 }));
 import { ScientificComputingSettings } from "./ScientificComputingSettings";
-import { buttonVariants } from "~/components/ui/button";
-import { cn } from "~/lib/utils";
 import pythonLogo from "~/assets/compute/python.svg";
 import matlabLogo from "~/assets/compute/matlab.svg";
+import octaveLogo from "~/assets/compute/octave.svg";
+import wolframLogo from "~/assets/compute/wolfram.svg";
 
 const managedPath = "/scient/python";
 const systemPath = "/system/python";
 const automaticRuntimeOption = "scient-runtime:automatic";
-function expectCompactAction(node: HTMLButtonElement, className?: string) {
-  for (const token of cn(buttonVariants({ size: "xs", variant: "outline" }), className).split(
-    /\s+/u,
-  )) {
-    expect(node.classList.contains(token), token).toBe(true);
-  }
+function expectCompactAction(node: HTMLButtonElement) {
+  expect(node.getAttribute("data-slot")).toBe("button");
+  expect(node.getAttribute("data-size")).toBe("xs");
   expect(node.classList.contains("bg-primary")).toBe(false);
 }
 const status = (): ComputeManagedRuntimeStatus => ({
@@ -746,22 +743,28 @@ describe("Scientific Computing settings interactions", () => {
 
   it("shows only Coming soon for preview languages without changing runtime settings", async () => {
     await render();
-    for (const [id, hasBrandLogo] of [
-      ["julia", true],
-      ["r", true],
-      ["rust", true],
-      ["spss", true],
-      ["sql", false],
-      ["octave", false],
-      ["wolfram", false],
-      ["stata", false],
+    for (const [id, logo] of [
+      ["julia", "brand"],
+      ["r", "brand"],
+      ["rust", "brand"],
+      ["spss", "brand"],
+      ["sql", "symbol"],
+      ["octave", octaveLogo],
+      ["wolfram", wolframLogo],
+      ["stata", "symbol"],
     ] as const) {
       const trigger = container.querySelector<HTMLButtonElement>(
         `#scientific-computing-${id}-trigger`,
       )!;
       expect(trigger.textContent).toContain("Coming soon");
-      expect(trigger.querySelector("img") !== null).toBe(hasBrandLogo);
-      if (!hasBrandLogo) expect(trigger.querySelector("svg")).not.toBeNull();
+      if (logo === "symbol") {
+        expect(trigger.querySelector("img")).toBeNull();
+        expect(trigger.querySelector(`[data-language-icon='${id}']`)).not.toBeNull();
+      } else {
+        const image = trigger.querySelector("img");
+        expect(image).not.toBeNull();
+        if (logo !== "brand") expect(image?.getAttribute("src")).toBe(logo);
+      }
       await act(() => trigger.click());
       const panel = container.querySelector<HTMLElement>(`#scientific-computing-${id}`)!;
       expect(panel.hidden).toBe(false);
@@ -1656,7 +1659,7 @@ describe("Scientific Computing settings interactions", () => {
       ];
       await render();
       const row = () => container.querySelector(`#${languageId}-managed-runtime`)!;
-      expectCompactAction(button("Update", row()), "text-primary");
+      expectCompactAction(button("Update", row()));
       expect(button("Update", row()).classList.contains("text-primary")).toBe(true);
       await openMaintenance(languageId === "matlab" ? "MATLAB connection" : "Python runtime");
       expect(

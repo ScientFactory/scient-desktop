@@ -262,6 +262,12 @@ const BLANK_LINE_PATTERN = /^[ \t]*$/;
 // nested items count. The trailing space is required, so a partial `-` or
 // `1.` never matches before the model finishes the marker.
 const LIST_ITEM_START_PATTERN = /^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]/;
+// A section title: an ATX heading, or a line of only bold text, which models
+// often use as a heading.
+const SECTION_TITLE_PATTERN = /^ {0,3}(?:#{1,6}(?:[ \t]|$)|\*\*(?:[^*]|\*(?!\*))+\*\*:?$)/;
+// An unindented ATX heading ends the paragraph or list above it, even with no
+// blank line between them. A bold line would continue the paragraph instead.
+const TOP_LEVEL_HEADING_PATTERN = /^#{1,6}(?:[ \t]|$)/;
 
 /**
  * Splits buffered assistant text at the last blank line, closing code fence,
@@ -272,17 +278,26 @@ const LIST_ITEM_START_PATTERN = /^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]/;
  * never leaks; a list item start is the one lookahead that may sit on the
  * partial line, since tight lists have no blank lines between items and would
  * otherwise land all at once.
+ *
+ * A section title holds the boundary until a content line follows it, so a
+ * title never lands alone and waits above a block that is still streaming.
  */
 export function splitBufferedAssistantText(text: string): { ready: string; rest: string } {
   let openFence: { marker: string; indent: number } | null = null;
   let boundary = -1;
   let lineStart = 0;
+  let titleAwaitingContent = false;
   for (;;) {
     const newline = text.indexOf("\n", lineStart);
     const line = text
       .slice(lineStart, newline === -1 ? text.length : newline)
       .replace(/[ \t\r]+$/, "");
-    if (openFence === null && lineStart > 0 && LIST_ITEM_START_PATTERN.test(line)) {
+    if (
+      openFence === null &&
+      lineStart > 0 &&
+      !titleAwaitingContent &&
+      LIST_ITEM_START_PATTERN.test(line)
+    ) {
       boundary = lineStart;
     }
     if (newline === -1) {
@@ -294,6 +309,7 @@ export function splitBufferedAssistantText(text: string): { ready: string; rest:
       const marker = fenceMatch[2]!;
       if (openFence === null) {
         openFence = { marker, indent };
+        titleAwaitingContent = false;
       } else if (
         marker[0] === openFence.marker[0] &&
         marker.length >= openFence.marker.length &&
@@ -305,7 +321,14 @@ export function splitBufferedAssistantText(text: string): { ready: string; rest:
         boundary = newline + 1;
       }
     } else if (openFence === null && BLANK_LINE_PATTERN.test(line) && lineStart > 0) {
-      boundary = newline + 1;
+      if (!titleAwaitingContent) {
+        boundary = newline + 1;
+      }
+    } else if (openFence === null) {
+      if (lineStart > 0 && !titleAwaitingContent && TOP_LEVEL_HEADING_PATTERN.test(line)) {
+        boundary = lineStart;
+      }
+      titleAwaitingContent = SECTION_TITLE_PATTERN.test(line);
     }
     lineStart = newline + 1;
   }
@@ -1094,6 +1117,57 @@ const make = Effect.gen(function* () {
   const threadBackgroundLiveness = yield* ThreadBackgroundLivenessService;
   const threadPlanProgress = yield* ThreadPlanProgressService;
   const crypto = yield* Crypto.Crypto;
+  const clock = yield* Clock.Clock;
+
+  /**
+   * Rate limit for refused terminal turn events. A provider that repeats a
+   * late event must not turn diagnostics into a log flood. Write the first
+   * refusal in each window and count repeats for the next report.
+   */
+  const REJECTED_TERMINAL_EVENT_LOG_WINDOW_MS = Duration.toMillis(Duration.seconds(30));
+  const lastRejectedTerminalEventLog = new Map<string, number>();
+  const rejectedTerminalEventCounts = new Map<string, number>();
+  const MAX_TRACKED_REJECTION_KEYS = 512;
+
+  const logRejectedTerminalTurnEvent = (input: {
+    readonly threadId: string;
+    readonly reason: string;
+    readonly eventType: string;
+    readonly eventId: string;
+    readonly eventTurnId: string | null;
+    readonly activeTurnId: string | null;
+  }) =>
+    Effect.gen(function* () {
+      const key = `${input.threadId}\u0000${input.reason}`;
+      const now = yield* clock.currentTimeMillis;
+      const previous = lastRejectedTerminalEventLog.get(key);
+      if (previous !== undefined && now - previous < REJECTED_TERMINAL_EVENT_LOG_WINDOW_MS) {
+        yield* Effect.sync(() => {
+          rejectedTerminalEventCounts.set(key, (rejectedTerminalEventCounts.get(key) ?? 0) + 1);
+        });
+        return;
+      }
+      const suppressed = rejectedTerminalEventCounts.get(key) ?? 0;
+      if (lastRejectedTerminalEventLog.size >= MAX_TRACKED_REJECTION_KEYS) {
+        lastRejectedTerminalEventLog.clear();
+        rejectedTerminalEventCounts.clear();
+      }
+      yield* Effect.sync(() => {
+        lastRejectedTerminalEventLog.set(key, now);
+        if (suppressed > 0) {
+          rejectedTerminalEventCounts.delete(key);
+        }
+      });
+      yield* Effect.logWarning("provider terminal turn event was not applied", {
+        threadId: input.threadId,
+        reason: input.reason,
+        eventType: input.eventType,
+        eventId: input.eventId,
+        eventTurnId: input.eventTurnId,
+        activeTurnId: input.activeTurnId,
+        ...(suppressed > 0 ? { suppressedRepetitions: suppressed } : {}),
+      });
+    });
   const orchestrationEngine = yield* OrchestrationEngineService;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerService = yield* ProviderService;
@@ -2254,6 +2328,26 @@ const make = Effect.gen(function* () {
             return true;
         }
       })();
+
+      // Record rejected terminal events without weakening stale-turn protection.
+      if (
+        !shouldApplyThreadLifecycle &&
+        (event.type === "turn.completed" || event.type === "turn.aborted")
+      ) {
+        const reason = missingTurnForActiveTurn
+          ? "terminal-event-without-turn-id"
+          : conflictsWithActiveTurn
+            ? "terminal-event-for-another-turn"
+            : "terminal-event-without-an-active-turn";
+        yield* logRejectedTerminalTurnEvent({
+          threadId: thread.id,
+          reason,
+          eventType: event.type,
+          eventId: event.eventId,
+          eventTurnId: eventTurnId ?? null,
+          activeTurnId,
+        });
+      }
       const acceptedTurnStartedSourcePlan =
         event.type === "turn.started" && shouldApplyThreadLifecycle
           ? yield* getSourceProposedPlanReferenceForAcceptedTurnStart(thread.id, eventTurnId)

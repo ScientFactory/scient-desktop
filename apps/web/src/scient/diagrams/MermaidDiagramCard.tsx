@@ -102,7 +102,6 @@ function DiagramActionButton({
         render={
           <Button
             aria-label={label}
-            className="chat-markdown-chrome-action"
             disabled={disabled}
             onClick={onClick}
             size="icon-xs"
@@ -361,7 +360,6 @@ export function MermaidDiagramCard({
                       render={
                         <Button
                           aria-label="More diagram actions"
-                          className="chat-markdown-chrome-action"
                           size="icon-xs"
                           type="button"
                           variant="ghost"

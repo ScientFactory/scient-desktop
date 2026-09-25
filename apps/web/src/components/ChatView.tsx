@@ -140,6 +140,9 @@ import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { isElectron } from "../env";
+import { useDesktopReloadGuard } from "../lib/desktopReload";
+import { projectFileOperationKey } from "@t3tools/client-runtime/state/projects";
+import { markdownPersistenceRegistry } from "../scient/markdownEditor/persistence/markdownPersistenceRegistry";
 import { readLocalApi } from "../localApi";
 import { useDiffPanelStore } from "../diffPanelStore";
 import {
@@ -425,6 +428,7 @@ import {
 import { environmentShell } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { createPageScrollController, type PageScrollKey } from "./chat/pageScrollController";
+import { isTimelineScrollTarget } from "./chat/timelineScrollTarget";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
@@ -474,7 +478,6 @@ import {
 import { deriveLatestContextWindowSnapshot, formatContextWindowTokens } from "../lib/contextWindow";
 import {
   DRAFT_HERO_TRANSITION_ANIMATION_ID,
-  DRAFT_HERO_TRANSITION_DURATION_MS,
   DRAFT_HERO_TRANSITION_EASING,
   MOBILE_COMPOSER_VIEW_TRANSITION_NAME,
   MOBILE_DRAFT_HEADLINE_VIEW_TRANSITION_NAME,
@@ -547,7 +550,6 @@ import {
   shouldWriteThreadErrorToCurrentServerThread,
   startNewThreadForProject,
   codexArtifactTemplatePromptToAppend,
-  toolGroupConsumesUpwardNavigation,
   waitForStartedServerThread,
   shouldRefocusComposerOnWindowFocus,
 } from "./ChatView.logic";
@@ -626,7 +628,11 @@ const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_USAGE_LIMIT_SOURCES: UsageLimitSourceSnapshots = [];
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
-function useDraftHeroLayoutTransition(isDraftHeroState: boolean) {
+function useDraftHeroLayoutTransition(
+  isDraftHeroState: boolean,
+  animationsActive: boolean,
+  animationDurationMs: number,
+) {
   const transitionGroupRef = useRef<HTMLDivElement | null>(null);
   const composerAnchorRef = useRef<HTMLDivElement | null>(null);
   const previousStateRef = useRef(isDraftHeroState);
@@ -646,9 +652,6 @@ function useDraftHeroLayoutTransition(isDraftHeroState: boolean) {
     const transitionGroup = transitionGroupRef.current;
     const nextComposerRect = composerAnchorRef.current?.getBoundingClientRect() ?? null;
     const stateChanged = previousStateRef.current !== isDraftHeroState;
-    const prefersReducedMotion =
-      typeof window !== "undefined" &&
-      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     const mobileComposerTransitionActive =
       typeof document !== "undefined" &&
       document.documentElement.dataset.mobileComposerRouteTransition === "true";
@@ -659,7 +662,7 @@ function useDraftHeroLayoutTransition(isDraftHeroState: boolean) {
     const previousComposerRect = previousComposerRectRef.current;
     if (
       stateChanged &&
-      !prefersReducedMotion &&
+      animationsActive &&
       !mobileComposerTransitionActive &&
       transitionGroup &&
       previousComposerRect &&
@@ -675,7 +678,7 @@ function useDraftHeroLayoutTransition(isDraftHeroState: boolean) {
             { transform: "translate3d(0, 0, 0)" },
           ],
           {
-            duration: DRAFT_HERO_TRANSITION_DURATION_MS,
+            duration: animationDurationMs,
             easing: DRAFT_HERO_TRANSITION_EASING,
           },
         );
@@ -694,7 +697,7 @@ function useDraftHeroLayoutTransition(isDraftHeroState: boolean) {
 
     previousStateRef.current = isDraftHeroState;
     previousComposerRectRef.current = nextComposerRect;
-  }, [isDraftHeroState]);
+  }, [animationDurationMs, animationsActive, isDraftHeroState]);
 
   return [attachTransitionGroupRef, attachComposerAnchorRef, captureComposerRect] as const;
 }
@@ -1346,7 +1349,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
         "grid shrink-0 overflow-clip",
         active ? (visible ? "grid-rows-[1fr]" : "grid-rows-[0fr]") : "hidden",
         active &&
-          "[[data-panel-animations=true]_&]:transition-[grid-template-rows] [[data-panel-animations=true]_&]:[transition-duration:var(--panel-animation-duration)] [[data-panel-animations=true]_&]:ease-out",
+          "[[data-panel-animations=true]_&]:transition-[grid-template-rows] [[data-panel-animations=true]_&]:duration-(--panel-animation-duration) [[data-panel-animations=true]_&]:ease-out",
         active && visible && "[[data-panel-animations=true]_&]:starting:grid-rows-[0fr]!",
       )}
     >
@@ -1685,7 +1688,13 @@ function ChatViewContent(props: ChatViewProps) {
   const ordinaryComposerTarget: ScopedThreadRef | DraftId =
     routeKind === "server" ? routeThreadRef : props.draftId;
   const queueEditsReady = useQueueEditSessions((state) => state.ready);
-  const queueEditStorageError = useQueueEditSessions((state) => state.error);
+  const queueEditStorageError = useQueueEditSessions((state) =>
+    state.error &&
+    (state.error.targetKey === null ||
+      state.error.targetKey === composerTargetKey(ordinaryComposerTarget))
+      ? state.error.message
+      : null,
+  );
   const queueEdit = useQueueEditSessions(
     (state) => state.sessions[composerTargetKey(ordinaryComposerTarget)],
   );
@@ -2642,6 +2651,18 @@ function ChatViewContent(props: ChatViewProps) {
   usePendingSurfaceNavigationBlocker(
     markdownNavigation.pendingSurfaceIds,
     markdownNavigation.departureOptions,
+  );
+  useDesktopReloadGuard(
+    markdownNavigation.pendingSurfaceIds,
+    markdownNavigation.departureOptions,
+    (id) => {
+      const file = markdownPersistenceRegistry
+        .getSnapshot()
+        .find((entry) => projectFileOperationKey(entry) === id);
+      return file
+        ? `Could not save ${file.relativePath} in ${file.cwd}. Resolve its save notice, then try again.`
+        : undefined;
+    },
   );
   const configuredPreviewUrls = useMemo(
     () => getConfiguredPreviewUrls(activeProjectScripts),
@@ -3982,7 +4003,11 @@ function ChatViewContent(props: ChatViewProps) {
     attachDraftHeroTransitionGroupRef,
     attachDraftHeroComposerAnchorRef,
     captureDraftHeroComposerRect,
-  ] = useDraftHeroLayoutTransition(isDraftHeroState);
+  ] = useDraftHeroLayoutTransition(
+    isDraftHeroState,
+    panelAnimationsActive,
+    panelAnimationDurationMs,
+  );
   const latestCompletedAssistantMessageId = useMemo(
     () =>
       findLatestCompletedAssistantMessageId({
@@ -4754,6 +4779,23 @@ function ChatViewContent(props: ChatViewProps) {
     ],
   );
 
+  const runProjectScriptRef = useRef(runProjectScript);
+  useLayoutEffect(() => {
+    runProjectScriptRef.current = runProjectScript;
+  }, [runProjectScript]);
+  const runShellCommand = useCallback((command: string) => {
+    void runProjectScriptRef.current(
+      {
+        id: "chat-code-block",
+        name: "Chat code block",
+        command,
+        icon: "play",
+        runOnWorktreeCreate: false,
+      },
+      { rememberAsLastInvoked: false },
+    );
+  }, []);
+
   const supportsProjectSettingsOverrides =
     environmentById.get(environmentId)?.serverConfig?.environment.capabilities
       .projectSettingsOverrides === true;
@@ -5056,16 +5098,13 @@ function ChatViewContent(props: ChatViewProps) {
   const openFileSourceSurfaceNow = useCallback(
     (relativePath: string, line?: number, options?: OpenFileOptions) => {
       if (!activeThreadRef || activeWorkspaceRoot === undefined) return;
-      useRightPanelStore
-        .getState()
-        .openFile(
-          activeThreadRef,
-          relativePath,
-          line,
-          shouldOpenInBrowserByDefault(relativePath)
-            ? { ...options, htmlPreviewMode: "source" }
-            : options,
-        );
+      const openOptions = {
+        ...(shouldOpenInBrowserByDefault(relativePath)
+          ? { htmlPreviewMode: "source" as const }
+          : {}),
+        ...options,
+      };
+      useRightPanelStore.getState().openFile(activeThreadRef, relativePath, line, openOptions);
     },
     [activeThreadRef, activeWorkspaceRoot],
   );
@@ -6111,6 +6150,8 @@ function ChatViewContent(props: ChatViewProps) {
         // Only an upward wheel is a navigation intent; wheeling down while
         // following either does nothing (at the end) or moves toward it.
         const handleWheel = (event: WheelEvent) => {
+          if (event.ctrlKey || !isTimelineScrollTarget(event.target, scrollNode, event.deltaY))
+            return;
           if (event.deltaY > 0) {
             timelineScrollIntentRef.current = "toward-end";
             if (isAtEndRef.current) {
@@ -6119,11 +6160,7 @@ function ChatViewContent(props: ChatViewProps) {
           } else if (event.deltaY < 0) {
             timelineScrollIntentRef.current = "away-from-end";
           }
-          if (
-            event.deltaY < 0 &&
-            contentScrollsUp() &&
-            !toolGroupConsumesUpwardNavigation(event.target)
-          ) {
+          if (event.deltaY < 0 && contentScrollsUp()) {
             handleManualNavigation();
           }
         };
@@ -6173,12 +6210,20 @@ function ChatViewContent(props: ChatViewProps) {
           ) {
             return;
           }
+          if (!["PageUp", "Home", "ArrowUp", "PageDown", "End", "ArrowDown"].includes(event.key))
+            return;
+          const scrollDirection = ["PageUp", "Home", "ArrowUp"].includes(event.key) ? -1 : 1;
+          if (
+            scrollNode.contains(event.target) &&
+            !isTimelineScrollTarget(event.target, scrollNode, scrollDirection)
+          )
+            return;
           switch (event.key) {
             case "PageUp":
             case "Home":
             case "ArrowUp":
               timelineScrollIntentRef.current = "away-from-end";
-              if (contentScrollsUp() && !toolGroupConsumesUpwardNavigation(event.target)) {
+              if (contentScrollsUp()) {
                 handleManualNavigation();
                 composerRef.current?.collapseForTimelineScrollKey(event.key);
               }
@@ -7248,7 +7293,7 @@ function ChatViewContent(props: ChatViewProps) {
                   </code>
                 }
               />
-              <TooltipPopup side="top" className="max-w-80">
+              <TooltipPopup side="top">
                 This thread last ran on {localCheckoutBranchMismatch.threadBranch}. Sending will
                 continue on {localCheckoutBranchMismatch.currentBranch}.
               </TooltipPopup>
@@ -8516,13 +8561,19 @@ function ChatViewContent(props: ChatViewProps) {
       const dockStarted = new Promise<void>((resolve) => {
         resolveDockStarted = resolve;
       });
-      const dockTransition = runMobileComposerTransition(() => {
-        flushSync(() => {
-          captureDraftHeroComposerRect();
-          setDockedDraftHeroThreadKey(activeThreadKey);
-        });
-        resolveDockStarted?.();
-      });
+      const dockTransition = runMobileComposerTransition(
+        () => {
+          flushSync(() => {
+            captureDraftHeroComposerRect();
+            setDockedDraftHeroThreadKey(activeThreadKey);
+          });
+          resolveDockStarted?.();
+        },
+        {
+          active: panelAnimationsActive,
+          durationMs: panelAnimationDurationMs,
+        },
+      );
       void dockTransition.catch(() => resolveDockStarted?.());
       await dockStarted;
     }
@@ -8615,7 +8666,19 @@ function ChatViewContent(props: ChatViewProps) {
               ...queueSettings,
               attachments: queueAttachmentsResult.value,
             });
-            await finishQueueEdit(queueEdit, draftSnapshotForSend ?? undefined);
+            const lateChangesStashed = await finishQueueEdit(
+              queueEdit,
+              draftSnapshotForSend ?? undefined,
+            );
+            if (lateChangesStashed)
+              toastManager.add(
+                stackedThreadToast({
+                  type: "info",
+                  title: "Message queued",
+                  description: "Changes received during sending were kept in your prompt stash.",
+                  data: { threadRef: queueEdit.originalTarget, dismissAfterVisibleMs: 8000 },
+                }),
+              );
           } else {
             const queuePayload = {
               ...queueSettings,
@@ -10360,7 +10423,7 @@ function ChatViewContent(props: ChatViewProps) {
           className={cn(
             "flex shrink-0",
             panelAnimationsActive &&
-              "motion-safe:transition-opacity motion-safe:[transition-duration:var(--panel-animation-duration)] motion-safe:ease-out",
+              "motion-safe:transition-opacity motion-safe:duration-(--panel-animation-duration) motion-safe:ease-out",
             rightPanelOpen ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0",
           )}
           inert={!rightPanelOpen}
@@ -10802,6 +10865,7 @@ function ChatViewContent(props: ChatViewProps) {
                       agentPanelModel,
                       onOpenAgents: addAgentsSurface,
                       onUseArtifactTemplate: useArtifactTemplate,
+                      ...(activeProject ? { onRunShellCommand: runShellCommand } : {}),
                     }
                   : {})}
                 isWorking={!paintOnlyDisplayedTimeline && isWorking}
@@ -10891,7 +10955,7 @@ function ChatViewContent(props: ChatViewProps) {
                       composerRef.current?.restoreAfterTimelineReachedEnd();
                       scrollToEnd(true);
                     }}
-                    className="pointer-events-auto gap-1.5 rounded-full px-3 text-muted-foreground hover:text-foreground"
+                    className="pointer-events-auto"
                     size="xs"
                     variant="glass"
                   >
@@ -10915,7 +10979,7 @@ function ChatViewContent(props: ChatViewProps) {
             >
               <div
                 ref={attachDraftHeroTransitionGroupRef}
-                className="w-full ps-[calc(env(safe-area-inset-left)+0.75rem)] pe-[calc(env(safe-area-inset-right)+0.75rem)] sm:ps-[calc(env(safe-area-inset-left)+1.25rem)] sm:pe-[calc(env(safe-area-inset-right)+1.25rem)]"
+                className="w-full ps-(--workspace-gutter-start) pe-(--workspace-gutter-end)"
               >
                 <div
                   data-chat-composer-stack="true"
@@ -10954,17 +11018,23 @@ function ChatViewContent(props: ChatViewProps) {
                       <ThreadQueueStrip
                         items={threadQueue.items}
                         error={threadQueue.error ?? queueEditStorageError}
-                        threadBusy={phase === "running"}
-                        dispatchingItemId={null}
+                        threadBusy={phase === "running" || phase === "connecting"}
+                        supportsExplicitSend={
+                          serverConfigs.get(environmentId)?.environment.capabilities
+                            .threadQueueExplicitSend === true
+                        }
+                        awaitingCompletion={threadQueue.awaitingCompletion}
+                        paused={threadQueue.paused !== null}
+                        dispatchingItemId={threadQueue.pendingSendItemId}
+                        onSend={(item) => {
+                          void threadQueue.control("send", item.queueItemId).catch(() => {});
+                        }}
                         onSteer={(item) => {
                           void threadQueue.control("steer", item.queueItemId).catch(() => {});
                         }}
+                        retryable={threadQueue.paused !== null}
                         onRetry={() => {
-                          void (
-                            threadQueue.paused
-                              ? threadQueue.control("resume")
-                              : threadQueue.refresh()
-                          ).catch(() => {});
+                          void threadQueue.control("resume").catch(() => {});
                         }}
                         onEdit={editQueuedItem}
                         onDelete={deleteQueuedItem}
@@ -11334,7 +11404,6 @@ function ChatViewContent(props: ChatViewProps) {
         <RightPanelSheet
           animationDurationMs={panelAnimationsActive ? panelAnimationDurationMs : 0}
           open={rightPanelOpen}
-          underFloatingPreview={previewMiniPlayerVisible}
           onClose={closePreviewPanel}
         >
           <RightPanelTabs

@@ -113,7 +113,9 @@ export const suspendQueue = Effect.fn("ScientQueue.suspend")(function* (
   return yield* writeQueue(threadId, {
     ...current,
     items: current.items.map((item) =>
-      item.steerRequested ? { ...item, steerRequested: false } : item,
+      item.steerRequested || item.sendRequested
+        ? { ...item, steerRequested: false, sendRequested: false }
+        : item,
     ),
     blocked: false,
     turnId: null,
@@ -154,6 +156,12 @@ export const observeQueueCommand = Effect.fn("ScientQueue.observeCommand")(funct
     let items = current.items;
     if (
       !command.queueItemId &&
+      command.sendIntent !== "steer" &&
+      items.some((item) => item.sendRequested)
+    )
+      return yield* new QueueError({ message: "A queued message is already being sent." });
+    if (
+      !command.queueItemId &&
       command.sendIntent === "normal" &&
       (current.blocked ||
         (!current.awaitingCompletion && items.some((item) => item.state !== "editing")) ||
@@ -173,7 +181,7 @@ export const observeQueueCommand = Effect.fn("ScientQueue.observeCommand")(funct
         item.state === "editing" ||
         (!item.steerRequested &&
           (current.blocked ||
-            current.awaitingCompletion ||
+            (current.awaitingCompletion && !item.sendRequested) ||
             current.paused ||
             thread?.session?.status === "running" ||
             thread?.session?.status === "starting"))
@@ -245,7 +253,11 @@ export const observeQueueCommand = Effect.fn("ScientQueue.observeCommand")(funct
   }
 });
 
-/** Called only after ingestion has persisted every final assistant segment, image and plan. */
+/**
+ * The answer part runs after persisted assistant output; the checkpoint part
+ * records settlement regardless of capture success. Only answer success can
+ * release the queue, and Stop remains sticky for the interrupted turn.
+ */
 export const finalizeQueueTurn = Effect.fn("ScientQueue.finalizeTurn")(function* (
   threadId: ThreadId,
   turnId: string,
@@ -255,8 +267,10 @@ export const finalizeQueueTurn = Effect.fn("ScientQueue.finalizeTurn")(function*
   const sql = yield* SqlClient.SqlClient;
   yield* sql.withTransaction(
     Effect.gen(function* () {
+      // Checkpoint completion is a settlement barrier, not an answer-success vote.
+      // An interrupt still writes successful=0 before either finalizer can release it.
       yield* sql`INSERT INTO scient_queue_finalization (thread_id, turn_id, answer_done, checkpoint_done, successful)
-        VALUES (${threadId}, ${turnId}, ${part === "answer" ? 1 : 0}, ${part === "checkpoint" ? 1 : 0}, ${successful ? 1 : 0})
+        VALUES (${threadId}, ${turnId}, ${part === "answer" ? 1 : 0}, ${part === "checkpoint" ? 1 : 0}, ${part === "checkpoint" || successful ? 1 : 0})
         ON CONFLICT(thread_id, turn_id) DO UPDATE SET
           answer_done = MAX(answer_done, excluded.answer_done), checkpoint_done = MAX(checkpoint_done, excluded.checkpoint_done),
           successful = MIN(successful, excluded.successful)`;
@@ -275,6 +289,10 @@ export const finalizeQueueTurn = Effect.fn("ScientQueue.finalizeTurn")(function*
         return;
       yield* writeQueue(threadId, {
         ...current,
+        // An unadmitted Steer targeted the turn that has now ended.
+        items: current.items.map((item) =>
+          item.steerRequested ? { ...item, steerRequested: false } : item,
+        ),
         blocked: false,
         turnId: null,
         awaitingCompletion: completion.successful !== 1,

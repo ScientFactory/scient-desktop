@@ -1,5 +1,7 @@
 "use client";
+import { mergeProps } from "@base-ui/react/merge-props";
 import { Select as SelectPrimitive } from "@base-ui/react/select";
+import { useRender } from "@base-ui/react/use-render";
 import { cva, type VariantProps } from "class-variance-authority";
 import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 import type * as React from "react";
@@ -21,6 +23,10 @@ const selectTriggerVariants = cva(
           "w-full min-w-36 border-input bg-background not-dark:bg-clip-padding text-foreground shadow-xs/5 before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--control-radius)-1px)] not-data-disabled:not-focus-visible:not-aria-invalid:not-data-pressed:before:shadow-[0_1px_--theme(--color-black/4%)] pointer-coarse:after:absolute pointer-coarse:after:size-full pointer-coarse:after:min-h-11 focus-visible:border-ring aria-invalid:border-destructive/36 focus-visible:aria-invalid:border-destructive/64 dark:bg-input/32 dark:not-data-disabled:not-focus-visible:not-aria-invalid:not-data-pressed:before:shadow-[0_-1px_--theme(--color-white/6%)] [&_svg:not([class*='opacity-'])]:opacity-80 [&_svg:not([class*='text-'])]:text-icon-muted [[data-disabled],:focus-visible,[aria-invalid],[data-pressed]]:shadow-none",
         ghost:
           "border-transparent text-secondary-label focus-visible:ring-2 focus-visible:ring-ring data-pressed:bg-accent [:hover,[data-pressed]]:bg-accent [:hover,[data-pressed]]:text-foreground",
+      },
+      width: {
+        default: "",
+        content: "w-auto min-w-0 px-2",
       },
       size: {
         compact:
@@ -57,6 +63,65 @@ function SelectTrigger({
   );
 }
 
+/**
+ * The select-field look for a picker that is not a Select, such as a Menu or
+ * Combobox trigger. Render it as that trigger: `<MenuTrigger render={<SelectButton />}>`.
+ */
+function SelectButton({
+  className,
+  size = "default",
+  width = "default",
+  children,
+  render,
+  ...props
+}: useRender.ComponentProps<"button"> &
+  Pick<VariantProps<typeof selectTriggerVariants>, "size" | "width">) {
+  const defaultProps = {
+    className: cn(selectTriggerVariants({ size, width }), className),
+    "data-slot": "select-trigger",
+    type: render ? undefined : ("button" as const),
+  };
+  return useRender({
+    defaultTagName: "button",
+    props: {
+      ...mergeProps<"button">(defaultProps, props),
+      children: (
+        <>
+          <span className="min-w-0 flex-1 truncate text-left">{children}</span>
+          <ChevronDownIcon aria-hidden className="-me-1 size-3 shrink-0 opacity-50" />
+        </>
+      ),
+    },
+    render,
+  });
+}
+
+/** Native select with the shared select-field appearance and platform menu behavior. */
+function NativeSelect({
+  className,
+  size = "default",
+  children,
+  ...props
+}: Omit<React.ComponentProps<"select">, "size"> & {
+  size?: NonNullable<VariantProps<typeof selectTriggerVariants>["size"]>;
+}) {
+  return (
+    <span className="relative inline-flex w-full">
+      <select
+        className={cn(selectTriggerVariants({ size }), "appearance-none pe-9", className)}
+        data-slot="native-select"
+        {...props}
+      >
+        {children}
+      </select>
+      <ChevronDownIcon
+        aria-hidden
+        className="pointer-events-none absolute top-1/2 end-3 size-4 -translate-y-1/2 text-icon-muted opacity-80"
+      />
+    </span>
+  );
+}
+
 function SelectValue({ className, ...props }: SelectPrimitive.Value.Props) {
   return (
     <SelectPrimitive.Value
@@ -69,7 +134,6 @@ function SelectValue({ className, ...props }: SelectPrimitive.Value.Props) {
 
 function SelectPopup({
   className,
-  popupClassName,
   children,
   side = "bottom",
   sideOffset = 4,
@@ -81,7 +145,6 @@ function SelectPopup({
   collisionBoundary,
   ...props
 }: SelectPrimitive.Popup.Props & {
-  popupClassName?: string;
   side?: SelectPrimitive.Positioner.Props["side"];
   sideOffset?: SelectPrimitive.Positioner.Props["sideOffset"];
   align?: SelectPrimitive.Positioner.Props["align"];
@@ -119,7 +182,6 @@ function SelectPopup({
             className={cn(
               "dropdown-glass relative h-full rounded-lg shadow-[0_16px_40px_-18px_rgb(0_0_0/55%)] dark:shadow-[0_18px_44px_-18px_rgb(0_0_0/80%)]",
               matchTriggerWidth && "min-w-(--anchor-width)",
-              popupClassName,
             )}
           >
             <SelectPrimitive.List
@@ -144,17 +206,21 @@ function SelectPopup({
 function SelectItem({
   className,
   children,
+  size = "default",
   hideIndicator: _hideIndicator = false,
   ...props
 }: SelectPrimitive.Item.Props & {
   hideIndicator?: boolean;
+  size?: "default" | "compact";
 }) {
   return (
     <SelectPrimitive.Item
       className={cn(
         "flex min-h-8 in-data-[side=none]:min-w-[calc(var(--anchor-width)+1.25rem)] cursor-pointer items-center rounded-sm px-2 py-1 text-base outline-none data-selected:bg-foreground/[0.08] data-disabled:pointer-events-none data-disabled:cursor-not-allowed data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:opacity-64 sm:min-h-7 sm:text-sm [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4 [&_svg]:pointer-events-none [&_svg]:shrink-0",
+        size === "compact" && "text-xs",
         className,
       )}
+      data-size={size}
       data-slot="select-item"
       {...props}
     >
@@ -195,7 +261,8 @@ function SelectGroupLabel(props: SelectPrimitive.GroupLabel.Props) {
 export {
   Select,
   SelectTrigger,
-  selectTriggerVariants,
+  SelectButton,
+  NativeSelect,
   SelectValue,
   SelectPopup,
   SelectPopup as SelectContent,
@@ -203,4 +270,5 @@ export {
   SelectSeparator,
   SelectGroup,
   SelectGroupLabel,
+  selectTriggerVariants,
 };

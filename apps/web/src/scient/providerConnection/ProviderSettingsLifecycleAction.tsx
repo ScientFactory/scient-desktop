@@ -18,16 +18,11 @@ import { stackedThreadToast, toastManager } from "../../components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { startCodexBrowserSignIn } from "./codexLifecycleActions";
 import { startReviewedProviderRuntimeAction } from "./providerLifecycleActions";
-import { PRIMARY_GHOST_ACTION_CLASS } from "./providerConnectionActionStyles";
 import {
   providerSettingsLifecyclePresentation,
   type ProviderSettingsLifecyclePresentation,
 } from "./providerSettingsLifecyclePresentation";
 import { useProviderLifecycleController } from "./useProviderLifecycleController";
-
-const SETTINGS_LIFECYCLE_PRIMARY_ACTION_CLASS = `h-7 gap-1.5 px-2.5 text-xs ${PRIMARY_GHOST_ACTION_CLASS}`;
-const SETTINGS_LIFECYCLE_NEUTRAL_ACTION_CLASS =
-  "h-7 gap-1.5 px-2.5 text-xs text-muted-foreground [--control-icon-color:currentColor] hover:bg-accent hover:text-foreground";
 
 export type ProviderSettingsPrimaryAction =
   | { readonly kind: "open"; readonly runtimeAction: ProviderManagedRuntimeAction | null }
@@ -144,16 +139,15 @@ export function ProviderSettingsLifecycleAction(props: {
 
   const actionButton = (
     <Button
-      className={
-        presentation.actionKind === "manage" || presentation.kind === "installing"
-          ? SETTINGS_LIFECYCLE_NEUTRAL_ACTION_CLASS
-          : SETTINGS_LIFECYCLE_PRIMARY_ACTION_CLASS
-      }
       disabled={externallyUpdating}
       onClick={run}
-      size="sm"
+      size="compact"
       type="button"
-      variant="ghost"
+      variant={
+        presentation.actionKind === "manage" || presentation.kind === "installing"
+          ? "ghost-muted"
+          : "ghost-primary"
+      }
     >
       {externallyUpdating || presentation.busy ? (
         <LoaderIcon className="animate-spin" />
@@ -209,9 +203,8 @@ function ProviderSettingsUpdateActions(props: {
           render={
             <Button
               aria-label={manageLabel}
-              className="size-7 text-muted-foreground hover:text-foreground"
               onClick={props.onManage}
-              size="icon-sm"
+              size="icon-xs"
               type="button"
               variant="ghost-muted"
             >
@@ -255,12 +248,11 @@ function CodexBrowserSignInButton(props: {
 
   return (
     <Button
-      className={SETTINGS_LIFECYCLE_PRIMARY_ACTION_CLASS}
       disabled={pending}
       onClick={() => void signIn()}
-      size="sm"
+      size="compact"
       type="button"
-      variant="ghost"
+      variant="ghost-primary"
     >
       {pending ? <LoaderIcon className="animate-spin" /> : <LogInIcon />}
       {pending ? "Signing in" : "Sign in"}
@@ -308,13 +300,10 @@ function ManagedRuntimeActionButton(props: {
 
   return (
     <Button
-      className={
-        pending ? SETTINGS_LIFECYCLE_NEUTRAL_ACTION_CLASS : SETTINGS_LIFECYCLE_PRIMARY_ACTION_CLASS
-      }
       onClick={run}
-      size="sm"
+      size="compact"
       type="button"
-      variant="ghost"
+      variant={pending ? "ghost-muted" : "ghost-primary"}
     >
       {pending ? (
         <LoaderIcon className="animate-spin" />

@@ -19,6 +19,7 @@ import {
   makeMemoryConsolidationNotificationFilter,
   openCodexThread,
   readCodexThread,
+  readCodexThreadActivity,
   rollbackCodexThread,
   toMcpElicitationResponse,
 } from "./CodexSessionRuntime.ts";
@@ -90,25 +91,28 @@ describe("Codex thread history", () => {
     );
   }
 
-  it.effect("keeps the count-based rollback API for older threads", () =>
+  it.effect("surfaces Codex rejecting a revert of a legacy thread", () =>
     Effect.gen(function* () {
+      const rejection = CodexErrors.CodexAppServerRequestError.invalidRequest(
+        "thread/revert only supports paginated threads",
+      );
       const client: Parameters<typeof rollbackCodexThread>[0] = {
-        raw: { request: () => Effect.succeed({ thread: {} }) },
-        request: <M extends CodexRpc.ClientRequestMethod>(
-          method: M,
-          params: CodexRpc.ClientRequestParamsByMethod[M],
-        ) => {
-          NodeAssert.equal(method, "thread/rollback");
-          NodeAssert.deepEqual(params, { threadId: "legacy-thread", numTurns: 2 });
+        raw: {
+          request: (method) => {
+            if (method === "thread/read") return Effect.succeed({ thread: {} });
+            if (method === "thread/revert") return Effect.fail(rejection);
+            return Effect.die(`Unexpected raw request: ${method}`);
+          },
+        },
+        request: <M extends CodexRpc.ClientRequestMethod>(method: M) => {
+          NodeAssert.equal(method, "thread/read");
           return Effect.succeed({
-            thread: { id: "legacy-thread", turns: [] },
+            thread: { id: "legacy-thread", turns: [{ id: "turn-1", items: [] }] },
           } as unknown as CodexRpc.ClientRequestResponsesByMethod[M]);
         },
       };
-      NodeAssert.deepEqual(yield* rollbackCodexThread(client, "legacy-thread", 2), {
-        threadId: "legacy-thread",
-        turns: [],
-      });
+      const error = yield* Effect.flip(rollbackCodexThread(client, "legacy-thread", 1));
+      NodeAssert.strictEqual(error, rejection);
     }),
   );
 });
@@ -719,6 +723,7 @@ function makeThreadStartedNotification(
         id: threadId,
         modelProvider: "openai",
         preview: "",
+        projectId: null,
         sessionId: threadId,
         source,
         status: { type: "idle" as const },
@@ -1093,6 +1098,43 @@ describe("openCodexThread", () => {
 
       NodeAssert.ok(isCodexAppServerRequestError(error));
       NodeAssert.equal(error.errorMessage, "timed out waiting for server");
+    }),
+  );
+});
+
+describe("Codex cancellation state probe", () => {
+  for (const [status, expected] of [
+    [{ type: "active", activeFlags: [] }, "active"],
+    [{ type: "idle" }, "ended"],
+    [{ type: "notLoaded" }, "ended"],
+    [{ type: "systemError" }, "unknown"],
+  ] as const) {
+    it.effect(`decodes provider status ${status.type}`, () =>
+      Effect.gen(function* () {
+        const client: Parameters<typeof readCodexThreadActivity>[0] = {
+          request: () => Effect.die("Must use raw thread/read"),
+          raw: {
+            request: (method, params) => {
+              NodeAssert.equal(method, "thread/read");
+              NodeAssert.deepEqual(params, { threadId: "native-thread", includeTurns: false });
+              return Effect.succeed({ thread: { status } });
+            },
+          },
+        };
+        NodeAssert.equal(yield* readCodexThreadActivity(client, "native-thread"), expected);
+      }),
+    );
+  }
+  it.effect("rejects malformed provider responses rather than confirming termination", () =>
+    Effect.gen(function* () {
+      const client: Parameters<typeof readCodexThreadActivity>[0] = {
+        request: () => Effect.die("Must use raw thread/read"),
+        raw: {
+          request: () => Effect.succeed({ thread: { status: { type: "new-unknown-status" } } }),
+        },
+      };
+      const result = yield* Effect.exit(readCodexThreadActivity(client, "native-thread"));
+      NodeAssert.equal(result._tag, "Failure");
     }),
   );
 });

@@ -31,7 +31,7 @@ import { ModelListRow } from "./ModelListRow";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { ModelPickerSidebar } from "./ModelPickerSidebar";
 import { prioritizeActiveProviderInstance } from "./modelPickerProviderOrder";
-import { hasProviderSetup } from "./ProviderStatusBanner";
+import { getProviderStatusMessage, hasProviderSetup } from "./ProviderStatusBanner";
 import {
   modelPickerLegacySectionKey,
   modelPickerModelKey,
@@ -42,7 +42,7 @@ import { buildModelPickerSearchText, scoreModelPickerSearch } from "./modelPicke
 import {
   Combobox,
   ComboboxEmpty,
-  ComboboxInput,
+  ComboboxSearchInput,
   ComboboxItem,
   ComboboxListVirtualized,
 } from "../ui/combobox";
@@ -59,7 +59,7 @@ import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings"
 import { cn } from "~/lib/utils";
 import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
 import { TooltipProvider } from "../ui/tooltip";
-import { Button } from "../ui/button";
+import { Button, InlineButton } from "../ui/button";
 import {
   isProviderInstancePickerReady,
   isProviderInstancePickerVisible,
@@ -250,8 +250,8 @@ export function ModelPickerProviderUpdateFooter(props: {
           <Button
             type="button"
             size="micro"
-            variant="ghost"
-            className="shrink-0 text-primary hover:bg-primary/8 hover:text-primary"
+            variant="ghost-primary"
+            className="shrink-0"
             disabled={props.disabled || props.isStarting}
             aria-label={accessibleActionLabel}
             title={props.disabledReason}
@@ -729,6 +729,23 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     activeModelSlug,
   ]);
 
+  const selectedEntry =
+    selectedInstanceId === "favorites" ? undefined : entryByInstanceId.get(selectedInstanceId);
+  const providerSetupEntries =
+    !isSearching && props.onOpenProviderSetup
+      ? instanceEntries.filter(
+          (entry) =>
+            matchesLockedProvider(entry) &&
+            shouldOfferModelPickerSetup(
+              entry,
+              modelOptionsByInstance.get(entry.instanceId) ?? [],
+            ) &&
+            (selectedEntry
+              ? entry.instanceId === selectedEntry.instanceId
+              : filteredModels.length === 0),
+        )
+      : [];
+
   const droidGroups = useMemo(() => {
     if (
       isSearching ||
@@ -1078,78 +1095,67 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               showSidebar && "border-l border-border/70",
             )}
           >
-            {/* Search is useful only when the selected surface can expose models. */}
+            {/* The shared search field owns its visual treatment; setup remains scoped to the
+                explicitly selected provider, without showing a redundant search field. */}
             {!selectedSetupEntry ? (
-              <div className="px-2 pt-2">
-                <div className="border-b border-border/70 pb-2.5 transition-colors focus-within:border-ring">
-                  <ComboboxInput
-                    ref={searchInputRef}
-                    className="[&_input]:h-6.5 [&_input]:font-sans [&_input]:leading-6.5"
-                    inputClassName="rounded-none bg-transparent text-sm"
-                    placeholder="Search models..."
-                    showTrigger={false}
-                    startAddon={
-                      <SearchIcon className="-translate-x-0.5 size-4 shrink-0 text-muted-foreground opacity-70" />
-                    }
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (
-                        showSidebar &&
-                        !e.altKey &&
-                        !e.ctrlKey &&
-                        !e.metaKey &&
-                        ((e.key === "ArrowLeft" && !e.shiftKey && searchQuery.length === 0) ||
-                          (e.key === "Tab" && e.shiftKey))
-                      ) {
-                        const sidebar = e.currentTarget
-                          .closest("[data-model-picker-content]")
-                          ?.querySelector("[data-model-picker-sidebar]");
-                        const button =
-                          sidebar?.querySelector<HTMLButtonElement>(
-                            'button[aria-pressed="true"]:not(:disabled)',
-                          ) ?? sidebar?.querySelector<HTMLButtonElement>("button:not(:disabled)");
-                        if (button) {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          button.focus();
-                          return;
-                        }
-                      }
-                      if (e.key === "Escape") {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        props.onRequestClose?.();
-                        return;
-                      }
-                      if (e.key === "Enter" && highlightedModelKeyRef.current) {
-                        (
-                          e as typeof e & { preventBaseUIHandler?: () => void }
-                        ).preventBaseUIHandler?.();
-                        e.preventDefault();
-                        e.stopPropagation();
-                        const legacyInstanceId = parseModelPickerLegacySectionKey(
-                          highlightedModelKeyRef.current,
-                        );
-                        if (legacyInstanceId) {
-                          toggleLegacySection(legacyInstanceId);
-                          return;
-                        }
-                        const model = parseModelPickerModelKey(highlightedModelKeyRef.current);
-                        if (model) {
-                          handleModelSelect(model.slug, model.instanceId, e.shiftKey);
-                        }
-                        return;
-                      }
+              <ComboboxSearchInput
+                ref={searchInputRef}
+                placeholder="Search models..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (
+                    showSidebar &&
+                    !e.altKey &&
+                    !e.ctrlKey &&
+                    !e.metaKey &&
+                    ((e.key === "ArrowLeft" && !e.shiftKey && searchQuery.length === 0) ||
+                      (e.key === "Tab" && e.shiftKey))
+                  ) {
+                    const sidebar = e.currentTarget
+                      .closest("[data-model-picker-content]")
+                      ?.querySelector("[data-model-picker-sidebar]");
+                    const button =
+                      sidebar?.querySelector<HTMLButtonElement>(
+                        'button[aria-pressed="true"]:not(:disabled)',
+                      ) ?? sidebar?.querySelector<HTMLButtonElement>("button:not(:disabled)");
+                    if (button) {
+                      e.preventDefault();
                       e.stopPropagation();
-                    }}
-                    onMouseDown={(e) => e.stopPropagation()}
-                    onTouchStart={(e) => e.stopPropagation()}
-                    size="sm"
-                    unstyled
-                  />
-                </div>
-              </div>
+                      button.focus();
+                      return;
+                    }
+                  }
+                  if (e.key === "Escape") {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    props.onRequestClose?.();
+                    return;
+                  }
+                  if (e.key === "Enter" && highlightedModelKeyRef.current) {
+                    (
+                      e as typeof e & { preventBaseUIHandler?: () => void }
+                    ).preventBaseUIHandler?.();
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const legacyInstanceId = parseModelPickerLegacySectionKey(
+                      highlightedModelKeyRef.current,
+                    );
+                    if (legacyInstanceId) {
+                      toggleLegacySection(legacyInstanceId);
+                      return;
+                    }
+                    const model = parseModelPickerModelKey(highlightedModelKeyRef.current);
+                    if (model) {
+                      handleModelSelect(model.slug, model.instanceId, e.shiftKey);
+                    }
+                    return;
+                  }
+                  e.stopPropagation();
+                }}
+                onMouseDown={(e) => e.stopPropagation()}
+                onTouchStart={(e) => e.stopPropagation()}
+              />
             ) : null}
 
             {/* Model list */}
@@ -1159,7 +1165,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                   {props.renderProviderSetup(selectedSetupEntry)}
                 </div>
               ) : null}
-              <ComboboxListVirtualized className="size-full min-w-0 p-0 not-empty:p-0">
+              <ComboboxListVirtualized padding="none">
                 <LegendList<string>
                   ref={modelListRef}
                   data={filteredItemKeys}
@@ -1173,8 +1179,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                           index={index}
                           value={modelKey}
                           aria-expanded={legacySection.isExpanded}
-                          className="group w-full cursor-pointer rounded-md px-2 py-2"
-                          contentClassName="flex w-full items-center gap-3"
+                          className="group w-full cursor-pointer"
                         >
                           <ModelListDisclosureContent
                             label={droidGroups ? "More models" : "Legacy models"}
@@ -1244,10 +1249,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               </ComboboxListVirtualized>
             </div>
             <ComboboxEmpty
-              className={cn(
-                "not-empty:py-6 empty:h-0 text-xs font-normal leading-snug",
-                selectedSetupEntry && "hidden",
-              )}
+              size="compact"
+              className={cn("empty:h-0", selectedSetupEntry && "hidden")}
             >
               No models found
             </ComboboxEmpty>
@@ -1259,6 +1262,28 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                 disabled={props.forkToSwitchProviderDisabled ?? false}
                 onFork={handleForkToSwitchProvider}
               />
+            ) : null}
+            {providerSetupEntries.length > 0 && !selectedSetupEntry ? (
+              <div className="max-h-44 shrink-0 overflow-y-auto border-t border-border/70 p-2">
+                {providerSetupEntries.map((entry) => (
+                  <div key={entry.instanceId} className="px-1 py-1.5 text-xs leading-snug">
+                    <p className="line-clamp-3 text-muted-foreground">
+                      {getProviderStatusMessage(entry.snapshot)}
+                    </p>
+                    <InlineButton
+                      className="mt-1"
+                      onClick={() => {
+                        props.onRequestClose?.();
+                        props.onOpenProviderSetup?.(entry.instanceId);
+                      }}
+                    >
+                      {providerSetupEntries.length > 1
+                        ? `Set up ${entry.displayName}`
+                        : "Open provider setup"}
+                    </InlineButton>
+                  </div>
+                ))}
+              </div>
             ) : null}
           </div>
         </Combobox>

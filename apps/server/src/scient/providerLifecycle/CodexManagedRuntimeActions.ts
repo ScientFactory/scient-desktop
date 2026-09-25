@@ -485,6 +485,9 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
         target: targetLabel,
         actions: [...policy.actions],
         managedVersion,
+        availableManagedVersion: policy.actions.includes("update")
+          ? (currentArtifact?.version ?? null)
+          : null,
         previousManagedVersion: latest?.previousVersion ?? null,
         operation: null,
         message,

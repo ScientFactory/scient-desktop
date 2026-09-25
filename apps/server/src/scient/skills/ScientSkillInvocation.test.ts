@@ -45,6 +45,11 @@ const releases = new Map([
   [automatic.releaseKey, automaticRelease],
   [explicit.releaseKey, explicitRelease],
 ]);
+const mcpProjection = {
+  skillLoadToolName: "scient_skill_load",
+  skillListToolName: "scient_skills_list",
+  includeCatalogMarker: true,
+};
 
 describe("turn-local Scient skill routing", () => {
   it("never derives explicit selection from augmented or retained provider text", () => {
@@ -97,10 +102,12 @@ describe("turn-local Scient skill routing", () => {
     expect(result.input).not.toContain(automatic.releaseKey);
     expect(result.input).not.toContain(explicit.releaseKey);
     expect(result.input).toContain("grant no additional tools or permissions");
-    expect(result.skillScope).toEqual({
+    expect(result.skillScope).toMatchObject({
       releases,
       skills: [explicit, automatic],
+      catalog: { status: "complete" },
     });
+    expect(result.skillScope.catalog?.digest).toMatch(/^sha256:[0-9a-f]{64}$/u);
   });
 
   it("keeps unselected explicit, inactive, and partial names out of the turn", () => {
@@ -129,9 +136,10 @@ describe("turn-local Scient skill routing", () => {
     expect(result.input).toContain(`{"name":"${authoring.name}"}`);
     expect(result.input).not.toContain(authoring.releaseKey);
     expect(result.input?.match(new RegExp(authoring.name, "gu"))).toHaveLength(3);
-    expect(result.skillScope).toEqual({
+    expect(result.skillScope).toMatchObject({
       releases: new Map([[authoring.releaseKey, authoringRelease]]),
       skills: [authoring],
+      catalog: { status: "complete" },
     });
   });
 
@@ -158,10 +166,111 @@ describe("turn-local Scient skill routing", () => {
   });
 
   it("returns an empty, inert scope when no skills are active", () => {
-    expect(prepareScientSkillTurn("Review this workspace.", [], new Map())).toEqual({
+    const result = prepareScientSkillTurn("Review this workspace.", [], new Map());
+    expect(result).toMatchObject({
       input: "Review this workspace.",
-      skillScope: { releases: new Map(), skills: [] },
+      skillScope: {
+        releases: new Map(),
+        skills: [],
+        catalog: { status: "complete" },
+      },
     });
+    expect(result.skillScope.catalog?.digest).toMatch(/^sha256:[0-9a-f]{64}$/u);
+  });
+
+  it("marks a complete empty MCP scope so the agent can skip an empty list call", () => {
+    const result = prepareScientSkillTurn("Review this workspace.", [], new Map(), mcpProjection);
+
+    expect(result.input).toContain("complete and empty (0 skills)");
+    expect(result.input).toContain("no `scient_skills_list` call is needed");
+    expect(result.input).toContain("Provider-native skills are separate");
+    expect(result.input).not.toContain("scient_skill_load");
+  });
+
+  it("includes the current nonempty digest for reuse and changes it with the scope", () => {
+    const current = prepareScientSkillTurn(
+      "Review this workspace.",
+      skills,
+      releases,
+      mcpProjection,
+    );
+    const matching = prepareScientSkillTurn(
+      "Review another detail.",
+      skills,
+      releases,
+      mcpProjection,
+    );
+    const changedRelease = {
+      ...automaticRelease,
+      version: "0.2.0",
+      digest: `sha256:${"b".repeat(64)}`,
+    };
+    const changedSkill = { ...automatic, releaseKey: skillReleaseKey(changedRelease) };
+    const changed = prepareScientSkillTurn(
+      "Review this workspace.",
+      [changedSkill],
+      new Map([[changedSkill.releaseKey, changedRelease]]),
+      mcpProjection,
+    );
+    const currentDigest = current.skillScope.catalog?.digest;
+    const changedDigest = changed.skillScope.catalog?.digest;
+
+    expect(currentDigest).toBe(matching.skillScope.catalog?.digest);
+    expect(current.input).toContain(`digest ${currentDigest}`);
+    expect(current.input).toContain("Reuse visible summaries only from a full result");
+    expect(changedDigest).not.toBe(currentDigest);
+    expect(changed.input).toContain(`digest ${changedDigest}`);
+    expect(changed.input).not.toContain(currentDigest!);
+  });
+
+  it("does not infer emptiness from an incomplete MCP scope", () => {
+    const result = prepareScientSkillTurn(
+      "Review this workspace.",
+      [],
+      new Map(),
+      mcpProjection,
+      [],
+      "incomplete",
+    );
+
+    expect(result.input).toContain("scope for this turn is incomplete");
+    expect(result.input).toContain("emptiness cannot be inferred");
+    expect(result.input).toContain("`scient_skills_list`");
+    expect(result.input).toContain("results may be partial");
+    expect(result.input).not.toContain("complete and empty");
+  });
+
+  it("versions the exact visible scope without treating the digest as authority", () => {
+    const ordinary = prepareScientSkillTurn("First task.", skills, releases);
+    const sameScope = prepareScientSkillTurn("A different task.", skills, releases);
+    const selected = prepareScientSkillTurn(
+      "Use the selected skill.",
+      skills,
+      releases,
+      undefined,
+      [explicit.name],
+    );
+    const changedRelease = {
+      ...automaticRelease,
+      version: "0.2.0",
+      digest: `sha256:${"b".repeat(64)}`,
+    };
+    const changedSkill = {
+      ...automatic,
+      releaseKey: skillReleaseKey(changedRelease),
+    };
+    const changed = prepareScientSkillTurn(
+      "First task.",
+      [changedSkill],
+      new Map([[changedSkill.releaseKey, changedRelease]]),
+    );
+
+    expect(ordinary.skillScope.catalog?.digest).toBe(sameScope.skillScope.catalog?.digest);
+    expect(selected.skillScope.catalog?.digest).not.toBe(ordinary.skillScope.catalog?.digest);
+    expect(changed.skillScope.catalog?.digest).not.toBe(ordinary.skillScope.catalog?.digest);
+    expect(ordinary.skillScope.skills).toEqual([automatic]);
+    expect(selected.skillScope.skills).toEqual([explicit, automatic]);
+    expect(changed.skillScope.skills).toEqual([changedSkill]);
   });
 
   it("preserves ordinary text, native commands and promptless input exactly", () => {
@@ -169,6 +278,15 @@ describe("turn-local Scient skill routing", () => {
       const result = prepareScientSkillTurn(input, skills, releases);
       expect(result.input).toBe(input);
       expect(result.skillScope.skills).toEqual([automatic]);
+    }
+    expect(
+      prepareScientSkillTurn("Review this workspace.", [], new Map(), {
+        ...mcpProjection,
+        includeCatalogMarker: false,
+      }).input,
+    ).toBe("Review this workspace.");
+    for (const input of [undefined, "", "/compact"]) {
+      expect(prepareScientSkillTurn(input, [], new Map(), mcpProjection).input).toBe(input);
     }
   });
 

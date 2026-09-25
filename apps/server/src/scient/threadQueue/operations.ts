@@ -96,6 +96,7 @@ export const updateQueue = Effect.fn("ScientQueue.update")(function* (
             attachments: payload.attachments,
             state: "waiting" as const,
             steerRequested: false,
+            sendRequested: false,
             updatedAt: now,
           }
         : entry,
@@ -137,7 +138,10 @@ export const reorderQueue = Effect.fn("ScientQueue.reorder")(function* (
   let index = 0;
   return {
     ...doc,
-    items: doc.items.map((item) => (item.state === "editing" ? item : ordered[index++]!)),
+    // Reordering cancels an unadmitted explicit Send; the user must confirm the new head.
+    items: doc.items.map((item) =>
+      item.state === "editing" ? item : { ...ordered[index++]!, sendRequested: false },
+    ),
   };
 });
 
@@ -147,7 +151,10 @@ export const controlQueue = Effect.fn("ScientQueue.control")(function* (
 ) {
   const sql = yield* SqlClient.SqlClient;
   if (payload.action === "resume") {
-    if (doc.awaitingCompletion || doc.blocked || !doc.paused) return doc;
+    // A failed admission of an explicit Send keeps its durable request. Retry
+    // may re-attempt that request, but cannot release any other finalization barrier.
+    const next = doc.items.find((entry) => entry.state !== "editing");
+    if (doc.blocked || !doc.paused || (doc.awaitingCompletion && !next?.sendRequested)) return doc;
     const query = yield* ProjectionSnapshotQuery;
     const thread = yield* query.getThreadDetailById(payload.threadId);
     if (
@@ -181,8 +188,33 @@ export const controlQueue = Effect.fn("ScientQueue.control")(function* (
     return {
       ...doc,
       items: doc.items.map((entry) =>
-        entry === item ? { ...entry, steerRequested: true } : entry,
+        entry === item
+          ? { ...entry, steerRequested: true, sendRequested: false }
+          : entry.sendRequested
+            ? { ...entry, sendRequested: false }
+            : entry,
       ),
+    };
+  }
+  if (payload.action === "send") {
+    const query = yield* ProjectionSnapshotQuery;
+    const thread = yield* query.getThreadDetailById(payload.threadId);
+    if (
+      !doc.awaitingCompletion ||
+      doc.blocked ||
+      doc.paused ||
+      Option.isNone(thread) ||
+      thread.value.session?.status === "running" ||
+      thread.value.session?.status === "starting" ||
+      item.state === "editing" ||
+      doc.items.find((entry) => entry.state !== "editing") !== item ||
+      doc.items.some((entry) => entry.steerRequested)
+    )
+      return yield* Effect.fail(new QueueError({ message: "This message is not ready to send." }));
+    if (item.sendRequested) return doc;
+    return {
+      ...doc,
+      items: doc.items.map((entry) => (entry === item ? { ...entry, sendRequested: true } : entry)),
     };
   }
   if (!payload.editToken || (item.state === "editing" && item.editToken !== payload.editToken))
@@ -198,6 +230,7 @@ export const controlQueue = Effect.fn("ScientQueue.control")(function* (
             state: "editing" as const,
             editToken: payload.editToken,
             steerRequested: false,
+            sendRequested: false,
           }
         : entry,
     ),

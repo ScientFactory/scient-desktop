@@ -20,6 +20,7 @@
   "ownedFiles": [
     "apps/server/scripts/compute-recipes.ts",
     "apps/server/scripts/publish-compute-recipe.ts",
+    "apps/server/scripts/qualify-compute-backend.ts",
     "apps/server/src/telemetry/ComputeOutputAnalytics.ts",
     "apps/server/src/orchestration/scient-fork/migrations/005_AnalysisRunIndex.ts",
     "apps/server/src/orchestration/scient-fork/migrations/006_AnalysisRunProjectionState.ts",
@@ -30,6 +31,7 @@
     "apps/web/src/components/preview/previewImageTransition.ts",
     "apps/web/src/components/preview/previewImageZoom.ts",
     "apps/web/src/previewStaticImageSurface.ts",
+    "apps/web/src/lib/desktopReload.ts",
     "apps/web/src/scient/pdf/ScientPdfReader.tsx",
     "apps/web/src/scient/rightPanel/ScientRightPanelSurfaceIcon.tsx",
     "apps/web/src/scient/rightPanel/surfaces.ts",

@@ -108,6 +108,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   inlineMessageContext: Schema.optionalKey(Schema.Boolean),
   /** Queue operations retain typed context independently of immediate-turn support. */
   threadQueueMessageContext: Schema.optionalKey(Schema.Boolean),
+  /** Server can explicitly send one waiting queue item after a failed or stopped turn. */
+  threadQueueExplicitSend: Schema.optionalKey(Schema.Boolean),
   /** Server rejects required worktrees instead of falling back to the project checkout. */
   requiredWorktreeBootstrap: Schema.optionalKey(Schema.Boolean),
   /** Server understands thread.settle / thread.unsettle commands. Absent on
@@ -145,6 +147,9 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   threadPinReorder: Schema.optionalKey(Schema.Boolean),
   /** Server persists manual Active order through thread.active.reorder. */
   threadActiveReorder: Schema.optionalKey(Schema.Boolean),
+  /** Server understands thread.auto-settle.set (per-thread auto-settle off).
+      Same version-skew contract as threadSettlement. */
+  threadAutoSettleOptOut: Schema.optionalKey(Schema.Boolean),
   /** Server understands regenerateTitle on thread.meta.update. Absent on
       older servers, so clients hide the action instead of sending it. */
   threadTitleRegeneration: Schema.optionalKey(Schema.Boolean),

@@ -98,7 +98,6 @@ function ChartActionButton({
         render={
           <Button
             aria-label={label}
-            className="chat-markdown-chrome-action"
             disabled={disabled}
             onClick={onClick}
             size="icon-xs"
@@ -302,7 +301,6 @@ export function VegaLiteChartCard({
                     render={
                       <Button
                         aria-label="More chart actions"
-                        className="chat-markdown-chrome-action"
                         size="icon-xs"
                         type="button"
                         variant="ghost"

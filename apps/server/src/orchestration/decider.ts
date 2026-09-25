@@ -1,5 +1,6 @@
 import {
   EventId,
+  OrchestrationSession,
   MAX_SCRIPT_ID_LENGTH,
   SCRIPT_RUN_COMMAND_PATTERN,
   MessageId,
@@ -55,6 +56,7 @@ const monogramSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme
 
 const isScriptRunCommand = Schema.is(SCRIPT_RUN_COMMAND_PATTERN);
 
+const sessionsEqual = Schema.toEquivalence(OrchestrationSession);
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const decodeUserInputRequestedPayload = Schema.decodeUnknownOption(UserInputRequestedPayload);
 const threadPullRequestLinksEqual = Schema.toEquivalence(Schema.NullOr(ThreadLinkedPullRequest));
@@ -491,7 +493,10 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
-      if (command.type === "thread.auto-settle" && thread.settledOverride !== null) {
+      if (
+        command.type === "thread.auto-settle" &&
+        (thread.settledOverride !== null || thread.autoSettleDisabledAt != null)
+      ) {
         return yield* Effect.fail(
           new OrchestrationCommandInvariantError({
             commandType: command.type,
@@ -863,6 +868,37 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           threadId: command.threadId,
           orderKey: command.orderKey,
           updatedAt: keyUnchanged ? thread.updatedAt : occurredAt,
+        },
+      };
+    }
+
+    case "thread.auto-settle.set": {
+      const thread = yield* requireThreadNotArchived({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      // Idempotent by re-emission (see thread.unpin): setting the current
+      // state again keeps the existing timestamps so duplicates do not churn
+      // ordering. The flag is independent of the settled lifecycle: it only
+      // gates the automatic paths, so it never blocks a manual settle.
+      const currentlyDisabledAt = thread.autoSettleDisabledAt ?? null;
+      const unchanged = command.enabled
+        ? currentlyDisabledAt === null
+        : currentlyDisabledAt !== null;
+      const occurredAt = yield* nowIso;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.auto-settle-set",
+        payload: {
+          threadId: command.threadId,
+          autoSettleDisabledAt: command.enabled ? null : (currentlyDisabledAt ?? occurredAt),
+          updatedAt: unchanged ? thread.updatedAt : occurredAt,
         },
       };
     }
@@ -1934,6 +1970,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      if (
+        command.expectedSession !== undefined &&
+        (thread.session === null || !sessionsEqual(command.expectedSession, thread.session))
+      ) {
+        return [];
+      }
       const sessionSetEvent: Omit<OrchestrationEvent, "sequence"> = {
         ...(yield* withEventBase({
           aggregateKind: "thread",

@@ -67,6 +67,8 @@ import Migration0053 from "./Migrations/053_ProjectionThreadPullRequests.ts";
 import Migration0054 from "./Migrations/054_ProjectionThreadMessageContext.ts";
 import Migration0055 from "./Migrations/055_ProjectionThreadTitleState.ts";
 import Migration0056 from "./Migrations/056_PullRequestFilesViewed.ts";
+// T3's migration 54 is renumbered to 57 because Scient's migration IDs are immutable.
+import Migration0057 from "./Migrations/057_ProjectionThreadsAutoSettleDisabledAt.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -140,6 +142,8 @@ const migrationEntries = [
   [55, "ProjectionThreadTitleState", Migration0055],
   // T3's migration 53 follows Scient's immutable migration sequence.
   [56, "PullRequestFilesViewed", Migration0056],
+  // T3's migration 54 follows Scient's immutable migration sequence.
+  [57, "ProjectionThreadsAutoSettleDisabledAt", Migration0057],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
