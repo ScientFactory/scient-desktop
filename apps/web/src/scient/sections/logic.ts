@@ -157,10 +157,62 @@ export function catalogWithRestoredSection(
   const ordered = sortThreadSections(sections).filter(
     (section) => section.id !== removed.section.id,
   );
-  ordered.splice(Math.min(removed.index, ordered.length), 0, removed.section);
+  // A restored section starts a fresh empty-section clock.
+  const { emptySince: _emptySince, ...section } = removed.section;
+  ordered.splice(Math.min(removed.index, ordered.length), 0, section);
   return {
     catalog: renumber(ordered),
     generalIndex: clampGeneralIndex(removed.generalIndex, ordered.length),
+  };
+}
+
+/**
+ * One pass of the optional empty-section cleanup. `occupied` holds every
+ * section id a sidebar thread (active, pinned, snoozed or settled) points to.
+ * Empty sections get stamped, occupied ones lose their stamp, and sections
+ * stamped at least `afterDays` ago are removed. Null when nothing changes.
+ */
+export function sweepEmptySections(input: {
+  readonly sections: readonly ThreadSection[];
+  readonly generalIndex: number;
+  readonly occupied: ReadonlySet<string>;
+  readonly now: Date;
+  readonly afterDays: number;
+}): (SectionLayout & { readonly removed: RemovedSection[] }) | null {
+  const ordered = sortThreadSections(input.sections);
+  const general = clampGeneralIndex(input.generalIndex, ordered.length);
+  const cutoff = input.now.getTime() - input.afterDays * 24 * 60 * 60 * 1000;
+  const kept: ThreadSection[] = [];
+  const removed: RemovedSection[] = [];
+  let changed = false;
+  ordered.forEach((section, index) => {
+    if (input.occupied.has(section.id)) {
+      if (section.emptySince === undefined) {
+        kept.push(section);
+      } else {
+        const { emptySince: _emptySince, ...rest } = section;
+        kept.push(rest);
+        changed = true;
+      }
+      return;
+    }
+    if (section.emptySince === undefined) {
+      kept.push({ ...section, emptySince: input.now.toISOString() });
+      changed = true;
+      return;
+    }
+    if (Date.parse(section.emptySince) <= cutoff) {
+      removed.push({ section, index, generalIndex: general });
+      changed = true;
+      return;
+    }
+    kept.push(section);
+  });
+  if (!changed) return null;
+  return {
+    catalog: renumber(kept),
+    generalIndex: general - removed.filter((entry) => entry.index < general).length,
+    removed,
   };
 }
 

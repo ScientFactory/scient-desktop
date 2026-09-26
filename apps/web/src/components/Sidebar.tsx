@@ -257,6 +257,7 @@ import {
 } from "../scient/sections/pendingNewThreadSections";
 import { SidebarSectionsView } from "../scient/sections/SidebarSectionsView";
 import { SidebarSectionsToggle } from "../scient/sections/SidebarSectionsToggle";
+import { useEmptySectionCleanup } from "../scient/sections/useEmptySectionCleanup";
 import { useNewSectionForThreads } from "../scient/sections/useNewSectionForThreads";
 // SCIENT-FORK:END
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuShortcut, MenuTrigger } from "./ui/menu";
@@ -4596,6 +4597,12 @@ export default function Sidebar() {
     [setThreadSection],
   );
   useApplyPendingNewThreadSections({ threads, apply: applyPendingSection });
+  useEmptySectionCleanup({
+    threads,
+    allEnvironmentsConnected:
+      environments.length > 0 &&
+      environments.every((environment) => environment.connection.phase === "connected"),
+  });
   // General (null) starts an ordinary thread; a section files the new thread.
   const startNewThreadInSection = useCallback(
     (section: ThreadSection | null) => {

@@ -99,6 +99,8 @@ export const ThreadSection = Schema.Struct({
   id: ThreadSectionId,
   name: TrimmedNonEmptyString,
   order: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  /** When the section was last seen without threads; drives optional auto-delete. */
+  emptySince: Schema.optionalKey(Schema.String),
 });
 export type ThreadSection = typeof ThreadSection.Type;
 
@@ -1239,6 +1241,11 @@ export const ServerSettings = Schema.Struct({
   // Where the built-in General group (unsectioned threads) sits among the
   // sections: 0 is first.
   threadSectionsGeneralIndex: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  // Delete a section after it has held no threads for this many days; null
+  // (the default) keeps empty sections. Same range as auto-settle.
+  threadSectionsDeleteEmptyAfterDays: Schema.NullOr(SidebarAutoSettleAfterDays).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   // SCIENT-FORK:END
   worktreeCleanup: WorktreeCleanup.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   storageCleanup: StorageCleanupSettings.pipe(
@@ -1620,6 +1627,7 @@ export const ServerSettingsPatch = Schema.Struct({
   // SCIENT-FORK:START — replaces the whole catalog; omitted leaves it alone.
   threadSections: Schema.optionalKey(ThreadSections),
   threadSectionsGeneralIndex: Schema.optionalKey(NonNegativeInt),
+  threadSectionsDeleteEmptyAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
   // SCIENT-FORK:END
   worktreeCleanup: Schema.optionalKey(
     Schema.NullOr(

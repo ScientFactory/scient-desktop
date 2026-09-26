@@ -17,6 +17,7 @@ import {
   catalogWithoutSection,
   layoutFromGroupOrder,
   sortThreadSections,
+  sweepEmptySections,
 } from "./logic";
 
 type LiveLayout = { readonly sections: readonly ThreadSection[]; readonly generalIndex: number };
@@ -57,6 +58,13 @@ export interface ThreadSectionCatalog {
   /** Removes the entry; its threads join General until it is restored. */
   readonly remove: (sectionId: string) => Promise<RemovedSection | null>;
   readonly restore: (removed: RemovedSection) => Promise<boolean>;
+  /** Restores sections removed together, each at its old position. */
+  readonly restoreAll: (removed: readonly RemovedSection[]) => Promise<boolean>;
+  /** Runs one empty-section cleanup pass; resolves the sections it removed. */
+  readonly sweepEmpty: (
+    occupied: ReadonlySet<string>,
+    afterDays: number,
+  ) => Promise<readonly RemovedSection[]>;
   /** Applies a group order that may include General. */
   readonly reorder: (orderedGroupIds: readonly string[]) => Promise<boolean>;
 }
@@ -160,6 +168,41 @@ export function useThreadSectionCatalog(): ThreadSectionCatalog {
     [write],
   );
 
+  const restoreAll = useCallback(
+    async (removed: readonly RemovedSection[]) =>
+      (
+        await write((layout) => {
+          let next: SectionLayout = {
+            catalog: [...layout.sections],
+            generalIndex: layout.generalIndex,
+          };
+          // Ascending original positions rebuild the list as it was.
+          for (const entry of [...removed].toSorted((left, right) => left.index - right.index)) {
+            next = catalogWithRestoredSection(next.catalog, entry);
+          }
+          return { layout: next, result: true };
+        })
+      ).ok,
+    [write],
+  );
+
+  const sweepEmpty = useCallback(
+    async (occupied: ReadonlySet<string>, afterDays: number) => {
+      const { ok, result } = await write((layout) => {
+        const swept = sweepEmptySections({
+          sections: layout.sections,
+          generalIndex: layout.generalIndex,
+          occupied,
+          now: new Date(),
+          afterDays,
+        });
+        return { layout: swept, result: swept?.removed ?? [] };
+      });
+      return ok ? (result ?? []) : [];
+    },
+    [write],
+  );
+
   const reorder = useCallback(
     async (orderedGroupIds: readonly string[]) =>
       (
@@ -179,6 +222,8 @@ export function useThreadSectionCatalog(): ThreadSectionCatalog {
     rename,
     remove,
     restore,
+    restoreAll,
+    sweepEmpty,
     reorder,
   };
 }

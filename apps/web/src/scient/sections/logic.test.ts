@@ -10,6 +10,7 @@ import {
   groupThreadsBySection,
   layoutFromGroupOrder,
   normalizeSectionName,
+  sweepEmptySections,
   planSectionsThreadDrop,
   resolveSectionDragOrder,
   sectionShifts,
@@ -272,5 +273,43 @@ describe("Sections view drops", () => {
       [GENERAL_SECTION_GROUP_ID]: 40,
       research: 40,
     });
+  });
+});
+
+describe("sweepEmptySections", () => {
+  const now = new Date("2026-09-27T12:00:00.000Z");
+  const daysAgo = (days: number) => new Date(now.getTime() - days * 86_400_000).toISOString();
+  const sweep = (sections: ThreadSection[], occupied: string[], generalIndex = 0) =>
+    sweepEmptySections({ sections, generalIndex, occupied: new Set(occupied), now, afterDays: 7 });
+
+  it("stamps a newly empty section and clears the stamp once a thread joins", () => {
+    const stamped = sweep([RESEARCH, PERMA], ["perma"]);
+    expect(stamped?.removed).toEqual([]);
+    expect(stamped?.catalog[0]?.emptySince).toBe(now.toISOString());
+    expect(stamped?.catalog[1]?.emptySince).toBeUndefined();
+
+    const cleared = sweep(stamped!.catalog, ["research", "perma"]);
+    expect(cleared?.catalog.every((entry) => entry.emptySince === undefined)).toBe(true);
+    expect(sweep(cleared!.catalog, ["research", "perma"])).toBeNull();
+  });
+
+  it("removes only sections empty for the whole period, keeping General beside its neighbors", () => {
+    const later = section("later", "Later", 2);
+    // Layout: Research, Perma, General, Later.
+    const swept = sweep(
+      [{ ...RESEARCH, emptySince: daysAgo(8) }, { ...PERMA, emptySince: daysAgo(3) }, later],
+      ["later"],
+      2,
+    );
+    expect(swept?.removed.map((entry) => entry.section.id)).toEqual(["research"]);
+    expect(swept?.catalog.map((entry) => entry.id)).toEqual(["perma", "later"]);
+    expect(swept?.generalIndex).toBe(1);
+  });
+
+  it("restores a removed section with a fresh clock", () => {
+    const swept = sweep([{ ...RESEARCH, emptySince: daysAgo(9) }, PERMA], ["perma"]);
+    const restored = catalogWithRestoredSection(swept!.catalog, swept!.removed[0]!);
+    expect(restored.catalog.map((entry) => entry.id)).toEqual(["research", "perma"]);
+    expect(restored.catalog[0]?.emptySince).toBeUndefined();
   });
 });

@@ -332,6 +332,23 @@ export const SETTINGS_SEARCH_ITEMS = [
     requiresThreadAutoSettlement: true,
     scope: "project-defaults",
   },
+  // SCIENT-FORK:START — optional empty-section cleanup.
+  {
+    id: "delete-empty-sections",
+    title: "Delete empty sections",
+    to: "/settings/general",
+    searchTerms: ["sidebar sections remove unused automatically cleanup"],
+    scope: "project-defaults",
+  },
+  {
+    id: "days-before-deleting-empty-sections",
+    title: "Days before deleting an empty section",
+    to: "/settings/general",
+    targetId: "delete-empty-sections",
+    searchTerms: ["sidebar sections timeout cleanup"],
+    scope: "project-defaults",
+  },
+  // SCIENT-FORK:END
   {
     id: "thread-notifications",
     title: "Thread notifications",

@@ -129,6 +129,7 @@ describe("pickSharedServerSettings", () => {
       "sidebarAutoSettleOnMerge",
       "sourceControlWritingStyle",
       "textGenerationModelSelection",
+      "threadSectionsDeleteEmptyAfterDays",
     ]);
   });
 });

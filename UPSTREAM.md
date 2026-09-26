@@ -504,7 +504,10 @@ thread's unchanged `updatedAt`, so organizing never reads as activity. Migration
 058 adds `projection_threads.section_id`. The section catalog is the
 `threadSections` entry in the primary environment's server settings, so removing
 an entry leaves thread ids intact for Undo. `threadSectionsGeneralIndex` stores
-where the built-in General group (threads without a section) sits among them. The Sections view, menus and drop
+where the built-in General group (threads without a section) sits among them. Optional
+empty-section cleanup (`threadSectionsDeleteEmptyAfterDays`, off by default) runs
+in the client while every environment is connected, stamping `emptySince` on
+catalog entries. The Sections view, menus and drop
 planning live under `apps/web/src/scient/sections`; T3 files carry only
 `SCIENT-FORK`-marked mounts. The view reuses T3's row, shelf headers and order-key
 planner rather than forking them, and never changes pin state. If T3 ships its own

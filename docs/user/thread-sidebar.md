@@ -139,6 +139,13 @@ Sections view:
 - Empty sections stay visible so you can drag threads into them. **New section**, after the last
   section, adds one at the end.
 
+To remove sections you no longer use, turn on **Settings → General → Delete empty sections** and
+choose how many days a section may stay empty (7 by default). It is off unless you turn it on. A
+section counts as empty when no active, pinned, snoozed, or settled thread belongs to it; archived
+threads do not keep a section. Adding a thread restarts the count, and **General** is never
+removed. Cleanup runs only while Scient is open and every environment is connected, and shows
+**Undo** when it removes a section.
+
 Deleting a section never deletes conversations: its threads move to **General**, and **Undo** on the
 confirmation brings the section and its threads back. The section list is stored on the server of
 your primary environment, so every window and connected client shows the same sections. If

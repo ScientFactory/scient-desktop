@@ -30,12 +30,14 @@ describe("ServerSettings thread sections", () => {
     const decoded = decodeServerSettings({});
     expect(decoded.threadSections).toEqual([]);
     expect(decoded.threadSectionsGeneralIndex).toBe(0);
+    expect(decoded.threadSectionsDeleteEmptyAfterDays).toBeNull();
     const input = {
       threadSections: [
         { id: "research", name: "Research", order: 0 },
         { id: "perma", name: "Perma", order: 1 },
       ],
       threadSectionsGeneralIndex: 1,
+      threadSectionsDeleteEmptyAfterDays: 7,
     };
     expect(encodeServerSettings(decodeServerSettings(input))).toMatchObject(input);
     expect(decodeServerSettingsPatch(input)).toEqual(input);
