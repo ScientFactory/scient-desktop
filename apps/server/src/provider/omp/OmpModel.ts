@@ -3,31 +3,29 @@ import { preferredReasoningLevel } from "@t3tools/shared/model";
 
 import type { OmpRpcModel, OmpThinkingLevel } from "effect-omp-rpc/schema";
 
+import {
+  encodeAgentModelSlug,
+  isValidModelSegment,
+  splitAgentModelSlug,
+  thinkingLevelCapabilities,
+} from "../agentModel.ts";
+
 const THINKING_LEVELS = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
-const validSegment = (value: string): boolean => value.length > 0 && value.trim() === value;
+const validSegment = isValidModelSegment;
 
-export const encodeOmpModelSlug = (provider: string, modelId: string): string | undefined => {
-  if (!validSegment(provider) || !validSegment(modelId)) return undefined;
-  return `${encodeURIComponent(provider)}/${encodeURIComponent(modelId)}`;
-};
+export const encodeOmpModelSlug = encodeAgentModelSlug;
 
 export const decodeOmpModelSlug = (
   slug: string,
 ): { readonly provider: string; readonly modelId: string } | undefined => {
-  const delimiter = slug.indexOf("/");
-  if (delimiter <= 0 || delimiter !== slug.lastIndexOf("/")) return undefined;
-  try {
-    const provider = decodeURIComponent(slug.slice(0, delimiter));
-    const modelId = decodeURIComponent(slug.slice(delimiter + 1));
-    if (!validSegment(provider) || !validSegment(modelId)) return undefined;
-    const canonical = encodeOmpModelSlug(provider, modelId);
-    const raw = `${provider}/${modelId}`;
-    if (canonical !== slug && raw !== slug) return undefined;
-    return { provider, modelId };
-  } catch {
-    return undefined;
-  }
+  // Oh My Pi also accepts an unencoded but otherwise well-formed slug.
+  if (slug.startsWith("/")) return undefined;
+  const decoded = splitAgentModelSlug(slug);
+  if (!decoded) return undefined;
+  const canonical = encodeOmpModelSlug(decoded.provider, decoded.modelId);
+  const raw = `${decoded.provider}/${decoded.modelId}`;
+  return canonical === slug || raw === slug ? decoded : undefined;
 };
 
 export const ompModelSupportsImages = (model: OmpRpcModel): boolean =>
@@ -68,25 +66,6 @@ export const ompModelToServerModel = (
     capabilities:
       thinkingLevels.length === 0
         ? null
-        : {
-            optionDescriptors: [
-              {
-                id: "thinkingLevel",
-                label: "Reasoning",
-                type: "select" as const,
-                strictSelection: true,
-                concreteReasoning: true,
-                emptySelectionLabel: "Reasoning",
-                options: thinkingLevels.map((level) => ({
-                  id: level,
-                  label:
-                    level === "xhigh"
-                      ? "Extra-high"
-                      : level.charAt(0).toUpperCase() + level.slice(1),
-                  ...(level === selectedDefault ? { isDefault: true } : {}),
-                })),
-              },
-            ],
-          },
+        : thinkingLevelCapabilities(thinkingLevels, selectedDefault),
   };
 };
