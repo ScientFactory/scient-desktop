@@ -181,6 +181,7 @@ const makeAdapter = (input: {
   >;
   readonly environment?: NodeJS.ProcessEnv;
   readonly homePath?: string;
+  readonly eventQueueByteLimit?: number;
 }) =>
   makeOmpAdapter({
     binaryPath: "omp",
@@ -189,6 +190,9 @@ const makeAdapter = (input: {
     attachmentsDir: NodePath.join(input.root, "attachments"),
     environment: input.environment ?? { PATH: "/usr/bin" },
     homePath: input.homePath,
+    ...(input.eventQueueByteLimit === undefined
+      ? {}
+      : { eventQueueByteLimit: input.eventQueueByteLimit }),
     makeProcess: input.makeProcess,
   });
 
@@ -456,6 +460,50 @@ describe("Oh My Pi production qualification seams", () => {
         .sendTurn({ threadId, input: "start after a stalled reader" })
         .pipe(Effect.timeout("2 seconds"), TestClock.withLive);
       expect(turn.turnId.length).toBeGreaterThan(0);
+      yield* adapter.stopAll();
+      NodeFS.rmSync(root, { recursive: true, force: true });
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("fails closed when the event queue byte budget is exceeded", () =>
+    Effect.gen(function* () {
+      const root = makeRoot("event-overflow");
+      const events = yield* Queue.unbounded<OmpRpcNotification, Cause.Done>();
+      const adapter = yield* makeAdapter({
+        root,
+        instanceId: ProviderInstanceId.make("omp-qualification-event-overflow"),
+        eventQueueByteLimit: 1,
+        makeProcess: (options) =>
+          Effect.sync(() =>
+            makeClient({
+              events,
+              sessionDir: options.sessionDir ?? root,
+              overrides: {
+                prompt: () =>
+                  Effect.gen(function* () {
+                    yield* Queue.offer(events, {
+                      _tag: "Event",
+                      event: {
+                        type: "host_tool_call",
+                        id: "oversized-event",
+                      },
+                    });
+                    yield* Effect.sleep("10 millis").pipe(TestClock.withLive);
+                    return success("prompt", { agentInvoked: true });
+                  }),
+              },
+            }),
+          ),
+      });
+      const threadId = ThreadId.make("omp-event-overflow");
+      yield* adapter.startSession({ threadId, cwd: root, runtimeMode: "full-access" });
+      yield* adapter.sendTurn({ threadId, input: "overflow the event queue" });
+      yield* Effect.forEach(
+        Array.from({ length: 100 }, (_, index) => index),
+        () => Effect.sleep("1 millis"),
+        { discard: true },
+      ).pipe(TestClock.withLive);
+      expect(yield* adapter.hasSession(threadId)).toBe(false);
       yield* adapter.stopAll();
       NodeFS.rmSync(root, { recursive: true, force: true });
     }).pipe(Effect.provide(NodeServices.layer)),

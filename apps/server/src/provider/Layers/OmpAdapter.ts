@@ -19,6 +19,7 @@ import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Cause from "effect/Cause";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -90,6 +91,8 @@ const OMP_MAX_PROMPT_IMAGE_BYTES = 512 * 1024;
  */
 const OMP_READY_TIMEOUT = "8 seconds";
 const OMP_CANCEL_DEADLINE = "3 seconds";
+const OMP_EVENT_QUEUE_MAX_ITEMS = 8192;
+const OMP_EVENT_QUEUE_MAX_BYTES = 32 * 1024 * 1024;
 
 export interface OmpAdapterOptions {
   readonly binaryPath: string;
@@ -99,6 +102,8 @@ export interface OmpAdapterOptions {
   readonly environment: NodeJS.ProcessEnv;
   readonly homePath?: string | undefined;
   readonly profile?: string | undefined;
+  /** Test/host override for the fail-closed event byte budget. */
+  readonly eventQueueByteLimit?: number | undefined;
   readonly makeProcess?: (options: OmpRpcProcessOptions) => Effect.Effect<
     OmpRpcClient & {
       readonly version: string;
@@ -156,7 +161,13 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
   const makeProcess = options.makeProcess ?? makeOmpRpcProcess;
   const sessions = new Map<ThreadId, SessionContext>();
   const threadLocks = yield* SynchronizedRef.make(new Map<ThreadId, Semaphore.Semaphore>());
-  const events = yield* Queue.unbounded<ProviderRuntimeEvent>();
+  const eventQueueByteLimit = Math.max(1, options.eventQueueByteLimit ?? OMP_EVENT_QUEUE_MAX_BYTES);
+  // Never block a turn.started/settlement producer on a stalled consumer. The
+  // dropping queue is paired with a byte budget and a fail-closed overflow path.
+  const events = yield* Queue.dropping<ProviderRuntimeEvent, Cause.Done>(OMP_EVENT_QUEUE_MAX_ITEMS);
+  let queuedEventBytes = 0;
+  let eventsOverflowed = false;
+  let overflowHandler: Effect.Effect<void> = Effect.void;
   const binaryFingerprint = ompBinaryFingerprint(options.binaryPath);
   const effectiveHomeIdentity =
     options.homePath?.trim() ||
@@ -252,7 +263,34 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       },
     };
   };
-  const offer = (event: ProviderRuntimeEvent) => Queue.offer(events, event).pipe(Effect.asVoid);
+  const runtimeEventBytes = (event: ProviderRuntimeEvent): number => {
+    try {
+      return Buffer.byteLength(JSON.stringify(event));
+    } catch {
+      return eventQueueByteLimit + 1;
+    }
+  };
+  const triggerEventOverflow = Effect.gen(function* () {
+    if (eventsOverflowed) return;
+    eventsOverflowed = true;
+    yield* Queue.end(events);
+    yield* Effect.forkDetach(overflowHandler);
+  });
+  const offer = (event: ProviderRuntimeEvent) =>
+    Effect.gen(function* () {
+      if (eventsOverflowed) return;
+      const bytes = runtimeEventBytes(event);
+      if (bytes > eventQueueByteLimit || queuedEventBytes + bytes > eventQueueByteLimit) {
+        yield* triggerEventOverflow;
+        return;
+      }
+      const accepted = yield* Queue.offer(events, event);
+      if (!accepted) {
+        yield* triggerEventOverflow;
+        return;
+      }
+      queuedEventBytes += bytes;
+    });
   const eventBase = (ctx: SessionContext) =>
     Effect.all({ eventId: Effect.map(uuid, EventId.make), createdAt: now }).pipe(
       Effect.map((stamp) => ({
@@ -1213,6 +1251,14 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       ),
     );
 
+  overflowHandler = Effect.gen(function* () {
+    yield* Effect.forEach(
+      [...sessions.keys()],
+      (threadId) => locally(stopSessionUnlocked(threadId)),
+      { discard: true, concurrency: "unbounded" },
+    );
+  }).pipe(Effect.ignore);
+
   const stopSession = (threadId: ThreadId) =>
     locally(withThreadLock(threadId, stopSessionUnlocked(threadId)));
 
@@ -1312,7 +1358,14 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         discard: true,
         concurrency: "unbounded",
       }),
-    streamEvents: Stream.fromQueue(events),
+    streamEvents: Stream.fromQueue(events).pipe(
+      Stream.mapEffect((event) =>
+        Effect.sync(() => {
+          queuedEventBytes = Math.max(0, queuedEventBytes - runtimeEventBytes(event));
+          return event;
+        }),
+      ),
+    ),
   } satisfies ProviderAdapterShape<ProviderAdapterError>;
 
   function respondToQuestion(
