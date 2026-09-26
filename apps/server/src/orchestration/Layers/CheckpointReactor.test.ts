@@ -312,6 +312,7 @@ describe("CheckpointReactor", () => {
     readonly gitStatusRefreshCalls?: Array<string>;
     readonly pullRequestRefreshCalls?: Array<string>;
     readonly pullRequestRefresh?: Effect.Effect<void>;
+    readonly pullRequestRefreshAfterTurn?: Effect.Effect<void>;
   }) {
     const cwd = createGitRepository();
     if (options?.initializeGit === false) {
@@ -345,7 +346,10 @@ describe("CheckpointReactor", () => {
       prefix: "t3-checkpoint-reactor-test-",
     });
     const pullRequestRefreshes: number[] = [];
-    const refreshAfterTurn = () => Effect.sync(() => void pullRequestRefreshes.push(1));
+    const refreshAfterTurn = () =>
+      Effect.sync(() => void pullRequestRefreshes.push(1)).pipe(
+        Effect.andThen(options?.pullRequestRefreshAfterTurn ?? Effect.void),
+      );
     const vcsStatusBroadcasterLayer = Layer.succeed(VcsStatusBroadcaster, {
       getStatus: () => Effect.die("getStatus should not be called in this test"),
       refreshLocalStatus: (cwd: string) =>
@@ -1149,6 +1153,40 @@ describe("CheckpointReactor", () => {
     expect(completion?.answer_done).toBe(0);
     expect(completion?.checkpoint_done).toBe(1);
     expect(completion?.successful).toBe(1);
+  });
+
+  it("settles the checkpoint barrier when PR refresh fails before capture", async () => {
+    const harness = await createHarness({
+      seedFilesystemCheckpoints: false,
+      pullRequestRefreshAfterTurn: Effect.die("PR refresh failed"),
+    });
+    const createdAt = "2026-01-01T00:00:00.000Z";
+    const threadId = ThreadId.make("thread-1");
+    const turnId = asTurnId("turn-before-capture-failure");
+    harness.provider.emit({
+      type: "turn.started",
+      eventId: EventId.make("evt-before-capture-started"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt,
+      threadId,
+      turnId,
+    });
+    await waitForGitRefExists(harness.cwd, checkpointRefForThreadTurn(threadId, 0));
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.make("evt-before-capture-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt,
+      threadId,
+      turnId,
+      payload: { state: "completed" },
+    });
+    await harness.drain();
+
+    const completion = await harness.readQueueFinalization(turnId);
+    expect(completion?.answer_done).toBe(0);
+    expect(completion?.checkpoint_done).toBe(1);
+    expect(gitRefExists(harness.cwd, checkpointRefForThreadTurn(threadId, 1))).toBe(false);
   });
 
   it("refreshes local git status state on turn completion using the session cwd", async () => {
