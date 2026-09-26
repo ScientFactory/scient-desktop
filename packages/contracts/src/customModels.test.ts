@@ -5,6 +5,7 @@ import {
   CustomModelsSettings,
   validateCustomModelConnection,
   customModelImageInput,
+  supportsModelConnections,
 } from "./customModels.ts";
 import { ServerSettingsPatch } from "./settings.ts";
 
@@ -106,6 +107,17 @@ describe("custom model contracts", () => {
       }),
     ).toBeUndefined();
   });
+  it("allows OMP to consume the shared model connection contracts", () => {
+    for (const protocol of [
+      "openai-completions",
+      "openai-responses",
+      "anthropic-messages",
+    ] as const) {
+      expect(supportsModelConnections("omp", protocol)).toBe(true);
+    }
+    expect(supportsModelConnections("omp", "unsupported" as never)).toBe(false);
+  });
+
   it("defaults old settings to an empty catalog", () => {
     expect(decodeSettings({})).toEqual({ revision: 0, connections: [] });
   });

@@ -1,7 +1,9 @@
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import * as ByteSize from "effect/ByteSize";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -12,6 +14,8 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { resolveCommandPath, resolveSpawnCommand } from "@t3tools/shared/shell";
 import { compareSemverVersions } from "@t3tools/shared/semver";
+import type { ModelConnectionReadiness } from "@t3tools/contracts";
+import type { OmpRpcModel } from "effect-omp-rpc/schema";
 
 import { makeOmpRpcClient, type OmpRpcClient } from "effect-omp-rpc/client";
 import { OmpRpcProtocolError, type OmpRpcError } from "effect-omp-rpc/errors";
@@ -70,10 +74,12 @@ const versionCacheKey = (
   command: string,
   env: Readonly<Record<string, string | undefined>>,
   binaryPathFingerprint: string,
+  binaryMetadata: string,
 ): string =>
   JSON.stringify([
     command,
     binaryPathFingerprint,
+    binaryMetadata,
     env.PATH ?? "",
     env.HOME ?? "",
     env.USERPROFILE ?? "",
@@ -101,6 +107,10 @@ export interface OmpRpcProcess extends OmpRpcClient {
   /** Identity of the executable selected by the effective process environment. */
   readonly binaryPathFingerprint: string;
   readonly shutdown: Effect.Effect<OmpProcessExit, OmpRpcError>;
+  /** Optional server-side projection for shared custom-model readiness. */
+  readonly assessModelConnections?: (
+    models: ReadonlyArray<OmpRpcModel>,
+  ) => ReadonlyArray<ModelConnectionReadiness>;
 }
 
 const parseOmpVersion = (output: string): string | undefined =>
@@ -159,9 +169,23 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
   const canonicalBinary = yield* fs
     .realPath(resolvedBinary)
     .pipe(Effect.orElseSucceed(() => resolvedBinary));
-  const binaryPathFingerprint = ompBinaryFingerprint(canonicalBinary, env.PATH);
+  const binaryPathFingerprint = ompBinaryFingerprint(canonicalBinary);
+  const binaryMetadata = yield* fs.stat(canonicalBinary).pipe(
+    Effect.option,
+    Effect.map((info) =>
+      Option.match(info, {
+        onNone: () => "",
+        onSome: (stat) =>
+          [
+            Option.match(stat.mtime, { onNone: () => "", onSome: (value) => value.toISOString() }),
+            ByteSize.toBigInt(stat.size).toString(),
+            Option.match(stat.ino, { onNone: () => "", onSome: (value) => String(value) }),
+          ].join(":"),
+      }),
+    ),
+  );
   const now = yield* Clock.currentTimeMillis;
-  const cacheKey = versionCacheKey(options.command, env, binaryPathFingerprint);
+  const cacheKey = versionCacheKey(options.command, env, binaryPathFingerprint, binaryMetadata);
   const cached = versionCache.get(cacheKey);
   const version = yield* Effect.gen(function* () {
     if (cached && cached.expiresAt > now) return cached.version;

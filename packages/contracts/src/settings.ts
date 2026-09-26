@@ -816,6 +816,10 @@ export const OmpSettings = makeProviderSettingsSchema(
         providerSettingsForm: { placeholder: "omp", clearWhenEmpty: "omit" },
       }),
     ),
+    customModels: Schema.Array(CustomModelSetting).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
     homePath: TrimmedString.pipe(
       Schema.withDecodingDefault(Effect.succeed("")),
       Schema.annotateKey({

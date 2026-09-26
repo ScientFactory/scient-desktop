@@ -60,10 +60,11 @@ const settings = Schema.decodeSync(
   Schema.Struct({
     enabled: Schema.Boolean,
     binaryPath: Schema.String,
+    customModels: Schema.Array(Schema.String),
     homePath: Schema.String,
     profile: Schema.String,
   }),
-)({ enabled: true, binaryPath: "omp", homePath: "", profile: "" });
+)({ enabled: true, binaryPath: "omp", customModels: [], homePath: "", profile: "" });
 
 const modelSelection = createModelSelection(ProviderInstanceId.make("omp"), "anthropic/test-model");
 

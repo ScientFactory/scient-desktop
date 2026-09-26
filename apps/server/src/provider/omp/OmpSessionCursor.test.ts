@@ -18,7 +18,7 @@ const identity = (overrides: Partial<OmpResumeIdentity> = {}): OmpResumeIdentity
   providerInstanceId: "omp",
   sessionRoot: "/state/omp/thread",
   workspace: "/workspace/project",
-  binaryPathFingerprint: ompBinaryFingerprint("/usr/local/bin/omp", "/usr/bin"),
+  binaryPathFingerprint: ompBinaryFingerprint("/usr/local/bin/omp"),
   homeIdentity: "/home/test/.omp/agent",
   profileIdentity: "default",
   ...overrides,
@@ -35,6 +35,26 @@ describe("Oh My Pi session cursor", () => {
     expect(current).toBe(next);
     expect(ompBinaryFingerprint("/usr/local/bin/omp")).not.toBe(current);
   });
+
+  it.effect("rejects unverifiable legacy cursor identity", () =>
+    Effect.gen(function* () {
+      const cursor = makeOmpSessionCursor({
+        identity: identity(),
+        sessionFile: "/state/omp/thread/session.jsonl",
+        ompVersion: "18.2.8",
+        rpcProtocolVersion: 2,
+      });
+      if (!cursor) throw new Error("Expected a cursor fixture.");
+      const legacy = { ...cursor, schemaVersion: 2 as const };
+      expect(
+        yield* parseOmpSessionCursor(legacy, {
+          identity: identity(),
+          ompVersion: "18.2.8",
+          rpcProtocolVersion: 2,
+        }).pipe(Effect.flip),
+      ).toContain("older identity format");
+    }),
+  );
 
   it("keeps a session file inside its directory and rejects lexical escapes", () => {
     expect(sessionFileInsideRoot("/state/omp/thread", "/state/omp/thread/session.jsonl")).toBe(

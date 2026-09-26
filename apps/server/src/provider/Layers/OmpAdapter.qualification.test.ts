@@ -398,6 +398,25 @@ describe("Oh My Pi production qualification seams", () => {
       });
       expect(resumedSession.status).toBe("ready");
       yield* resumed.stopAll();
+
+      const pathChangedEvents = yield* Queue.unbounded<OmpRpcNotification, Cause.Done>();
+      const pathChanged = yield* makeAdapter({
+        root,
+        instanceId,
+        environment: { PATH: "/opt/a-different-tool-directory" },
+        makeProcess: (options) =>
+          Effect.sync(() =>
+            makeClient({ events: pathChangedEvents, sessionDir: options.sessionDir ?? root }),
+          ),
+      });
+      const pathChangedSession = yield* pathChanged.startSession({
+        threadId,
+        cwd: root,
+        runtimeMode: "full-access",
+        resumeCursor,
+      });
+      expect(pathChangedSession.status).toBe("ready");
+      yield* pathChanged.stopAll();
       NodeFS.rmSync(root, { recursive: true, force: true });
     }).pipe(Effect.provide(NodeServices.layer)),
   );

@@ -99,7 +99,12 @@ export const checkOmpProviderStatus = Effect.fn("checkOmpProviderStatus")(functi
       const [models, commands] = yield* Effect.all([client.getModels(), client.getCommands()], {
         concurrency: "unbounded",
       });
-      return { version: client.version, models: models.models, commands: commands.commands };
+      return {
+        version: client.version,
+        models: models.models,
+        commands: commands.commands,
+        modelConnections: client.assessModelConnections?.(models.models),
+      };
     }),
   ).pipe(Effect.exit);
   if (discovery._tag === "Failure") {
@@ -130,16 +135,18 @@ export const checkOmpProviderStatus = Effect.fn("checkOmpProviderStatus")(functi
     enabled: true,
     checkedAt: at,
     models,
+    ...(discovery.value.modelConnections && discovery.value.modelConnections.length > 0
+      ? { modelConnections: discovery.value.modelConnections }
+      : {}),
     slashCommands: compileOmpCommandCatalog(discovery.value.commands).advertised,
     probe: {
       installed: true,
       version: discovery.value.version,
       status: models.length > 0 ? "ready" : "warning",
-      auth: { status: "unknown" },
-      message:
-        models.length > 0
-          ? "Oh My Pi is available. Model sign-in stays in Oh My Pi; Scient does not ask for it."
-          : "Oh My Pi started, but it did not report any models.",
+      auth: { status: "unknown", required: false },
+      ...(models.length > 0
+        ? {}
+        : { message: "Oh My Pi started, but it did not report any models." }),
     },
   });
 });

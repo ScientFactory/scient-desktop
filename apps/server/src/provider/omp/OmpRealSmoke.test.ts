@@ -25,6 +25,7 @@ describe("real OMP qualification", () => {
       const settings = OmpSettings.make({
         enabled: true,
         binaryPath: binary,
+        customModels: [],
         homePath: "",
         profile: "",
       });

@@ -14,6 +14,7 @@ import { createModelSelection } from "@t3tools/shared/model";
 import * as EffectAcpErrors from "effect-acp/errors";
 import { customModelProviderId } from "./customModels.ts";
 import { droidCustomModelId } from "./provider/droid/DroidCustomModels.ts";
+import { encodeOmpModelSlug } from "./provider/omp/OmpModel.ts";
 import { encodePiModelSlug } from "./provider/pi/PiModel.ts";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -248,7 +249,7 @@ const compactProviderError = (value: unknown): string | null => {
 };
 
 const customModelTestFailure = (driver: ProviderDriverKind, cause: unknown) => {
-  const agent = driver === "droid" ? "Droid" : "Pi";
+  const agent = driver === "omp" ? "Oh My Pi" : driver === "droid" ? "Droid" : "Pi";
   if (isTextGenerationError(cause) && isAcpRequestError(cause.cause)) {
     const providerDetail = compactProviderError(cause.cause.data);
     if (providerDetail) return new CustomModelError({ message: `${agent}: ${providerDetail}` });
@@ -3000,7 +3001,7 @@ const makeWsRpcLayer = (
               !supportsModelConnections(instance.driverKind, connection.protocol)
             )
               return yield* new CustomModelError({
-                message: "Connect this model to an enabled Pi or Droid agent first.",
+                message: "Connect this model to an enabled Pi, Droid, or Oh My Pi agent first.",
               });
             const resolved = yield* serverSettings.resolveCustomModels(input.instanceId);
             const credentialError = resolved.find((c) => c.id === connection.id)?.credentialError;
@@ -3009,7 +3010,9 @@ const makeWsRpcLayer = (
             const slug =
               instance.driverKind === "droid"
                 ? droidCustomModelId(connection.id, model.id)
-                : encodePiModelSlug(customModelProviderId(connection.id), model.modelId);
+                : instance.driverKind === "omp"
+                  ? encodeOmpModelSlug(customModelProviderId(connection.id), model.modelId)
+                  : encodePiModelSlug(customModelProviderId(connection.id), model.modelId);
             if (!slug) return yield* new CustomModelError({ message: "Invalid model ID." });
             yield* instance.textGeneration
               .generateThreadTitle({

@@ -5,11 +5,14 @@ import * as NodePath from "node:path";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-const OMP_SESSION_CURSOR_VERSION = 2;
+export const OMP_SESSION_CURSOR_VERSION = 3;
+const OMP_LEGACY_SESSION_CURSOR_VERSION = 2;
 const OMP_LAUNCH_POLICY = "rpc-v2;approval-mode=yolo;session-dir=explicit" as const;
 
+// v2 is decoded only to produce a precise fail-closed migration error. Its
+// executable hash included PATH, so it cannot be safely compared to v3.
 export const OmpSessionCursor = Schema.Struct({
-  schemaVersion: Schema.Literal(OMP_SESSION_CURSOR_VERSION),
+  schemaVersion: Schema.Literals([OMP_LEGACY_SESSION_CURSOR_VERSION, OMP_SESSION_CURSOR_VERSION]),
   providerInstanceId: Schema.String,
   sessionId: Schema.optional(Schema.String),
   relativeSessionFile: Schema.String,
@@ -71,13 +74,13 @@ export const ompSessionDirectoryKey = (instanceId: string, threadId: string): st
  * keeps the managed family and drops that release directory, so a qualified
  * update can reopen the same session. A custom or system binary stays exact.
  */
-export const ompBinaryFingerprint = (binaryPath: string, pathValue?: string): string => {
+export const ompBinaryFingerprint = (binaryPath: string): string => {
   const resolved = NodePath.resolve(binaryPath).replaceAll("\\", "/");
   const managed = resolved.replace(
     /\/provider-runtimes\/omp\/versions\/[^/]+\//u,
     "/provider-runtimes/omp/versions/current/",
   );
-  return fingerprint(["binary", managed, pathValue ?? ""]);
+  return fingerprint(["binary", managed]);
 };
 
 /** Resume across patch versions of the same major. A different major is refused. */
@@ -117,12 +120,6 @@ export const parseOmpSessionCursor = (
       if (cursor.providerInstanceId !== input.identity.providerInstanceId) {
         return Effect.fail("Oh My Pi resume cursor belongs to a different provider instance.");
       }
-      if (
-        !input.deferBinaryIdentity &&
-        cursor.binaryPathFingerprint !== input.identity.binaryPathFingerprint
-      ) {
-        return Effect.fail("Oh My Pi resume cursor was written by a different executable.");
-      }
       if (cursor.workspaceFingerprint !== ompWorkspaceFingerprint(input.identity.workspace)) {
         return Effect.fail("Oh My Pi resume cursor belongs to a different workspace.");
       }
@@ -135,12 +132,6 @@ export const parseOmpSessionCursor = (
       if (cursor.launchPolicyFingerprint !== ompLaunchPolicyFingerprint()) {
         return Effect.fail("Oh My Pi resume cursor was written with a different launch policy.");
       }
-      if (
-        !input.deferBinaryIdentity &&
-        cursor.stateScopeFingerprint !== ompStateScopeFingerprint(input.identity)
-      ) {
-        return Effect.fail("Oh My Pi resume cursor does not match this session scope.");
-      }
       if (cursor.rpcProtocolVersion !== input.rpcProtocolVersion) {
         return Effect.fail("Oh My Pi resume cursor uses an incompatible RPC protocol.");
       }
@@ -149,6 +140,23 @@ export const parseOmpSessionCursor = (
       }
       if (!sessionFileInsideRoot(input.identity.sessionRoot, cursor.relativeSessionFile)) {
         return Effect.fail("Oh My Pi resume cursor points outside its session directory.");
+      }
+      if (cursor.schemaVersion === OMP_LEGACY_SESSION_CURSOR_VERSION) {
+        return Effect.fail(
+          "This Oh My Pi session cursor uses an older identity format and cannot be safely migrated. Start a new session.",
+        );
+      }
+      if (
+        !input.deferBinaryIdentity &&
+        cursor.binaryPathFingerprint !== input.identity.binaryPathFingerprint
+      ) {
+        return Effect.fail("Oh My Pi resume cursor was written by a different executable.");
+      }
+      if (
+        !input.deferBinaryIdentity &&
+        cursor.stateScopeFingerprint !== ompStateScopeFingerprint(input.identity)
+      ) {
+        return Effect.fail("Oh My Pi resume cursor does not match this session scope.");
       }
       return Effect.succeed(cursor);
     }),

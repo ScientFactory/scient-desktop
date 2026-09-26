@@ -38,6 +38,7 @@ describe("real Oh My Pi managed runtime qualification", () => {
         const settings = OmpSettings.make({
           enabled: true,
           binaryPath: "omp",
+          customModels: [],
           homePath: "",
           profile: "",
         });

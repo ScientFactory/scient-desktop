@@ -100,8 +100,43 @@ describe("Oh My Pi provider status", () => {
     Effect.gen(function* () {
       const result = yield* checkOmpProviderStatus(settings, {}, () => Effect.succeed(process()));
       expect(result.status).toBe("ready");
+      expect(result.auth).toEqual({ status: "unknown", required: false });
+      expect(result.message).toBeUndefined();
       expect(result.models.map((model) => model.slug)).toEqual(["anthropic/claude-test"]);
       expect(result.slashCommands?.map((command) => command.name)).toEqual(["help", "compact"]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("preserves custom-model readiness reported by the process wrapper", () =>
+    Effect.gen(function* () {
+      const result = yield* checkOmpProviderStatus(settings, {}, () =>
+        Effect.succeed(
+          process({
+            assessModelConnections: () => [
+              {
+                connectionId: "fixture",
+                modelId: "model",
+                configurationKey: "fixture-key",
+                state: "available",
+                contextWindow: 128000,
+                maxOutputTokens: 4096,
+                source: "manual",
+              },
+            ],
+          }),
+        ),
+      );
+      expect(result.modelConnections).toEqual([
+        {
+          connectionId: "fixture",
+          modelId: "model",
+          configurationKey: "fixture-key",
+          state: "available",
+          contextWindow: 128000,
+          maxOutputTokens: 4096,
+          source: "manual",
+        },
+      ]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

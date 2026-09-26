@@ -84,7 +84,9 @@ const OMP_MAX_PROMPT_IMAGE_BYTES = 512 * 1024;
  * to the runtime consumer: sendTurn can be waiting for turn.started while
  * holding the thread lock, so a full bounded queue would deadlock the session.
  * The RPC client still enforces its 16 MiB logical-frame budget before frames
- * reach this queue.
+ * reach this queue. Do not replace this with a bounded queue without a
+ * non-blocking fail-closed shutdown path: bounded backpressure can deadlock
+ * the turn.started/thread-lock handshake.
  */
 const OMP_READY_TIMEOUT = "8 seconds";
 const OMP_CANCEL_DEADLINE = "3 seconds";
@@ -155,7 +157,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
   const sessions = new Map<ThreadId, SessionContext>();
   const threadLocks = yield* SynchronizedRef.make(new Map<ThreadId, Semaphore.Semaphore>());
   const events = yield* Queue.unbounded<ProviderRuntimeEvent>();
-  const binaryFingerprint = ompBinaryFingerprint(options.binaryPath, options.environment.PATH);
+  const binaryFingerprint = ompBinaryFingerprint(options.binaryPath);
   const effectiveHomeIdentity =
     options.homePath?.trim() ||
     options.environment.PI_CODING_AGENT_DIR?.trim() ||
@@ -793,14 +795,19 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
                   binaryPathFingerprint: client.binaryPathFingerprint,
                 }
               : baseResumeIdentity;
+            if (cursor && cursor.binaryPathFingerprint !== resumeIdentity.binaryPathFingerprint) {
+              return yield* validation(
+                "startSession",
+                "Oh My Pi resume cursor was written by a different executable.",
+              );
+            }
             if (
               cursor &&
-              (cursor.binaryPathFingerprint !== resumeIdentity.binaryPathFingerprint ||
-                cursor.stateScopeFingerprint !== ompStateScopeFingerprint(resumeIdentity))
+              cursor.stateScopeFingerprint !== ompStateScopeFingerprint(resumeIdentity)
             ) {
               return yield* validation(
                 "startSession",
-                "Oh My Pi resume cursor was written by a different executable or session scope.",
+                "Oh My Pi resume cursor does not match this session scope.",
               );
             }
             const ctx: SessionContext = {
@@ -1048,6 +1055,21 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
                   : undefined;
               })()
             : ctx.model;
+          if (
+            input.attachments?.some((attachment) => attachment.type === "image") &&
+            requestedModel &&
+            (!ctx.knownModels.has(requestedModel) || !ctx.imageModels.has(requestedModel))
+          ) {
+            const discovered = yield* ctx.client
+              .getModels()
+              .pipe(Effect.mapError((cause) => request("get_models", cause.message, cause)));
+            for (const model of discovered.models) {
+              const slug = encodeOmpModelSlug(model.provider, model.id);
+              if (!slug) continue;
+              ctx.knownModels.add(slug);
+              if (ompModelSupportsImages(model)) ctx.imageModels.add(slug);
+            }
+          }
           if (
             input.attachments?.some((attachment) => attachment.type === "image") &&
             (!requestedModel ||

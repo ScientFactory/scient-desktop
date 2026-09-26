@@ -1,9 +1,15 @@
-import { OmpSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
+import {
+  OmpSettings,
+  ProviderDriverKind,
+  type ServerProvider,
+  type ServerSettings,
+} from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
@@ -11,6 +17,8 @@ import { BackgroundPolicy } from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { makeOmpManagedRuntimeResolution } from "../../scient/providerLifecycle/OmpManagedRuntimeActions.ts";
+import { makeOmpCustomModelsClientFactory } from "../omp/OmpCustomModels.ts";
+import { customModelDiscoverySnapshot } from "../../customModelCapabilities.ts";
 import { makeOmpTextGeneration } from "../../textGeneration/OmpTextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeOmpAdapter } from "../Layers/OmpAdapter.ts";
@@ -38,7 +46,6 @@ import {
 } from "../providerMaintenance.ts";
 import {
   haveProviderSnapshotSettingsChanged,
-  makeProviderSnapshotSettingsSource,
   type ProviderSnapshotSettings,
 } from "../providerUpdateSettings.ts";
 import { withInstanceIdentity } from "./instanceIdentity.ts";
@@ -82,6 +89,21 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
       }
       if (home.length > 0) processEnv[OMP_AGENT_DIR_ENV] = expandHomePath(home);
       if (profile.length > 0) processEnv[OMP_PROFILE_ENV] = profile;
+      const makeRpcClient = yield* makeOmpCustomModelsClientFactory(
+        serverSettings,
+        instanceId,
+        serverConfig.stateDir,
+      ).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderDriverError({
+              driver: DRIVER_KIND,
+              instanceId,
+              detail: "Could not prepare Oh My Pi custom models.",
+              cause,
+            }),
+        ),
+      );
       const managedRuntime = yield* makeOmpManagedRuntimeResolution({
         settings: effectiveConfig,
         baseDir: serverConfig.baseDir,
@@ -119,18 +141,31 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
         stateDir: serverConfig.stateDir,
         attachmentsDir: serverConfig.attachmentsDir,
         environment: processEnv,
+        makeProcess: makeRpcClient,
         homePath: home || undefined,
         profile: profile || undefined,
       }).pipe(
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
       );
-      const textGeneration = yield* makeOmpTextGeneration(launchConfig, processEnv).pipe(
+      const textGeneration = yield* makeOmpTextGeneration(
+        launchConfig,
+        processEnv,
+        makeRpcClient,
+      ).pipe(
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
       );
-      const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
-      const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
+      const mapSnapshotSettings = (settings: ServerSettings) => ({
+        provider: effectiveConfig,
+        enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
+        customModels: customModelDiscoverySnapshot(settings.customModels.connections, instanceId),
+      });
+      const snapshotSettings = {
+        getSettings: serverSettings.getSettings.pipe(Effect.map(mapSnapshotSettings)),
+        streamSettings: serverSettings.streamChanges.pipe(Stream.map(mapSnapshotSettings)),
+      };
+      const resolveInstallationMaintenance = yield* makeCachedProviderMaintenanceResolution(
         (managedRuntime.usesManagedPath
           ? Effect.succeed(
               makeManualOnlyProviderMaintenanceCapabilities({
@@ -148,14 +183,30 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
           Effect.provideService(Path.Path, path),
         ),
       );
-      const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<OmpSettings>>({
+      // Routine snapshot reads use the cached ownership resolution. An
+      // explicit update must re-resolve the GitHub release channel so the
+      // runner receives a concrete candidate version before spawning omp.
+      const resolveMaintenance = (options?: { readonly fresh?: boolean }) =>
+        resolveInstallationMaintenance(options).pipe(
+          Effect.flatMap((capabilities) =>
+            options?.fresh === true
+              ? withOmpReleaseVersion(capabilities, true)
+              : Effect.succeed(capabilities),
+          ),
+          Effect.provideService(HttpClient.HttpClient, httpClient),
+        );
+      const snapshot = yield* makeManagedServerProvider<
+        ProviderSnapshotSettings<OmpSettings> & {
+          readonly customModels: ReturnType<typeof customModelDiscoverySnapshot>;
+        }
+      >({
         resolveMaintenance,
         getSettings: snapshotSettings.getSettings,
         streamSettings: snapshotSettings.streamSettings,
         haveSettingsChanged: haveProviderSnapshotSettingsChanged,
         initialSnapshot: (settings) =>
           makePendingOmpProvider(settings.provider).pipe(Effect.map(stamp)),
-        checkProvider: checkOmpProviderStatus(launchConfig, processEnv).pipe(
+        checkProvider: checkOmpProviderStatus(launchConfig, processEnv, makeRpcClient).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.provideService(FileSystem.FileSystem, fs),
           Effect.provideService(Path.Path, path),
@@ -174,20 +225,22 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
             Effect.flatMap((capabilities) =>
               enrichProviderSnapshotWithVersionAdvisory(currentSnapshot, capabilities, {
                 enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
-              }),
-            ),
-            Effect.map((enriched) => {
-              const advisory = enriched.versionAdvisory;
-              if (!advisory) return enriched;
-              return {
-                ...enriched,
-                versionAdvisory: shapeOmpExternalAdvisory({
-                  currentVersion: advisory.currentVersion,
-                  latestVersion: advisory.latestVersion,
-                  checkedAt: advisory.checkedAt,
+              }).pipe(
+                Effect.map((enriched) => {
+                  const advisory = enriched.versionAdvisory;
+                  if (!advisory) return enriched;
+                  return {
+                    ...enriched,
+                    versionAdvisory: shapeOmpExternalAdvisory({
+                      currentVersion: advisory.currentVersion,
+                      latestVersion: advisory.latestVersion,
+                      checkedAt: advisory.checkedAt,
+                      maintenanceCapabilities: capabilities,
+                    }),
+                  };
                 }),
-              };
-            }),
+              ),
+            ),
             Effect.provideService(HttpClient.HttpClient, httpClient),
             Effect.flatMap(publishSnapshot),
           ),
@@ -211,7 +264,7 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
         enabled,
         snapshot,
         snapshotForCwd: (cwd) =>
-          checkOmpProviderStatus(launchConfig, processEnv, undefined, cwd).pipe(
+          checkOmpProviderStatus(launchConfig, processEnv, makeRpcClient, cwd).pipe(
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
             Effect.provideService(FileSystem.FileSystem, fs),
             Effect.provideService(Path.Path, path),
@@ -219,6 +272,7 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
           ),
         adapter,
         textGeneration,
+        managedRuntimeActions: managedRuntime.actions,
       } satisfies ProviderInstance;
     }),
 };
