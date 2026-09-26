@@ -130,7 +130,7 @@ describe("UsageService", () => {
           serviceLayers({
             prefix: "usage-service-cursor-keychain-disabled",
             home,
-            settings,
+            settings: { ...settings, cursorKeychainUsageEnabled: false },
             platform: "darwin",
             environment: {},
           }),

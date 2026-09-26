@@ -110,6 +110,19 @@ describe("ServerSettings default permissions", () => {
   });
 });
 
+describe("ServerSettings Cursor account usage", () => {
+  it("enables Keychain usage by default while preserving an explicit opt-out", () => {
+    expect(decodeServerSettings({}).cursorKeychainUsageEnabled).toBe(true);
+    expect(DEFAULT_SERVER_SETTINGS.cursorKeychainUsageEnabled).toBe(true);
+    expect(
+      decodeServerSettings({ cursorKeychainUsageEnabled: false }).cursorKeychainUsageEnabled,
+    ).toBe(false);
+    expect(decodeServerSettingsPatch({ cursorKeychainUsageEnabled: false })).toEqual({
+      cursorKeychainUsageEnabled: false,
+    });
+  });
+});
+
 describe("ServerSettings usage price overrides", () => {
   const prices = { inputCostPerMillionTokens: 2, outputCostPerMillionTokens: 8 };
 

@@ -937,7 +937,7 @@ export function createServerEnvironmentAtoms<R, E>(
     Atom.make((get) =>
       JSON.stringify([
         get(usagePricesAtom(environmentId)),
-        get(settingsValueAtom(environmentId))?.cursorKeychainUsageEnabled ?? false,
+        get(settingsValueAtom(environmentId))?.cursorKeychainUsageEnabled ?? true,
       ]),
     ).pipe(Atom.withLabel(`environment-data:server:usage-scan-settings:${environmentId}`)),
   );

@@ -37,10 +37,10 @@ Cursor reads account usage from Cursor's dashboard API using the CLI login saved
 This includes headless Scient sessions and desktop usage across machines; the same account counts
 once across connected environments. Without an accessible CLI login, Scient shows a
 notice instead of incomplete local totals. Scient does not estimate missing tokens from
-conversation text. On macOS, choose **Enable Cursor usage** on Usage to allow Scient to read your
-existing CLI login from Keychain. Nothing is read from Keychain until you enable it there, and you
-can turn it off again in **Settings → Providers → Usage providers**. macOS may ask
-you to allow access on the server Mac.
+conversation text. On macOS, Cursor account usage is enabled by default when this setting is
+unset, so Scient can read the existing CLI login from Keychain when needed. macOS may ask you to
+allow access on the server Mac. You can turn this off in **Settings → Providers → Usage
+providers**; an existing explicit opt-out remains off.
 
 Usage includes each configured account's history, including disabled accounts. Custom homes follow
 the account's home setting or its `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, or `GROK_HOME` environment
@@ -127,9 +127,10 @@ OpenCode Go reports its session, weekly, and monthly allowance when OpenCode run
 the environment. T3 cannot report limits for external OpenCode servers because their credentials
 belong to the remote server. Cursor reports
 its monthly allowance, including separate Auto and API usage, using the CLI login or
-`CURSOR_AUTH_TOKEN`. On macOS, this includes the default Keychain login after you enable Cursor
-usage. Keychain login is used for limits only with Cursor's default API endpoint. If you configure
-a custom Cursor endpoint, use an explicit token or file-based CLI login for limits.
+`CURSOR_AUTH_TOKEN`. On macOS, this includes the default Keychain login unless Cursor account
+usage has been turned off. Keychain login is used for limits only with Cursor's default API
+endpoint. If you configure a custom Cursor endpoint, use an explicit token or file-based CLI
+login for limits.
 
 Grok reports the remaining subscription allowance and reset time for its current billing period
 after signing in with `grok login`. Explicit `XAI_API_KEY` connections and custom authentication

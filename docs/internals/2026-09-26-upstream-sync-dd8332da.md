@@ -61,9 +61,9 @@ Conflicts were classified rather than accepted wholesale:
   projectless threads, which Scient retains.
 - `apps/web/src/index.css` keeps `--tracking-subtle` and adds `--text-4xs` /
   `--text-5xs`.
-- `scripts/build-desktop-artifact.ts` keeps upstream's Linux `deb` build target;
-  it is inert in Scient because the release pipeline's artifact allowlist
-  excludes it.
+- `scripts/build-desktop-artifact.ts` keeps Scient's Linux AppImage-only target;
+  upstream's Linux `deb` target is not enabled because the release pipeline's
+  artifact allowlist excludes it.
 
 ## Protected-boundary results
 
@@ -75,7 +75,7 @@ Conflicts were classified rather than accepted wholesale:
 | Linux `.deb` publication                              | Not built and not published. The `deb` electron-builder target is **not enabled**: because electron-builder lists every built format in `latest-linux.yml`, and `scripts/verify-scient-release-assets.ts` requires every manifest entry to exist in the published asset set with a matching size and SHA-512, building a `.deb` would make the Linux release attestation fail on a payload the pipeline never publishes. The marketing download page carries no `.deb` card (it never did on the owned base; upstream's addition was not taken) |
 | Linux `.deb` / AUR packaging                          | AUR recipes are present but unreferenced; no Scient workflow or script publishes them                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | Provider lifecycle                                    | `grok update` is manual-only when `managedRuntime.usesManagedPath`; managed binaries never self-update                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| Cursor Keychain read                                  | Opt-in behind `cursorKeychainUsageEnabled` (decoding default `false`) and `readCursorUsageLimits`'s own `allowKeychain = false` default                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Cursor Keychain read                                  | Enabled by default when `cursorKeychainUsageEnabled` is absent; an explicit `false` remains an opt-out. The macOS-only toggle remains available, and `readCursorUsageLimits` keeps its low-level `allowKeychain = false` fail-safe default                                                                                                                                                                                                                                                                                                      |
 | Mobile EAS publication                                | Workflows untouched; production remains `workflow_dispatch` only                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | Signing, tags, npm, hosted web, marketing publication | Scient's rewritten `release.yml` retained; upstream's `publish_cli`, `publish_aur`, `deploy_web`, and `deploy_marketing` not adopted                                                                                                                                                                                                                                                                                                                                                                                                            |
 | State roots and persistence                           | `clientSettingsStorageKey: "scient-next:client-settings:v1"` and the `SCIENT-FORK` seams unchanged (70/70 markers, identical to base)                                                                                                                                                                                                                                                                                                                                                                                                           |
@@ -165,8 +165,8 @@ requires:
 - `pnpm run test:desktop-smoke` — **passed**
 - `pnpm brand:check` — **passed** across 2,248 product-surface files
 - `pnpm knip:check` — **passed**
-- `pnpm upstream:provenance:check` — **passed** at `integrationBase d4a33457`
-  before this record advanced it
+- `node scripts/verify-upstream-provenance.mjs` — **passed** at the current
+  `integrationBase dd8332da`; hosted Verify upstream provenance also passed
 - `pnpm alignment:seams:check --base 910f5b4d55 --upstream-ref dd8332da --head HEAD`
   — onboarding, skills, analysis, and latex seams all **passed**
 - `git diff --check` and `git diff --cached --check` — **clean**
@@ -212,18 +212,15 @@ release, or npm publication authority.
    macOS preview publish path is therefore broken on `main`. Restoring the
    upstream workflow would also restore the upstream packaging path this
    repository deliberately replaced, so this needs an explicit release decision.
-2. **Local usage history for three new providers, and an opt-in asymmetry.**
-   This range adds Cursor, OpenCode, and Antigravity local-history readers. The
-   `cursorKeychainUsageEnabled` opt-in is **macOS-only**: the gate sits inside a
-   `platform === "darwin"` condition, so on Linux and Windows the Cursor CLI
-   `auth.json` is read unconditionally and the derived access token is sent to
-   `cursor.com/api/dashboard/get-filtered-usage-events`, with no Scient opt-in
-   and no UI control. The same asymmetry exists on the limits path in
-   `cursorUsageLimits.ts`. `docs/user/usage.md` describes the macOS toggle in
-   language that reads as though it governs Cursor credential use generally.
-   Triggers are user-initiated (only the `serverGetUsageSummary` RPC starts a
-   scan; no background scan exists), which bounds the exposure. Decide whether
-   to extend the opt-in to all platforms or to state the asymmetry plainly.
+2. **Platform-specific Cursor credential consent is intentional.** This range
+   adds Cursor, OpenCode, and Antigravity local-history readers. Cursor account
+   usage is enabled by default when the setting is absent, while an explicit
+   `false` remains an opt-out. The macOS-only toggle controls access to the
+   macOS Keychain; Windows/Linux file-based CLI credentials require no OS
+   approval and remain automatic. Triggers are user-initiated (only the
+   `serverGetUsageSummary` RPC starts a scan; no background scan exists), which
+   bounds the behavior. `docs/user/usage.md` now describes the platform
+   difference and the default-on behavior.
 3. **`T3CODE_OTLP_SERVICE_NAME` removal.** Upstream removed
    `otlpServiceName` from `ServerConfig`; the environment override no longer
    exists. Confirm this is acceptable, or add a Scient replacement.

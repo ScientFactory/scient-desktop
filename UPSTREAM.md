@@ -57,7 +57,8 @@ parent the exact official target). The nearest reachable official tag remains
 owned-main catch-up was needed because the frozen base was already the current
 owned `main` tip. The preceding alignment
 ([PR #369](docs/internals/2026-09-25-upstream-sync-d4a33457.md)) remains literal
-ancestry; all earlier official ancestry remains preserved.
+ancestry; all earlier official ancestry remains preserved. The current alignment
+is tracked in PR #370.
 
 This alignment keeps production relay deployment disabled, keeps Linux `.deb`
 out of the published release set and the marketing download page, keeps cloud,
