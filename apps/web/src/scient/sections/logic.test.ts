@@ -9,6 +9,7 @@ import {
   catalogWithoutSection,
   groupThreadsBySection,
   layoutFromGroupOrder,
+  normalizeSectionName,
   planSectionsThreadDrop,
   resolveSectionDragOrder,
   sectionShifts,
@@ -37,6 +38,15 @@ describe("catalog edits", () => {
     const reused = catalogWithCreatedSection([RESEARCH], "research", sid("other"));
     expect(reused.created).toBe(false);
     expect(reused.section).toBe(RESEARCH);
+  });
+
+  it("capitalizes the first letter unless the first word mixes case on purpose", () => {
+    expect(normalizeSectionName("  to   look at ")).toBe("To look at");
+    expect(normalizeSectionName("research")).toBe("Research");
+    expect(normalizeSectionName("iOS builds")).toBe("iOS builds");
+    expect(normalizeSectionName("macOS")).toBe("macOS");
+    expect(normalizeSectionName("2026 plans")).toBe("2026 plans");
+    expect(normalizeSectionName("מחקר")).toBe("מחקר");
   });
 
   it("renames, rejecting a name another section already uses", () => {

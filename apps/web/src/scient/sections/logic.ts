@@ -24,8 +24,16 @@ export function sortThreadSections(sections: ThreadSections): ThreadSection[] {
   );
 }
 
+/**
+ * Collapses whitespace and capitalizes the first letter. A first word that
+ * already mixes case on purpose ("iOS", "macOS", "eBay") is kept as typed.
+ */
 export function normalizeSectionName(name: string): string {
-  return name.trim().replace(/\s+/g, " ");
+  const collapsed = name.trim().replace(/\s+/g, " ");
+  const firstWord = collapsed.split(" ", 1)[0] ?? "";
+  const rest = firstWord.slice(1);
+  if (rest !== rest.toLocaleLowerCase()) return collapsed;
+  return collapsed.charAt(0).toLocaleUpperCase() + collapsed.slice(1);
 }
 
 /** Case- and accent-insensitive: "Research" and "research" are one section. */
