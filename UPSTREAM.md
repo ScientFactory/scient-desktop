@@ -46,29 +46,30 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current T3 alignment is recorded in
-[`docs/internals/2026-09-25-upstream-sync-d4a33457.md`](docs/internals/2026-09-25-upstream-sync-d4a33457.md)
-and in `upstream-state.json`. Scient PR #369 carries this alignment, extending
-the integration through `d4a33457cb0da797728f4846a9da8592d7d81d36`: 24
-official commits from `e67abcf798f8c4d8458755e3b4dde02c2c1f628b`, merged onto
-owned base `5b214837d5358a117b282b208ddd172c75a2cf00` as
-`b55129b948a647d59b2a96e7f15204d00071a194` (first parent owned base, second
-parent the exact official target). The final reviewed candidate also records
-the narrow composed-web cleanup `e9168a8474e772a638525945502db0b361230d32`,
-the targeted review cleanup `58e12301c6442a4cccc877d81877b15618a79fd0`,
-and the final review cleanup `cc71ec265811be601f452f9311f851ef0a02fb1a`.
-No owned-main catch-up was needed because the frozen base was already the
-current owned `main` tip. The preceding alignment ([PR #365](docs/internals/2026-09-24-upstream-sync-e67abcf798.md))
-remains literal ancestry, including its owned-main catch-up
-`0c10a40a5d885beedd0d59fdbb10e277f397cadf`; all earlier official ancestry
-remains preserved.
+[`docs/internals/2026-09-26-upstream-sync-dd8332da.md`](docs/internals/2026-09-26-upstream-sync-dd8332da.md)
+and in `upstream-state.json`. It extends the integration through
+`dd8332da57355bccd7e666289267f2c94597debd`: 69 official commits after
+`d4a33457cb0da797728f4846a9da8592d7d81d36`, merged onto owned base
+`910f5b4d55c0423f8c4fa23758fcd0919a7e7497` as
+`836fbc899b4e9b05212c1c8eeb1c9de3438bcc31` (first parent owned base, second
+parent the exact official target). The nearest reachable official tag remains
+`v0.0.43-nightly.20260926.2282`, and the target is 15 commits past it. No
+owned-main catch-up was needed because the frozen base was already the current
+owned `main` tip. The preceding alignment
+([PR #369](docs/internals/2026-09-25-upstream-sync-d4a33457.md)) remains literal
+ancestry; all earlier official ancestry remains preserved.
 
-This alignment retains Scient's release pipeline and trust list, composes the
-OTel changes with the fail-closed safety envelope, preserves cloud, mobile,
-provider-lifecycle, identity, scientific, and migration boundaries, and adopts
-upstream reliability, provider, orchestration, desktop-update, theme, and
-shell-terminal improvements at narrow seams. The review also introduced an
-explicit legacy lint boundary for pre-existing Scient scientific/presentation
-surfaces rather than rewriting them wholesale during this upstream sync.
+This alignment keeps production relay deployment disabled, keeps Linux `.deb`
+out of the published release set and the marketing download page, keeps cloud,
+telemetry, mobile-publication, and provider-lifecycle boundaries fail-closed,
+and composes the shared usage, settings, persistence, and provider-seam
+contracts. Managed-endpoint recovery, the compiled-JavaScript cache, the
+observability additions, and the provider/maintenance and orchestration
+improvements are adopted as machinery behind those boundaries. Review also
+fixed an upstream latent bug in which `hasCloudPublicConfig` was used as a bare
+value and therefore always truthy, and corrected two inherited public-brand
+strings that named T3 Code instead of Scient.
+
 Automated qualification and source review passed; release publication remains
 separate. The [earlier receipt](docs/internals/2026-09-18-upstream-sync-3fd5d643.md)
 and all earlier official ancestry remain literal history. Later observed
