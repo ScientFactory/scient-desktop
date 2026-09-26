@@ -132,13 +132,12 @@ Forking is a durable, restart-safe saga:
    persists the complete unsent destination draft, and flushes storage before
    issuing the server command. Only a confirmed rejected or abandoned operation
    removes that staged draft; an interrupted connection does not.
-8. On the first provider turn, the provider-neutral bootstrap injects only the
-   immutable retained baseline and recent retained images. It reserves the
-   exact outgoing message before the external send and records
-   `pending` -> `sending` -> `completed`. A failed or interrupted send becomes
-   `ambiguous`; Scient never silently re-injects context whose acceptance is
-   uncertain. A completed assistant response before the next user request can
-   reconcile that attempt as accepted; unrelated later responses cannot.
+8. On the first provider turn, the fork's context transfer is resolved: a
+   native provider fork when possible (Codex), otherwise a portable handoff
+   delivered to one specific provider-native thread. See
+   [Provider context delivery](#provider-context-delivery). No outcome is a dead
+   end: a send that provably went nowhere is simply retried, and an uncertain
+   one is re-delivered on a fresh provider session.
 9. Terminal failures such as a disappeared origin attachment or an unavailable
    required worktree checkpoint delete the unusable target thread and record an
    `abandoned` lineage state. Transient failures remain retryable.
@@ -228,7 +227,15 @@ internals:
 - `apps/server/src/orchestration/scient-fork/migrations/`
 - `apps/server/src/orchestration/scient-fork/ForkAttachmentCopier.ts`
 - `apps/server/src/orchestration/scient-fork/ForkCheckpointBaseline.ts`
-- `apps/server/src/orchestration/scient-fork/ForkContextBootstrap.ts`
+- `apps/server/src/orchestration/scient-fork/ForkContextDelivery.ts`
+- `apps/server/src/orchestration/scient-fork/context/` (budget, history, native thread identity)
+- `apps/server/src/orchestration/scient-fork/forkActivityCopy.ts`
+- `apps/server/src/orchestration/scient-fork/forkLiveTail.ts`
+- `apps/server/src/orchestration/scient-fork/inheritedTurns.ts`
+- `apps/server/src/orchestration/scient-fork/liveTurnFlush.ts`
+- `apps/server/src/provider/turnDispatchPhase.ts`
+- `packages/contracts/src/scientForkSettings.ts`
+- `apps/web/src/scient/fork/ForkContextSettings.tsx`
 - `apps/server/src/orchestration/scient-fork/forkDecisionReadModel.ts`
 - `apps/server/src/orchestration/scient-fork/forkBoundaryTypes.ts`
 - `apps/server/src/orchestration/scient-fork/ForkBoundaryReadModel.ts`
@@ -240,15 +247,16 @@ internals:
 - `apps/web/src/components/scient-fork/useScientThreadFork.ts`
 
 Tests live beside these modules. The checkpoint helper uses T3's existing
-`VcsProcess`; it does not extend T3's VCS, checkpoint-store, or Git-driver
-interfaces. Provider adapters are also unchanged.
+`VcsProcess` and `CheckpointStore`; it does not extend T3's VCS,
+checkpoint-store, or Git-driver interfaces. Provider adapters change only to
+opt into native fork (`capabilities.nativeFork`, Codex `thread/fork`).
 
 Scient database state uses `scient_schema_migrations`, a separate migration
 ledger. It never consumes or predicts a T3 numbered migration. The
-`fidelity_mode` and `provider_mode` compatibility columns are retained
-physically for prototype upgrades but are no longer active runtime authorities;
-`transcript-bootstrap` is the only active provider bootstrap mode, enforced by
-migration normalization and active repository/bootstrap code paths.
+`fidelity_mode`, `provider_mode` and `provider_bootstrap_*` compatibility
+columns are retained physically for prototype upgrades but are no longer active
+runtime authorities; context delivery lives in `scient_context_transfers` and
+`scient_context_handoffs` (migration 14).
 
 ## Stack phase A: server-owned boundary resolution
 
@@ -510,15 +518,113 @@ Terminal lifecycle guards are enforced in repository SQL predicates:
 
 ### Provider bootstrap normalization
 
-`transcript-bootstrap` is the only active provider bootstrap mode.
-`prepareTurn` no longer reads the `provider_mode` compatibility column. It
-reads the immutable `baseline_assistant_message_id` and will never infer the
-baseline from later destination messages. Before the external provider send,
-`beginAttempt` atomically reserves the exact user message. `markAccepted`
-completes only that reservation. A send failure
-marks delivery ambiguous; a restart blocks re-injection unless a completed
-assistant response proves the original attempt was accepted. Bounded omission
-counts remain explicit inside the injected context payload.
+Superseded by Scient migration 14 and
+[Provider context delivery](#provider-context-delivery). The old
+`provider_bootstrap_*` columns remain for downgrade safety but are no longer
+read. Migration 14 carries existing forks over without re-sending delivered
+context: `completed` becomes an `inline` handoff that adopts the next provider
+session it sees; `sending`/`ambiguous` become `pending` handoffs settled from
+provider evidence or re-delivered on a fresh session.
+
+## Provider context delivery
+
+`ForkContextDelivery.ts` (replacing `ForkContextBootstrap.ts`) follows
+upstream Orchestration V2's model; names and literals mirror V2 wherever the
+meaning is the same.
+
+- **Context transfer** (`scient_context_transfers`, one per fork):
+  `pending` -> `resolved_native` | `resolved_portable` -> `consumed`, with a
+  `resolution_json` (`native_fork` / `portable_context`), a `fidelity`
+  (`native` / `portable` / `portable_mid_turn`) and an `error` that records why
+  a native fork was not possible.
+- **Handoffs** (`scient_context_handoffs`) are delivered to one
+  provider-native thread (`native_thread_key`, derived per provider from the
+  resume cursor in `context/nativeThreadKey.ts`). Delivery is `pending` while
+  the send is in flight and `inline` once accepted. A provider-native thread
+  that has not received the context gets it again: a Codex resume that fell
+  back to a new thread, a provider switch, a session after a crash.
+- **Failure semantics** (`provider/turnDispatchPhase.ts`): `ProviderService`
+  marks every failure raised after it handed the turn to an adapter. Anything
+  unmarked provably sent nothing (`notSent`): the pending row is removed and the
+  next message simply retries. Anything else is `maybeDelivered`: the row stays
+  `pending`, and the next turn settles it from provider evidence or starts a
+  fresh provider session (`ProviderService.discardSessionContinuity`) and
+  delivers again. A duplicate can only exist in the abandoned session.
+- **Evidence, not acceptance.** A handoff counts as received once the provider
+  reported the turn it started (`projection_turns.pending_message_id`), or
+  while that turn still runs. An adapter that only enqueued the turn in memory
+  (Claude) and then died is re-delivered.
+- **Revert** supersedes a handoff whose carrying turn the revert removed; a
+  revert that kept it rebinds to the rolled-back provider thread (Claude and
+  OpenCode fork their session on rollback).
+- **Separate channel.** The handoff travels as `ProviderSendTurnInput.contextPreamble`,
+  concatenated immediately before adapter dispatch. The 120,000-character input
+  limit keeps measuring only what the user sent; optional skill discovery is
+  dropped before any rejection. The preamble is bounded by
+  `PROVIDER_CONTEXT_PREAMBLE_MAX_CHARS` and, before that, by the budget below.
+- **Budget** (`context/handoffBudget.ts`, V2's `ContextHandoffBudget`
+  formula): `min(cap, window − native usage − current input − max(16k, window/4))`,
+  where the window is the smallest of the provider-reported maximum, the
+  auto-compaction threshold and V2's 128k default. Tokens are estimated as
+  `ceil(bytes / 3)` (V2 uses one byte per token). The cap is the Settings preset
+  `scientFork.contextHandoffSize` (Compact 16k, Standard 64k, Large 128k,
+  Maximum = window-bounded); `T3CODE_CONTEXT_HANDOFF_TOKEN_CAP` overrides.
+- **Selection** (`context/handoffHistory.ts`, V2's `selectHistory`): whole
+  items in V2's priority order (latest user, latest assistant, first user, then
+  newest to oldest). Scient extensions: reasoning and tool work are items; the
+  latest turn's thinking ranks right after the anchors, older thinking last; a
+  running-turn cut ranks first. Anchors that do not fit are kept truncated,
+  never silently lost. The coverage header lists omitted and truncated item ids
+  and names `t3_thread_read` for reading them.
+- Every delivery adds a `scient.fork.context` activity to the fork's timeline
+  saying whether it continued natively or received history as a summary.
+
+### Running-turn forks
+
+`sourceRunningTurnId` forks the running turn itself (`/fork` or the fork
+button while the agent works). The fork request first flushes the turn's
+buffered assistant/reasoning text through ingestion's ordered queue
+(`liveTurnFlush.ts`), then the decider copies every completed turn plus the
+live tail (`forkLiveTail.ts`): streaming text is copied as it stood and
+labelled partial, unfinished tool calls are copied and labelled in flight,
+pending approvals/questions are history only. The handoff names the files the
+origin touched and whether the fork shares its folder. A new-worktree fork
+snapshots the current files into its turn-zero ref (temporary index; the
+user's index is untouched; gitignored files are not copied). Upstream V2
+rejects forks from running work; this is the isolated Scient extension.
+
+### Native fork
+
+A fork's first session is started as a native provider fork when it can
+reproduce the fork exactly: same provider instance as the source, the forked
+turn is a completed turn the source's own provider thread produced, no
+running-turn cut, nothing delivered yet. Adapters opt in with
+`capabilities.nativeFork`; `ProviderSessionStartInput.forkFrom` carries the
+source cursor and the inclusive turn. Codex implements it with
+`thread/fork { threadId, lastTurnId }` and surfaces failure instead of opening
+a fresh thread; the reactor then records the reason and falls back to the
+portable handoff. Claude and OpenCode stay portable until Scient tracks the
+provider message ids their fork APIs need.
+
+### Orchestration V2 mapping
+
+| Scient (this branch)                                 | Upstream V2                                                                 |
+| ---------------------------------------------------- | --------------------------------------------------------------------------- |
+| `scient_thread_lineage` + `forkLineage` marker       | `AppThread.lineage` + `forkedFrom`                                          |
+| `scient_context_transfers.status`                    | `ContextTransfer.status` (same literals)                                    |
+| `resolution_json` `native_fork` / `portable_context` | `ContextTransfer.resolution`                                                |
+| `scient_context_handoffs` (`full_thread_summary`)    | `ContextHandoff` + `delivery {nativeThreadId, status}`                      |
+| `native_thread_key`                                  | `delivery.nativeThreadId`                                                   |
+| fork point turn id / checkpoint count                | `sourcePoint.runId` / `checkpointId`                                        |
+| running-turn cut (`mid_turn_cut_json`)               | `sourcePoint.turnItemId` + relaxed forkable-status guard (Scient extension) |
+| `handoffBudget` / `selectHistory` / coverage header  | `ContextHandoffBudget` (Scient cap + estimator override)                    |
+| `t3_thread_read` (Scient bridge)                     | V2 orchestrator `t3_thread_read`                                            |
+| `nativeFork` / `forkFrom`                            | `ProviderAdapter.forkThread`                                                |
+
+On the V2 day, the transfer and handoff rows translate one-to-one; the
+Scient-only concepts (running-turn cut, reasoning items, workspace mode,
+retain-before for user-message forks) become isolated extensions rather than
+fields in V2's persisted event log.
 
 ## Narrow T3-owned seams
 
@@ -615,7 +721,10 @@ toolkit lands.**
   are forkable. Invalid, stale, unknown, or streaming message IDs fail closed.
   A newer streaming turn is excluded from the retained prefix rather than
   blocking an older fork point.
-- A new worktree fails closed if the historical Git checkpoint is unavailable.
+- A new worktree fails closed if the historical Git checkpoint is unavailable
+  (a running-turn fork snapshots the current files instead).
+- Revert never removes a fork's inherited transcript: every inherited turn id is
+  recorded and retained, not only the boundary turn.
 - An untouched proposed title is recomputed by the server at commit time. Only
   an explicit non-empty user edit bypasses automatic numbering.
 - Same-workspace mode is honest about sharing current files; only its
@@ -624,14 +733,12 @@ toolkit lands.**
   closed rather than inventing a workspace or project during replay.
 - Every retained attachment gets a new fork-owned ID and verified file copy, so
   deletion or cleanup of the origin cannot invalidate the fork.
-- Provider bootstrap preserves exact message text until the total contract
-  budget requires truncating the oldest context. It never emits invalid JSON.
-  The current bounds are 120,000 characters and eight recent images.
+- Portable handoffs keep whole items within a model-window-derived budget and
+  never emit invalid JSON; omitted items stay readable through `t3_thread_read`.
 - Provider acceptance cannot be made globally exactly-once without provider
-  idempotency. Scient therefore chooses the safe failure mode: an uncertain
-  send is durable and blocks automatic re-injection. A proved provider response
-  reconciles it; otherwise the user creates a fresh fork instead of risking a
-  duplicated request.
+  idempotency. Scient therefore re-delivers uncertain context on a fresh
+  provider session: the abandoned session may hold a duplicate, the new one
+  never does, and the user is never left at a dead end.
 - Right-panel continuity copies only safe descriptors. It never reuses a live
   terminal or browser session, never persists authorized URLs, and expires
   pending PDF remaps after seven days.
