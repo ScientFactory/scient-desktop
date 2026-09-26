@@ -30,6 +30,7 @@ import * as Equal from "effect/Equal";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
@@ -406,7 +407,21 @@ const make = Effect.gen(function* () {
     if (isProviderWorkspaceMissingError(failReason?.error)) {
       return failReason.error.message;
     }
-    return Cause.pretty(cause);
+    // SCIENT-FORK: every other typed failure carries a user-facing sentence;
+    // stacks belong in the server log, never in the conversation.
+    const error = failReason?.error;
+    if (Predicate.isObject(error)) {
+      for (const key of ["detail", "issue", "message"] as const) {
+        const value = (error as Record<string, unknown>)[key];
+        if (typeof value === "string" && value.trim().length > 0) return value.trim();
+      }
+    }
+    return (
+      Cause.pretty(cause)
+        .split("\n")
+        .find((line) => line.trim().length > 0)
+        ?.trim() ?? "The provider could not start this turn."
+    );
   };
 
   const setThreadSession = (input: {
@@ -1356,11 +1371,17 @@ const make = Effect.gen(function* () {
         return Effect.void;
       }
       const detail = formatFailureDetail(cause);
-      return setThreadSessionErrorOnTurnStartFailure({
+      return Effect.logWarning("provider turn start failed", {
         threadId: event.payload.threadId,
-        detail,
-        createdAt: event.payload.createdAt,
+        cause: Cause.pretty(cause),
       }).pipe(
+        Effect.andThen(
+          setThreadSessionErrorOnTurnStartFailure({
+            threadId: event.payload.threadId,
+            detail,
+            createdAt: event.payload.createdAt,
+          }),
+        ),
         Effect.flatMap(() => appendTurnStartFailure("Provider turn start failed", detail)),
         Effect.asVoid,
       );

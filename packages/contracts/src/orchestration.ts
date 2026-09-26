@@ -1783,6 +1783,10 @@ const ThreadForkCompleteCommand = Schema.Struct({
   threadId: ThreadId,
   checkpointStatus: OrchestrationForkCheckpointStatus,
   workspaceStatus: OrchestrationForkWorkspaceStatus,
+  /** The inherited baseline turn; its turn-zero checkpoint exists only once copied. */
+  checkpointBaseline: Schema.optional(
+    Schema.Struct({ turnId: TurnId, assistantMessageId: Schema.NullOr(MessageId) }),
+  ),
   createdAt: IsoDateTime,
 });
 // SCIENT-FORK:END

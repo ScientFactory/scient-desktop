@@ -202,12 +202,13 @@ export const insertPendingFork = Effect.fn("insertPendingFork")(function* (
   `;
 });
 
-export const claimFork = Effect.fn("claimFork")(function* (
+/** Claims provisioning and returns this attempt's number, or null if not claimable. */
+export const claimForkAttempt = Effect.fn("claimForkAttempt")(function* (
   sql: SqlClient.SqlClient,
   threadId: ThreadId,
   updatedAt: string,
 ) {
-  const claimed = yield* sql<{ readonly thread_id: string }>`
+  const claimed = yield* sql<{ readonly attempt_count: number }>`
     UPDATE scient_thread_lineage
     SET
       status = 'provisioning',
@@ -216,9 +217,46 @@ export const claimFork = Effect.fn("claimFork")(function* (
       updated_at = ${updatedAt}
     WHERE thread_id = ${threadId}
       AND status NOT IN ('ready', 'abandoned')
-    RETURNING thread_id
+    RETURNING attempt_count
   `;
-  return claimed.length > 0;
+  return claimed[0]?.attempt_count ?? null;
+});
+
+export const claimFork = Effect.fn("claimFork")(function* (
+  sql: SqlClient.SqlClient,
+  threadId: ThreadId,
+  updatedAt: string,
+) {
+  return (yield* claimForkAttempt(sql, threadId, updatedAt)) !== null;
+});
+
+/**
+ * The origin turn now recorded at a checkpoint count. A fork copies its
+ * baseline by count, so provisioning confirms the count still names the turn
+ * the fork was decided from (a revert and rerun can reuse the count).
+ */
+export const originTurnAtCheckpoint = Effect.fn("originTurnAtCheckpoint")(function* (
+  sql: SqlClient.SqlClient,
+  input: { readonly originThreadId: ThreadId; readonly checkpointTurnCount: number },
+) {
+  const rows = yield* sql<{ readonly turn_id: string | null }>`
+    SELECT turn_id FROM projection_turns
+    WHERE thread_id = ${input.originThreadId}
+      AND checkpoint_turn_count = ${input.checkpointTurnCount}
+    LIMIT 1
+  `;
+  return rows[0]?.turn_id ?? null;
+});
+
+/** Whether the fork thread was deleted (for example by the user) during setup. */
+export const isForkThreadDeleted = Effect.fn("isForkThreadDeleted")(function* (
+  sql: SqlClient.SqlClient,
+  threadId: ThreadId,
+) {
+  const rows = yield* sql<{ readonly deleted_at: string | null }>`
+    SELECT deleted_at FROM projection_threads WHERE thread_id = ${threadId} LIMIT 1
+  `;
+  return rows[0] === undefined || rows[0].deleted_at !== null;
 });
 
 export const markForkFailed = Effect.fn("markForkFailed")(function* (
@@ -365,3 +403,19 @@ export const getForkStatus = Effect.fn("getForkStatus")(function* (
   `;
   return rows[0] === undefined ? null : yield* decodeForkStatusRow(rows[0]);
 });
+
+/** What a user sees when sending to a fork that is not set up. */
+export function forkNotReadyDetail(status: {
+  readonly status: string;
+  readonly last_error: string | null;
+}): string {
+  const reason = status.last_error ? `: ${status.last_error}` : ".";
+  switch (status.status) {
+    case "failed":
+      return `This fork's setup failed${reason} Fork the conversation again, or restart Scient to retry the setup.`;
+    case "abandoned":
+      return `This fork could not be set up${reason} Fork the conversation again.`;
+    default:
+      return "This fork is still being set up. Send your message again once it is ready.";
+  }
+}

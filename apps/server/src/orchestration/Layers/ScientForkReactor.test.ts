@@ -469,11 +469,7 @@ describe("ScientForkReactor", () => {
       const sql = yield* SqlClient.SqlClient;
       yield* seedOrigin();
       yield* dispatchFork("local", "retry-same-fork");
-      const first = yield* Effect.result(reactor.awaitCompletion(NEW));
-      expect(first._tag).toBe("Failure");
-      yield* reactor.drain;
-      expect(yield* reactor.getDisposition(NEW)).toBe("failed");
-      yield* dispatchFork("local", "retry-same-fork");
+      // The worker retries with backoff before the user ever sees a failure.
       yield* reactor.awaitCompletion(NEW);
       yield* reactor.drain;
       expect(yield* reactor.getDisposition(NEW)).toBe("ready");
@@ -559,6 +555,112 @@ describe("ScientForkReactor", () => {
     ),
   );
 
+  it.live("reports a failure that persists after bounded retries, then recovers on request", () => {
+    let attempts = 0;
+    let failing = true;
+    return Effect.gen(function* () {
+      const reactor = yield* ScientForkReactor;
+      const sql = yield* SqlClient.SqlClient;
+      yield* seedOrigin();
+      yield* dispatchFork("local", "retry-persistent-fork");
+      const first = yield* Effect.result(reactor.awaitCompletion(NEW));
+      expect(first._tag).toBe("Failure");
+      yield* reactor.drain;
+      expect(yield* reactor.getDisposition(NEW)).toBe("failed");
+      // One attempt plus three in-place retries.
+      expect(attempts).toBe(4);
+      // Attempt-scoped internal commands: a later request is not poisoned by
+      // the earlier attempts.
+      failing = false;
+      yield* dispatchFork("local", "retry-persistent-fork");
+      yield* reactor.awaitCompletion(NEW);
+      yield* reactor.drain;
+      expect(yield* reactor.getDisposition(NEW)).toBe("ready");
+      expect((yield* readLineageRow(sql))?.attempt_count).toBe(5);
+    }).pipe(
+      Effect.provide(
+        makeHarnessLayer([], [], true, {
+          copyAll: ({ threadId }) =>
+            Effect.suspend(() => {
+              attempts++;
+              return failing
+                ? Effect.fail(
+                    new ScientForkAttachmentCopyError({
+                      threadId,
+                      reason: "target-write-failed",
+                      detail: "Disk unavailable",
+                    }),
+                  )
+                : Effect.void;
+            }),
+        }),
+      ),
+    );
+  });
+
+  it.live("refuses to set up a fork whose origin turn was replaced before setup", () =>
+    Effect.gen(function* () {
+      const reactor = yield* ScientForkReactor;
+      const sql = yield* SqlClient.SqlClient;
+      yield* seedOrigin();
+      yield* dispatchFork("new-worktree", "cmd-fork-origin-replaced");
+      // A revert and rerun reused the checkpoint count for different work.
+      yield* sql`
+        UPDATE projection_turns SET turn_id = 'origin-turn-rerun'
+        WHERE thread_id = ${ORIGIN} AND checkpoint_turn_count = ${FORK_AT_TURN}
+      `;
+      const result = yield* Effect.result(reactor.awaitCompletion(NEW));
+      expect(result._tag).toBe("Failure");
+      yield* reactor.drain;
+      expect(yield* reactor.getDisposition(NEW)).toBe("abandoned");
+      expect((yield* readLineageRow(sql))?.last_error).toContain("changed before this fork");
+    }).pipe(Effect.provide(makeHarnessLayer([], []))),
+  );
+
+  it.live("abandons a fork deleted while it was being set up", () =>
+    Effect.gen(function* () {
+      const reactor = yield* ScientForkReactor;
+      const engine = yield* OrchestrationEngineService;
+      const sql = yield* SqlClient.SqlClient;
+      yield* seedOrigin();
+      yield* dispatchFork("local", "cmd-fork-deleted-during-setup");
+      yield* engine.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make("cmd-delete-fork-during-setup"),
+        threadId: NEW,
+      });
+      const result = yield* Effect.result(reactor.awaitCompletion(NEW));
+      expect(result._tag).toBe("Failure");
+      yield* reactor.drain;
+      expect(yield* reactor.getDisposition(NEW)).toBe("abandoned");
+      expect((yield* readLineageRow(sql))?.last_error).toContain(
+        "deleted while it was being set up",
+      );
+    }).pipe(Effect.provide(makeHarnessLayer([], []))),
+  );
+
+  it.live("does not fork a fork that is still being set up", () =>
+    Effect.gen(function* () {
+      const engine = yield* OrchestrationEngineService;
+      yield* seedOrigin();
+      yield* dispatchFork("local", "cmd-fork-parent-pending");
+      const nested = yield* Effect.result(
+        engine.dispatch({
+          type: "thread.fork",
+          commandId: CommandId.make("cmd-fork-of-pending-fork"),
+          originThreadId: NEW,
+          newThreadId: ThreadId.make("nested-fork"),
+          sourceAssistantMessageId: SOURCE_ASSISTANT_MESSAGE_ID,
+          workspaceMode: "local",
+        }),
+      );
+      expect(nested._tag).toBe("Failure");
+      expect(String(nested._tag === "Failure" ? nested.failure : "")).toContain(
+        "still being set up",
+      );
+    }).pipe(Effect.provide(makeHarnessLayer([], []))),
+  );
+
   it.live("provisions a shared-worktree baseline for a local fork", () => {
     const forkBaselineCalls: Array<Parameters<ScientForkCheckpointBaselineShape["copy"]>[0]> = [];
     const createWorktreeCalls: Array<VcsCreateWorktreeInput> = [];
@@ -566,14 +668,10 @@ describe("ScientForkReactor", () => {
     return Effect.gen(function* () {
       const { snapshotQuery, sql } = yield* runForkScenario("local", "cmd-fork-local");
 
-      // The checkpoint baseline copies origin turn-1 ref → new-thread turn-0 ref against
-      // the origin's worktree cwd.
-      expect(forkBaselineCalls).toHaveLength(1);
-      expect(forkBaselineCalls[0]).toEqual({
-        cwd: ORIGIN_WORKTREE,
-        fromCheckpointRef: checkpointRefForThreadTurn(ORIGIN, FORK_AT_TURN),
-        toCheckpointRef: checkpointRefForThreadTurn(NEW, 0),
-      });
+      // A shared workspace has moved on since the forked turn: no historical
+      // baseline is copied, so the fork's first turn captures a fresh one.
+      expect(forkBaselineCalls).toHaveLength(0);
+      expect((yield* readLineageRow(sql))?.checkpoint_status).toBe("unavailable");
       // "local" mode never provisions a new worktree.
       expect(createWorktreeCalls).toHaveLength(0);
 
@@ -716,7 +814,8 @@ describe("ScientForkReactor", () => {
       const completed = yield* readLineageRow(sql);
       expect(completed?.status).toBe("ready");
       expect(completed?.attempt_count).toBe(1);
-      expect(forkBaselineCalls).toHaveLength(1);
+      // Local forks never copy a historical baseline.
+      expect(forkBaselineCalls).toHaveLength(0);
     }).pipe(Effect.provide(makeHarnessLayer(forkBaselineCalls, createWorktreeCalls)));
   });
 
@@ -736,7 +835,8 @@ describe("ScientForkReactor", () => {
       yield* reactor.drain;
 
       expect((yield* readLineageRow(sql))?.status).toBe("ready");
-      expect(forkBaselineCalls).toHaveLength(1);
+      // Local forks never copy a historical baseline.
+      expect(forkBaselineCalls).toHaveLength(0);
     }).pipe(Effect.provide(makeHarnessLayer(forkBaselineCalls, createWorktreeCalls)));
   });
 

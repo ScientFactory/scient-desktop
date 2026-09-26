@@ -22,6 +22,16 @@ export interface ScientForkCheckpointBaselineShape {
     readonly fromCheckpointRef: CheckpointRef;
     readonly toCheckpointRef: CheckpointRef;
   }) => Effect.Effect<boolean, VcsError>;
+  /**
+   * Best-effort removal of what an abandoned fork created: its worktree, its
+   * `scient/fork/*` branch and its turn-zero checkpoint ref.
+   */
+  readonly discard: (input: {
+    readonly cwd: string;
+    readonly checkpointRef: CheckpointRef;
+    readonly worktreePath: string | null;
+    readonly branch: string | null;
+  }) => Effect.Effect<void>;
 }
 
 export class ScientForkCheckpointBaseline extends Context.Service<
@@ -87,11 +97,37 @@ const make = Effect.gen(function* () {
       })
       .pipe(Effect.map((result) => result.exitCode === 0));
 
+  const discard: ScientForkCheckpointBaselineShape["discard"] = Effect.fn(
+    "discardScientForkWorkspace",
+  )(function* (input) {
+    const git = (operation: string, args: ReadonlyArray<string>) =>
+      process
+        .run({ operation, command: "git", args: [...args], cwd: input.cwd, allowNonZeroExit: true })
+        .pipe(Effect.ignore);
+    if (input.worktreePath !== null) {
+      yield* git("ScientForkCheckpointBaseline.discardWorktree", [
+        "worktree",
+        "remove",
+        "--force",
+        input.worktreePath,
+      ]);
+    }
+    if (input.branch !== null) {
+      yield* git("ScientForkCheckpointBaseline.discardBranch", ["branch", "-D", input.branch]);
+    }
+    yield* git("ScientForkCheckpointBaseline.discardRef", [
+      "update-ref",
+      "-d",
+      input.checkpointRef,
+    ]);
+  });
+
   return {
     isGitRepository,
     hasCheckpoint,
     workspaceExists,
     copy,
+    discard,
   } satisfies ScientForkCheckpointBaselineShape;
 });
 
@@ -105,5 +141,6 @@ export const testLayer = (
     hasCheckpoint: () => Effect.succeed(true),
     workspaceExists: () => Effect.succeed(true),
     copy: () => Effect.succeed(true),
+    discard: () => Effect.void,
     ...overrides,
   });

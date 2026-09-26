@@ -25,7 +25,7 @@ import {
   resolveForkBoundariesFromList,
   resolveUserForkBoundariesFromList,
 } from "./forkBoundaryTypes.ts";
-import { forkThread as forkThreadAuthoritative } from "./forkDecider.ts";
+import { decideForkComplete, forkThread as forkThreadAuthoritative } from "./forkDecider.ts";
 import { questionAnswerActivity } from "./questionAnswer.test-fixtures.ts";
 import { retainQuestionAnswers, questionAnswerAttachments } from "./retainedQuestionAnswers.ts";
 
@@ -314,7 +314,6 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
         "thread.message-sent",
         "thread.message-sent",
         "thread.forked",
-        "thread.turn-diff-completed",
       ]);
 
       // Every emitted event targets the NEW thread — never the origin.
@@ -375,12 +374,36 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
       const baselineTurnId =
         forkedPayload?.type === "thread.forked" ? forkedPayload.payload.baselineTurnId : null;
       expect(emittedTurnIds.at(-1)).toBe(baselineTurnId);
-      const baseline = events.find((event) => event.type === "thread.turn-diff-completed");
+      // The turn-zero checkpoint waits for provisioning (decideForkComplete).
+      expect(events.some((event) => event.type === "thread.turn-diff-completed")).toBe(false);
+      const completeCommand = {
+        type: "thread.fork.complete" as const,
+        commandId: CommandId.make("cmd-fork-complete"),
+        threadId: NEW,
+        workspaceStatus: "worktree" as const,
+        createdAt: NOW,
+      };
+      const ready = yield* decideForkComplete({
+        command: {
+          ...completeCommand,
+          checkpointStatus: "ready",
+          checkpointBaseline: { turnId: baselineTurnId!, assistantMessageId: null },
+        },
+      });
+      expect(ready.map((event) => event.type)).toEqual([
+        "thread.fork-completed",
+        "thread.turn-diff-completed",
+      ]);
+      const baseline = ready[1];
       expect(
         baseline?.type === "thread.turn-diff-completed"
-          ? baseline.payload.checkpointTurnCount
+          ? [baseline.payload.checkpointTurnCount, baseline.payload.turnId]
           : null,
-      ).toBe(0);
+      ).toEqual([0, baselineTurnId]);
+      const unavailable = yield* decideForkComplete({
+        command: { ...completeCommand, checkpointStatus: "unavailable" },
+      });
+      expect(unavailable.map((event) => event.type)).toEqual(["thread.fork-completed"]);
       // Event ids are unique.
       const eventIds = events.map((event) => event.eventId);
       expect(new Set(eventIds).size).toBe(eventIds.length);

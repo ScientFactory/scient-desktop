@@ -1821,13 +1821,9 @@ it.layer(Layer.fresh(makeCrossAreaTestLayer("t3-boundary-008-")))(
         assert.strictEqual(forkedEvent.payload.forkAtTurnCount, 1);
         assert.strictEqual(forkedEvent.payload.sourceCheckpointTurnCount, 1);
 
-        // 6. Assert the baseline turn-diff-completed has checkpoint count 0
-        //    (the fork's own baseline checkpoint, not the origin's).
-        const tdcEvent = events.find((e) => e.type === "thread.turn-diff-completed");
-        if (!tdcEvent || tdcEvent.type !== "thread.turn-diff-completed") {
-          return assert.fail("thread.turn-diff-completed event not found");
-        }
-        assert.strictEqual(tdcEvent.payload.checkpointTurnCount, 0);
+        // 6. The fork's own turn-zero checkpoint is announced only once the
+        //    worker copied its ref (thread.fork.complete), never by the decision.
+        assert.isUndefined(events.find((e) => e.type === "thread.turn-diff-completed"));
 
         // 7. Assert only the first turn's prefix is retained (u1, a1).
         const messageEvents = events.filter((e) => e.type === "thread.message-sent");

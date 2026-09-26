@@ -593,26 +593,60 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
     },
   });
 
-  if (selectedCheckpoint) {
-    events.push({
+  // The turn-zero checkpoint is announced by `thread.fork.complete`, after the
+  // fork worker has actually copied its ref.
+  return events;
+});
+
+/**
+ * Settle fork provisioning. When the worker copied the baseline checkpoint,
+ * the fork's turn-zero checkpoint becomes visible in the same decision, never
+ * before its ref exists.
+ */
+export const decideForkComplete = Effect.fn("scientDecideForkComplete")(function* ({
+  command,
+}: {
+  readonly command: Extract<OrchestrationCommand, { type: "thread.fork.complete" }>;
+}): Effect.fn.Return<
+  ReadonlyArray<PlannedOrchestrationEvent>,
+  PlatformError.PlatformError,
+  Crypto.Crypto
+> {
+  const completed: PlannedOrchestrationEvent = {
+    ...(yield* withForkEventBase({
+      commandId: command.commandId,
+      aggregateId: command.threadId,
+      occurredAt: command.createdAt,
+    })),
+    type: "thread.fork-completed",
+    payload: {
+      threadId: command.threadId,
+      checkpointStatus: command.checkpointStatus,
+      workspaceStatus: command.workspaceStatus,
+    },
+  };
+  if (command.checkpointStatus !== "ready" || command.checkpointBaseline === undefined) {
+    return [completed];
+  }
+  return [
+    completed,
+    {
       ...(yield* withForkEventBase({
         commandId: command.commandId,
-        aggregateId: command.newThreadId,
-        occurredAt,
+        aggregateId: command.threadId,
+        occurredAt: command.createdAt,
       })),
       type: "thread.turn-diff-completed",
       payload: {
-        threadId: command.newThreadId,
-        turnId: baselineTurnId,
+        threadId: command.threadId,
+        turnId: command.checkpointBaseline.turnId,
         checkpointTurnCount: 0,
-        checkpointRef: checkpointRefForThreadTurn(command.newThreadId, 0),
+        checkpointRef: checkpointRefForThreadTurn(command.threadId, 0),
         status: "ready",
         files: [],
-        assistantMessageId: baselineAssistantMessageId,
-        completedAt: occurredAt,
+        assistantMessageId: command.checkpointBaseline.assistantMessageId,
+        completedAt: command.createdAt,
       },
-    });
-  }
-
-  return events;
+    },
+  ];
 });

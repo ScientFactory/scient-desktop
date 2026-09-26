@@ -48,7 +48,7 @@ import {
 import { projectEvent } from "./projector.ts";
 // SCIENT-FORK:START — delegate the Scient-owned thread.fork command out of T3.
 import type { ResolvedForkBoundaries } from "./scient-fork/forkBoundaryTypes.ts";
-import { forkThread } from "./scient-fork/forkDecider.ts";
+import { decideForkComplete, forkThread } from "./scient-fork/forkDecider.ts";
 // SCIENT-FORK:END
 import { threadHasQueuedTurnStart } from "./ThreadSettlementPolicy.ts";
 
@@ -2315,20 +2315,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
-      return {
-        ...(yield* withEventBase({
-          aggregateKind: "thread",
-          aggregateId: command.threadId,
-          occurredAt: command.createdAt,
-          commandId: command.commandId,
-        })),
-        type: "thread.fork-completed",
-        payload: {
-          threadId: command.threadId,
-          checkpointStatus: command.checkpointStatus,
-          workspaceStatus: command.workspaceStatus,
-        },
-      };
+      return yield* decideForkComplete({ command });
     }
     // SCIENT-FORK:END
 

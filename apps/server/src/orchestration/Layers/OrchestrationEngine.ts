@@ -43,7 +43,7 @@ import {
 } from "../Errors.ts";
 import { decideOrchestrationCommand } from "../decider.ts";
 import { withForkOriginDetail } from "../scient-fork/forkDecisionReadModel.ts";
-import { getForkStatus } from "../scient-fork/forkRepository.ts";
+import { forkNotReadyDetail, getForkStatus } from "../scient-fork/forkRepository.ts";
 import { makeForkBoundaryResolver } from "../scient-fork/ForkBoundaryReadModel.ts";
 import type { ResolvedForkBoundaries } from "../scient-fork/forkBoundaryTypes.ts";
 import { createEmptyReadModel, projectEvent } from "../projector.ts";
@@ -207,12 +207,24 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           if (forkStatus !== null && forkStatus.status !== "ready") {
             return yield* new OrchestrationCommandInvariantError({
               commandType: envelope.command.type,
-              detail:
-                "This fork is not ready yet. Finish or retry its setup before sending a message.",
+              detail: forkNotReadyDetail(forkStatus),
             });
           }
         }
         if (envelope.command.type === "thread.fork") {
+          // A fork of a fork copies what its parent holds; the parent must be set up.
+          const parentStatus = yield* getForkStatus(sql, envelope.command.originThreadId);
+          if (parentStatus !== null && parentStatus.status !== "ready") {
+            return yield* new OrchestrationCommandInvariantError({
+              commandType: envelope.command.type,
+              detail:
+                parentStatus.status === "pending" || parentStatus.status === "provisioning"
+                  ? "This conversation is itself a fork that is still being set up. Wait for it to finish, then fork it."
+                  : `This conversation is itself a fork whose setup did not finish${
+                      parentStatus.last_error ? `: ${parentStatus.last_error}` : "."
+                    } Fork its original conversation instead.`,
+            });
+          }
           const originOption = yield* projectionSnapshotQuery.getThreadDetailById(
             envelope.command.originThreadId,
           );
