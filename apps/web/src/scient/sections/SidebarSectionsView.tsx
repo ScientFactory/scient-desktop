@@ -40,6 +40,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/toolt
 import { useThreadActions } from "../../hooks/useThreadActions";
 import { cn } from "../../lib/utils";
 import { readEnvironmentSupportsSections, useThreadSectionActions } from "./actions";
+import { FadeTruncate } from "./FadeTruncate";
 import {
   OTHER_SECTION_GROUP_ID,
   type SectionGroup,
@@ -515,7 +516,7 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
       <DragOverlay dropAnimation={null}>
         {liftedGroup ? (
           <div className="flex h-8 items-center gap-2 rounded-md bg-sidebar-row-active px-2 text-xs font-medium text-sidebar-foreground/80 shadow-sm">
-            <span className="min-w-0 shrink truncate">{liftedGroup.section?.name}</span>
+            <FadeTruncate text={liftedGroup.section?.name ?? ""} className="shrink" />
             <span aria-hidden className="h-px min-w-2 flex-1 bg-sidebar-foreground/25" />
             <ChevronDownIcon aria-hidden className="size-3 shrink-0" />
           </div>
@@ -571,7 +572,6 @@ function SectionHeaderRow(props: {
     props.onMenu({ x: event.clientX, y: event.clientY });
   };
   // Same look as the Snoozed and Settled shelf headers, labelled with the name.
-  const label = props.collapsed ? `${props.label} (${group.threads.length})` : props.label;
   return (
     <li
       ref={setNodeRef}
@@ -615,7 +615,11 @@ function SectionHeaderRow(props: {
             {...attributes}
             {...listeners}
           >
-            <span className="min-w-0 shrink truncate">{label}</span>
+            {/* Long names fade out; the collapsed count stays whole beside them. */}
+            <FadeTruncate text={props.label} className="shrink" />
+            {props.collapsed ? (
+              <span className="-ml-1 shrink-0 tabular-nums">({group.threads.length})</span>
+            ) : null}
             <ChevronDownIcon
               aria-hidden
               className={cn(
