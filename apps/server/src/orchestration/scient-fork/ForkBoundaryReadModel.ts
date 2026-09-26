@@ -148,6 +148,7 @@ function makeForkBoundaryQueries(sql: SqlClient.SqlClient) {
           created_at AS "createdAt"
         FROM projection_thread_messages
         WHERE thread_id = ${threadId}
+          AND role IN ('user', 'assistant', 'system')
         ORDER BY created_at ASC, message_id ASC
       `,
     }),
