@@ -660,6 +660,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             pinOrderKey: null,
             activeOrderKey: null,
             autoSettleDisabledAt: null,
+            sectionId: null,
             titleRegenerationRequestId: null,
             titleRegenerationStartedAt: null,
             latestUserMessageAt: null,
@@ -885,6 +886,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ...(event.payload.branch !== undefined ? { branch: event.payload.branch } : {}),
             ...(event.payload.worktreePath !== undefined
               ? { worktreePath: event.payload.worktreePath }
+              : {}),
+            ...(event.payload.sectionId !== undefined
+              ? { sectionId: event.payload.sectionId }
               : {}),
             // SCIENT-FORK:START — replay immutable historical project
             // reassignment events into the durable shell/detail projection.

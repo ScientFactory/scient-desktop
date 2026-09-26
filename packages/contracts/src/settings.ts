@@ -9,6 +9,7 @@ import {
   ForwardCompatibleOptional,
   OmittedWhenNull,
   ProjectId,
+  ThreadSectionId,
   TrimmedNonEmptyString,
   TrimmedString,
 } from "./baseSchemas.ts";
@@ -83,6 +84,26 @@ export const SidebarThreadPreviewCount = Schema.Int.check(
 );
 export type SidebarThreadPreviewCount = typeof SidebarThreadPreviewCount.Type;
 const DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT: SidebarThreadPreviewCount = 6;
+
+// SCIENT-FORK:START — user-defined thread sections.
+/**
+ * A named group the user files threads into. Sections are independent of the
+ * lifecycle shelves (pinned, active, snoozed, settled); a thread belongs to at
+ * most one. The catalog lives in the primary environment's server settings so
+ * every window and attached client sees the same list. Membership is stored
+ * on each thread, so removing a catalog entry leaves its threads' IDs intact:
+ * they read as unsectioned, and restoring the entry brings them back.
+ */
+export const ThreadSection = Schema.Struct({
+  id: ThreadSectionId,
+  name: TrimmedNonEmptyString,
+  order: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+});
+export type ThreadSection = typeof ThreadSection.Type;
+
+export const ThreadSections = Schema.Array(ThreadSection);
+export type ThreadSections = typeof ThreadSections.Type;
+// SCIENT-FORK:END
 export const MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS = 1;
 export const MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS = 90;
 export const SidebarAutoSettleAfterDays = Schema.Number.check(
@@ -1212,6 +1233,9 @@ export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 
 export const ServerSettings = Schema.Struct({
   customModels: CustomModelsSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  // SCIENT-FORK:START
+  threadSections: ThreadSections.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  // SCIENT-FORK:END
   worktreeCleanup: WorktreeCleanup.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   storageCleanup: StorageCleanupSettings.pipe(
     Schema.withDecodingDefault(Effect.succeed(Schema.decodeSync(StorageCleanupSettings)({}))),
@@ -1589,6 +1613,9 @@ const PiSettingsPatch = Schema.Struct({
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 export const ServerSettingsPatch = Schema.Struct({
+  // SCIENT-FORK:START — replaces the whole catalog; omitted leaves it alone.
+  threadSections: Schema.optionalKey(ThreadSections),
+  // SCIENT-FORK:END
   worktreeCleanup: Schema.optionalKey(
     Schema.NullOr(
       Schema.Union([

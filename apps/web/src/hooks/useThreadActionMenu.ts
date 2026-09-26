@@ -42,6 +42,14 @@ import { useCopyToClipboard } from "./useCopyToClipboard";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { useClientSettings } from "./useSettings";
 import { useThreadActions } from "./useThreadActions";
+// SCIENT-FORK:START
+import {
+  readEnvironmentSupportsSections,
+  useThreadSectionActions,
+} from "../scient/sections/actions";
+import { useThreadSectionCatalog } from "../scient/sections/catalog";
+import { buildSectionSubmenu, parseSectionMenuAction } from "../scient/sections/menu";
+// SCIENT-FORK:END
 
 function failureToast(title: string, error: unknown) {
   toastManager.add(
@@ -68,8 +76,15 @@ export function useThreadActionMenu(input: {
   /** Fallback for "Copy path" when the thread has no worktree. */
   readonly projectCwd: string | null;
   readonly onStartRename: () => void;
+  // SCIENT-FORK:START — "New section…" needs a name, which the caller asks for.
+  readonly onRequestNewSection?: (threadRef: ScopedThreadRef) => void;
+  // SCIENT-FORK:END
 }) {
-  const { threadRef, projectCwd, onStartRename } = input;
+  const { threadRef, projectCwd, onStartRename, onRequestNewSection } = input;
+  // SCIENT-FORK:START
+  const sectionCatalog = useThreadSectionCatalog();
+  const { moveThreadsToSection } = useThreadSectionActions();
+  // SCIENT-FORK:END
   const router = useRouter();
   const projects = useProjects();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -156,6 +171,15 @@ export function useThreadActionMenu(input: {
           isRunning: thread.session?.status === "running" && thread.session.activeTurnId != null,
           supports,
           snoozePresets,
+          // SCIENT-FORK:START
+          sectionMenu:
+            sectionCatalog.available && readEnvironmentSupportsSections(threadRef.environmentId)
+              ? buildSectionSubmenu({
+                  sections: sectionCatalog.sections,
+                  currentSectionIds: [thread.sectionId ?? null],
+                })
+              : null,
+          // SCIENT-FORK:END
         });
         const clicked = await settlePromise(() => api.contextMenu.show(items, position));
         if (clicked._tag === "Failure" || clicked.value === null) return;
@@ -172,6 +196,18 @@ export function useThreadActionMenu(input: {
           }
           return;
         }
+        // SCIENT-FORK:START
+        const sectionAction = parseSectionMenuAction(action);
+        if (sectionAction !== null) {
+          if (sectionAction.kind === "new") onRequestNewSection?.(threadRef);
+          else
+            await moveThreadsToSection(
+              [threadRef],
+              sectionAction.kind === "set" ? sectionAction.sectionId : null,
+            );
+          return;
+        }
+        // SCIENT-FORK:END
         const reportFailure = async (
           title: string,
           run: () => Promise<AtomCommandResult<unknown, unknown>>,
@@ -340,12 +376,15 @@ export function useThreadActionMenu(input: {
       handleNewThread,
       logicalProjectKeyByPhysicalKey,
       markThreadUnread,
+      moveThreadsToSection,
+      onRequestNewSection,
       onStartRename,
       pinThread,
       projectCwd,
       projectGroupingSettings,
       projects,
       router,
+      sectionCatalog,
       setThreadAutoSettle,
       settleThread,
       snoozeThread,

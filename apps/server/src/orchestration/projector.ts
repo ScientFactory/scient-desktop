@@ -655,6 +655,7 @@ export function projectEvent(
               ...(payload.activeOrderKey !== undefined
                 ? { activeOrderKey: payload.activeOrderKey }
                 : {}),
+              ...(payload.sectionId !== undefined ? { sectionId: payload.sectionId } : {}),
               ...(payload.branchPullRequest !== undefined
                 ? { branchPullRequest: payload.branchPullRequest }
                 : {}),

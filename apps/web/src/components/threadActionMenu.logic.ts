@@ -1,5 +1,8 @@
 import type { ContextMenuItem } from "@t3tools/contracts";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
+// SCIENT-FORK:START
+import type { SectionMenuId } from "../scient/sections/menu";
+// SCIENT-FORK:END
 
 /**
  * Ids for the per-thread action menu. Snooze presets are dispatched as
@@ -28,7 +31,10 @@ export type ThreadActionMenuId =
   | "copy-branch"
   | "copy-thread-id"
   | "archive"
-  | "delete";
+  | "delete"
+  // SCIENT-FORK:START
+  | SectionMenuId;
+// SCIENT-FORK:END
 
 export interface ThreadActionMenuState {
   readonly branch: string | null;
@@ -59,6 +65,9 @@ export interface ThreadActionMenuState {
     readonly titleRegeneration: boolean;
   };
   readonly snoozePresets: ReadonlyArray<SnoozePreset>;
+  // SCIENT-FORK:START — the Section submenu, when the thread's server supports it.
+  readonly sectionMenu?: ContextMenuItem<SectionMenuId> | null;
+  // SCIENT-FORK:END
 }
 
 /**
@@ -163,6 +172,9 @@ export function buildThreadActionMenuItems(
           },
         ]
       : []),
+    // SCIENT-FORK:START
+    ...(state.sectionMenu ? [state.sectionMenu] : []),
+    // SCIENT-FORK:END
     {
       id: "copy",
       label: "Copy",

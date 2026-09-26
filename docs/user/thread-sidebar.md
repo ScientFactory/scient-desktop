@@ -109,6 +109,38 @@ If dragging is unavailable for one environment, update the Scient server running
 environment. Pinned and active reordering require server support. Threads from older servers keep
 their default order until the server is updated.
 
+## Group threads into sections
+
+On web and desktop, sections let you group related threads by topic, such as **To look at** or
+**Research**, across projects. A thread belongs to at most one section. Sections only organize the
+list: filing a thread never pins, settles, snoozes, or reorders it, and does not count as activity.
+
+Right-click a thread and choose **Section** to file it. The current section is checked. Choose
+**New section…** to name a section and file the thread in one step, or **Remove from section**.
+With several threads selected, **Move to section** files them together. Each move shows
+**Undo** in the sidebar, and `mod+z` restores the previous section.
+
+Open the view menu next to search and choose **Group threads by → Sections** to see the sidebar by
+section. **Status**, the default, keeps the Pinned and Active layout. In the Sections view:
+
+- Each section lists its pinned threads first, then the rest in your arranged order. Threads
+  without a section appear under **Other**, which is always last.
+- Snoozed and settled threads stay on their own shelves. A settled or snoozed thread keeps its
+  section and returns to it when you un-settle or wake it.
+- Drag a thread to a spot in any section to file it there at that position. Drag a section header
+  to reorder sections, or drag a thread onto the **Settled** header to settle it. Dragging never
+  unpins a thread.
+- Click a header to collapse it; a collapsed section shows a dot while one of its threads is
+  working. Double-click a header to rename it. Hover a header for **New thread in section** and
+  the section menu, which also offers **Move up**, **Move down**, and **Delete section**.
+- **Show empty sections** in the view menu controls whether sections without active threads show.
+
+Deleting a section never deletes conversations: its threads move to **Other**, and **Undo** on the
+confirmation brings the section and its threads back. The section list is stored on the server of
+your primary environment, so every window and connected client shows the same sections. If
+**Section** is missing from a thread's menu, update the Scient server running that thread's
+environment. The mobile app does not show sections yet; it keeps its usual layout.
+
 ## Settle finished work
 
 Choose **Settle thread** from its menu to move finished work out of the active list
