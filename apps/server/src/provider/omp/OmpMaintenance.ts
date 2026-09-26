@@ -38,10 +38,55 @@ export function parseOmpReleaseVersion(source: string): string | null {
 
 export const OMP_EXTERNAL_UPDATE_MESSAGE =
   "A newer stable Oh My Pi release is available. This installation is managed outside Scient. Update it with Oh My Pi or the tool that installed it.";
+export const OMP_NATIVE_UPDATE_MESSAGE =
+  "A newer stable Oh My Pi release is available. Update it with Oh My Pi.";
+
+export const OMP_NATIVE_UPDATE_LOCK_KEY = "omp-native";
+
+/** Managed OMP binaries are owned by the receipt/activation pipeline. */
+export const isOmpManagedRuntimePath = (commandPath: string): boolean =>
+  /(?:^|[\\/])provider-runtimes[\\/]omp[\\/](?:versions|staging)(?:[\\/]|$)/u.test(commandPath);
+
+/**
+ * OMP owns its update protocol. Restrict the native action to the official
+ * command names so an arbitrary configured executable is never treated as an
+ * updater merely because it can be launched.
+ */
+export const isOmpNativeUpdatePath = (commandPath: string): boolean => {
+  const basename = commandPath.replaceAll("\\", "/").split("/").at(-1)?.toLowerCase();
+  return (
+    basename === "omp" || basename === "omp.exe" || basename === "omp.cmd" || basename === "omp.ps1"
+  );
+};
 
 const stableRelease = (version: string | null): string | null => {
   if (!version) return null;
   return parseOmpReleaseVersion(version) === version ? version : null;
+};
+
+const parentDirectory = (commandPath: string): string => {
+  const normalized = commandPath.replaceAll("\\", "/");
+  const separator = normalized.lastIndexOf("/");
+  if (separator < 0) return ".";
+  if (separator === 2 && normalized[1] === ":") return normalized.slice(0, 3);
+  return separator > 0 ? normalized.slice(0, separator) : "/";
+};
+
+const ompUpdateEnvironment = (input: {
+  readonly commandPath: string;
+  readonly env: NodeJS.ProcessEnv;
+  readonly platform: NodeJS.Platform;
+}): NodeJS.ProcessEnv => {
+  const separator = input.platform === "win32" ? ";" : ":";
+  const configuredPath = input.env.PATH ?? input.env.Path ?? input.env.path ?? "";
+  // Do not copy the provider's full environment (which may contain credentials)
+  // into the updater. The server environment is inherited by the runner; only
+  // make the configured executable's directory win PATH resolution.
+  const path = [parentDirectory(input.commandPath), configuredPath].filter(Boolean).join(separator);
+  return {
+    PATH: path,
+    ...(input.platform === "win32" ? { Path: path } : {}),
+  };
 };
 
 /**
@@ -61,21 +106,52 @@ export const ompRoutineLatestVersion = (
 };
 
 /**
- * Package and Homebrew installs keep their channel's latest version. The
- * update command is removed: Oh My Pi's own updater owns native packages.
- * Anything else is discovered from GitHub and also cannot be executed.
+ * Package-managed and standalone OMP installations both expose the same native
+ * `omp update` command. The command is passed as argv (never through a shell),
+ * and OMP itself verifies and selects the correct installation channel.
  */
 export const ompMaintenance: ProviderMaintenanceCapabilitiesResolver = {
   resolve: Effect.fn("ompMaintenance.resolve")(function* (context) {
+    if (context && isOmpManagedRuntimePath(context.realCommandPath)) {
+      return makeManualOnlyProviderMaintenanceCapabilities({
+        provider: ProviderDriverKind.make("omp"),
+        packageName: null,
+      });
+    }
     const packaged = yield* resolvePackageManagedProviderMaintenance(
       {
         provider: ProviderDriverKind.make("omp"),
         npmPackageName: OMP_NPM_PACKAGE,
-        nativeUpdate: null,
+        nativeUpdate: {
+          // The advisory is qualified against the stable release channel.
+          // Make that channel explicit instead of inheriting a user's canary
+          // setting and installing an unqualified release.
+          args: ["update", "--stable"],
+          isCommandPath: isOmpNativeUpdatePath,
+        },
       },
       context,
     );
-    if (packaged.update) return { ...packaged, update: null };
+    const update = packaged.update;
+    if (context && update?.lockKey === OMP_NATIVE_UPDATE_LOCK_KEY) {
+      // Native OMP updates use the GitHub release channel, not the npm
+      // registry version. Keeping packageName null makes the existing
+      // maintenance runner resolve and verify the release advisory correctly.
+      return {
+        ...packaged,
+        packageName: null,
+        update: {
+          ...update,
+          env: ompUpdateEnvironment({
+            commandPath: context.resolvedCommandPath,
+            env: context.env,
+            platform: context.platform,
+          }),
+        },
+      };
+    }
+    // A package-manager path that is not an official OMP launcher remains
+    // discovery-only; never infer an installer for an arbitrary executable.
     return makeManualOnlyProviderMaintenanceCapabilities({
       provider: ProviderDriverKind.make("omp"),
       packageName: null,
@@ -87,20 +163,25 @@ export const shapeOmpExternalAdvisory = (input: {
   readonly currentVersion: string | null;
   readonly latestVersion: string | null;
   readonly checkedAt?: string | null;
+  readonly maintenanceCapabilities?: ProviderMaintenanceCapabilities;
 }): ServerProviderVersionAdvisory => {
   const advisory = createProviderVersionAdvisory({
     driver: ProviderDriverKind.make("omp"),
     currentVersion: input.currentVersion,
     latestVersion: ompRoutineLatestVersion(input.currentVersion, input.latestVersion),
     ...(input.checkedAt === undefined ? {} : { checkedAt: input.checkedAt }),
-    maintenanceCapabilities: makeManualOnlyProviderMaintenanceCapabilities({
-      provider: ProviderDriverKind.make("omp"),
-      packageName: null,
-    }),
+    maintenanceCapabilities:
+      input.maintenanceCapabilities ??
+      makeManualOnlyProviderMaintenanceCapabilities({
+        provider: ProviderDriverKind.make("omp"),
+        packageName: null,
+      }),
   });
-  return advisory.status === "behind_latest"
-    ? { ...advisory, message: OMP_EXTERNAL_UPDATE_MESSAGE }
-    : advisory;
+  if (advisory.status !== "behind_latest") return advisory;
+  return {
+    ...advisory,
+    message: advisory.canUpdate ? OMP_NATIVE_UPDATE_MESSAGE : OMP_EXTERNAL_UPDATE_MESSAGE,
+  };
 };
 
 /**
@@ -111,7 +192,10 @@ export const withOmpReleaseVersion = Effect.fn("withOmpReleaseVersion")(function
   capabilities: ProviderMaintenanceCapabilities,
   enabled: boolean,
 ) {
-  if (!enabled || capabilities.update || capabilities.packageName) return capabilities;
+  const usesNativeUpdater = capabilities.update?.lockKey === OMP_NATIVE_UPDATE_LOCK_KEY;
+  if (!enabled || (!usesNativeUpdater && (capabilities.update || capabilities.packageName))) {
+    return capabilities;
+  }
   const cache = yield* ProviderVersionCache;
   const now = DateTime.toEpochMillis(yield* DateTime.now);
   const cached = cache.get(OMP_LATEST_RELEASE_URL);

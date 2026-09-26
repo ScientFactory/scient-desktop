@@ -6,12 +6,16 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import {
   createProviderVersionAdvisory,
   ProviderVersionCache,
+  resolveProviderMaintenanceCapabilitiesEffect,
   type ProviderMaintenanceResolutionContext,
 } from "../providerMaintenance.ts";
 import {
+  isOmpManagedRuntimePath,
+  isOmpNativeUpdatePath,
   OMP_EXTERNAL_UPDATE_MESSAGE,
   OMP_LATEST_RELEASE_URL,
-  OMP_NPM_PACKAGE,
+  OMP_NATIVE_UPDATE_LOCK_KEY,
+  OMP_NATIVE_UPDATE_MESSAGE,
   ompMaintenance,
   parseOmpReleaseVersion,
   shapeOmpExternalAdvisory,
@@ -35,7 +39,7 @@ it.effect("parses Oh My Pi release tags", () =>
   }),
 );
 
-it.effect("notices a same-major release without offering a command", () =>
+it.effect("notices a same-major release without offering a command by default", () =>
   Effect.sync(() => {
     const advisory = shapeOmpExternalAdvisory({
       currentVersion: "18.2.8",
@@ -55,23 +59,56 @@ it.effect("notices a same-major release without offering a command", () =>
 );
 
 it.layer(NodeServices.layer)("Oh My Pi update discovery", (it) => {
-  it.effect("discovers a Bun or npm install without an executable command", () =>
+  it.effect("resolves the real OMP executable's native update command when requested", () =>
+    Effect.gen(function* () {
+      const binary = process.env.OMP_QUALIFY_BINARY;
+      if (!binary) return;
+      const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(ompMaintenance, {
+        binaryPath: binary,
+        env: process.env,
+      });
+      expect(capabilities.update?.args).toEqual(["update", "--stable"]);
+      expect(capabilities.update?.lockKey).toBe(OMP_NATIVE_UPDATE_LOCK_KEY);
+    }),
+  );
+
+  it.effect("uses OMP's native updater for official command paths", () =>
     Effect.gen(function* () {
       const bun = yield* ompMaintenance.resolve(context("/home/test/.bun/bin/omp"));
       const npm = yield* ompMaintenance.resolve(
         context("/opt/omp/lib/node_modules/@oh-my-pi/pi-coding-agent/bin/omp"),
       );
-      expect(bun.packageName).toBe(OMP_NPM_PACKAGE);
-      expect(bun.update).toBeNull();
-      expect(npm.packageName).toBe(OMP_NPM_PACKAGE);
-      expect(npm.update).toBeNull();
+      expect(isOmpNativeUpdatePath("/home/test/.bun/bin/omp")).toBe(true);
+      expect(isOmpNativeUpdatePath("/home/test/.bun/bin/omp.cmd")).toBe(true);
+      expect(isOmpNativeUpdatePath("/home/test/.bun/bin/not-omp")).toBe(false);
+      for (const capabilities of [bun, npm]) {
+        expect(capabilities.packageName).toBeNull();
+        const update = capabilities.update;
+        expect(update).toBeDefined();
+        if (!update) throw new Error("Expected native OMP update capability.");
+        expect(update.executable).toMatch(/[/\\]omp$/u);
+        expect(update.args).toEqual(["update", "--stable"]);
+        expect(update.lockKey).toBe(OMP_NATIVE_UPDATE_LOCK_KEY);
+        const commandDirectory = update.executable.slice(0, update.executable.lastIndexOf("/"));
+        expect(update.env?.PATH?.startsWith(commandDirectory)).toBe(true);
+      }
     }),
   );
 
-  it.effect("leaves a release binary and a missing install without an update command", () =>
+  it.effect("leaves an unknown path and a missing install without an update command", () =>
     Effect.gen(function* () {
-      const binary = yield* ompMaintenance.resolve(context("/usr/local/bin/omp"));
+      const binary = yield* ompMaintenance.resolve(context("/usr/local/bin/not-omp"));
+      const managed = yield* ompMaintenance.resolve(
+        context("/home/test/.scient-next/provider-runtimes/omp/versions/18.2.8/darwin-arm64/omp"),
+      );
       const missing = yield* ompMaintenance.resolve(null);
+      expect(
+        isOmpManagedRuntimePath(
+          "/home/test/.scient-next/provider-runtimes/omp/versions/18.2.8/omp",
+        ),
+      ).toBe(true);
+      expect(managed.update).toBeNull();
+      expect(managed.packageName).toBeNull();
       expect(binary.update).toBeNull();
       expect(binary.packageName).toBeNull();
       expect(missing.update).toBeNull();
@@ -79,10 +116,24 @@ it.layer(NodeServices.layer)("Oh My Pi update discovery", (it) => {
     }),
   );
 
-  it.effect("reads the GitHub release only for discovery-only installs", () =>
+  it.effect("keeps the native command in the update advisory", () =>
+    Effect.gen(function* () {
+      const capabilities = yield* ompMaintenance.resolve(context("/usr/local/bin/omp"));
+      const advisory = shapeOmpExternalAdvisory({
+        currentVersion: "18.2.8",
+        latestVersion: "18.3.0",
+        maintenanceCapabilities: capabilities,
+      });
+      expect(advisory.status).toBe("behind_latest");
+      expect(advisory.canUpdate).toBe(true);
+      expect(advisory.updateCommand).toBe("/usr/local/bin/omp update --stable");
+      expect(advisory.message).toBe(OMP_NATIVE_UPDATE_MESSAGE);
+    }),
+  );
+
+  it.effect("reads the GitHub release while retaining the native command", () =>
     Effect.gen(function* () {
       const binary = yield* ompMaintenance.resolve(context("/usr/local/bin/omp"));
-      const bun = yield* ompMaintenance.resolve(context("/home/test/.bun/bin/omp"));
       let requests = 0;
       const client = HttpClient.make((request) => {
         requests += 1;
@@ -96,7 +147,7 @@ it.layer(NodeServices.layer)("Oh My Pi update discovery", (it) => {
         expect(requests).toBe(0);
         const discovered = yield* withOmpReleaseVersion(binary, true);
         expect(discovered.latestVersion).toBe("18.3.1");
-        expect(discovered.update).toBeNull();
+        expect(discovered.update?.args).toEqual(["update", "--stable"]);
         expect(
           createProviderVersionAdvisory({
             driver: discovered.provider,
@@ -106,7 +157,6 @@ it.layer(NodeServices.layer)("Oh My Pi update discovery", (it) => {
           }).status,
         ).toBe("behind_latest");
         expect((yield* withOmpReleaseVersion(binary, true)).latestVersion).toBe("18.3.1");
-        expect((yield* withOmpReleaseVersion(bun, true)).latestVersion).toBeUndefined();
         expect(requests).toBe(1);
       }).pipe(
         Effect.provideService(HttpClient.HttpClient, client),
