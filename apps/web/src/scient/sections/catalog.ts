@@ -214,16 +214,31 @@ export function useThreadSectionCatalog(): ThreadSectionCatalog {
     [write],
   );
 
-  return {
-    sections,
-    generalIndex,
-    available: primaryEnvironmentId !== null,
-    create,
-    rename,
-    remove,
-    restore,
-    restoreAll,
-    sweepEmpty,
-    reorder,
-  };
+  const available = primaryEnvironmentId !== null;
+  return useMemo(
+    () => ({
+      sections,
+      generalIndex,
+      available,
+      create,
+      rename,
+      remove,
+      restore,
+      restoreAll,
+      sweepEmpty,
+      reorder,
+    }),
+    [
+      available,
+      create,
+      generalIndex,
+      remove,
+      rename,
+      reorder,
+      restore,
+      restoreAll,
+      sections,
+      sweepEmpty,
+    ],
+  );
 }

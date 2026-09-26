@@ -39,7 +39,8 @@ function formatValue(key: keyof ServerSettings, value: unknown): string {
   if (value === null || value === undefined) {
     return key === "pullRequestMergeMethod"
       ? "Last selected"
-      : key === "sidebarAutoSettleAfterDays" || key === "threadSectionsDeleteEmptyAfterDays"
+      : // SCIENT-FORK: empty-section cleanup reads like auto-settle.
+        key === "sidebarAutoSettleAfterDays" || key === "threadSectionsDeleteEmptyAfterDays"
         ? "Never"
         : key === "defaultModelSelection"
           ? "Automatic"
@@ -51,6 +52,7 @@ function formatValue(key: keyof ServerSettings, value: unknown): string {
   }
   if (typeof value === "boolean") return value ? "On" : "Off";
   if (typeof value === "number") {
+    // SCIENT-FORK: empty-section cleanup reads like auto-settle.
     return key === "sidebarAutoSettleAfterDays" || key === "threadSectionsDeleteEmptyAfterDays"
       ? `${value} ${value === 1 ? "day" : "days"}`
       : String(value);

@@ -43,12 +43,7 @@ import { useNewThreadHandler } from "./useHandleNewThread";
 import { useClientSettings } from "./useSettings";
 import { useThreadActions } from "./useThreadActions";
 // SCIENT-FORK:START
-import {
-  readEnvironmentSupportsSections,
-  useThreadSectionActions,
-} from "../scient/sections/actions";
-import { useThreadSectionCatalog } from "../scient/sections/catalog";
-import { buildSectionSubmenu, parseSectionMenuAction } from "../scient/sections/menu";
+import { useThreadSectionMenu } from "../scient/sections/useThreadSectionMenu";
 // SCIENT-FORK:END
 
 function failureToast(title: string, error: unknown) {
@@ -77,13 +72,13 @@ export function useThreadActionMenu(input: {
   readonly projectCwd: string | null;
   readonly onStartRename: () => void;
   // SCIENT-FORK:START — "New section…" needs a name, which the caller asks for.
-  readonly onRequestNewSection?: (threadRef: ScopedThreadRef) => void;
+  readonly onRequestNewSection: (threadRefs: readonly ScopedThreadRef[]) => void;
   // SCIENT-FORK:END
 }) {
   const { threadRef, projectCwd, onStartRename, onRequestNewSection } = input;
   // SCIENT-FORK:START
-  const sectionCatalog = useThreadSectionCatalog();
-  const { moveThreadsToSection } = useThreadSectionActions();
+  const { menuFor: sectionMenuFor, handleMenuAction: handleSectionMenuAction } =
+    useThreadSectionMenu(onRequestNewSection);
   // SCIENT-FORK:END
   const router = useRouter();
   const projects = useProjects();
@@ -172,14 +167,7 @@ export function useThreadActionMenu(input: {
           supports,
           snoozePresets,
           // SCIENT-FORK:START
-          sectionMenu:
-            sectionCatalog.available && readEnvironmentSupportsSections(threadRef.environmentId)
-              ? buildSectionSubmenu({
-                  sections: sectionCatalog.sections,
-                  generalIndex: sectionCatalog.generalIndex,
-                  currentSectionIds: [thread.sectionId ?? null],
-                })
-              : null,
+          sectionMenu: sectionMenuFor([thread]),
           // SCIENT-FORK:END
         });
         const clicked = await settlePromise(() => api.contextMenu.show(items, position));
@@ -198,16 +186,7 @@ export function useThreadActionMenu(input: {
           return;
         }
         // SCIENT-FORK:START
-        const sectionAction = parseSectionMenuAction(action);
-        if (sectionAction !== null) {
-          if (sectionAction.kind === "new") onRequestNewSection?.(threadRef);
-          else
-            await moveThreadsToSection(
-              [threadRef],
-              sectionAction.kind === "set" ? sectionAction.sectionId : null,
-            );
-          return;
-        }
+        if (await handleSectionMenuAction(action, [threadRef])) return;
         // SCIENT-FORK:END
         const reportFailure = async (
           title: string,
@@ -377,15 +356,14 @@ export function useThreadActionMenu(input: {
       handleNewThread,
       logicalProjectKeyByPhysicalKey,
       markThreadUnread,
-      moveThreadsToSection,
-      onRequestNewSection,
+      handleSectionMenuAction,
       onStartRename,
       pinThread,
       projectCwd,
       projectGroupingSettings,
       projects,
       router,
-      sectionCatalog,
+      sectionMenuFor,
       setThreadAutoSettle,
       settleThread,
       snoozeThread,

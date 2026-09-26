@@ -262,7 +262,7 @@ export const ChatHeader = memo(function ChatHeader({
   const { openMenu, closeMenu } = useThreadActionMenu({
     threadRef: isServerThread ? activeThreadRef : null,
     // SCIENT-FORK:START
-    onRequestNewSection: newSection.requestForThread,
+    onRequestNewSection: newSection.request,
     // SCIENT-FORK:END
     projectCwd: activeProjectCwd,
     onStartRename: startRename,

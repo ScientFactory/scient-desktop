@@ -31,8 +31,10 @@ export interface SidebarThreadHeaderProps {
   hasProjects: boolean;
   /** The project scope combobox, rendered as the first icon of the group. */
   projectScope: ReactNode;
-  // SCIENT-FORK:START — sidebar view options (group by status or section).
-  viewMenu?: ReactNode;
+  // SCIENT-FORK:START — the Status/Sections grouping toggle, and Scient's own
+  // New thread row below this header, which replaces the icon.
+  groupingToggle?: ReactNode;
+  hideNewThreadButton?: boolean;
   // SCIENT-FORK:END
   onNewProject: () => void;
   /** Receives the click so Shift+click can skip the project picker. */
@@ -56,7 +58,8 @@ export function SidebarThreadHeader({
   searchFieldRef,
   hasProjects,
   projectScope,
-  viewMenu,
+  groupingToggle,
+  hideNewThreadButton,
   onNewProject,
   onNewThread,
   newThreadDisabled,
@@ -129,7 +132,7 @@ export function SidebarThreadHeader({
           palettes than on the base light and dark ones. */}
       <div className="flex shrink-0 items-center">
         {/* SCIENT-FORK:START */}
-        {viewMenu}
+        {groupingToggle}
         {/* SCIENT-FORK:END */}
         {hasProjects ? (
           <>
@@ -156,6 +159,8 @@ export function SidebarThreadHeader({
           }
           disabled={newThreadDisabled}
           onClick={onNewThread}
+          // SCIENT-FORK: the `hidden` attribute (display: none) keeps this block intact.
+          hidden={hideNewThreadButton}
         >
           <SquarePenIcon />
         </SidebarHeaderIconButton>

@@ -239,7 +239,7 @@ export const make = Effect.gen(function* () {
       threadPinReorder: true,
       threadActiveReorder: true,
       threadAutoSettleOptOut: true,
-      threadSections: true,
+      threadSections: true, // SCIENT-FORK: thread sections
       threadTitleRegeneration: true,
       threadForkTitleOverride: true,
       threadForkRecovery: true,

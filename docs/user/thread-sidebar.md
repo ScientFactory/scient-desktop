@@ -109,6 +109,11 @@ If dragging is unavailable for one environment, update the Scient server running
 environment. Pinned and active reordering require server support. Threads from older servers keep
 their default order until the server is updated.
 
+## Start a new thread
+
+**New thread**, the row directly below search, starts a thread. With one project it opens right
+away; with more than one, it first asks which project to use.
+
 ## Group threads into sections
 
 On web and desktop, sections let you group related threads by topic, such as **To look at** or

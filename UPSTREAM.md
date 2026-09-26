@@ -496,23 +496,21 @@ than infer deletion from an absent sidebar entry. See the
 [fork maintenance contract](docs/internals/scient-fork-divergence.md) for
 workspace fidelity, lineage links, provider selection, and recovery boundaries.
 
-User-defined thread sections are a Scient divergence layered beside T3's lifecycle
-shelves. Membership is an optional `sectionId` on the thread, written by the
-Scient `thread.section.set` command and advertised by the `threadSections`
-capability. Like `thread.active.reorder`, it emits `thread.meta-updated` with the
-thread's unchanged `updatedAt`, so organizing never reads as activity. Migration
-058 adds `projection_threads.section_id`. The section catalog is the
-`threadSections` entry in the primary environment's server settings, so removing
-an entry leaves thread ids intact for Undo. `threadSectionsGeneralIndex` stores
-where the built-in General group (threads without a section) sits among them. Optional
-empty-section cleanup (`threadSectionsDeleteEmptyAfterDays`, off by default) runs
-in the client while every environment is connected, stamping `emptySince` on
-catalog entries. The Sections view, menus and drop
-planning live under `apps/web/src/scient/sections`; T3 files carry only
-`SCIENT-FORK`-marked mounts. The view reuses T3's row, shelf headers and order-key
-planner rather than forking them, and never changes pin state. If T3 ships its own
-grouping or collapsible shelves, reconcile against these seams rather than layering
-a second grouping. See [Organizing threads](docs/user/thread-sidebar.md#group-threads-into-sections).
+Scient layers two sidebar divergences beside T3's thread list: user-defined
+sections with a Sections view, and a labelled New thread row below search that
+replaces the header's New thread icon. Section membership is an optional
+`sectionId` written by the Scient `thread.section.set` command (advertised by the
+`threadSections` capability); like `thread.active.reorder`, it emits
+`thread.meta-updated` with an unchanged `updatedAt`, so organizing never reads as
+activity. Migration 058 adds `projection_threads.section_id`. The catalog, the
+built-in General group's position and the opt-in empty-section cleanup live in the
+primary environment's server settings. Scient code lives under
+`apps/web/src/scient/sections` and `apps/web/src/scient/sidebar`; upstream files
+carry `SCIENT-FORK`-marked mounts, and only two `Sidebar.tsx` lines change in place.
+The Sections view reuses T3's rows, shelves and order keys and never changes pin
+state. If T3 ships its own grouping or collapsible shelves, reconcile against these
+seams instead of layering a second grouping. Decisions, invariants and the full
+seam list are in [sidebar sections](docs/internals/scient-sidebar-sections.md).
 
 Antigravity reasoning presentation is a narrow client-side divergence. The shared
 `packages/client-runtime/src/antigravityModelPresentation.ts` groups recognized

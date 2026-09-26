@@ -42,8 +42,6 @@ import {
   type EnvironmentMachineKind,
   type ScopedThreadRef,
   type ThreadId,
-  type ThreadSection,
-  type ThreadSectionId,
 } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
@@ -127,7 +125,7 @@ import {
 import { useThreadActions } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
-import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
+import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { useClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
@@ -242,23 +240,10 @@ import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
 // SCIENT-FORK:START
-import { useThreadSectionActions } from "../scient/sections/actions";
-import { useThreadSectionCatalog } from "../scient/sections/catalog";
-import {
-  groupThreadsBySection,
-  sectionLayoutOrder,
-  SidebarViewMode,
-  type SectionsLifecycle,
-} from "../scient/sections/logic";
-import { buildSectionSubmenu, parseSectionMenuAction } from "../scient/sections/menu";
-import {
-  rememberSectionForNewThread,
-  useApplyPendingNewThreadSections,
-} from "../scient/sections/pendingNewThreadSections";
+import type { SectionsLifecycle } from "../scient/sections/logic";
 import { SidebarSectionsView } from "../scient/sections/SidebarSectionsView";
-import { SidebarSectionsToggle } from "../scient/sections/SidebarSectionsToggle";
-import { useEmptySectionCleanup } from "../scient/sections/useEmptySectionCleanup";
-import { useNewSectionForThreads } from "../scient/sections/useNewSectionForThreads";
+import { useSidebarSections } from "../scient/sections/useSidebarSections";
+import { SidebarNewThreadRow } from "../scient/sidebar/SidebarNewThreadRow";
 // SCIENT-FORK:END
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuShortcut, MenuTrigger } from "./ui/menu";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
@@ -279,11 +264,6 @@ const SETTLED_TAIL_PAGE_COUNT = 25;
 // Fresh keys deliberately reset both shelves to collapsed for existing users.
 const SETTLED_SHELF_EXPANDED_KEY = "t3code:sidebar:settled-expanded";
 const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar:snoozed-expanded";
-// SCIENT-FORK:START — thread sections view state.
-const SIDEBAR_VIEW_MODE_KEY = "scient:sidebar:view-mode";
-const COLLAPSED_SECTIONS_KEY = "scient:sidebar:collapsed-sections";
-const CollapsedSectionIds = Schema.Array(Schema.String);
-// SCIENT-FORK:END
 
 function compactSidebarTimeLabel(label: string): string {
   if (label === "just now") return "now";
@@ -2256,33 +2236,6 @@ export default function Sidebar() {
     },
   });
   const newThreadContext = useHandleNewThread();
-  // SCIENT-FORK:START — user-defined thread sections.
-  const sectionCatalog = useThreadSectionCatalog();
-  const { moveThreadsToSection, setThreadSection } = useThreadSectionActions();
-  const newSectionDialog = useNewSectionForThreads();
-  const [sidebarViewMode, setSidebarViewMode] = useLocalStorage(
-    SIDEBAR_VIEW_MODE_KEY,
-    "status" as SidebarViewMode,
-    SidebarViewMode,
-  );
-  const [collapsedSectionIds, setCollapsedSectionIds] = useLocalStorage(
-    COLLAPSED_SECTIONS_KEY,
-    [] as string[],
-    CollapsedSectionIds,
-  );
-  const collapsedSectionIdSet = useMemo(() => new Set(collapsedSectionIds), [collapsedSectionIds]);
-  const toggleSectionCollapsed = useCallback(
-    (groupId: string) =>
-      setCollapsedSectionIds((current) =>
-        current.includes(groupId) ? current.filter((id) => id !== groupId) : [...current, groupId],
-      ),
-    [setCollapsedSectionIds],
-  );
-  const [creatingSection, setCreatingSection] = useState<{
-    readonly threadRefs: readonly ScopedThreadRef[];
-  } | null>(null);
-  const [renamingSectionId, setRenamingSectionId] = useState<string | null>(null);
-  // SCIENT-FORK:END
   const openAddProjectCommandPalette = useCallback(
     () => openCommandPalette({ open: "add-project" }),
     [],
@@ -2838,52 +2791,32 @@ export default function Sidebar() {
     return routeThread === undefined ? EMPTY_THREADS : [routeThread];
   }, [routeThreadKey, snoozedShelfExpanded, snoozedThreads]);
 
-  // SCIENT-FORK:START — the Sections view regroups pinned and active rows.
-  // It needs the primary server to store the catalog; otherwise Status shows.
-  const primarySupportsSections =
-    sectionCatalog.available &&
-    primaryEnvironmentId !== null &&
-    serverConfigs.get(primaryEnvironmentId)?.environment.capabilities.threadSections === true;
-  const sectionsView = sidebarViewMode === "sections" && primarySupportsSections;
-  const sectionGroups = useMemo(
-    () =>
-      groupThreadsBySection({
-        sections: sectionCatalog.sections,
-        generalIndex: sectionCatalog.generalIndex,
-        pinned: pinnedThreads,
-        active: activeThreads,
-      }),
-    [activeThreads, pinnedThreads, sectionCatalog.generalIndex, sectionCatalog.sections],
+  // SCIENT-FORK:START — user-defined sections (see scient/sections).
+  const closeMobileSidebar = useCallback(() => {
+    if (isMobile) setOpenMobile(false);
+  }, [isMobile, setOpenMobile]);
+  const sections = useSidebarSections({
+    threads,
+    pinnedThreads,
+    activeThreads,
+    routeThreadKey,
+    newThreadContext,
+    onBeforeNewThread: closeMobileSidebar,
+  });
+  // Row handlers depend on these stable callbacks, never on `sections` itself.
+  const { handleSectionMenuAction, sectionMenuFor, sectionsView, visibleGroupThreads } = sections;
+  const sectionsOrderedThreads = useMemo(
+    () => [...visibleGroupThreads, ...visibleSnoozedThreads, ...renderedSettledThreads],
+    [renderedSettledThreads, visibleGroupThreads, visibleSnoozedThreads],
   );
-  const orderedThreads = useMemo(
-    () =>
-      sectionsView
-        ? [
-            // A collapsed section still shows the open thread.
-            ...sectionGroups.flatMap((group) =>
-              collapsedSectionIdSet.has(group.id)
-                ? group.threads.filter(
-                    (thread) =>
-                      scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) ===
-                      routeThreadKey,
-                  )
-                : group.threads,
-            ),
-            ...visibleSnoozedThreads,
-            ...renderedSettledThreads,
-          ]
-        : [...pinnedThreads, ...activeThreads, ...visibleSnoozedThreads, ...renderedSettledThreads],
-    [
-      activeThreads,
-      collapsedSectionIdSet,
-      pinnedThreads,
-      renderedSettledThreads,
-      routeThreadKey,
-      sectionGroups,
-      sectionsView,
-      visibleSnoozedThreads,
-    ],
+  // SCIENT-FORK:END
+  // SCIENT-FORK: renamed from orderedThreads; the Sections view swaps in its own order below.
+  const statusOrderedThreads = useMemo(
+    () => [...pinnedThreads, ...activeThreads, ...visibleSnoozedThreads, ...renderedSettledThreads],
+    [activeThreads, pinnedThreads, renderedSettledThreads, visibleSnoozedThreads],
   );
+  // SCIENT-FORK:START
+  const orderedThreads = sectionsView ? sectionsOrderedThreads : statusOrderedThreads;
   // SCIENT-FORK:END
   const orderedThreadKeys = useMemo(
     () =>
@@ -3886,15 +3819,6 @@ export default function Sidebar() {
   );
 
   const removeFromSelection = useThreadSelectionStore((s) => s.removeFromSelection);
-  // SCIENT-FORK:START — "New section…": inline in the Sections view, a dialog elsewhere.
-  const requestNewSection = useCallback(
-    (threadRefs: readonly ScopedThreadRef[]) => {
-      if (sectionsView) setCreatingSection({ threadRefs });
-      else newSectionDialog.request(threadRefs);
-    },
-    [newSectionDialog, sectionsView],
-  );
-  // SCIENT-FORK:END
   const handleMultiSelectContextMenu = useCallback(
     async (position: { x: number; y: number }) => {
       const api = readLocalApi();
@@ -3946,19 +3870,7 @@ export default function Sidebar() {
       });
       const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat);
       // SCIENT-FORK:START
-      const bulkSectionMenu =
-        sectionCatalog.available &&
-        selectedThreads.every(
-          (thread) =>
-            serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSections ===
-            true,
-        )
-          ? buildSectionSubmenu({
-              sections: sectionCatalog.sections,
-              generalIndex: sectionCatalog.generalIndex,
-              currentSectionIds: selectedThreads.map((thread) => thread.sectionId ?? null),
-            })
-          : null;
+      const bulkSectionMenu = sectionMenuFor(selectedThreads);
       // SCIENT-FORK:END
       const clicked = await settlePromise(() =>
         api.contextMenu.show(
@@ -3984,11 +3896,7 @@ export default function Sidebar() {
             // SCIENT-FORK:START
             ...(bulkSectionMenu ? [bulkSectionMenu] : []),
             // SCIENT-FORK:END
-            {
-              id: "mark-unread",
-              label: `Mark unread (${count})`,
-              separatorBefore: bulkSectionMenu !== null,
-            },
+            { id: "mark-unread", label: `Mark unread (${count})` },
             { id: "delete", label: `Delete (${count})`, destructive: true },
           ],
           position,
@@ -3996,18 +3904,11 @@ export default function Sidebar() {
       );
       if (clicked._tag === "Failure") return;
       // SCIENT-FORK:START
-      const sectionAction = clicked.value === null ? null : parseSectionMenuAction(clicked.value);
-      if (sectionAction !== null) {
-        const threadRefs = selectedThreads.map((thread) =>
-          scopeThreadRef(thread.environmentId, thread.id),
-        );
+      const selectedRefs = selectedThreads.map((thread) =>
+        scopeThreadRef(thread.environmentId, thread.id),
+      );
+      if (await handleSectionMenuAction(clicked.value, selectedRefs)) {
         clearSelection();
-        if (sectionAction.kind === "new") requestNewSection(threadRefs);
-        else
-          await moveThreadsToSection(
-            threadRefs,
-            sectionAction.kind === "set" ? sectionAction.sectionId : null,
-          );
         return;
       }
       // SCIENT-FORK:END
@@ -4152,11 +4053,10 @@ export default function Sidebar() {
       confirmThreadDelete,
       deleteThread,
       markThreadUnread,
-      moveThreadsToSection,
+      handleSectionMenuAction,
       performSnooze,
       removeFromSelection,
-      requestNewSection,
-      sectionCatalog,
+      sectionMenuFor,
       serverConfigs,
       updateThreadMetadata,
       timestampFormat,
@@ -4237,16 +4137,7 @@ export default function Sidebar() {
               },
               snoozePresets,
               // SCIENT-FORK:START
-              sectionMenu:
-                sectionCatalog.available &&
-                serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSections ===
-                  true
-                  ? buildSectionSubmenu({
-                      sections: sectionCatalog.sections,
-                      generalIndex: sectionCatalog.generalIndex,
-                      currentSectionIds: [thread.sectionId ?? null],
-                    })
-                  : null,
+              sectionMenu: sectionMenuFor([thread]),
               // SCIENT-FORK:END
             }),
             position,
@@ -4254,16 +4145,7 @@ export default function Sidebar() {
         );
         if (clicked._tag === "Failure") return;
         // SCIENT-FORK:START
-        const sectionAction = clicked.value === null ? null : parseSectionMenuAction(clicked.value);
-        if (sectionAction !== null) {
-          if (sectionAction.kind === "new") requestNewSection([threadRef]);
-          else
-            await moveThreadsToSection(
-              [threadRef],
-              sectionAction.kind === "set" ? sectionAction.sectionId : null,
-            );
-          return;
-        }
+        if (await handleSectionMenuAction(clicked.value, [threadRef])) return;
         // SCIENT-FORK:END
         if (clicked.value?.startsWith("snooze:")) {
           const preset =
@@ -4467,12 +4349,11 @@ export default function Sidebar() {
       deleteThread,
       handleMultiSelectContextMenu,
       markThreadUnread,
-      moveThreadsToSection,
       openProjectSettings,
       projectScopeKey,
       projectByKey,
-      requestNewSection,
-      sectionCatalog,
+      handleSectionMenuAction,
+      sectionMenuFor,
       serverConfigs,
       setProjectScopeKey,
       setThreadAutoSettle,
@@ -4589,178 +4470,7 @@ export default function Sidebar() {
   const showNewThreadInProjectHint = opensNewThreadTargetPicker && projectGroups.length > 0;
   const newThreadInProjectShortcutLabel = shortcutLabelForCommand(keybindings, "chat.newLocal");
 
-  // SCIENT-FORK:START — Sections view handlers and rows.
-  const applyPendingSection = useCallback(
-    (threadRef: ScopedThreadRef, sectionId: ThreadSectionId) => {
-      void setThreadSection(threadRef, sectionId);
-    },
-    [setThreadSection],
-  );
-  useApplyPendingNewThreadSections({ threads, apply: applyPendingSection });
-  useEmptySectionCleanup({
-    threads,
-    allEnvironmentsConnected:
-      environments.length > 0 &&
-      environments.every((environment) => environment.connection.phase === "connected"),
-  });
-  // General (null) starts an ordinary thread; a section files the new thread.
-  const startNewThreadInSection = useCallback(
-    (section: ThreadSection | null) => {
-      const projectRef = resolveThreadActionProjectRef({
-        activeDraftThread: newThreadContext.activeDraftThread,
-        activeThread: newThreadContext.activeThread ?? undefined,
-        defaultProjectRef: newThreadContext.defaultProjectRef,
-        handleNewThread: newThreadContext.handleNewThread,
-      });
-      if (projectRef === null) return;
-      if (isMobile) setOpenMobile(false);
-      void newThreadContext.handleNewThread(projectRef).then((draft) => {
-        if (draft !== null && section !== null) {
-          rememberSectionForNewThread(draft.threadId, section.id);
-        }
-      });
-    },
-    [isMobile, newThreadContext, setOpenMobile],
-  );
-  const submitNewSection = useCallback(
-    async (name: string) => {
-      const threadRefs = creatingSection?.threadRefs ?? [];
-      setCreatingSection(null);
-      const section = await sectionCatalog.create(name);
-      if (section === null) {
-        toastManager.add(stackedThreadToast({ type: "error", title: "Failed to create section" }));
-        return;
-      }
-      setCollapsedSectionIds((current) => current.filter((id) => id !== section.id));
-      if (threadRefs.length > 0) await moveThreadsToSection(threadRefs, section.id);
-    },
-    [creatingSection, moveThreadsToSection, sectionCatalog, setCollapsedSectionIds],
-  );
-  const renameSection = useCallback(
-    (sectionId: string, name: string) => {
-      setRenamingSectionId(null);
-      void sectionCatalog.rename(sectionId, name).then((result) => {
-        if (result === null) {
-          toastManager.add(
-            stackedThreadToast({ type: "error", title: "Failed to rename section" }),
-          );
-        } else if (result.kind === "duplicate") {
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: `A section named “${result.existing.name}” already exists`,
-            }),
-          );
-        }
-      });
-    },
-    [sectionCatalog],
-  );
-  const reorderSections = useCallback(
-    (orderedIds: readonly string[]) => {
-      void sectionCatalog.reorder(orderedIds).then((saved) => {
-        if (!saved) {
-          toastManager.add(
-            stackedThreadToast({ type: "error", title: "Failed to reorder sections" }),
-          );
-        }
-      });
-    },
-    [sectionCatalog],
-  );
-  const deleteSection = useCallback(
-    async (section: ThreadSection) => {
-      const api = readLocalApi();
-      if (!api) return;
-      const memberCount = threads.filter(
-        (thread) => thread.archivedAt === null && thread.sectionId === section.id,
-      ).length;
-      const confirmed = await settlePromise(() =>
-        api.dialogs.confirm(
-          memberCount === 0
-            ? `Delete the section “${section.name}”?`
-            : `Delete the section “${section.name}”?\n\nIts ${memberCount} thread${memberCount === 1 ? "" : "s"} will move to General. No conversations are deleted.`,
-          { variant: "destructive" },
-        ),
-      );
-      if (confirmed._tag === "Failure" || !confirmed.value) return;
-      const removed = await sectionCatalog.remove(section.id);
-      if (removed === null) {
-        toastManager.add(stackedThreadToast({ type: "error", title: "Failed to delete section" }));
-        return;
-      }
-      toastManager.add({
-        type: "success",
-        title: `Deleted section “${section.name}”`,
-        actionProps: {
-          children: "Undo",
-          onClick: () => {
-            void sectionCatalog.restore(removed);
-          },
-        },
-      });
-    },
-    [sectionCatalog, threads],
-  );
-  const openSectionMenu = useCallback(
-    async (section: ThreadSection, position: { x: number; y: number }) => {
-      const api = readLocalApi();
-      if (!api) return;
-      // Moves step over General like any other section.
-      const order = sectionLayoutOrder(sectionCatalog.sections, sectionCatalog.generalIndex);
-      const index = order.indexOf(section.id);
-      const clicked = await settlePromise(() =>
-        api.contextMenu.show(
-          [
-            { id: "new-thread", label: "New thread in section", icon: "message-square-plus" },
-            { id: "rename", label: "Rename section", icon: "pencil", separatorBefore: true },
-            { id: "move-up", label: "Move up", disabled: index <= 0 },
-            {
-              id: "move-down",
-              label: "Move down",
-              disabled: index < 0 || index >= order.length - 1,
-            },
-            {
-              id: "delete",
-              label: "Delete section",
-              icon: "trash",
-              destructive: true,
-              separatorBefore: true,
-            },
-          ],
-          position,
-        ),
-      );
-      if (clicked._tag === "Failure" || clicked.value === null) return;
-      switch (clicked.value) {
-        case "new-thread":
-          startNewThreadInSection(section);
-          return;
-        case "rename":
-          setRenamingSectionId(section.id);
-          return;
-        case "move-up":
-        case "move-down": {
-          const ids = [...order];
-          const target = clicked.value === "move-up" ? index - 1 : index + 1;
-          ids.splice(index, 1);
-          ids.splice(target, 0, section.id);
-          reorderSections(ids);
-          return;
-        }
-        case "delete":
-          await deleteSection(section);
-          return;
-      }
-    },
-    [
-      deleteSection,
-      reorderSections,
-      sectionCatalog.generalIndex,
-      sectionCatalog.sections,
-      startNewThreadInSection,
-    ],
-  );
+  // SCIENT-FORK:START — a Sections view row, rendered like the Status view's.
   const renderSectionsThreadRow = (
     thread: EnvironmentThreadShell,
     lifecycle: SectionsLifecycle,
@@ -4840,17 +4550,8 @@ export default function Sidebar() {
           <SidebarGroup className="z-[1]">
             <SidebarThreadHeader
               // SCIENT-FORK:START
-              viewMenu={
-                primarySupportsSections ? (
-                  <SidebarSectionsToggle
-                    active={sectionsView}
-                    onActiveChange={(active) => {
-                      setCreatingSection(null);
-                      setSidebarViewMode(active ? "sections" : "status");
-                    }}
-                  />
-                ) : null
-              }
+              hideNewThreadButton
+              groupingToggle={sections.toggle}
               // SCIENT-FORK:END
               searchFieldRef={headerSearchRef}
               hasProjects={projectGroups.length > 0}
@@ -5004,6 +4705,15 @@ export default function Sidebar() {
               activeSearchResultIndex={activeSearchResultIndex}
               onClearSearch={clearThreadSearch}
             />
+            {/* SCIENT-FORK:START — New thread gets its own labelled row below search. */}
+            <SidebarNewThreadRow
+              onNewThread={handleNewThreadClick}
+              disabled={projects.length === 0}
+              shortcutLabel={newThreadShortcutLabel}
+              inProjectShortcutLabel={newThreadInProjectShortcutLabel}
+              showInProjectHint={projectGroups.length > 1}
+            />
+            {/* SCIENT-FORK:END */}
           </SidebarGroup>
         }
       >
@@ -5077,7 +4787,8 @@ export default function Sidebar() {
               </p>
             )
           ) : null}
-          {/* SCIENT-FORK:START — group by user-defined section. */}
+          {/* SCIENT-FORK:START — group by user-defined section. The Status list below
+              renders only when not grouped (its condition gains `&& !sectionsView`). */}
           {!isSearchingThreads && sectionsView ? (
             <TooltipProvider
               key="sidebar-section-tooltips-150"
@@ -5086,10 +4797,7 @@ export default function Sidebar() {
               timeout={400}
             >
               <SidebarSectionsView
-                groups={sectionGroups}
-                collapsedGroupIds={collapsedSectionIdSet}
-                routeThreadKey={routeThreadKey}
-                onToggleGroup={toggleSectionCollapsed}
+                {...sections.viewProps}
                 snoozedThreads={visibleSnoozedThreads}
                 settledThreads={renderedSettledThreads}
                 showSnoozedShelf={snoozedThreads.length > 0}
@@ -5129,21 +4837,13 @@ export default function Sidebar() {
                   )
                 }
                 leading={
-                  <>
-                    <SidebarDraftBlock
-                      projectByKey={projectByKey}
-                      projectDisplayNameByKey={projectDisplayNameByKey}
-                      scopedProjectKeys={scopedProjectKeys}
-                      routeDraftId={routeDraftIdForRows}
-                      onNavigateToDraft={navigateToDraft}
-                    />
-                    {sectionCatalog.sections.length === 0 && creatingSection === null ? (
-                      <li className="list-none px-2 pb-2 text-xs text-sidebar-muted-foreground">
-                        Group related threads into sections. Right-click a thread and choose
-                        Section, or use New section below.
-                      </li>
-                    ) : null}
-                  </>
+                  <SidebarDraftBlock
+                    projectByKey={projectByKey}
+                    projectDisplayNameByKey={projectDisplayNameByKey}
+                    scopedProjectKeys={scopedProjectKeys}
+                    routeDraftId={routeDraftIdForRows}
+                    onNavigateToDraft={navigateToDraft}
+                  />
                 }
                 trailing={
                   settledShelfExpanded && hiddenSettledCount > 0 ? (
@@ -5160,15 +4860,6 @@ export default function Sidebar() {
                   ) : null
                 }
                 onSettleThread={attemptSettle}
-                onReorderSections={reorderSections}
-                onSectionMenu={(section, position) => void openSectionMenu(section, position)}
-                onNewThreadInSection={startNewThreadInSection}
-                renamingSectionId={renamingSectionId}
-                onRenamingSectionChange={setRenamingSectionId}
-                onRenameSection={renameSection}
-                creatingSection={creatingSection === null ? null : { onSubmit: submitNewSection }}
-                onStartCreateSection={() => setCreatingSection({ threadRefs: [] })}
-                onCancelCreateSection={() => setCreatingSection(null)}
               />
             </TooltipProvider>
           ) : null}
@@ -5499,7 +5190,7 @@ export default function Sidebar() {
       </SidebarContent>
       <SidebarChromeFooter />
       {/* SCIENT-FORK:START */}
-      {newSectionDialog.dialog}
+      {sections.dialog}
       {/* SCIENT-FORK:END */}
     </>
   );

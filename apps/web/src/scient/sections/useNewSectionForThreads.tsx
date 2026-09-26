@@ -11,7 +11,6 @@ import { NewSectionDialog } from "./NewSectionDialog";
  */
 export function useNewSectionForThreads(): {
   readonly request: (threadRefs: readonly ScopedThreadRef[]) => void;
-  readonly requestForThread: (threadRef: ScopedThreadRef) => void;
   readonly dialog: ReactNode;
 } {
   const catalog = useThreadSectionCatalog();
@@ -22,10 +21,6 @@ export function useNewSectionForThreads(): {
   const request = useCallback((threadRefs: readonly ScopedThreadRef[]) => {
     setRequestKey((key) => key + 1);
     setPending(threadRefs);
-  }, []);
-  const requestForThread = useCallback((threadRef: ScopedThreadRef) => {
-    setRequestKey((key) => key + 1);
-    setPending([threadRef]);
   }, []);
 
   const submit = useCallback(
@@ -42,7 +37,6 @@ export function useNewSectionForThreads(): {
 
   return {
     request,
-    requestForThread,
     dialog: (
       <NewSectionDialog
         open={pending !== null}

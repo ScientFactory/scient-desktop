@@ -660,7 +660,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             pinOrderKey: null,
             activeOrderKey: null,
             autoSettleDisabledAt: null,
-            sectionId: null,
+            sectionId: null, // SCIENT-FORK: thread sections
             titleRegenerationRequestId: null,
             titleRegenerationStartedAt: null,
             latestUserMessageAt: null,
@@ -887,6 +887,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ...(event.payload.worktreePath !== undefined
               ? { worktreePath: event.payload.worktreePath }
               : {}),
+            // SCIENT-FORK: thread sections
             ...(event.payload.sectionId !== undefined
               ? { sectionId: event.payload.sectionId }
               : {}),
