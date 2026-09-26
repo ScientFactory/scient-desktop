@@ -117,6 +117,7 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Scient typography profile](./internals/scient-typography.md)
 - [Scient math rendering](./internals/scient-math.md)
 - [Scient rich Markdown editor](./internals/scient-rich-markdown-editor.md)
+  - [Document editing foundation (proposal)](./internals/scient-document-editing.md)
   - [Shared keyboard ownership and authoring settings](./internals/scient-keyboard.md)
 - [Scient rich chat diagrams](./internals/scient-chat-diagrams.md)
 - [Scient inline workspace images](./internals/scient-chat-images.md)
