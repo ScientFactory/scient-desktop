@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 import { afterEach, assert, describe, it } from "vite-plus/test";
 
 import {
+  developmentLauncherIsActive,
   findOwnedDevelopmentChildProcess,
   findOwnedDevelopmentProcesses,
   makeMacDevelopmentAppLaunchCommand,
@@ -125,6 +126,17 @@ describe("macOS development app process ownership", () => {
         { pid: 101, command: commandPrefix },
         { pid: 102, command: `${commandPrefix} --remote-debugging-port=9000` },
       ],
+    );
+  });
+
+  it("treats a launcher terminated by a signal as no longer active", () => {
+    assert.isTrue(developmentLauncherIsActive({ pid: 7654, exitCode: null, signalCode: null }));
+    assert.isFalse(developmentLauncherIsActive({ pid: 7654, exitCode: 0, signalCode: null }));
+    assert.isFalse(
+      developmentLauncherIsActive({ pid: 7654, exitCode: null, signalCode: "SIGINT" }),
+    );
+    assert.isFalse(
+      developmentLauncherIsActive({ pid: undefined, exitCode: null, signalCode: null }),
     );
   });
 

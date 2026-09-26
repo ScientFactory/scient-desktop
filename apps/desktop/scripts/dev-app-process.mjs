@@ -206,3 +206,13 @@ export function removeDevelopmentLaunchFiles(...filePaths) {
     if (filePath) NodeFS.rmSync(filePath, { force: true });
   }
 }
+
+// A launcher terminated by a signal keeps exitCode null and sets signalCode,
+// so exitCode alone would report it as still running forever.
+export function developmentLauncherIsActive(launcher) {
+  return (
+    typeof launcher.pid === "number" &&
+    launcher.exitCode === null &&
+    (launcher.signalCode === null || launcher.signalCode === undefined)
+  );
+}

@@ -9,6 +9,7 @@ import {
   resolveElectronLaunchCommand,
 } from "./electron-launcher.mjs";
 import {
+  developmentLauncherIsActive,
   findOwnedDevelopmentProcesses,
   inspectProcessCommand,
   makeMacDevelopmentAppLaunchCommand,
@@ -177,7 +178,7 @@ async function waitForManagedProcessesToExit(app, timeoutMs) {
       !ownedBackend &&
       ownedApps.length === 0 &&
       ownedBackends.length === 0 &&
-      app.launcher.exitCode !== null
+      !developmentLauncherIsActive(app.launcher)
     )
       return true;
     await new Promise((resolve) => setTimeout(resolve, 50));
@@ -348,7 +349,7 @@ async function stopApp() {
     if (!(await waitForManagedProcessesToExit(app, forcedShutdownTimeoutMs))) {
       signalOwnedProcesses(app.mainCommandPrefix, "SIGKILL");
       signalOwnedProcesses(app.backendCommandPrefix, "SIGKILL");
-      if (app.launcher.exitCode === null) app.launcher.kill("SIGKILL");
+      if (developmentLauncherIsActive(app.launcher)) app.launcher.kill("SIGKILL");
       await waitForManagedProcessesToExit(app, 2_000);
     }
     cleanupLaunchFiles(app);
@@ -376,7 +377,7 @@ async function stopApp() {
         return;
       }
 
-      if (app.launcher.exitCode === null) app.launcher.kill("SIGKILL");
+      if (developmentLauncherIsActive(app.launcher)) app.launcher.kill("SIGKILL");
       signalCapturedBackend(app, "SIGKILL");
       finish();
     }, forcedShutdownTimeoutMs).unref();
