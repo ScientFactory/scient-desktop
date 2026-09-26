@@ -302,11 +302,22 @@ export function makeForkBoundaryResolver(sql: SqlClient.SqlClient) {
           detail: `Turn '${input.sourceRunningTurnId}' of origin thread '${input.originThreadId}' has already completed; fork its response instead.`,
         });
       }
+      const turnRequests = yield* listForkTurnRowsByThread({
+        threadId: input.originThreadId,
+      }).pipe(
+        Effect.mapError(
+          toPersistenceSqlError("ForkBoundaryResolver.resolve:listForkTurnRowsByThread"),
+        ),
+      );
       return {
         originThreadId: input.originThreadId,
         forkPoint: { kind: "running-turn", turnId: input.sourceRunningTurnId },
         boundaries,
         selectedBoundary,
+        turnRequests: turnRequests.map((turn) => ({
+          turnId: turn.turnId,
+          userMessageId: turn.userMessageId,
+        })),
       } satisfies ResolvedForkBoundaries;
     }
     const sourceAssistantMessageId =

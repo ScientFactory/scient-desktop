@@ -366,6 +366,9 @@ export function selectHistory(input: {
   const reattach = (item: HandoffItem) => {
     for (const attachment of item.attachments.toReversed()) {
       if (reattached.has(attachment.id)) continue;
+      // Captured-window images add their accessibility text to the user's own
+      // input limit on dispatch; they are named in the history instead.
+      if ("source" in attachment && attachment.source !== undefined) continue;
       const cost = attachmentAllowance(attachment);
       if (cost > remaining) continue;
       if (getProviderAttachmentLimitError([...reattached.values(), attachment])) continue;

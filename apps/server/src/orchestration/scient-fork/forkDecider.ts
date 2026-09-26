@@ -52,7 +52,11 @@ import { OrchestrationCommandInvariantError } from "../Errors.ts";
 import { requireThread, requireThreadAbsent } from "../commandInvariants.ts";
 import type { ResolvedForkBoundaries } from "./forkBoundaryTypes.ts";
 import { retainQuestionAnswers, questionAnswerAttachments } from "./retainedQuestionAnswers.ts";
-import { capForkActivityPayload, isForkCopiedActivity } from "./forkActivityCopy.ts";
+import {
+  capForkActivityPayload,
+  isForkCopiedActivity,
+  withoutOriginSequence,
+} from "./forkActivityCopy.ts";
 import { collectForkLiveTail, type ForkLiveTail } from "./forkLiveTail.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -174,6 +178,23 @@ export function retainPrefixMessages(
   return {
     messages: messages.filter((message) => retainedMessageIds.has(message.id)),
     sourceTurnIdByMessageId,
+  };
+}
+
+/** Composer context records name attachments by id; point them at the fork's copies. */
+function remapContextAttachments(
+  context: OrchestrationMessage["context"],
+  attachmentRemap: ReadonlyMap<string, ChatAttachment>,
+): OrchestrationMessage["context"] {
+  if (context === undefined) return undefined;
+  return {
+    ...context,
+    records: context.records.map((record) => {
+      const attachmentId = (record as { readonly attachmentId?: unknown }).attachmentId;
+      const target =
+        typeof attachmentId === "string" ? attachmentRemap.get(attachmentId) : undefined;
+      return target === undefined ? record : { ...record, attachmentId: target.id };
+    }),
   };
 }
 
@@ -337,8 +358,22 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
       ? collectForkLiveTail({
           origin,
           retainedMessageIds: new Set(prefixMessages.map((message) => message.id)),
+          retainedTurnIds,
           runningTurnId: forkPoint.turnId,
+          turnRequests: resolvedBoundaries.turnRequests ?? [],
         })
+      : null;
+  // The running turn becomes the fork's baseline only once it produced answer
+  // text; until then the baseline stays the last completed turn, so the fork
+  // never records a turn without a response as a completed one.
+  const liveBaselineTurnId =
+    liveTail !== null &&
+    liveTail.messages.some(
+      (message) =>
+        message.role === "assistant" &&
+        liveTail.turnIdByMessageId.get(message.id) === liveTail.runningTurnId,
+    )
+      ? liveTail.runningTurnId
       : null;
   const retainedAnswers = retainQuestionAnswers(
     origin.activities,
@@ -445,7 +480,7 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
     if (existing !== undefined) return existing;
     // The fork's baseline is the newest inherited turn: the running turn for a
     // running-turn fork, otherwise the selected completed boundary.
-    const baselineSourceTurnId = liveTail?.runningTurnId ?? selectedBoundary.turnId;
+    const baselineSourceTurnId = liveBaselineTurnId ?? selectedBoundary.turnId;
     const importedTurnId =
       sourceTurnId !== null && sourceTurnId === baselineSourceTurnId
         ? baselineTurnId
@@ -499,7 +534,9 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
           : {}),
         // Composer context (selected diffs, comments, terminal output) is
         // part of what the user sent; the fork keeps it with the message.
-        ...(message.context !== undefined ? { context: message.context } : {}),
+        ...(message.context !== undefined
+          ? { context: remapContextAttachments(message.context, attachmentRemap)! }
+          : {}),
         turnId: importedTurnId,
         streaming: false,
         createdAt: message.createdAt,
@@ -520,16 +557,16 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
       yield* Crypto.Crypto.pipe(Effect.flatMap((crypto) => crypto.randomUUIDv4)),
     );
     messageIdRemap.set(message.id, messageId);
-    // A request that has not been bound to a turn yet belongs to the running turn.
-    const sourceTurnId = message.turnId ?? liveTail!.runningTurnId;
+    const sourceTurnId = liveTail!.turnIdByMessageId.get(message.id) ?? liveTail!.runningTurnId;
     const importedTurnId = yield* importedTurnIdFor(sourceTurnId, sourceTurnId);
     const turnMessages = liveTurnMessages.get(sourceTurnId) ?? { user: null, assistant: null };
+    const isBaselineTurn = sourceTurnId === liveBaselineTurnId;
     if (message.role === "user") {
-      baselineUserMessageId = messageId;
+      if (isBaselineTurn) baselineUserMessageId = messageId;
       turnMessages.user = messageId;
     }
     if (message.role === "assistant") {
-      baselineAssistantMessageId = messageId;
+      if (isBaselineTurn) baselineAssistantMessageId = messageId;
       turnMessages.assistant = messageId;
     }
     liveTurnMessages.set(sourceTurnId, turnMessages);
@@ -553,7 +590,9 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
               ),
             }
           : {}),
-        ...(message.context !== undefined ? { context: message.context } : {}),
+        ...(message.context !== undefined
+          ? { context: remapContextAttachments(message.context, attachmentRemap)! }
+          : {}),
         turnId: importedTurnId,
         streaming: false,
         createdAt: message.createdAt,
@@ -589,7 +628,7 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
       payload: {
         threadId: command.newThreadId,
         activity: {
-          ...activity,
+          ...withoutOriginSequence(activity),
           id,
           turnId,
           payload: {
@@ -624,7 +663,7 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
       payload: {
         threadId: command.newThreadId,
         activity: {
-          ...activity,
+          ...withoutOriginSequence(activity),
           id: EventId.make(
             yield* Crypto.Crypto.pipe(Effect.flatMap((crypto) => crypto.randomUUIDv4)),
           ),
@@ -654,7 +693,12 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
       type: "thread.activity-appended",
       payload: {
         threadId: command.newThreadId,
-        activity: { ...activity, id, turnId, payload: capForkActivityPayload(activity.payload) },
+        activity: {
+          ...withoutOriginSequence(activity),
+          id,
+          turnId,
+          payload: capForkActivityPayload(activity.payload),
+        },
       },
     });
   }

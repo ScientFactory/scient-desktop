@@ -141,6 +141,7 @@ it.layer(layer)("ScientForkContextDelivery", (it) => {
         threadId: FORK,
         handoffId: context.handoffId,
         messageId: current.id,
+        nativeThreadKey: null,
         includedItemCount: context.includedItemCount,
         omittedItemCount: context.omittedItemCount,
         budgetTokens: context.budgetTokens,
@@ -230,6 +231,33 @@ it.layer(layer)("ScientForkContextDelivery", (it) => {
       yield* recordProviderTurn("provider-turn-1", 1);
       const next = yield* prepare({ nativeThreadKey: "codex:thread-a" });
       assert.strictEqual(next.kind, "none");
+    }),
+  );
+
+  it.effect("evidence found on a replaced provider thread does not count as delivered", () =>
+    Effect.gen(function* () {
+      const sql = yield* reset;
+      const first = yield* prepare({ nativeThreadKey: "codex:thread-a" });
+      if (first.kind !== "deliver") return assert.fail("expected a delivery");
+      const delivery = yield* ScientForkContextDelivery;
+      yield* delivery.beginDelivery({
+        threadId: FORK,
+        handoffId: first.handoffId,
+        messageId: current.id,
+        nativeThreadKey: "codex:thread-a",
+        includedItemCount: first.includedItemCount,
+        omittedItemCount: first.omittedItemCount,
+        budgetTokens: first.budgetTokens,
+      });
+      yield* settle(first.handoffId, { type: "maybeDelivered" });
+      yield* recordProviderTurn("provider-turn-1", 1);
+      // After a restart, Codex resumed into a different thread that never got it.
+      const next = yield* prepare({ nativeThreadKey: "codex:thread-b" });
+      assert.strictEqual(next.kind, "deliver");
+      const rows = yield* sql<{ readonly delivery_status: string }>`
+        SELECT delivery_status FROM scient_context_handoffs WHERE handoff_id = ${first.handoffId}
+      `;
+      assert.strictEqual(rows[0]?.delivery_status, "superseded");
     }),
   );
 

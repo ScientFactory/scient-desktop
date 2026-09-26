@@ -11542,7 +11542,15 @@ function ChatViewContent(props: ChatViewProps) {
           forkPreview?.options && (forkRecoverySupported || forkPreview.locked)
             ? forkPreview.options.newWorktree
               ? { available: true }
-              : { available: false, reason: "no-checkpoint" }
+              : {
+                  available: false,
+                  // A running-turn fork snapshots files, so only a missing
+                  // Git repository can rule a new worktree out.
+                  reason:
+                    forkCommandTarget?.kind === "running-turn"
+                      ? "no-git-repository"
+                      : "no-checkpoint",
+                }
             : forkWorktreeAvailability
         }
         checking={forkPreview?.checking ?? true}

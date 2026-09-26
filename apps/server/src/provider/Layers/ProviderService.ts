@@ -1612,15 +1612,22 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         const adapter = yield* registry.getByInstance(resolvedInstanceId);
         yield* clearTurnAnalyticsSession(resolvedInstanceId, threadId);
         yield* prepareMcpSession(threadId, resolvedInstanceId, adapter);
-        // SCIENT-FORK: a native fork applies only to a brand-new provider thread
-        // of an adapter that declares it; resuming always wins.
+        // SCIENT-FORK: a native fork is honoured or rejected, never silently
+        // dropped: success must mean the new provider thread is the fork. It
+        // applies only to a brand-new thread of an adapter that declares it.
         const { forkFrom, ...startInput } = input;
-        const nativeFork =
+        if (
           forkFrom !== undefined &&
-          effectiveResumeCursor === undefined &&
-          adapter.capabilities.nativeFork === true
-            ? { forkFrom }
-            : {};
+          (effectiveResumeCursor != null || adapter.capabilities.nativeFork !== true)
+        ) {
+          return yield* toValidationError(
+            "ProviderService.startSession",
+            effectiveResumeCursor != null
+              ? "A native fork needs a new provider thread, but this thread already has one."
+              : `Provider '${adapter.provider}' cannot fork a conversation natively.`,
+          );
+        }
+        const nativeFork = forkFrom !== undefined ? { forkFrom } : {};
         const session = yield* adapter
           .startSession({
             ...startInput,

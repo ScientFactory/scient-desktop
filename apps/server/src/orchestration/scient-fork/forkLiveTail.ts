@@ -28,6 +28,8 @@ export interface ForkLiveTail {
   readonly runningTurnId: TurnId;
   /** Messages after the retained prefix, in timeline order. */
   readonly messages: ReadonlyArray<OrchestrationMessage>;
+  /** The source turn each tail message belongs to. */
+  readonly turnIdByMessageId: ReadonlyMap<string, string>;
   /** Source ids of messages still streaming at the cut. */
   readonly partialMessageIds: ReadonlySet<string>;
   /** Source turn ids the tail spans (the running turn and any unfinished ones). */
@@ -41,6 +43,8 @@ export interface ForkLiveTail {
 
 const FILE_KEYS = new Set(["path", "file_path", "filePath", "filename"]);
 const MAX_TOUCHED_FILES = 50;
+const MAX_PENDING_REQUESTS = 20;
+const MAX_REQUEST_SUMMARY_CHARS = 300;
 const TOOL_KINDS = new Set(["tool.started", "tool.updated", "tool.completed", "tool.denied"]);
 
 const payloadRecord = (activity: OrchestrationThreadActivity) =>
@@ -80,7 +84,14 @@ function collectFilePaths(value: unknown, into: Set<string>, depth = 0): void {
 export function collectForkLiveTail(input: {
   readonly origin: Pick<OrchestrationThread, "messages" | "activities">;
   readonly retainedMessageIds: ReadonlySet<string>;
+  /** Completed turns already copied with the prefix; their work log is copied there. */
+  readonly retainedTurnIds: ReadonlySet<string>;
   readonly runningTurnId: TurnId;
+  /** User requests are stored without a turn; this binds each to the turn it started. */
+  readonly turnRequests: ReadonlyArray<{
+    readonly turnId: TurnId;
+    readonly userMessageId: string | null;
+  }>;
 }): ForkLiveTail {
   const lastRetainedIndex = input.origin.messages.findLastIndex((message) =>
     input.retainedMessageIds.has(message.id),
@@ -88,8 +99,22 @@ export function collectForkLiveTail(input: {
   const messages = input.origin.messages
     .slice(lastRetainedIndex + 1)
     .filter((message) => message.role !== "system" && !input.retainedMessageIds.has(message.id));
+  const turnByRequest = new Map(
+    input.turnRequests.flatMap((turn) =>
+      turn.userMessageId === null ? [] : [[turn.userMessageId, turn.turnId] as const],
+    ),
+  );
+  // A request the provider has not bound to a turn yet belongs to the running turn.
+  const turnIdByMessageId = new Map(
+    messages.map((message) => [
+      message.id,
+      message.turnId ?? turnByRequest.get(message.id) ?? input.runningTurnId,
+    ]),
+  );
   const turnIds = new Set<string>([input.runningTurnId]);
-  for (const message of messages) if (message.turnId !== null) turnIds.add(message.turnId);
+  for (const turnId of turnIdByMessageId.values()) {
+    if (!input.retainedTurnIds.has(turnId)) turnIds.add(turnId);
+  }
 
   const tailActivities = input.origin.activities.filter(
     (activity) => activity.turnId !== null && turnIds.has(activity.turnId),
@@ -130,7 +155,8 @@ export function collectForkLiveTail(input: {
         (activity.kind === "approval.requested" || activity.kind === "user-input.requested") &&
         !resolvedRequests.has(requestIdOf(activity) ?? ""),
     )
-    .map((activity) => activity.summary);
+    .map((activity) => activity.summary.slice(0, MAX_REQUEST_SUMMARY_CHARS))
+    .slice(0, MAX_PENDING_REQUESTS);
 
   const touchedFiles = new Set<string>();
   for (const activity of tailActivities) {
@@ -141,6 +167,7 @@ export function collectForkLiveTail(input: {
   return {
     runningTurnId: input.runningTurnId,
     messages,
+    turnIdByMessageId,
     partialMessageIds: new Set(
       messages.filter((message) => message.streaming).map((message) => message.id),
     ),

@@ -44,6 +44,7 @@ import {
 import { decideOrchestrationCommand } from "../decider.ts";
 import { withForkOriginDetail } from "../scient-fork/forkDecisionReadModel.ts";
 import { forkNotReadyDetail, getForkStatus } from "../scient-fork/forkRepository.ts";
+import { FORK_HYDRATION_ACTIVITY_KINDS } from "../scient-fork/forkActivityCopy.ts";
 import { makeForkBoundaryResolver } from "../scient-fork/ForkBoundaryReadModel.ts";
 import type { ResolvedForkBoundaries } from "../scient-fork/forkBoundaryTypes.ts";
 import { createEmptyReadModel, projectEvent } from "../projector.ts";
@@ -227,6 +228,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           }
           const originOption = yield* projectionSnapshotQuery.getThreadDetailById(
             envelope.command.originThreadId,
+            { activityKinds: [...FORK_HYDRATION_ACTIVITY_KINDS] },
           );
           if (Option.isNone(originOption)) {
             return yield* new OrchestrationCommandInvariantError({

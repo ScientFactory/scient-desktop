@@ -617,6 +617,24 @@ describe("ScientForkReactor", () => {
     }).pipe(Effect.provide(makeHarnessLayer([], []))),
   );
 
+  it.live("keeps a local fork whose origin turn was replaced before setup", () =>
+    Effect.gen(function* () {
+      const reactor = yield* ScientForkReactor;
+      const sql = yield* SqlClient.SqlClient;
+      yield* seedOrigin();
+      yield* dispatchFork("local", "cmd-fork-local-origin-replaced");
+      yield* sql`
+        UPDATE projection_turns SET turn_id = 'origin-turn-rerun'
+        WHERE thread_id = ${ORIGIN} AND checkpoint_turn_count = ${FORK_AT_TURN}
+      `;
+      // A shared workspace copies no historical checkpoint, so it is unaffected.
+      yield* reactor.awaitCompletion(NEW);
+      yield* reactor.drain;
+      expect(yield* reactor.getDisposition(NEW)).toBe("ready");
+      expect((yield* readLineageRow(sql))?.last_error).toBeNull();
+    }).pipe(Effect.provide(makeHarnessLayer([], []))),
+  );
+
   it.live("abandons a fork deleted while it was being set up", () =>
     Effect.gen(function* () {
       const reactor = yield* ScientForkReactor;
@@ -731,6 +749,8 @@ describe("ScientForkReactor", () => {
     }).pipe(
       Effect.provide(
         makeHarnessLayer([], createWorktreeCalls, true, undefined, {
+          // No snapshot exists yet: the first attempt captures the workspace.
+          hasCheckpoint: () => Effect.succeed(false),
           capture: (input) =>
             Effect.sync(() => {
               captureCalls.push(input);

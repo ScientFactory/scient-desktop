@@ -1744,4 +1744,149 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
       );
     }),
   );
+
+  it.effect("binds an interrupted request to its own turn in a running-turn fork", () =>
+    Effect.gen(function* () {
+      const base = makeOriginThread();
+      const T_INT = TurnId.make("turn-interrupted");
+      const T_RUN = TurnId.make("turn-running");
+      const origin = makeOriginThread({
+        messages: [
+          ...base.messages.slice(0, 2),
+          message({
+            id: "user-interrupted",
+            role: "user",
+            text: "first try",
+            turnId: null,
+            createdAt: "2026-01-01T00:00:03.000Z",
+          }),
+          message({
+            id: "assistant-interrupted",
+            role: "assistant",
+            text: "partial before stop",
+            turnId: "turn-interrupted",
+            createdAt: "2026-01-01T00:00:03.500Z",
+          }),
+          message({
+            id: "user-running",
+            role: "user",
+            text: "second try",
+            turnId: null,
+            createdAt: "2026-01-01T00:00:04.000Z",
+          }),
+          message({
+            id: "reasoning-running",
+            role: "reasoning",
+            text: "thinking",
+            turnId: "turn-running",
+            createdAt: "2026-01-01T00:00:04.500Z",
+            streaming: true,
+          }),
+        ],
+        activities: [
+          {
+            id: EventId.make("legacy-sequenced"),
+            tone: "tool",
+            kind: "tool.completed",
+            summary: "old tool",
+            payload: { toolCallId: "call-old" },
+            turnId: TurnId.make("turn-1"),
+            sequence: 99,
+            createdAt: NOW,
+          },
+        ],
+        latestTurn: {
+          turnId: T_RUN,
+          state: "running",
+          requestedAt: NOW,
+          startedAt: NOW,
+          completedAt: null,
+          assistantMessageId: null,
+        },
+        session: { ...IDLE_SESSION, status: "running", activeTurnId: T_RUN },
+      });
+      const completed = boundaries.slice(0, 2);
+      const events = yield* forkThreadAuthoritative({
+        command: forkCommand({ sourceAssistantMessageId: undefined, sourceRunningTurnId: T_RUN }),
+        readModel: makeReadModel({ origin }),
+        resolvedBoundaries: {
+          originThreadId: ORIGIN,
+          forkPoint: { kind: "running-turn", turnId: T_RUN },
+          boundaries: completed,
+          selectedBoundary: completed[1]!,
+          turnRequests: [
+            { turnId: TurnId.make("turn-1"), userMessageId: MessageId.make("user-1") },
+            { turnId: T_INT, userMessageId: MessageId.make("user-interrupted") },
+          ],
+        },
+      });
+      const sent = events.flatMap((event) =>
+        event.type === "thread.message-sent" ? [event.payload] : [],
+      );
+      const turnOf = (text: string) => sent.find((entry) => entry.text === text)?.turnId;
+      // The interrupted request stays with the answer it produced.
+      expect(turnOf("first try")).toBe(turnOf("partial before stop"));
+      expect(turnOf("second try")).toBe(turnOf("thinking"));
+      expect(turnOf("first try")).not.toBe(turnOf("second try"));
+
+      const forked = events.find((event) => event.type === "thread.forked");
+      if (forked?.type !== "thread.forked") return expect.unreachable();
+      // No answer text in the running turn yet: the baseline stays the last
+      // completed turn, and the interrupted turn's boundary follows it in order.
+      expect(forked.payload.baselineTurnId).toBe(turnOf("first answer"));
+      expect(forked.payload.copiedBoundaries.map((boundary) => boundary.turnId)).toEqual([
+        turnOf("first answer"),
+        turnOf("partial before stop"),
+      ]);
+      // Copied activities are ordered in the fork, never by origin sequence.
+      const copied = events.flatMap((event) =>
+        event.type === "thread.activity-appended" ? [event.payload.activity] : [],
+      );
+      expect(copied).toHaveLength(1);
+      expect(copied[0]).not.toHaveProperty("sequence");
+    }),
+  );
+
+  it.effect("points copied composer context at the fork's own attachment copies", () =>
+    Effect.gen(function* () {
+      const base = makeOriginThread();
+      const image = {
+        type: "image" as const,
+        id: "origin-image-1",
+        name: "plot.png",
+        mimeType: "image/png",
+        sizeBytes: 10,
+      };
+      const origin = makeOriginThread({
+        messages: base.messages.map((entry) =>
+          entry.id === MessageId.make("user-2")
+            ? {
+                ...entry,
+                attachments: [image],
+                context: {
+                  version: 1 as const,
+                  records: [{ kind: "image", contextId: "ctx-1", attachmentId: "origin-image-1" }],
+                } as unknown as OrchestrationMessage["context"],
+              }
+            : entry,
+        ),
+      });
+      const events = yield* forkThreadForTest({
+        command: forkCommand({ sourceAssistantMessageId: A2 }),
+        readModel: makeReadModel({ origin }),
+      });
+      const prompt = events.flatMap((event) =>
+        event.type === "thread.message-sent" && event.payload.text === "second prompt"
+          ? [event.payload]
+          : [],
+      )[0];
+      const copiedImageId = prompt?.attachments?.[0]?.id;
+      expect(copiedImageId).toBeDefined();
+      expect(copiedImageId).not.toBe("origin-image-1");
+      expect(
+        (prompt?.context?.records[0] as { readonly attachmentId?: string } | undefined)
+          ?.attachmentId,
+      ).toBe(copiedImageId);
+    }),
+  );
 });

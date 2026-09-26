@@ -80,6 +80,37 @@ export default Effect.gen(function* () {
     yield* sql`ALTER TABLE scient_thread_lineage ADD COLUMN mid_turn_cut_json TEXT`;
   }
 
+  // Explicit inherited turns for existing forks: every copied boundary turn
+  // plus the baseline turn. Newer forks record the full set at fork time.
+  const lineageColumnNames = new Set(
+    (yield* sql<{ readonly name: string }>`PRAGMA table_info(scient_thread_lineage)`).map(
+      (column) => column.name,
+    ),
+  );
+  const lineageRows = !(
+    lineageColumnNames.has("baseline_turn_id") && lineageColumnNames.has("copied_boundaries_json")
+  )
+    ? []
+    : yield* sql<{
+        readonly thread_id: string;
+        readonly baseline_turn_id: string | null;
+        readonly copied_boundaries_json: string;
+      }>`
+    SELECT thread_id, baseline_turn_id, copied_boundaries_json
+    FROM scient_thread_lineage
+    WHERE inherited_turn_ids_json = '[]'
+  `;
+  for (const row of lineageRows) {
+    const turnIds = new Set<string>();
+    if (row.baseline_turn_id !== null) turnIds.add(row.baseline_turn_id);
+    for (const turnId of copiedBoundaryTurnIds(row.copied_boundaries_json)) turnIds.add(turnId);
+    if (turnIds.size === 0) continue;
+    yield* sql`
+      UPDATE scient_thread_lineage
+      SET inherited_turn_ids_json = ${encodeTurnIdList([...turnIds])}
+      WHERE thread_id = ${row.thread_id}
+    `;
+  }
   // Backfill only from a complete lineage table; a partial development schema
   // has no delivery state to carry over.
   const lineageColumns = new Set(
@@ -162,29 +193,6 @@ export default Effect.gen(function* () {
     FROM scient_thread_lineage
     WHERE provider_bootstrap_status IN ('completed', 'sending', 'ambiguous')
   `;
-
-  // Explicit inherited turns for existing forks: every copied boundary turn
-  // plus the baseline turn. Newer forks record the full set at fork time.
-  const lineageRows = yield* sql<{
-    readonly thread_id: string;
-    readonly baseline_turn_id: string | null;
-    readonly copied_boundaries_json: string;
-  }>`
-    SELECT thread_id, baseline_turn_id, copied_boundaries_json
-    FROM scient_thread_lineage
-    WHERE inherited_turn_ids_json = '[]'
-  `;
-  for (const row of lineageRows) {
-    const turnIds = new Set<string>();
-    if (row.baseline_turn_id !== null) turnIds.add(row.baseline_turn_id);
-    for (const turnId of copiedBoundaryTurnIds(row.copied_boundaries_json)) turnIds.add(turnId);
-    if (turnIds.size === 0) continue;
-    yield* sql`
-      UPDATE scient_thread_lineage
-      SET inherited_turn_ids_json = ${encodeTurnIdList([...turnIds])}
-      WHERE thread_id = ${row.thread_id}
-    `;
-  }
 });
 
 function copiedBoundaryTurnIds(json: string): ReadonlyArray<string> {

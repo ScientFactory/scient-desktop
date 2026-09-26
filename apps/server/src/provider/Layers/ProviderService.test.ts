@@ -5058,6 +5058,31 @@ validation.layer("ProviderServiceLive validation", (it) => {
     }),
   );
 
+  it.effect("rejects a native fork for a thread that already has a provider thread", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-native-fork-existing");
+      yield* provider.startSession(threadId, {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* provider.stopSession({ threadId });
+      const failure = yield* provider
+        .startSession(threadId, {
+          provider: ProviderDriverKind.make("codex"),
+          providerInstanceId: codexInstanceId,
+          threadId,
+          runtimeMode: "full-access",
+          forkFrom: { resumeCursor: { threadId: "source" }, throughTurnId: asTurnId("t1") },
+        })
+        .pipe(Effect.flip);
+      assert.instanceOf(failure, ProviderValidationError);
+      assert.include(failure.issue, "new provider thread");
+    }),
+  );
+
   it.effect("classifies rejections before dispatch as not sent", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;

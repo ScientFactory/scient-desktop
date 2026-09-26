@@ -990,12 +990,15 @@ describe("openCodexThread", () => {
       NodeAssert.equal(opened.thread.id, "forked-thread");
       NodeAssert.equal(calls.length, 1);
       NodeAssert.equal(calls[0]?.method, "thread/fork");
+      const payload = calls[0]?.payload as
+        | { threadId: string; lastTurnId: string; cwd: string; excludeTurns: boolean }
+        | undefined;
       NodeAssert.deepStrictEqual(
         {
-          threadId: (calls[0]?.payload as { threadId: string }).threadId,
-          lastTurnId: (calls[0]?.payload as { lastTurnId: string }).lastTurnId,
-          cwd: (calls[0]?.payload as { cwd: string }).cwd,
-          excludeTurns: (calls[0]?.payload as { excludeTurns: boolean }).excludeTurns,
+          threadId: payload?.threadId,
+          lastTurnId: payload?.lastTurnId,
+          cwd: payload?.cwd,
+          excludeTurns: payload?.excludeTurns,
         },
         {
           threadId: "source-thread",

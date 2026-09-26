@@ -2327,6 +2327,19 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           });
         }
 
+        // SCIENT-FORK: a native fork needs a Codex source thread; never fall
+        // back to an empty thread while claiming a fork.
+        if (
+          input.forkFrom !== undefined &&
+          !isCodexResumeCursorSchema(input.forkFrom.resumeCursor)
+        ) {
+          return yield* new ProviderAdapterValidationError({
+            provider: PROVIDER,
+            operation: "startSession",
+            issue: "The fork source is not a Codex thread.",
+          });
+        }
+
         const existing = sessions.get(input.threadId);
         if (existing && !existing.stopped) {
           // A follow-up arriving during verified teardown joins its cleanup;

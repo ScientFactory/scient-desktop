@@ -1149,6 +1149,37 @@ describe("ProviderCommandReactor", () => {
     });
   });
 
+  it("never continues a fork inside the source's own provider thread", async () => {
+    const recordNativeFork = vi.fn<ScientForkContextDeliveryShape["recordNativeFork"]>(
+      () => Effect.void,
+    );
+    const recordNativeForkUnavailable = vi.fn<
+      ScientForkContextDeliveryShape["recordNativeForkUnavailable"]
+    >(() => Effect.void);
+    const harness = await createHarness({
+      forkLineage: true,
+      nativeFork: true,
+      forkContextDelivery: {
+        planNativeFork: () => Effect.succeed(nativePlan),
+        recordNativeFork,
+        recordNativeForkUnavailable,
+        prepareTurn: () => Effect.succeed(deliverContext()),
+      },
+      // The provider handed back the source thread instead of a fork.
+      startSessionEffect: (session) =>
+        Effect.succeed({ ...session, resumeCursor: nativePlan.resumeCursor }),
+    });
+
+    await startForkTurn(harness, "fork-native-same-thread-message");
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    expect(recordNativeFork).not.toHaveBeenCalled();
+    expect(recordNativeForkUnavailable).toHaveBeenCalled();
+    expect(harness.discardSessionContinuity).toHaveBeenCalledWith({
+      threadId: ThreadId.make("thread-1"),
+    });
+  });
+
   it("records an unavailable native fork and continues with the portable handoff", async () => {
     let attempts = 0;
     const recordNativeForkUnavailable = vi.fn<

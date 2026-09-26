@@ -256,6 +256,43 @@ describe("selectHistory", () => {
   });
 });
 
+describe("attachment reattachment", () => {
+  it("names captured-window images instead of reattaching them", () => {
+    const captured = {
+      type: "image" as const,
+      id: "capture-1",
+      name: "window.png",
+      mimeType: "image/png",
+      sizeBytes: 10,
+      source: { kind: "snap-shot" as const, capturedAt: "2026-09-26T10:00:00.000Z" },
+    };
+    const plain = {
+      type: "image" as const,
+      id: "plain-1",
+      name: "plot.png",
+      mimeType: "image/png",
+      sizeBytes: 10,
+    };
+    const items = buildHandoffItems({
+      messages: [
+        { ...message("u1", "user", "look", "t1", 1), attachments: [captured, plain] },
+        message("a1", "assistant", "ok", "t1", 2),
+      ],
+      activities: [],
+      proposedPlans: [],
+      beforeMessageId: "none",
+      midTurnCut: undefined,
+    });
+    const selection = selectHistory({
+      items,
+      budget: 100_000,
+      currentAttachments: [],
+      midTurnCut: undefined,
+    });
+    expect(selection.reattached.map((attachment) => attachment.id)).toEqual(["plain-1"]);
+  });
+});
+
 describe("nativeThreadKey", () => {
   it("reads each provider's own session identity", () => {
     expect(nativeThreadKey("codex", { threadId: "thr_1" })).toBe("codex:thr_1");

@@ -387,6 +387,15 @@ export function useScientThreadFork({
               const eligibility = await resolveOptions(source);
               if (!eligibility.available)
                 throw new Error(eligibility.reason ?? "This fork point is unavailable.");
+              // A server that does not know running-turn forks answers for the
+              // latest response instead; never fork that under this label.
+              if (
+                source.kind === "running-turn" &&
+                eligibility.sourceRunningTurnId !== source.turnId
+              )
+                throw new Error(
+                  "This server cannot fork while the agent is working. Update Scient, or fork once the turn finishes.",
+                );
               if (options.workspaceMode === "local" && !eligibility.localAvailable)
                 throw new Error(eligibility.reason ?? "The original workspace is unavailable.");
               if (options.workspaceMode === "new-worktree" && !eligibility.newWorktree)

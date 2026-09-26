@@ -223,6 +223,8 @@ const make = Effect.gen(function* () {
     // The baseline is copied by checkpoint count. A revert and rerun of the
     // origin can reuse that count for different work: refuse rather than copy it.
     if (
+      payload.workspaceMode === "new-worktree" &&
+      payload.midTurnCut === undefined &&
       payload.sourceCheckpointTurnCount !== null &&
       payload.forkAtTurnId !== null &&
       payload.forkAtTurnId !== LEGACY_FORK_BOUNDARY_TURN_ID
@@ -272,7 +274,12 @@ const make = Effect.gen(function* () {
       ? false
       : snapshotsLiveWorkspace
         ? localAvailable &&
-          (yield* checkpointBaseline.capture({ cwd: originWorkspace, toCheckpointRef: toRef }))
+          // A retry keeps the snapshot taken at the cut (its worktree may
+          // already exist); only the first attempt captures the workspace.
+          ((yield* checkpointBaseline
+            .hasCheckpoint(originCwd, toRef)
+            .pipe(Effect.orElseSucceed(() => false))) ||
+            (yield* checkpointBaseline.capture({ cwd: originWorkspace, toCheckpointRef: toRef })))
         : fromRef !== null
           ? yield* checkpointBaseline.copy({
               cwd: originCwd,
@@ -350,17 +357,44 @@ const make = Effect.gen(function* () {
     yield* releaseCompletion(payload.newThreadId, completion);
   });
 
-  /** Removes what a terminally failed fork created, then its thread. */
+  /**
+   * Removes what a terminally failed fork created, then its thread. Only
+   * fork-owned names are touched (its `scient/fork/<id>` branch, that branch's
+   * worktree and its turn-zero ref), found from Git rather than from memory,
+   * so a worktree created by an earlier attempt or before a restart is removed.
+   */
   const discardProvisioned = (payload: ThreadForkedPayload) =>
     Effect.gen(function* () {
       const created = provisioned.get(payload.newThreadId);
       provisioned.delete(payload.newThreadId);
-      if (created !== undefined) {
+      const originContext = yield* projectionSnapshotQuery
+        .getThreadCheckpointContext(payload.originThreadId)
+        .pipe(
+          Effect.map(Option.getOrUndefined),
+          Effect.orElseSucceed(() => undefined),
+        );
+      const cwd =
+        created?.cwd ?? originContext?.worktreePath ?? originContext?.workspaceRoot ?? null;
+      if (cwd !== null) {
+        const branch = forkBranchName(payload.newThreadId);
+        const existing = yield* gitWorkflow
+          .listRefs({
+            cwd,
+            query: branch,
+            refKind: "local",
+            includeMatchingRemoteRefs: false,
+            refresh: true,
+            limit: 100,
+          })
+          .pipe(
+            Effect.map((listed) => exactRef(listed.refs, branch)),
+            Effect.orElseSucceed(() => null),
+          );
         yield* checkpointBaseline.discard({
-          cwd: created.cwd,
+          cwd,
           checkpointRef: checkpointRefForThreadTurn(payload.newThreadId, 0),
-          worktreePath: created.worktreePath,
-          branch: created.branch,
+          worktreePath: existing?.worktreePath ?? created?.worktreePath ?? null,
+          branch: existing !== null ? branch : (created?.branch ?? null),
         });
       }
       if (yield* isForkThreadDeleted(sql, payload.newThreadId)) return;
@@ -680,7 +714,13 @@ const make = Effect.gen(function* () {
             ? collectForkLiveTail({
                 origin,
                 retainedMessageIds: new Set(prefix.messages.map((message) => message.id)),
+                retainedTurnIds: new Set(
+                  retained.flatMap((boundary) =>
+                    boundary.turnId === null ? [] : [boundary.turnId],
+                  ),
+                ),
                 runningTurnId: forkPoint.turnId,
+                turnRequests: resolved.turnRequests ?? [],
               })
             : null;
         yield* attachmentCopier.checkSources({
