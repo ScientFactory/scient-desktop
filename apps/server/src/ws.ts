@@ -2682,11 +2682,25 @@ const makeWsRpcLayer = (
                       });
                       if (maintenance.packageName)
                         providerVersionCache.delete(maintenance.packageName);
+                      if (maintenance.homebrewApiUrl)
+                        providerVersionCache.delete(maintenance.homebrewApiUrl);
                     }),
                   { concurrency: "unbounded", discard: true },
                 );
               }
               if (input.refreshManagedRuntimeCatalog === true) {
+                // An explicit runtime refresh re-checks a runtime that fell back
+                // after a failed check; switching back waits for running work.
+                const reselectInstances = yield* providerInstances.listInstances;
+                yield* Effect.forEach(
+                  reselectInstances.filter(
+                    (instance) =>
+                      input.instanceId === undefined || input.instanceId === instance.instanceId,
+                  ),
+                  (instance) =>
+                    providerRuntimeManager.reselect(instance.instanceId).pipe(Effect.forkDetach),
+                  { discard: true },
+                );
                 const before = yield* managedRuntimeCatalog.current;
                 const after = yield* managedRuntimeCatalog.refreshNow;
                 const changedProviders = MANAGED_RUNTIME_CATALOG_PROVIDERS.filter(

@@ -4,7 +4,6 @@
 code, and commands. Scient connects to the official `droid` tool and shows its
 responses, tool calls, file edits, and nested Tasks in the thread.
 
-Droid is marked **Early Access** in Scient because its integration is newer than the other providers.
 Its provider-specific behaviors and current limitations are documented below.
 
 For the behavior shared by all assisted providers, see [Providers in Scient](./providers.md).

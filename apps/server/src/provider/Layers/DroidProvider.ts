@@ -47,7 +47,6 @@ import {
 
 const DROID_PRESENTATION = {
   displayName: "Droid",
-  badgeLabel: "Early Access",
   showInteractionModeToggle: true,
   requiresNewThreadForModelChange: false,
 } as const;

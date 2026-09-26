@@ -15,6 +15,7 @@ import {
   type ManagedRuntimeArtifact,
 } from "@scientfactory/provider-runtime";
 import * as Effect from "effect/Effect";
+import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
 import * as Stream from "effect/Stream";
 import { BUNDLED_MANAGED_RUNTIME_CATALOG, ManagedRuntimeCatalog } from "./ManagedRuntimeCatalog.ts";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
@@ -197,7 +198,27 @@ describe("managed provider runtime policy", () => {
       expect(resolution.effectiveBinaryPath).toBe(process.execPath);
       expect(resolution.usesManagedPath).toBe(false);
 
-      yield* resolution.actions.run("install", plan.catalogRevision, () => Effect.void);
+      // A window that cannot stop sessions leaves the runtime untouched and
+      // keeps its own explanation.
+      const blocked = yield* resolution.actions
+        .run(
+          "install",
+          plan.catalogRevision,
+          () => Effect.void,
+          Effect.fail(
+            new ProviderConnectionActionError({ message: "Could not stop idle sessions." }),
+          ),
+        )
+        .pipe(Effect.flip);
+      expect(blocked.message).toBe("Could not stop idle sessions.");
+      expect(yield* resolution.actions.getSummary).toMatchObject({ source: "system" });
+
+      yield* resolution.actions.run(
+        "install",
+        plan.catalogRevision,
+        () => Effect.void,
+        Effect.void,
+      );
 
       expect(yield* resolution.actions.getSummary).toMatchObject({
         source: "scient_managed",
@@ -213,7 +234,12 @@ describe("managed provider runtime policy", () => {
       expect(managedResolution.usesManagedPath).toBe(true);
 
       const removePlan = yield* managedResolution.actions.plan("remove");
-      yield* managedResolution.actions.run("remove", removePlan.catalogRevision, () => Effect.void);
+      yield* managedResolution.actions.run(
+        "remove",
+        removePlan.catalogRevision,
+        () => Effect.void,
+        Effect.void,
+      );
       const restoredResolution = yield* resolve();
       expect(restoredResolution.summary).toMatchObject({
         source: "system",
@@ -300,7 +326,12 @@ describe("managed provider runtime policy", () => {
         const expectedVersion = BUNDLED_MANAGED_RUNTIME_CATALOG.providers.claudeAgent!.version;
         const plan = yield* resolution.actions.plan("install");
         expect(plan.version).toBe(expectedVersion);
-        yield* resolution.actions.run("install", plan.catalogRevision, () => Effect.void);
+        yield* resolution.actions.run(
+          "install",
+          plan.catalogRevision,
+          () => Effect.void,
+          Effect.void,
+        );
         expect(yield* Effect.promise(() => runtime.status(bundledArtifact))).toMatchObject({
           installed: true,
           activeVersion: expectedVersion,
@@ -339,13 +370,18 @@ describe("managed provider runtime policy", () => {
         });
         failSmoke = true;
         yield* resolution.actions
-          .run("repair", repair.catalogRevision, () => Effect.void)
+          .run("repair", repair.catalogRevision, () => Effect.void, Effect.void)
           .pipe(Effect.flip);
         expect((yield* Effect.promise(() => runtime.status(bundledArtifact))).activeVersion).toBe(
           expectedVersion,
         );
         failSmoke = false;
-        yield* resolution.actions.run("repair", repair.catalogRevision, () => Effect.void);
+        yield* resolution.actions.run(
+          "repair",
+          repair.catalogRevision,
+          () => Effect.void,
+          Effect.void,
+        );
         expect((yield* Effect.promise(() => runtime.status(bundledArtifact))).activeVersion).toBe(
           nextVersion,
         );
@@ -353,7 +389,12 @@ describe("managed provider runtime policy", () => {
         expect(repeatRepair.version).toBe(nextVersion);
         const beforeRemove = refreshes;
         const remove = yield* resolution.actions.plan("remove");
-        yield* resolution.actions.run("remove", remove.catalogRevision, () => Effect.void);
+        yield* resolution.actions.run(
+          "remove",
+          remove.catalogRevision,
+          () => Effect.void,
+          Effect.void,
+        );
         expect(refreshes).toBe(beforeRemove);
       }).pipe(Effect.provide(NodeServices.layer)),
   );

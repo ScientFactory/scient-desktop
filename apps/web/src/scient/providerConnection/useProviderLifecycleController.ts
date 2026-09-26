@@ -52,6 +52,41 @@ function resultValue<A, E>(result: AtomCommandResult<A, E>, fallback: string): A
 }
 
 /**
+ * Plans and starts a reviewed runtime action for any provider instance. For
+ * callers that act on several providers, where one controller per provider
+ * would need a hook per instance.
+ */
+export function useStartProviderRuntimeAction(): (input: {
+  readonly environmentId: EnvironmentId;
+  readonly instanceId: ServerProvider["instanceId"];
+  readonly action: ProviderManagedRuntimeAction;
+}) => Promise<ServerProvider> {
+  const planProviderRuntime = useAtomCommand(serverEnvironment.planProviderRuntime, {
+    reportFailure: false,
+  });
+  const startProviderRuntime = useAtomCommand(serverEnvironment.startProviderRuntime, {
+    reportFailure: false,
+  });
+  return useCallback(
+    async ({ environmentId, instanceId, action }) => {
+      const plan = resultValue(
+        await planProviderRuntime({ environmentId, input: { instanceId, action } }),
+        "Scient could not prepare the provider runtime action.",
+      );
+      const started = resultValue(
+        await startProviderRuntime({
+          environmentId,
+          input: { instanceId, action: plan.action, catalogRevision: plan.catalogRevision },
+        }),
+        "Scient could not start the provider runtime action.",
+      );
+      return providerFromResult(started.providers, instanceId);
+    },
+    [planProviderRuntime, startProviderRuntime],
+  );
+}
+
+/**
  * The production adapter between Scient's provider lifecycle UI and T3's
  * environment-scoped provider commands. It owns no provider state: every
  * successful action returns the canonical server snapshot.

@@ -401,7 +401,12 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
     }
   };
 
-  const run: ProviderManagedRuntimeActions["run"] = (action, catalogRevision, report) =>
+  const run: ProviderManagedRuntimeActions["run"] = (
+    action,
+    catalogRevision,
+    report,
+    awaitActivationWindow = Effect.void,
+  ) =>
     Effect.gen(function* () {
       const prepared = yield* prepareAction(action);
       const planned = prepared.plan;
@@ -412,7 +417,9 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
       }
       const context = yield* Effect.context<never>();
       const runFork = Effect.runForkWith(context);
+      const runPromise = Effect.runPromiseWith(context);
       if (action === "remove") {
+        yield* awaitActivationWindow;
         yield* report({
           status: "removing",
           message: `Removing Scient's private ${providerName} runtime.`,
@@ -435,6 +442,8 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
           runtime.install({
             artifact: actionArtifact,
             signal,
+            beforeActivate: (activationSignal) =>
+              runPromise(awaitActivationWindow, { signal: activationSignal }),
             onProgress: (progress) => {
               const stageChanged = progress.stage !== lastStatus;
               const downloadedBytes = progress.downloadedBytes ?? 0;
@@ -457,7 +466,9 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
             },
           }),
         catch: (cause) =>
-          runtimeError(managedRuntimeInstallationFailureMessage(providerName, cause), cause),
+          cause instanceof ProviderConnectionActionError
+            ? cause
+            : runtimeError(managedRuntimeInstallationFailureMessage(providerName, cause), cause),
       });
     });
 

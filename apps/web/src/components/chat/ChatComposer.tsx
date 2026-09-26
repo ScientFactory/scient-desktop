@@ -2316,12 +2316,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
   const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
   const [isProviderOnboardingOpen, setIsProviderOnboardingOpen] = useState(false);
+  // The server stages an update while turns run and switches runtimes only
+  // once the provider is idle, so a running turn does not block starting one.
   const providerUpdateDisabledReason =
-    phase === "running" || isSendBusy || isConnecting || isPreparingWorktree
-      ? "Available when the provider is idle."
-      : environmentUnavailable !== null
-        ? "Available when this environment reconnects."
-        : undefined;
+    environmentUnavailable !== null ? "Available when this environment reconnects." : undefined;
   const renderProviderUpdateFooter = useCallback(
     (entry: ProviderInstanceEntry) => (
       <ComposerProviderUpdateFooter

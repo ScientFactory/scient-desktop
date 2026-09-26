@@ -343,7 +343,14 @@ export function makeAntigravityManagedRuntimeActions(input: {
     }
   });
 
-  const run: ProviderManagedRuntimeActions["run"] = (action, revision, report) =>
+  // The Antigravity installer replaces its runtime in one step, so the
+  // activation window is awaited before installing rather than mid-install.
+  const run: ProviderManagedRuntimeActions["run"] = (
+    action,
+    revision,
+    report,
+    awaitActivationWindow = Effect.void,
+  ) =>
     Effect.gen(function* () {
       const summary = yield* getSummary;
       if (!summary.actions.includes(action)) {
@@ -353,6 +360,7 @@ export function makeAntigravityManagedRuntimeActions(input: {
         if (revision !== `antigravity-acp:remove:${summary.managedVersion ?? "none"}`) {
           return yield* failure("The Antigravity removal plan changed. Review it again.");
         }
+        yield* awaitActivationWindow;
         yield* report({
           status: "removing",
           message: "Removing Scient's private Antigravity runtime.",
@@ -364,6 +372,7 @@ export function makeAntigravityManagedRuntimeActions(input: {
       if (!asset || revision !== runtimeRevision(asset.version, asset.sha256)) {
         return yield* failure("The Antigravity installation plan changed. Review it again.");
       }
+      yield* awaitActivationWindow;
       yield* runInstall(asset, report);
     }).pipe(
       Effect.mapError((cause) =>

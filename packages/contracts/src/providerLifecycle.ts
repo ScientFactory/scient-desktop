@@ -111,6 +111,12 @@ export const ProviderRuntimeOperation = Schema.Struct({
   message: TrimmedNonEmptyString,
   downloadedBytes: Schema.optionalKey(NonNegativeInt),
   totalBytes: Schema.optionalKey(PositiveInt),
+  /**
+   * The new runtime is ready but not yet active: switching stops the provider's
+   * sessions, so it waits for their running turns to finish. Optional so older
+   * clients keep decoding the operation.
+   */
+  waitingForIdle: Schema.optionalKey(Schema.Boolean),
 });
 export type ProviderRuntimeOperation = typeof ProviderRuntimeOperation.Type;
 

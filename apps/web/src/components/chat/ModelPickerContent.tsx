@@ -203,6 +203,8 @@ export function ModelPickerProviderUpdateFooter(props: {
   readonly disabledReason?: string | undefined;
   readonly isStarting: boolean;
   readonly isUpdating: boolean;
+  /** The update is staged and waits for the provider's running turns to finish. */
+  readonly isWaitingForIdle?: boolean | undefined;
   readonly hasError?: boolean | undefined;
   readonly onUpdate: () => void;
 }) {
@@ -210,9 +212,11 @@ export function ModelPickerProviderUpdateFooter(props: {
   const accessibleActionLabel = props.disabledReason
     ? `${props.displayName} update unavailable. ${props.disabledReason}`
     : `${actionLabel} ${props.displayName}`;
-  const progressLabel = props.isUpdating
-    ? `Updating ${props.displayName}…`
-    : `Preparing ${props.displayName} update…`;
+  const progressLabel = props.isWaitingForIdle
+    ? `${props.displayName} will update when idle`
+    : props.isUpdating
+      ? `Updating ${props.displayName}…`
+      : `Preparing ${props.displayName} update…`;
 
   return (
     <div className="flex shrink-0 items-center gap-2 border-t border-border/70 px-2 py-1">
@@ -225,10 +229,13 @@ export function ModelPickerProviderUpdateFooter(props: {
             className="size-3.5"
             iconClassName="size-3.5"
           />
-          <Loader2Icon
-            aria-hidden="true"
-            className="size-3 shrink-0 animate-spin text-primary [animation-duration:1.35s] [animation-timing-function:linear] motion-reduce:animate-none"
-          />
+          {/* A wait can last a whole turn; it gets no continuously repainting spinner. */}
+          {props.isWaitingForIdle ? null : (
+            <Loader2Icon
+              aria-hidden="true"
+              className="size-3 shrink-0 animate-spin text-primary [animation-duration:1.35s] [animation-timing-function:linear] motion-reduce:animate-none"
+            />
+          )}
           <p
             aria-live="polite"
             className="min-w-0 truncate text-[11px] leading-snug text-muted-foreground"

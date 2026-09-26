@@ -283,6 +283,47 @@ describe("ManagedProviderRuntime contract", () => {
     expect(events).toEqual(["download", "verify", "materialize", "smoke", "commit"]);
   });
 
+  it("waits for the activation window after smoke testing and before activating", async () => {
+    const { runtime, events } = await makeRuntime();
+    const stages: string[] = [];
+
+    await runtime.install({
+      artifact: artifact("1.0.0"),
+      signal: new AbortController().signal,
+      onProgress: ({ stage }) => stages.push(stage),
+      beforeActivate: async () => {
+        events.push("activation-window");
+        stages.push("window");
+      },
+    });
+
+    expect(events).toEqual([
+      "download",
+      "verify",
+      "materialize",
+      "smoke",
+      "activation-window",
+      "commit",
+    ]);
+    expect(stages.slice(-2)).toEqual(["window", "activating"]);
+  });
+
+  it("does not activate when the activation window is cancelled", async () => {
+    const controller = new AbortController();
+    const { runtime, events } = await makeRuntime();
+    const recipe = artifact("1.0.0");
+
+    await expect(
+      runtime.install({
+        artifact: recipe,
+        signal: controller.signal,
+        beforeActivate: async () => controller.abort(),
+      }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(await runtime.readState()).toBeUndefined();
+    expect(events).not.toContain("commit");
+  });
+
   it("reads legacy state without silently treating it as an explicit managed selection", async () => {
     const { root, runtime } = await makeRuntime();
     const recipe = artifact("1.0.0");

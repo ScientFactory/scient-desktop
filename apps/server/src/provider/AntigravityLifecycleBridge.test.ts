@@ -300,8 +300,11 @@ it.effect("never removes a managed runtime when its repair download or verificat
     expect(plan.version).toBe(newest.version);
     const progress: string[] = [];
     const error = yield* actions
-      .run("repair", plan.catalogRevision, (update) =>
-        Effect.sync(() => progress.push(update.status)),
+      .run(
+        "repair",
+        plan.catalogRevision,
+        (update) => Effect.sync(() => progress.push(update.status)),
+        Effect.void,
       )
       .pipe(Effect.flip);
 
@@ -311,13 +314,14 @@ it.effect("never removes a managed runtime when its repair download or verificat
     expect(progress).toEqual(["downloading", "preparing"]);
     current = { ...newest, sha256: "8".repeat(64) };
     expect(
-      (yield* actions.run("repair", plan.catalogRevision, () => Effect.void).pipe(Effect.flip))
-        .message,
+      (yield* actions
+        .run("repair", plan.catalogRevision, () => Effect.void, Effect.void)
+        .pipe(Effect.flip)).message,
     ).toContain("plan changed");
     expect(starts).toBe(1);
     const removePlan = yield* actions.plan("remove");
     current = null; // Removal does not depend on the download catalog.
-    yield* actions.run("remove", removePlan.catalogRevision, () => Effect.void);
+    yield* actions.run("remove", removePlan.catalogRevision, () => Effect.void, Effect.void);
     expect(removes).toBe(1);
     expect(refreshes).toBe(1);
   }),

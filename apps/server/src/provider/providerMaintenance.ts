@@ -65,6 +65,12 @@ export interface ProviderMaintenanceCapabilities {
    * installer was asked and did not know.
    */
   readonly latestVersion?: string | null;
+  /**
+   * Homebrew's published metadata for an official-tap package. `brew info`
+   * reads the local copy, which is only as fresh as the last `brew update`,
+   * while `brew upgrade` refreshes it first and installs this version.
+   */
+  readonly homebrewApiUrl?: string;
 }
 
 export interface ProviderMaintenanceCommandAction {
@@ -161,6 +167,7 @@ export function makeProviderMaintenanceCapabilities(input: {
   readonly platform?: NodeJS.Platform;
   readonly env?: NodeJS.ProcessEnv;
   readonly latestVersion?: string | null;
+  readonly homebrewApiUrl?: string;
 }): ProviderMaintenanceCapabilities {
   const platform = input.platform ?? HostProcessPlatform.defaultValue();
   const update =
@@ -183,6 +190,7 @@ export function makeProviderMaintenanceCapabilities(input: {
     packageName: input.packageName,
     update,
     ...("latestVersion" in input ? { latestVersion: input.latestVersion } : {}),
+    ...(input.homebrewApiUrl ? { homebrewApiUrl: input.homebrewApiUrl } : {}),
   };
 }
 
@@ -306,15 +314,48 @@ export function homebrewOwnershipFromCommandPath(
   };
 }
 
+const HomebrewFormulaInfo = Schema.Struct({
+  tap: Schema.optional(Schema.NullOr(Schema.String)),
+  versions: Schema.optional(Schema.Struct({ stable: Schema.optional(Schema.String) })),
+});
+const HomebrewCaskInfo = Schema.Struct({
+  tap: Schema.optional(Schema.NullOr(Schema.String)),
+  version: Schema.optional(Schema.String),
+});
 const HomebrewInfoResponse = Schema.Struct({
-  formulae: Schema.optional(
-    Schema.Array(
-      Schema.Struct({
-        versions: Schema.optional(Schema.Struct({ stable: Schema.optional(Schema.String) })),
-      }),
-    ),
-  ),
-  casks: Schema.optional(Schema.Array(Schema.Struct({ version: Schema.optional(Schema.String) }))),
+  formulae: Schema.optional(Schema.Array(HomebrewFormulaInfo)),
+  casks: Schema.optional(Schema.Array(HomebrewCaskInfo)),
+});
+
+const HOMEBREW_OFFICIAL_TAPS = { formula: "homebrew/core", cask: "homebrew/cask" } as const;
+const HOMEBREW_DEFAULT_API_DOMAIN = "https://formulae.brew.sh/api";
+
+/**
+ * The published-metadata URL `brew upgrade` resolves against, when it does.
+ * Only official taps are published there, and Homebrew skips the refresh when
+ * the user disables the API or auto-update, so `brew info` stays authoritative.
+ */
+export function homebrewApiUrl(
+  infoJson: string,
+  ownership: HomebrewOwnership,
+  env: NodeJS.ProcessEnv,
+): string | undefined {
+  if (env.HOMEBREW_NO_INSTALL_FROM_API || env.HOMEBREW_NO_AUTO_UPDATE) return undefined;
+  const decoded = decodeHomebrewInfo(infoJson);
+  if (Option.isNone(decoded)) return undefined;
+  const tap =
+    ownership.kind === "formula" ? decoded.value.formulae?.[0]?.tap : decoded.value.casks?.[0]?.tap;
+  if (tap !== HOMEBREW_OFFICIAL_TAPS[ownership.kind]) return undefined;
+  const domain = (env.HOMEBREW_API_DOMAIN?.trim() || HOMEBREW_DEFAULT_API_DOMAIN).replace(
+    /\/+$/,
+    "",
+  );
+  return `${domain}/${ownership.kind}/${encodeURIComponent(ownership.name)}.json`;
+}
+
+const HomebrewApiPackage = Schema.Struct({
+  version: Schema.optional(Schema.String),
+  versions: Schema.optional(Schema.Struct({ stable: Schema.optional(Schema.String) })),
 });
 
 const decodeHomebrewInfo = Schema.decodeUnknownOption(Schema.fromJsonString(HomebrewInfoResponse));
@@ -487,6 +528,9 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
     // Homebrew lags npm by hours on every release, so compare against what
     // `brew upgrade` can actually deliver.
     const info = yield* runHomebrew(brewPath, ["info", "--json=v2", homebrew.name], context.env);
+    const apiUrl = info
+      ? homebrewApiUrl(info, homebrew, { ...process.env, ...context.env })
+      : undefined;
     return makeProviderMaintenanceCapabilities({
       provider: definition.provider,
       packageName,
@@ -495,6 +539,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
       updateLockKey: "homebrew",
       updateCommand: ["brew", ...args].join(" "),
       latestVersion: info ? parseHomebrewLatestVersion(info, homebrew) : null,
+      ...(apiUrl ? { homebrewApiUrl: apiUrl } : {}),
     });
   }
 
@@ -683,9 +728,47 @@ const fetchNpmLatestVersion = Effect.fn("fetchNpmLatestVersion")(function* (pack
   return payload ? nonEmptyString(payload.version) : null;
 });
 
+const fetchHomebrewApiVersion = Effect.fn("fetchHomebrewApiVersion")(function* (url: string) {
+  const client = yield* HttpClient.HttpClient;
+  const request = HttpClientRequest.get(url).pipe(
+    HttpClientRequest.setHeader("accept", "application/json"),
+  );
+  const response = yield* client.execute(request).pipe(
+    Effect.timeoutOption(LATEST_VERSION_TIMEOUT_MS),
+    Effect.orElseSucceed(() => Option.none()),
+  );
+  if (Option.isNone(response)) return null;
+  if (response.value.status < 200 || response.value.status >= 300) return null;
+  const payload = yield* response.value.json.pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(HomebrewApiPackage)),
+    Effect.orElseSucceed(() => null),
+  );
+  return nonEmptyString(payload?.versions?.stable ?? payload?.version?.split(",", 1)[0]);
+});
+
+const cachedLatestVersion = Effect.fn("cachedLatestVersion")(function* (
+  key: string,
+  fetch: Effect.Effect<string | null, never, HttpClient.HttpClient>,
+) {
+  const latestVersionCache = yield* ProviderVersionCache;
+  const cached = latestVersionCache.get(key);
+  const now = DateTime.toEpochMillis(yield* DateTime.now);
+  if (cached && cached.expiresAt > now) {
+    return cached.version;
+  }
+  const version = yield* fetch;
+  latestVersionCache.set(key, { expiresAt: now + LATEST_VERSION_CACHE_TTL_MS, version });
+  return version;
+});
+
 export const resolveLatestProviderVersion = Effect.fn("resolveLatestProviderVersion")(function* (
   maintenanceCapabilities: ProviderMaintenanceCapabilities,
 ) {
+  const apiUrl = maintenanceCapabilities.homebrewApiUrl;
+  if (apiUrl) {
+    const published = yield* cachedLatestVersion(apiUrl, fetchHomebrewApiVersion(apiUrl));
+    if (published) return published;
+  }
   if (maintenanceCapabilities.latestVersion !== undefined) {
     return maintenanceCapabilities.latestVersion;
   }
@@ -694,19 +777,7 @@ export const resolveLatestProviderVersion = Effect.fn("resolveLatestProviderVers
     return null;
   }
 
-  const latestVersionCache = yield* ProviderVersionCache;
-  const cached = latestVersionCache.get(packageName);
-  const now = DateTime.toEpochMillis(yield* DateTime.now);
-  if (cached && cached.expiresAt > now) {
-    return cached.version;
-  }
-
-  const version = yield* fetchNpmLatestVersion(packageName);
-  latestVersionCache.set(packageName, {
-    expiresAt: now + LATEST_VERSION_CACHE_TTL_MS,
-    version,
-  });
-  return version;
+  return yield* cachedLatestVersion(packageName, fetchNpmLatestVersion(packageName));
 });
 
 export const enrichProviderSnapshotWithVersionAdvisory = Effect.fn(

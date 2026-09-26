@@ -16,8 +16,11 @@ import { useProviderLifecycleController } from "./useProviderLifecycleController
 
 export function canOfferComposerManagedRuntimeUpdate(entry: ProviderInstanceEntry): boolean {
   const runtime = entry.snapshot.connection?.runtime;
+  // Includes a system runtime standing in for an installed private copy:
+  // updating the private copy is how it gets selected again.
   return (
-    runtime?.source === "scient_managed" &&
+    (runtime?.source === "scient_managed" ||
+      (runtime?.source === "system" && runtime.managedVersion !== null)) &&
     !isActiveProviderRuntimeOperation(runtime.operation) &&
     runtime.actions.includes("update")
   );
@@ -74,6 +77,7 @@ export function ComposerProviderUpdateFooter(props: {
       {...(props.disabledReason ? { disabledReason: props.disabledReason } : {})}
       isStarting={isStarting}
       isUpdating={activeUpdate !== null}
+      isWaitingForIdle={activeUpdate?.waitingForIdle === true}
       hasError={hasError}
       onUpdate={() => void startUpdate()}
     />
