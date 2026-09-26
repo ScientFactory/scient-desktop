@@ -4,6 +4,7 @@ import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import { makeOmpRpcClient } from "./client.ts";
 import { OmpNegotiateResult } from "./schema.ts";
@@ -115,6 +116,43 @@ describe("Oh My Pi RPC client", () => {
         expect(yield* Queue.size(events)).toBe(0);
         yield* Queue.offer(stdout, line({ type: "agent_end", isTerminal: true, messages: [] }));
         expect(yield* Queue.take(events)).toBe("agent_end");
+      }),
+    ),
+  );
+
+  it.effect("waits for a prompt acknowledgement past the command timeout", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const stdout = yield* Queue.unbounded<Uint8Array>();
+        const stdin = yield* Queue.unbounded<string>();
+        const client = yield* makeOmpRpcClient(
+          {
+            stdout: Stream.fromQueue(stdout),
+            write: (bytes) => Queue.offer(stdin, decoder.decode(bytes)).pipe(Effect.asVoid),
+          },
+          { requestTimeoutMs: 50 },
+        );
+        yield* negotiate(stdout, stdin);
+        const promptFiber = yield* client
+          .prompt({ message: "slow acknowledgement" })
+          .pipe(Effect.forkScoped);
+        const request = decodeCommand(yield* Queue.take(stdin));
+        // A busy or slow OMP agent can acknowledge `prompt` long after the
+        // normal per-command deadline. Failing the turn here would abandon a
+        // running agent, so prompt waits for its own response.
+        yield* TestClock.adjust("500 millis");
+        expect(promptFiber.pollUnsafe()).toBeUndefined();
+        yield* Queue.offer(
+          stdout,
+          line({
+            id: request.id,
+            type: "response",
+            command: "prompt",
+            success: true,
+            data: { agentInvoked: true },
+          }),
+        );
+        expect(yield* Fiber.join(promptFiber)).toMatchObject({ success: true });
       }),
     ),
   );
@@ -270,6 +308,38 @@ describe("Oh My Pi RPC client", () => {
           event: { type: "future_event", raw: { type: "future_event", payload: { value: 7 } } },
         });
         expect(yield* client.ready).toMatchObject({ type: "ready" });
+      }),
+    ),
+  );
+
+  it.effect("accepts a future protocol list that still offers v2", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const stdout = yield* Queue.unbounded<Uint8Array>();
+        const stdin = yield* Queue.unbounded<string>();
+        const client = yield* makeOmpRpcClient({
+          stdout: Stream.fromQueue(stdout),
+          write: (bytes) => Queue.offer(stdin, decoder.decode(bytes)).pipe(Effect.asVoid),
+        });
+        yield* Queue.offer(
+          stdout,
+          line({ ...readyFrame, supportedProtocolVersions: [1, 2, 3, 9] }),
+        );
+        const request = decodeCommand(yield* Queue.take(stdin));
+        expect(request.type).toBe("negotiate_protocol");
+        yield* Queue.offer(
+          stdout,
+          line({
+            id: request.id,
+            type: "response",
+            command: "negotiate_protocol",
+            success: true,
+            data: { protocolVersion: 2 },
+          }),
+        );
+        expect(
+          yield* client.ready.pipe(Effect.map((ready) => ready.supportedProtocolVersions)),
+        ).toEqual([1, 2, 3, 9]);
       }),
     ),
   );

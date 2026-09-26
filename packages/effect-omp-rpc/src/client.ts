@@ -458,10 +458,11 @@ export const makeOmpRpcClient = Effect.fn("OmpRpcClient.make")(function* (
           takeWaiter(id).pipe(Effect.asVoid, Effect.andThen(Effect.fail(cause))),
         ),
       );
-      const response = yield* Deferred.await(waiter).pipe(
-        Effect.timeout(timeout),
-        Effect.ensuring(takeWaiter(id).pipe(Effect.asVoid)),
-      );
+      const response = yield* (
+        body.type === "prompt"
+          ? Deferred.await(waiter)
+          : Deferred.await(waiter).pipe(Effect.timeout(timeout))
+      ).pipe(Effect.ensuring(takeWaiter(id).pipe(Effect.asVoid)));
       if (!response.success) {
         return yield* new OmpRpcCommandError({
           command: response.command,

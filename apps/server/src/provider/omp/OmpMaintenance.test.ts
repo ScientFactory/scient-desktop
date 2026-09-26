@@ -10,6 +10,12 @@ import {
   type ProviderMaintenanceResolutionContext,
 } from "../providerMaintenance.ts";
 import {
+  registerOmpProcess,
+  resetOmpProcessRegistry,
+  unregisterOmpProcess,
+  isOmpBinaryUpdating,
+} from "./OmpProcessRegistry.ts";
+import {
   isOmpManagedRuntimePath,
   isOmpNativeUpdatePath,
   OMP_EXTERNAL_UPDATE_MESSAGE,
@@ -93,6 +99,56 @@ it.layer(NodeServices.layer)("Oh My Pi update discovery", (it) => {
         expect(update.env?.PATH?.startsWith(commandDirectory)).toBe(true);
       }
     }),
+  );
+
+  it.effect("refuses a native update while any OMP process for that executable is alive", () =>
+    Effect.gen(function* () {
+      const capabilities = yield* ompMaintenance.resolve(context("/usr/local/bin/omp"));
+      const update = capabilities.update;
+      if (!update?.canUpdate) throw new Error("Expected native OMP update capability.");
+      expect(yield* update.canUpdate()).toBe(true);
+
+      // An idle session, a one-shot title/commit run, and any other OMP
+      // instance in this server all hold the same executable.
+      registerOmpProcess({
+        command: "/usr/local/bin/omp",
+        id: "session-1",
+        kind: "session",
+        threadId: "thread-1",
+      });
+      expect(yield* update.canUpdate()).toBe(false);
+      unregisterOmpProcess({ command: "/usr/local/bin/omp", id: "session-1" });
+
+      // A different executable is unaffected.
+      registerOmpProcess({
+        command: "/opt/other/omp",
+        id: "session-2",
+        kind: "session",
+        threadId: "thread-2",
+      });
+      expect(yield* update.canUpdate()).toBe(true);
+      unregisterOmpProcess({ command: "/opt/other/omp", id: "session-2" });
+    }).pipe(Effect.ensuring(Effect.sync(resetOmpProcessRegistry))),
+  );
+
+  it.effect("holds the executable exclusively while the updater runs", () =>
+    Effect.gen(function* () {
+      const capabilities = yield* ompMaintenance.resolve(context("/usr/local/bin/omp"));
+      const update = capabilities.update;
+      if (!update?.beforeRun || !update.afterRun) {
+        throw new Error("Expected native OMP update bracket.");
+      }
+      expect(isOmpBinaryUpdating("/usr/local/bin/omp")).toBe(false);
+      const during = yield* Effect.scoped(
+        Effect.acquireUseRelease(
+          update.beforeRun(),
+          () => Effect.sync(() => isOmpBinaryUpdating("/usr/local/bin/omp")),
+          () => update.afterRun?.() ?? Effect.void,
+        ),
+      );
+      expect(during).toBe(true);
+      expect(isOmpBinaryUpdating("/usr/local/bin/omp")).toBe(false);
+    }).pipe(Effect.ensuring(Effect.sync(resetOmpProcessRegistry))),
   );
 
   it.effect("leaves an unknown path and a missing install without an update command", () =>

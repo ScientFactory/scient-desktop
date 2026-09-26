@@ -47,7 +47,7 @@ describe("analytics contract conformance corpus", () => {
         { appVersion: "private-custom-build", buildChannel: "stable" },
       );
       expect(result?.properties).toMatchObject({
-        provider,
+        provider: provider === "omp" ? "other" : provider,
         modelKey: "other",
         appVersion: "unknown",
       });

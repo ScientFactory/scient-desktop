@@ -465,6 +465,55 @@ describe("providerMaintenanceRunner", () => {
     );
   });
 
+  it.effect("re-checks the provider guard immediately before spawning and brackets the run", () => {
+    const order: Array<string> = [];
+    let guardCalls = 0;
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry(baseProvider);
+      const updater = yield* makeTestRunner({
+        ...registry,
+        getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
+          Effect.succeed({
+            ...lifecycleFor(provider),
+            update: {
+              command: "codex update",
+              executable: "/work/codex",
+              args: ["update"],
+              lockKey: "codex-native",
+              canUpdate: () =>
+                Effect.sync(() => {
+                  guardCalls += 1;
+                  return true;
+                }),
+              beforeRun: () =>
+                Effect.sync(() => {
+                  order.push("before");
+                }),
+              afterRun: () =>
+                Effect.sync(() => {
+                  order.push("after");
+                }),
+            },
+          }),
+      });
+
+      const result = yield* updater.updateProvider(CODEX_DRIVER);
+      assert.notStrictEqual(result.providers[0]?.updateState?.status, "failed");
+      // The guard runs for the pre-flight check and again immediately before
+      // the installer, and the provider bracket covers the whole command.
+      assert.strictEqual(guardCalls, 2);
+      assert.deepStrictEqual(order, ["before", "after"]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NonWindowsPlatform,
+          latestVersionHttpClient("0.0.0"),
+          mockSpawnerLayer(() => ({ stdout: "updated" })),
+        ),
+      ),
+    );
+  });
+
   it.effect("re-resolves ownership before running and executes the fresh command", () => {
     const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
     const fresh: Array<boolean> = [];

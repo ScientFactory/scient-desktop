@@ -22,10 +22,12 @@ import { OmpRpcProtocolError, type OmpRpcError } from "effect-omp-rpc/errors";
 
 import { spawnAndCollect } from "../providerSnapshot.ts";
 import { ompBinaryFingerprint } from "./OmpSessionCursor.ts";
+import { registerOmpProcess, unregisterOmpProcess } from "./OmpProcessRegistry.ts";
 
 const isProtocolError = Schema.is(OmpRpcProtocolError);
 
 export const OMP_MINIMUM_VERSION = "18.2.8";
+export const OMP_MAXIMUM_MAJOR = 19;
 const OMP_SESSION_DIR_ENV = "PI_CODING_AGENT_SESSION_DIR";
 /** Agent directory override from oh-my-pi v18.2.8 `packages/utils/src/dirs.ts`. */
 export const OMP_AGENT_DIR_ENV = "PI_CODING_AGENT_DIR";
@@ -59,6 +61,7 @@ export const OMP_ISOLATED_ARGS = [
 
 const VERSION_CACHE_MS = 5 * 60 * 1000;
 const MAX_VERSION_CACHE_ENTRIES = 128;
+let ompProcessCounter = 0;
 const versionCache = new Map<string, { readonly version: string; readonly expiresAt: number }>();
 const cacheVersion = (key: string, version: string, now: number): void => {
   for (const [cachedKey, cached] of versionCache) {
@@ -94,6 +97,8 @@ export interface OmpRpcProcessOptions {
   readonly env?: Readonly<Record<string, string | undefined>>;
   readonly sessionDir?: string;
   readonly extraArgs?: ReadonlyArray<string>;
+  /** Thread identity for a session-owned process, used by update guards. */
+  readonly threadId?: string | undefined;
 }
 
 export interface OmpProcessExit {
@@ -170,6 +175,20 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
     .realPath(resolvedBinary)
     .pipe(Effect.orElseSucceed(() => resolvedBinary));
   const binaryPathFingerprint = ompBinaryFingerprint(canonicalBinary);
+  // Every OMP child process is registered for its executable so a native
+  // update can refuse to replace an image that is still running, including
+  // idle sessions and one-shot title/commit generation.
+  const processId = `omp-${(ompProcessCounter += 1)}`;
+  registerOmpProcess({
+    command: canonicalBinary,
+    id: processId,
+    kind: options.threadId ? "session" : "one-shot",
+    ...(options.threadId ? { threadId: options.threadId } : {}),
+  });
+  yield* Scope.addFinalizer(
+    scope,
+    Effect.sync(() => unregisterOmpProcess({ command: canonicalBinary, id: processId })),
+  );
   const binaryMetadata = yield* fs.stat(canonicalBinary).pipe(
     Effect.option,
     Effect.map((info) =>
@@ -205,10 +224,11 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
     if (
       result.code !== 0 ||
       parsed === undefined ||
-      compareSemverVersions(parsed, OMP_MINIMUM_VERSION) < 0
+      compareSemverVersions(parsed, OMP_MINIMUM_VERSION) < 0 ||
+      Number(parsed.split(".")[0] ?? "0") >= OMP_MAXIMUM_MAJOR
     ) {
       return yield* new OmpRpcProtocolError({
-        detail: `Scient requires Oh My Pi ${OMP_MINIMUM_VERSION} or newer. Check the configured executable.`,
+        detail: `Scient supports Oh My Pi ${OMP_MINIMUM_VERSION} through major ${OMP_MAXIMUM_MAJOR - 1}. Check the configured executable.`,
       });
     }
     cacheVersion(cacheKey, parsed, now);

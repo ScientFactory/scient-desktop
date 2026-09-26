@@ -93,4 +93,46 @@ describe("Oh My Pi launch arguments", () => {
       NodeFS.rmSync(root, { recursive: true, force: true });
     }).pipe(Effect.provide(NodeServices.layer)),
   );
+
+  it.effect("refuses an unsupported future major", () =>
+    Effect.gen(function* () {
+      const root = NodePath.join(NodeOS.tmpdir(), `scient-omp-future-major-${process.pid}`);
+      NodeFS.rmSync(root, { recursive: true, force: true });
+      NodeFS.mkdirSync(root, { recursive: true });
+      const binary = NodePath.join(root, "omp");
+      NodeFS.writeFileSync(binary, "future");
+      const encoder = new TextEncoder();
+      const spawner = ChildProcessSpawner.make((command) => {
+        const child = command as unknown as { readonly args: ReadonlyArray<string> };
+        const isVersionProbe = child.args.includes("--version");
+        return Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            exitCode: isVersionProbe
+              ? Effect.succeed(ChildProcessSpawner.ExitCode(0))
+              : Effect.never,
+            isRunning: Effect.succeed(!isVersionProbe),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.make(
+              isVersionProbe ? encoder.encode("omp/19.0.0-beta.1\n") : new Uint8Array(),
+            ),
+            stderr: Stream.empty,
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          }),
+        );
+      });
+      const error = yield* Effect.scoped(
+        makeOmpRpcProcess({ command: binary, env: { PATH: "/usr/bin" } }).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.flip,
+        ),
+      );
+      expect(error.message).toMatch(/major 18/u);
+      NodeFS.rmSync(root, { recursive: true, force: true });
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });

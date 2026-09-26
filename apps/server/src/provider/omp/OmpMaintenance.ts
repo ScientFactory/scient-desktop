@@ -1,4 +1,3 @@
-import { managedRuntimeSmokeEnvironment } from "@scientfactory/provider-runtime";
 import { ProviderDriverKind, type ServerProviderVersionAdvisory } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -6,6 +5,13 @@ import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
 
 import { collectUint8StreamText } from "../../stream/collectUint8StreamText.ts";
+import {
+  beginOmpBinaryUpdate,
+  endOmpBinaryUpdate,
+  hasLiveOmpProcess,
+  isOmpBinaryUpdating,
+} from "./OmpProcessRegistry.ts";
+import { ompUpdaterEnvironment } from "./OmpEnvironment.ts";
 import { ompMajorCompatible } from "./OmpSessionCursor.ts";
 import {
   createProviderVersionAdvisory,
@@ -92,8 +98,9 @@ const ompUpdateEnvironment = (input: {
   const configuredPath = input.env.PATH ?? input.env.Path ?? input.env.path ?? "";
   // Keep the updater's environment explicit. The maintenance runner normally
   // inherits the server environment for other providers; OMP must not receive
-  // unrelated credentials just to run its own updater.
-  const safe = managedRuntimeSmokeEnvironment(input.env);
+  // unrelated credentials just to run its own updater, but it does need proxy
+  // and certificate coordinates to reach the release channel.
+  const safe = ompUpdaterEnvironment({ env: input.env, extraKeys: OMP_UPDATER_CONFIG_KEYS });
   const path = [parentDirectory(input.commandPath), configuredPath].filter(Boolean).join(separator);
   const result: NodeJS.ProcessEnv = { ...safe, PATH: path };
   if (input.platform === "win32") result.Path = path;
@@ -163,6 +170,22 @@ export const ompMaintenance: ProviderMaintenanceCapabilitiesResolver = {
             env: context.env,
             platform: context.platform,
           }),
+          // Replacing the executable is only safe when no OMP process is
+          // running and none can start while the updater works.
+          canUpdate: () =>
+            Effect.sync(
+              () =>
+                !isOmpBinaryUpdating(context.realCommandPath) &&
+                !hasLiveOmpProcess(context.realCommandPath),
+            ),
+          beforeRun: () =>
+            Effect.sync(() => {
+              beginOmpBinaryUpdate(context.realCommandPath);
+            }),
+          afterRun: () =>
+            Effect.sync(() => {
+              endOmpBinaryUpdate(context.realCommandPath);
+            }),
         },
       };
     }

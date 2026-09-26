@@ -31,7 +31,7 @@ export type OmpRpcImage = typeof OmpRpcImage.Type;
 export const OmpRpcReady = Schema.Struct({
   type: Schema.Literal("ready"),
   protocolVersion: Schema.Literal(1),
-  supportedProtocolVersions: Schema.Array(Schema.Literals([1, 2])),
+  supportedProtocolVersions: Schema.Array(Schema.Finite),
   maxFrameBytes: Schema.Finite,
   maxReassembledFrameBytes: Schema.Finite,
 });

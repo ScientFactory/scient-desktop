@@ -465,14 +465,15 @@ describe("Oh My Pi production qualification seams", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("fails closed when the event queue byte budget is exceeded", () =>
+  it.effect("recovers the event queue after a byte-budget overflow", () =>
     Effect.gen(function* () {
       const root = makeRoot("event-overflow");
       const events = yield* Queue.unbounded<OmpRpcNotification, Cause.Done>();
+      let emitOversized = true;
       const adapter = yield* makeAdapter({
         root,
         instanceId: ProviderInstanceId.make("omp-qualification-event-overflow"),
-        eventQueueByteLimit: 1,
+        eventQueueByteLimit: 64 * 1024,
         makeProcess: (options) =>
           Effect.sync(() =>
             makeClient({
@@ -481,20 +482,27 @@ describe("Oh My Pi production qualification seams", () => {
               overrides: {
                 prompt: () =>
                   Effect.gen(function* () {
-                    yield* Queue.offer(events, {
-                      _tag: "Event",
-                      event: {
-                        type: "host_tool_call",
-                        id: "oversized-event",
-                      },
-                    });
-                    yield* Effect.sleep("10 millis").pipe(TestClock.withLive);
+                    if (emitOversized) {
+                      yield* Queue.offer(events, {
+                        _tag: "Event",
+                        event: {
+                          type: "message_update",
+                          message: { role: "assistant", content: "" },
+                          assistantMessageEvent: {
+                            type: "text_delta",
+                            delta: "x".repeat(256 * 1024),
+                          },
+                        },
+                      });
+                      yield* Effect.sleep("10 millis").pipe(TestClock.withLive);
+                    }
                     return success("prompt", { agentInvoked: true });
                   }),
               },
             }),
           ),
       });
+      const runtimeEvents = yield* collectRuntimeEvents(adapter);
       const threadId = ThreadId.make("omp-event-overflow");
       yield* adapter.startSession({ threadId, cwd: root, runtimeMode: "full-access" });
       yield* adapter.sendTurn({ threadId, input: "overflow the event queue" });
@@ -504,6 +512,26 @@ describe("Oh My Pi production qualification seams", () => {
         { discard: true },
       ).pipe(TestClock.withLive);
       expect(yield* adapter.hasSession(threadId)).toBe(false);
+
+      // The failed turn must not end the shared queue: the next session has to
+      // be able to start and publish events again.
+      emitOversized = false;
+      const recoveredThreadId = ThreadId.make("omp-event-overflow-recovered");
+      yield* adapter.startSession({
+        threadId: recoveredThreadId,
+        cwd: root,
+        runtimeMode: "full-access",
+      });
+      const turn = yield* adapter
+        .sendTurn({ threadId: recoveredThreadId, input: "deliver after recovery" })
+        .pipe(Effect.timeout("2 seconds"), TestClock.withLive);
+      expect(turn.turnId.length).toBeGreaterThan(0);
+      expect(
+        yield* takeMatching(
+          runtimeEvents,
+          (event) => event.type === "turn.started" && event.threadId === recoveredThreadId,
+        ),
+      ).toEqual(expect.objectContaining({ threadId: recoveredThreadId }));
       yield* adapter.stopAll();
       NodeFS.rmSync(root, { recursive: true, force: true });
     }).pipe(Effect.provide(NodeServices.layer)),
@@ -743,6 +771,69 @@ describe("Oh My Pi production qualification seams", () => {
         { id: "select-1", value: "two" },
       ]);
       yield* adapter.stopAll();
+      NodeFS.rmSync(root, { recursive: true, force: true });
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("answers extension input and stops while the prompt acknowledgement is blocked", () =>
+    Effect.gen(function* () {
+      const root = makeRoot("blocked-prompt");
+      const events = yield* Queue.unbounded<OmpRpcNotification, Cause.Done>();
+      const responses: Array<Record<string, unknown>> = [];
+      let shutdowns = 0;
+      const adapter = yield* makeAdapter({
+        root,
+        instanceId: ProviderInstanceId.make("omp-qualification-blocked-prompt"),
+        makeProcess: (options) =>
+          Effect.sync(() =>
+            makeClient({
+              events,
+              sessionDir: options.sessionDir ?? root,
+              overrides: {
+                // Oh My Pi is busy and has not acknowledged the prompt.
+                prompt: () => Effect.never,
+                extensionUiResponse: (response) => {
+                  responses.push(response);
+                  return Effect.void;
+                },
+              },
+              shutdown: Effect.sync(() => {
+                shutdowns += 1;
+                return { code: null, forced: true, stderrTail: "" };
+              }),
+            }),
+          ),
+      });
+      const runtimeEvents = yield* collectRuntimeEvents(adapter);
+      const threadId = ThreadId.make("omp-blocked-prompt");
+      yield* adapter.startSession({ threadId, cwd: root, runtimeMode: "full-access" });
+      yield* adapter
+        .sendTurn({ threadId, input: "hold the acknowledgement open" })
+        .pipe(Effect.forkScoped);
+      yield* takeMatching(runtimeEvents, (event) => event.type === "turn.started");
+      yield* Queue.offer(events, {
+        _tag: "Event",
+        event: {
+          type: "extension_ui_request",
+          id: "confirm-blocked",
+          method: "confirm",
+          title: "Confirm",
+          message: "Continue?",
+        },
+      });
+      yield* takeMatching(runtimeEvents, (event) => event.type === "user-input.requested").pipe(
+        Effect.timeout("2 seconds"),
+        TestClock.withLive,
+      );
+      yield* adapter
+        .respondToUserInput(threadId, ApprovalRequestId.make("confirm-blocked"), {
+          "confirm-blocked": "true",
+        })
+        .pipe(Effect.timeout("2 seconds"), TestClock.withLive);
+      expect(responses).toEqual([{ id: "confirm-blocked", confirmed: true }]);
+      yield* adapter.stopSession(threadId).pipe(Effect.timeout("5 seconds"), TestClock.withLive);
+      expect(yield* adapter.hasSession(threadId)).toBe(false);
+      expect(shutdowns).toBe(1);
       NodeFS.rmSync(root, { recursive: true, force: true });
     }).pipe(Effect.provide(NodeServices.layer)),
   );

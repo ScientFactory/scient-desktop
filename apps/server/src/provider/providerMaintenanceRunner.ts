@@ -451,7 +451,27 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
                 }),
               );
             }
-            const result = yield* runMaintenanceCommand(command);
+            // The last check before the installer runs. Work can start between
+            // the first guard and here, so a provider-owned guard is evaluated
+            // again immediately before the command is spawned.
+            if (command.canUpdate && !(yield* command.canUpdate())) {
+              return yield* finish(
+                makeUpdateState({
+                  status: "failed",
+                  startedAt,
+                  finishedAt: yield* nowIso,
+                  message: "The provider has active work. Wait for it to settle and try again.",
+                }),
+              );
+            }
+            const runCommand = () => runMaintenanceCommand(command);
+            const result = yield* command.beforeRun || command.afterRun
+              ? Effect.acquireUseRelease(
+                  command.beforeRun?.() ?? Effect.void,
+                  runCommand,
+                  () => command.afterRun?.() ?? Effect.void,
+                )
+              : runCommand();
             const finishedAt = yield* nowIso;
             if (result.timedOut || result.exitCode !== 0) {
               return yield* finish(

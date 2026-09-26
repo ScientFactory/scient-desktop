@@ -1,4 +1,5 @@
-import { managedRuntimeSmokeEnvironment } from "@scientfactory/provider-runtime";
+import { ompSessionEnvironment } from "../omp/OmpEnvironment.ts";
+import { hasLiveOmpProcess, isOmpBinaryUpdating } from "../omp/OmpProcessRegistry.ts";
 import {
   OmpSettings,
   ProviderDriverKind,
@@ -59,7 +60,7 @@ export const makeOmpProcessEnvironment = (
   environment: ProviderInstanceEnvironment | undefined,
   baseEnv: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv => ({
-  ...managedRuntimeSmokeEnvironment(baseEnv),
+  ...ompSessionEnvironment(baseEnv),
   ...mergeProviderInstanceEnvironment(environment, {}),
 });
 
@@ -196,13 +197,11 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
                     update: {
                       ...capabilities.update,
                       canUpdate: () =>
-                        adapter
-                          .listSessions()
-                          .pipe(
-                            Effect.map((sessions) =>
-                              sessions.every((session) => session.status !== "running"),
-                            ),
-                          ),
+                        Effect.sync(
+                          () =>
+                            !isOmpBinaryUpdating(launchConfig.binaryPath) &&
+                            !hasLiveOmpProcess(launchConfig.binaryPath),
+                        ),
                     },
                   }
                 : capabilities,

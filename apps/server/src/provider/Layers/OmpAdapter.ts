@@ -60,6 +60,7 @@ import {
   type OmpRpcProcessOptions,
 } from "../omp/OmpRpcProcess.ts";
 import { assertReadableOmpSessionFile, ompSessionFilesEqual } from "../omp/OmpSessionFile.ts";
+import { isOmpBinaryUpdating } from "../omp/OmpProcessRegistry.ts";
 import { acquireOmpSessionLock, releaseOmpSessionLock } from "../omp/OmpSessionLock.ts";
 import {
   makeOmpSessionCursor,
@@ -167,7 +168,9 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
   const events = yield* Queue.dropping<ProviderRuntimeEvent, Cause.Done>(OMP_EVENT_QUEUE_MAX_ITEMS);
   let queuedEventBytes = 0;
   let eventsOverflowed = false;
-  let overflowHandler: Effect.Effect<void> = Effect.void;
+  const stoppingThreads = new Set<ThreadId>();
+  let overflowHandler: (threadIds: ReadonlyArray<ThreadId>) => Effect.Effect<void> = () =>
+    Effect.void;
   const binaryFingerprint = ompBinaryFingerprint(options.binaryPath);
   const effectiveHomeIdentity =
     options.homePath?.trim() ||
@@ -270,15 +273,53 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       return eventQueueByteLimit + 1;
     }
   };
+  /** New sessions wait for a failed turn's cleanup instead of racing it. */
+  const awaitEventRecovery = Effect.gen(function* () {
+    for (let attempt = 0; attempt < 1_000 && eventsOverflowed; attempt += 1) {
+      yield* Effect.yieldNow;
+    }
+    if (eventsOverflowed) {
+      return yield* request(
+        "startSession",
+        "Oh My Pi event delivery is still recovering. Try again in a moment.",
+      );
+    }
+  });
   const triggerEventOverflow = Effect.gen(function* () {
     if (eventsOverflowed) return;
     eventsOverflowed = true;
-    yield* Queue.end(events);
-    yield* Effect.forkDetach(overflowHandler);
+    // Keep the shared stream subscribed. Ending it would permanently strand
+    // ProviderService after this adapter instance overflowed. Stop the current
+    // sessions, then reopen the event budget for future sessions.
+    // Sessions created after the overflow must survive the cleanup, so the
+    // cleanup target list is fixed at overflow time and new sessions wait for
+    // recovery instead of racing it.
+    const overflowedThreads = [...sessions.keys()];
+    yield* Effect.forkDetach(
+      overflowHandler(overflowedThreads).pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            eventsOverflowed = false;
+            queuedEventBytes = 0;
+          }),
+        ),
+      ),
+    );
   });
   const offer = (event: ProviderRuntimeEvent) =>
     Effect.gen(function* () {
       if (eventsOverflowed) return;
+      // A stopped or replaced session can still have queued runtime updates.
+      // Publishing them would both resurrect dead turns and let a finished
+      // turn keep re-triggering queue overflow against healthy sessions. A
+      // session that is currently shutting down may still publish its own
+      // terminal events.
+      if (
+        event.type !== "session.exited" &&
+        !sessions.has(event.threadId) &&
+        !stoppingThreads.has(event.threadId)
+      )
+        return;
       const bytes = runtimeEventBytes(event);
       if (bytes > eventQueueByteLimit || queuedEventBytes + bytes > eventQueueByteLimit) {
         yield* triggerEventOverflow;
@@ -700,6 +741,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       ctx.stopped = true;
       ctx.finalized = true;
       sessions.delete(threadId);
+      stoppingThreads.add(threadId);
       const exit = ctx.client.shutdown
         ? yield* ctx.client.shutdown.pipe(
             Effect.orElseSucceed(() => ({ code: null, forced: true, stderrTail: "" })),
@@ -735,7 +777,8 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           exitKind: failed ? "error" : "graceful",
         },
       });
-    });
+      stoppingThreads.delete(threadId);
+    }).pipe(Effect.uninterruptible);
 
   const startSession: ProviderAdapterShape<ProviderAdapterError>["startSession"] = (input) =>
     locally(
@@ -743,6 +786,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         input.threadId,
         Effect.gen(function* () {
           const threadLock = yield* getThreadLock(input.threadId);
+          yield* awaitEventRecovery;
           if (input.runtimeMode !== "full-access") {
             return yield* validation(
               "startSession",
@@ -751,6 +795,12 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           }
           if (!input.cwd)
             return yield* validation("startSession", "Oh My Pi requires a workspace directory.");
+          if (isOmpBinaryUpdating(options.binaryPath)) {
+            return yield* validation(
+              "startSession",
+              "Oh My Pi is being updated. Try again in a moment.",
+            );
+          }
           const cwd = yield* fs
             .realPath(input.cwd)
             .pipe(
@@ -1251,16 +1301,13 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       ),
     );
 
-  overflowHandler = Effect.gen(function* () {
-    yield* Effect.forEach(
-      [...sessions.keys()],
-      (threadId) => locally(stopSessionUnlocked(threadId)),
-      { discard: true, concurrency: "unbounded" },
-    );
-  }).pipe(Effect.ignore);
+  overflowHandler = (threadIds) =>
+    Effect.forEach(threadIds, (threadId) => locally(stopSessionUnlocked(threadId)), {
+      discard: true,
+      concurrency: "unbounded",
+    }).pipe(Effect.ignore);
 
-  const stopSession = (threadId: ThreadId) =>
-    locally(withThreadLock(threadId, stopSessionUnlocked(threadId)));
+  const stopSession = (threadId: ThreadId) => locally(stopSessionUnlocked(threadId));
 
   const unsupported = (operation: string, threadId: ThreadId) =>
     Effect.fail(
@@ -1288,56 +1335,50 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     sendTurn,
     interruptTurn: (threadId, turnId) =>
       locally(
-        withThreadLock(
-          threadId,
-          Effect.gen(function* () {
-            const ctx = yield* requireSession(threadId);
-            if (!ctx.turnId) return;
-            if (turnId && ctx.turnId !== turnId) {
-              return yield* validation("interruptTurn", "No matching active Oh My Pi turn.");
-            }
-            yield* ctx.runtime.requestCancel();
-            // Abort is graceful first. If OMP accepts it before an agent starts,
-            // confirm the local cancellation immediately; otherwise wait for the
-            // terminal event plus idle-state barrier. Past the deadline the
-            // process is killed and the outcome stays uncertain.
-            const cancellation = yield* Effect.gen(function* () {
-              const aborted = yield* ctx.client
-                .abort()
-                .pipe(Effect.timeout(OMP_CANCEL_DEADLINE), Effect.exit);
-              if (aborted._tag === "Success") yield* ctx.runtime.confirmCancel();
-              yield* ctx.runtime.awaitTurnSettled();
-              return aborted;
-            }).pipe(Effect.timeout(OMP_CANCEL_DEADLINE), Effect.option);
-            if (cancellation._tag === "None") {
-              yield* stopSessionUnlocked(threadId);
-              return;
-            }
-            if (cancellation.value._tag === "Failure") {
-              const base = yield* eventBase(ctx);
-              yield* offer({
-                type: "runtime.warning",
-                ...base,
-                ...refs(ctx),
-                payload: {
-                  message:
-                    "Oh My Pi did not acknowledge abort, but the turn reached terminal settlement.",
-                },
-              });
-            }
-          }),
-        ),
+        Effect.gen(function* () {
+          const ctx = yield* requireSession(threadId);
+          if (!ctx.turnId) return;
+          if (turnId && ctx.turnId !== turnId) {
+            return yield* validation("interruptTurn", "No matching active Oh My Pi turn.");
+          }
+          yield* ctx.runtime.requestCancel();
+          // Abort is graceful first. If OMP accepts it before an agent starts,
+          // confirm the local cancellation immediately; otherwise wait for the
+          // terminal event plus idle-state barrier. Past the deadline the
+          // process is killed and the outcome stays uncertain.
+          const cancellation = yield* Effect.gen(function* () {
+            const aborted = yield* ctx.client
+              .abort()
+              .pipe(Effect.timeout(OMP_CANCEL_DEADLINE), Effect.exit);
+            if (aborted._tag === "Success") yield* ctx.runtime.confirmCancel();
+            yield* ctx.runtime.awaitTurnSettled();
+            return aborted;
+          }).pipe(Effect.timeout(OMP_CANCEL_DEADLINE), Effect.option);
+          if (cancellation._tag === "None") {
+            yield* stopSessionUnlocked(threadId);
+            return;
+          }
+          if (cancellation.value._tag === "Failure") {
+            const base = yield* eventBase(ctx);
+            yield* offer({
+              type: "runtime.warning",
+              ...base,
+              ...refs(ctx),
+              payload: {
+                message:
+                  "Oh My Pi did not acknowledge abort, but the turn reached terminal settlement.",
+              },
+            });
+          }
+        }),
       ),
     respondToRequest: (threadId) => unsupported("respondToRequest", threadId),
     respondToUserInput: (threadId, requestId, answers) =>
       locally(
-        withThreadLock(
-          threadId,
-          Effect.gen(function* () {
-            const ctx = yield* requireSession(threadId);
-            yield* respondToQuestion(ctx, requestId, answers);
-          }),
-        ),
+        Effect.gen(function* () {
+          const ctx = yield* requireSession(threadId);
+          yield* respondToQuestion(ctx, requestId, answers);
+        }),
       ),
     readThread: (threadId) =>
       unsupported("readThread", threadId) as Effect.Effect<

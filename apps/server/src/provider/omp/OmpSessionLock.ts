@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Effect FileSystem cannot create a file with O_EXCL.
 import * as NodeFS from "node:fs";
+import { randomUUID } from "node:crypto";
 
 import * as Effect from "effect/Effect";
 
@@ -22,18 +23,38 @@ const errorCode = (error: unknown): string | undefined =>
 export const acquireOmpSessionLock = (lockPath: string): Effect.Effect<void, string> =>
   Effect.try({
     try: () => {
-      const write = () => NodeFS.writeFileSync(lockPath, `${process.pid}\n`, { flag: "wx" });
-      try {
-        write();
-        return "acquired" as const;
-      } catch (error) {
-        if (errorCode(error) !== "EEXIST") throw error;
-        const existing = Number(NodeFS.readFileSync(lockPath, "utf8").trim());
-        if (lockHeld(existing)) return "busy" as const;
-        NodeFS.rmSync(lockPath, { force: true });
-        write();
-        return "acquired" as const;
+      // The holder record carries a per-acquisition token so a takeover can
+      // prove it is deleting the stale record it inspected, and not a lock that
+      // another process re-created between the check and the delete.
+      const token = `${process.pid}:${randomUUID()}`;
+      const writeToken = () => NodeFS.writeFileSync(lockPath, `${token}\n`, { flag: "wx" });
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          writeToken();
+          return "acquired" as const;
+        } catch (error) {
+          const code = errorCode(error);
+          if (code !== "EEXIST") throw error;
+        }
+        let observed: string;
+        try {
+          observed = NodeFS.readFileSync(lockPath, "utf8").trim();
+        } catch (error) {
+          // The holder released the lock between our write attempt and the read.
+          if (errorCode(error) === "ENOENT") continue;
+          throw error;
+        }
+        if (lockHeld(Number(observed.split(":")[0]))) return "busy" as const;
+        try {
+          // Only unlink the exact stale record we inspected.
+          if (NodeFS.readFileSync(lockPath, "utf8").trim() !== observed) continue;
+          NodeFS.unlinkSync(lockPath);
+        } catch (error) {
+          if (errorCode(error) === "ENOENT") continue;
+          throw error;
+        }
       }
+      return "busy" as const;
     },
     catch: () => "Oh My Pi could not lock this conversation.",
   }).pipe(
