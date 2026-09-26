@@ -1,8 +1,7 @@
 # Custom model connections
 
-Status: implemented on the Pi, Droid, and Oh My Pi feature branch; not merged. Earlier manual
-reviews do not qualify the latest lifecycle, automatic-settings and readiness changes. Hosted-account
-and visual acceptance of this pass remain separate from automated fixtures.
+Status: implemented on the Pi, Droid, and Oh My Pi provider surfaces. Hosted-account,
+platform-process, and visual acceptance remain separate from the automated fixtures.
 
 ## Ownership and boundaries
 

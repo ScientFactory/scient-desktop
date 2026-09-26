@@ -31,7 +31,7 @@ import {
   type OmpRpcProcessOptions,
 } from "./OmpRpcProcess.ts";
 
-export const OMP_CUSTOM_MODELS_EXTENSION = `
+const OMP_CUSTOM_MODELS_EXTENSION = `
 const url = process.env.SCIENT_OMP_MODELS_URL;
 const token = process.env.SCIENT_OMP_MODELS_TOKEN;
 const secrets = new Map();

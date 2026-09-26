@@ -84,9 +84,10 @@ enable them or provide compatible evidence.
 --no-extensions --no-skills --no-rules`; a running conversation validates against its live
   profile-specific catalog without publishing that catalog globally.
 
-Rollback, fork, and Scient-managed installation are not available. Scient does not inject a
-private system prompt or awareness block into OMP; no project or OMP-home configuration file is
-written for that purpose.
+Native OMP rollback and fork commands are not exposed. On qualified desktop targets, Scient can
+install and manage a private Oh My Pi runtime; that managed path is separate from the system
+installation. Scient does not inject a private system prompt or awareness block into OMP; no project
+or OMP-home configuration file is written for that purpose.
 
 ## Resume
 
@@ -99,3 +100,14 @@ regular file inside that directory after resolving symlinks. A cursor from anoth
 workspace, home/profile, executable, protocol, major Oh My Pi version, or unreadable path is
 rejected. Patch updates inside
 the same major version can resume.
+
+## Qualification
+
+The current qualified acceptance evidence covers:
+
+- external OMP on macOS Apple silicon with a real OMP process;
+- Oh My Pi RPC startup, streaming, steering, cancellation, attachments, resume, and custom models;
+- the reviewed private macOS Apple-silicon runtime and its rollback/qualification path.
+
+Windows process-tree cleanup, Linux process qualification, and hosted-account flows are not claimed
+by this evidence. Those platforms remain unqualified until their own matrix runs.

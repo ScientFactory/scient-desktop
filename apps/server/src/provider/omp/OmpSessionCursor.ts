@@ -5,7 +5,7 @@ import * as NodePath from "node:path";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-export const OMP_SESSION_CURSOR_VERSION = 3;
+const OMP_SESSION_CURSOR_VERSION = 3;
 const OMP_LEGACY_SESSION_CURSOR_VERSION = 2;
 const OMP_LAUNCH_POLICY = "rpc-v2;approval-mode=yolo;session-dir=explicit" as const;
 
