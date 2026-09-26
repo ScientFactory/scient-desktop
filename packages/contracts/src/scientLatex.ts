@@ -171,7 +171,9 @@ export type ScientLatexResolutionIncompleteReason =
 const ScientLatexResolutionShared = {
   sourceRelativePath: PathString,
   candidates: Schema.Array(ScientLatexRootCandidate).check(Schema.isMaxLength(64)),
-  indexGeneration: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(128)),
+  indexGeneration: Schema.optional(
+    Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(128)),
+  ),
   complete: Schema.Boolean,
   incompleteReasons: Schema.Array(ScientLatexResolutionIncompleteReason).check(
     Schema.isMaxLength(8),

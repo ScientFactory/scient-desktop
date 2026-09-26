@@ -100,7 +100,7 @@ export const PublishedLatexBuildEvidence = Schema.Struct({
 });
 export type PublishedLatexBuildEvidence = typeof PublishedLatexBuildEvidence.Type;
 
-/** Visual edits require stable inputs across the compile, not merely a post-build stat. */
+/** Current-source export requires stable inputs across the compile, not merely a post-build stat. */
 export function latexVisualSourceRevisions(
   before: LatexBuildEvidence,
   after: LatexBuildEvidence,

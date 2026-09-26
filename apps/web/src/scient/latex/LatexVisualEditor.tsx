@@ -1,9 +1,23 @@
+import type { JSONContent } from "@tiptap/core";
+import { matrixEdit, type MatrixAction } from "../math/input/matrix";
+import { customMathEdit } from "../keyboard/customMath";
+import { attachShortcutHost } from "../keyboard/host";
+import {
+  commandKeys,
+  getKeyboardPreferences,
+  subscribeKeyboardPreferences,
+} from "../keyboard/preferences";
+import { labelKeys } from "../keyboard/keys";
+import { commandEdit, mathCommand } from "../math/input/catalog";
+import { WritingShortcutsDialog } from "../keyboard/WritingShortcutsDialog";
 import { Extension, Node, type Editor } from "@tiptap/core";
 import { NodeViewWrapper, ReactNodeViewRenderer, EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import type { NodeViewProps } from "@tiptap/react";
 import {
   Fragment,
+  createContext,
+  useContext,
   useCallback,
   useEffect,
   useId,
@@ -21,17 +35,29 @@ import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
 
 import { EditorState, Plugin, NodeSelection, Selection, TextSelection } from "@tiptap/pm/state";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
-import { LatexInsertDialog, type LatexInsertAction } from "./LatexInsertDialog";
+import { LatexInsertMenu, type LatexInsertAction } from "./LatexInsertMenu";
+import { LatexDocumentSettings } from "./LatexDocumentSettings";
+import {
+  DockButton,
+  DockMenu,
+  DockCommandItem,
+  DockCommandRadioItem,
+} from "../markdownEditor/ui/dockChrome";
+import { MenuRadioGroup, MenuSeparator } from "~/components/ui/menu";
+import "../markdownEditor/scient-markdown-editor.css";
 import { LatexReferenceDialog } from "./LatexReferenceDialog";
 import { LatexFigureInsertDialog } from "./LatexFigureInsertDialog";
 import { LatexDocumentReview } from "./LatexDocumentReview";
 import { LatexMathField, type LatexMathFieldHandle } from "./LatexMathField";
 import { LatexMathPalette } from "./LatexMathPalette";
+import { LatexTextField, LatexDraftContext } from "./LatexTextField";
+import { LatexObjectToolbar } from "./LatexObjectToolbar";
+import { LatexHeadingToolbar } from "./LatexHeadingToolbar";
 import { LatexTitleView } from "./LatexTitleView";
 import { LatexTableToolbar } from "./LatexTableToolbar";
 import { LatexVisualZoomControls } from "./LatexVisualZoomControls";
 import { useLatexPinchZoom } from "./useLatexPinchZoom";
-import { List, ListOrdered, Undo2, Redo2, Plus, Sigma, MoreHorizontal } from "lucide-react";
+import { List, Undo2, Redo2, Sigma, ListTree, ClipboardCheck, Keyboard } from "lucide-react";
 import { mathSourceCompletions, type MathSourceCompletion } from "./latexMathCompletion";
 import {
   LatexVisualPagination,
@@ -41,7 +67,6 @@ import {
 } from "./latexVisualPaginationExtension";
 import {
   CSS_PIXELS_PER_INCH,
-  LATEX_PAPER_SIZES,
   TEX_POINTS_PER_INCH,
   latexLengthInches,
   latexVisualFontMetrics,
@@ -53,6 +78,8 @@ import { readVisualDraft, clearVisualDraft } from "./visualDrafts";
 
 import {
   applyLatexVisualDocumentChange,
+  escapeText,
+  metadataText,
   latexVisualLayoutProfile,
   latexVisualScientificSource,
   latexVisualTableSource,
@@ -62,8 +89,8 @@ import {
   parseStructuredMathEnvironment,
   projectLatexVisualDocument,
   updateLatexVisualLayoutSource,
+  ensureLatexTitleBlock,
   type LatexVisualDocument,
-  type LatexVisualTablePreset,
 } from "./latexVisualDocument";
 
 const LatexSourceAttributes = Extension.create({
@@ -73,6 +100,7 @@ const LatexSourceAttributes = Extension.create({
       {
         types: ["paragraph", "heading", "bulletList", "orderedList"],
         attributes: {
+          referenceLabel: { default: null, rendered: false },
           sourceId: { default: null, rendered: false },
           latexCommand: {
             default: null,
@@ -164,6 +192,8 @@ function LatexMathView({ node, updateAttributes, editor, getPos, selected }: Nod
   } as const;
   const [editing, setEditing] = useState(false);
   const [sourceOpen, setSourceOpen] = useState(false);
+  const [paletteRequest, setPaletteRequest] = useState(0);
+  const [shortcutHint, setShortcutHint] = useState("");
   const [draft, setDraft] = useState(attributes.tex);
   const [sourceError, setSourceError] = useState<string | null>(null);
   const [caret, setCaret] = useState(0);
@@ -358,6 +388,55 @@ function LatexMathView({ node, updateAttributes, editor, getPos, selected }: Nod
     }
   };
 
+  const sourceShortcut = useRef<(id: string) => boolean>(() => false);
+  sourceShortcut.current = (id) => {
+    const field = sourceEditor.current;
+    if (!field || !editor.isEditable) return false;
+    if (id === "math.palette") {
+      setSourceOpen(false);
+      setPaletteRequest((value) => value + 1);
+      return true;
+    }
+    if (id === "math.inline" || id === "math.display") {
+      changeType(id === "math.inline" ? "inline-paren" : "display-bracket");
+      return true;
+    }
+    const source = field.value;
+    const selection = { from: field.selectionStart, to: field.selectionEnd };
+    const custom = getKeyboardPreferences().preferences.customMath?.find(
+      (entry) => entry.id === id,
+    );
+    const command = mathCommand(id);
+    const edit = custom
+      ? customMathEdit(custom, source, selection)
+      : command
+        ? commandEdit(command, source, selection)
+        : id.startsWith("math.matrix.")
+          ? matrixEdit(source, selection, id.slice("math.matrix.".length) as MatrixAction)
+          : null;
+    if (!edit) return false;
+    const next = source.slice(0, edit.from) + edit.insert + source.slice(edit.to);
+    setDraft(next);
+    setCaret(edit.selection.from);
+    publishSource(next);
+    requestAnimationFrame(() => {
+      if (sourceEditor.current !== field || field.value !== next) return;
+      field.focus({ preventScroll: true });
+      field.setSelectionRange(edit.selection.from, edit.selection.to);
+    });
+    return true;
+  };
+  useEffect(() => {
+    const field = sourceEditor.current;
+    if (!field || !sourceOpen || !editing) return;
+    return attachShortcutHost(field, "math", {
+      capture: true,
+      feedback: setShortcutHint,
+      accepts: (event) => editor.isEditable && !event.isComposing,
+      execute: (id) => sourceShortcut.current(id),
+    });
+  }, [sourceOpen, editing, editor]);
+
   const toolbarHost = editor.view.dom
     .closest(".scient-latex-visual-workspace")
     ?.querySelector(".scient-latex-context-tools-slot");
@@ -387,7 +466,11 @@ function LatexMathView({ node, updateAttributes, editor, getPos, selected }: Nod
               <option value="environment:gather">Gather (numbered)</option>
               <option value="environment:gather*">Gather (unnumbered)</option>
             </select>
+            <span className="scient-latex-shortcut-hint" role="status">
+              {shortcutHint}
+            </span>
             <LatexMathPalette
+              openRequest={paletteRequest}
               sourceOpen={sourceOpen}
               onOpen={() => setSourceOpen(false)}
               onInsert={(symbol) =>
@@ -519,6 +602,19 @@ function LatexMathView({ node, updateAttributes, editor, getPos, selected }: Nod
         value={attributes.tex}
         display={display}
         disabled={!editable}
+        onShortcutHint={setShortcutHint}
+        onShortcut={(command) => {
+          if (command === "math.palette") {
+            setSourceOpen(false);
+            setPaletteRequest((value) => value + 1);
+            return true;
+          }
+          if (command === "math.inline" || command === "math.display") {
+            changeType(command === "math.inline" ? "inline-paren" : "display-bracket");
+            return true;
+          }
+          return false;
+        }}
         onFocus={() => activate(false)}
         onExit={finish}
         onRemoveEmpty={() => {
@@ -553,44 +649,83 @@ function LatexMathView({ node, updateAttributes, editor, getPos, selected }: Nod
   );
 }
 
-function LatexInlineCommandView({ node, updateAttributes, selected, editor }: NodeViewProps) {
+function LatexInlineCommandView({
+  node,
+  updateAttributes,
+  selected,
+  editor,
+  getPos,
+}: NodeViewProps) {
   const editable = useEditorEditable(editor);
   const name = String(node.attrs.name ?? "command");
   const argument = String(node.attrs.argument ?? "");
-  const [editing, setEditing] = useState(false);
+  const root = useRef<HTMLSpanElement>(null);
+  const host = editor.view.dom.closest(".scient-latex-visual-workspace");
+  const footnoteText = name === "footnote" ? metadataText(argument) : null;
+  useEffect(() => {
+    if (!selected || !editable) return;
+    const frame = requestAnimationFrame(() =>
+      host
+        ?.querySelector<HTMLTextAreaElement>(`[aria-label="${name} argument"]`)
+        ?.focus({ preventScroll: true }),
+    );
+    return () => cancelAnimationFrame(frame);
+  }, [selected, editable, host, name]);
   return (
     <NodeViewWrapper
       as="span"
+      ref={root}
       className="scient-latex-visual-command"
       data-selected={selected || undefined}
       contentEditable={false}
     >
-      {editing ? (
-        <input
-          autoFocus
+      <button
+        type="button"
+        disabled={!editable}
+        aria-label={`Edit ${name}`}
+        onClick={() => {
+          const position = getPos();
+          if (typeof position === "number") editor.commands.setNodeSelection(position);
+          requestAnimationFrame(() =>
+            host
+              ?.querySelector<HTMLTextAreaElement>(`[aria-label="${name} argument"]`)
+              ?.focus({ preventScroll: true }),
+          );
+        }}
+      >
+        {name === "footnote" ? (
+          <ScientTooltip content={footnoteText ?? argument}>
+            <sup>*</sup>
+          </ScientTooltip>
+        ) : (
+          <span>{name === "label" ? `(${argument || "label"})` : `[${argument || name}]`}</span>
+        )}
+      </button>
+      <LatexObjectToolbar editor={editor} root={root} selected={selected} label={`${name} options`}>
+        <span className="scient-latex-context-label">
+          {name === "footnote" ? "Footnote" : name === "label" ? "Reference label" : name}
+        </span>
+        <LatexTextField
           aria-label={`${name} argument`}
-          value={argument}
-          onChange={(event) => {
-            const next = event.currentTarget.value;
-            if (!editor.isEditable || /[{}\\%]/u.test(next)) return;
+          rows={1}
+          value={footnoteText ?? argument}
+          onValueChange={(value) => {
+            const next = name === "footnote" && footnoteText !== null ? escapeText(value) : value;
+            if (name !== "footnote" && /[{}\\%]/u.test(next)) return;
+            if (name === "footnote" && footnoteText === null && /[{}%]/u.test(next)) return;
             updateAttributes({ argument: next, raw: `\\${name}{${next}}` });
           }}
-          onBlur={() => setEditing(false)}
           onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === "Escape") event.currentTarget.blur();
+            if (event.key === "Escape" || (event.key === "Enter" && !event.shiftKey)) {
+              event.preventDefault();
+              const position = getPos();
+              if (typeof position === "number")
+                editor.commands.setTextSelection(position + node.nodeSize);
+              editor.commands.focus(undefined, { scrollIntoView: false });
+            }
           }}
         />
-      ) : (
-        <button
-          type="button"
-          disabled={!editable}
-          onClick={() => setEditing(true)}
-          aria-label={`Edit ${name}`}
-        >
-          <span className="scient-latex-visual-command-name">{name}</span>
-          <span>{argument || "empty"}</span>
-        </button>
-      )}
+      </LatexObjectToolbar>
     </NodeViewWrapper>
   );
 }
@@ -618,10 +753,13 @@ function withStableKeys<T>(values: T[], serialize: (value: T) => string) {
 }
 
 interface LatexVisualWorkspace {
+  readonly draftKey: string | null;
   readonly environmentId: EnvironmentId | null;
   readonly cwd: string | null;
   readonly relativePath: string | null;
 }
+
+const LatexRootContext = createContext<string | null>(null);
 
 function normalizeFigurePath(sourceRelativePath: string, figurePath: string): string | null {
   if (/^(?:[A-Za-z][A-Za-z0-9+.-]*:|[A-Za-z]:[\\/]|[\\/])/u.test(figurePath)) return null;
@@ -651,10 +789,9 @@ function LatexFigureImage(props: {
   readonly width: string;
   readonly workspace: LatexVisualWorkspace;
 }) {
+  const rootRelativePath = useContext(LatexRootContext);
   const relativePath =
-    props.workspace.relativePath === null
-      ? null
-      : normalizeFigurePath(props.workspace.relativePath, props.path);
+    rootRelativePath === null ? null : normalizeFigurePath(rootRelativePath, props.path);
   const resource = useMemo<AssetResource | null>(
     () =>
       props.workspace.cwd === null || relativePath === null
@@ -711,14 +848,36 @@ function LatexRichPreviewView({
   updateAttributes,
   editor,
   deleteNode,
+  getPos,
   workspace,
 }: NodeViewProps & { readonly workspace: LatexVisualWorkspace }) {
   const editorEditable = useEditorEditable(editor);
   const generatedId = useRef(0);
   const tableRoot = useRef<HTMLElement | null>(null);
+  const objectRoot = useRef<HTMLElement | null>(null);
+  const [descriptionItem, setDescriptionItem] = useState(0);
+  const [captionEditing, setCaptionEditing] = useState(false);
+  const selectObject = () => {
+    const position = getPos();
+    if (typeof position === "number" && editor.state.selection.from !== position)
+      editor.view.dispatch(
+        editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, position)),
+      );
+  };
+  const leaveObject = (direction: -1 | 1) => {
+    const position = getPos();
+    if (typeof position !== "number") return;
+    const boundary = direction < 0 ? position : position + node.nodeSize;
+    editor.view.dispatch(
+      editor.state.tr.setSelection(Selection.near(editor.state.doc.resolve(boundary), direction)),
+    );
+    editor.commands.focus(undefined, { scrollIntoView: false });
+  };
   const [selectedCell, setSelectedCell] = useState({ row: 0, column: 0 });
   const [objectActive, setObjectActive] = useState(false);
   const kind = String(node.attrs.kind ?? "description");
+  const fieldDraft = (name: string) =>
+    workspace.draftKey ? `${workspace.draftKey}:${node.attrs.sourceId}:${kind}:${name}` : undefined;
   const items = Array.isArray(node.attrs.items)
     ? (node.attrs.items as { label?: unknown; body?: unknown }[])
     : [];
@@ -799,7 +958,7 @@ function LatexRichPreviewView({
   const addDescriptionItem = () => {
     if (!editorEditable || !descriptionEditable) return;
     updateAttributes({
-      items: [...items, { label: "New item", body: "Describe this item." }],
+      items: [...items, { label: "", body: "" }],
       itemIds: [...itemIds, nextGeneratedId("description-new")],
     });
   };
@@ -854,7 +1013,7 @@ function LatexRichPreviewView({
       0,
       Array.from({ length: rows[0]!.length }, () => ""),
     );
-    nextRowIds.splice(insertion, 0, nextGeneratedId("table-row"));
+    nextRowIds.splice(insertion, 0, nextGeneratedId("table-row-new"));
     setSelectedCell({ row: insertion, column: 0 });
     updateTableStructure({ rows: nextRows, rowIds: nextRowIds });
     focusTableCell(insertion, 0);
@@ -879,7 +1038,7 @@ function LatexRichPreviewView({
     });
     const nextColumnIds = [...columnIds];
     const nextAlignments = [...columnAlignments];
-    nextColumnIds.splice(insertion, 0, nextGeneratedId("table-column"));
+    nextColumnIds.splice(insertion, 0, nextGeneratedId("table-column-new"));
     nextAlignments.splice(insertion, 0, "left");
     setSelectedCell({ row: selectedCell.row, column: insertion });
     updateTableStructure({
@@ -941,6 +1100,28 @@ function LatexRichPreviewView({
     });
     focusTableCell(selectedCell.row, to);
   };
+  const tableShortcut = useRef<(id: string) => boolean>(() => false);
+  tableShortcut.current = (id) => {
+    if (!editorEditable || !tableEditable) return false;
+    if (id === "table.addRow") addTableRow();
+    else if (id === "table.deleteRow" && rows.length > 1) removeTableRow();
+    else if (id === "table.addColumn") addTableColumn();
+    else if (id === "table.deleteColumn" && (rows[0]?.length ?? 0) > 1) removeTableColumn();
+    else return false;
+    return true;
+  };
+  useEffect(() => {
+    const root = tableRoot.current;
+    if (!root || !tableEditable) return;
+    return attachShortcutHost(root, "table", {
+      capture: true,
+      accepts: (event) =>
+        editor.isEditable &&
+        event.target instanceof Element &&
+        Boolean(event.target.closest("[data-table-cell]")),
+      execute: (id) => tableShortcut.current(id),
+    });
+  }, [tableEditable, editor]);
   if (kind === "title") {
     return (
       <LatexTitleView
@@ -948,6 +1129,8 @@ function LatexRichPreviewView({
         updateAttributes={updateAttributes}
         editor={editor}
         selected={selected}
+        getPos={getPos}
+        draftKey={workspace.draftKey}
         editable={editorEditable}
       />
     );
@@ -960,12 +1143,13 @@ function LatexRichPreviewView({
         contentEditable={false}
       >
         <h2>Abstract</h2>
-        <textarea
+        <LatexTextField
           aria-label="Abstract"
+          draftKey={fieldDraft("body")}
           disabled={!editorEditable || !structureEditable}
-          rows={4}
+          rows={1}
           value={String(node.attrs.body ?? "")}
-          onChange={(event) => updateAttributes({ body: event.currentTarget.value })}
+          onValueChange={(body) => updateAttributes({ body })}
         />
       </NodeViewWrapper>
     );
@@ -1016,50 +1200,82 @@ function LatexRichPreviewView({
     const figureEditable = structureEditable && editorEditable;
     return (
       <NodeViewWrapper
+        ref={objectRoot}
+        onFocusCapture={selectObject}
+        onPointerDown={selectObject}
         className="scient-latex-rich-preview scient-latex-figure-preview"
-        data-selected={selected || undefined}
         contentEditable={false}
       >
-        <div className="scient-latex-rich-preview-label">
-          <span>Figure</span>
-          <span>{structureEditable ? "Editable LaTeX figure" : "Protected source"}</span>
-        </div>
-        <div className="scient-latex-object-toolbar" role="toolbar" aria-label="Figure tools">
-          <label>
-            Alignment
-            <select
-              aria-label="Figure alignment"
-              disabled={!figureEditable}
-              value={String(node.attrs.figureAlignment ?? "center")}
-              onChange={(event) => updateAttributes({ figureAlignment: event.currentTarget.value })}
-            >
-              <option value="left">Left</option>
-              <option value="center">Center</option>
-              <option value="right">Right</option>
-            </select>
-          </label>
-          <label>
-            Placement
-            <input
-              aria-label="Figure placement"
-              disabled={!figureEditable}
-              value={String(node.attrs.figurePlacement ?? "")}
-              onChange={(event) => updateAttributes({ figurePlacement: event.currentTarget.value })}
-            />
-          </label>
-          <label>
-            Width
-            <input
-              aria-label="Figure width"
-              disabled={!figureEditable}
-              value={String(node.attrs.figureWidth ?? "")}
-              onChange={(event) => updateAttributes({ figureWidth: event.currentTarget.value })}
-            />
-          </label>
-          <button disabled={!figureEditable} onClick={deleteNode} type="button">
-            Delete figure
-          </button>
-        </div>
+        <LatexObjectToolbar
+          editor={editor}
+          root={objectRoot}
+          selected={selected}
+          label="Figure tools"
+        >
+          <span className="scient-latex-context-label">Figure</span>
+          <select
+            aria-label="Figure alignment"
+            disabled={!figureEditable}
+            value={String(node.attrs.figureAlignment ?? "center")}
+            onChange={(event) => updateAttributes({ figureAlignment: event.currentTarget.value })}
+          >
+            <option value="left">Left</option>
+            <option value="center">Center</option>
+            <option value="right">Right</option>
+          </select>
+          <details className="scient-latex-context-menu">
+            <summary>Figure options</summary>
+            <div className="scient-latex-context-menu-panel">
+              <label>
+                Width
+                <LatexTextField
+                  aria-label="Figure width"
+                  rows={1}
+                  disabled={!figureEditable}
+                  draftKey={fieldDraft("width")}
+                  value={String(node.attrs.figureWidth ?? "")}
+                  onValueChange={(figureWidth) => updateAttributes({ figureWidth })}
+                />
+              </label>
+              <label>
+                Placement
+                <LatexTextField
+                  aria-label="Figure placement"
+                  rows={1}
+                  disabled={!figureEditable}
+                  draftKey={fieldDraft("placement")}
+                  value={String(node.attrs.figurePlacement ?? "")}
+                  onValueChange={(figurePlacement) => updateAttributes({ figurePlacement })}
+                />
+              </label>
+              <label>
+                Image path
+                <LatexTextField
+                  aria-label="Figure image path"
+                  rows={1}
+                  disabled={!figureEditable}
+                  draftKey={fieldDraft("path")}
+                  value={String(node.attrs.path ?? "")}
+                  onValueChange={(path) => updateAttributes({ path })}
+                />
+              </label>
+              <label>
+                Reference label
+                <LatexTextField
+                  aria-label="Figure reference label"
+                  rows={1}
+                  disabled={!figureEditable}
+                  draftKey={fieldDraft("label")}
+                  value={String(node.attrs.label ?? "")}
+                  onValueChange={(label) => updateAttributes({ label })}
+                />
+              </label>
+              <button disabled={!figureEditable} onClick={deleteNode} type="button">
+                Delete figure
+              </button>
+            </div>
+          </details>
+        </LatexObjectToolbar>
         <figure data-align={String(node.attrs.figureAlignment ?? "center")}>
           <LatexFigureImage
             alt={String(node.attrs.caption ?? "")}
@@ -1067,58 +1283,42 @@ function LatexRichPreviewView({
             width={String(node.attrs.figureWidth ?? "")}
             workspace={workspace}
           />
-          <label className="scient-latex-object-field">
-            Image path
-            <input
-              aria-label="Figure image path"
-              disabled={!figureEditable}
-              value={String(node.attrs.path ?? "")}
-              onChange={(event) => updateAttributes({ path: event.currentTarget.value })}
-            />
-          </label>
           <figcaption>
-            <input
+            <LatexTextField
               aria-label="Figure caption"
+              rows={1}
               disabled={!figureEditable}
-              placeholder="Add a figure caption"
+              draftKey={fieldDraft("caption")}
               value={String(node.attrs.caption ?? "")}
-              onChange={(event) => updateAttributes({ caption: event.currentTarget.value })}
+              onValueChange={(caption) => updateAttributes({ caption })}
             />
           </figcaption>
-          <label className="scient-latex-table-label">
-            Reference label
-            <input
-              aria-label="Figure reference label"
-              disabled={!figureEditable}
-              placeholder="fig:result"
-              value={String(node.attrs.label ?? "")}
-              onChange={(event) => updateAttributes({ label: event.currentTarget.value })}
-            />
-          </label>
         </figure>
       </NodeViewWrapper>
     );
   }
   if (kind === "scientific") {
     const scientificEditable = structureEditable && editorEditable;
+    const environment = String(node.attrs.environment ?? "theorem");
     return (
       <NodeViewWrapper
+        ref={objectRoot}
+        onFocusCapture={selectObject}
+        onPointerDown={selectObject}
         className="scient-latex-rich-preview scient-latex-scientific-preview"
-        data-environment={String(node.attrs.environment ?? "theorem")}
-        data-selected={selected || undefined}
+        data-environment={environment}
         contentEditable={false}
       >
-        <div className="scient-latex-rich-preview-label">
-          <span>Scientific statement</span>
-          <button disabled={!scientificEditable} onClick={deleteNode} type="button">
-            Delete
-          </button>
-        </div>
-        <div className="scient-latex-scientific-heading">
+        <LatexObjectToolbar
+          editor={editor}
+          root={objectRoot}
+          selected={selected}
+          label="Statement options"
+        >
           <select
             aria-label="Scientific statement type"
             disabled={!scientificEditable}
-            value={String(node.attrs.environment ?? "theorem")}
+            value={environment}
             onChange={(event) => updateAttributes({ environment: event.currentTarget.value })}
           >
             {[
@@ -1131,42 +1331,63 @@ function LatexRichPreviewView({
               "example",
               "remark",
               "proof",
-            ].map((environment) => (
-              <option key={environment} value={environment}>
-                {environment[0]!.toUpperCase() + environment.slice(1)}
+            ].map((name) => (
+              <option key={name} value={name}>
+                {name[0]!.toUpperCase() + name.slice(1)}
               </option>
             ))}
           </select>
-          <input
-            aria-label="Scientific statement title"
-            disabled={!scientificEditable}
-            placeholder="Optional title"
-            value={String(node.attrs.title ?? "")}
-            onChange={(event) => updateAttributes({ title: event.currentTarget.value })}
-          />
+          <details className="scient-latex-context-menu">
+            <summary>Statement options</summary>
+            <div className="scient-latex-context-menu-panel">
+              <label>
+                Optional title
+                <LatexTextField
+                  aria-label="Scientific statement title"
+                  rows={1}
+                  disabled={!scientificEditable}
+                  draftKey={fieldDraft("title")}
+                  value={String(node.attrs.title ?? "")}
+                  onValueChange={(title) => updateAttributes({ title })}
+                />
+              </label>
+              <label>
+                Reference label
+                <LatexTextField
+                  aria-label="Scientific statement reference label"
+                  rows={1}
+                  disabled={!scientificEditable}
+                  draftKey={fieldDraft("label")}
+                  value={String(node.attrs.label ?? "")}
+                  onValueChange={(label) => updateAttributes({ label })}
+                />
+              </label>
+              <button disabled={!scientificEditable} onClick={deleteNode} type="button">
+                Delete statement
+              </button>
+            </div>
+          </details>
+        </LatexObjectToolbar>
+        <div className="scient-latex-scientific-heading">
+          <strong>
+            {environment[0]!.toUpperCase() + environment.slice(1)}
+            {node.attrs.title ? ` (${String(node.attrs.title)})` : ""}.
+          </strong>
         </div>
-        <textarea
+        <LatexTextField
           aria-label="Scientific statement body"
           disabled={!scientificEditable}
-          rows={4}
+          rows={1}
+          draftKey={fieldDraft("body")}
           value={String(node.attrs.body ?? "")}
-          onChange={(event) => updateAttributes({ body: event.currentTarget.value })}
+          onValueChange={(body) => updateAttributes({ body })}
         />
-        <label className="scient-latex-object-field">
-          Reference label
-          <input
-            aria-label="Scientific statement reference label"
-            disabled={!scientificEditable}
-            placeholder="thm:main"
-            value={String(node.attrs.label ?? "")}
-            onChange={(event) => updateAttributes({ label: event.currentTarget.value })}
-          />
-        </label>
       </NodeViewWrapper>
     );
   }
   return (
     <NodeViewWrapper
+      ref={objectRoot}
       className="scient-latex-rich-preview"
       data-kind={kind}
       data-description-style={
@@ -1182,6 +1403,7 @@ function LatexRichPreviewView({
           : undefined
       }
       onFocusCapture={() => {
+        selectObject();
         if (kind !== "table") setObjectActive(true);
       }}
       onBlurCapture={(event: FocusEvent<HTMLElement>) => {
@@ -1192,18 +1414,30 @@ function LatexRichPreviewView({
           setObjectActive(false);
       }}
     >
-      {kind !== "table" ? (
-        <div className="scient-latex-rich-preview-label">
-          <span>Description list</span>
-          <span>
-            {structureEditable
-              ? "Editable structure - LaTeX preserved"
-              : "Protected source - edit in Source"}
-          </span>
-        </div>
-      ) : null}
       {kind === "description" ? (
         <>
+          <LatexObjectToolbar
+            editor={editor}
+            root={objectRoot}
+            selected={selected}
+            label="Description list options"
+          >
+            <span className="scient-latex-context-label">Description list</span>
+            <button
+              disabled={!editorEditable || !descriptionEditable}
+              onClick={addDescriptionItem}
+              type="button"
+            >
+              Add item
+            </button>
+            <button
+              disabled={!editorEditable || !descriptionEditable || items.length <= 1}
+              onClick={() => removeDescriptionItem(Math.min(descriptionItem, items.length - 1))}
+              type="button"
+            >
+              Remove item
+            </button>
+          </LatexObjectToolbar>
           <dl>
             {keyedItems.map(({ index, key, value: item }) => (
               <Fragment key={key}>
@@ -1214,7 +1448,10 @@ function LatexRichPreviewView({
                     style={{ height: objectPageGaps[index] }}
                   />
                 ) : null}
-                <div data-latex-description-item={index}>
+                <div
+                  data-latex-description-item={index}
+                  onFocusCapture={() => setDescriptionItem(index)}
+                >
                   <dt>
                     {descriptionEditable ? (
                       <input
@@ -1244,28 +1481,10 @@ function LatexRichPreviewView({
                       String(item.body ?? "")
                     )}
                   </dd>
-                  {descriptionEditable && controlsVisible ? (
-                    <button
-                      aria-label={`Remove description item ${index + 1}`}
-                      className="scient-latex-structure-remove"
-                      disabled={!editorEditable || items.length <= 1}
-                      onClick={() => removeDescriptionItem(index)}
-                      type="button"
-                    >
-                      Remove
-                    </button>
-                  ) : null}
                 </div>
               </Fragment>
             ))}
           </dl>
-          {descriptionEditable && controlsVisible ? (
-            <div className="scient-latex-structure-actions">
-              <button disabled={!editorEditable} onClick={addDescriptionItem} type="button">
-                Add item
-              </button>
-            </div>
-          ) : null}
         </>
       ) : (
         <figure
@@ -1315,17 +1534,19 @@ function LatexRichPreviewView({
             }}
             onDelete={deleteNode}
           />
-          {caption.length > 0 ? (
+          {caption.length > 0 || captionEditing ? (
             <figcaption>
               {captionEditable ? (
-                <textarea
+                <LatexTextField
                   aria-label="Table caption"
+                  draftKey={fieldDraft("caption")}
+                  onFocus={() => setCaptionEditing(true)}
+                  onBlur={() => setCaptionEditing(false)}
                   rows={1}
                   disabled={!editorEditable}
                   placeholder="Add a table caption"
                   value={caption}
-                  onChange={(event) => {
-                    const nextCaption = event.currentTarget.value;
+                  onValueChange={(nextCaption) => {
                     if (sourceMeta?.captionRange === null)
                       updateTableStructure({ caption: nextCaption });
                     else updateAttributes({ caption: nextCaption });
@@ -1401,23 +1622,53 @@ function LatexRichPreviewView({
                         : withStableKeys(row, String)
                       ).map(({ index: cellIndex, key: cellKey, value: cell }) => {
                         const content = tableEditable ? (
-                          <textarea
+                          <LatexTextField
                             aria-label={`Table row ${rowIndex + 1} column ${cellIndex + 1}`}
                             data-table-cell={`${rowIndex}-${cellIndex}`}
                             disabled={!editorEditable}
                             rows={1}
                             value={cell}
+                            draftKey={fieldDraft(`cell:${key}:${cellKey}`)}
                             onFocus={() => setSelectedCell({ row: rowIndex, column: cellIndex })}
-                            onChange={(event) =>
-                              updateCell(rowIndex, cellIndex, event.currentTarget.value)
-                            }
+                            onValueChange={(value) => updateCell(rowIndex, cellIndex, value)}
                             onKeyDown={(event) => {
-                              if (event.key === "Escape") event.currentTarget.blur();
+                              if (event.nativeEvent.isComposing) return;
+                              if (
+                                (event.ctrlKey || event.metaKey) &&
+                                event.key.toLowerCase() === "z"
+                              ) {
+                                event.preventDefault();
+                                if (event.shiftKey) editor.commands.redo();
+                                else editor.commands.undo();
+                                return;
+                              }
+                              if (event.key === "Escape") {
+                                event.preventDefault();
+                                leaveObject(1);
+                                return;
+                              }
+                              const field = event.currentTarget;
+                              if (
+                                (event.key === "ArrowUp" && field.selectionStart === 0) ||
+                                (event.key === "ArrowDown" &&
+                                  field.selectionEnd === field.value.length)
+                              ) {
+                                const nextRow = rowIndex + (event.key === "ArrowUp" ? -1 : 1);
+                                if (nextRow >= 0 && nextRow < rows.length) {
+                                  event.preventDefault();
+                                  focusTableCell(nextRow, cellIndex);
+                                }
+                                return;
+                              }
                               if (event.key !== "Tab") return;
                               const width = row.length;
                               const current = rowIndex * width + cellIndex;
                               const next = current + (event.shiftKey ? -1 : 1);
-                              if (next < 0) return;
+                              if (next < 0) {
+                                event.preventDefault();
+                                leaveObject(-1);
+                                return;
+                              }
                               event.preventDefault();
                               if (next >= rows.length * width) {
                                 addTableRow(rows.length - 1);
@@ -1591,7 +1842,12 @@ const LatexRichPreview = Node.create<LatexVisualWorkspace>({
   atom: true,
   selectable: true,
   addOptions() {
-    return { environmentId: null, cwd: null, relativePath: null };
+    return {
+      environmentId: null,
+      cwd: null,
+      relativePath: null,
+      draftKey: null,
+    };
   },
   addAttributes() {
     return {
@@ -1653,6 +1909,15 @@ const LatexRichPreview = Node.create<LatexVisualWorkspace>({
 });
 
 const baseExtensions = [
+  // Configurable formatting is dispatched by the shared capture adapter. Prevent
+  // StarterKit from reviving its fixed bindings after a shortcut is disabled.
+  Extension.create({
+    name: "sharedWritingKeys",
+    priority: 1000,
+    addKeyboardShortcuts() {
+      return { "Mod-b": () => true, "Mod-i": () => true };
+    },
+  }),
   StarterKit.configure({
     heading: { levels: [1, 2, 3] },
     blockquote: false,
@@ -1679,9 +1944,13 @@ const MATH_INSERTIONS = {
 } as const;
 
 export interface LatexVisualEditorProps {
+  readonly documentToolsHost?: HTMLDivElement | null;
+  readonly onLocalDraftChange?: (pending: boolean) => void;
   readonly draftKey: string;
   readonly fileRevision: string;
   readonly source: string;
+  readonly rootSource?: string | null;
+  readonly rootRelativePath?: string | null;
   readonly disabled: boolean;
   readonly onEdit: (expected: string, next: string) => boolean;
   readonly onEditingChange: (editing: boolean) => void;
@@ -1692,7 +1961,34 @@ export interface LatexVisualEditorProps {
   readonly registerFinishEditing?: (finish: (() => void) | null) => void;
 }
 
+const visualJsonNodes = new WeakMap<ProseMirrorNode, JSONContent>();
+function visualDocumentJson(doc: ProseMirrorNode): JSONContent {
+  const content: JSONContent[] = [];
+  doc.forEach((node) => {
+    let json = visualJsonNodes.get(node);
+    if (!json) {
+      json = node.toJSON() as JSONContent;
+      visualJsonNodes.set(node, json);
+    }
+    content.push(json);
+  });
+  return { type: "doc", content };
+}
+
 export function LatexVisualEditor(props: LatexVisualEditorProps) {
+  const pendingFields = useRef(new Set<string>());
+  const [hasLocalDraft, setHasLocalDraft] = useState(false);
+  const reportDraft = useCallback((id: string, pending: boolean) => {
+    if (pending) pendingFields.current.add(id);
+    else pendingFields.current.delete(id);
+    setHasLocalDraft(pendingFields.current.size > 0);
+  }, []);
+  const onLocalDraftChange = props.onLocalDraftChange;
+  useEffect(() => {
+    onLocalDraftChange?.(hasLocalDraft);
+  }, [hasLocalDraft, onLocalDraftChange]);
+  useEffect(() => () => onLocalDraftChange?.(false), [onLocalDraftChange]);
+
   const [recovery, setRecovery] = useState(() =>
     readVisualDraft(props.draftKey, { source: props.source, revision: props.fileRevision }),
   );
@@ -1705,7 +2001,11 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   // The ProseMirror plugins live for the editor's lifetime. Keep their source
   // adapter current across renderer hot updates without resetting user edits.
   const applyDocumentChange = useRef(applyLatexVisualDocumentChange);
-  applyDocumentChange.current = applyLatexVisualDocumentChange;
+  applyDocumentChange.current = (source, document, content) =>
+    applyLatexVisualDocumentChange(source, document, content, {
+      rootSource: props.rootSource ?? null,
+      onMissingRequirement: (message) => setNotice(message),
+    });
   const accepted = useRef<{
     doc: ProseMirrorNode;
     expected: string;
@@ -1714,23 +2014,33 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   const editorRef = useRef<ReturnType<typeof useEditor>>(null);
   const [editorRevision, refreshToolbar] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
+  useEffect(() => {
+    const failed = (event: Event) => {
+      if ((event as CustomEvent<string>).detail === props.draftKey)
+        setNotice(
+          "The local recovery copy could not be stored. Keep this document open until its workspace save succeeds.",
+        );
+    };
+    window.addEventListener("scient-latex-recovery-error", failed);
+    return () => window.removeEventListener("scient-latex-recovery-error", failed);
+  }, [props.draftKey]);
   const [insertOpen, setInsertOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [shortcutHint, setShortcutHint] = useState("");
+  useSyncExternalStore(
+    subscribeKeyboardPreferences,
+    getKeyboardPreferences,
+    getKeyboardPreferences,
+  );
+  const shortcutLabel = (id: string) =>
+    commandKeys(id)
+      .map((keys) => labelKeys(keys))
+      .join(" / ");
+  const shortcutAction = useRef<(id: string) => boolean>(() => false);
   const [referenceOpen, setReferenceOpen] = useState(false);
   const [figureOpen, setFigureOpen] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [navigationOpen, setNavigationOpen] = useState(false);
-  const [tablePreset, setTablePreset] = useState<LatexVisualTablePreset>("booktabs");
-  const [tablePickerSize, setTablePickerSize] = useState({ rows: 3, columns: 3 });
-  const [layoutDraft, setLayoutDraft] = useState(() => {
-    const profile = latexVisualLayoutProfile(props.source);
-    return {
-      paper: profile.paper,
-      baseFontPt: profile.baseFontPt,
-      margin: `${Math.round(profile.marginTopIn * 100) / 100}in`,
-      paragraphStyle: profile.paragraphGapEm > 0 ? ("spaced" as const) : ("indented" as const),
-    };
-  });
-  const tablePicker = useRef<HTMLDetailsElement | null>(null);
   const [summary, setSummary] = useState({
     supported: initial.supportedBlocks,
     raw: initial.rawBlocks,
@@ -1740,17 +2050,6 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   const [zoomMode, setZoomMode] = useState<"fit" | number>("fit");
   const [fitZoom, setFitZoom] = useState(1);
   const visualScroll = useRef<HTMLDivElement | null>(null);
-  const moreTools = useRef<HTMLDetailsElement | null>(null);
-
-  useEffect(() => {
-    const outside = (event: PointerEvent) => {
-      if (moreTools.current?.open && !event.composedPath().includes(moreTools.current))
-        moreTools.current.open = false;
-    };
-    document.addEventListener("pointerdown", outside, true);
-    return () => document.removeEventListener("pointerdown", outside, true);
-  }, []);
-
   useLayoutEffect(() => {
     onEdit.current = props.onEdit;
   }, [props.onEdit]);
@@ -1760,8 +2059,24 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     setSummary({ supported: next.supportedBlocks, raw: next.rawBlocks });
     const editor = editorRef.current;
     if (!resetEditor || !editor) return;
+    const oldSelection = editor.state.selection;
+    const scroll = editor.view.dom.closest(".scient-latex-visual-scroll");
+    const scrollTop = scroll?.scrollTop ?? 0;
+    const scrollLeft = scroll?.scrollLeft ?? 0;
     applying.current = true;
     editor.commands.setContent(next.content, { emitUpdate: false });
+    const size = editor.state.doc.content.size;
+    const from = Math.min(oldSelection.from, size);
+    const to = Math.min(oldSelection.to, size);
+    const selection =
+      oldSelection instanceof NodeSelection && editor.state.doc.nodeAt(from)?.isAtom
+        ? NodeSelection.create(editor.state.doc, from)
+        : TextSelection.between(editor.state.doc.resolve(from), editor.state.doc.resolve(to));
+    editor.view.dispatch(editor.state.tr.setSelection(selection));
+    if (scroll) {
+      scroll.scrollTop = scrollTop;
+      scroll.scrollLeft = scrollLeft;
+    }
     applying.current = false;
   }, []);
 
@@ -1773,14 +2088,17 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       const changed =
         cached?.doc === doc && cached.expected === expected
           ? cached.change
-          : applyDocumentChange.current(expected, projection.current, doc.toJSON());
+          : applyDocumentChange.current(expected, projection.current, visualDocumentJson(doc));
       accepted.current = null;
       if (changed === null) {
         setNotice("That structure is source-only. Your LaTeX was not changed.");
         installProjection(projection.current, true);
         return;
       }
-      if (changed.source === expected) return;
+      if (changed.source === expected) {
+        installProjection(changed.projection, false);
+        return;
+      }
       if (!onEdit.current(expected, changed.source)) {
         setNotice("The source changed elsewhere. Visual reloaded the current LaTeX.");
         installProjection(projectLatexVisualDocument(currentSource.current), true);
@@ -1800,11 +2118,12 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   const richPreviewExtension = useMemo(
     () =>
       LatexRichPreview.configure({
+        draftKey: props.draftKey,
         environmentId: props.environmentId ?? null,
         cwd: props.cwd ?? null,
         relativePath: props.relativePath ?? null,
       }),
-    [props.cwd, props.environmentId, props.relativePath],
+    [props.cwd, props.environmentId, props.relativePath, props.draftKey],
   );
 
   const guardedExtensions = useMemo(
@@ -1837,7 +2156,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
                 const change = applyDocumentChange.current(
                   currentSource.current,
                   projection.current,
-                  transaction.doc.toJSON(),
+                  visualDocumentJson(transaction.doc),
                 );
                 const supported = change !== null;
                 if (change)
@@ -1846,9 +2165,18 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
                     expected: currentSource.current,
                     change,
                   };
-                if (!supported)
+                const field = document.activeElement;
+                if (
+                  !supported &&
+                  !(
+                    field instanceof HTMLTextAreaElement &&
+                    field.closest(".scient-latex-visual-workspace")
+                  )
+                )
                   setNotice(
-                    "This change could not be safely written to LaTeX. Your source was left unchanged.",
+                    (previous) =>
+                      previous ??
+                      "This change could not be safely written to LaTeX. Your source was left unchanged.",
                   );
                 return supported;
               },
@@ -1870,21 +2198,13 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       handleKeyDown(view, event) {
         if (event.isComposing || view.composing || !view.editable) return false;
         if (
-          editorRef.current &&
-          ((event.altKey && !event.ctrlKey && !event.metaKey && event.code === "Equal") ||
-            ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === "m"))
-        ) {
-          event.preventDefault();
-          return insertVisualMath(editorRef.current, event.shiftKey);
-        }
-
-        if (
-          (event.key === "/" && (event.metaKey || event.ctrlKey)) ||
-          (event.key === "/" &&
-            !event.altKey &&
-            view.state.selection.empty &&
-            view.state.selection.$from.parent.type.name === "paragraph" &&
-            view.state.selection.$from.parent.content.size === 0)
+          event.key === "/" &&
+          !event.altKey &&
+          !event.ctrlKey &&
+          !event.metaKey &&
+          view.state.selection.empty &&
+          view.state.selection.$from.parent.type.name === "paragraph" &&
+          view.state.selection.$from.parent.content.size === 0
         ) {
           event.preventDefault();
           setInsertOpen(true);
@@ -1909,6 +2229,31 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   }, [editor]);
 
   useEffect(() => {
+    if (!editor) return;
+    return attachShortcutHost(editor.view.dom, ["latex", "math"], {
+      capture: true,
+      feedback: setShortcutHint,
+      accepts: (event) =>
+        editor.isEditable &&
+        !editor.view.composing &&
+        event.target instanceof Element &&
+        !event.target.closest('input, textarea, select, math-field, [contenteditable="false"]'),
+      execute: (id) => shortcutAction.current(id),
+    });
+  }, [editor]);
+
+  const fieldContext = useMemo(
+    () => ({
+      reportDraft,
+      undo: (redo: boolean) => {
+        if (redo) editor?.commands.redo();
+        else editor?.commands.undo();
+      },
+    }),
+    [editor, reportDraft],
+  );
+
+  useEffect(() => {
     editor?.setEditable(!readOnly);
   }, [editor, readOnly]);
 
@@ -1924,7 +2269,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
           plugins: editor.state.plugins,
         }),
       );
-      const nextLayout = latexVisualLayoutProfile(props.source);
+      const nextLayout = latexVisualLayoutProfile(props.rootSource ?? props.source);
       setLatexPaginationDimensions(editor.view, {
         pageHeight: nextLayout.paperHeightIn * CSS_PIXELS_PER_INCH,
         pageGap: 28,
@@ -1933,11 +2278,19 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       });
     }
     setNotice(null);
-  }, [editor, installProjection, props.source]);
+  }, [editor, installProjection, props.source, props.rootSource]);
 
   const registerFinishEditing = props.registerFinishEditing;
   useLayoutEffect(() => {
-    registerFinishEditing?.(() => editor?.commands.blur());
+    registerFinishEditing?.(() => {
+      const field = document.activeElement;
+      if (
+        field instanceof HTMLElement &&
+        editor?.view.dom.closest(".scient-latex-visual-workspace")?.contains(field)
+      )
+        field.blur();
+      editor?.commands.blur();
+    });
     return () => registerFinishEditing?.(null);
   }, [editor, registerFinishEditing]);
 
@@ -1955,12 +2308,10 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   };
 
   const insertTable = (rows: number, columns: number) => {
-    const source = latexVisualTableSource(rows, columns, tablePreset);
+    const source = latexVisualTableSource(rows, columns, "plain");
     const table = projectLatexVisualDocument(source).content.content?.[0];
     if (!table) return;
     editor?.chain().focus().insertContent(table).run();
-    if (tablePicker.current) tablePicker.current.open = false;
-    if (moreTools.current) moreTools.current.open = false;
   };
   const insertReference = (command: string, key: string) => {
     if (readOnly || !key || /[{}\\%]/u.test(key)) return;
@@ -2021,24 +2372,14 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       },
     })),
     {
-      id: "table",
-      label: "Table",
-      description: "Choose a grid size and table style",
-      group: "Objects",
-      run: () => {
-        if (tablePicker.current) {
-          if (moreTools.current) moreTools.current.open = true;
-          tablePicker.current.open = true;
-          tablePicker.current.querySelector<HTMLElement>("select")?.focus();
-        }
-      },
-    },
-    {
       id: "figure",
       label: "Figure",
       description: "Choose an image from your project",
       group: "Objects",
-      run: () => setFigureOpen(true),
+      run: () =>
+        props.rootRelativePath
+          ? setFigureOpen(true)
+          : setNotice("Choose a root document before inserting a figure."),
     },
     ...[
       "theorem",
@@ -2071,13 +2412,13 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
           .focus()
           .insertContent([
             { type: "heading", attrs: { level: 1 }, content: [{ type: "text", text: "Question" }] },
-            { type: "paragraph", content: [{ type: "text", text: "Write the question here." }] },
+            { type: "paragraph" },
             {
               type: "heading",
               attrs: { level: 2, unnumbered: true },
               content: [{ type: "text", text: "Solution" }],
             },
-            { type: "paragraph", content: [{ type: "text", text: "Write your solution here." }] },
+            { type: "paragraph" },
           ])
           .run();
       },
@@ -2099,6 +2440,40 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       run: () => setReferenceOpen(true),
     },
     {
+      id: "footnote",
+      label: "Footnote",
+      description: "Add a note to this text",
+      group: "References",
+      run: () => {
+        editor
+          ?.chain()
+          .focus()
+          .insertContent({
+            type: "latexInlineCommand",
+            attrs: { name: "footnote", argument: "", raw: "\\footnote{}" },
+          })
+          .command(({ tr }) => {
+            tr.setSelection(NodeSelection.create(tr.doc, tr.selection.from - 1));
+            return true;
+          })
+          .run();
+      },
+    },
+    {
+      id: "abstract",
+      label: "Abstract",
+      description: "Add a summary",
+      group: "Academic",
+      run: () => insertVisualSource("\\begin{abstract}\n\n\\end{abstract}"),
+    },
+    {
+      id: "contents",
+      label: "Table of contents",
+      description: "Use the document headings",
+      group: "References",
+      run: () => insertVisualSource("\\tableofcontents"),
+    },
+    {
       id: "pagebreak",
       label: "Page break",
       description: "Start the next content on a new page",
@@ -2106,7 +2481,147 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       run: () => insertVisualSource("\\newpage"),
     },
   ];
-  const layout = useMemo(() => latexVisualLayoutProfile(props.source), [props.source]);
+  shortcutAction.current = (id) => {
+    if (!editor || readOnly) return false;
+    if (id === "latex.shortcuts") {
+      setShortcutsOpen(true);
+      return true;
+    }
+    if (id === "latex.outline") {
+      setNavigationOpen((value) => !value);
+      return true;
+    }
+    if (id === "latex.bold") return editor.chain().focus().toggleBold().run();
+    if (id === "latex.italic") return editor.chain().focus().toggleItalic().run();
+    if (id === "latex.bulletList") return editor.chain().focus().toggleBulletList().run();
+    if (id === "latex.orderedList") return editor.chain().focus().toggleOrderedList().run();
+    if (id === "latex.table") {
+      insertTable(2, 2);
+      return true;
+    }
+    if (id === "math.palette") {
+      setInsertOpen(true);
+      return true;
+    }
+    if (id === "math.inline" || id === "math.display") {
+      insertMath(id === "math.display");
+      return true;
+    }
+    if (id.startsWith("math.")) {
+      const command = mathCommand(id);
+      const custom = getKeyboardPreferences().preferences.customMath?.find(
+        (entry) => entry.id === id,
+      );
+      if (!command && !custom) return false;
+      const selected = editor.state.doc.textBetween(
+        editor.state.selection.from,
+        editor.state.selection.to,
+      );
+      const edit = custom
+        ? customMathEdit(custom, selected, { from: 0, to: selected.length })
+        : commandEdit(command!, selected, { from: 0, to: selected.length });
+      return insertVisualMath(editor, false, edit.insert);
+    }
+    const actionId =
+      (
+        { section: "heading-1", subsection: "heading-2", subsubsection: "heading-3" } as Record<
+          string,
+          string
+        >
+      )[id.slice(6)] ?? id.slice(6);
+    const action = insertActions.find((entry) => entry.id === actionId);
+    if (!action) return false;
+    action.run();
+    return true;
+  };
+  const documentTools = (
+    <>
+      <WritingShortcutsDialog
+        open={shortcutsOpen}
+        onOpenChange={setShortcutsOpen}
+        environmentId={props.environmentId}
+      />
+      <ScientTooltip content="Writing shortcuts">
+        <button
+          type="button"
+          className="scient-latex-action"
+          aria-label="Writing shortcuts"
+          onClick={() => setShortcutsOpen(true)}
+        >
+          <Keyboard className="size-3.5" />
+        </button>
+      </ScientTooltip>
+      <LatexDocumentSettings
+        source={props.source}
+        disabled={readOnly}
+        onOpenSource={props.onOpenSource}
+        onApply={(draft) => {
+          const expected = currentSource.current;
+          const next = updateLatexVisualLayoutSource(expected, draft);
+          if (next === null || !onEdit.current(expected, next)) return false;
+          currentSource.current = next;
+          installProjection(projectLatexVisualDocument(next), true);
+          return true;
+        }}
+        onTitle={(field) => {
+          const expected = currentSource.current;
+          const name =
+            props.relativePath
+              ?.split(/[\\/]/u)
+              .at(-1)
+              ?.replace(/\.tex$/iu, "") ?? "Untitled";
+          const next = ensureLatexTitleBlock(expected, name);
+          if (next === null) {
+            setNotice("Open the document root to add a title block.");
+            return;
+          }
+          if (next !== expected) {
+            if (!onEdit.current(expected, next)) return;
+            currentSource.current = next;
+            installProjection(projectLatexVisualDocument(next), true);
+          }
+          requestAnimationFrame(() => {
+            const root = editor?.view.dom.querySelector<HTMLElement>(".scient-latex-title-preview");
+            const target = root?.querySelector<HTMLTextAreaElement>(
+              `[aria-label="Document ${field}"]`,
+            );
+            if (target?.disabled) {
+              setNotice(
+                `This ${field} contains custom formatting. Edit it in LaTeX to preserve that formatting.`,
+              );
+              return;
+            }
+            root?.dispatchEvent(new CustomEvent("scient-latex-edit-title", { detail: field }));
+          });
+        }}
+      />
+      <ScientTooltip content="Document outline">
+        <button
+          type="button"
+          className="scient-latex-action"
+          aria-label="Document outline"
+          aria-pressed={navigationOpen}
+          onClick={() => setNavigationOpen((open) => !open)}
+        >
+          <ListTree className="size-3.5" />
+        </button>
+      </ScientTooltip>
+      <ScientTooltip content="Review document">
+        <button
+          type="button"
+          className="scient-latex-action"
+          aria-label="Review document"
+          onClick={() => setReviewOpen(true)}
+        >
+          <ClipboardCheck className="size-3.5" />
+        </button>
+      </ScientTooltip>
+    </>
+  );
+  const layout = useMemo(
+    () => latexVisualLayoutProfile(props.rootSource ?? props.source),
+    [props.source, props.rootSource],
+  );
   void editorRevision;
   const outline: { level: number; position: number; title: string }[] = [];
   editor?.state.doc.descendants((node, position) => {
@@ -2259,500 +2774,327 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       active: editor?.isActive("italic"),
       secondary: false,
     },
-    {
-      label: "Bullet list",
-      icon: <List />,
-      action: () => editor?.chain().focus().toggleBulletList().run(),
-      active: editor?.isActive("bulletList"),
-      secondary: true,
-    },
-    {
-      label: "Numbered list",
-      icon: <ListOrdered />,
-      action: () => editor?.chain().focus().toggleOrderedList().run(),
-      active: editor?.isActive("orderedList"),
-      secondary: true,
-    },
-    {
-      label: "Undo",
-      icon: <Undo2 />,
-      action: () => editor?.chain().focus().undo().run(),
-      active: false,
-      secondary: true,
-    },
-    {
-      label: "Redo",
-      icon: <Redo2 />,
-      action: () => editor?.chain().focus().redo().run(),
-      active: false,
-      secondary: true,
-    },
   ];
 
   return (
-    <div
-      className="scient-latex-visual-workspace"
-      onFocusCapture={() => props.onEditingChange(true)}
-      onBlurCapture={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget)) props.onEditingChange(false);
-      }}
-    >
-      {recovery === null ? null : (
-        <div className="scient-latex-visual-recovery" role="alert">
-          <label>
-            Recovered unsaved source — the file has not been replaced.
-            <textarea aria-label="Recover unapplied visual source" readOnly value={recovery} />
-          </label>
-          <button
-            type="button"
-            onClick={() => {
-              clearVisualDraft(props.draftKey);
-              setRecovery(null);
-            }}
-          >
-            Dismiss recovered draft
-          </button>
-        </div>
-      )}
-      <div
-        className="scient-latex-writing-toolbar"
-        role="toolbar"
-        aria-label="Writing tools"
-        onMouseDown={(event) => {
-          if (event.target instanceof Element && event.target.closest("button"))
-            event.preventDefault();
-        }}
-      >
-        <div className="scient-latex-toolbar-group" aria-label="Text style">
-          <select
-            aria-label="Paragraph style"
-            disabled={readOnly || recovery !== null || !editor}
-            value={
-              editor?.isActive("heading")
-                ? String(editor.getAttributes("heading").level)
-                : "paragraph"
-            }
-            onChange={(event) => {
-              if (event.target.value === "paragraph") editor?.chain().focus().setParagraph().run();
-              else
-                editor
-                  ?.chain()
-                  .focus()
-                  .setHeading({ level: Number(event.target.value) as 1 | 2 | 3 })
-                  .run();
-            }}
-          >
-            <option value="paragraph">Normal text</option>
-            <option value="1">Section</option>
-            <option value="2">Subsection</option>
-            <option value="3">Subsubsection</option>
-          </select>
-          {formatActions.map((item) => (
-            <ScientTooltip key={item.label} content={item.label}>
-              <button
-                type="button"
-                aria-label={item.label}
-                aria-pressed={Boolean(item.active)}
-                className={
-                  item.secondary ? "scient-latex-toolbar-secondary" : "scient-latex-toolbar-format"
-                }
-                disabled={readOnly || !editor}
-                onClick={item.action}
-              >
-                {item.icon}
-              </button>
-            </ScientTooltip>
-          ))}
-        </div>
-
-        <div className="scient-latex-toolbar-group">
-          <button
-            type="button"
-            aria-label="Insert"
-            title="Insert"
-            disabled={readOnly}
-            onClick={() => setInsertOpen(true)}
-          >
-            <Plus aria-hidden="true" />
-            <span className="scient-latex-insert-label">Insert</span>
-          </button>
-          <button
-            type="button"
-            disabled={readOnly}
-            title="Insert an empty equation (Ctrl/Cmd+Shift+M)"
-            aria-label="Insert equation"
-            onClick={() => insertDisplayMath(MATH_INSERTIONS.equation)}
-          >
-            <Sigma aria-hidden="true" />
-          </button>
-        </div>
-        <details
-          ref={moreTools}
-          className="scient-latex-more-tools"
-          onKeyDown={(event) => {
-            if (event.key === "Escape") {
-              event.preventDefault();
-              event.stopPropagation();
-              event.currentTarget.open = false;
-              event.currentTarget.querySelector("summary")?.focus();
-            }
+    <LatexRootContext value={props.rootRelativePath ?? null}>
+      <LatexDraftContext value={fieldContext}>
+        <div
+          className="scient-latex-visual-workspace"
+          onFocusCapture={() => props.onEditingChange(true)}
+          onBlurCapture={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget)) props.onEditingChange(false);
           }}
         >
-          <summary aria-label="More writing tools" title="More writing tools">
-            <MoreHorizontal aria-hidden="true" />
-          </summary>
-          <div className="scient-latex-more-popover">
-            <div className="scient-latex-more-formatting">
-              {formatActions.map((item) => (
-                <button
-                  key={item.label}
-                  type="button"
-                  className={
-                    item.secondary ? "scient-latex-more-secondary" : "scient-latex-more-primary"
-                  }
-                  aria-pressed={Boolean(item.active)}
-                  disabled={readOnly || !editor}
-                  onClick={() => {
-                    item.action();
-                    if (moreTools.current) moreTools.current.open = false;
-                  }}
-                >
-                  {item.icon}
-                  <span>{item.label}</span>
-                </button>
-              ))}
-            </div>
-            <div className="scient-latex-toolbar-group">
-              <details
-                className="scient-latex-table-picker"
-                onToggle={(event) => {
-                  if (readOnly) event.currentTarget.open = false;
-                }}
-                ref={tablePicker}
-              >
-                <summary aria-disabled={readOnly} aria-label="Insert table">
-                  Table
-                </summary>
-                <div className="scient-latex-table-picker-popover">
-                  <label>
-                    Table style
-                    <select
-                      aria-label="New table style"
-                      disabled={readOnly}
-                      value={tablePreset}
-                      onChange={(event) =>
-                        setTablePreset(event.currentTarget.value as LatexVisualTablePreset)
-                      }
-                    >
-                      <option value="plain">Simple</option>
-                      <option value="booktabs">Booktabs</option>
-                      <option value="grid">Full grid</option>
-                      <option value="stretch">Fit page</option>
-                    </select>
-                  </label>
-                  <div className="scient-latex-table-picker-size">
-                    {tablePickerSize.rows} × {tablePickerSize.columns}
-                  </div>
-                  <div className="scient-latex-table-picker-grid">
-                    {Array.from({ length: 25 }, (_, index) => {
-                      const row = Math.floor(index / 5) + 1;
-                      const column = (index % 5) + 1;
-                      const active =
-                        row <= tablePickerSize.rows && column <= tablePickerSize.columns;
-                      return (
-                        <button
-                          aria-label={`Insert ${row} by ${column} table`}
-                          data-active={active || undefined}
-                          disabled={readOnly}
-                          key={`${row}-${column}`}
-                          onClick={() => insertTable(row, column)}
-                          onMouseEnter={() => setTablePickerSize({ rows: row, columns: column })}
-                          type="button"
-                        />
-                      );
-                    })}
-                  </div>
-                </div>
-              </details>
+          {recovery === null ? null : (
+            <div className="scient-latex-visual-recovery" role="alert">
+              <label>
+                Recovered unsaved source — the file has not been replaced.
+                <textarea aria-label="Recover unapplied visual source" readOnly value={recovery} />
+              </label>
               <button
                 type="button"
-                disabled={readOnly}
+                disabled={props.disabled}
                 onClick={() => {
-                  setReferenceOpen(true);
-                  if (moreTools.current) moreTools.current.open = false;
+                  if (onEdit.current(currentSource.current, recovery)) setRecovery(null);
                 }}
               >
-                Cite / Refer...
+                Restore recovered source
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  clearVisualDraft(props.draftKey);
+                  setRecovery(null);
+                }}
+              >
+                Dismiss recovered draft
               </button>
             </div>
-            <div className="scient-latex-toolbar-group" aria-label="Document layout">
-              <details
-                className="scient-latex-layout-picker"
-                onToggle={(event) => {
-                  if (readOnly) {
-                    event.currentTarget.open = false;
-                    return;
-                  }
-                  if (!event.currentTarget.open) return;
-                  const profile = latexVisualLayoutProfile(props.source);
-                  setLayoutDraft({
-                    paper: profile.paper,
-                    baseFontPt: profile.baseFontPt,
-                    margin: `${Math.round(profile.marginTopIn * 100) / 100}in`,
-                    paragraphStyle: profile.paragraphGapEm > 0 ? "spaced" : "indented",
-                  });
-                }}
-              >
-                <summary aria-disabled={readOnly}>Document settings</summary>
-                <div className="scient-latex-layout-popover">
-                  <label>
-                    Paper
-                    <select
-                      disabled={readOnly}
-                      value={layoutDraft.paper}
-                      onChange={(event) =>
-                        setLayoutDraft((value) => ({
-                          ...value,
-                          paper: event.currentTarget.value as keyof typeof LATEX_PAPER_SIZES,
-                        }))
-                      }
-                    >
-                      {Object.entries(LATEX_PAPER_SIZES).map(([value, paper]) => (
-                        <option key={value} value={value}>
-                          {paper.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    Base font
-                    <select
-                      disabled={readOnly}
-                      value={layoutDraft.baseFontPt}
-                      onChange={(event) =>
-                        setLayoutDraft((value) => ({
-                          ...value,
-                          baseFontPt: Number(event.currentTarget.value) as 10 | 11 | 12,
-                        }))
-                      }
-                    >
-                      <option value={10}>10 pt</option>
-                      <option value={11}>11 pt</option>
-                      <option value={12}>12 pt</option>
-                    </select>
-                  </label>
-                  <label>
-                    Margins
-                    <input
-                      aria-label="Document margin"
-                      disabled={readOnly}
-                      value={layoutDraft.margin}
-                      onChange={(event) =>
-                        setLayoutDraft((value) => ({ ...value, margin: event.currentTarget.value }))
-                      }
-                    />
-                  </label>
-                  <label>
-                    Paragraphs
-                    <select
-                      disabled={readOnly}
-                      value={layoutDraft.paragraphStyle}
-                      onChange={(event) =>
-                        setLayoutDraft((value) => ({
-                          ...value,
-                          paragraphStyle: event.currentTarget.value as "indented" | "spaced",
-                        }))
-                      }
-                    >
-                      <option value="indented">First-line indent</option>
-                      <option value="spaced">Space between paragraphs</option>
-                    </select>
-                  </label>
-                  <button
-                    disabled={readOnly}
-                    onClick={() => {
-                      const expected = currentSource.current;
-                      const next = updateLatexVisualLayoutSource(expected, layoutDraft);
-                      if (next === null) {
-                        setNotice("Use a margin such as 1in, 2.5cm, 20mm, or 72pt.");
-                        return;
-                      }
-                      if (!onEdit.current(expected, next)) {
-                        setNotice("The source changed elsewhere. Layout was not applied.");
-                        return;
-                      }
-                      currentSource.current = next;
-                      installProjection(projectLatexVisualDocument(next), true);
-                      setNotice(null);
-                      if (moreTools.current) moreTools.current.open = false;
-                    }}
-                    type="button"
-                  >
-                    Apply layout
-                  </button>
-                  <p>Applies to the whole document. Update the PDF to see the final result.</p>
-                </div>
-              </details>
-            </div>
-
-            <button
-              type="button"
-              aria-expanded={navigationOpen}
-              onClick={() => {
-                setNavigationOpen((open) => !open);
-                if (moreTools.current) moreTools.current.open = false;
-              }}
-            >
-              Outline
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setReviewOpen(true);
-                if (moreTools.current) moreTools.current.open = false;
-              }}
-            >
-              Review
-            </button>
-          </div>
-        </details>
-        <LatexVisualZoomControls
-          zoom={zoom}
-          fit={zoomMode === "fit"}
-          onZoom={setZoomMode}
-          onFit={() => setZoomMode("fit")}
-        />
-      </div>
-      <LatexInsertDialog
-        open={insertOpen && !readOnly}
-        onOpenChange={setInsertOpen}
-        actions={insertActions}
-      />
-      <LatexReferenceDialog
-        open={referenceOpen && !readOnly}
-        onOpenChange={setReferenceOpen}
-        source={props.source}
-        environmentId={props.environmentId}
-        cwd={props.cwd}
-        relativePath={props.relativePath}
-        onInsert={insertReference}
-      />
-      {props.environmentId && props.cwd ? (
-        <LatexFigureInsertDialog
-          open={figureOpen && !readOnly}
-          onOpenChange={setFigureOpen}
-          environmentId={props.environmentId}
-          cwd={props.cwd}
-          relativePath={props.relativePath ?? ""}
-          source={props.source}
-          onInsert={insertVisualSource}
-        />
-      ) : null}
-      <LatexDocumentReview
-        open={reviewOpen}
-        onOpenChange={setReviewOpen}
-        source={props.source}
-        onOpenSource={props.onOpenSource}
-      />
-      {notice === null ? null : (
-        <div className="scient-latex-visual-notice" role="alert">
-          {notice}
-        </div>
-      )}
-      <div className="scient-latex-visual-body" data-navigation={navigationOpen || undefined}>
-        {navigationOpen ? (
-          <aside className="scient-latex-document-navigation" aria-label="Document navigation">
-            <div className="scient-latex-navigation-section">
-              <strong>Document</strong>
-              <span>{props.relativePath?.split(/[\\/]/u).at(-1) ?? "LaTeX document"}</span>
-            </div>
-            <nav aria-label="Document outline">
-              <div className="scient-latex-navigation-heading">Outline</div>
-              {outline.length === 0 ? (
-                <p>Add headings to build an outline.</p>
-              ) : (
-                outline.map((heading) => (
-                  <button
-                    key={`${heading.position}-${heading.title}`}
-                    onClick={() =>
-                      editor
-                        ?.chain()
-                        .focus()
-                        .setTextSelection(heading.position + 1)
-                        .scrollIntoView()
-                        .run()
-                    }
-                    style={{ "--outline-level": heading.level } as CSSProperties}
-                    type="button"
-                  >
-                    {heading.title}
-                  </button>
-                ))
-              )}
-            </nav>
-          </aside>
-        ) : null}
-        <div className="scient-latex-visual-scroll" ref={visualScroll}>
+          )}
+          {props.documentToolsHost ? (
+            createPortal(documentTools, props.documentToolsHost)
+          ) : (
+            <div className="scient-latex-document-tools">{documentTools}</div>
+          )}
           <div
-            className="scient-latex-page-zoom-frame"
-            style={{ width: paperWidth * zoom, height: stageHeight * zoom }}
+            className="scient-latex-writing-toolbar"
+            role="toolbar"
+            aria-label="Writing tools"
+            onMouseDown={(event) => {
+              if (event.target instanceof Element && event.target.closest("button"))
+                event.preventDefault();
+            }}
           >
-            <div
-              className="scient-latex-page-stage"
-              style={
-                {
-                  ...paperStyle,
-                  transform: `scale(${zoom})`,
-                } as CSSProperties
-              }
-            >
-              <div
-                className="scient-latex-visual-paper"
-                data-indent-after-heading={layout.indentAfterHeading}
+            <div className="scient-latex-toolbar-group" aria-label="Text style">
+              <DockMenu
+                label="Paragraph style"
+                icon={
+                  <span>
+                    {editor?.isActive("heading")
+                      ? ["Section", "Subsection", "Subsubsection"][
+                          Number(editor.getAttributes("heading").level) - 1
+                        ]
+                      : "Normal text"}
+                  </span>
+                }
               >
-                <div className="scient-latex-page-stack" aria-hidden="true">
-                  {Array.from({ length: pageCount }, (_, index) => (
-                    <div
-                      className="scient-latex-page-sheet"
-                      key={index}
-                      style={{ top: index * (pageHeight + pageGap) }}
+                <MenuRadioGroup
+                  value={
+                    editor?.isActive("heading")
+                      ? String(editor.getAttributes("heading").level)
+                      : "paragraph"
+                  }
+                >
+                  <DockCommandRadioItem
+                    value="paragraph"
+                    onClick={() => {
+                      editor?.chain().focus().setParagraph().run();
+                    }}
+                  >
+                    Normal text
+                  </DockCommandRadioItem>
+                  {([1, 2, 3] as const).map((level) => (
+                    <DockCommandRadioItem
+                      key={level}
+                      value={String(level)}
+                      onClick={() => {
+                        editor?.chain().focus().setHeading({ level }).run();
+                      }}
                     >
-                      <span>Page {index + 1}</span>
-                    </div>
+                      {["Section", "Subsection", "Subsubsection"][level - 1]}
+                    </DockCommandRadioItem>
                   ))}
+                </MenuRadioGroup>
+              </DockMenu>
+              {formatActions
+                .filter((item) => !item.secondary)
+                .map((item) => (
+                  <DockButton
+                    key={item.label}
+                    label={`${item.label}${shortcutLabel(item.label === "Bold" ? "latex.bold" : "latex.italic") ? " (" + shortcutLabel(item.label === "Bold" ? "latex.bold" : "latex.italic") + ")" : ""}`}
+                    icon={item.icon}
+                    disabled={readOnly || !editor}
+                    active={Boolean(item.active)}
+                    onClick={item.action}
+                  />
+                ))}
+              <DockMenu label="Lists" icon={<List />}>
+                <DockCommandItem
+                  onClick={() => {
+                    editor?.chain().focus().toggleBulletList().run();
+                  }}
+                  disabled={readOnly}
+                >
+                  Bullet list
+                </DockCommandItem>
+                <DockCommandItem
+                  onClick={() => {
+                    editor?.chain().focus().toggleOrderedList().run();
+                  }}
+                  disabled={readOnly}
+                >
+                  Numbered list
+                </DockCommandItem>
+                <MenuSeparator />
+                <DockCommandItem
+                  onClick={() => {
+                    editor?.chain().focus().sinkListItem("listItem").run();
+                  }}
+                  disabled={readOnly || !editor?.can().sinkListItem("listItem")}
+                >
+                  Indent item
+                </DockCommandItem>
+                <DockCommandItem
+                  onClick={() => {
+                    editor?.chain().focus().liftListItem("listItem").run();
+                  }}
+                  disabled={readOnly || !editor?.can().liftListItem("listItem")}
+                >
+                  Outdent item
+                </DockCommandItem>
+              </DockMenu>
+            </div>
+            <div className="scient-latex-toolbar-group">
+              <LatexInsertMenu
+                open={insertOpen && !readOnly}
+                onOpenChange={setInsertOpen}
+                actions={insertActions}
+                disabled={readOnly}
+                onInsertTable={insertTable}
+                onReturnFocus={() => editor?.commands.focus(undefined, { scrollIntoView: false })}
+              />
+              <DockButton
+                label={`Insert equation${shortcutLabel("math.display") ? " (" + shortcutLabel("math.display") + ")" : ""}`}
+                icon={<Sigma />}
+                disabled={readOnly}
+                onClick={() => insertDisplayMath(MATH_INSERTIONS.equation)}
+              />
+            </div>
+            <div className="scient-latex-toolbar-history">
+              <DockButton
+                label="Undo (Ctrl/Cmd+Z)"
+                icon={<Undo2 />}
+                disabled={readOnly || !editor?.can().undo()}
+                onClick={() => {
+                  editor?.chain().focus().undo().run();
+                }}
+              />
+              <DockButton
+                label="Redo (Ctrl/Cmd+Shift+Z)"
+                icon={<Redo2 />}
+                disabled={readOnly || !editor?.can().redo()}
+                onClick={() => {
+                  editor?.chain().focus().redo().run();
+                }}
+              />
+            </div>
+            <span className="scient-latex-shortcut-hint" role="status">
+              {shortcutHint}
+            </span>
+            <LatexVisualZoomControls
+              zoom={zoom}
+              fit={zoomMode === "fit"}
+              onZoom={setZoomMode}
+              onFit={() => setZoomMode("fit")}
+            />
+          </div>
+          <LatexReferenceDialog
+            open={referenceOpen && !readOnly}
+            onOpenChange={setReferenceOpen}
+            source={props.source}
+            environmentId={props.environmentId}
+            cwd={props.cwd}
+            relativePath={props.relativePath}
+            onInsert={insertReference}
+          />
+          {props.environmentId && props.cwd ? (
+            <LatexFigureInsertDialog
+              open={figureOpen && !readOnly}
+              onOpenChange={setFigureOpen}
+              environmentId={props.environmentId}
+              cwd={props.cwd}
+              relativePath={props.rootRelativePath ?? ""}
+              source={props.source}
+              onInsert={insertVisualSource}
+            />
+          ) : null}
+          <LatexDocumentReview
+            open={reviewOpen}
+            onOpenChange={setReviewOpen}
+            source={props.source}
+            onOpenSource={props.onOpenSource}
+          />
+          {notice === null ? null : (
+            <div className="scient-latex-visual-notice" role="alert">
+              {notice}
+            </div>
+          )}
+          <div className="scient-latex-visual-body" data-navigation={navigationOpen || undefined}>
+            {navigationOpen ? (
+              <aside className="scient-latex-document-navigation" aria-label="Document navigation">
+                <div className="scient-latex-navigation-section">
+                  <strong>Document</strong>
+                  <span>{props.relativePath?.split(/[\\/]/u).at(-1) ?? "LaTeX document"}</span>
                 </div>
-                <EditorContent editor={editor} />
+                <nav aria-label="Document outline">
+                  <div className="scient-latex-navigation-heading">Outline</div>
+                  {outline.length === 0 ? (
+                    <p>Add headings to build an outline.</p>
+                  ) : (
+                    outline.map((heading) => (
+                      <button
+                        key={`${heading.position}-${heading.title}`}
+                        onClick={() =>
+                          editor
+                            ?.chain()
+                            .focus()
+                            .setTextSelection(heading.position + 1)
+                            .scrollIntoView()
+                            .run()
+                        }
+                        style={{ "--outline-level": heading.level } as CSSProperties}
+                        type="button"
+                      >
+                        {heading.title}
+                      </button>
+                    ))
+                  )}
+                </nav>
+              </aside>
+            ) : null}
+            <div className="scient-latex-visual-scroll" ref={visualScroll}>
+              <div
+                className="scient-latex-page-zoom-frame"
+                style={{ width: paperWidth * zoom, height: stageHeight * zoom }}
+              >
+                <div
+                  className="scient-latex-page-stage"
+                  style={
+                    {
+                      ...paperStyle,
+                      transform: `scale(${zoom})`,
+                    } as CSSProperties
+                  }
+                >
+                  <div
+                    className="scient-latex-visual-paper"
+                    data-indent-after-heading={layout.indentAfterHeading}
+                  >
+                    <div className="scient-latex-page-stack" aria-hidden="true">
+                      {Array.from({ length: pageCount }, (_, index) => (
+                        <div
+                          className="scient-latex-page-sheet"
+                          key={index}
+                          style={{ top: index * (pageHeight + pageGap) }}
+                        >
+                          <span>Page {index + 1}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <EditorContent editor={editor} />
+                  </div>
+                </div>
               </div>
             </div>
           </div>
+          <footer className="scient-latex-visual-summary">
+            <div className="scient-latex-context-tools-slot">
+              {editor && !readOnly && editor.isActive("heading") ? (
+                <LatexHeadingToolbar editor={editor} draftKey={props.draftKey} />
+              ) : null}
+            </div>
+            <div className="scient-latex-document-status" role="status">
+              <span className="scient-latex-selection-status">
+                {readOnly ? "Read-only" : selectionContext}
+              </span>
+              {hasLocalDraft ? (
+                <ScientTooltip content="This field has a local draft. Complete the entry to update the LaTeX source.">
+                  <span className="scient-latex-draft-status">Editing draft</span>
+                </ScientTooltip>
+              ) : null}
+              <span className="scient-latex-layout-status">
+                {layout.documentClass} · {layout.baseFontPt}pt · {layout.paper.toUpperCase()}
+              </span>
+              <span
+                className="scient-latex-page-status"
+                aria-label={`Page ${Math.min(currentPage, pageCount)} of ${pageCount}`}
+              >
+                {Math.min(currentPage, pageCount)} / {pageCount}
+              </span>
+              {summary.raw > 0 ? (
+                <button
+                  className="scient-latex-source-status"
+                  type="button"
+                  onClick={props.onOpenSource}
+                >
+                  {summary.raw} source-only {summary.raw === 1 ? "block" : "blocks"}
+                </button>
+              ) : null}
+            </div>
+          </footer>
         </div>
-      </div>
-      <footer className="scient-latex-visual-summary">
-        <div className="scient-latex-context-tools-slot" />
-        <div className="scient-latex-document-status" role="status">
-          <span className="scient-latex-selection-status">
-            {readOnly ? "Read-only" : selectionContext}
-          </span>
-          <span className="scient-latex-layout-status">
-            {layout.documentClass} · {layout.baseFontPt}pt · {layout.paper.toUpperCase()}
-          </span>
-          <span
-            className="scient-latex-page-status"
-            aria-label={`Page ${Math.min(currentPage, pageCount)} of ${pageCount}`}
-          >
-            {Math.min(currentPage, pageCount)} / {pageCount}
-          </span>
-          {summary.raw > 0 ? (
-            <button
-              className="scient-latex-source-status"
-              type="button"
-              onClick={props.onOpenSource}
-            >
-              {summary.raw} source-only {summary.raw === 1 ? "block" : "blocks"}
-            </button>
-          ) : null}
-        </div>
-      </footer>
-    </div>
+      </LatexDraftContext>
+    </LatexRootContext>
   );
 }

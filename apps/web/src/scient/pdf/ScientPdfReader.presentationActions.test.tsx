@@ -50,7 +50,6 @@ vi.mock("./useScientPdfReader", () => ({
     goToPage: vi.fn(),
     goToSyncPoint: vi.fn(),
     prepareSearch: vi.fn(),
-    registerAnchorProvider: vi.fn(),
     rotate: vi.fn(),
     setSearchQuery: vi.fn(),
     setZoom: vi.fn(),

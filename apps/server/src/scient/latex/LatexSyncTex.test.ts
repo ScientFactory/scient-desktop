@@ -107,7 +107,6 @@ const makeHarness = Effect.gen(function* () {
         ),
       ),
     revisionExists: (input) => revisionIsLive(input.revisionId),
-    readRevisionAttachment: () => Effect.die("unused"),
     resolveRevisionForAsset: () => Effect.die("unused"),
     retainRevision: () => Effect.void,
     changes: Stream.empty,

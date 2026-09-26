@@ -73,7 +73,6 @@ it("waits for actual canvas AND text-layer completion, then two stable frames", 
   const promise = preparePdfPresentation({
     ...f,
     current: () => null,
-    captureAnchor: () => null,
     signal: controller.signal,
   }).then(() => {
     done = true;
@@ -102,7 +101,6 @@ it("follows newer scroll and zoom rather than overwriting navigation with an old
   const promise = preparePdfPresentation({
     ...f,
     current: () => live,
-    captureAnchor: () => null,
     signal: controller.signal,
   });
   await frame();
@@ -118,31 +116,12 @@ it("follows newer scroll and zoom rather than overwriting navigation with an old
   await frame();
   await promise;
 });
-it("compensates source-anchor displacement before publishing, without touching the live viewport", async () => {
-  const f = fixture(),
-    live = fixture();
-  live.container.scrollTop = 80;
-  f.view.renderingState = 3;
-  const promise = preparePdfPresentation({
-    ...f,
-    current: () => live,
-    captureAnchor: () => ({ key: "source-position", screenTop: 100, locate: () => 140 }),
-    signal: new AbortController().signal,
-  });
-  f.emit("textlayerrendered", { pageNumber: 1 });
-  await frame();
-  expect(f.container.scrollTop).toBe(120);
-  expect(live.container.scrollTop).toBe(80);
-  await frame();
-  await promise;
-});
 it("aborts obsolete work and releases all callbacks", async () => {
   const f = fixture(),
     controller = new AbortController();
   const promise = preparePdfPresentation({
     ...f,
     current: () => null,
-    captureAnchor: () => null,
     signal: controller.signal,
   });
   const assertion = expect(promise).rejects.toMatchObject({ name: "AbortError" });
@@ -156,7 +135,6 @@ it("rejects broken renders and bounds an indefinitely stalled replacement", asyn
   const promise = preparePdfPresentation({
     ...f,
     current: () => null,
-    captureAnchor: () => null,
     signal: new AbortController().signal,
   });
   const assertion = expect(promise).rejects.toThrow("not ready");
@@ -165,46 +143,11 @@ it("rejects broken renders and bounds an indefinitely stalled replacement", asyn
   expect(frames.size).toBe(0);
 });
 
-it("does not publish during asynchronous reflow lookup or follow a superseded anchor", async () => {
-  const f = fixture();
-  f.view.renderingState = 3;
-  const controller = new AbortController();
-  let key = "older-source";
-  const lookups: ((page: number | null) => void)[] = [];
-  const promise = preparePdfPresentation({
-    ...f,
-    current: () => null,
-    signal: controller.signal,
-    captureAnchor: () => ({
-      key,
-      screenTop: 100,
-      locate: () => null,
-      locatePage: () => new Promise((resolve) => lookups.push(resolve)),
-    }),
-  });
-  const assertion = expect(promise).rejects.toMatchObject({ name: "AbortError" });
-  f.emit("textlayerrendered", { pageNumber: 1 });
-  await frame();
-  expect(lookups.length).toBe(1);
-  key = "newer-source";
-  await frame();
-  expect(lookups.length).toBe(2);
-  lookups[0]!(2);
-  await Promise.resolve();
-  expect(f.viewer.currentPageNumber).toBe(1);
-  controller.abort();
-  await assertion;
-  lookups[1]!(3);
-  await Promise.resolve();
-  expect(f.viewer.currentPageNumber).toBe(1);
-});
-
 it("rejects a failed canvas without admitting an unpainted presentation", async () => {
   const f = fixture();
   const promise = preparePdfPresentation({
     ...f,
     current: () => null,
-    captureAnchor: () => null,
     signal: new AbortController().signal,
   });
   const assertion = expect(promise).rejects.toThrow("page could not be rendered");

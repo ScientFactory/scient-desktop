@@ -131,11 +131,6 @@ const DEFAULT_GENERATED_DOCUMENT_RETENTION: GeneratedDocumentRetentionPolicy = {
 const BINDING_CHANGE_REPLAY = 32;
 
 const IDENTIFIER_NAME = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/u;
-const REVISION_ATTACHMENT_NAME = /^[a-z0-9][a-z0-9._-]{0,127}$/u;
-const RESERVED_REVISION_FILES = new Set(["document.pdf", "metadata.json"]);
-const MAX_REVISION_ATTACHMENTS = 8;
-/** Shared publication budget for every immutable revision attachment combined. */
-export const MAX_REVISION_ATTACHMENT_BYTES = 1_024 * 1_024;
 
 export class GeneratedDocumentStoreError extends Schema.TaggedError<GeneratedDocumentStoreError>()(
   "GeneratedDocumentStoreError",
@@ -179,23 +174,12 @@ export interface GeneratedDocumentProductionHandle extends BeginGeneratedDocumen
   readonly generation: BindingGeneration;
 }
 
-export interface GeneratedDocumentRevisionAttachment {
-  /** A single safe file name; attachments always live inside the immutable revision directory. */
-  readonly name: string;
-  readonly bytes: Uint8Array;
-}
-
 export interface PublishGeneratedPdfInput extends GeneratedDocumentProductionHandle {
   readonly bytes: Uint8Array;
   readonly title: string;
   readonly provenanceKind: ArtifactProvenance["kind"];
   /** Browser export has a distinct validation profile; all other producers keep the historical default. */
   readonly validationProfile?: PdfValidationProfile;
-  /**
-   * Small producer evidence which must commit atomically with this exact PDF
-   * revision. The store owns a byte copy and retains/evicts it with the PDF.
-   */
-  readonly revisionAttachments?: ReadonlyArray<GeneratedDocumentRevisionAttachment>;
 }
 
 export interface FailGeneratedDocumentProductionInput extends GeneratedDocumentProductionHandle {
@@ -262,12 +246,6 @@ export class GeneratedDocumentStore extends Context.Service<
       readonly artifactId: ArtifactId;
       readonly revisionId: ArtifactRevisionId;
     }) => Effect.Effect<boolean, GeneratedDocumentStoreError>;
-    readonly readRevisionAttachment: (input: {
-      readonly authority: ArtifactAuthority;
-      readonly artifactId: ArtifactId;
-      readonly revisionId: ArtifactRevisionId;
-      readonly name: string;
-    }) => Effect.Effect<Uint8Array | null, GeneratedDocumentStoreError>;
     /**
      * Resolves immutable bytes and durably protects them for exactly as long as
      * the signed asset capability returned to the reader will remain valid.
@@ -318,45 +296,6 @@ const optionalOnNotFound = <A>(effect: Effect.Effect<A, PlatformError.PlatformEr
         error.reason._tag === "NotFound" ? Effect.succeed(Option.none<A>()) : Effect.fail(error),
     }),
   );
-
-function ownRevisionAttachments(
-  attachments: ReadonlyArray<GeneratedDocumentRevisionAttachment> | undefined,
-): Effect.Effect<ReadonlyArray<GeneratedDocumentRevisionAttachment>, GeneratedDocumentStoreError> {
-  return Effect.try({
-    try: () => {
-      const input = attachments ?? [];
-      if (input.length > MAX_REVISION_ATTACHMENTS) {
-        throw new Error(`At most ${MAX_REVISION_ATTACHMENTS} revision attachments are allowed.`);
-      }
-      const names = new Set<string>();
-      let totalBytes = 0;
-      return input.map((attachment) => {
-        if (
-          !REVISION_ATTACHMENT_NAME.test(attachment.name) ||
-          RESERVED_REVISION_FILES.has(attachment.name) ||
-          names.has(attachment.name)
-        ) {
-          throw new Error(`Invalid or duplicate revision attachment name: ${attachment.name}`);
-        }
-        names.add(attachment.name);
-        totalBytes += attachment.bytes.byteLength;
-        if (totalBytes > MAX_REVISION_ATTACHMENT_BYTES) {
-          throw new Error(
-            `Revision attachments exceed ${MAX_REVISION_ATTACHMENT_BYTES} retained bytes.`,
-          );
-        }
-        return { name: attachment.name, bytes: attachment.bytes.slice() };
-      });
-    },
-    catch: (cause) =>
-      makeStoreError(
-        "publish",
-        "validation-rejected",
-        cause instanceof Error ? cause.message : "Invalid generated-document revision attachment.",
-        cause,
-      ),
-  });
-}
 
 const revisionKey = (artifactId: ArtifactId, revisionId: ArtifactRevisionId) =>
   `${artifactId}/${revisionId}`;
@@ -554,11 +493,7 @@ export const make = Effect.fn("GeneratedDocumentStore.make")(function* (
   });
 
   const writeRevisionAtomically = Effect.fn("GeneratedDocumentStore.writeRevisionAtomically")(
-    function* (
-      stored: StoredGeneratedDocumentRevision,
-      bytes: Uint8Array,
-      attachments: ReadonlyArray<GeneratedDocumentRevisionAttachment>,
-    ) {
+    function* (stored: StoredGeneratedDocumentRevision, bytes: Uint8Array) {
       const artifactId = stored.artifact.artifactId;
       const revisionId = stored.artifact.revisionId;
       const artifactDirectory = artifactRevisionDirectory(artifactId);
@@ -574,17 +509,11 @@ export const make = Effect.fn("GeneratedDocumentStore.make")(function* (
           path.join(temporaryDirectory, "metadata.json"),
           `${encodeRevision(stored)}\n`,
         );
-        yield* Effect.forEach(
-          attachments,
-          (attachment) =>
-            fileSystem.writeFile(path.join(temporaryDirectory, attachment.name), attachment.bytes),
-          { discard: true },
-        );
         // Windows rejects fsync on a read-only descriptor with EPERM, so the
         // durability flush opens these freshly written files for writing.
         yield* Effect.scoped(
           Effect.forEach(
-            ["document.pdf", "metadata.json", ...attachments.map(({ name }) => name)],
+            ["document.pdf", "metadata.json"],
             (name) =>
               fileSystem
                 .open(path.join(temporaryDirectory, name), { flag: "r+" })
@@ -922,13 +851,6 @@ export const make = Effect.fn("GeneratedDocumentStore.make")(function* (
   const publishPdf = (input: PublishGeneratedPdfInput) =>
     Effect.gen(function* () {
       yield* lock.withPermit(ensureActiveProduction(input));
-      const revisionAttachments = yield* ownRevisionAttachments(input.revisionAttachments).pipe(
-        Effect.catch((error) =>
-          lock
-            .withPermit(failCurrentProduction({ ...input, reason: error.detail }))
-            .pipe(Effect.ignore, Effect.andThen(Effect.fail(error))),
-        ),
-      );
       const ownedBytes =
         input.bytes.byteLength > PDF_VALIDATION_MAX_BYTES ? input.bytes : input.bytes.slice();
       const validation = yield* Effect.promise(() =>
@@ -991,13 +913,9 @@ export const make = Effect.fn("GeneratedDocumentStore.make")(function* (
             title: input.title.trim().slice(0, 512) || "Document",
             fileName: pdfFileName(input.title),
             pageCount: validation.pageCount,
-            attachmentByteLength: revisionAttachments.reduce(
-              (total, attachment) => total + attachment.bytes.byteLength,
-              0,
-            ),
           };
           const publishedRevisionDirectory = revisionDirectory(current.artifactId, revisionId);
-          yield* writeRevisionAtomically(stored, ownedBytes, revisionAttachments).pipe(
+          yield* writeRevisionAtomically(stored, ownedBytes).pipe(
             Effect.mapError((cause) =>
               makeStoreError(
                 "write-revision",
@@ -1146,44 +1064,6 @@ export const make = Effect.fn("GeneratedDocumentStore.make")(function* (
         ),
       );
       return metadataExists && pdfExists;
-    });
-
-  const readRevisionAttachment = (input: {
-    readonly authority: ArtifactAuthority;
-    readonly artifactId: ArtifactId;
-    readonly revisionId: ArtifactRevisionId;
-    readonly name: string;
-  }) =>
-    Effect.gen(function* () {
-      if (
-        input.authority !== authority ||
-        !REVISION_ATTACHMENT_NAME.test(input.name) ||
-        RESERVED_REVISION_FILES.has(input.name)
-      ) {
-        return yield* makeStoreError(
-          "read-revision",
-          input.authority === authority ? "validation-rejected" : "authority-mismatch",
-          "Generated PDF revision attachment reference is invalid.",
-        );
-      }
-      // Metadata identity is the authority for this directory; never read an
-      // auxiliary file from an unverified artifact/revision path.
-      yield* readRevision(input.artifactId, input.revisionId);
-      const bytes = yield* optionalOnNotFound(
-        fileSystem.readFile(
-          path.join(revisionDirectory(input.artifactId, input.revisionId), input.name),
-        ),
-      ).pipe(
-        Effect.mapError((cause) =>
-          makeStoreError(
-            "read-revision",
-            "filesystem",
-            "Unable to read generated PDF revision attachment.",
-            cause,
-          ),
-        ),
-      );
-      return Option.getOrNull(bytes);
     });
 
   const resolveRevisionForAsset = (input: {
@@ -1515,7 +1395,6 @@ export const make = Effect.fn("GeneratedDocumentStore.make")(function* (
     getDescriptor,
     resolveRevision,
     revisionExists,
-    readRevisionAttachment,
     resolveRevisionForAsset,
     retainRevision,
     changes: Stream.fromPubSub(changesPubSub),

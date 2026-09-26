@@ -48,7 +48,6 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
-import { Kbd, KbdGroup } from "../ui/kbd";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
@@ -82,10 +81,11 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { AuthoringKeybindingsSettings } from "../../scient/keyboard/AuthoringKeybindingsSettings";
 import { ShortcutKeys, SHORTCUT_PILL_BUTTON_CLASS, SHORTCUT_ROW_CLASS } from "./ShortcutRow";
-import { surfaceCommands, type KeyboardScope } from "../../scient/keyboard/catalog";
+import { type KeyboardScope } from "../../scient/keyboard/catalog";
 import { isMacKeyboard } from "../../scient/keyboard/keys";
 import {
   effectiveSurfaceBindings,
+  authoringCommands as getAuthoringCommands,
   getKeyboardPreferences,
   subscribeKeyboardPreferences,
 } from "../../scient/keyboard/preferences";
@@ -1488,11 +1488,14 @@ export function KeybindingsSettingsPanel() {
 
   const cancelAdd = useCallback(() => setIsAddingBinding(false), []);
 
-  const authoringCommands = useMemo(() => surfaceCommands(isMacKeyboard()), []);
   const authoringPreferences = useSyncExternalStore(
     subscribeKeyboardPreferences,
     getKeyboardPreferences,
     getKeyboardPreferences,
+  );
+  const authoringCommands = useMemo(
+    () => getAuthoringCommands(authoringPreferences.preferences, isMacKeyboard()),
+    [authoringPreferences.preferences],
   );
   const authoringBindings = useMemo(
     () => effectiveSurfaceBindings(authoringPreferences.preferences, isMacKeyboard()),
@@ -1510,7 +1513,7 @@ export function KeybindingsSettingsPanel() {
   const authoringCounts = useMemo(
     () =>
       Object.fromEntries(
-        (["markdown", "math", "pdf"] as const).map((scope) => [
+        (["markdown", "math", "pdf", "latex", "source", "table"] as const).map((scope) => [
           scope,
           authoringCommands.filter((command) => command.scope === scope).length,
         ]),
@@ -1620,6 +1623,24 @@ export function KeybindingsSettingsPanel() {
                     label: "General",
                     detail: `${allRows.length} application bindings`,
                     icon: <KeyboardIcon className="size-6 shrink-0" />,
+                  },
+                  {
+                    id: "latex" as const,
+                    label: "Write",
+                    detail: `${authoringCounts.latex} commands`,
+                    icon: <FileTextIcon className="size-6 shrink-0" />,
+                  },
+                  {
+                    id: "source" as const,
+                    label: "Source",
+                    detail: `${authoringCounts.source} commands`,
+                    icon: <FileJsonIcon className="size-6 shrink-0" />,
+                  },
+                  {
+                    id: "table" as const,
+                    label: "Tables",
+                    detail: `${authoringCounts.table} commands`,
+                    icon: <FileIcon className="size-6 shrink-0" />,
                   },
                   {
                     id: "markdown" as const,

@@ -44,10 +44,6 @@ import {
 } from "./LatexPackageInstaller.ts";
 import { LatexToolchain } from "./LatexToolchain.ts";
 import { LatexSyncTex } from "./LatexSyncTex.ts";
-import {
-  LatexVisualRevisionStore,
-  layer as visualRevisionStoreLayer,
-} from "./LatexVisualRevisionStore.ts";
 
 /** Byte-for-byte the fixture shape the document store's own tests accept. */
 function minimalPdf(marker: string): Uint8Array {
@@ -259,8 +255,6 @@ const makeHarness = (input: {
   readonly abandonProductionGate?: (attempt: number) => Effect.Effect<void>;
   /** Runs after an abandoned production has released its store claim. */
   readonly abandonCompletedGate?: () => Effect.Effect<void>;
-  /** Simulates valid Visual evidence that cannot fit the immutable attachment budget. */
-  readonly visualRevisionAttachmentUnavailable?: boolean;
 }) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -434,22 +428,8 @@ const makeHarness = (input: {
             }),
           ).pipe(Layer.provide(realStoreLayer));
 
-    const visualRevisionLayer = input.visualRevisionAttachmentUnavailable
-      ? Layer.succeed(
-          LatexVisualRevisionStore,
-          LatexVisualRevisionStore.of({
-            prepare: () => Effect.succeed(null),
-            load: () => Effect.succeed(null),
-          }),
-        )
-      : visualRevisionStoreLayer.pipe(
-          Layer.provide(gatedStoreLayer),
-          Layer.provide(serverEnvironment),
-        );
-
     const serviceLayer = Layer.effect(LatexBuildService, makeBuildService).pipe(
       Layer.provide(syncTexLayer),
-      Layer.provide(visualRevisionLayer),
       Layer.provide(Layer.succeed(LatexPackageInstaller, installer)),
       Layer.provide(Layer.succeed(LocalExecutionProcess.ExecutionProcess, port)),
       Layer.provide(
@@ -1598,32 +1578,6 @@ describe("LatexBuildService", () => {
     Effect.gen(function* () {
       const harness = yield* makeHarness({
         compiles: [{ transcript: "", exitCode: 0, pdf: minimalPdf("no-recorder") }],
-      });
-      yield* Effect.gen(function* () {
-        const service = yield* LatexBuildService;
-        yield* service.requestBuild(harness.buildInput);
-        const finished = yield* awaitTerminal(service, harness.buildInput);
-
-        expect(finished.state).toBe("succeeded");
-        expect(finished.descriptor).toMatchObject({ bindingStatus: "current" });
-        expect(finished.visualSourceRevisions).toEqual({});
-        expect(yield* Ref.get(harness.startCount)).toBe(1);
-      }).pipe(Effect.provide(harness.serviceLayer));
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
-  );
-
-  it.live("publishes read-only when revision-scoped Visual evidence cannot be attached", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness({
-        compiles: [
-          {
-            transcript: "",
-            exitCode: 0,
-            pdf: minimalPdf("oversized-visual-proof"),
-            fls: ROOT_RECORDER_MANIFEST,
-          },
-        ],
-        visualRevisionAttachmentUnavailable: true,
       });
       yield* Effect.gen(function* () {
         const service = yield* LatexBuildService;

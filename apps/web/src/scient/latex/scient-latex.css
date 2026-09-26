@@ -538,96 +538,7 @@
   padding: 3px 4px;
   font-size: 11px;
 }
-.scient-latex-more-tools {
-  position: relative;
-  flex: none;
-}
-.scient-latex-more-tools > summary {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 26px;
-  border-radius: 4px;
-  list-style: none;
-  cursor: pointer;
-}
-.scient-latex-more-tools > summary::-webkit-details-marker {
-  display: none;
-}
-.scient-latex-more-tools > summary:hover,
-.scient-latex-more-tools[open] > summary {
-  background: var(--accent);
-  color: var(--accent-foreground);
-}
-.scient-latex-more-popover {
-  position: absolute;
-  z-index: 90;
-  top: calc(100% + 7px);
-  right: 0;
-  width: 260px;
-  max-width: calc(100vw - 32px);
-  max-height: min(520px, calc(100dvh - 180px));
-  overflow: auto;
-  overscroll-behavior: contain;
-  padding: 6px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--popover);
-  color: var(--popover-foreground);
-  box-shadow: 0 6px 22px #00000026;
-}
-.scient-latex-more-popover .scient-latex-toolbar-group {
-  display: grid;
-  gap: 3px;
-}
-.scient-latex-more-popover > button,
-.scient-latex-more-popover .scient-latex-toolbar-group > button,
-.scient-latex-more-popover summary {
-  display: flex;
-  align-items: center;
-  width: 100%;
-  padding: 6px 8px;
-  font: 12px/1.4 var(--font-sans);
-  text-align: left;
-  background: transparent;
-}
-.scient-latex-more-popover .scient-latex-table-picker-popover,
-.scient-latex-more-popover .scient-latex-layout-popover {
-  position: static;
-  width: 100%;
-  min-width: 0;
-  margin-block: 5px;
-  padding: 8px;
-  box-shadow: none;
-}
-.scient-latex-more-formatting {
-  display: none;
-}
-@container scient-writing (max-width: 620px) {
-  .scient-latex-writing-toolbar > .scient-latex-toolbar-group > .scient-latex-toolbar-secondary {
-    display: none;
-  }
-  .scient-latex-more-formatting {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 3px;
-    padding-bottom: 5px;
-    margin-bottom: 5px;
-    border-bottom: 1px solid var(--border);
-  }
-  .scient-latex-more-formatting > button {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 11px;
-  }
-  .scient-latex-more-formatting > .scient-latex-more-primary {
-    display: none;
-  }
-}
 @container scient-writing (max-width: 440px) {
-  .scient-latex-writing-toolbar > .scient-latex-toolbar-group > .scient-latex-toolbar-format,
   .scient-latex-writing-toolbar .scient-latex-insert-label,
   .scient-latex-writing-toolbar .scient-latex-zoom-controls .scient-latex-zoom-step {
     display: none;
@@ -719,8 +630,15 @@
   }
 }
 .scient-latex-visual-notice {
-  padding: 8px 12px;
-  background: var(--muted);
+  position: absolute;
+  z-index: 50;
+  inset-inline: 12px;
+  bottom: 38px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--popover);
+  color: var(--popover-foreground);
   font-size: 12px;
 }
 
@@ -2752,4 +2670,215 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   .scient-latex-table-position {
     display: none;
   }
+}
+
+/* Document controls share the Markdown dock's dimensions and menu primitives. */
+.scient-latex-document-tools,
+.scient-latex-toolbar-history {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+.scient-latex-document-tools:empty {
+  display: none;
+}
+.scient-latex-writing-toolbar .scient-markdown-command-button {
+  height: 28px;
+  min-height: 28px;
+  background: transparent;
+  font-size: 12px;
+}
+.scient-latex-writing-toolbar .scient-markdown-command-button:hover,
+.scient-latex-writing-toolbar .scient-markdown-command-button[aria-pressed="true"] {
+  background: var(--accent);
+}
+.scient-latex-writing-toolbar .scient-latex-toolbar-group:first-child > button:first-child {
+  max-width: 126px;
+}
+.scient-latex-writing-toolbar .scient-latex-toolbar-group:first-child > button:first-child > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.scient-latex-insert-search {
+  padding: 5px;
+}
+.scient-latex-insert-search input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 5px 7px;
+  background: var(--background);
+  color: var(--foreground);
+  font: 12px/1.5 var(--font-sans);
+}
+.scient-latex-insert-search input:focus-visible {
+  outline: 1px solid var(--ring);
+}
+.scient-latex-insert-items {
+  max-height: min(380px, calc(100dvh - 180px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.scient-latex-empty-menu {
+  padding: 8px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.scient-latex-document-settings {
+  font: 12px/1.5 var(--font-sans);
+  margin-top: 12px;
+}
+.scient-latex-document-settings fieldset {
+  display: grid;
+  gap: 12px;
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+.scient-latex-document-settings label {
+  display: grid;
+  gap: 4px;
+}
+.scient-latex-document-settings :is(input, select) {
+  min-width: 0;
+  width: 100%;
+  padding: 5px 7px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--background);
+  color: var(--foreground);
+  font: inherit;
+}
+.scient-latex-document-settings button {
+  padding: 4px 7px;
+  border-radius: 4px;
+  color: var(--foreground);
+  font: inherit;
+}
+.scient-latex-document-settings button:hover {
+  background: var(--accent);
+}
+.scient-latex-document-settings :disabled {
+  opacity: 0.5;
+}
+.scient-latex-document-settings :focus-visible {
+  outline: 1px solid var(--ring);
+}
+.scient-latex-settings-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.scient-latex-metadata-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+}
+.scient-latex-document-settings button[type="submit"] {
+  background: var(--accent);
+}
+.scient-latex-heading-reference {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.scient-latex-context-toolbar > textarea,
+.scient-latex-heading-reference > textarea {
+  height: 24px;
+  min-height: 24px;
+  max-height: 24px;
+  width: 160px;
+  min-width: 60px;
+  padding: 3px 5px;
+  resize: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--background);
+  color: var(--foreground);
+  font: 11px/16px var(--font-sans);
+  white-space: pre;
+}
+.scient-latex-context-toolbar textarea[data-local-draft] {
+  border-color: var(--muted-foreground);
+}
+.scient-latex-context-toolbar {
+  max-width: 100%;
+}
+.scient-latex-context-tools-slot {
+  min-width: 0;
+  flex-shrink: 1;
+}
+.scient-latex-figure-preview figcaption textarea {
+  width: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: center;
+  resize: none;
+  field-sizing: content;
+}
+.scient-latex-figure-preview:focus-within,
+.scient-latex-scientific-preview:focus-within {
+  border-color: transparent;
+  box-shadow: none;
+}
+.scient-latex-scientific-preview > textarea:focus,
+.scient-latex-abstract-preview textarea:focus,
+.scient-latex-abstract-preview textarea:hover {
+  border-color: transparent;
+  outline: none;
+  background: transparent;
+}
+.scient-latex-title-preview textarea {
+  white-space: pre-wrap;
+}
+.scient-latex-context-toolbar :is(input, select, textarea):focus-visible {
+  outline: 1px solid var(--ring);
+  outline-offset: -1px;
+}
+@container scient-writing (max-width: 550px) {
+  .scient-latex-toolbar-history {
+    display: none;
+  }
+  .scient-latex-heading-reference {
+    font-size: 0;
+    gap: 0;
+  }
+  .scient-latex-heading-reference > textarea {
+    width: 120px;
+  }
+}
+
+.scient-latex-writing-toolbar {
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.scient-latex-writing-toolbar::-webkit-scrollbar {
+  display: none;
+}
+
+.scient-latex-save-state {
+  min-width: 4.5em;
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+
+/* Sequence guidance stays in the existing chrome, never on document paper. */
+.scient-latex-shortcut-hint {
+  font: 11px/1.3 var(--font-sans);
+  color: var(--muted-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  max-width: 22rem;
+}
+.scient-latex-shortcut-hint:empty {
+  display: none;
 }

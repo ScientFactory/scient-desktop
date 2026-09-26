@@ -28,15 +28,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  useSyncExternalStore,
-  type ReactNode,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
 import {
   DropdownMenu,
@@ -72,11 +64,7 @@ import {
 } from "./pdfReaderModel";
 import { pdfReaderSessionDocumentKey, pdfReaderSessionStore } from "./pdfReaderSessionStore";
 import { usePresentedPdfSourceBundle } from "./usePresentedPdfSourceBundle";
-import {
-  useScientPdfReader,
-  type PresentedPdfTextEvidence,
-  type RequestedPdfPresentation,
-} from "./useScientPdfReader";
+import { useScientPdfReader } from "./useScientPdfReader";
 
 import "pdfjs-dist/legacy/web/pdf_viewer.css";
 import "./scientPdfReader.css";
@@ -158,29 +146,7 @@ function PdfPasswordPrompt(props: {
   );
 }
 
-/** Interaction only; extensions never replace PDF.js's authoritative page rendering. */
-export interface PdfInteractionHost {
-  readonly registerAnchorProvider?: (
-    provider: (() => import("./pdfPresentation").PdfPresentationAnchor | null) | null,
-  ) => void;
-  readonly scale?: number;
-  /** Revision owning `container`; never the requested-but-unpublished replacement. */
-  readonly revisionId: string | null;
-  readonly rotation?: number;
-  readonly container: HTMLDivElement | null;
-  readonly ready: boolean;
-  /** Complete text-item evidence for the immutable PDF owning `container`. */
-  readonly readDocumentTextItems: () => Promise<PresentedPdfTextEvidence | null>;
-  readonly pointFromClient: (input: {
-    pageElement: HTMLElement;
-    clientX: number;
-    clientY: number;
-  }) => PdfInverseSyncPoint | null;
-}
-
 export function ScientPdfReader(props: {
-  readonly canPublishPresentation?: (candidate: RequestedPdfPresentation) => boolean;
-  readonly renderInteraction?: (host: PdfInteractionHost) => ReactNode;
   readonly actions?: PdfSourceActions;
   readonly refreshKey?: number;
   readonly resolver?: PdfSourceResolver;
@@ -234,22 +200,14 @@ export function ScientPdfReader(props: {
       }
       refreshSource={asset.refresh}
       actions={props.actions ?? webPdfSourceActions}
-      {...(props.canPublishPresentation === undefined
-        ? {}
-        : { canPublishPresentation: props.canPublishPresentation })}
-      {...(props.renderInteraction === undefined
-        ? {}
-        : { renderInteraction: props.renderInteraction })}
       {...(props.syncNavigation === undefined ? {} : { syncNavigation: props.syncNavigation })}
     />
   );
 }
 
 function LoadedScientPdfReader(props: {
-  readonly canPublishPresentation?: (candidate: RequestedPdfPresentation) => boolean;
   readonly sourceNotice: string | null;
   readonly interactionReady: boolean;
-  readonly renderInteraction?: (host: PdfInteractionHost) => ReactNode;
   readonly actions: PdfSourceActions;
   readonly documentKey: string;
   readonly source: PdfSourceDescriptor;
@@ -308,9 +266,6 @@ function LoadedScientPdfReader(props: {
   const [pageInput, setPageInput] = useState("1");
   const [sourceSyncHintVisible, setSourceSyncHintVisible] = useState(false);
   const reader = useScientPdfReader({
-    ...(props.canPublishPresentation === undefined
-      ? {}
-      : { canPublishPresentation: props.canPublishPresentation }),
     documentKey: props.documentKey,
     onSourceInvalidated: props.refreshSource,
     revisionId: requestedRevisionId,
@@ -421,7 +376,6 @@ function LoadedScientPdfReader(props: {
     (event: React.MouseEvent<HTMLDivElement>) => {
       if (
         props.syncNavigation?.onInverseSearch === undefined ||
-        props.renderInteraction !== undefined ||
         !currentPresentation ||
         pdfSourceSyncHintLearnedThisSession ||
         event.ctrlKey ||
@@ -452,7 +406,6 @@ function LoadedScientPdfReader(props: {
     },
     [
       props.syncNavigation?.onInverseSearch,
-      props.renderInteraction,
       showSourceSyncHint,
       sourceSyncHintVisible,
       currentPresentation,
@@ -784,7 +737,6 @@ function LoadedScientPdfReader(props: {
               if (onInverseSearch === undefined) return;
               // An editable page uses the ordinary click gesture. Keep inverse
               // search available in Split without making a direct edit also navigate.
-              if (props.renderInteraction !== undefined && !event.ctrlKey && !event.metaKey) return;
               const target = event.target;
               if (!(target instanceof Element)) return;
               const pageElement = target.closest<HTMLElement>(".page[data-page-number]");
@@ -808,16 +760,6 @@ function LoadedScientPdfReader(props: {
               {state.updateError ?? props.sourceNotice}
             </div>
           ) : null}
-          {props.renderInteraction?.({
-            container: reader.presentation?.container ?? null,
-            registerAnchorProvider: reader.registerAnchorProvider,
-            scale: state.scale,
-            revisionId: reader.presentation?.revisionId ?? null,
-            rotation: state.rotation,
-            ready: reader.presentation !== null,
-            readDocumentTextItems: reader.readDocumentTextItems,
-            pointFromClient: reader.syncPointFromClient,
-          })}
           {sourceSyncHintVisible ? (
             <div className="scient-pdf-source-sync-hint" role="status">
               Double-click a PDF word to show its matching source line

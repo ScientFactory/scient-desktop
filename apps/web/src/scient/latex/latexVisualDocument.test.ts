@@ -13,7 +13,6 @@ import {
   projectLatexVisualDocument,
   updateLatexVisualLayoutSource,
 } from "./latexVisualDocument";
-import { latexPreviewRebuildReason } from "./latexPreviewPolicy";
 
 const text = (value: string): JSONContent => ({ type: "text", text: value });
 const paragraph = (value: string): JSONContent => ({
@@ -506,9 +505,9 @@ Text
       margin: "2.5cm",
       paragraphStyle: "spaced",
     });
-    expect(changed).toContain("\\documentclass[12pt,a4paper,twoside]{article}");
+    expect(changed).toContain("\\documentclass[twoside,12pt,a4paper]{article}");
     expect(changed).toContain("\\usepackage[colorlinks]{hyperref}");
-    expect(changed).toContain("\\usepackage[margin=2.5cm]{geometry}");
+    expect(changed).toContain("\\usepackage[margin=2.5cm,a4paper]{geometry}");
     expect(changed).toContain("\\setlength{\\parindent}{0pt}");
     expect(changed).toContain("\\setlength{\\parskip}{0.75em}");
     expect(changed).toContain("Text");
@@ -530,7 +529,9 @@ Text
           paragraphStyle: "indented",
         },
       ),
-    ).toContain("\\documentclass[10pt,letterpaper]{article}\n\\usepackage[margin=1in]{geometry}");
+    ).toContain(
+      "\\documentclass[10pt,letterpaper]{article}\n\\usepackage[margin=1in,letterpaper]{geometry}",
+    );
   });
 
   it("keeps structurally complex table cells protected", () => {
@@ -589,20 +590,5 @@ Value & $x^2$ \\\\
       },
     ]);
     expect(result).not.toBeNull();
-  });
-});
-
-describe("preview rebuild notices", () => {
-  it("does not promise browser/TeX equivalence after a build", () => {
-    expect(latexPreviewRebuildReason(document("A"), document("A"), true)).toBeNull();
-    expect(latexPreviewRebuildReason(document("A"), document("B"), false)).toContain("pagination");
-  });
-  it("names preamble and macro invalidation", () => {
-    expect(
-      latexPreviewRebuildReason(document("A"), document("A").replace("article", "report"), false),
-    ).toContain("preamble");
-    expect(
-      latexPreviewRebuildReason(document("A"), document("\\newcommand{\\x}{X}\nA"), false),
-    ).toContain("macros");
   });
 });

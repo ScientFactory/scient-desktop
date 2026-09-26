@@ -1,3 +1,4 @@
+import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { ChevronUp } from "lucide-react";
 import "mathlive/static.css";
@@ -42,12 +43,14 @@ export function LatexMathPalette({
   onReturnToMath,
   sourceOpen,
   onOpen,
+  openRequest = 0,
 }: {
   onInsert: (symbol: MathSymbol) => void;
   onCommand: LatexMathFieldHandle["command"];
   onReturnToMath: () => void;
   sourceOpen: boolean;
   onOpen: () => void;
+  openRequest?: number;
 }) {
   const [open, setOpen] = useState(false);
   const [category, setCategory] = useState("latex_greek");
@@ -58,6 +61,9 @@ export function LatexMathPalette({
   const root = useRef<HTMLDivElement>(null);
   const search = useRef<HTMLInputElement>(null);
   const grid = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (openRequest) setOpen(true);
+  }, [openRequest]);
   useEffect(() => {
     if (sourceOpen) setOpen(false);
   }, [sourceOpen]);
@@ -189,12 +195,7 @@ export function LatexMathPalette({
                 }
               }}
             />
-            <button
-              type="button"
-              aria-label="Close symbol palette"
-              title="Close (Escape)"
-              onClick={close}
-            >
+            <button type="button" aria-label="Close symbol palette" onClick={close}>
               ×
             </button>
           </div>
@@ -240,22 +241,22 @@ export function LatexMathPalette({
                 key={`${category}:${query}`}
               >
                 {symbols.map((symbol, index) => (
-                  <button
-                    key={symbol.id}
-                    type="button"
-                    data-symbol=""
-                    aria-label={`${symbol.label}, ${symbol.command}`}
-                    title={`${symbol.label}\n${symbol.command}`}
-                    tabIndex={active?.id === symbol.id ? 0 : -1}
-                    data-active={active?.id === symbol.id || undefined}
-                    onMouseEnter={() => setActiveId(symbol.id)}
-                    onFocus={() => setActiveId(symbol.id)}
-                    onMouseDown={(event) => event.preventDefault()}
-                    onKeyDown={(event) => navigate(event, index)}
-                    onClick={() => insert(symbol)}
-                  >
-                    <SymbolGlyph symbol={symbol} />
-                  </button>
+                  <ScientTooltip key={symbol.id} content={`${symbol.label} (${symbol.command})`}>
+                    <button
+                      type="button"
+                      data-symbol=""
+                      aria-label={`${symbol.label}, ${symbol.command}`}
+                      tabIndex={active?.id === symbol.id ? 0 : -1}
+                      data-active={active?.id === symbol.id || undefined}
+                      onMouseEnter={() => setActiveId(symbol.id)}
+                      onFocus={() => setActiveId(symbol.id)}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onKeyDown={(event) => navigate(event, index)}
+                      onClick={() => insert(symbol)}
+                    >
+                      <SymbolGlyph symbol={symbol} />
+                    </button>
+                  </ScientTooltip>
                 ))}
               </div>
               {category === "structures" && !query && (

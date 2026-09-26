@@ -2,7 +2,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
-import { type RequestedPdfPresentation, useScientPdfReader } from "./useScientPdfReader";
+import { useScientPdfReader } from "./useScientPdfReader";
 
 const mocks = vi.hoisted(() => ({ load: vi.fn(), runtime: vi.fn(), prepare: vi.fn() }));
 vi.mock("./pdfRuntime", () => ({
@@ -30,19 +30,13 @@ const preparations: { resolve: () => void; reject: (error: Error) => void }[] = 
 const documentProxy = {
   numPages: 2,
   getOutline: async () => [],
-  getPage: async () => ({ getTextContent: async () => ({ items: [{ str: "text" }] }) }),
+  getPage: async () => ({
+    getTextContent: async () => ({ items: [{ str: "text" }] }),
+    cleanup: () => {},
+  }),
 };
-function Probe({
-  url,
-  revisionId,
-  canPublish,
-}: {
-  url: string;
-  revisionId: string;
-  canPublish: (candidate: RequestedPdfPresentation) => boolean;
-}) {
+function Probe({ url, revisionId }: { url: string; revisionId: string }) {
   reader = useScientPdfReader({
-    canPublishPresentation: canPublish,
     documentKey: "same-document",
     revisionId,
     sourceUrl: url,
@@ -52,14 +46,8 @@ function Probe({
   });
   return <textarea defaultValue="persistent input" />;
 }
-const allowPublication = () => true;
-const holdPublication = () => false;
-async function render(
-  url: string,
-  revisionId = url,
-  canPublish: (candidate: RequestedPdfPresentation) => boolean = allowPublication,
-) {
-  await act(() => root.render(<Probe url={url} revisionId={revisionId} canPublish={canPublish} />));
+async function render(url: string, revisionId = url) {
+  await act(() => root.render(<Probe url={url} revisionId={revisionId} />));
 }
 async function load(index: number) {
   await act(async () => {
@@ -179,50 +167,7 @@ it("publishes the painted container and its source identity atomically after rep
   expect(document.activeElement).toBe(input);
   expect(reader.state.updating).toBe(false);
 });
-it("always admits the first readable PDF even when its producer cannot authorize replacements", async () => {
-  await render("legacy-A", "revision-a", holdPublication);
-  expect(mocks.load).toHaveBeenCalledTimes(1);
-  await load(0);
-  await publish(0);
-  expect(reader.presentation).toMatchObject({
-    revisionId: "revision-a",
-    sourceUrl: "legacy-A",
-  });
 
-  await render("legacy-B", "revision-b", holdPublication);
-  expect(mocks.load).toHaveBeenCalledTimes(1);
-  expect(reader.presentation).toMatchObject({
-    revisionId: "revision-a",
-    sourceUrl: "legacy-A",
-  });
-});
-it("cannot use a newer revision's permission to publish an older retained candidate", async () => {
-  await render("A", "revision-a");
-  await load(0);
-  await publish(0);
-  const presentationA = reader.presentation;
-  const allowOnlyC = vi.fn(
-    (candidate: { readonly revisionId: string | null }) => candidate.revisionId === "revision-c",
-  );
-
-  // This is the shape produced while C's asset authorization is still loading:
-  // the retained resolved input is B, while the live source proof belongs to C.
-  await render("B", "revision-b", allowOnlyC);
-  expect(mocks.load).toHaveBeenCalledTimes(1);
-  expect(allowOnlyC).toHaveBeenLastCalledWith({
-    documentKey: "same-document",
-    revisionId: "revision-b",
-    sourceUrl: "B",
-  });
-  expect(reader.presentation).toBe(presentationA);
-
-  await render("C", "revision-c", allowOnlyC);
-  expect(mocks.load).toHaveBeenCalledTimes(2);
-  await load(1);
-  await publish(1);
-  expect(reader.presentation).toMatchObject({ revisionId: "revision-c", sourceUrl: "C" });
-  expect(reader.presentation?.revisionId).not.toBe("revision-b");
-});
 it("treats a changed immutable revision as a replacement even when its capability URL is reused", async () => {
   await render("shared-url", "revision-a");
   await load(0);
@@ -257,44 +202,7 @@ it("discards obsolete preparations without ever replacing the current page with 
   expect(reader.state.loadedSourceUrl).toBe("C");
   expect(viewerElement.querySelectorAll(".page").length).toBe(1);
 });
-it("holds an in-flight replacement through active editing and publishes only the later exact revision", async () => {
-  await render("A", "revision-a");
-  await load(0);
-  await publish(0);
-  const presentationA = reader.presentation;
-  const input = mount.querySelector("textarea")!;
-  input.focus();
 
-  // B was exact when staging began. Editing starts before its prepared page
-  // crosses the paint fence, so B must be discarded without disturbing A.
-  await render("B", "revision-b");
-  await load(1);
-  expect(viewerElement.querySelectorAll(".page").length).toBe(2);
-  await render("B", "revision-b", holdPublication);
-  expect(runtimes[1].destroy).toHaveBeenCalledTimes(1);
-  await publish(1);
-  expect(reader.presentation).toBe(presentationA);
-  expect(reader.presentation).toMatchObject({ revisionId: "revision-a", sourceUrl: "A" });
-  expect(reader.state.updating).toBe(false);
-  expect(document.activeElement).toBe(input);
-
-  // The source advances again while editing. Neither the completed B artifact
-  // nor C may stage until C is proven to own the current source.
-  await render("C", "revision-c", holdPublication);
-  expect(mocks.load).toHaveBeenCalledTimes(2);
-  expect(reader.presentation).toBe(presentationA);
-  expect(document.activeElement).toBe(input);
-
-  await render("C", "revision-c", allowPublication);
-  expect(mocks.load).toHaveBeenCalledTimes(3);
-  await load(2);
-  expect(reader.presentation).toBe(presentationA);
-  await publish(2);
-  expect(reader.presentation).toMatchObject({ revisionId: "revision-c", sourceUrl: "C" });
-  expect(reader.presentation?.revisionId).not.toBe("revision-b");
-  expect(document.activeElement).toBe(input);
-  expect(viewerElement.querySelectorAll(".page").length).toBe(1);
-});
 it("retains the displayed page on failed loads and failed rendering", async () => {
   await render("A");
   await load(0);

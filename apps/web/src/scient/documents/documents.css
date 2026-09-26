@@ -322,3 +322,35 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+.scient-document-create-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+.scient-document-create-row > input {
+  flex: 1;
+  min-width: 0;
+}
+.scient-document-create-row > button {
+  flex-shrink: 0;
+  margin: 0;
+}
+.scient-document-filename-hint {
+  color: var(--muted-foreground);
+  line-height: 1.5;
+}
+.scient-document-template-options {
+  margin: 8px 0 20px;
+  font-size: 12px;
+}
+.scient-document-template-options > summary {
+  cursor: pointer;
+  color: var(--muted-foreground);
+}
+.scient-document-template-options > label {
+  margin-top: 12px;
+}
+.scient-document-create {
+  margin-bottom: 32px;
+}

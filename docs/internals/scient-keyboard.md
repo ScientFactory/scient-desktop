@@ -1,6 +1,6 @@
 # Scient contextual keyboard ownership
 
-Status: Active shared foundation. Visual editing integration remains adapter work.
+Status: Active shared foundation with Write, visual equation, table, source, Markdown, and PDF adapters.
 
 ## Ownership and settings
 
@@ -21,7 +21,7 @@ Application bindings retain their environment-owned contract and persistence.
 Authoring overrides and math behavior use a versioned client-profile preference
 under `scient.authoringKeyboard.v1`. Settings presents both in one Shortcuts
 location through the shared source selector: General contains application
-bindings, while Markdown, Math, and PDF contain profile-owned document commands.
+bindings; Write, Source, Tables, Markdown, Math, and PDF contain profile-owned document commands.
 The grouping does not merge their persistence or authority. No server schema,
 mobile setting, or environment-authority migration is implied. OS-wide Capture
 settings remain in their existing owner.
@@ -39,7 +39,7 @@ snapshot or persisted-data changes. Legacy math arrays migrate on read, preserve
 the old key, and write the new format only on save. Invalid storage leaves the
 default controls usable and shows an error. Import/export includes behavior
 preferences as well as bindings; it does not export environment keybindings.
-The three document sections present one row per command and share the General
+The document sections present one row per command and share the General
 shortcut-pill treatment; the compact profile actions appear in those sections,
 not General. This UI reuse does not combine their persistence owners.
 
@@ -80,6 +80,41 @@ cannot be reassigned as authoring actions.
 - Structural movement, clipboard, IME, accessibility, and native undo remain
   editor-owned. They are documented behavior, not hundreds of configurable
   application commands.
+
+## Write integration
+
+`writingCommands.ts` owns common writing, source, and table action identities.
+Write and Source both claim the writing scope; Math overlaps either, while
+Markdown, PDF, and visual table cells retain disjoint document owners. Capture
+adapters exclude nested fields they do not own. Sequence feedback stays in the
+existing chrome or a screen-reader status; it never becomes editable paper content.
+Settings in the writing dialog reuse `AuthoringKeybindingsSettings`, including
+conflict checks against the document environment's application bindings.
+
+MathLive executes shared math commands against its current mathematical selection.
+Template slots are translated to its insertion placeholders, and structural matrix
+commands use its public command API. These edits continue through the existing
+visual source guard and history. Publication uses MathLive's `latex-without-placeholders`
+format; acknowledgment compares that projection without resetting live slots or the caret.
+Source uses CodeMirror transactions and its shared
+math controller. The equation-source popover shares the math sequence matcher and
+edit functions while retaining its guarded local draft. Fixed source mappings for configurable commands and fixed Write
+bold/italic mappings do not reactivate disabled user bindings. Matrix copy/swap
+remains limited to the source-based adapters and is labeled accordingly.
+
+The v1 profile accepts additive `customMath` expressions and `writingPresetVersion`.
+Custom actions are expressions with explicit `${selection}` and `${cursor}`
+markers, not executable LyX command scripts. Bound keys use ordinary profile
+overrides. Removing an action removes its overrides. Validation bounds action
+counts and input size and rejects document-level setup commands. Existing profiles
+without the writing revision retain their custom keys; only inherited defaults
+which collide with those customizations are disabled during import/read migration.
+
+`ShortcutReference` renders a local, sandboxed printable HTML document from the
+same effective registry and resolved application rules. The iframe permits local
+font access and the native print dialog, but no scripts. KaTeX previews use bundled
+CSS/fonts with trust disabled. Export uses the OS/browser print-to-PDF destination;
+it does not create a project file or require a TeX/compiler/network service.
 
 ## Verification
 

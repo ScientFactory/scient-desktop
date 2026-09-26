@@ -1,3 +1,6 @@
+import { attachShortcutHost } from "../keyboard/host";
+import { getKeyboardPreferences, subscribeKeyboardPreferences } from "../keyboard/preferences";
+import { mathCommand } from "../math/input/catalog";
 import { MathfieldElement } from "mathlive";
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import "mathlive/fonts.css";
@@ -56,9 +59,21 @@ export const LatexMathField = forwardRef<
     readonly onFocus: () => void;
     readonly onExit: (direction: -1 | 1) => void;
     readonly onRemoveEmpty: () => void;
+    readonly onShortcut: (command: string) => boolean;
+    readonly onShortcutHint: (text: string) => void;
   }
 >(function LatexMathField(
-  { value, disabled, display, onChange, onFocus, onExit, onRemoveEmpty },
+  {
+    value,
+    disabled,
+    display,
+    onChange,
+    onFocus,
+    onExit,
+    onRemoveEmpty,
+    onShortcut,
+    onShortcutHint,
+  },
   forwardedRef,
 ) {
   const host = useRef<HTMLSpanElement>(null);
@@ -67,6 +82,10 @@ export const LatexMathField = forwardRef<
   const focus = useRef(onFocus);
   const exit = useRef(onExit);
   const removeEmpty = useRef(onRemoveEmpty);
+  const shortcut = useRef(onShortcut);
+  const shortcutHint = useRef(onShortcutHint);
+  shortcut.current = onShortcut;
+  shortcutHint.current = onShortcutHint;
   useEffect(() => {
     change.current = onChange;
     focus.current = onFocus;
@@ -110,13 +129,67 @@ export const LatexMathField = forwardRef<
     math.macros = { ...math.macros, ...mathSymbolMacros() };
     math.smartFence = true;
     math.smartSuperscript = true;
-    math.inlineShortcuts = INLINE_SHORTCUTS;
+    const applyPreferences = () => {
+      const preferences = getKeyboardPreferences().preferences;
+      math.inlineShortcuts = preferences.automaticOperators ? INLINE_SHORTCUTS : {};
+      math.popoverPolicy = preferences.completion === "off" ? "off" : "auto";
+    };
+    applyPreferences();
+    const unsubscribe = subscribeKeyboardPreferences(applyPreferences);
+    const detachShortcuts = attachShortcutHost(host.current!, "math", {
+      capture: true,
+      feedback: (text) => shortcutHint.current(text),
+      accepts: () => !math.readOnly && math.mode !== "latex",
+      execute: (id) => {
+        if (id === "math.inline" || id === "math.display" || id === "math.palette")
+          return shortcut.current(id);
+        if (id === "math.superscript") return math.executeCommand("moveToSuperscript");
+        if (id === "math.subscript") return math.executeCommand("moveToSubscript");
+        const matrixActions = {
+          "math.matrix.addRow": "addRowAfter",
+          "math.matrix.deleteRow": "removeRow",
+          "math.matrix.addColumn": "addColumnAfter",
+          "math.matrix.deleteColumn": "removeColumn",
+        } as const;
+        const matrixAction = matrixActions[id as keyof typeof matrixActions];
+        if (matrixAction) return math.executeCommand(matrixAction);
+        const custom = getKeyboardPreferences().preferences.customMath?.find(
+          (entry) => entry.id === id,
+        );
+        if (custom) {
+          math.insert(custom.latex.replaceAll("${selection}", "#0").replaceAll("${cursor}", "#?"), {
+            format: "latex",
+            insertionMode: "replaceSelection",
+            selectionMode: "placeholder",
+            focus: true,
+          });
+          return true;
+        }
+        const command = mathCommand(id);
+        if (!command) return false;
+        math.insert(
+          command.template
+            .replaceAll("@", math.selectionIsCollapsed ? "#?" : "#0")
+            .replaceAll("|", "#?"),
+          {
+            format: "latex",
+            insertionMode: "replaceSelection",
+            selectionMode: "placeholder",
+            focus: true,
+          },
+        );
+        return true;
+      },
+    });
     const input = () => {
       // A command under construction (including its ghost suggestion) is a
       // local draft. Publish only after MathLive turns it into math atoms.
       if (math.mode === "latex" || field.current !== math) return;
-      const accepted = change.current(math.value);
-      if (accepted !== math.value) math.setValue(accepted, { silenceNotifications: true });
+      // Editable slots belong to MathLive, not to the compiled LaTeX source.
+      // Keep the live field intact when the parent acknowledges this projection.
+      const source = math.getValue("latex-without-placeholders");
+      const accepted = change.current(source);
+      if (accepted !== source) math.setValue(accepted, { silenceNotifications: true });
     };
     const modeChange = () => {
       // MathLive changes mode before inserting the completed command.
@@ -135,9 +208,13 @@ export const LatexMathField = forwardRef<
       }
     };
     const keydown = (event: KeyboardEvent) => {
-      if (math.readOnly || event.isComposing) return;
+      if (math.readOnly || event.isComposing || event.defaultPrevented) return;
       if (math.mode === "latex") {
-        if (event.key === "Tab" && !event.shiftKey) {
+        if (
+          event.key === "Tab" &&
+          !event.shiftKey &&
+          getKeyboardPreferences().preferences.completion !== "off"
+        ) {
           event.preventDefault();
           event.stopPropagation();
           math.executeCommand(["complete", "accept-all"]);
@@ -145,6 +222,17 @@ export const LatexMathField = forwardRef<
         // Enter accepts a command and arrows select suggestions. They must
         // reach MathLive before any document-level navigation can take over.
         return;
+      }
+      if (
+        event.key === "Enter" &&
+        event.shiftKey &&
+        getKeyboardPreferences().preferences.matrixEnter
+      ) {
+        if (math.executeCommand("addRowAfter")) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
       }
       if ((event.key === "Backspace" || event.key === "Delete") && math.value === "") {
         event.preventDefault();
@@ -174,6 +262,8 @@ export const LatexMathField = forwardRef<
     math.addEventListener("move-out", moveOut);
     field.current = math;
     return () => {
+      detachShortcuts();
+      unsubscribe();
       math.removeEventListener("input", input);
       math.removeEventListener("mode-change", modeChange);
       math.removeEventListener("focus", focused);
@@ -187,7 +277,7 @@ export const LatexMathField = forwardRef<
   useEffect(() => {
     if (!field.current) return;
     if (field.current.readOnly !== disabled) field.current.readOnly = disabled;
-    if (field.current.value !== value)
+    if (field.current.getValue("latex-without-placeholders") !== value)
       field.current.setValue(value, { silenceNotifications: true });
   }, [disabled, value, display]);
   return <span ref={host} className="scient-latex-mathfield" contentEditable={false} />;

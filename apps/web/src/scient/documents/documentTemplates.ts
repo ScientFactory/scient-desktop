@@ -59,6 +59,7 @@ export function documentPath(value: string): string | null {
     if (/\.[^/]+$/u.test(path)) return null;
     path += ".tex";
   }
+  if (path.split("/").at(-1)?.toLowerCase() === ".tex") return null;
   return path;
 }
 
@@ -116,4 +117,23 @@ export function createDocumentSource(input: {
     /<<SCIENT_(TITLE|AUTHOR_BLOCK)>>/gu,
     (_token, name: string) => values[name]!,
   );
+}
+
+/** File naming and the printed title start together and can diverge after creation. */
+export function documentTitleFromFilename(path: string): string {
+  return path
+    .replaceAll("\\", "/")
+    .split("/")
+    .at(-1)!
+    .replace(/\.tex$/iu, "");
+}
+
+export function availableDocumentPath(path: string, existing: readonly string[]): string {
+  const occupied = new Set(existing.map((entry) => entry.toLocaleLowerCase()));
+  const stem = path.replace(/\.tex$/iu, "");
+  let candidate = path;
+  for (let suffix = 2; occupied.has(candidate.toLocaleLowerCase()); suffix++) {
+    candidate = `${stem} (${suffix}).tex`;
+  }
+  return candidate;
 }

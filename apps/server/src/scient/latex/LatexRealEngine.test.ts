@@ -9,7 +9,6 @@
  */
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
-import { editVisualRun, matchVisualRun } from "@t3tools/shared/latexVisual";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { PdfSourceDescriptor } from "@scientfactory/document-artifacts";
@@ -36,7 +35,6 @@ import {
 import { layer as packageInstallerLayer } from "./LatexPackageInstaller.ts";
 import { layer as toolchainLayer } from "./LatexToolchain.ts";
 import { LatexSyncTex, layer as syncTexLayer } from "./LatexSyncTex.ts";
-import { layer as visualRevisionStoreLayer } from "./LatexVisualRevisionStore.ts";
 
 /** A whole-command string keeps this off `shell:true`'s argument-splicing path. */
 const resolvesOnPath = (command: string): boolean => {
@@ -86,12 +84,7 @@ const makeWorkspace = (files: Readonly<Record<string, string>>) =>
       serviceLayer: buildServiceLayer.pipe(
         Layer.provide(LocalExecutionProcess.layer),
         Layer.provideMerge(syncTexLayer.pipe(Layer.provide(serverEnvironment))),
-        Layer.provideMerge(
-          visualRevisionStoreLayer.pipe(
-            Layer.provide(generatedStoreLayer),
-            Layer.provide(serverEnvironment),
-          ),
-        ),
+
         // Never asked for here — the engine on PATH is the user's own, which
         // this lane does not install into — but the service holds it the way
         // the server mounts it.
@@ -210,10 +203,10 @@ describe.skipIf(!ENGINE_ON_PATH)("LatexBuildService against an installed engine"
 });
 
 describe.skipIf(!ENGINE_ON_PATH || !resolvesOnPath("pdftotext -v"))(
-  "visual editing real-engine round trip",
+  "edited-source real-engine round trip",
   () => {
     it.live(
-      "maps the published PDF, repeatedly patches prose, preserves math and recovers from a failed compile",
+      "rebuilds edited prose, preserves math and recovers from a failed compile",
       () =>
         Effect.gen(function* () {
           const original =
@@ -237,11 +230,10 @@ describe.skipIf(!ENGINE_ON_PATH || !resolvesOnPath("pdftotext -v"))(
             ]) {
               if (replacement !== null) {
                 const sentence = source.split("\n")[2]!;
-                // The same bounded mapper and splice implementation used by the UI.
-                const display = sentence.replace(/\\([%&])/gu, "$1");
-                const match = matchVisualRun(source, display, 0, 3);
-                expect(match).not.toBeNull();
-                source = editVisualRun(source, match!.run, replacement);
+                source = source.replace(
+                  sentence,
+                  replacement.replace(/[%&]/gu, (character) => `\\${character}`),
+                );
                 yield* fs.writeFileString(`${harness.workspaceRoot}/main.tex`, source);
               }
               yield* service.requestBuild(input);

@@ -70,7 +70,6 @@ import { LatexPackageInstaller } from "./LatexPackageInstaller.ts";
 import { resolveLatexDocument } from "./LatexProjectIndex.ts";
 import { LatexToolchain } from "./LatexToolchain.ts";
 import { LatexSyncTex } from "./LatexSyncTex.ts";
-import { LatexVisualRevisionStore } from "./LatexVisualRevisionStore.ts";
 import { parseLatexRecorderManifest, parseTectonicMakefileRules } from "./flsManifest.ts";
 import {
   EMPTY_EVIDENCE_MARKS,
@@ -464,7 +463,6 @@ export const make = Effect.gen(function* () {
   const store = yield* GeneratedDocumentStore;
   const toolchainProbe = yield* LatexToolchain;
   const syncTex = yield* LatexSyncTex;
-  const visualRevisions = yield* LatexVisualRevisionStore;
   const packageInstaller = yield* LatexPackageInstaller;
   const processes = yield* LocalExecutionProcess.ExecutionProcess;
   const hostEnvironment = yield* HostProcessEnvironment;
@@ -881,26 +879,6 @@ export const make = Effect.gen(function* () {
             })),
           ),
         );
-      const visualAttachment = yield* visualRevisions
-        .prepare({
-          workspaceRoot: input.workspaceRoot,
-          rootRelativePath: input.rootRelativePath,
-          sourceRevisions: input.visualSourceRevisions,
-        })
-        .pipe(
-          Effect.map((attachment) =>
-            attachment === null ? Option.none() : Option.some(attachment),
-          ),
-          Effect.catch((error) =>
-            Effect.logWarning("latex visual revision manifest could not be prepared", {
-              logicalDocumentKey: input.key,
-              error,
-            }).pipe(Effect.as(Option.none())),
-          ),
-        );
-      const durableVisualSourceRevisions = Option.isSome(visualAttachment)
-        ? input.visualSourceRevisions
-        : {};
       yield* updateOwnEntry(input.key, input.generation, (entry) => ({
         ...entry,
         state: "publishing",
@@ -911,9 +889,6 @@ export const make = Effect.gen(function* () {
           bytes,
           title: input.title,
           provenanceKind: "document-build",
-          ...(Option.isSome(visualAttachment)
-            ? { revisionAttachments: [visualAttachment.value] }
-            : {}),
         })
         .pipe(
           Effect.flatMap((descriptor) =>
@@ -990,7 +965,7 @@ export const make = Effect.gen(function* () {
                 ...entry,
                 state: "succeeded",
                 cancelRequested: false,
-                visualSourceRevisions: durableVisualSourceRevisions,
+                visualSourceRevisions: input.visualSourceRevisions,
                 descriptor,
                 // Warnings survive a successful build; they are the point of the log.
                 diagnostics: input.diagnostics,
@@ -2006,10 +1981,8 @@ export const make = Effect.gen(function* () {
     });
 
   /**
-   * Restores Visual eligibility only after the ordinary source-evidence check
-   * has established that this exact retained PDF still describes the files on
-   * disk. A missing or damaged manifest leaves the PDF usable and Visual
-   * conservatively unavailable.
+   * Reuse the revision-scoped build evidence for export eligibility. Missing
+   * evidence leaves the PDF readable but cannot authorize exporting it as current.
    */
   const restoreVisualSourceRevisions = (
     target: ResolvedLatexTarget,
@@ -2023,15 +1996,17 @@ export const make = Effect.gen(function* () {
         descriptor.bindingStatus !== "current"
       )
         return snapshot;
-      const sourceRevisions = yield* visualRevisions.load({
-        artifactId: descriptor.artifactId,
-        revisionId: descriptor.revisionId,
-        workspaceRoot: target.workspaceRoot,
-        rootRelativePath: target.rootRelativePath,
-      });
-      return sourceRevisions === null
-        ? snapshot
-        : { ...snapshot, visualSourceRevisions: sourceRevisions };
+      const cached = yield* loadEvidence(target.logicalDocumentKey);
+      if (
+        !cached.evidence ||
+        cached.revision?.artifactId !== descriptor.artifactId ||
+        cached.revision.revisionId !== descriptor.revisionId
+      )
+        return snapshot;
+      return {
+        ...snapshot,
+        visualSourceRevisions: latexVisualSourceRevisions(cached.evidence, cached.evidence),
+      };
     });
 
   /**

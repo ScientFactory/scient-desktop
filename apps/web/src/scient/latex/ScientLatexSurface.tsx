@@ -30,9 +30,12 @@ import {
   useState,
 } from "react";
 
-import { EditableFileEditor } from "~/components/files/FilePreviewPanel";
+import { LatexSourceEditor, type LatexSourceSession } from "./LatexSourceEditor";
 import { useFileSaveCoordinator } from "~/components/files/useFileSaveCoordinator";
-import { setProjectFileQueryData } from "~/components/files/projectFilesQueryState";
+import {
+  setProjectFileQueryData,
+  useProjectFileQuery,
+} from "~/components/files/projectFilesQueryState";
 import { projectFileCacheKey } from "~/components/files/fileContentRevision";
 import { type DraftId } from "~/composerDraftStore";
 import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
@@ -47,14 +50,14 @@ import type {
   PdfForwardSyncTarget,
   PdfInverseSyncPoint,
   PdfSyncNavigation,
-  PdfInteractionHost,
 } from "~/scient/pdf/ScientPdfReader";
-import type { RequestedPdfPresentation } from "~/scient/pdf/useScientPdfReader";
 import { usePdfSaveCopy } from "~/scient/pdf/usePdfSaveCopy";
 import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
 
 import { documentBindingChanges } from "./bindingChanges";
-import { LatexVisualEditor } from "./LatexVisualEditor";
+const LatexVisualEditor = lazy(() =>
+  import("./LatexVisualEditor").then((module) => ({ default: module.LatexVisualEditor })),
+);
 import { LatexToolchainSetupCard } from "./LatexToolchainSetupCard";
 import { requestLatexForwardSync, requestLatexInverseSync } from "./client";
 import { useLatexDocumentResolution } from "./useLatexDocumentResolution";
@@ -343,8 +346,6 @@ function LatexReadOnlyHalf(props: {
  * none of that reaches the PDF reader.
  */
 interface LatexViewerPaneProps {
-  readonly canPublishPresentation?: (candidate: RequestedPdfPresentation) => boolean;
-  readonly renderInteraction?: (host: PdfInteractionHost) => React.ReactNode;
   readonly descriptor: LatexPdfDescriptor;
   readonly readerKey: string | null;
   readonly viewer: LatexViewerState;
@@ -363,7 +364,6 @@ interface LatexViewerPaneProps {
  * news to the PDF reader, and re-rendering it would cost the reader its page.
  */
 const LatexViewerPane = memo(function LatexViewerPane({
-  canPublishPresentation,
   descriptor,
   readerKey,
   viewer,
@@ -374,7 +374,6 @@ const LatexViewerPane = memo(function LatexViewerPane({
   installRequesting,
   onInstall,
   syncNavigation,
-  renderInteraction,
 }: LatexViewerPaneProps) {
   return (
     <div className="scient-latex-pane">
@@ -383,8 +382,6 @@ const LatexViewerPane = memo(function LatexViewerPane({
           <ScientPdfReader
             key={readerKey}
             source={descriptor}
-            {...(canPublishPresentation === undefined ? {} : { canPublishPresentation })}
-            {...(renderInteraction === undefined ? {} : { renderInteraction })}
             {...(syncNavigation === undefined ? {} : { syncNavigation })}
           />
         </Suspense>
@@ -418,29 +415,11 @@ interface SourceSyncPosition {
   readonly column: number;
 }
 
-function sourcePositionFromPointerEvent(
-  event: React.MouseEvent<HTMLElement>,
-): SourceSyncPosition | null {
-  for (const candidate of event.nativeEvent.composedPath()) {
-    if (!(candidate instanceof HTMLElement)) continue;
-    const raw = candidate.dataset.line;
-    if (raw === undefined) continue;
-    const line = Number(raw);
-    if (!Number.isSafeInteger(line) || line < 1) return null;
-    return {
-      line,
-      // The inherited editor surface does not expose its internal cursor on
-      // main. Zero is SyncTeX's explicit "unknown column" value; guessing a
-      // visual DOM offset would be wrong for wrapped and bidirectional text.
-      column: 0,
-    };
-  }
-  return null;
-}
-
 export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   const savePdfCopy = usePdfSaveCopy(props.environmentId);
   const [exportingPdf, setExportingPdf] = useState(false);
+  const sourceSession = useRef<LatexSourceSession | null>(null);
+  const [sourceBuildRequested, setSourceBuildRequested] = useState(false);
   const visualDraftKey = `${props.environmentId}\0${props.cwd}\0${props.relativePath}`;
   const [manualRootSelection, setManualRootSelection] = useState<{
     readonly environmentId: EnvironmentId;
@@ -479,6 +458,18 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
           },
     [props.cwd, props.environmentId, resolvedRootRelativePath],
   );
+  const rootFile = useProjectFileQuery(
+    props.environmentId,
+    props.cwd,
+    resolvedRootRelativePath !== props.relativePath ? resolvedRootRelativePath : null,
+    resolvedRootRelativePath !== null && resolvedRootRelativePath !== props.relativePath,
+  );
+  const rootSource =
+    resolvedRootRelativePath === props.relativePath
+      ? props.contents
+      : rootFile.data && !rootFile.data.truncated
+        ? rootFile.data.contents
+        : null;
   const build = useLatexBuild(target);
   const bindingChange = useLatexBindingChange(props.environmentId, build.snapshot);
   const status = useMemo(() => latexStatusStripModel(build, props.cwd), [build, props.cwd]);
@@ -488,6 +479,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   const [splitFraction, setSplitFraction] = useState(initialSplitFraction);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [visualAwaitingSave, setVisualAwaitingSave] = useState(false);
+  const [hasLocalVisualDraft, setHasLocalVisualDraft] = useState(false);
   const visualEditingRef = useRef(false);
   const visualAwaitingSaveRef = useRef(false);
   const visualPendingSourceRef = useRef<string | null>(null);
@@ -623,7 +615,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   // optimistic buffer and revision-checked write queue, never competing saves.
   const coordinator = useFileSaveCoordinator({
     ...props,
-    debounceMs: 150,
+    debounceMs: 500,
     onSaveConfirmed: handleSaveConfirmed,
     onSaveFailure: handleSaveFailure,
     onSaveResolutionApplied: handleSaveResolutionApplied,
@@ -682,7 +674,10 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
     revealPending && (preferredMode === "pdf" || preferredMode === "visual")
       ? "split"
       : preferredMode;
-  const sourceIdentity = useLatexSourceIdentity(props.contents);
+  const sourceIdentity = useLatexSourceIdentity(
+    props.contents,
+    !visualAwaitingSave && build.snapshot?.state === "succeeded",
+  );
   const compiledRevision = build.snapshot?.visualSourceRevisions?.[props.relativePath];
   const pdfMatchesBuffer =
     sourceIdentity !== null &&
@@ -710,6 +705,24 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
     keyboardStep: LATEX_SPLIT_KEYBOARD_STEP,
     onCommit: commitSplitFraction,
   });
+
+  useEffect(() => {
+    if (!sourceBuildRequested) return;
+    if (saveError || props.saveResolution || target === null) {
+      setSourceBuildRequested(false);
+      return;
+    }
+    if (visualAwaitingSave || !status.canRebuild) return;
+    setSourceBuildRequested(false);
+    requestLatexRebuild(target, { reprobeToolchain: true });
+  }, [
+    sourceBuildRequested,
+    visualAwaitingSave,
+    saveError,
+    props.saveResolution,
+    target,
+    status.canRebuild,
+  ]);
 
   const diagnostics = build.snapshot?.diagnostics ?? NO_DIAGNOSTICS;
   const diagnosticRows = useMemo(() => latexDiagnosticRows(diagnostics), [diagnostics]);
@@ -850,6 +863,8 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   const showEditor = mode === "source" || mode === "split";
   const showViewer = mode === "pdf" || mode === "split";
 
+  const [documentToolsHost, setDocumentToolsHost] = useState<HTMLDivElement | null>(null);
+
   const handleVisualEditingChange = useCallback((editing: boolean) => {
     visualEditingRef.current = editing;
   }, []);
@@ -860,9 +875,11 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   return (
     <div className="scient-latex-surface" data-latex-layout={mode} dir="ltr">
       <div className="scient-latex-toolbar">
-        <strong className="scient-latex-document-name" title={props.relativePath}>
-          {props.relativePath.split(/[\\/]/u).at(-1)}
-        </strong>
+        <ScientTooltip content={props.relativePath}>
+          <strong className="scient-latex-document-name">
+            {props.relativePath.split(/[\\/]/u).at(-1)}
+          </strong>
+        </ScientTooltip>
         <select
           className="scient-latex-view-select"
           aria-label="Document view"
@@ -876,6 +893,11 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
           ))}
         </select>
         <div className="scient-latex-status">
+          {mode === "visual" && !saveError && !props.saveResolution ? (
+            <span className="scient-latex-save-state" aria-label="File save status">
+              {hasLocalVisualDraft ? "Draft" : visualAwaitingSave ? "Saving..." : "Saved"}
+            </span>
+          ) : null}
           {resolution.pending || status.busy ? (
             <LoaderCircle
               className="size-3.5 animate-spin text-muted-foreground"
@@ -972,10 +994,10 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
           {status.stale ? (
             status.staleReason ? (
               <ScientTooltip content={status.staleReason}>
-                <span className="scient-latex-chip">Stale</span>
+                <span className="scient-latex-chip">PDF needs rebuilding</span>
               </ScientTooltip>
             ) : (
-              <span className="scient-latex-chip">Stale</span>
+              <span className="scient-latex-chip">PDF needs rebuilding</span>
             )
           ) : null}
           {saveError === null ? null : (
@@ -997,6 +1019,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
           )}
         </div>
         <div className="scient-latex-actions">
+          <div className="scient-latex-document-tools" ref={setDocumentToolsHost} />
           {status.canCancel && target !== null ? (
             <button
               type="button"
@@ -1014,6 +1037,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
               target === null ||
               !status.canRebuild ||
               visualAwaitingSave ||
+              hasLocalVisualDraft ||
               saveError !== null ||
               props.saveResolution !== null
             }
@@ -1026,46 +1050,51 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
             <RotateCw className="size-3.5" aria-hidden="true" />
             Update PDF
           </button>
-          <button
-            type="button"
-            className="scient-latex-action"
-            disabled={
-              descriptor === null ||
-              !pdfMatchesBuffer ||
-              status.stale ||
-              status.busy ||
-              visualAwaitingSave ||
-              saveError !== null ||
-              props.saveResolution !== null ||
-              exportingPdf
-            }
-            title={
+          <ScientTooltip
+            content={
               pdfMatchesBuffer && !status.stale
                 ? "Save a PDF copy"
                 : "Update PDF to export the current document"
             }
-            onClick={async () => {
-              if (!descriptor || !pdfMatchesBuffer || status.stale || exportingPdf) return;
-              setExportingPdf(true);
-              setSyncNotice(null);
-              try {
-                await savePdfCopy(descriptor);
-              } catch (error) {
-                setSyncNotice({
-                  label: "Export failed",
-                  message: error instanceof Error ? error.message : "Could not save the PDF copy.",
-                });
-              } finally {
-                setExportingPdf(false);
-              }
-            }}
           >
-            {exportingPdf ? "Exporting..." : "Export PDF"}
-          </button>
+            <button
+              type="button"
+              className="scient-latex-action"
+              disabled={
+                descriptor === null ||
+                !pdfMatchesBuffer ||
+                status.stale ||
+                status.busy ||
+                visualAwaitingSave ||
+                hasLocalVisualDraft ||
+                saveError !== null ||
+                props.saveResolution !== null ||
+                exportingPdf
+              }
+              onClick={async () => {
+                if (!descriptor || !pdfMatchesBuffer || status.stale || exportingPdf) return;
+                setExportingPdf(true);
+                setSyncNotice(null);
+                try {
+                  await savePdfCopy(descriptor);
+                } catch (error) {
+                  setSyncNotice({
+                    label: "Export failed",
+                    message:
+                      error instanceof Error ? error.message : "Could not save the PDF copy.",
+                  });
+                } finally {
+                  setExportingPdf(false);
+                }
+              }}
+            >
+              {exportingPdf ? "Exporting..." : "Export PDF"}
+            </button>
+          </ScientTooltip>
         </div>
       </div>
 
-      {diagnostics.length > 0 && (mode === "source" || mode === "split" || diagnosticsOpen) ? (
+      {diagnostics.length > 0 && diagnosticsOpen ? (
         <div className="scient-latex-diagnostics">
           <button
             type="button"
@@ -1109,61 +1138,85 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
 
       <div className="scient-latex-content" ref={containerRef}>
         {mode === "visual" ? (
-          <LatexVisualEditor
-            key={visualDraftKey}
-            source={props.contents}
-            draftKey={visualDraftKey}
-            fileRevision={props.revision}
-            environmentId={props.environmentId}
-            cwd={props.cwd}
-            relativePath={props.relativePath}
-            disabled={props.truncated || props.saveResolution !== null}
-            onEdit={handleVisualEdit}
-            onEditingChange={handleVisualEditingChange}
-            onOpenSource={() => selectMode("source")}
-            registerFinishEditing={registerFinishVisualEditing}
-          />
+          <Suspense fallback={<div className="scient-latex-empty">Opening Write view?</div>}>
+            <LatexVisualEditor
+              rootRelativePath={resolvedRootRelativePath}
+              rootSource={rootSource}
+              key={visualDraftKey}
+              source={props.contents}
+              documentToolsHost={documentToolsHost}
+              onLocalDraftChange={setHasLocalVisualDraft}
+              draftKey={visualDraftKey}
+              fileRevision={props.revision}
+              environmentId={props.environmentId}
+              cwd={props.cwd}
+              relativePath={props.relativePath}
+              disabled={props.truncated || props.saveResolution !== null}
+              onEdit={handleVisualEdit}
+              onEditingChange={handleVisualEditingChange}
+              onOpenSource={() => selectMode("source")}
+              registerFinishEditing={registerFinishVisualEditing}
+            />
+          </Suspense>
         ) : null}
         {showEditor ? (
-          <ScientTooltip content="In Split, double-click a source line to find it in the typeset page">
-            <div
-              ref={primaryPaneRef}
-              className={cn(
-                "scient-latex-pane",
-                mode === "split" ? "scient-latex-pane-sized" : null,
-              )}
-              onDoubleClickCapture={(event) => {
-                if (mode !== "split") return;
-                const position = sourcePositionFromPointerEvent(event);
-                if (position !== null) handleForwardSync(position);
-              }}
-            >
-              {props.truncated ? (
-                <LatexReadOnlyHalf
-                  cwd={props.cwd}
-                  relativePath={props.relativePath}
-                  contents={props.contents}
-                  resolvedTheme={props.resolvedTheme}
-                  wordWrap={props.wordWrap}
-                  onPostRender={props.onPostRender}
-                />
-              ) : (
-                <EditableFileEditor
-                  environmentId={props.environmentId}
-                  cwd={props.cwd}
-                  relativePath={props.relativePath}
-                  composerDraftTarget={props.composerDraftTarget}
-                  contents={props.contents}
-                  revision={props.revision}
-                  resolvedTheme={props.resolvedTheme}
-                  revealRequestId={props.revealRequestId}
-                  wordWrap={props.wordWrap}
-                  onPostRender={props.onPostRender}
-                  onContentsChange={handleContentsChange}
-                />
-              )}
-            </div>
-          </ScientTooltip>
+          <div
+            ref={primaryPaneRef}
+            className={cn("scient-latex-pane", mode === "split" ? "scient-latex-pane-sized" : null)}
+          >
+            {props.truncated ? (
+              <LatexReadOnlyHalf
+                cwd={props.cwd}
+                relativePath={props.relativePath}
+                contents={props.contents}
+                resolvedTheme={props.resolvedTheme}
+                wordWrap={props.wordWrap}
+                onPostRender={props.onPostRender}
+              />
+            ) : (
+              <LatexSourceEditor
+                environmentId={props.environmentId}
+                cwd={props.cwd}
+                relativePath={props.relativePath}
+                rootPath={target?.relativePath ?? props.relativePath}
+                contents={props.contents}
+                resolvedTheme={props.resolvedTheme}
+                wordWrap={props.wordWrap}
+                revealLine={props.revealLine}
+                revealRequestId={props.revealRequestId}
+                disabled={props.saveResolution !== null}
+                session={sourceSession}
+                onContentsChange={handleContentsChange}
+                saveStatus={
+                  saveError
+                    ? "Save failed"
+                    : props.saveResolution
+                      ? "Resolve save conflict"
+                      : visualAwaitingSave
+                        ? "Saving..."
+                        : "Saved"
+                }
+                diagnostics={diagnostics}
+                diagnosticsCurrent={!status.stale && !visualAwaitingSave}
+                canBuild={
+                  target !== null &&
+                  status.canRebuild &&
+                  saveError === null &&
+                  props.saveResolution === null
+                }
+                onBuild={() => setSourceBuildRequested(true)}
+                onShowDiagnostics={() => setDiagnosticsOpen(true)}
+                onForwardSync={(position) => {
+                  if (mode !== "split") selectMode("split");
+                  handleForwardSync(position);
+                }}
+                onOpenFile={(path, line) => {
+                  const root = target?.relativePath ?? props.latexRootRelativePath;
+                  onOpenFileSource(path, line, root ? { latexRootRelativePath: root } : {});
+                }}
+              />
+            )}
+          </div>
         ) : null}
 
         {showViewer ? (

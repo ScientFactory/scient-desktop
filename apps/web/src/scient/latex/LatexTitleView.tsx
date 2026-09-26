@@ -1,9 +1,22 @@
-import { useEffect, useId, useRef, useState } from "react";
+import * as Schema from "effect/Schema";
+import { useLocalStorage } from "~/hooks/useLocalStorage";
+import {
+  useEffect,
+  useCallback,
+  useId,
+  useRef,
+  useState,
+  type FocusEvent,
+  type KeyboardEvent,
+} from "react";
 import { createPortal } from "react-dom";
 import { NodeViewWrapper, type NodeViewProps } from "@tiptap/react";
+import { NodeSelection, Selection } from "@tiptap/pm/state";
+import { LatexTextField } from "./LatexTextField";
 
-type Props = Pick<NodeViewProps, "node" | "editor" | "updateAttributes" | "selected"> & {
+type Props = Pick<NodeViewProps, "node" | "editor" | "updateAttributes" | "selected" | "getPos"> & {
   editable: boolean;
+  draftKey: string | null;
 };
 
 function today() {
@@ -14,15 +27,26 @@ function today() {
   }).format(new Date());
 }
 
-export function LatexTitleView({ node, editor, updateAttributes, selected, editable }: Props) {
+export function LatexTitleView({
+  node,
+  editor,
+  updateAttributes,
+  selected,
+  editable,
+  getPos,
+  draftKey,
+}: Props) {
+  const [hiddenAuthor, setHiddenAuthor] = useLocalStorage(
+    `scient.latex.hidden-author:${draftKey ?? "transient"}`,
+    "",
+    Schema.String,
+  );
   const root = useRef<HTMLDivElement>(null);
   const toolbar = useRef<HTMLDivElement>(null);
-  const authorField = useRef<HTMLTextAreaElement>(null);
-  const dateField = useRef<HTMLTextAreaElement>(null);
   const id = useId();
   const [active, setActive] = useState(false);
   const [addingAuthor, setAddingAuthor] = useState(false);
-  const [dateDraft, setDateDraft] = useState<string | null>(null);
+  const [addingDate, setAddingDate] = useState(false);
   const authorEnabled = node.attrs.authorEnabled === true;
   const showAuthor = authorEnabled || addingAuthor;
   const dateMode =
@@ -31,6 +55,30 @@ export function LatexTitleView({ node, editor, updateAttributes, selected, edita
       : node.attrs.dateMode === "explicit"
         ? "explicit"
         : "automatic";
+  const sourceMeta = node.attrs.sourceMeta as {
+    titleEditable?: boolean;
+    authorEditable?: boolean;
+    dateEditable?: boolean;
+  } | null;
+  const focusField = useCallback(
+    (field: "title" | "author" | "date") =>
+      requestAnimationFrame(() =>
+        root.current
+          ?.querySelector<HTMLTextAreaElement>(`[aria-label="Document ${field}"]`)
+          ?.focus({ preventScroll: true }),
+      ),
+    [],
+  );
+  const exit = (direction: -1 | 1) => {
+    const position = getPos();
+    if (typeof position !== "number") return;
+    const boundary = direction < 0 ? position : position + node.nodeSize;
+    editor.view.dispatch(
+      editor.state.tr.setSelection(Selection.near(editor.state.doc.resolve(boundary), direction)),
+    );
+    editor.commands.focus(undefined, { scrollIntoView: false });
+    setActive(false);
+  };
   const activate = () => {
     if (!editable) return;
     document.dispatchEvent(new CustomEvent("scient-latex-context-activate", { detail: id }));
@@ -54,7 +102,7 @@ export function LatexTitleView({ node, editor, updateAttributes, selected, edita
       const path = event.composedPath();
       if (!path.includes(root.current!) && !path.includes(toolbar.current!)) setActive(false);
     };
-    const focusOutside = (event: FocusEvent) => {
+    const focusOutside = (event: globalThis.FocusEvent) => {
       const path = event.composedPath();
       if (!path.includes(root.current!) && !path.includes(toolbar.current!)) setActive(false);
     };
@@ -65,6 +113,19 @@ export function LatexTitleView({ node, editor, updateAttributes, selected, edita
       document.removeEventListener("focusin", focusOutside);
     };
   }, [active]);
+  useEffect(() => {
+    const element = root.current;
+    if (!element) return;
+    const edit = (event: Event) => {
+      const field = (event as CustomEvent<"title" | "author" | "date">).detail;
+      if (field === "author") setAddingAuthor(true);
+      if (field === "date") setAddingDate(true);
+      activation.current();
+      focusField(field);
+    };
+    element.addEventListener("scient-latex-edit-title", edit);
+    return () => element.removeEventListener("scient-latex-edit-title", edit);
+  }, [focusField]);
   const host = editor.view.dom
     .closest(".scient-latex-visual-workspace")
     ?.querySelector(".scient-latex-context-tools-slot");
@@ -74,49 +135,80 @@ export function LatexTitleView({ node, editor, updateAttributes, selected, edita
       className="scient-latex-title-preview"
       contentEditable={false}
       data-active={active || undefined}
-      onFocusCapture={activate}
+      onFocusCapture={(event: FocusEvent<HTMLDivElement>) => {
+        activate();
+        if (event.target instanceof HTMLTextAreaElement) {
+          const position = getPos();
+          if (typeof position === "number" && editor.state.selection.from !== position)
+            editor.view.dispatch(
+              editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, position)),
+            );
+        }
+      }}
+      onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
+        if (!(event.target instanceof HTMLTextAreaElement) || event.nativeEvent.isComposing) return;
+        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+          event.preventDefault();
+          event.stopPropagation();
+          if (event.shiftKey) editor.commands.redo();
+          else editor.commands.undo();
+        } else if (event.key === "Escape" || (event.key === "Enter" && !event.shiftKey)) {
+          event.preventDefault();
+          event.stopPropagation();
+          event.target.blur();
+          exit(1);
+        } else if (event.key === "Tab") {
+          const fields = [
+            ...(root.current?.querySelectorAll<HTMLTextAreaElement>("textarea:not(:disabled)") ??
+              []),
+          ];
+          const index = fields.indexOf(event.target) + (event.shiftKey ? -1 : 1);
+          event.preventDefault();
+          if (fields[index]) fields[index].focus({ preventScroll: true });
+          else exit(event.shiftKey ? -1 : 1);
+        }
+      }}
       onPointerDown={activate}
     >
-      <textarea
+      <LatexTextField
         aria-label="Document title"
         rows={1}
-        disabled={!editable}
+        disabled={!editable || sourceMeta?.titleEditable === false}
+        draftKey={draftKey ? `${draftKey}:title` : undefined}
         placeholder={active ? "Document title" : ""}
         value={String(node.attrs.title ?? "")}
-        onChange={(event) => updateAttributes({ title: event.currentTarget.value })}
+        onValueChange={(title) => updateAttributes({ title })}
       />
       {showAuthor ? (
-        <textarea
-          ref={authorField}
+        <LatexTextField
           aria-label="Document author"
           rows={1}
-          disabled={!editable}
-          placeholder={active ? "Author, course, or institution" : ""}
+          disabled={!editable || sourceMeta?.authorEditable === false}
+          draftKey={draftKey ? `${draftKey}:author` : undefined}
+          placeholder={active ? "Author" : ""}
           value={String(node.attrs.author ?? "")}
-          onChange={(event) => {
-            const author = event.currentTarget.value;
+          onValueChange={(author) => {
             setAddingAuthor(!author.trim());
             updateAttributes({ author, authorEnabled: Boolean(author.trim()) });
           }}
         />
       ) : null}
-      {dateMode !== "hidden" ? (
-        <textarea
-          ref={dateField}
+      {dateMode !== "hidden" || addingDate ? (
+        <LatexTextField
           aria-label="Document date"
           rows={1}
-          disabled={!editable}
+          disabled={!editable || sourceMeta?.dateEditable === false}
+          draftKey={draftKey ? `${draftKey}:date` : undefined}
           placeholder={active ? "Date" : ""}
-          value={dateDraft ?? String(node.attrs.date ?? "")}
-          onChange={(event) => {
-            const date = event.currentTarget.value;
-            setDateDraft(date);
+          value={String(node.attrs.date ?? "")}
+          onValueChange={(date) => {
             if (date.trim()) updateAttributes({ date, dateEnabled: true, dateMode: "explicit" });
           }}
-          onBlur={() => {
-            if (dateDraft !== null && !dateDraft.trim())
+          onBlur={(event) => {
+            if (!event.currentTarget.value.trim()) {
               updateAttributes({ date: "", dateEnabled: false, dateMode: "hidden" });
-            setDateDraft(null);
+              setAddingDate(false);
+            }
           }}
         />
       ) : null}
@@ -131,20 +223,22 @@ export function LatexTitleView({ node, editor, updateAttributes, selected, edita
               onClick={(event) => event.stopPropagation()}
               onFocusCapture={(event) => event.stopPropagation()}
             >
-              <span className="scient-latex-context-label">Title</span>
+              <span className="scient-latex-context-label">Title block</span>
               <label className="scient-latex-title-author-toggle">
                 <input
                   type="checkbox"
                   checked={showAuthor}
+                  disabled={sourceMeta?.authorEditable === false}
                   onChange={(event) => {
                     if (!event.currentTarget.checked) {
+                      setHiddenAuthor(String(node.attrs.author ?? ""));
                       setAddingAuthor(false);
                       updateAttributes({ authorEnabled: false });
                     } else {
-                      if (String(node.attrs.author ?? "").trim())
-                        updateAttributes({ authorEnabled: true });
+                      const author = String(node.attrs.author || hiddenAuthor);
+                      if (author.trim()) updateAttributes({ author, authorEnabled: true });
                       else setAddingAuthor(true);
-                      requestAnimationFrame(() => authorField.current?.focus());
+                      focusField("author");
                     }
                   }}
                 />
@@ -152,10 +246,11 @@ export function LatexTitleView({ node, editor, updateAttributes, selected, edita
               </label>
               <select
                 aria-label="Title date"
+                disabled={sourceMeta?.dateEditable === false}
                 value={dateMode}
                 onChange={(event) => {
                   const mode = event.currentTarget.value;
-                  setDateDraft(null);
+                  setAddingDate(false);
                   updateAttributes(
                     mode === "hidden"
                       ? { date: "", dateEnabled: false, dateMode: "hidden" }
@@ -165,11 +260,7 @@ export function LatexTitleView({ node, editor, updateAttributes, selected, edita
                           dateMode: mode === "automatic" ? "today" : "explicit",
                         },
                   );
-                  if (mode === "explicit")
-                    requestAnimationFrame(() => {
-                      dateField.current?.focus();
-                      dateField.current?.select();
-                    });
+                  if (mode === "explicit") focusField("date");
                 }}
               >
                 <option value="automatic">Date: Automatic</option>

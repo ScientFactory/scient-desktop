@@ -1,3 +1,6 @@
+import { CustomMathActionDialog } from "./CustomMathActionDialog";
+import type { CustomMathCommand } from "./customMath";
+import { ShortcutReference } from "./ShortcutReference";
 import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ChevronDownIcon, EllipsisIcon, PlusIcon } from "lucide-react";
 import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
@@ -20,11 +23,12 @@ import {
   SHORTCUT_PILL_BUTTON_CLASS,
   SHORTCUT_ROW_CLASS,
 } from "~/components/settings/ShortcutRow";
-import { surfaceCommands, type KeyboardScope } from "./catalog";
+import { type KeyboardScope } from "./catalog";
 import { eventStroke, isMacKeyboard, labelKeys } from "./keys";
 import {
   DEFAULT_KEYBOARD_PREFERENCES,
   effectiveSurfaceBindings,
+  authoringCommands,
   getKeyboardPreferences,
   importKeyboardPreferences,
   saveKeyboardPreferences,
@@ -55,7 +59,8 @@ export function AuthoringKeybindingsSettings({
     getKeyboardPreferences,
   );
   const mac = isMacKeyboard();
-  const commands = useMemo(() => surfaceCommands(mac), [mac]);
+  const commands = useMemo(() => authoringCommands(snapshot.preferences, mac), [snapshot, mac]);
+  const [customAction, setCustomAction] = useState<CustomMathCommand | null | undefined>(undefined);
   const [editing, setEditing] = useState<{
     id: string;
     index: number;
@@ -317,7 +322,7 @@ export function AuthoringKeybindingsSettings({
                     <SettingsRow
                       className={MATH_OPTION_ROW_CLASS}
                       title="Sequence timeout"
-                      description="Applies to Markdown, Math, and PDF shortcuts."
+                      description="Applies to Write, Source, Tables, Markdown, Math, and PDF shortcuts."
                       control={
                         <Select
                           value={String(snapshot.preferences.sequenceTimeoutMs)}
@@ -363,7 +368,7 @@ export function AuthoringKeybindingsSettings({
           <span />
         )}
         <div
-          className="flex items-center gap-1"
+          className="flex flex-wrap items-center justify-end gap-1"
           role="group"
           aria-label="Document shortcut profile"
         >
@@ -378,7 +383,7 @@ export function AuthoringKeybindingsSettings({
               event.currentTarget.value = "";
               if (!file) return;
               const expected = snapshot;
-              if (file.size > 100000) {
+              if (file.size > 1000000) {
                 setError("Shortcut file is too large.");
                 return;
               }
@@ -388,7 +393,7 @@ export function AuthoringKeybindingsSettings({
                   const imported = importKeyboardPreferences(text);
                   if (
                     window.confirm(
-                      "Replace Markdown, Math, and PDF shortcuts and math behavior with this file? Application keybindings will not change.",
+                      "Replace Write, Source, Tables, Markdown, Math, and PDF shortcuts, custom math actions, and math behavior with this file? Application keybindings will not change.",
                     )
                   )
                     save(imported, expected);
@@ -398,6 +403,12 @@ export function AuthoringKeybindingsSettings({
                 );
             }}
           />
+          {scope === "math" ? (
+            <Button size="xs" variant="ghost-muted" onClick={() => setCustomAction(null)}>
+              New math action
+            </Button>
+          ) : null}
+          <ShortcutReference appBindings={appBindings} />
           <Button size="xs" variant="ghost-muted" onClick={() => importInput.current?.click()}>
             Import
           </Button>
@@ -433,8 +444,8 @@ export function AuthoringKeybindingsSettings({
                 <div className="space-y-1">
                   <p className="text-sm font-medium">Restore defaults?</p>
                   <p className="text-xs text-muted-foreground">
-                    Reset Markdown, Math, and PDF shortcuts and Math input settings. General
-                    shortcuts stay unchanged.
+                    Reset Write, Source, Tables, Markdown, Math, and PDF shortcuts and Math input
+                    settings, and remove custom math actions. General shortcuts stay unchanged.
                   </p>
                 </div>
                 <div className="flex justify-end gap-1">
@@ -456,6 +467,9 @@ export function AuthoringKeybindingsSettings({
           </Popover>
         </div>
       </div>
+      {customAction !== undefined ? (
+        <CustomMathActionDialog action={customAction} onClose={() => setCustomAction(undefined)} />
+      ) : null}
       {snapshot.migrated ? (
         <p role="status" className="px-3 py-1 text-xs text-muted-foreground sm:px-4">
           Legacy math shortcuts loaded. Your next save writes the shared format and keeps the
@@ -470,6 +484,7 @@ export function AuthoringKeybindingsSettings({
       <div>
         {visible.map((command) => {
           const keys = keysByCommand.get(command.id) ?? [];
+          const custom = snapshot.preferences.customMath?.find((entry) => entry.id === command.id);
           const customized = Object.hasOwn(snapshot.preferences.overrides, command.id);
           const disabled = customized && keys.length === 0;
           const activeEdit = editing?.id === command.id ? editing : null;
@@ -518,7 +533,7 @@ export function AuthoringKeybindingsSettings({
                       Save
                     </Button>
                   ) : null}
-                  {keys.length > 0 || customized ? (
+                  {keys.length > 0 || customized || custom ? (
                     <Menu>
                       <MenuTrigger
                         render={
@@ -535,6 +550,27 @@ export function AuthoringKeybindingsSettings({
                         align="end"
                         data-authoring-keybinding-menu={activeEdit ? "" : undefined}
                       >
+                        {custom ? (
+                          <>
+                            <MenuItem onClick={() => setCustomAction(custom)}>
+                              Edit expression
+                            </MenuItem>
+                            <MenuItem
+                              onClick={() => {
+                                const overrides = { ...snapshot.preferences.overrides };
+                                delete overrides[custom.id];
+                                update({
+                                  customMath: snapshot.preferences.customMath!.filter(
+                                    (entry) => entry.id !== custom.id,
+                                  ),
+                                  overrides,
+                                });
+                              }}
+                            >
+                              Delete math action
+                            </MenuItem>
+                          </>
+                        ) : null}
                         {activeEdit && activeEdit.index < keys.length ? (
                           <MenuItem onClick={() => removeEditing(keys)}>Remove shortcut</MenuItem>
                         ) : null}

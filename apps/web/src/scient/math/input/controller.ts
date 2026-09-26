@@ -1,3 +1,4 @@
+import { customMathEdit } from "../../keyboard/customMath";
 import {
   commandEdit,
   mathCommand,
@@ -182,16 +183,24 @@ export class MathInputController {
       if (current.region !== "prose") return false;
       const { source, selection } = current.snapshot;
       const selected = source.slice(selection.from, selection.to);
-      const caret = selected ? selection.to : selection.from + 1;
+      const caret = selection.to;
       return this.commit(
         {
           ...selection,
-          insert: selected || "{}",
+          insert: selected,
           selection: { from: caret, to: caret },
         },
         id === "math.display",
       );
     }
+    const custom = getKeyboardPreferences().preferences.customMath?.find(
+      (command) => command.id === id,
+    );
+    if (custom)
+      return this.commit(
+        customMathEdit(custom, current.snapshot.source, current.snapshot.selection),
+        false,
+      );
     if (id.startsWith("math.matrix.")) {
       if (current.region === "prose") return false;
       const edit = matrixEdit(

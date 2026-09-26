@@ -1,15 +1,9 @@
+import * as Schema from "effect/Schema";
+import { useLocalStorage } from "~/hooks/useLocalStorage";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  ArrowLeft,
-  ArrowUpRight,
-  FileText,
-  FolderOpen,
-  Plus,
-  RefreshCw,
-  Search,
-} from "lucide-react";
+import { ArrowUpRight, FileText, FolderOpen, RefreshCw, Search } from "lucide-react";
 import { projectEnvironment } from "~/state/projects";
 import { toastManager } from "~/components/ui/toast";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -22,11 +16,15 @@ import {
 import {
   DOCUMENT_TEMPLATES,
   createDocumentSource,
-  documentFilename,
+  documentTitleFromFilename,
+  availableDocumentPath,
   documentPath,
   type DocumentTemplateId,
 } from "./documentTemplates";
 import "./documents.css";
+
+const RecentDocuments = Schema.Array(Schema.String);
+const EMPTY_RECENT: readonly string[] = [];
 
 function failureMessage(result: Parameters<typeof squashAtomCommandFailure>[0]) {
   const error = squashAtomCommandFailure(result);
@@ -63,21 +61,13 @@ export function ScientDocumentsPanel(props: {
     refresh: true,
   });
   const storageKey = `scient.documents.recent:${JSON.stringify([props.environmentId, props.cwd])}`;
-  const [recent, setRecent] = useState<string[]>(() => {
-    try {
-      const value: unknown = JSON.parse(window.localStorage.getItem(storageKey) ?? "[]");
-      return Array.isArray(value)
-        ? value.filter((path): path is string => typeof path === "string").slice(0, 12)
-        : [];
-    } catch {
-      return [];
-    }
-  });
+  const [recent, setRecent] = useLocalStorage<readonly string[], readonly string[]>(
+    storageKey,
+    EMPTY_RECENT,
+    RecentDocuments,
+  );
   const [query, setQuery] = useState("");
-  const [template, setTemplate] = useState<DocumentTemplateId | "custom" | null>(null);
-  const [title, setTitle] = useState("");
-  const [author, setAuthor] = useState("");
-  const [course, setCourse] = useState("");
+  const [template, setTemplate] = useState<DocumentTemplateId | "custom">("blank");
   const [filename, setFilename] = useState("");
   const [customPath, setCustomPath] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -92,10 +82,7 @@ export function ScientDocumentsPanel(props: {
     };
   }, []);
   const searchInput = useRef<HTMLInputElement>(null);
-  const titleInput = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    if (template) titleInput.current?.focus();
-  }, [template]);
+  const filenameInput = useRef<HTMLInputElement>(null);
   const documents = useMemo(
     () =>
       (files.data?.entries ?? [])
@@ -108,33 +95,23 @@ export function ScientDocumentsPanel(props: {
     path.toLocaleLowerCase().includes(query.toLocaleLowerCase()),
   );
   const recentDocuments = recent.filter((path) => documents.includes(path));
-  const sourcePreview = useMemo(
-    () =>
-      template && template !== "custom"
-        ? createDocumentSource({ template, title, author, course })
-        : null,
-    [template, title, author, course],
-  );
   const open = (path: string) => {
     const next = [path, ...recent.filter((entry) => entry !== path)].slice(0, 12);
     setRecent(next);
-    try {
-      window.localStorage.setItem(storageKey, JSON.stringify(next));
-    } catch {
-      /* File opening does not depend on history storage. */
-    }
     props.onOpenDocument(path);
   };
   const submit = async () => {
-    if (!template || submitting.current) return;
-    const path = documentPath(filename || documentFilename(title));
+    if (submitting.current) return;
+    const requestedPath = documentPath(filename);
+    const path =
+      requestedPath &&
+      availableDocumentPath(
+        requestedPath,
+        (files.data?.entries ?? []).map((entry) => entry.path),
+      );
     if (!path) {
       setError("Choose a .tex filename inside this project, such as documents/proposal.tex.");
-      return;
-    }
-    if (!title.trim() && template !== "custom") {
-      setError("Give your document a title.");
-      titleInput.current?.focus();
+      filenameInput.current?.focus();
       return;
     }
     submitting.current = true;
@@ -170,7 +147,13 @@ export function ScientDocumentsPanel(props: {
           return;
         }
         contents = result.value.contents;
-      } else contents = sourcePreview!;
+      } else
+        contents = createDocumentSource({
+          template,
+          title: documentTitleFromFilename(path),
+          author: "",
+          course: "",
+        });
       if (!mounted.current) return;
       const result = await createFile({
         environmentId: props.environmentId,
@@ -221,255 +204,182 @@ export function ScientDocumentsPanel(props: {
         </button>
       </header>
       <div className="scient-documents-content">
-        {template ? (
-          <form
-            className="scient-document-create"
-            noValidate
-            onSubmit={(event) => {
-              event.preventDefault();
-              void submit();
-            }}
-          >
-            <button
-              type="button"
-              className="scient-documents-back"
-              disabled={busy}
-              onClick={() => {
-                setTemplate(null);
-                setError(null);
-              }}
-            >
-              <ArrowLeft size={15} /> All documents
-            </button>
-            <h2>
-              {template === "custom"
-                ? "Use a project template"
-                : `New ${DOCUMENT_TEMPLATES.find((entry) => entry.id === template)?.name.toLowerCase()}`}
-            </h2>
-            <p>
-              {template === "custom"
-                ? "Create a separate copy of an existing LaTeX document. Its supporting files stay in the project."
-                : DOCUMENT_TEMPLATES.find((entry) => entry.id === template)?.detail}
-            </p>
-            <fieldset disabled={busy}>
+        <form
+          className="scient-document-create"
+          noValidate
+          onSubmit={(event) => {
+            event.preventDefault();
+            void submit();
+          }}
+        >
+          <h2>New document</h2>
+          <fieldset disabled={busy}>
+            <label htmlFor="scient-document-filename">Filename</label>
+            <div className="scient-document-create-row">
+              <input
+                id="scient-document-filename"
+                ref={filenameInput}
+                value={filename}
+                onChange={(event) => {
+                  setFilename(event.target.value);
+                  setError(null);
+                }}
+                placeholder="My document.tex"
+                spellCheck={false}
+                autoComplete="off"
+                required
+              />
+              <button
+                className="scient-documents-primary"
+                type="submit"
+                disabled={busy || !filename.trim()}
+              >
+                {busy ? "Creating..." : "Create"}
+                <ArrowUpRight size={16} />
+              </button>
+            </div>
+            <small className="scient-document-filename-hint">
+              The filename becomes the default title. You can change the title while writing.
+            </small>
+            <details className="scient-document-template-options">
+              <summary>
+                {template === "blank"
+                  ? "Use a template"
+                  : template === "custom"
+                    ? "Project template"
+                    : DOCUMENT_TEMPLATES.find((entry) => entry.id === template)?.name}
+              </summary>
+              <label>
+                Starting structure
+                <select
+                  value={template}
+                  onChange={(event) =>
+                    setTemplate(event.target.value as DocumentTemplateId | "custom")
+                  }
+                >
+                  <option value="blank">Empty document</option>
+                  {DOCUMENT_TEMPLATES.filter((entry) => entry.id !== "blank").map((entry) => (
+                    <option key={entry.id} value={entry.id}>
+                      {entry.name}
+                    </option>
+                  ))}
+                  <option value="custom">Copy a project template</option>
+                </select>
+              </label>
               {template === "custom" ? (
                 <label>
-                  Template
+                  Template file
                   <select
                     value={customPath}
                     onChange={(event) => {
-                      const path = event.target.value;
-                      setCustomPath(path);
-                      setFilename(path.replace(/\.tex$/iu, "-copy.tex"));
+                      setCustomPath(event.target.value);
+                      setFilename(event.target.value.replace(/\.tex$/iu, "-copy.tex"));
                     }}
                   >
-                    <option value="">Choose a .tex file…</option>
+                    <option value="">Choose a .tex file...</option>
                     {documents.map((path) => (
                       <option key={path} value={path}>
                         {path}
                       </option>
                     ))}
                   </select>
+                  <small>
+                    A copy keeps the template's contents and uses its supporting files. Save it
+                    beside the original.
+                  </small>
                 </label>
-              ) : (
-                <>
-                  <label>
-                    Document title
-                    <input
-                      ref={titleInput}
-                      value={title}
-                      onChange={(event) => setTitle(event.target.value)}
-                      placeholder="What are you working on?"
-                      maxLength={250}
-                      required
-                    />
-                  </label>
-                  <div className="scient-document-fields">
-                    <label>
-                      Author <span>Optional</span>
-                      <input
-                        value={author}
-                        onChange={(event) => setAuthor(event.target.value)}
-                        autoComplete="name"
-                        maxLength={250}
-                      />
-                    </label>
-                    <label>
-                      {template === "assignment" ? "Course" : "Institution / course"}{" "}
-                      <span>Optional</span>
-                      <input
-                        value={course}
-                        onChange={(event) => setCourse(event.target.value)}
-                        maxLength={250}
-                      />
-                    </label>
-                  </div>
-                </>
-              )}
-              <label>
-                Save in project
-                <input
-                  ref={template === "custom" ? titleInput : undefined}
-                  value={filename}
-                  onChange={(event) => setFilename(event.target.value)}
-                  placeholder={documentFilename(title)}
-                  spellCheck={false}
-                />
-                <small>{props.cwd}</small>
-              </label>
-              {error ? (
-                <p role="alert" className="scient-documents-error">
-                  {error}
-                </p>
               ) : null}
-              {createdPath ? (
-                <p role="status" className="scient-documents-created">
-                  Saved <strong>{createdPath}</strong>.{" "}
-                  <button type="button" onClick={() => open(createdPath)}>
-                    Open document
-                  </button>
-                </p>
-              ) : null}
-              <button className="scient-documents-primary" type="submit" disabled={busy}>
-                {busy ? "Creating…" : "Create and start writing"}
-                <ArrowUpRight size={16} />
-              </button>
-            </fieldset>
-            {sourcePreview !== null ? (
-              <details className="scient-document-source-preview">
-                <summary>Preview LaTeX source</summary>
-                <p>
-                  This is the complete source that will be saved, including starter text for you to
-                  replace.
-                </p>
-                <pre>
-                  <code>{sourcePreview}</code>
-                </pre>
-              </details>
+            </details>
+            {error ? (
+              <p role="alert" className="scient-documents-error">
+                {error}
+              </p>
             ) : null}
-          </form>
-        ) : (
-          <>
-            <div className="scient-documents-intro">
-              <h2>What would you like to write?</h2>
-              <p>Start with a structure, then make it your own.</p>
-            </div>
-            <div className="scient-document-templates">
-              {DOCUMENT_TEMPLATES.map((entry) => (
-                <button
-                  key={entry.id}
-                  type="button"
-                  onClick={() => {
-                    setTemplate(entry.id);
-                    setFilename("");
-                    setError(null);
-                    setCreatedPath(null);
-                  }}
-                >
-                  <span className="scient-document-template-paper">
-                    <FileText size={24} strokeWidth={1.3} />
-                  </span>
-                  <strong>{entry.name}</strong>
-                  <span>{entry.description}</span>
-                  <Plus className="scient-document-template-plus" size={15} />
+            {createdPath ? (
+              <p role="status" className="scient-documents-created">
+                Saved <strong>{createdPath}</strong>.{" "}
+                <button type="button" onClick={() => open(createdPath)}>
+                  Open document
+                </button>
+              </p>
+            ) : null}
+          </fieldset>
+        </form>
+        {recentDocuments.length > 0 && !query ? (
+          <section aria-label="Recent documents">
+            <h3>Recently opened here</h3>
+            <div className="scient-document-recents">
+              {recentDocuments.slice(0, 4).map((path) => (
+                <button key={path} type="button" onClick={() => open(path)}>
+                  <FileText size={16} />
+                  <span>{path}</span>
                 </button>
               ))}
             </div>
-            <div className="scient-documents-secondary">
-              <button
-                type="button"
-                onClick={() => {
-                  setTemplate("custom");
-                  setFilename("");
-                  setError(null);
-                  setCreatedPath(null);
-                }}
-              >
-                Use a project template
-              </button>
-              <button type="button" onClick={() => searchInput.current?.focus()}>
-                Open existing document
-              </button>
-            </div>
-            {recentDocuments.length > 0 && !query ? (
-              <section aria-label="Recent documents">
-                <h3>Recently opened here</h3>
-                <div className="scient-document-recents">
-                  {recentDocuments.slice(0, 4).map((path) => (
-                    <button key={path} type="button" onClick={() => open(path)}>
-                      <FileText size={16} />
-                      <span>{path}</span>
-                    </button>
-                  ))}
-                </div>
-              </section>
-            ) : null}
-            <section aria-label="Project documents">
-              <div className="scient-documents-list-heading">
-                <h3>In this project</h3>
-                <button type="button" onClick={files.refresh} aria-label="Refresh documents">
-                  <RefreshCw size={15} />
-                </button>
-              </div>
-              <label className="scient-documents-search">
-                <Search size={16} />
-                <input
-                  ref={searchInput}
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Find a document…"
-                  aria-label="Find a document"
-                />
-              </label>
-              {files.error ? (
-                <p role="alert" className="scient-documents-error">
-                  {files.error}
-                </p>
-              ) : files.isPending && !files.data ? (
-                <p role="status">Loading documents…</p>
-              ) : visible.length === 0 ? (
-                <div className="scient-documents-empty">
-                  <FileText size={26} />
-                  <p>{query ? "No matching documents." : "Your documents will appear here."}</p>
-                  <span>
-                    {query
-                      ? "Try another name or browse Project files."
-                      : "Choose a starter above, or open an existing LaTeX project from the project sidebar."}
-                  </span>
-                </div>
-              ) : (
-                <div className="scient-documents-list">
-                  {visible.map((path) => (
-                    <button key={path} type="button" onClick={() => open(path)}>
-                      <FileText size={18} />
-                      <span>
-                        <strong>{path.split("/").at(-1)}</strong>
-                        <small>
-                          {path.includes("/")
-                            ? path.slice(0, path.lastIndexOf("/"))
-                            : "Project folder"}
-                        </small>
-                      </span>
-                      <ArrowUpRight size={15} />
-                    </button>
-                  ))}
-                </div>
-              )}
-              {files.data?.truncated ? (
-                <p>
-                  Some files aren’t listed.{" "}
-                  <button type="button" onClick={props.onOpenFiles}>
-                    Browse all project files
-                  </button>
-                </p>
-              ) : null}
-            </section>
-            <p className="scient-documents-footnote">
-              Saved as LaTeX files in your project. Writing works offline; PDF export uses your
-              local TeX installation.
+          </section>
+        ) : null}
+        <section aria-label="Project documents">
+          <div className="scient-documents-list-heading">
+            <h3>In this project</h3>
+            <button type="button" onClick={files.refresh} aria-label="Refresh documents">
+              <RefreshCw size={15} />
+            </button>
+          </div>
+          <label className="scient-documents-search">
+            <Search size={16} />
+            <input
+              ref={searchInput}
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Find a document…"
+              aria-label="Find a document"
+            />
+          </label>
+          {files.error ? (
+            <p role="alert" className="scient-documents-error">
+              {files.error}
             </p>
-          </>
-        )}
+          ) : files.isPending && !files.data ? (
+            <p role="status">Loading documents…</p>
+          ) : visible.length === 0 ? (
+            <div className="scient-documents-empty">
+              <FileText size={26} />
+              <p>{query ? "No matching documents." : "Your documents will appear here."}</p>
+              <span>
+                {query
+                  ? "Try another name or browse Project files."
+                  : "Enter a filename above to start writing, or open an existing LaTeX project from the project sidebar."}
+              </span>
+            </div>
+          ) : (
+            <div className="scient-documents-list">
+              {visible.map((path) => (
+                <button key={path} type="button" onClick={() => open(path)}>
+                  <FileText size={18} />
+                  <span>
+                    <strong>{path.split("/").at(-1)}</strong>
+                    <small>
+                      {path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "Project folder"}
+                    </small>
+                  </span>
+                  <ArrowUpRight size={15} />
+                </button>
+              ))}
+            </div>
+          )}
+          {files.data?.truncated ? (
+            <p>
+              Some files aren’t listed.{" "}
+              <button type="button" onClick={props.onOpenFiles}>
+                Browse all project files
+              </button>
+            </p>
+          ) : null}
+        </section>
+        <p className="scient-documents-footnote">
+          Saved as LaTeX files in your project. Writing works offline; PDF export uses your local
+          TeX installation.
+        </p>
       </div>
     </section>
   );

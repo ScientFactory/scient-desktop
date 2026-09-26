@@ -7,21 +7,26 @@ export interface ShortcutHost {
   /** Availability and execution stay with the document, including its history. */
   execute(command: string, event: KeyboardEvent): boolean;
   accepts(event: KeyboardEvent, command?: string): boolean;
+  /** Capture is for adapters which exclude other nested input owners. */
+  capture?: boolean;
+  /** Render announcements in existing editor chrome, outside the editable document. */
+  feedback?: (text: string) => void;
   /** Reserve a recognized chord for a nested native input without rewriting the document. */
   native?: (event: KeyboardEvent, command?: string) => boolean;
 }
 export function attachShortcutHost(
   host: HTMLElement,
-  scope: KeyboardScope,
+  scope: KeyboardScope | readonly KeyboardScope[],
   adapter: ShortcutHost,
 ): () => void {
   const status = document.createElement("span");
-  status.className = "text-xs text-muted-foreground";
+  status.className = "sr-only";
   status.setAttribute("role", "status");
   status.setAttribute("data-shortcut-status", "");
-  host.append(status);
+  if (!adapter.feedback) host.append(status);
   const sequence = new ShortcutSequence(scope, (text) => {
     status.textContent = text;
+    adapter.feedback?.(text);
   });
   const accepts = (event: KeyboardEvent) => {
     const match = sequence.peek(event);
@@ -37,15 +42,15 @@ export function attachShortcutHost(
     if (!(event.relatedTarget instanceof Node) || !host.contains(event.relatedTarget))
       sequence.cancel();
   };
-  // Bubble: nested editor controls get the first opportunity to consume input.
-  host.addEventListener("keydown", keydown);
+  // Capture adapters must explicitly exclude nested controls they do not own.
+  host.addEventListener("keydown", keydown, adapter.capture ?? false);
   host.addEventListener("focusout", blur);
   return () => {
     release();
     unsubscribe();
     sequence.cancel();
     status.remove();
-    host.removeEventListener("keydown", keydown);
+    host.removeEventListener("keydown", keydown, adapter.capture ?? false);
     host.removeEventListener("focusout", blur);
   };
 }

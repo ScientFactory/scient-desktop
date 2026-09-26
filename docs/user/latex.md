@@ -7,21 +7,15 @@ between them, and drag the divider in split view to resize either side.
 
 ## Start a document
 
-Choose **Documents** from **Open a surface** or the panel's **+** menu. In your
-current project, choose Assignment, Report, Research proposal, Thesis, or Blank,
-enter a title and optional author/course, and choose **Create and start writing**.
-The filename is editable, including a folder inside the project. Existing files
-are never overwritten by document creation.
+Choose **Documents** from **Open a surface** or the panel's **+** menu. Enter a
+filename and press Enter (or **Create**). The `.tex` extension is added when needed,
+and the filename becomes the default printed title. A blank article is the default;
+**Use a template** optionally selects Assignment, Report, Research proposal, or
+Thesis in the same form. Author and date can be added while writing. Known filename
+collisions receive a numbered suffix; existing files are never overwritten.
 
-Built-in starters are bundled `.tex` templates with title, author, and course
-placeholders and instructional body text. **Preview LaTeX source** shows the exact
-filled source before saving. A successful save reports the created filename;
-creation failures keep your form entries and display an error.
-
-The optional course/institution is a centered line below the author in the title
-block. Author details support multiple lines in Write and preserve LaTeX line
-breaks. This formatting applies to newly created templates; existing source is
-preserved.
+Built-in starters are bundled `.tex` templates. A successful save reports the
+created filename; creation failures keep your entries and display an error.
 
 The Documents surface also searches the project's `.tex` files and remembers
 documents opened through it on this device. **Use a project template** copies an
@@ -44,9 +38,11 @@ status bar. The toolbar supports paragraphs, three heading levels, bold, italic,
 lists, undo and redo. **Insert...** opens a searchable menu for equations, tables,
 statements, figures, question/solution pairs, and page breaks. Type `/` on an empty
 paragraph or press Ctrl/Cmd+/ to open it; use the arrow keys and Enter to choose.
-The toolbar stays on one slim row. **More writing tools** holds Table, Cite / Refer,
-Document settings, Outline, and Review. In narrower panes, formatting controls also
-move into this menu, keeping them available without wrapping the toolbar.
+The toolbar stays on one slim row. Insert holds elements and references; Lists
+holds list actions. Document settings, Outline, and Review are in the document
+header. Selecting title metadata, headings, tables, figures, or statements exposes
+its options in the existing footbar. Title, author, and date remain directly
+editable on paper; Document settings restores missing fields.
 Zoom controls are in the top writing toolbar. Enter an exact percentage (25–400%)
 and press Enter, or use minus/plus and the percentage presets. Escape cancels an
 unfinished percentage edit. **Fit width** fills the available pane and follows
@@ -225,6 +221,39 @@ macro and global-layout edits show a rebuild
 notice. After a crash or interrupted save, a recovered draft is offered as
 copyable source, never automatically written over a newer file.
 
+## Edit LaTeX source
+
+LaTeX source and Source + PDF use a dedicated code editor. Its compact toolbar
+contains Outline, Find, Bold, Italic, Comment, Insert, Math, Find in PDF, and editor
+options. The bottom bar shows the cursor position and save state, with a text-size
+control. Source display preferences do not change the document or PDF typography.
+
+- Type a backslash for command and environment suggestions. Ctrl+Space also opens
+  suggestions on Mac. Completions include the bundled math symbol catalog and
+  literal custom commands defined in the document and linked files.
+- Inside `\cite{}`, `\ref{}`, `\input{}`, or `\includegraphics{}`, suggestions use
+  linked bibliography entries, labels, and project filenames. Use **Refresh linked
+  references** after changing another file. Macro-generated paths are not evaluated.
+- Tab accepts a suggestion or advances through a snippet's empty entry fields.
+  Enter after a standalone `\begin{...}` supplies an indented body and matching
+  `\end{...}` when it is missing. Braces, brackets, and parentheses pair automatically.
+- Fold sections and environments in the gutter, or use Fold/Unfold all in editor
+  options. Outline filters section titles and reveals folded destinations.
+- Ctrl/Cmd+F opens find/replace with case, whole-word, and regular-expression
+  options. Ctrl/Cmd+Shift+L goes to a line. Ctrl/Cmd+/ comments selected lines.
+  Alt+drag selects a rectangle; Ctrl/Cmd+D adds the next occurrence as another cursor.
+- F12 or Ctrl/Cmd+click follows a literal include or a reference label. Filename
+  suggestions follow the compiling root's directory, with `subfiles` support.
+- Editor options control line wrapping, line numbers, suggestions, system
+  spellcheck, and optional automatic PDF updates. System spellcheck depends on
+  the host's installed dictionaries; it is not a TeX-aware grammar checker.
+
+Compiler errors and warnings for the current file appear in the gutter when they
+belong to the current source. Build messages opens the full list. Editing invalidates
+old marks. Source edits keep native selection, composition, multiple cursors, and
+undo; save acknowledgements do not rebuild the editor. Unchanged source sessions
+keep selection, folding, scroll, and history when switching views.
+
 ## Math insertion
 
 The source editor's **Ω** toolbar provides shared math symbols, fractions, roots,
@@ -235,8 +264,11 @@ limitations. These controls change LaTeX source; PDF read mode does not insert m
 
 ## Build and review
 
-Builds are explicit: choose **Update PDF** after pending source saves finish. Opening,
-typing, autosaving, status polling and toolchain installation do not compile.
+Choose **Update PDF** or press Ctrl/Cmd+Enter in Source. The shortcut waits for
+pending saves. Builds are manual by default. **Auto update PDF after saving**,
+in source editor options, requests a build after 1.5 seconds of saved editing
+inactivity. It coalesces typing and waits for the current build and save queue;
+opening a document does not itself request a build.
 **Review** lists repeated labels, references missing from the current file, and
 common unfinished placeholders. References may belong to included files; this
 review does not replace compiling the complete document. **Export PDF** saves a
@@ -244,7 +276,7 @@ copy only when the latest PDF matches the saved buffer and build dependencies.
 Update the PDF first if export is unavailable.
 
 An agent can still explicitly request a build through the existing tools. Errors and
-warnings from the build appear in a list above the document; each one shows
+warnings from the build can be opened from the status chips above the document; each one shows
 the file and line it came from when the compiler reported one. Click a message
 that names a project file to open that file at the reported line.
 
@@ -257,11 +289,11 @@ visual quality matters.
 
 ## Move between source and PDF
 
-In Split, double-click a line of source to jump to the matching place in the
-current successful PDF. Double-clicking a word in the PDF keeps the normal word
-selection and reveals the corresponding source line in the source pane. These
-gestures never open Split automatically; select Split first when you want both
-sides to follow one another. Scient briefly marks the destination so it is easy
+Choose **Find selection in PDF** in Source, or press Ctrl/Cmd+Shift+J, to reveal the
+current source position in the successful PDF. This opens Split when needed.
+Double-clicking source keeps normal word selection. Double-clicking a word in the
+PDF in Split keeps normal word selection and reveals the corresponding source line.
+Scient briefly marks the destination so it is easy
 to see. This needs a successful current build with a navigation index. If no
 mapping is available, the PDF remains usable and the status explains why the
 jump could not be completed.
@@ -333,3 +365,15 @@ The path is relative to the file containing the comment. Scient compiles
 `main.tex` when you request Update PDF. If no root can be found, open the main
 document or add the comment; Scient leaves the fragment unbuilt rather than
 compiling the wrong file.
+
+### Editing included chapters
+
+Write uses the selected root document for page settings and image paths. For an
+insertion requiring a missing package or theorem declaration, open the root in
+Source, add the declaration, then return to the chapter. Scient does not silently
+save a second file. New tables start with a package-free style.
+
+Ordinary prose edits preserve unchanged `~`, dash spelling, emphasis commands and
+source line breaks. Unknown macros and unsupported syntax remain available through
+Source; Write is a bounded editor, not a complete TeX interpreter. Recovery offers
+**Restore recovered source**, which follows normal save/conflict handling.
