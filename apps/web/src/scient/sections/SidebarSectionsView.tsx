@@ -21,7 +21,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { type ScopedThreadRef, type ThreadSection, ThreadSectionId } from "@t3tools/contracts";
-import { ChevronDownIcon, EllipsisIcon, PlusIcon } from "lucide-react";
+import { ChevronDownIcon, EllipsisIcon, PlusIcon, SquarePenIcon } from "lucide-react";
 import {
   Fragment,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -622,7 +622,8 @@ function SectionHeaderRow(props: {
         {isUserSection && !props.renaming ? (
           <span className="pointer-events-none flex shrink-0 items-center opacity-0 group-focus-within/section-header:pointer-events-auto group-focus-within/section-header:opacity-100 group-hover/section-header:pointer-events-auto group-hover/section-header:opacity-100">
             <HeaderIconButton label="New thread in section" onClick={props.onNewThread}>
-              <PlusIcon className="size-3.5" />
+              {/* Same glyph as the sidebar's New thread button. */}
+              <SquarePenIcon className="size-3.5" />
             </HeaderIconButton>
             <HeaderIconButton
               label="Section actions"
