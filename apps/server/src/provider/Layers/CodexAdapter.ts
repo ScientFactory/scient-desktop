@@ -2350,7 +2350,15 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           ...(codexConfig.homePath ? { homePath: codexConfig.homePath } : {}),
           ...(isCodexResumeCursorSchema(input.resumeCursor)
             ? { resumeCursor: input.resumeCursor }
-            : {}),
+            : // SCIENT-FORK: a fork's first session forks the source thread natively.
+              input.forkFrom !== undefined && isCodexResumeCursorSchema(input.forkFrom.resumeCursor)
+              ? {
+                  forkFrom: {
+                    threadId: input.forkFrom.resumeCursor.threadId,
+                    lastTurnId: input.forkFrom.throughTurnId,
+                  },
+                }
+              : {}),
           runtimeMode: input.runtimeMode,
           ...(input.modelSelection?.instanceId === boundInstanceId
             ? { model: input.modelSelection.model }
@@ -2882,6 +2890,8 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       sessionModelSwitch: "in-session",
       promptlessTurnContinuation: true,
       mcpSessionInjection: true,
+      // SCIENT-FORK: startSession honours forkFrom via Codex thread/fork.
+      nativeFork: true,
     },
     startSession,
     sendTurn,

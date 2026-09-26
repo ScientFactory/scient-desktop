@@ -85,6 +85,9 @@ export interface ProviderAdapterCapabilities {
   /** The adapter can inject Scient's current thread-scoped MCP session into
       the provider runtime. Omission is fail-closed and means unsupported. */
   readonly mcpSessionInjection?: true;
+  /** SCIENT-FORK: `startSession` honours `forkFrom` by forking the source
+      provider thread natively (full fidelity, no transcript handoff). */
+  readonly nativeFork?: true;
 }
 
 export interface ProviderThreadTurnSnapshot {

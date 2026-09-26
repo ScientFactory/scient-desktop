@@ -1612,9 +1612,19 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         const adapter = yield* registry.getByInstance(resolvedInstanceId);
         yield* clearTurnAnalyticsSession(resolvedInstanceId, threadId);
         yield* prepareMcpSession(threadId, resolvedInstanceId, adapter);
+        // SCIENT-FORK: a native fork applies only to a brand-new provider thread
+        // of an adapter that declares it; resuming always wins.
+        const { forkFrom, ...startInput } = input;
+        const nativeFork =
+          forkFrom !== undefined &&
+          effectiveResumeCursor === undefined &&
+          adapter.capabilities.nativeFork === true
+            ? { forkFrom }
+            : {};
         const session = yield* adapter
           .startSession({
-            ...input,
+            ...startInput,
+            ...nativeFork,
             providerInstanceId: resolvedInstanceId,
             ...(effectiveCwd !== undefined ? { cwd: effectiveCwd } : {}),
             ...(effectiveResumeCursor !== undefined ? { resumeCursor: effectiveResumeCursor } : {}),

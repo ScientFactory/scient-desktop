@@ -74,6 +74,7 @@ import {
   ScientForkContextDelivery,
   type ForkDeliveryOutcome,
   type ForkTurnContext,
+  type NativeForkPlan,
 } from "../scient-fork/ForkContextDelivery.ts";
 import { nativeThreadKey } from "../scient-fork/context/nativeThreadKey.ts";
 import { classifyTurnDispatchFailure } from "../../provider/turnDispatchPhase.ts";
@@ -287,6 +288,37 @@ const make = Effect.gen(function* () {
     }
   >();
   const stoppingThreadIds = new Set<ThreadId>();
+
+  // SCIENT-FORK: the fork's timeline says how its context reached the provider.
+  const appendForkContextActivity = (input: {
+    readonly threadId: ThreadId;
+    readonly summary: string;
+    readonly detail: string;
+    readonly createdAt: string;
+  }) =>
+    Effect.all({
+      commandId: serverCommandId("fork-context-activity"),
+      eventId: serverEventId(),
+    }).pipe(
+      Effect.flatMap(({ commandId, eventId }) =>
+        orchestrationEngine.dispatch({
+          type: "thread.activity.append",
+          commandId,
+          threadId: input.threadId,
+          activity: {
+            id: eventId,
+            tone: "info",
+            kind: "scient.fork.context",
+            summary: input.summary,
+            payload: { detail: input.detail },
+            turnId: null,
+            createdAt: input.createdAt,
+          },
+          createdAt: input.createdAt,
+        }),
+      ),
+      Effect.ignore,
+    );
 
   const appendProviderFailureActivity = (input: {
     readonly threadId: ThreadId;
@@ -575,6 +607,73 @@ const make = Effect.gen(function* () {
       .pipe(Effect.map(Option.getOrUndefined));
   });
 
+  // SCIENT-FORK:START — a fork's first provider thread clones the source's
+  // conversation natively when the provider can (full fidelity, reasoning
+  // included); any failure is recorded and falls back to the portable handoff.
+  const startNativeForkIfPossible = Effect.fnUntraced(function* (input: {
+    readonly thread: { readonly id: ThreadId; readonly session: OrchestrationSession | null };
+    readonly modelSelection: ModelSelection;
+    readonly createdAt: string;
+  }) {
+    if (input.thread.session !== null && input.thread.session.status !== "stopped") return null;
+    const capabilities = yield* providerService
+      .getCapabilities(input.modelSelection.instanceId)
+      .pipe(Effect.orElseSucceed(() => undefined));
+    if (capabilities?.nativeFork !== true) return null;
+    const plan = yield* scientForkContextDelivery
+      .planNativeFork({
+        threadId: input.thread.id,
+        providerInstanceId: input.modelSelection.instanceId,
+      })
+      .pipe(Effect.orElseSucceed(() => null));
+    if (plan === null) return null;
+    let unavailableReason: string | null = null;
+    const started = yield* ensureSessionForThread(input.thread.id, input.createdAt, {
+      modelSelection: input.modelSelection,
+      pendingTurnStart: true,
+      forkFrom: plan,
+    }).pipe(
+      Effect.as(true),
+      Effect.catchCause((cause) => {
+        const reason = formatFailureDetail(cause);
+        unavailableReason = reason;
+        return Effect.logWarning("native fork unavailable; using the portable handoff", {
+          threadId: input.thread.id,
+          cause: Cause.pretty(cause),
+        }).pipe(
+          Effect.andThen(
+            scientForkContextDelivery
+              .recordNativeForkUnavailable({ threadId: input.thread.id, reason })
+              .pipe(Effect.ignore),
+          ),
+          Effect.as(false),
+        );
+      }),
+    );
+    if (!started) return unavailableReason;
+    const session = (yield* providerService.listSessions()).find(
+      (candidate) => candidate.threadId === input.thread.id,
+    );
+    const key =
+      session === undefined ? null : nativeThreadKey(session.provider, session.resumeCursor);
+    // The new provider thread must differ from the source's: otherwise the
+    // adapter resumed instead of forking and the portable handoff is needed.
+    if (key === null || key === nativeThreadKey(session!.provider, plan.resumeCursor)) return null;
+    yield* scientForkContextDelivery.recordNativeFork({
+      threadId: input.thread.id,
+      nativeThreadKey: key,
+    });
+    yield* appendForkContextActivity({
+      threadId: input.thread.id,
+      summary: "Continued natively",
+      detail:
+        "The provider forked its own conversation at this point, including its reasoning and tool state.",
+      createdAt: input.createdAt,
+    });
+    return null;
+  });
+  // SCIENT-FORK:END
+
   // SCIENT-FORK:START — conversation context for fork turns. The full detail
   // (activities included) carries question answers and the work log.
   const prepareScientForkContext = Effect.fnUntraced(function* (input: {
@@ -676,6 +775,8 @@ const make = Effect.gen(function* () {
       // First-turn prompt seed. A manual title that still equals this seed was
       // written by the client's auto-title, not a user rename.
       readonly titleSeed?: string;
+      // SCIENT-FORK: start a fork's first provider thread as a native fork.
+      readonly forkFrom?: NativeForkPlan;
     },
   ) {
     const thread = yield* resolveThreadShell(threadId);
@@ -836,6 +937,7 @@ const make = Effect.gen(function* () {
           ...(sessionTitle ? { title: sessionTitle } : {}),
           modelSelection: desiredModelSelection,
           ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
+          ...(options?.forkFrom !== undefined ? { forkFrom: options.forkFrom } : {}),
           runtimeMode: desiredRuntimeMode,
         })
         .pipe(Effect.tap(() => refreshWorkspaceSnapshot));
@@ -1603,6 +1705,21 @@ const make = Effect.gen(function* () {
       text: message.text,
       records: message.context?.records ?? [],
     });
+    const nativeForkUnavailable =
+      thread.forkLineage == null
+        ? null
+        : yield* startNativeForkIfPossible({
+            thread,
+            modelSelection: event.payload.modelSelection ?? thread.modelSelection,
+            createdAt: event.payload.createdAt,
+          }).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("native fork planning failed", {
+                threadId: thread.id,
+                cause: Cause.pretty(cause),
+              }).pipe(Effect.as(null)),
+            ),
+          );
     const sendTurnRequest = yield* buildSendTurnRequestForThread({
       ...(event.payload.selectedScientSkillNames === undefined
         ? {}
@@ -1696,7 +1813,25 @@ const make = Effect.gen(function* () {
                           session.provider,
                           turn.resumeCursor ?? session.resumeCursor,
                         ),
-                });
+                }).pipe(
+                  Effect.andThen(
+                    appendForkContextActivity({
+                      threadId: event.payload.threadId,
+                      summary: "Sent conversation history",
+                      detail: [
+                        forkContext.omittedItemCount > 0
+                          ? `${forkContext.includedItemCount} items sent; ${forkContext.omittedItemCount} older items stay readable on request.`
+                          : `${forkContext.includedItemCount} items sent.`,
+                        nativeForkUnavailable === null
+                          ? null
+                          : `A native fork was not possible: ${nativeForkUnavailable}`,
+                      ]
+                        .filter((line) => line !== null)
+                        .join(" "),
+                      createdAt: event.payload.createdAt,
+                    }),
+                  ),
+                );
               }),
             ),
       ),

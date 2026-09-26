@@ -64,6 +64,10 @@ export const ProviderSessionStartInput = Schema.Struct({
   approvalPolicy: Schema.optional(ProviderApprovalPolicy),
   sandboxMode: Schema.optional(ProviderSandboxMode),
   runtimeMode: RuntimeMode,
+  // SCIENT-FORK: start a new provider-native thread as a native fork of the
+  // source thread's conversation, inclusive through `throughTurnId`. Honoured
+  // only by adapters that declare `nativeFork`; ignored when resuming.
+  forkFrom: Schema.optional(Schema.Struct({ resumeCursor: Schema.Unknown, throughTurnId: TurnId })),
 });
 export type ProviderSessionStartInput = typeof ProviderSessionStartInput.Type;
 

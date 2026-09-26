@@ -29,6 +29,7 @@ import {
   PROVIDER_CONTEXT_PREAMBLE_MAX_CHARS,
   ThreadForkMidTurnCut,
   ThreadId,
+  TurnId,
   type ChatAttachment,
   type OrchestrationMessage,
   type OrchestrationThread,
@@ -71,6 +72,12 @@ export type ForkTurnContext =
       readonly budgetTokens: number;
     };
 
+/** Where a native fork clones from: the source's provider thread, through a turn. */
+export interface NativeForkPlan {
+  readonly resumeCursor: unknown;
+  readonly throughTurnId: TurnId;
+}
+
 export type ForkDeliveryOutcome =
   | { readonly type: "notSent" }
   | { readonly type: "accepted"; readonly nativeThreadKey: string | null }
@@ -100,6 +107,25 @@ export interface ScientForkContextDeliveryShape {
     readonly handoffId: string;
     readonly outcome: ForkDeliveryOutcome;
   }) => Effect.Effect<void, ScientForkContextError>;
+  /**
+   * A native provider fork is possible for this fork's first session: same
+   * provider instance as the source, a completed turn the source's provider
+   * thread itself produced, no running-turn cut, nothing delivered yet.
+   */
+  readonly planNativeFork: (input: {
+    readonly threadId: ThreadId;
+    readonly providerInstanceId: string;
+  }) => Effect.Effect<NativeForkPlan | null, ScientForkContextError>;
+  /** The provider cloned the conversation natively: nothing to hand off. */
+  readonly recordNativeFork: (input: {
+    readonly threadId: ThreadId;
+    readonly nativeThreadKey: string | null;
+  }) => Effect.Effect<void, ScientForkContextError>;
+  /** Native fork was attempted and failed; the portable handoff is used instead. */
+  readonly recordNativeForkUnavailable: (input: {
+    readonly threadId: ThreadId;
+    readonly reason: string;
+  }) => Effect.Effect<void, ScientForkContextError>;
   /** Supersedes handoffs whose carrying turn the revert removed. */
   readonly onThreadReverted: (input: {
     readonly threadId: ThreadId;
@@ -114,6 +140,7 @@ export class ScientForkContextDelivery extends Context.Service<
 
 const HandoffRow = Schema.Struct({
   handoff_id: Schema.String,
+  strategy: Schema.String,
   native_thread_key: Schema.NullOr(Schema.String),
   rebind_pending: Schema.Number,
   delivery_status: Schema.Literals(["pending", "inline", "superseded"]),
@@ -131,6 +158,10 @@ const TransferRow = Schema.Struct({
 const decodeTransferRows = Schema.decodeUnknownEffect(Schema.Array(TransferRow));
 const decodeMidTurnCut = Schema.decodeUnknownOption(Schema.fromJsonString(ThreadForkMidTurnCut));
 const decodeUsageJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
+
+const NATIVE_FORK_STRATEGY = "native_fork";
+const LEGACY_FORK_BOUNDARY_TURN_ID = "legacy-fork-boundary";
+const decodeUnknownJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
 /** Keeps the preamble well under the transport ceiling for any window. */
 const MAX_BUDGET_TOKENS = Math.floor(PROVIDER_CONTEXT_PREAMBLE_MAX_CHARS / 4);
@@ -185,7 +216,8 @@ const make = Effect.gen(function* () {
 
   const readActiveHandoffs = (threadId: ThreadId) =>
     sql<Record<string, unknown>>`
-      SELECT handoff_id, native_thread_key, rebind_pending, delivery_status, message_id, turn_id
+      SELECT
+        handoff_id, strategy, native_thread_key, rebind_pending, delivery_status, message_id, turn_id
       FROM scient_context_handoffs
       WHERE thread_id = ${threadId} AND delivery_status IN ('pending', 'inline')
       ORDER BY created_at DESC, handoff_id DESC
@@ -317,7 +349,9 @@ const make = Effect.gen(function* () {
       // Rebinding deliveries (migrated from the old flag, or kept by a revert
       // that may have moved the provider to a new native thread) are trusted.
       const rebinding = handoff.rebind_pending === 1;
-      if (!rebinding && handoff.turn_id === null) {
+      // A native fork holds the conversation in the provider thread itself.
+      const native = handoff.strategy === NATIVE_FORK_STRATEGY;
+      if (!rebinding && !native && handoff.turn_id === null) {
         const turnId = yield* providerTurnFor(input.threadId, handoff.message_id);
         if (turnId !== undefined) {
           yield* updateHandoff(input.threadId, handoff.handoff_id, { turnId });
@@ -496,6 +530,107 @@ const make = Effect.gen(function* () {
     }
   });
 
+  const planNativeFork: ScientForkContextDeliveryShape["planNativeFork"] = Effect.fn(
+    "planScientNativeFork",
+  )(function* (input) {
+    const rows = yield* sql<{
+      readonly status: string;
+      readonly source_thread_id: string;
+      readonly fork_point_turn_id: string | null;
+      readonly inherited_turn_ids_json: string;
+      readonly mid_turn_cut_json: string | null;
+    }>`
+      SELECT
+        transfer.status AS status,
+        transfer.source_thread_id AS source_thread_id,
+        lineage.fork_point_turn_id AS fork_point_turn_id,
+        lineage.mid_turn_cut_json AS mid_turn_cut_json,
+        COALESCE(source_lineage.inherited_turn_ids_json, '[]') AS inherited_turn_ids_json
+      FROM scient_context_transfers AS transfer
+      JOIN scient_thread_lineage AS lineage ON lineage.thread_id = transfer.thread_id
+      LEFT JOIN scient_thread_lineage AS source_lineage
+        ON source_lineage.thread_id = transfer.source_thread_id
+      WHERE transfer.thread_id = ${input.threadId}
+      LIMIT 1
+    `.pipe(Effect.mapError(fail(input.threadId, "Unable to read the fork's source.")));
+    const fork = rows[0];
+    if (
+      fork === undefined ||
+      fork.status !== "pending" ||
+      fork.mid_turn_cut_json !== null ||
+      fork.fork_point_turn_id === null ||
+      fork.fork_point_turn_id === LEGACY_FORK_BOUNDARY_TURN_ID
+    ) {
+      return null;
+    }
+    // A turn the source itself inherited was never a turn of its provider thread.
+    if (fork.inherited_turn_ids_json.includes(`"${fork.fork_point_turn_id}"`)) return null;
+    if ((yield* readActiveHandoffs(input.threadId)).length > 0) return null;
+    const turns = yield* sql<{ readonly state: string }>`
+      SELECT state FROM projection_turns
+      WHERE thread_id = ${fork.source_thread_id} AND turn_id = ${fork.fork_point_turn_id}
+      LIMIT 1
+    `.pipe(Effect.mapError(fail(input.threadId, "Unable to read the forked turn.")));
+    if (turns[0]?.state !== "completed") return null;
+    const bindings = yield* sql<{
+      readonly provider_instance_id: string | null;
+      readonly resume_cursor_json: string | null;
+    }>`
+      SELECT provider_instance_id, resume_cursor_json FROM provider_session_runtime
+      WHERE thread_id = ${fork.source_thread_id}
+      LIMIT 1
+    `.pipe(Effect.mapError(fail(input.threadId, "Unable to read the source provider thread.")));
+    const binding = bindings[0];
+    if (
+      binding === undefined ||
+      binding.provider_instance_id !== input.providerInstanceId ||
+      binding.resume_cursor_json === null
+    ) {
+      return null;
+    }
+    const resumeCursor = Option.getOrUndefined(decodeUnknownJson(binding.resume_cursor_json));
+    if (resumeCursor === undefined || resumeCursor === null) return null;
+    return { resumeCursor, throughTurnId: TurnId.make(fork.fork_point_turn_id) };
+  });
+
+  const recordNativeFork: ScientForkContextDeliveryShape["recordNativeFork"] = Effect.fn(
+    "recordScientNativeFork",
+  )(function* (input) {
+    const now_ = yield* now;
+    const handoffId = `native:${input.threadId}`;
+    yield* sql`
+      INSERT OR REPLACE INTO scient_context_handoffs (
+        handoff_id, thread_id, strategy, native_thread_key, rebind_pending,
+        delivery_status, created_at, updated_at
+      ) VALUES (
+        ${handoffId}, ${input.threadId}, ${NATIVE_FORK_STRATEGY}, ${input.nativeThreadKey}, 0,
+        'inline', ${now_}, ${now_}
+      )
+    `.pipe(Effect.mapError(fail(input.threadId, "Unable to record the native fork.")));
+    // @effect-diagnostics-next-line preferSchemaOverJson:off - fixed two-field record.
+    const resolution = JSON.stringify({
+      type: "native_fork",
+      providerThreadRef: input.nativeThreadKey,
+    });
+    yield* sql`
+      UPDATE scient_context_transfers
+      SET status = 'resolved_native', resolution_json = ${resolution}, fidelity = 'native',
+          error = NULL, updated_at = ${now_}
+      WHERE thread_id = ${input.threadId}
+    `.pipe(Effect.mapError(fail(input.threadId, "Unable to record the native fork.")));
+  });
+
+  const recordNativeForkUnavailable: ScientForkContextDeliveryShape["recordNativeForkUnavailable"] =
+    Effect.fn("recordScientNativeForkUnavailable")(function* (input) {
+      const updatedAt = yield* now;
+      yield* sql`
+        UPDATE scient_context_transfers
+        SET error = ${`Native fork unavailable: ${input.reason}`.slice(0, 2_000)},
+            updated_at = ${updatedAt}
+        WHERE thread_id = ${input.threadId}
+      `.pipe(Effect.mapError(fail(input.threadId, "Unable to record the native fork outcome.")));
+    });
+
   const onThreadReverted: ScientForkContextDeliveryShape["onThreadReverted"] = Effect.fn(
     "scientForkContextThreadReverted",
   )(function* (input) {
@@ -522,6 +657,9 @@ const make = Effect.gen(function* () {
     prepareTurn,
     beginDelivery,
     settleDelivery,
+    planNativeFork,
+    recordNativeFork,
+    recordNativeForkUnavailable,
     onThreadReverted,
   } satisfies ScientForkContextDeliveryShape;
 });
@@ -535,6 +673,9 @@ export const testLayer = (
     prepareTurn: () => Effect.succeed({ kind: "none" } as const),
     beginDelivery: () => Effect.void,
     settleDelivery: () => Effect.void,
+    planNativeFork: () => Effect.succeed(null),
+    recordNativeFork: () => Effect.void,
+    recordNativeForkUnavailable: () => Effect.void,
     onThreadReverted: () => Effect.void,
     ...overrides,
   });

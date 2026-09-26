@@ -204,6 +204,7 @@ describe("ProviderCommandReactor", () => {
       session: ProviderSession,
     ) => Effect.Effect<ProviderSession, ProviderServiceError>;
     readonly forkContextDelivery?: Partial<ScientForkContextDeliveryShape>;
+    readonly nativeFork?: boolean;
     readonly sendTurnEffect?: ProviderServiceShape["sendTurn"];
     readonly tryHandlePromptCommandEffect?: ProviderAuthService["Service"]["tryHandlePromptCommand"];
   }) {
@@ -402,6 +403,7 @@ describe("ProviderCommandReactor", () => {
       getCapabilities: (_provider) =>
         Effect.succeed({
           sessionModelSwitch: input?.sessionModelSwitch ?? "in-session",
+          ...(input?.nativeFork ? { nativeFork: true as const } : {}),
         }),
       assertConversationRollbackSupported: () => unsupported(),
       getInstanceInfo: (instanceId) => {
@@ -1115,6 +1117,77 @@ describe("ProviderCommandReactor", () => {
     expect(harness.discardSessionContinuity).toHaveBeenCalledWith({
       threadId: ThreadId.make("thread-1"),
     });
+  });
+
+  const nativePlan = {
+    resumeCursor: { threadId: "source-native" },
+    throughTurnId: asTurnId("source-turn"),
+  };
+
+  it("starts a fork's first session as a native provider fork", async () => {
+    const recordNativeFork = vi.fn<ScientForkContextDeliveryShape["recordNativeFork"]>(
+      () => Effect.void,
+    );
+    const harness = await createHarness({
+      forkLineage: true,
+      nativeFork: true,
+      forkContextDelivery: {
+        planNativeFork: () => Effect.succeed(nativePlan),
+        recordNativeFork,
+      },
+      startSessionEffect: (session) =>
+        Effect.succeed({ ...session, resumeCursor: { threadId: "forked-native" } }),
+    });
+
+    await startForkTurn(harness, "fork-native-message");
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({ forkFrom: nativePlan });
+    expect(recordNativeFork).toHaveBeenCalledWith({
+      threadId: ThreadId.make("thread-1"),
+      nativeThreadKey: "codex:forked-native",
+    });
+  });
+
+  it("records an unavailable native fork and continues with the portable handoff", async () => {
+    let attempts = 0;
+    const recordNativeForkUnavailable = vi.fn<
+      ScientForkContextDeliveryShape["recordNativeForkUnavailable"]
+    >(() => Effect.void);
+    const recordNativeFork = vi.fn<ScientForkContextDeliveryShape["recordNativeFork"]>(
+      () => Effect.void,
+    );
+    const harness = await createHarness({
+      forkLineage: true,
+      nativeFork: true,
+      forkContextDelivery: {
+        planNativeFork: () => Effect.succeed(nativePlan),
+        recordNativeFork,
+        recordNativeForkUnavailable,
+        prepareTurn: () => Effect.succeed(deliverContext()),
+      },
+      startSessionEffect: (session) =>
+        attempts++ === 0
+          ? Effect.fail(
+              new ProviderAdapterRequestError({
+                provider: "codex",
+                method: "thread/fork",
+                detail: "turn not found",
+              }),
+            )
+          : Effect.succeed(session),
+    });
+
+    await startForkTurn(harness, "fork-native-fallback-message");
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    expect(recordNativeForkUnavailable).toHaveBeenCalledWith({
+      threadId: ThreadId.make("thread-1"),
+      reason: "turn not found",
+    });
+    expect(recordNativeFork).not.toHaveBeenCalled();
+    expect(harness.startSession.mock.calls.at(-1)?.[1]).not.toHaveProperty("forkFrom");
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toHaveProperty("contextPreamble");
   });
 
   it("sends a plain turn when the fork already holds its context", async () => {

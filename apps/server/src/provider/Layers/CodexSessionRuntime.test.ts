@@ -965,6 +965,75 @@ describe("isRecoverableThreadResumeError", () => {
 });
 
 describe("openCodexThread", () => {
+  // SCIENT-FORK: a fork's first session clones the source thread natively.
+  it.effect("forks the source thread through the forked turn", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ method: string; payload: unknown }> = [];
+      const opened = yield* openCodexThread({
+        client: {
+          request: () => Effect.die("A native fork must not start a fresh thread"),
+          raw: {
+            request: (method, payload) => {
+              calls.push({ method, payload });
+              return Effect.succeed(makeThreadOpenResponse("forked-thread"));
+            },
+          },
+        },
+        threadId: ThreadId.make("fork-thread"),
+        runtimeMode: "full-access",
+        cwd: "/tmp/fork-worktree",
+        requestedModel: "gpt-5.3-codex",
+        serviceTier: undefined,
+        resumeThreadId: undefined,
+        forkFrom: { threadId: "source-thread", lastTurnId: "source-turn-2" },
+      });
+      NodeAssert.equal(opened.thread.id, "forked-thread");
+      NodeAssert.equal(calls.length, 1);
+      NodeAssert.equal(calls[0]?.method, "thread/fork");
+      NodeAssert.deepStrictEqual(
+        {
+          threadId: (calls[0]?.payload as { threadId: string }).threadId,
+          lastTurnId: (calls[0]?.payload as { lastTurnId: string }).lastTurnId,
+          cwd: (calls[0]?.payload as { cwd: string }).cwd,
+          excludeTurns: (calls[0]?.payload as { excludeTurns: boolean }).excludeTurns,
+        },
+        {
+          threadId: "source-thread",
+          lastTurnId: "source-turn-2",
+          cwd: "/tmp/fork-worktree",
+          excludeTurns: true,
+        },
+      );
+    }),
+  );
+
+  it.effect("surfaces a failed native fork instead of starting a fresh thread", () =>
+    Effect.gen(function* () {
+      const error = yield* openCodexThread({
+        client: {
+          request: () => Effect.die("A failed native fork must not start a fresh thread"),
+          raw: {
+            request: () =>
+              Effect.fail(
+                new CodexErrors.CodexAppServerRequestError({
+                  code: -32603,
+                  errorMessage: "turn not found",
+                }),
+              ),
+          },
+        },
+        threadId: ThreadId.make("fork-thread"),
+        runtimeMode: "full-access",
+        cwd: "/tmp/fork-worktree",
+        requestedModel: undefined,
+        serviceTier: undefined,
+        resumeThreadId: undefined,
+        forkFrom: { threadId: "source-thread", lastTurnId: "missing-turn" },
+      }).pipe(Effect.flip);
+      NodeAssert.equal(error._tag, "CodexAppServerRequestError");
+    }),
+  );
+
   it.effect("resumes metadata when historical turns contain unknown error values", () =>
     Effect.gen(function* () {
       const response = makeThreadOpenResponse("saved-thread");

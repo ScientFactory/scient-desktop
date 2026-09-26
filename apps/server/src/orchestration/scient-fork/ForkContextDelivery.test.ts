@@ -387,4 +387,97 @@ it.layer(layer)("ScientForkContextDelivery", (it) => {
       assert.strictEqual(rows[0]?.status, "consumed");
     }),
   );
+
+  const seedNativeFork = (
+    options: {
+      readonly sourceInstance?: string;
+      readonly inheritedTurnIds?: string;
+      readonly midTurnCut?: string | null;
+    } = {},
+  ) =>
+    Effect.gen(function* () {
+      const sql = yield* reset;
+      yield* sql`DELETE FROM scient_thread_lineage`;
+      yield* sql`DELETE FROM provider_session_runtime`;
+      yield* sql`
+        INSERT INTO scient_thread_lineage (
+          thread_id, forked_from_thread_id, fork_point_turn_id, fork_point_turn_count,
+          baseline_turn_id, workspace_mode, provider_mode, provider_bootstrap_status,
+          fidelity_mode, status, checkpoint_status, workspace_status, attempt_count,
+          mid_turn_cut_json, created_at, updated_at
+        ) VALUES (
+          ${FORK}, 'origin-thread', 'source-turn-2', 2, 'baseline', 'local',
+          'transcript-bootstrap', 'pending', 'transcript-bootstrap', 'ready', 'ready', 'shared', 1,
+          ${options.midTurnCut ?? null}, ${NOW}, ${NOW}
+        ),
+        (
+          'origin-thread', 'grand-origin', NULL, 0, 'origin-baseline', 'local',
+          'transcript-bootstrap', 'completed', 'transcript-bootstrap', 'ready', 'ready', 'shared',
+          1, NULL, ${NOW}, ${NOW}
+        )
+      `;
+      yield* sql`
+        UPDATE scient_thread_lineage
+        SET inherited_turn_ids_json = ${options.inheritedTurnIds ?? '["origin-baseline"]'}
+        WHERE thread_id = 'origin-thread'
+      `;
+      yield* sql`
+        INSERT INTO projection_turns (
+          thread_id, turn_id, state, requested_at, checkpoint_turn_count, checkpoint_files_json
+        ) VALUES ('origin-thread', 'source-turn-2', 'completed', ${NOW}, 2, '[]')
+      `;
+      yield* sql`
+        INSERT INTO provider_session_runtime (
+          thread_id, provider_name, adapter_key, provider_instance_id, runtime_mode, status,
+          last_seen_at, resume_cursor_json
+        ) VALUES (
+          'origin-thread', 'codex', 'codex', ${options.sourceInstance ?? "codex"}, 'full-access',
+          'stopped', ${NOW}, '{"threadId":"source-native-thread"}'
+        )
+      `;
+    });
+
+  const plan = (providerInstanceId = "codex") =>
+    Effect.flatMap(ScientForkContextDelivery, (delivery) =>
+      delivery.planNativeFork({ threadId: FORK, providerInstanceId }),
+    );
+
+  it.effect("plans a native fork from the source's own provider thread", () =>
+    Effect.gen(function* () {
+      yield* seedNativeFork();
+      const result = yield* plan();
+      assert.deepEqual(result, {
+        resumeCursor: { threadId: "source-native-thread" },
+        throughTurnId: TurnId.make("source-turn-2"),
+      });
+    }),
+  );
+
+  it.effect("uses the portable handoff when a native fork cannot reproduce the fork", () =>
+    Effect.gen(function* () {
+      // Another provider instance cannot open the source's native thread.
+      yield* seedNativeFork();
+      assert.isNull(yield* plan("claude"));
+      // A turn the source itself inherited is not a turn of its provider thread.
+      yield* seedNativeFork({ inheritedTurnIds: '["origin-baseline","source-turn-2"]' });
+      assert.isNull(yield* plan());
+      // A running-turn fork always uses the portable handoff.
+      yield* seedNativeFork({ midTurnCut: "{}" });
+      assert.isNull(yield* plan());
+    }),
+  );
+
+  it.effect("a native fork needs no handoff until its provider thread is replaced", () =>
+    Effect.gen(function* () {
+      yield* seedNativeFork();
+      const delivery = yield* ScientForkContextDelivery;
+      yield* delivery.recordNativeFork({ threadId: FORK, nativeThreadKey: "codex:forked" });
+      assert.strictEqual((yield* prepare({ nativeThreadKey: "codex:forked" })).kind, "none");
+      // No provider evidence is needed: the conversation lives in the thread.
+      assert.strictEqual((yield* prepare({ nativeThreadKey: "codex:forked" })).kind, "none");
+      assert.strictEqual((yield* prepare({ nativeThreadKey: "codex:replaced" })).kind, "deliver");
+      // Once delivered or resolved, the fork is no longer eligible for a native fork.
+      assert.isNull(yield* plan());
+    }),
+  );
 });
