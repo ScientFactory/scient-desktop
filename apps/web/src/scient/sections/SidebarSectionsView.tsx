@@ -604,6 +604,13 @@ function SectionHeaderRow(props: {
             {...listeners}
           >
             <span className="min-w-0 shrink truncate">{label}</span>
+            <ChevronDownIcon
+              aria-hidden
+              className={cn(
+                "-ml-1 size-3 shrink-0 transition-transform",
+                !props.collapsed && "rotate-180",
+              )}
+            />
             {runningCount > 0 ? (
               <span
                 aria-label={`${runningCount} working`}
@@ -636,16 +643,6 @@ function SectionHeaderRow(props: {
             </HeaderIconButton>
           </span>
         ) : null}
-        {props.renaming ? null : (
-          <ChevronDownIcon
-            aria-hidden
-            onClick={props.onToggle}
-            className={cn(
-              "size-3 shrink-0 cursor-pointer transition-transform",
-              !props.collapsed && "rotate-180",
-            )}
-          />
-        )}
       </div>
     </li>
   );
