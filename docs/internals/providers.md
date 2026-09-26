@@ -491,7 +491,11 @@ by default for other uses and lets the user hide or reveal the email. These defa
 External runtime maintenance uses T3's ownership resolver in
 `apps/server/src/provider/providerMaintenance.ts`. It proves the resolved binary's installer,
 pins npm's owning prefix, and uses Homebrew's available version rather than npm's version for a
-Homebrew install. Homebrew and npm ownership are proven from the real path with symlinks
+Homebrew install. For official-tap packages that version comes from Homebrew's published API
+(`HOMEBREW_API_DOMAIN`, default `formulae.brew.sh`), which `brew upgrade` refreshes before
+installing; `brew info` only reads local metadata as of the last `brew update`. With
+`HOMEBREW_NO_INSTALL_FROM_API` or `HOMEBREW_NO_AUTO_UPDATE` set, or when the API is unreachable,
+`brew info` stays authoritative. Homebrew and npm ownership are proven from the real path with symlinks
 followed: a versioned keg or cask under `brew --prefix`, or `<prefix>/lib/node_modules/<pkg>/`
 (Windows: the shim beside `node_modules`). Native installer layouts and the global bin
 directories of pnpm, Bun, and Vite+ may match on either the resolved path or its real target,

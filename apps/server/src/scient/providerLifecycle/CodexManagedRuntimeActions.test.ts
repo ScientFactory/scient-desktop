@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 
 import { it as effectIt } from "@effect/vitest";
 import { describe, expect, it } from "vite-plus/test";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 
 import {
@@ -15,6 +16,8 @@ import {
   hasManagedCodexCodeModeHost,
   resolveCodexCatalogCandidate,
   resolveCodexCodeModeHostPath,
+  describeCodexCapabilityFailure,
+  isStandInForManagedCodex,
   resolveCodexManagedRuntimePolicy,
   resolveCodexRuntimeHomePath,
   resolveCodexRuntimeSource,
@@ -260,6 +263,53 @@ describe("Codex managed runtime policy", () => {
         managedInstallationAllowed: true,
       }).actions,
     ).toEqual(["repair", "remove"]);
+  });
+
+  it("keeps a short reason when the capability check fails", () => {
+    expect(describeCodexCapabilityFailure(Cause.fail(new Cause.TimeoutError()))).toBe(
+      "it did not answer within 8 seconds",
+    );
+    expect(describeCodexCapabilityFailure(Cause.fail(new Error("spawn EACCES\nstack trace")))).toBe(
+      "it failed to start: spawn EACCES",
+    );
+    expect(
+      describeCodexCapabilityFailure(
+        Cause.fail(
+          new Error(
+            "Failed to spawn Codex App Server process for command: /private/path/bin/codex app-server",
+          ),
+        ),
+      ),
+    ).toBe("it failed to start: Failed to spawn Codex App Server process");
+  });
+
+  it("offers PATH Codex updates only when no private copy is installed", () => {
+    const standIn = {
+      source: "system",
+      managedVersion: "0.157.0",
+      actions: ["repair", "remove"],
+    } as const;
+    expect(isStandInForManagedCodex(standIn)).toBe(true);
+    expect(isStandInForManagedCodex({ ...standIn, managedVersion: null })).toBe(false);
+    expect(isStandInForManagedCodex({ ...standIn, source: "scient_managed" })).toBe(false);
+    // Without a managed fix (a remote server, no assisted artifact), keep PATH updates.
+    expect(isStandInForManagedCodex({ ...standIn, actions: [] })).toBe(false);
+  });
+
+  it("keeps a newer managed release reachable while PATH Codex stands in", () => {
+    expect(
+      resolveCodexManagedRuntimePolicy({
+        source: "system",
+        artifact,
+        installed: true,
+        installedVersion: "1.0.0",
+        managedInstallationAllowed: true,
+      }),
+    ).toEqual({
+      supportTier: "fully_assisted",
+      actions: ["update", "repair", "remove"],
+      useManagedPath: false,
+    });
   });
 
   it("does not advertise managed mutation outside the local desktop", () => {

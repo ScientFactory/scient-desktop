@@ -9,7 +9,7 @@ For the behavior shared by all assisted providers, see [Providers in Scient](./p
 
 ## Enable and install
 
-Grok is an Early Access provider and is off by default. Enable it from the provider lifecycle
+Grok is off by default. Enable it from the provider lifecycle
 surface or in **Settings > Providers**.
 
 In the local desktop app, choose **Install** to add Scient's qualified Grok Build runtime. This copy

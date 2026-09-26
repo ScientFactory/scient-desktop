@@ -19,6 +19,9 @@ import {
   environmentGroupsWithUpdates,
   firstFailedProviderUpdateMessage,
   firstRejectedProviderUpdateMessage,
+  getManagedRuntimeUpdateResultToastView,
+  getManagedRuntimeUpdateRunningToastView,
+  getManagedRuntimeUpdateWaitingToastView,
   getProviderUpdateInitialToastView,
   getProviderUpdateProgressToastView,
   getProviderUpdateRejectedToastView,
@@ -30,12 +33,17 @@ import {
   isTerminalProviderUpdatePhase,
   localEnvironmentUpdateNotificationKey,
   managedRuntimeUpdateNotificationKey,
+  managedRuntimeUpdateTargets,
   providerUpdateNotificationKey,
   resolveEnvironmentUpdateRowStatus,
+  resolveManagedRuntimeUpdateOutcome,
+  settleManagedRuntimeUpdateRuns,
   shouldShowPrimaryProviderUpdateToast,
   type LocalEnvironmentProvidersInput,
   type LocalEnvironmentUpdateGroup,
   type LocalProviderUpdateOutcome,
+  type ManagedRuntimeUpdateRun,
+  type ManagedRuntimeUpdateTarget,
   type ProviderUpdateCandidate,
   type ProviderUpdateSidebarPillView,
   type ProviderUpdateToastView,
@@ -87,7 +95,9 @@ function provider(input: {
               target: "darwin-arm64",
               actions: input.runtimeActions ?? [],
               managedVersion:
-                input.runtimeSource === "scient_managed" ? (input.managedVersion ?? "1.0.0") : null,
+                input.runtimeSource === "scient_managed"
+                  ? (input.managedVersion ?? "1.0.0")
+                  : (input.managedVersion ?? null),
               availableManagedVersion:
                 input.availableManagedVersion ??
                 (input.runtimeActions?.includes("update") ? "1.1.0" : null),
@@ -1177,4 +1187,227 @@ it("does not offer incompatible latest versions and restores suggestions after p
     expect(isProviderUpdateCandidate(snapshot)).toBe(expected);
     expect(isProviderSettingsUpdateCandidate(snapshot)).toBe(expected);
   }
+});
+
+describe("managed runtime one-click updates", () => {
+  const macos = "local:macos" as EnvironmentId;
+  const wsl = "local:wsl" as EnvironmentId;
+  const managedCodex = (patch: { readonly instanceId?: string; readonly source?: "system" } = {}) =>
+    provider({
+      driver: driver("codex"),
+      instanceId: instanceId(patch.instanceId ?? "codex"),
+      runtimeSource: patch.source ?? "scient_managed",
+      runtimeActions: ["update", "repair", "remove"],
+      managedVersion: "0.157.0",
+      availableManagedVersion: "0.157.1",
+    });
+  const withOperation = (
+    snapshot: ServerProvider,
+    operation: Partial<
+      NonNullable<NonNullable<ServerProvider["connection"]>["runtime"]>["operation"]
+    >,
+    managedVersion = "0.157.0",
+  ): ServerProvider => ({
+    ...snapshot,
+    connection: {
+      ...snapshot.connection!,
+      runtime: {
+        ...snapshot.connection!.runtime!,
+        managedVersion,
+        operation: {
+          operationId: "op-1",
+          action: "update",
+          status: "downloading",
+          startedAt: checkedAt,
+          finishedAt: null,
+          message: "Downloading.",
+          ...operation,
+        },
+      },
+    },
+  });
+  const target: ManagedRuntimeUpdateTarget = {
+    environmentId: macos,
+    environmentLabel: "macOS",
+    instanceId: instanceId("codex"),
+    driver: driver("codex"),
+    availableVersion: "0.157.1",
+  };
+
+  it("offers the update while system Codex stands in for a failed private copy", () => {
+    expect(isManagedRuntimeUpdateCandidate(managedCodex({ source: "system" }))).toBe(true);
+  });
+
+  it("updates one shared runtime per environment and driver", () => {
+    const groups = buildLocalEnvironmentUpdateGroups([
+      {
+        environmentId: macos,
+        label: "macOS",
+        isPrimary: true,
+        connectionState: "ready",
+        providers: [managedCodex(), managedCodex({ instanceId: "codex_work" })],
+      },
+      {
+        environmentId: wsl,
+        label: "WSL",
+        isPrimary: false,
+        connectionState: "ready",
+        providers: [managedCodex()],
+      },
+    ]).groups;
+    const targets = managedRuntimeUpdateTargets(collectManagedRuntimeUpdateCandidates(groups));
+    expect(targets.map(({ environmentId, instanceId }) => [environmentId, instanceId])).toEqual([
+      [macos, "codex"],
+      [wsl, "codex"],
+    ]);
+  });
+
+  it("reads the started operation's terminal state", () => {
+    const base = managedCodex();
+    const resolve = (snapshot: ServerProvider | undefined, observed = true) =>
+      resolveManagedRuntimeUpdateOutcome({
+        provider: snapshot,
+        operationId: "op-1",
+        observed,
+        expectedVersion: "0.157.1",
+      });
+    expect(resolve(withOperation(base, {}))).toEqual({ status: "pending" });
+    expect(resolve(withOperation(base, { status: "succeeded" }, "0.157.1"))).toEqual({
+      status: "succeeded",
+      version: "0.157.1",
+    });
+    expect(
+      resolve(withOperation(base, { status: "failed", message: "Checksum mismatch." })),
+    ).toEqual({ status: "failed", message: "Checksum mismatch." });
+  });
+
+  it("waits for a lagging snapshot, then settles a vanished operation by version", () => {
+    const base = managedCodex();
+    const resolve = (snapshot: ServerProvider, observed: boolean) =>
+      resolveManagedRuntimeUpdateOutcome({
+        provider: snapshot,
+        operationId: "op-1",
+        observed,
+        expectedVersion: "0.157.1",
+      });
+    expect(resolve(base, false)).toEqual({ status: "pending" });
+    expect(resolve(withOperation(base, { operationId: "other" }, "0.157.1"), true)).toEqual({
+      status: "succeeded",
+      version: "0.157.1",
+    });
+    expect(resolve(base, true)).toMatchObject({ status: "failed" });
+  });
+
+  it("marks runs observed from the environment's snapshot before settling them", () => {
+    const run: ManagedRuntimeUpdateRun = {
+      target,
+      operationId: "op-1",
+      observed: false,
+      outcome: { status: "pending" },
+      waitingMessage: null,
+    };
+    const [inFlight] = settleManagedRuntimeUpdateRuns(
+      [run],
+      [{ environmentId: macos, providers: [withOperation(managedCodex(), {})] }],
+    );
+    expect(inFlight).toMatchObject({ observed: true, outcome: { status: "pending" } });
+    const [lagging] = settleManagedRuntimeUpdateRuns(
+      [run],
+      [{ environmentId: macos, providers: [managedCodex()] }],
+    );
+    expect(lagging).toMatchObject({ observed: false, outcome: { status: "pending" } });
+    const failedStart: ManagedRuntimeUpdateRun = {
+      ...run,
+      operationId: null,
+      outcome: { status: "failed", message: "x" },
+    };
+    expect(settleManagedRuntimeUpdateRuns([failedStart], [])).toEqual([failedStart]);
+  });
+
+  it("carries the server's waiting message while a staged update waits for idle", () => {
+    const run: ManagedRuntimeUpdateRun = {
+      target,
+      operationId: "op-1",
+      observed: false,
+      outcome: { status: "pending" },
+      waitingMessage: null,
+    };
+    const [waiting] = settleManagedRuntimeUpdateRuns(
+      [run],
+      [
+        {
+          environmentId: macos,
+          providers: [
+            withOperation(managedCodex(), {
+              status: "activating",
+              waitingForIdle: true,
+              message: "Waiting for running Codex turns.",
+            }),
+          ],
+        },
+      ],
+    );
+    expect(waiting).toMatchObject({
+      waitingMessage: "Waiting for running Codex turns.",
+      outcome: { status: "pending" },
+    });
+  });
+
+  it("does not call an update successful while the system runtime is still in use", () => {
+    const standingIn = managedCodex({ source: "system" });
+    expect(
+      resolveManagedRuntimeUpdateOutcome({
+        provider: withOperation(standingIn, { status: "succeeded" }, "0.157.1"),
+        operationId: "op-1",
+        observed: true,
+        expectedVersion: "0.157.1",
+      }),
+    ).toMatchObject({ status: "failed" });
+  });
+
+  it("reports a lost environment instead of waiting forever", () => {
+    expect(
+      resolveManagedRuntimeUpdateOutcome({
+        provider: undefined,
+        operationId: "op-1",
+        observed: false,
+        expectedVersion: "0.157.1",
+      }),
+    ).toMatchObject({ status: "failed", message: expect.stringContaining("lost contact") });
+  });
+
+  it("stays quiet when the user cancels every update", () => {
+    const cancelled = resolveManagedRuntimeUpdateOutcome({
+      provider: withOperation(managedCodex(), { status: "cancelled" }),
+      operationId: "op-1",
+      observed: true,
+      expectedVersion: "0.157.1",
+    });
+    expect(cancelled).toEqual({ status: "cancelled" });
+    expect(
+      getManagedRuntimeUpdateResultToastView([{ target, outcome: { status: "cancelled" } }]),
+    ).toBeNull();
+  });
+
+  it("names the provider and version in waiting, running, and result notices", () => {
+    expect(getManagedRuntimeUpdateWaitingToastView([target], "Waiting for turns.")).toMatchObject({
+      title: "Codex will update when idle",
+      description: "Waiting for turns.",
+    });
+    expect(getManagedRuntimeUpdateRunningToastView([target]).title).toBe("Updating Codex v0.157.1");
+    expect(
+      getManagedRuntimeUpdateResultToastView([
+        { target, outcome: { status: "succeeded", version: "0.157.1" } },
+      ]),
+    ).toMatchObject({ type: "success", title: "Codex updated to v0.157.1" });
+    expect(
+      getManagedRuntimeUpdateResultToastView([
+        { target, outcome: { status: "failed", message: "Checksum mismatch." } },
+      ]),
+    ).toMatchObject({
+      type: "error",
+      title: "Codex update failed",
+      description: "Checksum mismatch.",
+    });
+  });
 });

@@ -169,6 +169,29 @@ export function canManageProviderLifecycle(provider: ServerProvider | undefined)
  * no longer starts correctly. Route that state to runtime recovery instead of
  * presenting account sign-in as the next action.
  */
+/**
+ * The installed private runtime failed its capability check, so a healthy
+ * system runtime is standing in for it until the private copy is repaired or
+ * updated.
+ */
+export function isManagedRuntimeBypassed(provider: ServerProvider | undefined): boolean {
+  const runtime = provider?.connection?.runtime;
+  return (
+    runtime?.source === "system" &&
+    runtime.managedVersion !== null &&
+    runtime.actions.includes("repair")
+  );
+}
+
+/** An installed runtime version this release does not support, which Scient can replace. */
+export function hasInstallableCompatibilityRemedy(provider: ServerProvider | undefined): boolean {
+  const status = provider?.compatibilityAdvisory?.status;
+  return (
+    (status === "unsupported" || status === "broken") &&
+    (provider?.connection?.runtime?.actions.includes("install") ?? false)
+  );
+}
+
 export function needsManagedRuntimeRecovery(provider: ServerProvider | undefined): boolean {
   const runtime = provider?.connection?.runtime;
   return (

@@ -483,8 +483,10 @@ export class ManagedProviderRuntime {
     readonly signal: AbortSignal;
     readonly onProgress?: (progress: ManagedProviderRuntimeProgress) => void;
     readonly qualify?: (input: ManagedProviderRuntimeQualificationInput) => Promise<void>;
+    /** Runs after staging and smoke testing, immediately before the live runtime changes. */
+    readonly beforeActivate?: (signal: AbortSignal) => Promise<void>;
   }): Promise<ManagedProviderRuntimeStatus> {
-    const { artifact, signal, onProgress, qualify } = input;
+    const { artifact, signal, onProgress, qualify, beforeActivate } = input;
     if (artifact.supportTier !== "fully_assisted") {
       throw new ManagedProviderRuntimeError(artifact.supportMessage);
     }
@@ -557,6 +559,8 @@ export class ManagedProviderRuntime {
         artifact.smokeEnvironment,
         { ...(smokeWorkingDirectory ? { cwd: smokeWorkingDirectory } : {}), signal },
       );
+      if (signal.aborted) throw new DOMException("Installation cancelled.", "AbortError");
+      await beforeActivate?.(signal);
       if (signal.aborted) throw new DOMException("Installation cancelled.", "AbortError");
       onProgress?.({ stage: "activating" });
       await NodeFSP.mkdir(NodePath.dirname(destination), { recursive: true, mode: 0o700 });

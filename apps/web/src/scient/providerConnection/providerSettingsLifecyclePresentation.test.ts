@@ -354,6 +354,110 @@ describe("provider settings lifecycle presentation", () => {
     });
   });
 
+  describe("when system Codex stands in for the private copy", () => {
+    const standingIn = (
+      runtimePatch: Partial<NonNullable<NonNullable<ServerProvider["connection"]>["runtime"]>>,
+    ) =>
+      provider({
+        installed: true,
+        version: "0.155.1",
+        status: "ready",
+        auth: { status: "authenticated", required: true, label: "ChatGPT" },
+        models: [{ slug: "gpt-5", name: "GPT-5", isCustom: false, capabilities: null }],
+        connection: {
+          methods: ["codex_browser"],
+          canDisconnect: true,
+          operation: null,
+          runtime: {
+            source: "system",
+            supportTier: "fully_assisted",
+            target: "darwin-arm64",
+            actions: ["repair", "remove"],
+            managedVersion: "0.157.0",
+            previousManagedVersion: null,
+            operation: null,
+            message: "Scient is using healthy PATH Codex because the private copy failed.",
+            ...runtimePatch,
+          },
+        },
+      });
+
+    it("says so and offers repair instead of calling the provider ready", () => {
+      expect(providerSettingsLifecyclePresentation(standingIn({}), "Codex")).toMatchObject({
+        kind: "attention",
+        statusLabel: "Using system Codex",
+        detail: "Scient is using healthy PATH Codex because the private copy failed.",
+        actionKind: "runtime",
+        runtimeAction: "repair",
+      });
+    });
+
+    it("prefers a newer private release, which re-runs the capability check", () => {
+      expect(
+        providerSettingsLifecyclePresentation(
+          standingIn({ actions: ["update", "repair", "remove"] }),
+          "Codex",
+        ),
+      ).toMatchObject({ actionLabel: "Update", runtimeAction: "update" });
+    });
+
+    it("does not claim a fallback when the private copy cannot be repaired", () => {
+      expect(
+        providerSettingsLifecyclePresentation(standingIn({ actions: [] }), "Codex"),
+      ).toMatchObject({ kind: "ready", actionKind: "manage" });
+    });
+  });
+
+  describe("with an installed version this release does not support", () => {
+    const unsupported = (actions: ReadonlyArray<"install">) =>
+      provider({
+        installed: true,
+        version: "0.155.1",
+        status: "ready",
+        auth: { status: "authenticated", required: true, label: "ChatGPT" },
+        models: [{ slug: "gpt-5", name: "GPT-5", isCustom: false, capabilities: null }],
+        compatibilityAdvisory: {
+          status: "unsupported",
+          message: "This provider version is outside the supported range. Use >=0.156.0.",
+          recommendedVersion: null,
+          recommendedRange: ">=0.156.0",
+        },
+        connection: {
+          methods: ["codex_browser"],
+          canDisconnect: true,
+          operation: null,
+          runtime: {
+            source: "system",
+            supportTier: "fully_assisted",
+            target: "darwin-arm64",
+            actions: [...actions],
+            managedVersion: null,
+            previousManagedVersion: null,
+            operation: null,
+            message: "Scient is using the healthy Codex runtime already installed.",
+          },
+        },
+      });
+
+    it("offers Scient's verified runtime as the remedy", () => {
+      expect(
+        providerSettingsLifecyclePresentation(unsupported(["install"]), "Codex"),
+      ).toMatchObject({
+        kind: "attention",
+        statusLabel: "Unsupported version",
+        actionKind: "runtime",
+        runtimeAction: "install",
+      });
+    });
+
+    it("keeps management when Scient cannot install a replacement", () => {
+      expect(providerSettingsLifecyclePresentation(unsupported([]), "Codex")).toMatchObject({
+        kind: "ready",
+        actionKind: "manage",
+      });
+    });
+  });
+
   it("uses concise Factory subscription guidance for Droid pairing", () => {
     expect(
       providerSettingsLifecyclePresentation(
@@ -472,6 +576,22 @@ describe("provider settings lifecycle presentation", () => {
       ).toBeUndefined();
     },
   );
+
+  it("says a staged runtime is waiting for running turns instead of claiming progress", () => {
+    expect(
+      presentingOperation({
+        status: "activating",
+        waitingForIdle: true,
+        message: "Ready. Waiting for running Codex turns to finish before switching.",
+      }),
+    ).toMatchObject({
+      kind: "installing",
+      statusLabel: "Waiting",
+      actionLabel: "Waiting",
+      detail: "Ready. Waiting for running Codex turns to finish before switching.",
+      busy: true,
+    });
+  });
 
   it("keeps an installation failure distinct from a missing runtime", () => {
     expect(

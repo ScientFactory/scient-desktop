@@ -173,6 +173,7 @@ export interface ProviderManagedRuntimeProgress {
   readonly message: string;
   readonly downloadedBytes?: number | undefined;
   readonly totalBytes?: number | undefined;
+  readonly waitingForIdle?: boolean | undefined;
 }
 
 export interface ProviderManagedRuntimeActions {
@@ -180,11 +181,25 @@ export interface ProviderManagedRuntimeActions {
   readonly plan: (
     action: ProviderManagedRuntimeAction,
   ) => Effect.Effect<Omit<ProviderRuntimePlan, "instanceId">, ProviderConnectionActionFailure>;
+  /**
+   * Runs a planned action. Download, verification, and staging may proceed
+   * while the provider is in use; `awaitActivationWindow` must complete
+   * immediately before the live runtime changes. The runtime manager always
+   * supplies it: it waits for the provider's running work to finish and then
+   * stops its sessions. Direct callers such as tests may omit it.
+   */
   readonly run: (
     action: ProviderManagedRuntimeAction,
     catalogRevision: string,
     report: (progress: ProviderManagedRuntimeProgress) => Effect.Effect<void>,
+    awaitActivationWindow?: Effect.Effect<void, ProviderConnectionActionFailure>,
   ) => Effect.Effect<void, ProviderConnectionActionFailure>;
+  /**
+   * Whether a fresh check would select a different runtime than the one this
+   * instance launches, for providers whose selection can fall back. The owner
+   * reloads the instance when it returns true.
+   */
+  readonly selectionChanged?: Effect.Effect<boolean>;
 }
 
 export interface ProviderContinuationIdentity {

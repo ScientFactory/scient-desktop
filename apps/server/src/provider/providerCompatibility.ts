@@ -5,7 +5,11 @@ import {
   type ServerProvider,
   type ServerProviderCompatibilityAdvisory,
 } from "@t3tools/contracts";
-import { satisfiesSemverRange } from "@t3tools/shared/semver";
+import {
+  compareSemverVersions,
+  normalizeSemverVersion,
+  satisfiesSemverRange,
+} from "@t3tools/shared/semver";
 import * as Schema from "effect/Schema";
 import packageJson from "../../package.json" with { type: "json" };
 
@@ -56,14 +60,31 @@ export const ProviderCompatibilityPolicy = Policy.pipe(
 );
 export type ProviderCompatibilityPolicy = typeof ProviderCompatibilityPolicy.Type;
 
+const FIRST_SCIENT_RELEASE_VERSION = "0.6.0";
+const DEVELOPMENT_BUILD_VERSION = `${Number.MAX_SAFE_INTEGER}.0.0`;
+
+/**
+ * The version a policy's `t3CodeRange` is matched against. Installed releases
+ * fetch the manifest from `main`, so policies that follow code on `main` must be
+ * scoped to the next Scient release. Release builds are stamped with their Scient
+ * version; unstamped development builds keep upstream's 0.0.x version but run
+ * `main`'s code, so they match as newer than every release.
+ */
+export function compatibilityBuildVersion(buildVersion: string): string {
+  return compareSemverVersions(buildVersion, FIRST_SCIENT_RELEASE_VERSION) < 0
+    ? DEVELOPMENT_BUILD_VERSION
+    : buildVersion;
+}
+
 export function resolveProviderCompatibility(
   policies: ReadonlyArray<ProviderCompatibilityPolicy> | undefined,
   driver: ProviderDriverKind,
   version: string | null,
   t3CodeVersion = packageJson.version,
 ): ServerProviderCompatibilityAdvisory | undefined {
+  const buildVersion = compatibilityBuildVersion(t3CodeVersion);
   const policy = policies?.find(
-    (entry) => entry.driver === driver && satisfiesSemverRange(t3CodeVersion, entry.t3CodeRange),
+    (entry) => entry.driver === driver && satisfiesSemverRange(buildVersion, entry.t3CodeRange),
   );
   if (!policy) return undefined;
   const unprefixed = version?.replace(/^v/, "");
@@ -99,7 +120,60 @@ export function resolveProviderCompatibility(
   };
 }
 
-/** A remote policy replaces its matching bundled policy; omission keeps the bundle. */
+const isScientVersion = (version: string) =>
+  compareSemverVersions(normalizeSemverVersion(version), FIRST_SCIENT_RELEASE_VERSION) >= 0;
+
+/**
+ * A range is written for Scient releases when every alternative is bounded in
+ * Scient's version space: its lower bound is a Scient release, or it has only
+ * an upper bound above the first release (`<0.6.18`). Upstream ranges start in
+ * T3's 0.0.x space (`>=0.0.42`, `>=0.0.42 <1.0.0`).
+ */
+function namesScientRelease(range: string): boolean {
+  return range.split("||").every((group) => {
+    const comparators = [...group.matchAll(/(\^|>=|>|<=|<|=)?\s*v?(\d+(?:\.\d+){0,2})/g)];
+    const lower = comparators.filter(([, operator]) => operator !== "<" && operator !== "<=");
+    const bounds = lower.length > 0 ? lower : comparators;
+    return (
+      bounds.length > 0 &&
+      bounds.every(([, , version]) => version !== undefined && isScientVersion(version))
+    );
+  });
+}
+
+/**
+ * The fetched manifest's policies that may apply to this build. The manifest
+ * is fetched from `main`, where upstream policies use T3's 0.0.x version space
+ * and describe `main`'s code. A release build therefore applies only policies
+ * whose range names a Scient release; everything else comes from its bundle.
+ */
+export function releaseScopedCompatibilityPolicies(
+  policies: ReadonlyArray<ProviderCompatibilityPolicy> | undefined,
+  t3CodeVersion = packageJson.version,
+): ReadonlyArray<ProviderCompatibilityPolicy> | undefined {
+  if (compatibilityBuildVersion(t3CodeVersion) !== t3CodeVersion) return policies;
+  return policies?.filter((policy) => namesScientRelease(policy.t3CodeRange));
+}
+
+/** A fetched policy scoped to this build replaces its bundled policy; omission keeps the bundle. */
+export function resolveManifestProviderCompatibility(input: {
+  readonly manifest: ReadonlyArray<ProviderCompatibilityPolicy> | undefined;
+  readonly bundled: ReadonlyArray<ProviderCompatibilityPolicy> | undefined;
+  readonly driver: ProviderDriverKind;
+  readonly version: string | null;
+  readonly t3CodeVersion?: string;
+}): ServerProviderCompatibilityAdvisory | undefined {
+  const t3CodeVersion = input.t3CodeVersion ?? packageJson.version;
+  return (
+    resolveProviderCompatibility(
+      releaseScopedCompatibilityPolicies(input.manifest, t3CodeVersion),
+      input.driver,
+      input.version,
+      t3CodeVersion,
+    ) ?? resolveProviderCompatibility(input.bundled, input.driver, input.version, t3CodeVersion)
+  );
+}
+
 export function applyProviderCompatibility(
   snapshot: ServerProvider,
   policies: ReadonlyArray<ProviderCompatibilityPolicy> | undefined,
@@ -107,14 +181,16 @@ export function applyProviderCompatibility(
 ): ServerProvider {
   const { compatibilityAdvisory: _previous, ...base } = snapshot;
   if (!snapshot.enabled || !snapshot.installed) return base;
-  const advisory =
-    resolveProviderCompatibility(policies, snapshot.driver, snapshot.version) ??
-    resolveProviderCompatibility(fallback, snapshot.driver, snapshot.version);
+  const resolve = (version: string | null) =>
+    resolveManifestProviderCompatibility({
+      manifest: policies,
+      bundled: fallback,
+      driver: snapshot.driver,
+      version,
+    });
+  const advisory = resolve(snapshot.version);
   const latestVersion = snapshot.versionAdvisory?.latestVersion;
-  const latestAdvisory = latestVersion
-    ? (resolveProviderCompatibility(policies, snapshot.driver, latestVersion) ??
-      resolveProviderCompatibility(fallback, snapshot.driver, latestVersion))
-    : undefined;
+  const latestAdvisory = latestVersion ? resolve(latestVersion) : undefined;
   return advisory
     ? {
         ...base,

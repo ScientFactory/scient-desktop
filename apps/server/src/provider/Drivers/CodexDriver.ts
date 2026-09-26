@@ -53,7 +53,10 @@ import type { ProviderDriver, ProviderInstance } from "../ProviderDriver.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import { makeCodexConnectionActions } from "../../scient/providerLifecycle/CodexConnectionActions.ts";
-import { makeCodexManagedRuntimeResolution } from "../../scient/providerLifecycle/CodexManagedRuntimeActions.ts";
+import {
+  isStandInForManagedCodex,
+  makeCodexManagedRuntimeResolution,
+} from "../../scient/providerLifecycle/CodexManagedRuntimeActions.ts";
 import { makeCodexVoiceTranscriptCorrection } from "../../scient/voice/CodexVoiceTranscriptCorrection.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
@@ -203,7 +206,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         homePath: homeLayout.effectiveHomePath ?? "",
       } satisfies CodexSettings;
       const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
-        (managedRuntime.usesManagedPath
+        (managedRuntime.usesManagedPath || isStandInForManagedCodex(managedRuntime.summary)
           ? Effect.succeed(
               makeManualOnlyProviderMaintenanceCapabilities({
                 provider: DRIVER_KIND,

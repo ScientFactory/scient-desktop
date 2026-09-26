@@ -187,6 +187,7 @@ import { forkParked, ServerActivation } from "./serverActivation.ts";
 // upstream route and service imports can continue to follow their native layout.
 import * as ProviderConnectionManager from "./scient/providerLifecycle/ProviderConnectionManager.ts";
 import * as ProviderLifecycleCoordinator from "./scient/providerLifecycle/ProviderLifecycleCoordinator.ts";
+import * as ProviderActivity from "./scient/providerLifecycle/ProviderActivity.ts";
 import * as ProviderRuntimeManager from "./scient/providerLifecycle/ProviderRuntimeManager.ts";
 import * as ManagedRuntimeCatalogReconciler from "./scient/providerLifecycle/ManagedRuntimeCatalogReconciler.ts";
 import * as GeneratedDocumentStore from "./scient/documentArtifacts/GeneratedDocumentStore.ts";
@@ -784,7 +785,10 @@ export const makeRoutesLayer = Layer.mergeAll(
       ProviderConnectionManager.layer,
       ProviderRuntimeManager.layer,
       ManagedRuntimeCatalogReconciler.layer,
-    ).pipe(Layer.provideMerge(ProviderLifecycleCoordinator.layer)),
+    ).pipe(
+      Layer.provideMerge(ProviderLifecycleCoordinator.layer),
+      Layer.provideMerge(ProviderActivity.layer),
+    ),
   ),
   // Both transports consume the same service instance, so caches single-flight across clients
   // and mutations observed on WebSocket invalidate patches subsequently read over HTTP.
