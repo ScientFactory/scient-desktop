@@ -176,6 +176,7 @@ export function useThreadActionMenu(input: {
             sectionCatalog.available && readEnvironmentSupportsSections(threadRef.environmentId)
               ? buildSectionSubmenu({
                   sections: sectionCatalog.sections,
+                  generalIndex: sectionCatalog.generalIndex,
                   currentSectionIds: [thread.sectionId ?? null],
                 })
               : null,

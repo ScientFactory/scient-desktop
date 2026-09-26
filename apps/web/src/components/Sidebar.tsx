@@ -246,6 +246,7 @@ import { useThreadSectionActions } from "../scient/sections/actions";
 import { useThreadSectionCatalog } from "../scient/sections/catalog";
 import {
   groupThreadsBySection,
+  sectionLayoutOrder,
   SidebarViewMode,
   type SectionsLifecycle,
 } from "../scient/sections/logic";
@@ -2847,12 +2848,11 @@ export default function Sidebar() {
     () =>
       groupThreadsBySection({
         sections: sectionCatalog.sections,
+        generalIndex: sectionCatalog.generalIndex,
         pinned: pinnedThreads,
         active: activeThreads,
-        // Empty sections stay visible: they are drop targets.
-        showEmptySections: true,
       }),
-    [activeThreads, pinnedThreads, sectionCatalog.sections],
+    [activeThreads, pinnedThreads, sectionCatalog.generalIndex, sectionCatalog.sections],
   );
   const orderedThreads = useMemo(
     () =>
@@ -3954,6 +3954,7 @@ export default function Sidebar() {
         )
           ? buildSectionSubmenu({
               sections: sectionCatalog.sections,
+              generalIndex: sectionCatalog.generalIndex,
               currentSectionIds: selectedThreads.map((thread) => thread.sectionId ?? null),
             })
           : null;
@@ -4241,6 +4242,7 @@ export default function Sidebar() {
                   true
                   ? buildSectionSubmenu({
                       sections: sectionCatalog.sections,
+                      generalIndex: sectionCatalog.generalIndex,
                       currentSectionIds: [thread.sectionId ?? null],
                     })
                   : null,
@@ -4594,8 +4596,9 @@ export default function Sidebar() {
     [setThreadSection],
   );
   useApplyPendingNewThreadSections({ threads, apply: applyPendingSection });
+  // General (null) starts an ordinary thread; a section files the new thread.
   const startNewThreadInSection = useCallback(
-    (section: ThreadSection) => {
+    (section: ThreadSection | null) => {
       const projectRef = resolveThreadActionProjectRef({
         activeDraftThread: newThreadContext.activeDraftThread,
         activeThread: newThreadContext.activeThread ?? undefined,
@@ -4605,7 +4608,9 @@ export default function Sidebar() {
       if (projectRef === null) return;
       if (isMobile) setOpenMobile(false);
       void newThreadContext.handleNewThread(projectRef).then((draft) => {
-        if (draft !== null) rememberSectionForNewThread(draft.threadId, section.id);
+        if (draft !== null && section !== null) {
+          rememberSectionForNewThread(draft.threadId, section.id);
+        }
       });
     },
     [isMobile, newThreadContext, setOpenMobile],
@@ -4667,7 +4672,7 @@ export default function Sidebar() {
         api.dialogs.confirm(
           memberCount === 0
             ? `Delete the section “${section.name}”?`
-            : `Delete the section “${section.name}”?\n\nIts ${memberCount} thread${memberCount === 1 ? "" : "s"} will move to No section. No conversations are deleted.`,
+            : `Delete the section “${section.name}”?\n\nIts ${memberCount} thread${memberCount === 1 ? "" : "s"} will move to General. No conversations are deleted.`,
           { variant: "destructive" },
         ),
       );
@@ -4694,7 +4699,9 @@ export default function Sidebar() {
     async (section: ThreadSection, position: { x: number; y: number }) => {
       const api = readLocalApi();
       if (!api) return;
-      const index = sectionCatalog.sections.findIndex((entry) => entry.id === section.id);
+      // Moves step over General like any other section.
+      const order = sectionLayoutOrder(sectionCatalog.sections, sectionCatalog.generalIndex);
+      const index = order.indexOf(section.id);
       const clicked = await settlePromise(() =>
         api.contextMenu.show(
           [
@@ -4704,7 +4711,7 @@ export default function Sidebar() {
             {
               id: "move-down",
               label: "Move down",
-              disabled: index < 0 || index >= sectionCatalog.sections.length - 1,
+              disabled: index < 0 || index >= order.length - 1,
             },
             {
               id: "delete",
@@ -4727,7 +4734,7 @@ export default function Sidebar() {
           return;
         case "move-up":
         case "move-down": {
-          const ids = sectionCatalog.sections.map((entry) => entry.id as string);
+          const ids = [...order];
           const target = clicked.value === "move-up" ? index - 1 : index + 1;
           ids.splice(index, 1);
           ids.splice(target, 0, section.id);
@@ -4739,7 +4746,13 @@ export default function Sidebar() {
           return;
       }
     },
-    [deleteSection, reorderSections, sectionCatalog.sections, startNewThreadInSection],
+    [
+      deleteSection,
+      reorderSections,
+      sectionCatalog.generalIndex,
+      sectionCatalog.sections,
+      startNewThreadInSection,
+    ],
   );
   const renderSectionsThreadRow = (
     thread: EnvironmentThreadShell,
@@ -5067,7 +5080,6 @@ export default function Sidebar() {
             >
               <SidebarSectionsView
                 groups={sectionGroups}
-                hasSections={sectionCatalog.sections.length > 0}
                 collapsedGroupIds={collapsedSectionIdSet}
                 routeThreadKey={routeThreadKey}
                 onToggleGroup={toggleSectionCollapsed}

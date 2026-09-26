@@ -42,7 +42,7 @@ import { cn } from "../../lib/utils";
 import { readEnvironmentSupportsSections, useThreadSectionActions } from "./actions";
 import { FadeTruncate } from "./FadeTruncate";
 import {
-  OTHER_SECTION_GROUP_ID,
+  GENERAL_SECTION_GROUP_ID,
   type SectionGroup,
   type SectionsDropTarget,
   type SectionsLifecycle,
@@ -66,8 +66,6 @@ export type SectionsRowSortable = Pick<
 
 export interface SidebarSectionsViewProps {
   readonly groups: readonly SectionGroup<Shell>[];
-  /** Label the unsectioned group "No section" only once sections exist. */
-  readonly hasSections: boolean;
   readonly collapsedGroupIds: ReadonlySet<string>;
   /** The open thread stays visible even inside a collapsed section. */
   readonly routeThreadKey: string | null;
@@ -99,7 +97,8 @@ export interface SidebarSectionsViewProps {
   readonly onSettleThread: (threadRef: ScopedThreadRef) => void;
   readonly onReorderSections: (orderedIds: readonly string[]) => void;
   readonly onSectionMenu: (section: ThreadSection, position: { x: number; y: number }) => void;
-  readonly onNewThreadInSection: (section: ThreadSection) => void;
+  /** Null starts an ordinary thread from General. */
+  readonly onNewThreadInSection: (section: ThreadSection | null) => void;
   readonly renamingSectionId: string | null;
   readonly onRenamingSectionChange: (sectionId: string | null) => void;
   readonly onRenameSection: (sectionId: string, name: string) => void;
@@ -277,32 +276,23 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
       const orderedGroupIds = groups.map((group) => group.id);
       const next = resolveSectionHeaderDrop(orderedGroupIds, activeGroupId, overGroupId);
       if (next === null) return;
-      const nextHeaderIds = new Set(next.map(sectionHeaderItemId));
-      // Hold the full layout in the new section order: unsectioned rows first,
-      // then the reordered sections, then the shelves.
+      // Hold the full layout in the new group order, shelves last.
       const blocks = new Map<string, string[]>();
       let current: string | null = null;
-      let pastSections = false;
-      const head: string[] = [];
       const tail: string[] = [];
       for (const item of items) {
         if (item.kind === "header") current = item.groupId;
-        else if (item.kind === "shelf") {
-          current = null;
-          pastSections = true;
-        }
-        if (current !== null && nextHeaderIds.has(sectionHeaderItemId(current))) {
+        else if (item.kind === "shelf") current = null;
+        if (current === null) {
+          tail.push(item.id);
+        } else {
           const block = blocks.get(current) ?? [];
           block.push(item.id);
           blocks.set(current, block);
-        } else if (pastSections) {
-          tail.push(item.id);
-        } else {
-          head.push(item.id);
         }
       }
       setHeld({
-        ids: [...head, ...next.flatMap((id) => blocks.get(id) ?? []), ...tail],
+        ids: [...next.flatMap((id) => blocks.get(id) ?? []), ...tail],
         expiresAt: Date.now() + HELD_LAYOUT_MS,
       });
       onReorderSections(next);
@@ -329,7 +319,7 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
         pinnedKeysById,
         activeKeysById,
         toSectionId: (groupId) =>
-          groupId === OTHER_SECTION_GROUP_ID ? null : ThreadSectionId.make(groupId),
+          groupId === GENERAL_SECTION_GROUP_ID ? null : ThreadSectionId.make(groupId),
       });
       const threadRef = scopeThreadRef(thread.environmentId, thread.id);
       if (plan.kind === "none") return;
@@ -450,7 +440,7 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
                   key={item.id}
                   itemId={item.id}
                   group={group}
-                  label={group.section?.name ?? (props.hasSections ? "No section" : "Threads")}
+                  label={group.section?.name ?? "General"}
                   collapsed={collapsedGroupIds.has(group.id)}
                   isDropTarget={dragTarget?.kind === "section" && dragTarget.groupId === group.id}
                   hidden={drag?.kind === "section" && drag.groupId === group.id}
@@ -463,7 +453,7 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
                     if (group.section) props.onSectionMenu(group.section, position);
                   }}
                   onNewThread={() => {
-                    if (group.section) props.onNewThreadInSection(group.section);
+                    props.onNewThreadInSection(group.section);
                   }}
                 />
               );
@@ -562,7 +552,7 @@ function SectionHeaderRow(props: {
   const isUserSection = group.section !== null;
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({
     id: props.itemId,
-    disabled: { draggable: !isUserSection || props.renaming },
+    disabled: { draggable: props.renaming },
   });
   const runningCount = props.collapsed
     ? group.threads.filter((thread) => thread.session?.status === "running").length
@@ -642,23 +632,29 @@ function SectionHeaderRow(props: {
             />
           </button>
         )}
-        {isUserSection && !props.renaming ? (
+        {props.renaming ? null : (
           <span className="pointer-events-none flex shrink-0 items-center gap-1.5 opacity-0 group-focus-within/section-header:pointer-events-auto group-focus-within/section-header:opacity-100 group-hover/section-header:pointer-events-auto group-hover/section-header:opacity-100">
+            {/* General can't be renamed or deleted, so it has no section menu. */}
+            {isUserSection ? (
+              <HeaderIconButton
+                label="Section actions"
+                onClick={(event) => {
+                  const rect = event.currentTarget.getBoundingClientRect();
+                  props.onMenu({ x: rect.left, y: rect.bottom + 4 });
+                }}
+              >
+                <EllipsisIcon className="size-3.5" />
+              </HeaderIconButton>
+            ) : null}
             <HeaderIconButton
-              label="Section actions"
-              onClick={(event) => {
-                const rect = event.currentTarget.getBoundingClientRect();
-                props.onMenu({ x: rect.left, y: rect.bottom + 4 });
-              }}
+              label={isUserSection ? "New thread in section" : "New thread"}
+              onClick={props.onNewThread}
             >
-              <EllipsisIcon className="size-3.5" />
-            </HeaderIconButton>
-            <HeaderIconButton label="New thread in section" onClick={props.onNewThread}>
               {/* Same glyph as the sidebar's New thread button. */}
               <SquarePenIcon className="size-3.5" />
             </HeaderIconButton>
           </span>
-        ) : null}
+        )}
       </div>
     </li>
   );

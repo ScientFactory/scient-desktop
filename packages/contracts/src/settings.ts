@@ -9,6 +9,7 @@ import {
   ForwardCompatibleOptional,
   OmittedWhenNull,
   ProjectId,
+  NonNegativeInt,
   ThreadSectionId,
   TrimmedNonEmptyString,
   TrimmedString,
@@ -1235,6 +1236,9 @@ export const ServerSettings = Schema.Struct({
   customModels: CustomModelsSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // SCIENT-FORK:START
   threadSections: ThreadSections.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  // Where the built-in General group (unsectioned threads) sits among the
+  // sections: 0 is first.
+  threadSectionsGeneralIndex: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
   // SCIENT-FORK:END
   worktreeCleanup: WorktreeCleanup.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   storageCleanup: StorageCleanupSettings.pipe(
@@ -1615,6 +1619,7 @@ const PiSettingsPatch = Schema.Struct({
 export const ServerSettingsPatch = Schema.Struct({
   // SCIENT-FORK:START — replaces the whole catalog; omitted leaves it alone.
   threadSections: Schema.optionalKey(ThreadSections),
+  threadSectionsGeneralIndex: Schema.optionalKey(NonNegativeInt),
   // SCIENT-FORK:END
   worktreeCleanup: Schema.optionalKey(
     Schema.NullOr(

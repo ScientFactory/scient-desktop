@@ -12,8 +12,8 @@ import * as Schema from "effect/Schema";
 export const SidebarViewMode = Schema.Literals(["status", "sections"]);
 export type SidebarViewMode = typeof SidebarViewMode.Type;
 
-/** Group id for threads without a (known) section. */
-export const OTHER_SECTION_GROUP_ID = "__other__";
+/** Group id for General: threads without a (known) section. */
+export const GENERAL_SECTION_GROUP_ID = "__general__";
 
 // ── Catalog ────────────────────────────────────────────────────────────
 
@@ -93,55 +93,94 @@ export function catalogWithRenamedSection(
   return { kind: "renamed", catalog };
 }
 
+/**
+ * The catalog plus where General sits among the sections. General is not a
+ * catalog entry: it holds every thread without a known section, and its
+ * position is stored separately as the number of sections before it.
+ */
+export interface SectionLayout {
+  readonly catalog: ThreadSection[];
+  readonly generalIndex: number;
+}
+
+function clampGeneralIndex(generalIndex: number, sectionCount: number): number {
+  return Math.max(0, Math.min(generalIndex, sectionCount));
+}
+
+/** Group ids in display order, General included. */
+export function sectionLayoutOrder(
+  sections: readonly ThreadSection[],
+  generalIndex: number,
+): string[] {
+  const ids: string[] = sections.map((section) => section.id);
+  ids.splice(clampGeneralIndex(generalIndex, ids.length), 0, GENERAL_SECTION_GROUP_ID);
+  return ids;
+}
+
 export interface RemovedSection {
   readonly section: ThreadSection;
   readonly index: number;
+  /** General's position before the removal, restored with the section. */
+  readonly generalIndex: number;
 }
 
 /** Threads keep the removed id, so restoring the entry brings them back. */
 export function catalogWithoutSection(
   sections: ThreadSections,
+  generalIndex: number,
   sectionId: string,
-): { readonly catalog: ThreadSection[]; readonly removed: RemovedSection | null } {
+): SectionLayout & { readonly removed: RemovedSection | null } {
   const ordered = sortThreadSections(sections);
+  const general = clampGeneralIndex(generalIndex, ordered.length);
   const index = ordered.findIndex((section) => section.id === sectionId);
-  if (index < 0) return { catalog: ordered, removed: null };
+  if (index < 0) return { catalog: ordered, generalIndex: general, removed: null };
   return {
     catalog: renumber(ordered.filter((section) => section.id !== sectionId)),
-    removed: { section: ordered[index]!, index },
+    // General keeps its neighbors when a section above it goes away.
+    generalIndex: index < general ? general - 1 : general,
+    removed: { section: ordered[index]!, index, generalIndex: general },
   };
 }
 
 export function catalogWithRestoredSection(
   sections: ThreadSections,
   removed: RemovedSection,
-): ThreadSection[] {
+): SectionLayout {
   const ordered = sortThreadSections(sections).filter(
     (section) => section.id !== removed.section.id,
   );
   ordered.splice(Math.min(removed.index, ordered.length), 0, removed.section);
-  return renumber(ordered);
+  return {
+    catalog: renumber(ordered),
+    generalIndex: clampGeneralIndex(removed.generalIndex, ordered.length),
+  };
 }
 
-export function catalogWithSectionOrder(
+/** Applies a dragged group order (General included) to the catalog. */
+export function layoutFromGroupOrder(
   sections: ThreadSections,
-  orderedIds: readonly string[],
-): ThreadSection[] {
+  orderedGroupIds: readonly string[],
+): SectionLayout {
   const byId = new Map(sections.map((section) => [section.id as string, section]));
-  const ordered = orderedIds.flatMap((id) => {
+  const ordered = orderedGroupIds.flatMap((id) => {
     const section = byId.get(id);
     return section ? [section] : [];
   });
+  const generalAt = orderedGroupIds.indexOf(GENERAL_SECTION_GROUP_ID);
+  const generalIndex =
+    generalAt < 0
+      ? ordered.length
+      : orderedGroupIds.slice(0, generalAt).filter((id) => byId.has(id)).length;
   // Sections created concurrently elsewhere keep their place at the end.
-  const listed = new Set(orderedIds);
+  const listed = new Set(orderedGroupIds);
   const rest = sortThreadSections(sections).filter((section) => !listed.has(section.id));
-  return renumber([...ordered, ...rest]);
+  return { catalog: renumber([...ordered, ...rest]), generalIndex };
 }
 
 // ── Grouping ───────────────────────────────────────────────────────────
 
 export interface SectionGroup<T> {
-  /** Section id, or OTHER_SECTION_GROUP_ID. */
+  /** Section id, or GENERAL_SECTION_GROUP_ID. */
   readonly id: string;
   readonly section: ThreadSection | null;
   readonly threads: readonly T[];
@@ -154,22 +193,23 @@ export function sectionGroupIdOf(
 ): string {
   return thread.sectionId != null && knownSectionIds.has(thread.sectionId)
     ? thread.sectionId
-    : OTHER_SECTION_GROUP_ID;
+    : GENERAL_SECTION_GROUP_ID;
 }
 
 /**
- * Pinned and active threads grouped by section. Unsectioned threads come
- * first, where new work appears in the Status view too, then sections in
- * catalog order. Each group keeps the Status view's order: pinned first, then
- * active. Snoozed and settled threads stay on their own shelves.
+ * Pinned and active threads grouped by section, with General (threads without
+ * a section, including new ones) at its stored position. Every section shows,
+ * even empty, since each is a drop target. Each group keeps the Status view's
+ * order: pinned first, then active. Snoozed and settled threads stay on their
+ * own shelves.
  */
 export function groupThreadsBySection<
   T extends { readonly sectionId?: string | null | undefined },
 >(input: {
   readonly sections: readonly ThreadSection[];
+  readonly generalIndex: number;
   readonly pinned: readonly T[];
   readonly active: readonly T[];
-  readonly showEmptySections: boolean;
 }): SectionGroup<T>[] {
   const known = new Set<string>(input.sections.map((section) => section.id));
   const members = new Map<string, T[]>();
@@ -179,17 +219,12 @@ export function groupThreadsBySection<
     if (list) list.push(thread);
     else members.set(groupId, [thread]);
   }
-  const groups: SectionGroup<T>[] = [];
-  const other = members.get(OTHER_SECTION_GROUP_ID) ?? [];
-  if (other.length > 0 || input.sections.length === 0) {
-    groups.push({ id: OTHER_SECTION_GROUP_ID, section: null, threads: other });
-  }
-  for (const section of input.sections) {
-    const threads = members.get(section.id) ?? [];
-    if (threads.length === 0 && !input.showEmptySections) continue;
-    groups.push({ id: section.id, section, threads });
-  }
-  return groups;
+  const bySection = new Map(input.sections.map((section) => [section.id as string, section]));
+  return sectionLayoutOrder(input.sections, input.generalIndex).map((id) => ({
+    id,
+    section: bySection.get(id) ?? null,
+    threads: members.get(id) ?? [],
+  }));
 }
 
 // ── Drag and drop ──────────────────────────────────────────────────────
@@ -337,26 +372,20 @@ export function planSectionsThreadDrop(input: {
 }
 
 /**
- * New section order after dragging one header. The unsectioned group stays
- * first: dropping over it means the first slot, and null (past the last
- * header) means the last.
+ * Group order after dragging one header, General included like any section.
+ * Null (past the last header) means the last slot.
  */
 export function resolveSectionHeaderDrop(
   orderedGroupIds: readonly string[],
   activeGroupId: string,
   overGroupId: string | null,
 ): string[] | null {
-  const ids = orderedGroupIds.filter((id) => id !== OTHER_SECTION_GROUP_ID);
-  const from = ids.indexOf(activeGroupId);
+  const from = orderedGroupIds.indexOf(activeGroupId);
   if (from === -1) return null;
   const to =
-    overGroupId === null
-      ? ids.length - 1
-      : overGroupId === OTHER_SECTION_GROUP_ID
-        ? 0
-        : ids.indexOf(overGroupId);
+    overGroupId === null ? orderedGroupIds.length - 1 : orderedGroupIds.indexOf(overGroupId);
   if (to === -1 || to === from) return null;
-  const next = [...ids];
+  const next = [...orderedGroupIds];
   next.splice(from, 1);
   next.splice(to, 0, activeGroupId);
   return next;

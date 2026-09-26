@@ -116,7 +116,8 @@ On web and desktop, sections let you group related threads by topic, such as **T
 list: filing a thread never pins, settles, snoozes, or reorders it, and does not count as activity.
 
 Right-click a thread and choose **Section** to file it. The current section is checked. Choose
-**New section…** to name a section and file the thread in one step, or **Remove from section**.
+**New section…** to name a section and file the thread in one step. Choose **General** to take it
+out of its section.
 With several threads selected, **Move to section** files them together. Each move shows
 **Undo** in the sidebar, and `mod+z` restores the previous section.
 
@@ -125,7 +126,8 @@ highlighted while it is on. Click it again to return to the default Pinned and A
 Sections view:
 
 - Each section lists its pinned threads first, then the rest in your arranged order. Threads
-  without a section, including new ones, appear first under **No section**.
+  without a section, including new ones, appear in **General**, which comes first until you move
+  it. You can drag **General** like any section, but not rename or delete it.
 - Snoozed and settled threads stay on their own shelves. A settled or snoozed thread keeps its
   section and returns to it when you un-settle or wake it.
 - Drag a thread to a spot in any section to file it there at that position. Drag a section header
@@ -137,7 +139,7 @@ Sections view:
 - Empty sections stay visible so you can drag threads into them. **New section**, after the last
   section, adds one at the end.
 
-Deleting a section never deletes conversations: its threads move to **No section**, and **Undo** on the
+Deleting a section never deletes conversations: its threads move to **General**, and **Undo** on the
 confirmation brings the section and its threads back. The section list is stored on the server of
 your primary environment, so every window and connected client shows the same sections. If
 **Section** is missing from a thread's menu, update the Scient server running that thread's

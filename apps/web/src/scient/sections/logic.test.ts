@@ -2,13 +2,13 @@ import { ThreadSectionId, type ThreadSection } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
-  OTHER_SECTION_GROUP_ID,
+  GENERAL_SECTION_GROUP_ID,
   catalogWithCreatedSection,
   catalogWithRenamedSection,
   catalogWithRestoredSection,
-  catalogWithSectionOrder,
   catalogWithoutSection,
   groupThreadsBySection,
+  layoutFromGroupOrder,
   planSectionsThreadDrop,
   resolveSectionHeaderDrop,
   resolveSectionsDropTarget,
@@ -52,65 +52,63 @@ describe("catalog edits", () => {
     expect(catalogWithRenamedSection([RESEARCH], "missing", "x").kind).toBe("missing");
   });
 
-  it("restores a removed section at its old position", () => {
+  it("removes and restores a section, keeping General beside the same neighbors", () => {
     const later = section("later", "Later", 2);
-    const { catalog, removed } = catalogWithoutSection([RESEARCH, PERMA, later], "perma");
-    expect(catalog.map((entry) => [entry.id, entry.order])).toEqual([
+    // Layout: Research, Perma, General, Later.
+    const removed = catalogWithoutSection([RESEARCH, PERMA, later], 2, "perma");
+    expect(removed.catalog.map((entry) => [entry.id, entry.order])).toEqual([
       ["research", 0],
       ["later", 1],
     ]);
-    expect(catalogWithRestoredSection(catalog, removed!).map((entry) => entry.id)).toEqual([
-      "research",
-      "perma",
-      "later",
-    ]);
+    expect(removed.generalIndex).toBe(1);
+    const restored = catalogWithRestoredSection(removed.catalog, removed.removed!);
+    expect(restored.catalog.map((entry) => entry.id)).toEqual(["research", "perma", "later"]);
+    expect(restored.generalIndex).toBe(2);
   });
 
-  it("reorders, keeping sections the drag did not know about at the end", () => {
+  it("applies a dragged order that places General among the sections", () => {
     const later = section("later", "Later", 2);
-    expect(
-      catalogWithSectionOrder([RESEARCH, PERMA, later], ["perma", "research"]).map((entry) => [
-        entry.id,
-        entry.order,
-      ]),
-    ).toEqual([
+    const layout = layoutFromGroupOrder(
+      [RESEARCH, PERMA, later],
+      ["perma", GENERAL_SECTION_GROUP_ID, "research"],
+    );
+    // Sections the drag did not know about keep their place at the end.
+    expect(layout.catalog.map((entry) => [entry.id, entry.order])).toEqual([
       ["perma", 0],
       ["research", 1],
       ["later", 2],
     ]);
+    expect(layout.generalIndex).toBe(1);
   });
 });
 
 describe("groupThreadsBySection", () => {
   const thread = (id: string, sectionId: string | null) => ({ id, sectionId });
 
-  it("keeps pinned rows first, puts unknown sections in the unsectioned group, and it first", () => {
+  it("files unknown sections under General, keeps pinned rows first and shows empty sections", () => {
     const groups = groupThreadsBySection({
       sections: [RESEARCH, PERMA],
+      generalIndex: 0,
       pinned: [thread("p1", "perma")],
       active: [thread("a1", "perma"), thread("a2", "deleted"), thread("a3", null)],
-      showEmptySections: false,
     });
     expect(groups.map((group) => [group.id, group.threads.map((entry) => entry.id)])).toEqual([
-      [OTHER_SECTION_GROUP_ID, ["a2", "a3"]],
+      [GENERAL_SECTION_GROUP_ID, ["a2", "a3"]],
+      ["research", []],
       ["perma", ["p1", "a1"]],
     ]);
   });
 
-  it("shows empty sections on request and Other when no sections exist", () => {
-    expect(
+  it("places General at its stored position, clamped to the list", () => {
+    const ids = (generalIndex: number) =>
       groupThreadsBySection({
-        sections: [RESEARCH],
+        sections: [RESEARCH, PERMA],
+        generalIndex,
         pinned: [],
         active: [],
-        showEmptySections: true,
-      }).map((group) => group.id),
-    ).toEqual(["research"]);
-    expect(
-      groupThreadsBySection({ sections: [], pinned: [], active: [], showEmptySections: true }).map(
-        (group) => group.id,
-      ),
-    ).toEqual([OTHER_SECTION_GROUP_ID]);
+      }).map((group) => group.id);
+    expect(ids(1)).toEqual(["research", GENERAL_SECTION_GROUP_ID, "perma"]);
+    expect(ids(9)).toEqual(["research", "perma", GENERAL_SECTION_GROUP_ID]);
   });
 });
 
@@ -129,8 +127,8 @@ describe("Sections view drops", () => {
     row("r2", "active", "research"),
     header("perma"),
     row("p1", "active", "perma"),
-    header(OTHER_SECTION_GROUP_ID),
-    row("o1", "active", OTHER_SECTION_GROUP_ID),
+    header(GENERAL_SECTION_GROUP_ID),
+    row("o1", "active", GENERAL_SECTION_GROUP_ID),
     { kind: "shelf", id: "snoozed", shelf: "snoozed" },
     row("z1", "snoozed", null),
     { kind: "shelf", id: "settled", shelf: "settled" },
@@ -164,7 +162,7 @@ describe("Sections view drops", () => {
       lifecycleByKey,
       pinnedKeysById: new Map(),
       activeKeysById: keys,
-      toSectionId: (groupId) => (groupId === OTHER_SECTION_GROUP_ID ? null : sid(groupId)),
+      toSectionId: (groupId) => (groupId === GENERAL_SECTION_GROUP_ID ? null : sid(groupId)),
     });
   };
 
@@ -226,24 +224,24 @@ describe("Sections view drops", () => {
     expect(plan("s1", "s1")).toEqual({ kind: "none" });
   });
 
-  it("reorders section headers, keeping the unsectioned group first", () => {
-    const ordered = [OTHER_SECTION_GROUP_ID, "research", "perma", "later"];
-    expect(resolveSectionHeaderDrop(ordered, "research", "perma")).toEqual([
-      "perma",
-      "research",
-      "later",
-    ]);
-    // Over the unsectioned header: the first slot. Past the last header: the last.
-    expect(resolveSectionHeaderDrop(ordered, "later", OTHER_SECTION_GROUP_ID)).toEqual([
-      "later",
+  it("reorders section headers, General included like any section", () => {
+    const ordered = [GENERAL_SECTION_GROUP_ID, "research", "perma"];
+    expect(resolveSectionHeaderDrop(ordered, GENERAL_SECTION_GROUP_ID, "perma")).toEqual([
       "research",
       "perma",
+      GENERAL_SECTION_GROUP_ID,
     ]);
+    expect(resolveSectionHeaderDrop(ordered, "perma", GENERAL_SECTION_GROUP_ID)).toEqual([
+      "perma",
+      GENERAL_SECTION_GROUP_ID,
+      "research",
+    ]);
+    // Past the last header: the last slot.
     expect(resolveSectionHeaderDrop(ordered, "research", null)).toEqual([
+      GENERAL_SECTION_GROUP_ID,
       "perma",
-      "later",
       "research",
     ]);
-    expect(resolveSectionHeaderDrop(["research", "perma"], "perma", "perma")).toBeNull();
+    expect(resolveSectionHeaderDrop(ordered, "perma", "perma")).toBeNull();
   });
 });
