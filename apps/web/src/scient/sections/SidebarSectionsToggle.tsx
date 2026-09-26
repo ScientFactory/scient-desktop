@@ -1,4 +1,4 @@
-import { ArrowDownWideNarrowIcon } from "lucide-react";
+import { ListFilterIcon } from "lucide-react";
 
 import { SidebarMenuButton } from "../../components/ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
@@ -29,7 +29,7 @@ export function SidebarSectionsToggle(props: {
           />
         }
       >
-        <ArrowDownWideNarrowIcon />
+        <ListFilterIcon className="size-3.5" />
         {/* Coarse-pointer hit area, matching the rest of the sidebar chrome. */}
         <span
           aria-hidden
