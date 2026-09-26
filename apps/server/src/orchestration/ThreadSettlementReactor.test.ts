@@ -1529,6 +1529,7 @@ describe("ThreadSettlementReactor", () => {
         Effect.gen(function* () {
           const readThreadIds: Array<string> = [];
           const fixture = yield* makeHarness({
+            settings: { ...DEFAULT_SERVER_SETTINGS, sidebarAutoSettleOnMerge: true },
             snapshot: makeSnapshot([]),
             getShellSnapshot: (options) =>
               read(options).pipe(

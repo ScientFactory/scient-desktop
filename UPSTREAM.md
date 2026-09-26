@@ -51,8 +51,10 @@ and in `upstream-state.json`. It extends the integration through
 `95030dc674883f0f2a7fd034b32ce742c8cf55d0`: 21 official commits after
 `dd8332da57355bccd7e666289267f2c94597debd`, merged onto owned base
 `01cc063c77edcad0e5110e843ebf08162bcc7013` as `f164dde1ff` (first parent owned
-base, second parent the exact official target). No owned-main catch-up was
-needed because the frozen base was already the current owned `main` tip. The
+base, second parent the exact official target). The alignment is prepared in
+[PR #372](https://github.com/ScientFactory/scient-desktop/pull/372). No
+owned-main catch-up was needed because the frozen base was already the current
+owned `main` tip. The
 preceding alignment ([PR #370](docs/internals/2026-09-26-upstream-sync-dd8332da.md))
 remains literal ancestry.
 

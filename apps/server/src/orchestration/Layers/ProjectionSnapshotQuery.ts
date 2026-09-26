@@ -655,9 +655,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   // without a `projection_threads` alias, and an unqualified name resolves in
   // either case.
   const unsettledThreadsFilter = (unsettledOnly: boolean) =>
-    unsettledOnly
-      ? sql`AND settled_at IS NULL AND settled_override IS NOT 'settled'`
-      : sql``;
+    unsettledOnly ? sql`AND settled_at IS NULL AND settled_override IS NOT 'settled'` : sql``;
 
   const listActiveThreadRows = SqlSchema.findAll({
     Request: ActiveThreadRowsRequest,
