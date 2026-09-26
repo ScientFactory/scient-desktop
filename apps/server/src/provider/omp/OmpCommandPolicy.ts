@@ -121,5 +121,12 @@ export const ompCommandDecision = (
   if (mutators.has(name)) return "mutator";
   if (catalog.allowed.has(name)) return "allowed";
   if (catalog.known.has(name)) return "mutator";
-  return "unavailable";
+  // Discovery did not report this command. OMP resolves a slash invocation it
+  // does not know as ordinary text, so Scient forwards it too: a pasted path
+  // like /Users/alice/notes.md or prose that opens with "/" is not a command.
+  // When discovery itself failed the catalog is empty and every invocation
+  // stays fail-closed, because an unreported extension or skill command must
+  // never be forwarded blind.
+  if (catalog.known.size === 0) return "unavailable";
+  return "not-a-command";
 };

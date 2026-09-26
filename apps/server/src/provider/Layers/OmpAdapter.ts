@@ -34,6 +34,7 @@ import {
   OMP_RPC_PROTOCOL_V2,
   isRecord,
   type OmpRpcImage,
+  type OmpRpcModel,
 } from "effect-omp-rpc/schema";
 import type { OmpRpcClient } from "effect-omp-rpc/client";
 import type { OmpRpcError } from "effect-omp-rpc/errors";
@@ -780,6 +781,41 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       stoppingThreads.delete(threadId);
     }).pipe(Effect.uninterruptible);
 
+  const recordKnownModels = (ctx: SessionContext, models: ReadonlyArray<OmpRpcModel>) => {
+    for (const model of models) {
+      const slug = encodeOmpModelSlug(model.provider, model.id);
+      if (!slug) continue;
+      ctx.knownModels.add(slug);
+      if (ompModelSupportsImages(model)) ctx.imageModels.add(slug);
+    }
+  };
+
+  /**
+   * Apply a model selection. The catalog this session read at startup can be
+   * stale: a custom model added while the conversation is open, or one added by
+   * a different instance, is rejected by OMP. Refresh the catalog once and
+   * retry before failing the turn, so a model the user just configured works
+   * without restarting the conversation.
+   */
+  const applyModelSelection = (
+    ctx: SessionContext,
+    client: SessionContext["client"],
+    provider: string,
+    modelId: string,
+  ) =>
+    Effect.gen(function* () {
+      const first = yield* client.setModel(provider, modelId).pipe(
+        Effect.mapError((cause) => request("set_model", cause.message, cause)),
+        Effect.exit,
+      );
+      if (first._tag === "Success") return;
+      const models = yield* client.getModels().pipe(Effect.option);
+      if (models._tag === "Some") recordKnownModels(ctx, models.value.models);
+      yield* client
+        .setModel(provider, modelId)
+        .pipe(Effect.mapError((cause) => request("set_model", cause.message, cause)));
+    }).pipe(Effect.uninterruptible);
+
   const startSession: ProviderAdapterShape<ProviderAdapterError>["startSession"] = (input) =>
     locally(
       withThreadLock(
@@ -1009,12 +1045,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
             if (state.thinkingLevel) ctx.thinkingLevel = state.thinkingLevel;
             const models = yield* client.getModels().pipe(Effect.option);
             if (models._tag === "Some") {
-              for (const model of models.value.models) {
-                const slug = encodeOmpModelSlug(model.provider, model.id);
-                if (!slug) continue;
-                ctx.knownModels.add(slug);
-                if (ompModelSupportsImages(model)) ctx.imageModels.add(slug);
-              }
+              recordKnownModels(ctx, models.value.models);
             } else {
               const base = yield* eventBase(ctx);
               yield* offer({
@@ -1111,9 +1142,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
                   "Wait for the current Oh My Pi turn before changing its model.",
                 );
               }
-              yield* ctx.client
-                .setModel(selected.provider, selected.modelId)
-                .pipe(Effect.mapError((cause) => request("set_model", cause.message, cause)));
+              yield* applyModelSelection(ctx, ctx.client, selected.provider, selected.modelId);
               ctx.model = selectedModel;
               ctx.session = { ...ctx.session, model: selectedModel, updatedAt: yield* now };
             }

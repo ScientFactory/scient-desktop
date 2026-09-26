@@ -24,7 +24,21 @@ describe("Oh My Pi command policy", () => {
     expect(ompCommandDecision("/session delete", catalog)).toBe("mutator");
     expect(ompCommandDecision("/session info", catalog)).toBe("allowed");
     expect(ompCommandDecision("/session\tinfo", catalog)).toBe("allowed");
-    expect(ompCommandDecision("/unknown", catalog)).toBe("unavailable");
+    // Oh My Pi resolves an unknown slash invocation as ordinary text.
+    expect(ompCommandDecision("/unknown", catalog)).toBe("not-a-command");
+  });
+
+  it("forwards pasted paths and prose that open with a slash", () => {
+    expect(ompCommandDecision("/Users/alice/notes.md", catalog)).toBe("not-a-command");
+    expect(ompCommandDecision("/home/alice/project/src", catalog)).toBe("not-a-command");
+    expect(ompCommandDecision("/usr/local/bin/omp update", catalog)).toBe("not-a-command");
+    expect(ompCommandDecision("/ is a common path separator", catalog)).toBe("not-a-command");
+  });
+
+  it("stays fail-closed when command discovery is unavailable", () => {
+    const undiscovered = compileOmpCommandCatalog([]);
+    expect(ompCommandDecision("/help", undiscovered)).toBe("unavailable");
+    expect(ompCommandDecision("/Users/alice/notes.md", undiscovered)).toBe("unavailable");
   });
 
   it("rejects aliases and side-effecting commands even when discovered", () => {

@@ -15,6 +15,7 @@ import * as Stream from "effect/Stream";
 import * as NodeAssert from "node:assert/strict";
 
 import type { OmpRpcClient, OmpRpcNotification } from "effect-omp-rpc/client";
+import { OmpRpcCommandError } from "effect-omp-rpc/errors";
 import type { OmpRpcResponse } from "effect-omp-rpc/schema";
 
 import { makeOmpAdapter } from "./OmpAdapter.ts";
@@ -410,8 +411,6 @@ describe("Oh My Pi adapter", () => {
         .sendTurn({ threadId, input: "/review", originalInput: "/review" })
         .pipe(Effect.flip);
       NodeAssert.match(review.message, /does not forward/);
-      const unknown = yield* adapter.sendTurn({ threadId, input: "/nope" }).pipe(Effect.flip);
-      NodeAssert.match(unknown.message, /not available/);
       const foreign = yield* adapter
         .sendTurn({
           threadId,
@@ -423,12 +422,127 @@ describe("Oh My Pi adapter", () => {
         })
         .pipe(Effect.flip);
       NodeAssert.match(foreign.message, /another provider instance/);
+      // A slash invocation Oh My Pi does not know is ordinary text, so a
+      // pasted path that opens with "/" is still sent to the agent.
+      yield* adapter.sendTurn({ threadId, input: "/Users/alice/notes.md" });
+      yield* adapter.stopSession(threadId);
+      const compactThread = ThreadId.make("thread-commands-compact");
+      yield* adapter.startSession({
+        threadId: compactThread,
+        cwd: NodeOS.tmpdir(),
+        runtimeMode: "full-access",
+      });
       yield* adapter.sendTurn({
-        threadId,
+        threadId: compactThread,
         input: "/compact\n\n[Scient runtime instruction]",
         originalInput: "/compact the patch",
       });
-      NodeAssert.deepEqual(prompts, ["/compact the patch"]);
+      NodeAssert.deepEqual(prompts, ["/Users/alice/notes.md", "/compact the patch"]);
+      yield* adapter.stopAll();
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("refreshes a stale model catalog before failing a model selection", () =>
+    Effect.gen(function* () {
+      const events = yield* Queue.unbounded<OmpRpcNotification>();
+      let modelCalls = 0;
+      let modelLists = 0;
+      const makeProcess = (options: OmpRpcProcessOptions) =>
+        Effect.sync(() => {
+          const sessionFile = `${options.sessionDir ?? ""}/session.jsonl`;
+          return {
+            version: "18.2.8",
+            ready: Effect.succeed({
+              type: "ready" as const,
+              protocolVersion: 1,
+              supportedProtocolVersions: [1, 2],
+              maxFrameBytes: 1_048_576,
+              maxReassembledFrameBytes: 67_108_864,
+            }),
+            events: Stream.fromQueue(events),
+            flushEvents: () => Queue.offer(events, { _tag: "Drain" }).pipe(Effect.asVoid),
+            command: () => Effect.succeed(success("command")),
+            prompt: () => Effect.succeed(success("prompt", { agentInvoked: false })),
+            steer: () => Effect.succeed(success("steer")),
+            followUp: () => Effect.succeed(success("follow_up")),
+            abort: () => Effect.succeed(success("abort")),
+            getState: () =>
+              Effect.sync(() => {
+                NodeFS.mkdirSync(options.sessionDir ?? ".", { recursive: true });
+                NodeFS.writeFileSync(sessionFile, "{}\n");
+                return {
+                  sessionFile,
+                  sessionId: "session-1",
+                  isStreaming: false,
+                  isCompacting: false,
+                };
+              }),
+            // The first catalog has no custom model. A model configured after
+            // the session started only appears on a later read.
+            getModels: () =>
+              Effect.sync(() => {
+                modelLists += 1;
+                return {
+                  models:
+                    modelLists === 1
+                      ? []
+                      : [{ provider: "scient", id: "custom-model", input: ["text"] }],
+                };
+              }),
+            getCommands: () => Effect.succeed({ commands: [] }),
+            setModel: () =>
+              Effect.sync(() => {
+                modelCalls += 1;
+                // Reject the first attempt for this model, as OMP does when the
+                // running session has not discovered it yet.
+                return modelCalls === 1
+                  ? Effect.fail(
+                      new OmpRpcCommandError({
+                        command: "set_model",
+                        detail: "Unknown model",
+                      }),
+                    )
+                  : Effect.succeed(success("set_model"));
+              }).pipe(Effect.flatten),
+            setThinkingLevel: () => Effect.succeed(success("set_thinking_level")),
+            compact: () => Effect.succeed(success("compact")),
+            switchSession: () => Effect.succeed({ cancelled: false }),
+            setSubagentSubscription: () => Effect.succeed(success("set_subagent_subscription")),
+            setHostTools: () => Effect.succeed(success("set_host_tools")),
+            setHostUriSchemes: () => Effect.succeed(success("set_host_uri_schemes")),
+            extensionUiResponse: () => Effect.void,
+            hostToolUpdate: () => Effect.void,
+            hostToolResult: () => Effect.void,
+            hostUriResult: () => Effect.void,
+            close: () => Effect.void,
+          } satisfies OmpRpcClient & { readonly version: string };
+        });
+      const path = yield* Path.Path;
+      const clock = yield* Clock.Clock;
+      const stateDir = path.join(
+        NodeOS.tmpdir(),
+        `scient-omp-model-refresh-${String(yield* clock.currentTimeMillis)}`,
+      );
+      const adapter = yield* makeOmpAdapter({
+        binaryPath: "omp",
+        providerInstanceId: ProviderInstanceId.make("omp-model-refresh"),
+        stateDir,
+        attachmentsDir: stateDir,
+        environment: { PATH: "/usr/bin" },
+        makeProcess,
+      });
+      const threadId = ThreadId.make("thread-model-refresh");
+      yield* adapter.startSession({ threadId, cwd: NodeOS.tmpdir(), runtimeMode: "full-access" });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "hello",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("omp-model-refresh"),
+          model: "scient/custom-model",
+        },
+      });
+      // One rejected attempt, one catalog refresh, one accepted retry.
+      NodeAssert.deepEqual({ modelCalls, modelLists }, { modelCalls: 2, modelLists: 2 });
       yield* adapter.stopAll();
     }).pipe(Effect.provide(NodeServices.layer)),
   );
