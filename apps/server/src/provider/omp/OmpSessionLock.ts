@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Effect FileSystem cannot create a file with O_EXCL.
 import * as NodeFS from "node:fs";
-import { randomUUID } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 
 import * as Effect from "effect/Effect";
 
@@ -26,7 +26,7 @@ export const acquireOmpSessionLock = (lockPath: string): Effect.Effect<void, str
       // The holder record carries a per-acquisition token so a takeover can
       // prove it is deleting the stale record it inspected, and not a lock that
       // another process re-created between the check and the delete.
-      const token = `${process.pid}:${randomUUID()}`;
+      const token = `${process.pid}:${NodeCrypto.randomUUID()}`;
       const writeToken = () => NodeFS.writeFileSync(lockPath, `${token}\n`, { flag: "wx" });
       for (let attempt = 0; attempt < 3; attempt += 1) {
         try {

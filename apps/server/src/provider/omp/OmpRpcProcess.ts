@@ -27,7 +27,7 @@ import { registerOmpProcess, unregisterOmpProcess } from "./OmpProcessRegistry.t
 const isProtocolError = Schema.is(OmpRpcProtocolError);
 
 export const OMP_MINIMUM_VERSION = "18.2.8";
-export const OMP_MAXIMUM_MAJOR = 19;
+const OMP_MAXIMUM_MAJOR = 19;
 const OMP_SESSION_DIR_ENV = "PI_CODING_AGENT_SESSION_DIR";
 /** Agent directory override from oh-my-pi v18.2.8 `packages/utils/src/dirs.ts`. */
 export const OMP_AGENT_DIR_ENV = "PI_CODING_AGENT_DIR";

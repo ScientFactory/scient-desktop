@@ -61,11 +61,6 @@ export const hasLiveOmpProcess = (command: string): boolean => {
   return existing !== undefined && existing.size > 0;
 };
 
-export const liveOmpProcesses = (command: string): ReadonlyArray<OmpProcessRegistration> => {
-  const existing = live.get(keyFor(command));
-  return existing ? [...existing.values()] : [];
-};
-
 /**
  * Marks the executable as being replaced for the duration of a native update.
  * New sessions then fail closed instead of starting against an executable that
