@@ -33,4 +33,25 @@ it.layer(NodeServices.layer)("writeHeapSnapshot", (it) => {
       assert.deepEqual(yield* fs.readDirectory(logsDir), []);
     }),
   );
+
+  it.effect("leaves the snapshot owner-only and never publishes the partial file", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const logsDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-heap-snapshot-mode-" });
+      vi.mocked(NodeV8.writeHeapSnapshot).mockImplementationOnce((path) => {
+        if (path) NodeFS.writeFileSync(path, "heap");
+        return path ?? "";
+      });
+
+      yield* writeHeapSnapshot(logsDir);
+
+      const entries = yield* fs.readDirectory(logsDir);
+      assert.deepEqual(entries, [entries[0]]);
+      assert.isFalse(entries[0]?.endsWith(".partial"), "partial file must not survive");
+      const mode = yield* fs
+        .stat(NodePath.join(logsDir, entries[0] ?? ""))
+        .pipe(Effect.map((stat) => stat.mode & 0o777));
+      assert.strictEqual(mode, 0o600, "a heap snapshot holds credentials and must be owner-only");
+    }),
+  );
 });

@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - v8.writeHeapSnapshot has no Effect equivalent.
 import * as NodePath from "node:path";
+import * as NodeFS from "node:fs";
 import * as NodeV8 from "node:v8";
 
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -20,10 +21,17 @@ export const writeHeapSnapshot = Effect.fn("server.heapSnapshot", { root: true }
     const fs = yield* FileSystem.FileSystem;
     const timestamp = DateTime.formatIso(yield* DateTime.now).replaceAll(":", "-");
     const path = NodePath.join(logsDir, `server-${process.pid}-${timestamp}.heapsnapshot`);
+    // A heap snapshot holds every credential and thread this process has seen,
+    // so it is left owner-only like the secret store. `v8.writeHeapSnapshot`
+    // creates the file with the process umask, so restrict it explicitly and
+    // publish it only once the mode is set.
+    const partialPath = `${path}.partial`;
     yield* Effect.annotateCurrentSpan({ path });
-    yield* Effect.try(() => NodeV8.writeHeapSnapshot(path)).pipe(
-      Effect.tapError(() => fs.remove(path, { force: true }).pipe(Effect.ignore)),
-    );
+    yield* Effect.try(() => {
+      NodeV8.writeHeapSnapshot(partialPath);
+      NodeFS.chmodSync(partialPath, 0o600);
+      NodeFS.renameSync(partialPath, path);
+    }).pipe(Effect.tapError(() => fs.remove(partialPath, { force: true }).pipe(Effect.ignore)));
     yield* Effect.logInfo("Wrote heap snapshot.", { path });
   },
   Effect.catch((cause) => Effect.logWarning("Failed to write heap snapshot.", { cause })),

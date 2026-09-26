@@ -765,8 +765,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         iconSize: 120,
         iconTextSize: 12,
       });
-      // A Linux AppImage build also emits the .deb from the same run.
-      assert.deepStrictEqual((linux.linux as Record<string, unknown>).target, ["AppImage", "deb"]);
+      // Linux ships an AppImage only. A second target here would add its payload
+      // to `latest-linux.yml`, which the release attestation requires to exist
+      // in the published asset set.
+      assert.deepStrictEqual((linux.linux as Record<string, unknown>).target, ["AppImage"]);
       // Linux must register the production renderer scheme so the generated
       // .desktop entry advertises the canonical Scient OAuth deep-link handler.
       assert.deepStrictEqual((linux.linux as Record<string, unknown>).protocols, [

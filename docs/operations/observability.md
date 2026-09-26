@@ -6,11 +6,22 @@ Scient has one server-side observability model:
 
 - pretty logs go to stdout for humans
 - completed spans go to a local NDJSON trace file
-- traces, metrics, and logs can also be exported over OTLP to a real backend like Grafana LGTM
+- traces, metrics, and logs have plumbing for OTLP export to a backend like Grafana LGTM, but
+  Scient's safety envelope disables that export — see the note below
 
 The local trace file is the persisted source of truth for normal local launches. Those launches do not
 write a separate server log file, but SSH-managed launches also persist the remote process's
 stdout/stderr at `~/.t3/ssh-launch/<state>/server.log`.
+
+> **Outbound OTLP export is currently disabled in Scient.** The server and the desktop main
+> process both force every OTLP destination to unset while
+> `SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled` and
+> `SCIENT_DESKTOP_IDENTITY.outboundTelemetryEnabled` are at their compiled defaults
+> (`true` and `false`). No environment variable, Settings entry, or build-time value can enable
+> it. The OTLP environment variables, `OTEL_EXPORTER_OTLP_*` handling, and the "Kill Switch"
+> section below are retained plumbing inherited from the host, and they describe behavior that
+> is not currently reachable. The supported artifacts are the local NDJSON trace file, stdout
+> logs, and the `t3 trace summary` command.
 
 ## Where To Find Things
 
@@ -686,5 +697,6 @@ Before you take one:
   takes another snapshot after the first one finishes.
 - The write needs about as much free memory as the heap uses. On a machine that is already
   swapping, it can make the problem worse or crash the server.
-- The file contains everything in server memory, including tokens, secrets, and thread content. Do
-  not share it publicly. Delete it when you are done, because storage cleanup does not remove it.
+- The file contains everything in server memory, including tokens, secrets, and thread content. It
+  is written owner-only (`0600`), like the credential store, but do not share it publicly. Delete it
+  when you are done, because storage cleanup does not remove it.

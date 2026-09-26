@@ -1310,7 +1310,14 @@ const buildAppUnderTest = (options?: {
         Layer.provide(workspaceAndProjectServicesLayer),
       )
       .pipe(
-        Layer.provideMerge(FetchHttpClient.layer),
+        // Honour an injected client so relay-route tests can stub the upstream
+        // response instead of reaching the network. Without this the option is
+        // silently ignored and the cloud seam tests exercise the real client.
+        Layer.provideMerge(
+          options?.layers?.httpClient === undefined
+            ? FetchHttpClient.layer
+            : Layer.succeed(HttpClient.HttpClient, options.layers.httpClient),
+        ),
         Layer.provide(GitHubCli.layer.pipe(Layer.provideMerge(VcsProcess.layer))),
         Layer.provide(VcsProcess.layer),
         Layer.provide(layerConfig),
