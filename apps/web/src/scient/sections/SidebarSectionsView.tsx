@@ -620,11 +620,7 @@ function SectionHeaderRow(props: {
           </button>
         )}
         {isUserSection && !props.renaming ? (
-          <span className="pointer-events-none flex shrink-0 items-center opacity-0 group-focus-within/section-header:pointer-events-auto group-focus-within/section-header:opacity-100 group-hover/section-header:pointer-events-auto group-hover/section-header:opacity-100">
-            <HeaderIconButton label="New thread in section" onClick={props.onNewThread}>
-              {/* Same glyph as the sidebar's New thread button. */}
-              <SquarePenIcon className="size-3.5" />
-            </HeaderIconButton>
+          <span className="pointer-events-none flex shrink-0 items-center gap-1.5 opacity-0 group-focus-within/section-header:pointer-events-auto group-focus-within/section-header:opacity-100 group-hover/section-header:pointer-events-auto group-hover/section-header:opacity-100">
             <HeaderIconButton
               label="Section actions"
               onClick={(event) => {
@@ -633,6 +629,10 @@ function SectionHeaderRow(props: {
               }}
             >
               <EllipsisIcon className="size-3.5" />
+            </HeaderIconButton>
+            <HeaderIconButton label="New thread in section" onClick={props.onNewThread}>
+              {/* Same glyph as the sidebar's New thread button. */}
+              <SquarePenIcon className="size-3.5" />
             </HeaderIconButton>
           </span>
         ) : null}
