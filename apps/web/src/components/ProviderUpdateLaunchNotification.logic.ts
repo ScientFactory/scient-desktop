@@ -744,7 +744,7 @@ export interface ManagedRuntimeUpdateTarget {
   readonly availableVersion: string | null;
 }
 
-export function managedRuntimeUpdateTargetKey(target: {
+function managedRuntimeUpdateTargetKey(target: {
   readonly environmentId: EnvironmentId;
   readonly driver: string;
 }): string {

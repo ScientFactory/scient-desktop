@@ -70,7 +70,7 @@ const DEVELOPMENT_BUILD_VERSION = `${Number.MAX_SAFE_INTEGER}.0.0`;
  * version; unstamped development builds keep upstream's 0.0.x version but run
  * `main`'s code, so they match as newer than every release.
  */
-export function compatibilityBuildVersion(buildVersion: string): string {
+function compatibilityBuildVersion(buildVersion: string): string {
   return compareSemverVersions(buildVersion, FIRST_SCIENT_RELEASE_VERSION) < 0
     ? DEVELOPMENT_BUILD_VERSION
     : buildVersion;
