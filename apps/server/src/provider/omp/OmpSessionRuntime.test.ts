@@ -5,6 +5,7 @@ import * as Exit from "effect/Exit";
 import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import type { OmpRpcClient, OmpRpcNotification } from "effect-omp-rpc/client";
 import type { OmpRpcResponse } from "effect-omp-rpc/schema";
@@ -330,6 +331,27 @@ describe("Oh My Pi session runtime", () => {
         type: "turn-outcome",
         outcome: "interrupted",
       });
+      expect(yield* harness.runtime.awaitTurnSettled()).toBeUndefined();
+      yield* Scope.close(harness.scope, Exit.void);
+    }),
+  );
+
+  it.effect("settles a cancel that arrives after a racing agent start", () =>
+    Effect.gen(function* () {
+      const harness = yield* runtimeHarness();
+      yield* harness.runtime.begin("turn-cancel-agent-start");
+      yield* takeUpdate(harness.updates);
+      yield* harness.runtime.accepted("prompt-cancel-race", true);
+      yield* harness.runtime.requestCancel();
+      // The agent starts after the cancel request and before the
+      // acknowledgement, and OMP never reports a terminal end.
+      yield* Queue.offer(harness.events, { _tag: "Event", event: { type: "agent_start" } });
+      yield* Effect.sleep("200 millis").pipe(TestClock.withLive);
+      yield* harness.runtime.confirmCancel();
+      const updates = yield* Queue.takeAll(harness.updates);
+      expect(updates).toContainEqual(
+        expect.objectContaining({ type: "turn-outcome", outcome: "interrupted" }) as never,
+      );
       expect(yield* harness.runtime.awaitTurnSettled()).toBeUndefined();
       yield* Scope.close(harness.scope, Exit.void);
     }),

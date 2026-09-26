@@ -837,7 +837,11 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         return;
       }
       if (item.type === "confirm-cancel") {
-        if (turn.cancelRequested && turn.phase !== "running" && turn.phase !== "draining") {
+        // An acknowledged abort is the settlement, even when a racing
+        // agent_start already moved the turn to running. Waiting for a terminal
+        // agent_end there would hang the turn until the cancel deadline and
+        // then kill a healthy process.
+        if (turn.cancelRequested) {
           yield* applySignal({ type: "cancel-confirmed" });
         } else {
           yield* confirmIdle;

@@ -162,6 +162,9 @@ export const OmpRpcEvent = Schema.Struct({
   event: maybeString,
   stopReason: maybeString,
   role: maybeString,
+  level: maybeString,
+  success: maybeBoolean,
+  finalError: maybeString,
   aborted: maybeBoolean,
   willRetry: maybeBoolean,
   content: maybeUnknown,
@@ -425,6 +428,12 @@ const OmpLifecycleEvent = Schema.Struct({
   willRetry: maybeBoolean,
   output: maybeString,
   text: maybeString,
+  // Model failures (401, 429, unknown model) are reported as an error notice
+  // or a failed auto-retry. Keep those fields so the host can name the cause.
+  level: maybeString,
+  message: maybeString,
+  success: maybeBoolean,
+  finalError: maybeString,
 });
 export type OmpLifecycleEvent = typeof OmpLifecycleEvent.Type;
 

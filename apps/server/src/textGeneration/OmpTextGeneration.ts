@@ -42,6 +42,30 @@ import {
 } from "./TextGenerationUtils.ts";
 
 const TIMEOUT_MS = 120_000;
+/**
+ * Oh My Pi reports model failures (401, 429, unknown model, provider outage) as
+ * an error notice, a failed auto-retry, or an error assistant message rather
+ * than as an RPC error. Keep that text so a text-generation failure names the
+ * real cause instead of "no model response".
+ */
+const modelErrorDetail = (event: {
+  readonly type: string;
+  readonly message?: unknown;
+  readonly level?: unknown;
+  readonly finalError?: unknown;
+  readonly success?: unknown;
+  readonly error?: unknown;
+}): string | undefined => {
+  const text = (value: unknown): string | undefined =>
+    typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+  if (event.type === "notice" && event.level === "error") return text(event.message);
+  if (event.type === "auto_retry_end" && event.success === false) {
+    return text(event.finalError) ?? text(event.error);
+  }
+  if (event.type === "extension_error") return text(event.error) ?? text(event.message);
+  return undefined;
+};
+
 const isTextGenerationError = Schema.is(TextGenerationError);
 const isProtocolError = Schema.is(OmpRpcProtocolError);
 
@@ -129,6 +153,7 @@ export const makeOmpTextGeneration = Effect.fn("makeOmpTextGeneration")(function
         );
         const output = yield* Ref.make("");
         const exhausted = yield* Ref.make(false);
+        const modelError = yield* Ref.make<string | null>(null);
         let currentMessageHasDelta = false;
         const settled = yield* Deferred.make<void, TextGenerationError>();
         yield* client.events.pipe(
@@ -150,6 +175,30 @@ export const makeOmpTextGeneration = Effect.fn("makeOmpTextGeneration")(function
             }
             if (notification._tag !== "Event") return Effect.void;
             const event = notification.event;
+            const reported = modelErrorDetail({
+              type: event.type,
+              message: event.message,
+              level: event.level,
+              finalError: event.finalError,
+              success: event.success,
+              error: event.error,
+            });
+            if (reported) {
+              return Ref.set(modelError, reported).pipe(
+                Effect.andThen(
+                  Deferred.isDone(settled)
+                    ? Effect.void
+                    : Deferred.fail(
+                        settled,
+                        new TextGenerationError({
+                          operation: input.operation,
+                          detail: reported,
+                        }),
+                      ),
+                ),
+                Effect.asVoid,
+              );
+            }
             if (event.type === "prompt_result" && event.agentInvoked === false) {
               return Deferred.fail(
                 settled,
@@ -253,7 +302,9 @@ export const makeOmpTextGeneration = Effect.fn("makeOmpTextGeneration")(function
         if (invoked === false) {
           return yield* new TextGenerationError({
             operation: input.operation,
-            detail: "Oh My Pi finished the prompt without a model response.",
+            detail:
+              (yield* Ref.get(modelError)) ??
+              "Oh My Pi finished the prompt without a model response.",
           });
         }
         yield* Deferred.await(settled);
@@ -261,7 +312,7 @@ export const makeOmpTextGeneration = Effect.fn("makeOmpTextGeneration")(function
         if (!raw) {
           return yield* new TextGenerationError({
             operation: input.operation,
-            detail: "Oh My Pi returned empty output.",
+            detail: (yield* Ref.get(modelError)) ?? "Oh My Pi returned empty output.",
           });
         }
         // oxlint-disable-next-line t3code/no-inline-schema-compile -- The caller supplies a distinct output schema per generation request.

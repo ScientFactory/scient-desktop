@@ -97,6 +97,46 @@ describe("Oh My Pi text generation", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("keeps the model provider's error in the failure detail", () =>
+    Effect.gen(function* () {
+      for (const event of [
+        {
+          type: "notice",
+          level: "error",
+          message: "401 Unauthorized: invalid Anthropic API key",
+        },
+        {
+          type: "auto_retry_end",
+          success: false,
+          finalError: "429 Too Many Requests: rate limit exceeded",
+        },
+      ]) {
+        const service = yield* makeOmpTextGeneration(settings, {}, () =>
+          Effect.succeed(
+            makeClient([
+              { _tag: "Event", event },
+              { _tag: "Event", event: { type: "agent_end", messages: [], isTerminal: true } },
+            ]),
+          ),
+        );
+        const result = yield* service
+          .generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Summarize this work",
+            modelSelection,
+          })
+          .pipe(Effect.flip);
+        expect(result.message).toContain(
+          event.type === "notice"
+            ? "401 Unauthorized: invalid Anthropic API key"
+            : "429 Too Many Requests: rate limit exceeded",
+        );
+        expect(result.message).not.toContain("without a model response");
+        expect(result.message).not.toContain("returned empty output");
+      }
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("settles a later local prompt_result instead of waiting for agent_end", () =>
     Effect.gen(function* () {
       const service = yield* makeOmpTextGeneration(settings, {}, () =>

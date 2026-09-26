@@ -234,6 +234,55 @@ describe("Oh My Pi production qualification seams", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("settles an early cancel that races a starting agent", () =>
+    Effect.gen(function* () {
+      const root = makeRoot("cancel-agent-start-race");
+      const events = yield* Queue.unbounded<OmpRpcNotification, Cause.Done>();
+      let shutdowns = 0;
+      const adapter = yield* makeAdapter({
+        root,
+        instanceId: ProviderInstanceId.make("omp-qualification-cancel-race"),
+        makeProcess: (options) =>
+          Effect.sync(() =>
+            makeClient({
+              events,
+              sessionDir: options.sessionDir ?? root,
+              overrides: {
+                // The agent starts after the cancel request is sent but before
+                // the acknowledgement arrives, and OMP never reports a
+                // terminal end for that turn.
+                abort: () =>
+                  Effect.gen(function* () {
+                    yield* Queue.offer(events, { _tag: "Event", event: { type: "agent_start" } });
+                    // Let the runtime observe the starting agent before the
+                    // acknowledgement arrives.
+                    for (let index = 0; index < 50; index += 1) yield* Effect.yieldNow;
+                    return success("abort");
+                  }),
+              },
+              shutdown: Effect.sync(() => {
+                shutdowns += 1;
+                return { code: 0, forced: false, stderrTail: "" };
+              }),
+            }),
+          ),
+      });
+      const runtimeEvents = yield* collectRuntimeEvents(adapter);
+      const threadId = ThreadId.make("omp-cancel-agent-start-race");
+      yield* adapter.startSession({ threadId, cwd: root, runtimeMode: "full-access" });
+      const turn = yield* adapter.sendTurn({ threadId, input: "cancel while starting" });
+      yield* adapter
+        .interruptTurn(threadId, turn.turnId)
+        .pipe(Effect.timeout("5 seconds"), TestClock.withLive);
+      const terminal = yield* takeMatching(runtimeEvents, (event) => event.type === "turn.aborted");
+      expect(terminal.payload).toMatchObject({ reason: "cancelled" });
+      expect(shutdowns).toBe(0);
+      expect(yield* adapter.hasSession(threadId)).toBe(true);
+      yield* adapter.stopAll();
+      NodeFS.rmSync(root, { recursive: true, force: true });
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("does not kill a process when cancellation arrives after settlement", () =>
     Effect.gen(function* () {
       const root = makeRoot("settled-cancel");
