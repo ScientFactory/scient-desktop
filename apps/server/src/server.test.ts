@@ -173,6 +173,7 @@ import {
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
+import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
@@ -594,6 +595,7 @@ const buildAppUnderTest = (options?: {
       CloudManagedEndpointRuntime.CloudManagedEndpointRuntime["Service"]
     >;
     relayClient?: Partial<RelayClient.RelayClient["Service"]>;
+    agentAwarenessRelay?: Partial<AgentAwarenessRelay.AgentAwarenessRelay["Service"]>;
     cloudCliTokenManager?: Partial<CloudCliTokenManager.CloudCliTokenManager["Service"]>;
     httpClient?: HttpClient.HttpClient;
     nativeTelemetryClient?: Partial<NativeTelemetryClient.NativeTelemetryClient["Service"]>;
@@ -1250,16 +1252,24 @@ const buildAppUnderTest = (options?: {
           }),
         ),
         Layer.provide(
-          Layer.succeed(
-            CloudManagedEndpointRuntime.CloudManagedEndpointRuntime,
-            CloudManagedEndpointRuntime.CloudManagedEndpointRuntime.of({
-              applyConfig: () => Effect.succeed({ status: "disabled" }),
-              // Managed endpoint recovery stays inert in tests: no requests, no
-              // side effects, and the link-state lock is a pass-through.
-              recoveryRequests: Stream.empty,
-              requestRecovery: () => Effect.void,
-              withLinkStateLock: (effect) => effect,
-              ...options?.layers?.cloudManagedEndpointRuntime,
+          Layer.mergeAll(
+            Layer.succeed(
+              CloudManagedEndpointRuntime.CloudManagedEndpointRuntime,
+              CloudManagedEndpointRuntime.CloudManagedEndpointRuntime.of({
+                applyConfig: () => Effect.succeed({ status: "disabled" }),
+                // Managed endpoint recovery stays inert in tests: no requests, no
+                // side effects, and the link-state lock is a pass-through.
+                recoveryRequests: Stream.empty,
+                requestRecovery: () => Effect.void,
+                withLinkStateLock: (effect) => effect,
+                ...options?.layers?.cloudManagedEndpointRuntime,
+              }),
+            ),
+            // Upstream applies relay config through this relay; the mock keeps
+            // that a no-op so no test reaches the awareness channel.
+            Layer.mock(AgentAwarenessRelay.AgentAwarenessRelay)({
+              requestCatchUp: () => Effect.void,
+              ...options?.layers?.agentAwarenessRelay,
             }),
           ),
         ),

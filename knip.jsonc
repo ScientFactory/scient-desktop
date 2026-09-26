@@ -73,6 +73,8 @@
       "ignoreDependencies": ["playwright-core", "electron-builder"],
     },
     "apps/web": {
+      // Vitest loads this through the per-file @vitest-environment directive.
+      "ignoreDependencies": ["jsdom"],
       // Worktree setup (scripts/setup-worktree.ts) and the dep-cache warmer run
       // this directly. The Mermaid smoke harness loads its recovery corpus
       // through Vite in a real Chromium renderer, so that fixture module is

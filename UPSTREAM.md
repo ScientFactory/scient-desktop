@@ -46,35 +46,25 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current T3 alignment is recorded in
-[`docs/internals/2026-09-26-upstream-sync-dd8332da.md`](docs/internals/2026-09-26-upstream-sync-dd8332da.md)
+[`docs/internals/2026-09-26-upstream-sync-95030dc6.md`](docs/internals/2026-09-26-upstream-sync-95030dc6.md)
 and in `upstream-state.json`. It extends the integration through
-`dd8332da57355bccd7e666289267f2c94597debd`: 69 official commits after
-`d4a33457cb0da797728f4846a9da8592d7d81d36`, merged onto owned base
-`910f5b4d55c0423f8c4fa23758fcd0919a7e7497` as
-`836fbc899b4e9b05212c1c8eeb1c9de3438bcc31` (first parent owned base, second
-parent the exact official target). The nearest reachable official tag remains
-`v0.0.43-nightly.20260926.2282`, and the target is 15 commits past it. No
+`95030dc674883f0f2a7fd034b32ce742c8cf55d0`: 21 official commits after
+`dd8332da57355bccd7e666289267f2c94597debd`, merged onto owned base
+`01cc063c77edcad0e5110e843ebf08162bcc7013` as `f164dde1ff` (first parent owned
+base, second parent the exact official target). The alignment is prepared in
+[PR #372](https://github.com/ScientFactory/scient-desktop/pull/372). No
 owned-main catch-up was needed because the frozen base was already the current
-owned `main` tip. The preceding alignment
-([PR #369](docs/internals/2026-09-25-upstream-sync-d4a33457.md)) remains literal
-ancestry; all earlier official ancestry remains preserved. The current alignment
-is tracked in PR #370.
+owned `main` tip. The
+preceding alignment ([PR #370](docs/internals/2026-09-26-upstream-sync-dd8332da.md))
+remains literal ancestry.
 
-This alignment keeps production relay deployment disabled, keeps Linux `.deb`
-out of the published release set and the marketing download page, keeps cloud,
-telemetry, mobile-publication, and provider-lifecycle boundaries fail-closed,
-and composes the shared usage, settings, persistence, and provider-seam
-contracts. Managed-endpoint recovery, the compiled-JavaScript cache, the
-observability additions, and the provider/maintenance and orchestration
-improvements are adopted as machinery behind those boundaries. Review also
-fixed an upstream latent bug in which `hasCloudPublicConfig` was used as a bare
-value and therefore always truthy, and corrected two inherited public-brand
-strings that named T3 Code instead of Scient.
-
-Automated qualification and source review passed; release publication remains
-separate. The [earlier receipt](docs/internals/2026-09-18-upstream-sync-3fd5d643.md)
-and all earlier official ancestry remain literal history. Later observed
-upstream tips do not move `integrationBase` by themselves.
+This was a routine maintenance range that activates no protected boundary. The
+deliberate queued-messages revert is preserved whole, `node-pty` stays on `^1.1.0`
+because Scient builds its Linux arm64 artifact on arm64 hardware and does not
+consume upstream's new prebuild, and the Usage page keeps its Spend metric
+alongside upstream's new usage keybindings. Review also fixed an upstream change
+that aliased `projection_threads` in a new query and so silently broke Scient's
+`completedAnswerSql` correlation, which Git had merged without a conflict.
 
 ## Receiving T3 updates
 
