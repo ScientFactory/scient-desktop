@@ -2,6 +2,7 @@ import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -54,7 +55,13 @@ export type OmpRpcNotification =
       readonly id: string;
       readonly command: string;
       readonly error: string;
-    };
+    }
+  /**
+   * A known event type whose payload this client version cannot decode. The
+   * session continues; the host surfaces the raw frame so a new OMP release
+   * cannot silently end a conversation over a cosmetic field change.
+   */
+  | { readonly _tag: "UndecodableEvent"; readonly eventType: string; readonly detail: string };
 
 export interface OmpRpcIo {
   readonly stdout: Stream.Stream<Uint8Array, OmpRpcError>;
@@ -187,6 +194,26 @@ const ompKnownEventTypes = new Set([
   "command_output",
 ]);
 
+/**
+ * Events whose identity fields route a host request or a turn boundary. A
+ * decode failure here is a real protocol problem and stays fail-closed; every
+ * other known event degrades to an observable `UndecodableEvent`.
+ */
+const ompRoutingCriticalEventTypes = new Set([
+  "agent_start",
+  "agent_end",
+  "turn_start",
+  "turn_end",
+  "host_tool_call",
+  "host_tool_result",
+  "host_uri_request",
+  "host_uri_result",
+  "extension_ui_request",
+  "subagent_lifecycle",
+  "subagent_progress",
+  "subagent_event",
+]);
+
 const decodeOmpEvent = (value: unknown) =>
   Effect.gen(function* () {
     if (!isRecord(value) || typeof value.type !== "string") {
@@ -200,9 +227,21 @@ const decodeOmpEvent = (value: unknown) =>
         ),
       );
     }
-    const decoded = yield* decodeKnownEvent(value).pipe(
-      Effect.mapError((cause) => protocol(`RPC ${type} event failed schema decoding.`, cause)),
-    );
+    const decodeOutcome = yield* decodeKnownEvent(value).pipe(Effect.option);
+    if (Option.isNone(decodeOutcome)) {
+      if (ompRoutingCriticalEventTypes.has(type)) {
+        return yield* protocol(`RPC ${type} event failed schema decoding.`);
+      }
+      // A benign shape change in an informational event must not end the
+      // conversation. Routing-critical events stay fail-closed so a host
+      // request can never be dropped without a decision.
+      return {
+        _tag: "UndecodableEvent" as const,
+        eventType: type,
+        detail: `The agent sent an '${type}' event this client build cannot read.`,
+      };
+    }
+    const decoded = decodeOutcome.value;
     if (decoded.type === "extension_ui_request" && decoded.method === "open_url" && !decoded.url) {
       return yield* protocol("RPC open_url event omitted its URL.");
     }
@@ -227,11 +266,21 @@ export const makeOmpRpcClient = Effect.fn("OmpRpcClient.make")(function* (
 ): Effect.fn.Return<OmpRpcClient, never, Scope.Scope> {
   const timeout = Duration.millis(options.requestTimeoutMs ?? 30_000);
   const maxQueuedCharacters = options.maxQueuedCharacters ?? 16 * 1024 * 1024;
+  /**
+   * The event buffer must be able to hold one complete logical frame, because a
+   * single chunked agent_end or message_end is delivered as one notification
+   * after reassembly. The default 16 MiB streaming budget therefore never
+   * overrides the negotiated reassembly ceiling.
+   */
+  const queuedCharacterBudget = (current: OmpFrameLimits) =>
+    Math.max(maxQueuedCharacters, current.maxReassembledFrameBytes);
   const scope = yield* Scope.Scope;
   const pending = yield* Ref.make(new Map<string, PendingCommand>());
   const completedPromptIds = yield* Ref.make<ReadonlyArray<string>>([]);
   const nextId = yield* Ref.make(1);
   const limits = yield* Ref.make<OmpFrameLimits>(defaultOmpFrameLimits());
+  /** Synchronous mirror of the negotiated limits for the event-buffer budget. */
+  let negotiatedLimits = defaultOmpFrameLimits();
   const decoder = yield* Ref.make<OmpFrameDecoderState>(emptyOmpFrameDecoderState);
   const negotiated = yield* Deferred.make<void, OmpRpcError>();
   const ready = yield* Deferred.make<OmpRpcReady, OmpRpcError>();
@@ -272,7 +321,7 @@ export const makeOmpRpcClient = Effect.fn("OmpRpcClient.make")(function* (
 
   const offer = (notification: OmpRpcNotification, size: number) =>
     Effect.suspend(() => {
-      if (queuedCharacters + pendingChunkBytes + size > maxQueuedCharacters) {
+      if (queuedCharacters + pendingChunkBytes + size > queuedCharacterBudget(negotiatedLimits)) {
         return end(
           new OmpRpcProcessExitedError({ detail: "RPC event buffer exceeded its limit." }),
         ).pipe(Effect.andThen(io.close ?? Effect.void));
@@ -386,7 +435,10 @@ export const makeOmpRpcClient = Effect.fn("OmpRpcClient.make")(function* (
             );
           },
           onSuccess: (frame) =>
-            Ref.set(limits, defaultOmpFrameLimits(frame)).pipe(
+            Effect.sync(() => {
+              negotiatedLimits = defaultOmpFrameLimits(frame);
+            }).pipe(
+              Effect.andThen(Ref.set(limits, negotiatedLimits)),
               Effect.andThen(Deferred.succeed(ready, frame)),
               Effect.andThen(
                 Effect.gen(function* () {
@@ -434,7 +486,8 @@ export const makeOmpRpcClient = Effect.fn("OmpRpcClient.make")(function* (
       Effect.matchEffect({
         onFailure: (cause) =>
           fatal(isProtocolError(cause) ? cause.message : "RPC event failed schema decoding."),
-        onSuccess: (event) => offer({ _tag: "Event", event }, size),
+        onSuccess: (decoded) =>
+          "_tag" in decoded ? offer(decoded, size) : offer({ _tag: "Event", event: decoded }, size),
       }),
     );
   };
@@ -493,7 +546,7 @@ export const makeOmpRpcClient = Effect.fn("OmpRpcClient.make")(function* (
       });
       pendingChunkBytes = pushed.state.pending?.receivedBytes ?? 0;
       yield* Ref.set(decoder, pushed.state);
-      if (queuedCharacters + pendingChunkBytes > maxQueuedCharacters) {
+      if (queuedCharacters + pendingChunkBytes > queuedCharacterBudget(currentLimits)) {
         return yield* fatal("RPC frame buffer exceeded its limit.");
       }
       if (pushed.state.failed) {

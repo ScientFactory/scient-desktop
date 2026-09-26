@@ -787,6 +787,12 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         return;
       }
       if (notification._tag === "Drain") return;
+      if (notification._tag === "UndecodableEvent") {
+        // Stay observable without ending a conversation over a field change in
+        // an informational event.
+        yield* publish({ type: "warning", message: notification.detail });
+        return;
+      }
       yield* applyEvent(notification.event);
     });
 

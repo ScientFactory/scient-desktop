@@ -6,8 +6,8 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
-import { makeOmpRpcClient } from "./client.ts";
-import { OmpNegotiateResult } from "./schema.ts";
+import { makeOmpRpcClient, type OmpRpcNotification } from "./client.ts";
+import { OMP_RPC_CHUNK_PAYLOAD_BYTES, OmpNegotiateResult } from "./schema.ts";
 import { OmpRpcCommandError, OmpRpcProcessExitedError, OmpRpcProtocolError } from "./errors.ts";
 
 const encoder = new TextEncoder();
@@ -288,6 +288,36 @@ describe("Oh My Pi RPC client", () => {
     ),
   );
 
+  it.effect("keeps a session alive when an informational event shape changes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const stdout = yield* Queue.unbounded<Uint8Array>();
+        const seen = yield* Queue.unbounded<string>();
+        const client = yield* makeOmpRpcClient({
+          stdout: Stream.fromQueue(stdout),
+          write: () => Effect.void,
+        });
+        yield* client.events.pipe(
+          Stream.runForEach((notification) =>
+            Queue.offer(
+              seen,
+              notification._tag === "Event" ? notification.event.type : notification._tag,
+            ).pipe(Effect.asVoid),
+          ),
+          Effect.forkScoped,
+        );
+        yield* Queue.offer(stdout, line(readyFrame));
+        // A future OMP release changes an informational event's shape. The
+        // session must continue and report it instead of ending the process.
+        yield* Queue.offer(stdout, line({ type: "command_output", output: { unexpected: true } }));
+        expect(yield* Queue.take(seen)).toBe("UndecodableEvent");
+        yield* Queue.offer(stdout, line({ type: "agent_start" }));
+        expect(yield* Queue.take(seen)).toBe("agent_start");
+        expect(yield* client.ready.pipe(Effect.isSuccess)).toBe(true);
+      }),
+    ),
+  );
+
   it.effect("keeps an unknown event as an explicit raw variant", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -340,6 +370,64 @@ describe("Oh My Pi RPC client", () => {
         expect(
           yield* client.ready.pipe(Effect.map((ready) => ready.supportedProtocolVersions)),
         ).toEqual([1, 2, 3, 9]);
+      }),
+    ),
+  );
+
+  it.effect("delivers one logical frame larger than the streaming event budget", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const stdout = yield* Queue.unbounded<Uint8Array>();
+        const seen = yield* Queue.unbounded<OmpRpcNotification>();
+        const client = yield* makeOmpRpcClient({
+          stdout: Stream.fromQueue(stdout),
+          write: () => Effect.void,
+        });
+        yield* client.events.pipe(
+          Stream.runForEach((notification) => Queue.offer(seen, notification).pipe(Effect.asVoid)),
+          Effect.forkScoped,
+        );
+        yield* Queue.offer(stdout, line(readyFrame));
+        // One chunked logical frame above the 16 MiB streaming budget must still
+        // be delivered: the negotiated reassembly ceiling, not the streaming
+        // budget, is the limit for a single logical frame.
+        const messages = Array.from({ length: 70_000 }, (_, index) => ({
+          role: "assistant",
+          content: [{ type: "text", text: `message ${index} ${"x".repeat(200)}` }],
+        }));
+        const json = yield* Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))({
+          type: "agent_end",
+          isTerminal: true,
+          messages,
+        });
+        const bytes = Buffer.from(json, "utf8");
+        expect(bytes.byteLength).toBeGreaterThan(16 * 1024 * 1024);
+        const count = Math.ceil(bytes.byteLength / OMP_RPC_CHUNK_PAYLOAD_BYTES);
+        for (let index = 0; index < count; index += 1) {
+          yield* Queue.offer(
+            stdout,
+            line({
+              type: "rpc_chunk",
+              chunkId: "rpc-large",
+              index,
+              count,
+              byteLength: bytes.byteLength,
+              data: bytes
+                .subarray(
+                  index * OMP_RPC_CHUNK_PAYLOAD_BYTES,
+                  (index + 1) * OMP_RPC_CHUNK_PAYLOAD_BYTES,
+                )
+                .toString("base64"),
+            }),
+          );
+        }
+        // The transport is drained asynchronously, so wait for the frame.
+        yield* Effect.sleep("2 seconds").pipe(TestClock.withLive);
+        const delivered = yield* Queue.takeAll(seen);
+        expect(delivered.filter((notification) => notification._tag === "Event")).toHaveLength(1);
+        expect(delivered.filter((notification) => notification._tag === "ProtocolFailure")).toEqual(
+          [],
+        );
       }),
     ),
   );
