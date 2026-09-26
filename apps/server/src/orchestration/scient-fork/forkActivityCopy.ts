@@ -13,7 +13,7 @@
  */
 import type { OrchestrationThreadActivity } from "@t3tools/contracts";
 
-export const FORK_COPIED_ACTIVITY_KINDS: ReadonlySet<string> = new Set([
+const FORK_COPIED_ACTIVITY_KINDS: ReadonlySet<string> = new Set([
   "tool.updated",
   "tool.completed",
   "tool.denied",
@@ -42,13 +42,13 @@ export const FORK_HYDRATION_ACTIVITY_KINDS: ReadonlyArray<string> = [
 ];
 
 /** Largest string kept verbatim in a copied activity payload. */
-export const FORK_ACTIVITY_STRING_MAX_CHARS = 8_192;
+const FORK_ACTIVITY_STRING_MAX_CHARS = 8_192;
 const HEAD_CHARS = 6_144;
 const TAIL_CHARS = 1_536;
 const MAX_ARRAY_ITEMS = 200;
 const MAX_DEPTH = 12;
 
-export const FORK_TRUNCATION_MARKER = "[… truncated in fork …]";
+const FORK_TRUNCATION_MARKER = "[… truncated in fork …]";
 
 /** A copied activity is ordered by its time in the fork, not the origin's sequence. */
 export function withoutOriginSequence(

@@ -20,7 +20,7 @@ import * as NodeBuffer from "node:buffer";
 /** V2: an unknown model window is assumed to be 128k tokens. */
 export const DEFAULT_MODEL_CONTEXT_WINDOW = 128_000;
 /** V2: the reserve for tools, instructions and subsequent work. */
-export const MIN_HANDOFF_RESERVE = 16_000;
+const MIN_HANDOFF_RESERVE = 16_000;
 /** Below this, a handoff carries only its coverage header. */
 export const MIN_USEFUL_HANDOFF_TOKENS = 512;
 const IMAGE_ALLOWANCE = 8_192;
@@ -31,7 +31,7 @@ export function estimateTokens(text: string): number {
 }
 
 /** V2: images cost 8,192 and other attachments 4,096 estimated tokens. */
-export function attachmentTokenAllowance(attachments: ReadonlyArray<ChatAttachment>): number {
+function attachmentTokenAllowance(attachments: ReadonlyArray<ChatAttachment>): number {
   return attachments.reduce(
     (total, attachment) => total + (attachment.type === "image" ? IMAGE_ALLOWANCE : FILE_ALLOWANCE),
     0,
