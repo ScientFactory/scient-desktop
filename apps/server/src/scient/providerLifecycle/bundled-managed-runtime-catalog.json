@@ -540,6 +540,22 @@
           "size": 45009021
         }
       }
+    },
+    "omp": {
+      "contractRevision": 1,
+      "channel": "stable",
+      "version": "18.2.8",
+      "artifacts": {
+        "darwin-arm64": {
+          "artifactName": "omp-darwin-arm64",
+          "url": "https://github.com/can1357/oh-my-pi/releases/download/v18.2.8/omp-darwin-arm64",
+          "checksum": {
+            "algorithm": "sha256",
+            "digest": "cf8d34a7fe6f60de1acbe74f29c82026e4c07888e9d89f7ebceeb922159e5787"
+          },
+          "size": 193484176
+        }
+      }
     }
   }
 }

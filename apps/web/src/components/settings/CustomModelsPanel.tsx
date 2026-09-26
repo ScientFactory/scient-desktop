@@ -196,7 +196,9 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
     .filter(([, value]) => supportsModelConnections(value.driver))
     .map(([id, value]) => ({
       id: ProviderInstanceId.make(id),
-      name: value.displayName ?? (value.driver === "droid" ? "Droid" : "Pi"),
+      name:
+        value.displayName ??
+        (value.driver === "droid" ? "Droid" : value.driver === "omp" ? "Oh My Pi" : "Pi"),
       driver: value.driver,
     }));
   if (

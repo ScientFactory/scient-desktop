@@ -79,6 +79,21 @@ export interface ProviderMaintenanceCommandAction {
    * must update that home and not the default one.
    */
   readonly env?: NodeJS.ProcessEnv;
+  /**
+   * Set false for a provider-owned updater that must not inherit ambient
+   * server credentials. The default preserves the existing provider behavior.
+   */
+  readonly inheritEnv?: boolean;
+  /** Optional provider-owned guard evaluated immediately before the command. */
+  readonly canUpdate?: () => Effect.Effect<boolean>;
+  /**
+   * Optional provider-owned hooks around the spawned command. A provider that
+   * must hold something for the whole update (for example an executable that
+   * is being replaced) takes it in `beforeRun` and releases it in `afterRun`,
+   * so new work can be refused while the command runs.
+   */
+  readonly beforeRun?: () => Effect.Effect<void>;
+  readonly afterRun?: () => Effect.Effect<void>;
 }
 
 /** Where the provider executable was found; every path is absolute. */

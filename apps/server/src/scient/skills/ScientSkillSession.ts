@@ -31,6 +31,7 @@ export const SCIENT_SKILL_DELIVERY = {
   droid: "mcp",
   grok: "mcp",
   opencode: "mcp",
+  omp: "unsupported",
   pi: "mcp",
 } as const;
 

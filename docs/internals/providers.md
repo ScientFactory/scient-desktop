@@ -7,7 +7,7 @@ orchestration layer does not know which one is behind a thread.
 
 ## Built-in drivers
 
-[`builtInDrivers.ts`][drivers] exports `BUILT_IN_DRIVERS` with eight entries:
+[`builtInDrivers.ts`][drivers] exports `BUILT_IN_DRIVERS` with nine entries:
 
 | Driver kind   | Driver source                                 |
 | ------------- | --------------------------------------------- |
@@ -19,6 +19,7 @@ orchestration layer does not know which one is behind a thread.
 | `droid`       | [`Drivers/DroidDriver.ts`][droid]             |
 | `antigravity` | [`Drivers/AntigravityDriver.ts`][antigravity] |
 | `pi`          | [`Drivers/PiDriver.ts`][pi]                   |
+| `omp`         | [`Drivers/OmpDriver.ts`][omp]                 |
 
 Each driver declares its `driverKind`, a `configSchema`, and a `create` function that builds an
 adapter in a child scope. Adapter implementations live beside them in
@@ -448,6 +449,66 @@ profiles and local model/MCP endpoints. It exercises the real binary without use
 Passing it proves native protocol/tool integration, not hosted authentication, every third-party
 extension, cross-platform runtime support, or human product acceptance.
 
+### Oh My Pi driver
+
+[`OmpDriver.ts`][omp] is an external provider on the current adapter. `packages/effect-omp-rpc` speaks
+Oh My Pi's newline JSON protocol, including protocol v2 chunk reassembly, and imports no Scient
+orchestration types. The adapter owns the process and the turn mapping.
+
+- The executable is `omp` 18.2.8 or newer and below major 19; a newer major is refused until it is
+  qualified. Launch arguments are `--mode rpc` and
+  `--approval-mode yolo`. Scient does not call `login` during discovery. A desktop macOS Apple
+  silicon app can install the qualified private binary. Other machines use an executable the user
+  installed.
+  Update checks compare the running version with the latest stable same-major release. For an
+  official `omp` launcher, Scient runs `omp update --stable` through the shared one-click update
+  flow. Fresh maintenance resolution carries that release candidate through compatibility checks
+  and verifies the version again after the command. A different major, a prerelease, an unknown
+  launcher, or any executable under Scient's private managed-runtime root is not offered as a
+  routine native update. A desktop macOS Apple silicon app can install a private Oh My Pi from the
+  qualified catalog. That copy is updated only through the managed-runtime actions. Its resume
+  identity ignores the managed version directory, so a later qualified update can reopen the same
+  session. Managed activation also runs an isolated RPC-v2 handshake and state probe after staging;
+  a binary that only answers `--version` is rejected and the previous runtime is restored.
+  A native update is refused while any OMP process for that executable is alive, including an idle
+  conversation and a one-shot title or commit run, and the executable is held exclusively for the
+  whole command; a conversation that starts during the update is refused.
+- The child environment is an explicit allowlist: home, `PATH`, temp and locale coordinates, proxy
+  and certificate settings, XDG directories, shell identity, SSH agent socket, virtualenv and conda
+  state, and the named model-provider API keys. Unrelated server secrets are not forwarded.
+- One process serves one thread. Stop closes that process only. The child receives an explicit
+  `--session-dir` under Scient's per-instance/per-thread state root; the legacy session environment
+  variable is retained only as a compatibility fallback in the process environment.
+- A prompt response is acceptance. Completion is a local prompt, or a terminal `agent_end` confirmed
+  idle with `get_state`. Stop first requests an abort; the process remains available when OMP
+  confirms an idle terminal state, and forced process termination produces an uncertain outcome.
+  Process exit during a turn is an uncertain failure.
+- Resume cursors must match the provider instance, workspace, effective OMP home/profile, canonical
+  executable, protocol, and launch policy, and must stay inside Scient's session directory. `PATH`
+  is not part of the persisted executable identity. Legacy v2 cursors that hashed `PATH` are
+  rejected rather than migrated without independent executable evidence.
+- A known event that no longer matches its schema is reported as an observable `UndecodableEvent`
+  warning when it is informational; routing-critical frames (turn boundaries, host requests,
+  subagent identity) stay fail-closed. A slash invocation OMP does not know is forwarded as text,
+  matching OMP itself, while a failed command catalog keeps every slash invocation blocked.
+- Subagent frames stay on the parent turn and preserve native IDs. Native compact reports a compacted
+  thread only when OMP confirms success. Only explicitly qualified commands are exposed; discovered
+  session, export, sharing, model, configuration, and extension commands are rejected. The
+  v18.2.8 runtime exposes context usage through `get_state`, not a standalone event, so OMP does not
+  advertise a native context-window projection yet.
+- `provider/omp/OmpCustomModels.ts` adapts the shared custom-model connection contract to OMP's
+  explicit extension API for discovery, chat, and background generation. It passes credentials only
+  through scoped child-process environment names for connections published at process start,
+  refreshes metadata through an authenticated loopback endpoint, and retires the process on
+  credential, endpoint, or model-removal changes. A newly attached keyed connection is withheld
+  until the next OMP process instead of interrupting an active turn. Custom-model readiness is
+  projected separately from native OMP models. See [Custom model connections](./custom-models.md)
+  for ownership and qualification limits.
+- Awareness, Scient skill delivery, and Scient host tools are intentionally unsupported and stay
+  that way: registering host-tool authority for this provider is outside the agreed external-agent
+  boundary. An unexpected host-tool call is rejected with an explicit warning rather than being
+  silently dropped. Full access is the only runtime mode. There is no Orchestration V2 adapter.
+
 ## Scient-assisted provider lifecycle
 
 Codex, Claude, Cursor, Antigravity, Grok, and Droid optionally expose assisted runtime and account
@@ -626,6 +687,7 @@ when a request opens (approval) or user input is requested, via
 [opencode-server-owner]: ../../apps/server/src/provider/OpenCodeServerOwner.ts
 [droid]: ../../apps/server/src/provider/Drivers/DroidDriver.ts
 [pi]: ../../apps/server/src/provider/Drivers/PiDriver.ts
+[omp]: ../../apps/server/src/provider/Drivers/OmpDriver.ts
 [pi-notice]: ../../apps/server/src/provider/pi/NOTICE.md
 [agy-session]: ../../apps/server/src/provider/antigravity/AgySession.ts
 [adapter]: ../../apps/server/src/provider/Services/ProviderAdapter.ts

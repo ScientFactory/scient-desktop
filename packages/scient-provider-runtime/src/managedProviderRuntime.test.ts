@@ -283,6 +283,27 @@ describe("ManagedProviderRuntime contract", () => {
     expect(events).toEqual(["download", "verify", "materialize", "smoke", "commit"]);
   });
 
+  it("persists qualified OMP receipts across runtime recreation", async () => {
+    const { root, runtime } = await makeRuntime();
+    const recipe = artifact("18.2.8", {
+      provider: "omp",
+      catalogRevision: "omp:18.2.8:test",
+    });
+
+    await install(runtime, recipe);
+    const recreated = new ManagedProviderRuntime(root, {
+      providerDirectory: "test-provider",
+      displayName: "Test Provider",
+    });
+
+    expect(await recreated.status(recipe)).toMatchObject({
+      installed: true,
+      selected: true,
+      activeVersion: "18.2.8",
+      activeArtifact: { provider: "omp", version: "18.2.8" },
+    });
+  });
+
   it("reads legacy state without silently treating it as an explicit managed selection", async () => {
     const { root, runtime } = await makeRuntime();
     const recipe = artifact("1.0.0");

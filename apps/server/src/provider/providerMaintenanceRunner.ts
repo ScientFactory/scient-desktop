@@ -84,6 +84,7 @@ const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceR
     readonly command: string;
     readonly args: ReadonlyArray<string>;
     readonly env?: NodeJS.ProcessEnv;
+    readonly inheritEnv?: boolean;
   }) {
     const collectCommandResult = Effect.fn("ProviderMaintenanceRunner.collectCommandResult")(
       function* () {
@@ -97,7 +98,11 @@ const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceR
           .spawn(
             ChildProcess.make(resolved.command, resolved.args, {
               shell: resolved.shell,
-              ...(input.env ? { env: input.env, extendEnv: true } : {}),
+              ...(input.inheritEnv === false
+                ? { env: input.env ?? {}, extendEnv: false }
+                : input.env
+                  ? { env: input.env, extendEnv: true }
+                  : {}),
             }),
           )
           .pipe(
@@ -231,6 +236,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
       command: update.executable,
       args: update.args,
       ...(update.env ? { env: update.env } : {}),
+      ...(update.inheritEnv === false ? { inheritEnv: false } : {}),
     });
   const commandCoordinator = yield* makeProviderMaintenanceCommandCoordinator({
     makeAlreadyRunningError: () =>
@@ -397,6 +403,16 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
                 }),
               );
             }
+            if (fresh.update.canUpdate && !(yield* fresh.update.canUpdate())) {
+              return yield* finish(
+                makeUpdateState({
+                  status: "failed",
+                  startedAt,
+                  finishedAt: yield* nowIso,
+                  message: "The provider has active work. Wait for it to settle and try again.",
+                }),
+              );
+            }
 
             const manifest = yield* manifestService.current;
             const candidateVersion =
@@ -435,7 +451,27 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
                 }),
               );
             }
-            const result = yield* runMaintenanceCommand(command);
+            // The last check before the installer runs. Work can start between
+            // the first guard and here, so a provider-owned guard is evaluated
+            // again immediately before the command is spawned.
+            if (command.canUpdate && !(yield* command.canUpdate())) {
+              return yield* finish(
+                makeUpdateState({
+                  status: "failed",
+                  startedAt,
+                  finishedAt: yield* nowIso,
+                  message: "The provider has active work. Wait for it to settle and try again.",
+                }),
+              );
+            }
+            const runCommand = () => runMaintenanceCommand(command);
+            const result = yield* command.beforeRun || command.afterRun
+              ? Effect.acquireUseRelease(
+                  command.beforeRun?.() ?? Effect.void,
+                  runCommand,
+                  () => command.afterRun?.() ?? Effect.void,
+                )
+              : runCommand();
             const finishedAt = yield* nowIso;
             if (result.timedOut || result.exitCode !== 0) {
               return yield* finish(

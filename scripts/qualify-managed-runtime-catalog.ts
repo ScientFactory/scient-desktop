@@ -13,6 +13,7 @@ import {
   ManagedCursorRuntime,
   ManagedDroidRuntime,
   ManagedGrokRuntime,
+  ManagedOmpRuntime,
   ManagedPiRuntime,
   detectManagedRuntimeTarget,
   hydrateManagedRuntimeArtifact,
@@ -24,6 +25,7 @@ import {
   resolveReviewedCursorArtifact,
   resolveReviewedDroidArtifact,
   resolveReviewedGrokArtifact,
+  resolveReviewedOmpArtifact,
   resolveReviewedPiArtifact,
   type ManagedProviderRuntime,
   type ManagedRuntimeArtifact,
@@ -130,6 +132,10 @@ const providerFactories: Readonly<
   pi: {
     policy: resolveReviewedPiArtifact,
     runtime: (baseDir) => new ManagedPiRuntime(baseDir),
+  },
+  omp: {
+    policy: resolveReviewedOmpArtifact,
+    runtime: (baseDir) => new ManagedOmpRuntime(baseDir),
   },
 };
 

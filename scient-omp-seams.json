@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 2,
+  "owner": "ScientFactory",
+  "purpose": "External Oh My Pi provider. The wire package has no Scient orchestration types. Desktop files own process, session cursor, and current turn mapping.",
+  "ownedRoots": ["packages/effect-omp-rpc", "apps/server/src/provider/omp"],
+  "ownedFiles": [
+    "apps/server/src/provider/Drivers/OmpDriver.ts",
+    "apps/server/src/provider/Layers/OmpAdapter.ts",
+    "apps/server/src/provider/Layers/OmpAdapter.test.ts",
+    "apps/server/src/provider/Layers/OmpProvider.ts",
+    "apps/server/src/provider/Layers/OmpProvider.test.ts",
+    "apps/server/src/provider/ScientAwareness.ts",
+    "apps/server/src/scient/skills/ScientSkillSession.ts",
+    "apps/server/src/textGeneration/OmpTextGeneration.ts",
+    "apps/server/src/textGeneration/OmpTextGeneration.test.ts",
+    "docs/user/providers-omp.md",
+    "packages/contracts/src/model.test.ts",
+    "packages/scient-analytics/src/contract.ts",
+    "packages/scient-analytics/src/wireContract.ts",
+    "packages/scient-analytics/src/conformance.test.ts",
+    "apps/web/src/providerOrdering.test.ts"
+  ],
+  "upstreamMounts": [
+    {
+      "path": "apps/mobile/src/components/ProviderIcon.tsx",
+      "anchor": "props.provider === \"omp\""
+    },
+    { "path": "apps/server/src/provider/builtInDrivers.ts", "anchor": "OmpDriver" },
+    { "path": "apps/server/src/provider/Layers/ProviderRegistry.test.ts", "anchor": "omp" },
+    { "path": "packages/contracts/src/settings.ts", "anchor": "OmpSettings" },
+    { "path": "packages/contracts/src/model.ts", "anchor": "OMP_DRIVER_KIND" },
+    { "path": "apps/web/src/session-logic.ts", "anchor": "ProviderDriverKind.make(\"omp\")" },
+    { "path": "apps/web/src/modelSelection.ts", "anchor": "customModels" },
+    { "path": "apps/web/src/components/settings/providerDriverMeta.ts", "anchor": "OmpSettings" },
+    { "path": "apps/web/src/components/chat/providerIconUtils.ts", "anchor": "omp" },
+    { "path": "apps/web/src/components/Icons.tsx", "anchor": "OhMyPiIcon" },
+    { "path": "scripts/release-smoke.ts", "anchor": "packages/effect-omp-rpc/package.json" }
+  ],
+  "ompDiffSignals": ["Oh My Pi", "effect-omp-rpc", "provider/omp", "Omp", "\"omp\""]
+}

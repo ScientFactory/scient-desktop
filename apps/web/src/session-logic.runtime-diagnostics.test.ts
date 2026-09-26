@@ -65,6 +65,28 @@ describe("runtime diagnostics in the work log", () => {
     expect(entry?.detail).toBeUndefined();
   });
 
+  it("keeps an Oh My Pi browser action visible and clickable", () => {
+    const [entry] = deriveWorkLogEntries([
+      makeActivity({
+        kind: "runtime.warning",
+        tone: "info",
+        summary: "Oh My Pi requested a browser action.",
+        payload: {
+          message: "Oh My Pi requested a browser action.",
+          detail: {
+            kind: "open-url",
+            url: "https://example.com/authorize?state=secret",
+          },
+        },
+      }),
+    ]);
+
+    expect(entry?.externalUrl).toEqual({
+      href: "https://example.com/authorize?state=secret",
+    });
+    expect(entry?.detail).toContain("https://example.com/authorize?state=secret");
+  });
+
   it("does not interpret an unrelated activity message as a runtime diagnostic", () => {
     const [entry] = deriveWorkLogEntries([
       makeActivity({ kind: "tool.completed", tone: "tool", summary: "Read file" }),

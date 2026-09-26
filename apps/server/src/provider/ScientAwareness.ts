@@ -74,6 +74,7 @@ export const SCIENT_AWARENESS_DELIVERY = {
   droid: "system-prompt-append",
   grok: "rules-append",
   opencode: "managed-server-per-message-system",
+  omp: "unsupported-no-private-system-seam",
   pi: "before-agent-start-system-append",
 } as const;
 

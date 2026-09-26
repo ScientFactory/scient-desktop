@@ -32,6 +32,16 @@ describe("Scient analytics contract", () => {
       normalizeInheritedEvent("provider.turn.completed", { provider: "pi" }, context)?.name,
     ).toBe("provider.turn.completed");
   });
+  it("maps OMP analytics to the gateway's existing provider bucket", () => {
+    expect(
+      normalizeInheritedEvent(
+        "provider.turn.completed",
+        { provider: "omp", terminalStatus: "completed" },
+        context,
+      )?.properties.provider,
+    ).toBe("other");
+  });
+
   it("attributes Pi without collecting custom endpoint or model names", () => {
     const event = normalizeInheritedEvent(
       "provider.turn.sent",

@@ -276,6 +276,12 @@ function stableChannelFetch(codexVersion = bundledCatalogJson.providers.codex.ve
         draft: false,
         prerelease: false,
       });
+    if (url === "https://api.github.com/repos/can1357/oh-my-pi/releases/latest")
+      return Response.json({
+        tag_name: `v${bundledCatalogJson.providers.omp.version}`,
+        draft: false,
+        prerelease: false,
+      });
     throw new Error(`Unexpected release request: ${url}`);
   };
   return { fetch_, requested };
@@ -580,7 +586,7 @@ describe("managed runtime release discovery", () => {
     const result = await refreshManagedRuntimeCatalog(currentCatalog, fetch_);
     expect(result.changedProviders).toEqual([]);
     expect(result.catalog).toEqual(currentCatalog);
-    expect(requested).toHaveLength(8);
+    expect(requested).toHaveLength(9);
   });
 
   it("discovers one provider without coupling it to another provider channel", async () => {

@@ -57,7 +57,7 @@ function insertMessage(
     readonly threadId: string;
     readonly messageId: string;
     readonly turnId: string;
-    readonly role: "user" | "assistant";
+    readonly role: "user" | "assistant" | "reasoning";
     readonly createdAt: string;
   },
 ) {
@@ -245,6 +245,39 @@ layer("ForkBoundaryReadModel resolver", (it) => {
       assert.strictEqual(result.forkPoint.kind, "user-message");
       assert.strictEqual(result.selectedBoundary.assistantMessageId, A1);
       assert.strictEqual(result.selectedBoundary.conversationTurnCount, 1);
+    }),
+  );
+
+  it.effect("ignores reasoning rows while resolving user and assistant forks", () =>
+    Effect.gen(function* () {
+      const sql = yield* prepare;
+      yield* seedThreeTurns(sql);
+      yield* insertMessage(sql, {
+        threadId: ORIGIN,
+        messageId: MessageId.make("reasoning-1"),
+        turnId: T1,
+        role: "reasoning",
+        createdAt: "2026-01-01T00:00:01.500Z",
+      });
+      const resolver = makeForkBoundaryResolver(sql);
+
+      const userResult = yield* resolver.resolve({
+        originThreadId: ORIGIN,
+        sourceUserMessageId: U2,
+        threadCreatedAt: THREAD_CREATED_AT,
+      });
+      const assistantResult = yield* resolver.resolve({
+        originThreadId: ORIGIN,
+        sourceAssistantMessageId: A2,
+        threadCreatedAt: THREAD_CREATED_AT,
+      });
+
+      assert.strictEqual(userResult.selectedBoundary.assistantMessageId, A1);
+      assert.strictEqual(assistantResult.selectedBoundary.assistantMessageId, A2);
+      assert.strictEqual(
+        userResult.boundaries.some((boundary) => boundary.assistantMessageId === A2),
+        true,
+      );
     }),
   );
 

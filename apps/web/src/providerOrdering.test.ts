@@ -10,6 +10,7 @@ const expectedOrder = [
   "opencode",
   "droid",
   "pi",
+  "omp",
   "cursor",
   "grok",
 ];

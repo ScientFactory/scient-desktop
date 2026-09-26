@@ -14,6 +14,7 @@ import {
   resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsPatch,
+  OmpSettings,
 } from "./settings.ts";
 
 const decodeClientSettings = Schema.decodeUnknownSync(ClientSettingsSchema);
@@ -195,6 +196,15 @@ describe("custom model settings", () => {
       "bare-slug",
       { slug: "named", name: "Named", capabilities },
     ]);
+  });
+
+  it("accepts custom model entries for OMP instances", () => {
+    const decodeOmpSettings = Schema.decodeUnknownSync(OmpSettings);
+    expect(
+      decodeOmpSettings({ customModels: [{ slug: "local", name: "Local", capabilities }] })
+        .customModels,
+    ).toEqual([{ slug: "local", name: "Local", capabilities }]);
+    expect(decodeOmpSettings({}).customModels).toEqual([]);
   });
 
   it("accepts entries at the settings patch boundary", () => {

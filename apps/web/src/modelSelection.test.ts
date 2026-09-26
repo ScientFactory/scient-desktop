@@ -67,7 +67,7 @@ function settingsWithProviderInstances(): UnifiedSettings {
 }
 
 describe("instance-scoped model selection", () => {
-  it.each(["droid", "pi"] as const)(
+  it.each(["droid", "pi", "omp"] as const)(
     "keeps %s discovered BYOK models selectable, scoped, hideable, and removable",
     (kind) => {
       const driver = ProviderDriverKind.make(kind);

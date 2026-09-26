@@ -21,6 +21,7 @@ import { CursorInlineSetup } from "./CursorInlineSetup";
 import { DroidInlineSetup } from "./DroidInlineSetup";
 import { ConnectModelsButton } from "./ConnectModelsButton";
 import { GrokInlineSetup } from "./GrokInlineSetup";
+import { OmpInlineSetup } from "./OmpInlineSetup";
 import { PiInlineSetup } from "./PiInlineSetup";
 import {
   isProviderAccountPresentedAsConnected,
@@ -42,6 +43,7 @@ export function supportsAssistedProviderSetupSurface(
     case "cursor":
     case "droid":
     case "grok":
+    case "omp":
     case "pi":
       return true;
     default:
@@ -159,6 +161,16 @@ function SupportedAssistedProviderSetupHost(props: AssistedProviderSetupHostProp
 
   let setup: ReactNode;
   switch (props.provider.driver) {
+    case "omp":
+      setup = (
+        <OmpInlineSetup
+          {...managementProps}
+          environmentId={props.environmentId}
+          displayName={displayName}
+          provider={props.provider}
+        />
+      );
+      break;
     case "pi":
       setup = (
         <PiInlineSetup

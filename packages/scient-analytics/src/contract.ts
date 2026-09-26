@@ -105,6 +105,7 @@ const PROVIDERS = new Set([
   "grok",
   "opencode",
   "pi",
+  "omp",
 ]);
 const RUNTIME_SOURCES = new Set(["custom", "system", "scient_managed", "missing", "unknown"]);
 const LIFECYCLE_ACTIONS = new Set([
@@ -1022,7 +1023,12 @@ export function normalizeInheritedEvent(
   rawProperties: Readonly<Record<string, unknown>> | undefined,
   context: NormalizationContext,
 ): NormalizedEvent | null {
-  const normalized = normalizeEvent(name, rawProperties, context);
+  // The hosted analytics gateway has not yet learned the OMP provider value.
+  // Keep the local contract forward-compatible while emitting the gateway's
+  // existing "other" bucket until that contract revision is published.
+  const properties =
+    rawProperties?.provider === "omp" ? { ...rawProperties, provider: "other" } : rawProperties;
+  const normalized = normalizeEvent(name, properties, context);
   return normalized === null
     ? null
     : {

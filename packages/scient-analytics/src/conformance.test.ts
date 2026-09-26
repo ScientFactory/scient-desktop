@@ -36,6 +36,7 @@ describe("analytics contract conformance corpus", () => {
       "grok",
       "opencode",
       "pi",
+      "omp",
     ]) {
       const result = normalizeInheritedEvent(
         "provider.turn.sent",
@@ -46,7 +47,7 @@ describe("analytics contract conformance corpus", () => {
         { appVersion: "private-custom-build", buildChannel: "stable" },
       );
       expect(result?.properties).toMatchObject({
-        provider,
+        provider: provider === "omp" ? "other" : provider,
         modelKey: "other",
         appVersion: "unknown",
       });

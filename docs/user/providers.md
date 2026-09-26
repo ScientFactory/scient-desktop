@@ -1,7 +1,7 @@
 # Providers in Scient
 
 A provider supplies the AI models that work inside Scient. For example, you
-can connect Codex, Claude, Cursor, Grok, Droid, Antigravity, or Pi, then choose an
+can connect Codex, Claude, Cursor, Grok, Droid, Antigravity, Pi, or Oh My Pi, then choose an
 available model for each conversation. Different providers can have different
 models, tools, account requirements, and usage limits.
 
@@ -118,10 +118,14 @@ You can still use an installation administered directly on the server when that 
 - [Droid](./providers-droid.md)
 - [Cursor](./providers-cursor.md)
 - [Pi](./providers-pi.md)
+- [Oh My Pi](./providers-omp.md)
 
 Pi uses its own multi-provider model and credential configuration. Scient can manage its runtime
 on a qualified target, but does not offer a universal Pi account sign-in or sign-out action. Model
 discovery is not proof that a particular credential or subscription works.
+
+Oh My Pi uses the `omp` executable you install. Scient does not download it or sign in to it.
+Full access is the only runtime mode, and Oh My Pi's own approval mode is explicit `yolo`.
 
 OpenCode uses its own multi-provider credential and runtime configuration. Scient does not present
 one universal OpenCode account, sign-out action, or Scient-managed installation because its upstream

@@ -132,7 +132,11 @@ function mockSpawnerLayer(
   handler: (
     command: string,
     args: ReadonlyArray<string>,
-    options: { readonly env?: NodeJS.ProcessEnv | undefined },
+    options: {
+      readonly shell?: boolean | undefined;
+      readonly env?: NodeJS.ProcessEnv | undefined;
+      readonly extendEnv?: boolean | undefined;
+    },
   ) => {
     readonly stdout?: string;
     readonly stderr?: string;
@@ -146,7 +150,11 @@ function mockSpawnerLayer(
       const childProcess = command as unknown as {
         readonly command: string;
         readonly args: ReadonlyArray<string>;
-        readonly options: { readonly env?: NodeJS.ProcessEnv | undefined };
+        readonly options: {
+          readonly shell?: boolean | undefined;
+          readonly env?: NodeJS.ProcessEnv | undefined;
+          readonly extendEnv?: boolean | undefined;
+        };
       };
       return Effect.succeed(
         mockHandle(handler(childProcess.command, childProcess.args, childProcess.options)),
@@ -374,6 +382,133 @@ describe("providerMaintenanceRunner", () => {
             seen.push(options.env);
             return { stdout: "updated" };
           }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("can isolate an updater from the ambient server environment", () => {
+    const seen: Array<{
+      readonly shell?: boolean | undefined;
+      readonly env?: NodeJS.ProcessEnv | undefined;
+      readonly extendEnv?: boolean | undefined;
+    }> = [];
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry(baseProvider);
+      const updater = yield* makeTestRunner({
+        ...registry,
+        getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
+          Effect.succeed({
+            ...lifecycleFor(provider),
+            update: {
+              command: "codex update",
+              executable: "/work/codex",
+              args: ["update"],
+              lockKey: "codex-native",
+              inheritEnv: false,
+              env: { PATH: "/minimal/bin" },
+            },
+          }),
+      });
+
+      yield* updater.updateProvider(CODEX_DRIVER);
+      assert.deepStrictEqual(seen, [
+        { shell: false, env: { PATH: "/minimal/bin" }, extendEnv: false },
+      ]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NonWindowsPlatform,
+          latestVersionHttpClient("0.0.0"),
+          mockSpawnerLayer((_command, _args, options) => {
+            seen.push(options);
+            return { stdout: "updated" };
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("refuses an update when the provider reports active work", () => {
+    const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry(baseProvider);
+      const updater = yield* makeTestRunner({
+        ...registry,
+        getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
+          Effect.succeed({
+            ...lifecycleFor(provider),
+            update: {
+              command: "codex update",
+              executable: "/work/codex",
+              args: ["update"],
+              lockKey: "codex-native",
+              canUpdate: () => Effect.succeed(false),
+            },
+          }),
+      });
+
+      const result = yield* updater.updateProvider(CODEX_DRIVER);
+      assert.strictEqual(result.providers[0]?.updateState?.status, "failed");
+      assert.deepStrictEqual(calls, []);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NonWindowsPlatform,
+          latestVersionHttpClient("0.0.0"),
+          mockSpawnerLayer((command, args) => {
+            calls.push({ command, args });
+            return { stdout: "updated" };
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("re-checks the provider guard immediately before spawning and brackets the run", () => {
+    const order: Array<string> = [];
+    let guardCalls = 0;
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry(baseProvider);
+      const updater = yield* makeTestRunner({
+        ...registry,
+        getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
+          Effect.succeed({
+            ...lifecycleFor(provider),
+            update: {
+              command: "codex update",
+              executable: "/work/codex",
+              args: ["update"],
+              lockKey: "codex-native",
+              canUpdate: () =>
+                Effect.sync(() => {
+                  guardCalls += 1;
+                  return true;
+                }),
+              beforeRun: () =>
+                Effect.sync(() => {
+                  order.push("before");
+                }),
+              afterRun: () =>
+                Effect.sync(() => {
+                  order.push("after");
+                }),
+            },
+          }),
+      });
+
+      const result = yield* updater.updateProvider(CODEX_DRIVER);
+      assert.notStrictEqual(result.providers[0]?.updateState?.status, "failed");
+      // The guard runs for the pre-flight check and again immediately before
+      // the installer, and the provider bracket covers the whole command.
+      assert.strictEqual(guardCalls, 2);
+      assert.deepStrictEqual(order, ["before", "after"]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NonWindowsPlatform,
+          latestVersionHttpClient("0.0.0"),
+          mockSpawnerLayer(() => ({ stdout: "updated" })),
         ),
       ),
     );

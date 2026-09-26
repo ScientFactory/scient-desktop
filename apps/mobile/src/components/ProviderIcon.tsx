@@ -1,5 +1,5 @@
 import { Image } from "expo-image";
-import { Path, Rect, Svg } from "react-native-svg";
+import { Circle, Path, Rect, Svg } from "react-native-svg";
 import { View } from "react-native";
 import { providerInstanceInitials } from "@t3tools/client-runtime/state/provider-instance-display";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
@@ -83,6 +83,16 @@ export function ProviderIcon(props: ProviderIconProps) {
           d="M165.29 165.29H517.36V400H400V517.36H282.65V634.72H165.29ZM282.65 282.65V400H400V282.65Z"
         />
         <Path fill="#fff" d="M517.36 400H634.72V634.72H517.36Z" />
+      </Svg>
+    );
+  }
+
+  if (props.provider === "omp") {
+    return (
+      <Svg width={size} height={size} viewBox="0 0 800 800" fill="none">
+        <Rect width={800} height={800} rx={160} fill="#111827" />
+        <Circle cx={400} cy={400} r={220} stroke="#F8FAFC" strokeWidth={48} fill="none" />
+        <Path fill="#F8FAFC" d="M292 250h216v72H436v228h-72V322H292V250Zm216 150h72v228h-72V400Z" />
       </Svg>
     );
   }

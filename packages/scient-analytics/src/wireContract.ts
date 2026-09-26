@@ -26,6 +26,7 @@ const provider = {
     "grok",
     "opencode",
     "pi",
+    "omp",
     "other",
   ],
 } as const satisfies PropertyRule;
