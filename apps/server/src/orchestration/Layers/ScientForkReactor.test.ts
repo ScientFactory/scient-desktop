@@ -661,6 +661,85 @@ describe("ScientForkReactor", () => {
     }).pipe(Effect.provide(makeHarnessLayer([], []))),
   );
 
+  it.live("snapshots the live workspace for a new-worktree fork of a running turn", () => {
+    const captureCalls: Array<Parameters<ScientForkCheckpointBaselineShape["capture"]>[0]> = [];
+    const createWorktreeCalls: Array<VcsCreateWorktreeInput> = [];
+    const runningTurn = TurnId.make("origin-turn-2");
+    return Effect.gen(function* () {
+      const reactor = yield* ScientForkReactor;
+      const engine = yield* OrchestrationEngineService;
+      const sql = yield* SqlClient.SqlClient;
+      yield* seedOrigin();
+      yield* engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-live-turn-start"),
+        threadId: ORIGIN,
+        message: {
+          messageId: MessageId.make("origin-user-2"),
+          role: "user",
+          text: "Keep going",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: CREATED_AT,
+      });
+      yield* engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-live-session"),
+        threadId: ORIGIN,
+        session: {
+          threadId: ORIGIN,
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: runningTurn,
+          lastError: null,
+          updatedAt: CREATED_AT,
+        },
+        createdAt: CREATED_AT,
+      });
+      const options = yield* reactor.getOptions({
+        originThreadId: ORIGIN,
+        sourceRunningTurnId: runningTurn,
+      });
+      expect(options.available).toBe(true);
+      expect(options.sourceRunningTurnId).toBe(runningTurn);
+
+      yield* engine.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("cmd-fork-running-turn"),
+        originThreadId: ORIGIN,
+        newThreadId: NEW,
+        sourceRunningTurnId: runningTurn,
+        workspaceMode: "new-worktree",
+      });
+      yield* reactor.awaitCompletion(NEW);
+      yield* reactor.drain;
+
+      // The worktree starts from the workspace as it stands, not a checkpoint.
+      expect(captureCalls).toEqual([
+        { cwd: ORIGIN_WORKTREE, toCheckpointRef: checkpointRefForThreadTurn(NEW, 0) },
+      ]);
+      expect(createWorktreeCalls[0]?.refName).toBe(checkpointRefForThreadTurn(NEW, 0));
+      const lineage = yield* readLineageRow(sql);
+      expect(lineage?.status).toBe("ready");
+      const cut = yield* sql<{ readonly mid_turn_cut_json: string | null }>`
+        SELECT mid_turn_cut_json FROM scient_thread_lineage WHERE thread_id = ${NEW}
+      `;
+      expect(cut[0]?.mid_turn_cut_json).toContain(runningTurn);
+    }).pipe(
+      Effect.provide(
+        makeHarnessLayer([], createWorktreeCalls, true, undefined, {
+          capture: (input) =>
+            Effect.sync(() => {
+              captureCalls.push(input);
+            }).pipe(Effect.as(true)),
+        }),
+      ),
+    );
+  });
+
   it.live("provisions a shared-worktree baseline for a local fork", () => {
     const forkBaselineCalls: Array<Parameters<ScientForkCheckpointBaselineShape["copy"]>[0]> = [];
     const createWorktreeCalls: Array<VcsCreateWorktreeInput> = [];

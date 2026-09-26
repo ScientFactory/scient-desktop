@@ -1597,4 +1597,151 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
       expect(new Set(inherited)).toEqual(copiedTurns);
     }),
   );
+
+  it.effect("forks a running turn with its latest traces", () =>
+    Effect.gen(function* () {
+      const base = makeOriginThread();
+      const activity = (
+        id: string,
+        kind: string,
+        payload: unknown,
+        summary = id,
+      ): OrchestrationThreadActivity => ({
+        id: EventId.make(id),
+        tone: "tool",
+        kind,
+        summary,
+        payload,
+        turnId: T2,
+        createdAt: NOW,
+      });
+      const origin = makeOriginThread({
+        messages: [
+          ...base.messages.slice(0, 2),
+          message({
+            id: "user-2",
+            role: "user",
+            text: "second prompt",
+            turnId: null,
+            createdAt: "2026-01-01T00:00:03.000Z",
+          }),
+          message({
+            id: "reasoning-2",
+            role: "reasoning",
+            text: "still thinking about",
+            turnId: "turn-2",
+            createdAt: "2026-01-01T00:00:03.500Z",
+            streaming: true,
+          }),
+          message({
+            id: "assistant-2",
+            role: "assistant",
+            text: "Partial ans",
+            turnId: "turn-2",
+            createdAt: "2026-01-01T00:00:04.000Z",
+            streaming: true,
+          }),
+        ],
+        activities: [
+          activity("edit-done", "tool.completed", {
+            toolCallId: "call-edit",
+            data: { changes: [{ path: "src/fit.py" }] },
+          }),
+          activity("run-started", "tool.started", { toolCallId: "call-run" }),
+          activity("run-progress", "tool.updated", { toolCallId: "call-run", detail: "npm test" }),
+          activity(
+            "approval",
+            "approval.requested",
+            { requestId: "req-1" },
+            "Approve running the migration",
+          ),
+        ],
+        latestTurn: {
+          turnId: T2,
+          state: "running",
+          requestedAt: NOW,
+          startedAt: NOW,
+          completedAt: null,
+          assistantMessageId: null,
+        },
+        session: { ...IDLE_SESSION, status: "running", activeTurnId: T2 },
+      });
+      const completed = boundaries.slice(0, 2);
+      const events = yield* forkThreadAuthoritative({
+        command: forkCommand({
+          sourceAssistantMessageId: undefined,
+          sourceRunningTurnId: T2,
+        }),
+        readModel: makeReadModel({ origin }),
+        resolvedBoundaries: {
+          originThreadId: ORIGIN,
+          forkPoint: { kind: "running-turn", turnId: T2 },
+          boundaries: completed,
+          selectedBoundary: completed[1]!,
+        },
+      });
+
+      const sent = events.flatMap((event) =>
+        event.type === "thread.message-sent" ? [event.payload] : [],
+      );
+      expect(sent.map((entry) => entry.text)).toEqual([
+        "first prompt",
+        "first answer",
+        "second prompt",
+        "still thinking about",
+        "Partial ans",
+      ]);
+      expect(sent.every((entry) => entry.streaming === false)).toBe(true);
+      const liveTurnId = sent.at(-1)?.turnId;
+      expect(sent.slice(2).every((entry) => entry.turnId === liveTurnId)).toBe(true);
+
+      const forked = events.find((event) => event.type === "thread.forked");
+      if (forked?.type !== "thread.forked") return expect.unreachable();
+      const cut = forked.payload.midTurnCut;
+      expect(forked.payload.forkPointKind).toBe("running-turn");
+      expect(forked.payload.baselineTurnId).toBe(liveTurnId);
+      expect(forked.payload.sourceCheckpointTurnCount).toBeNull();
+      expect(cut?.sourceTurnId).toBe(T2);
+      expect(cut?.importedTurnId).toBe(liveTurnId);
+      expect(cut?.partialMessageIds).toEqual(sent.slice(3).map((entry) => entry.messageId));
+      expect(cut?.inFlightActivityIds).toHaveLength(1);
+      expect(cut?.pendingRequests).toEqual(["Approve running the migration"]);
+      expect(cut?.touchedFiles).toEqual(["src/fit.py"]);
+      expect(cut?.sharedWorkspace).toBe(true);
+      // The running turn's partial answer is a completed turn of the fork.
+      expect(forked.payload.copiedBoundaries).toHaveLength(2);
+
+      const copied = events.flatMap((event) =>
+        event.type === "thread.activity-appended" ? [event.payload.activity] : [],
+      );
+      // Tool rows only: the approval request is never executable in the fork.
+      expect(copied.map((entry) => entry.kind).toSorted()).toEqual([
+        "tool.completed",
+        "tool.updated",
+      ]);
+      expect(copied.map((entry) => entry.id)).toContain(cut?.inFlightActivityIds[0]);
+    }),
+  );
+
+  it.effect("refuses to fork a turn that is no longer running", () =>
+    Effect.gen(function* () {
+      const completed = boundaries.slice(0, 2);
+      const result = yield* Effect.result(
+        forkThreadAuthoritative({
+          command: forkCommand({ sourceAssistantMessageId: undefined, sourceRunningTurnId: T2 }),
+          readModel: makeReadModel(),
+          resolvedBoundaries: {
+            originThreadId: ORIGIN,
+            forkPoint: { kind: "running-turn", turnId: T2 },
+            boundaries: completed,
+            selectedBoundary: completed[1]!,
+          },
+        }),
+      );
+      expect(result._tag).toBe("Failure");
+      expect(String(result._tag === "Failure" ? result.failure.message : "")).toContain(
+        "no longer running",
+      );
+    }),
+  );
 });

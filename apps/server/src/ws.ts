@@ -2167,6 +2167,10 @@ const makeWsRpcLayer = (
                     ),
                   )
                 : false;
+              // SCIENT-FORK: a fork of a running turn copies its latest state.
+              if (normalizedCommand.type === "thread.fork") {
+                yield* scientForkReactor.prepareFork?.(normalizedCommand) ?? Effect.void;
+              }
               const result = yield* dispatchNormalizedCommand(normalizedCommand).pipe(
                 Effect.tapError(() => cleanupFailedUploadedAttachments(command, normalizedCommand)),
               );

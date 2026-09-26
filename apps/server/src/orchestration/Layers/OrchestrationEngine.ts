@@ -245,6 +245,9 @@ const makeOrchestrationEngine = Effect.gen(function* () {
               ...(envelope.command.sourceUserMessageId !== undefined
                 ? { sourceUserMessageId: envelope.command.sourceUserMessageId }
                 : {}),
+              ...(envelope.command.sourceRunningTurnId !== undefined
+                ? { sourceRunningTurnId: envelope.command.sourceRunningTurnId }
+                : {}),
               threadCreatedAt: origin.createdAt,
             })
             .pipe(

@@ -39,6 +39,8 @@ import { ScientForkCheckpointBaseline } from "../scient-fork/ForkCheckpointBasel
 import { ScientForkContextDelivery } from "../scient-fork/ForkContextDelivery.ts";
 import { makeForkBoundaryResolver } from "../scient-fork/ForkBoundaryReadModel.ts";
 import { retainPrefixMessages } from "../scient-fork/forkDecider.ts";
+import { collectForkLiveTail } from "../scient-fork/forkLiveTail.ts";
+import { ScientLiveTurnFlush } from "../scient-fork/liveTurnFlush.ts";
 import {
   retainQuestionAnswers,
   questionAnswerAttachments,
@@ -259,18 +261,25 @@ const make = Effect.gen(function* () {
     // A shared workspace has moved on since the forked turn: its first fork turn
     // captures a fresh baseline instead of diffing against historical files.
     const copiesBaseline = payload.workspaceMode === "new-worktree";
+    // A fork of a running turn snapshots the origin's workspace as it stands
+    // at the cut; other forks copy the forked turn's saved checkpoint.
+    const snapshotsLiveWorkspace = copiesBaseline && payload.midTurnCut !== undefined;
     const isGitRepository =
-      !copiesBaseline || fromRef === null
+      !copiesBaseline || (fromRef === null && !snapshotsLiveWorkspace)
         ? false
         : yield* checkpointBaseline.isGitRepository(originCwd);
-    const baselined =
-      isGitRepository && fromRef !== null
-        ? yield* checkpointBaseline.copy({
-            cwd: originCwd,
-            fromCheckpointRef: fromRef,
-            toCheckpointRef: toRef,
-          })
-        : false;
+    const baselined = !isGitRepository
+      ? false
+      : snapshotsLiveWorkspace
+        ? localAvailable &&
+          (yield* checkpointBaseline.capture({ cwd: originWorkspace, toCheckpointRef: toRef }))
+        : fromRef !== null
+          ? yield* checkpointBaseline.copy({
+              cwd: originCwd,
+              fromCheckpointRef: fromRef,
+              toCheckpointRef: toRef,
+            })
+          : false;
     const checkpointStatus: ScientForkCheckpointStatus = baselined ? "ready" : "unavailable";
 
     if (yield* isForkThreadDeleted(sql, payload.newThreadId)) {
@@ -280,15 +289,17 @@ const make = Effect.gen(function* () {
     }
     let workspaceStatus: ScientForkWorkspaceStatus;
     if (payload.workspaceMode === "new-worktree") {
-      if (!baselined || fromRef === null) {
+      const worktreeBase = snapshotsLiveWorkspace ? toRef : fromRef;
+      if (!baselined || worktreeBase === null) {
         return yield* new ScientForkTerminalProvisioningError({
-          detail:
-            "A new worktree cannot be created because the selected conversation boundary has no ready Git checkpoint.",
+          detail: snapshotsLiveWorkspace
+            ? "A new worktree cannot be created because the running conversation's workspace could not be snapshotted (it must be a Git repository that still exists)."
+            : "A new worktree cannot be created because the selected conversation boundary has no ready Git checkpoint.",
         });
       }
       const worktree = yield* ensureWorktree({
         cwd: originCwd,
-        fromRef,
+        fromRef: worktreeBase,
         threadId: payload.newThreadId,
       });
       provisioned.set(payload.newThreadId, {
@@ -585,12 +596,16 @@ const make = Effect.gen(function* () {
         reason,
         sourceAssistantMessageId: null,
         sourceUserMessageId: null,
+        sourceRunningTurnId: null,
         newWorktree: false,
       });
       const result = yield* Effect.gen(function* () {
         if (
-          input.sourceAssistantMessageId !== undefined &&
-          input.sourceUserMessageId !== undefined
+          [
+            input.sourceAssistantMessageId,
+            input.sourceUserMessageId,
+            input.sourceRunningTurnId,
+          ].filter((source) => source !== undefined).length > 1
         ) {
           return unavailable("Choose one message to fork from.");
         }
@@ -614,17 +629,29 @@ const make = Effect.gen(function* () {
           ...(input.sourceUserMessageId === undefined
             ? {}
             : { sourceUserMessageId: input.sourceUserMessageId }),
+          ...(input.sourceRunningTurnId === undefined
+            ? {}
+            : { sourceRunningTurnId: input.sourceRunningTurnId }),
         });
-        const source = origin.messages.find(
-          (message) => message.id === resolved.forkPoint.messageId,
-        );
-        if (!source || source.streaming)
+        const forkPoint = resolved.forkPoint;
+        if (forkPoint.kind === "running-turn") {
+          const running =
+            origin.session?.activeTurnId === forkPoint.turnId ||
+            (origin.latestTurn?.turnId === forkPoint.turnId &&
+              origin.latestTurn.state === "running");
+          if (!running) return unavailable("This turn has finished. Fork its response instead.");
+        }
+        const source =
+          forkPoint.kind === "running-turn"
+            ? undefined
+            : origin.messages.find((message) => message.id === forkPoint.messageId);
+        if (forkPoint.kind !== "running-turn" && (!source || source.streaming))
           return unavailable(
             "This message is still being written. Choose a completed response or a sent message.",
           );
         if (
-          resolved.forkPoint.kind === "user-message" &&
-          source.attachments?.some((attachment) => attachment.type !== "image")
+          forkPoint.kind === "user-message" &&
+          source?.attachments?.some((attachment) => attachment.type !== "image")
         ) {
           return unavailable(
             "Fork from the completed response to retain this message and its files. Editing a fork from a message with file attachments is not supported yet.",
@@ -648,10 +675,19 @@ const make = Effect.gen(function* () {
           ),
         );
         if (retainedAnswers.error) return unavailable(retainedAnswers.error);
+        const liveTail =
+          forkPoint.kind === "running-turn"
+            ? collectForkLiveTail({
+                origin,
+                retainedMessageIds: new Set(prefix.messages.map((message) => message.id)),
+                runningTurnId: forkPoint.turnId,
+              })
+            : null;
         yield* attachmentCopier.checkSources({
           threadId: origin.id,
           attachments: [
             ...prefix.messages.flatMap((message) => message.attachments ?? []),
+            ...(liveTail?.messages.flatMap((message) => message.attachments ?? []) ?? []),
             ...questionAnswerAttachments(retainedAnswers.answers),
           ],
         });
@@ -667,14 +703,21 @@ const make = Effect.gen(function* () {
           (checkpoint) =>
             checkpoint.turnId === resolved.selectedBoundary.turnId && checkpoint.status === "ready",
         );
+        // A running-turn fork snapshots the current workspace, so it needs a
+        // Git repository rather than a saved checkpoint.
         const newWorktree =
-          checkpoint !== undefined &&
-          (yield* checkpointBaseline
-            .hasCheckpoint(
-              checkpointCwd,
-              checkpointRefForThreadTurn(origin.id, checkpoint.checkpointTurnCount),
-            )
-            .pipe(Effect.catch(() => Effect.succeed(false))));
+          liveTail !== null
+            ? localAvailable &&
+              (yield* checkpointBaseline
+                .isGitRepository(cwd)
+                .pipe(Effect.catch(() => Effect.succeed(false))))
+            : checkpoint !== undefined &&
+              (yield* checkpointBaseline
+                .hasCheckpoint(
+                  checkpointCwd,
+                  checkpointRefForThreadTurn(origin.id, checkpoint.checkpointTurnCount),
+                )
+                .pipe(Effect.catch(() => Effect.succeed(false))));
         return {
           available: localAvailable || newWorktree,
           localAvailable,
@@ -684,9 +727,9 @@ const make = Effect.gen(function* () {
               ? "The original worktree no longer exists. Choose New worktree to restore the saved checkpoint in an independent workspace."
               : "The original workspace is unavailable. Restore its folder before forking.",
           sourceAssistantMessageId:
-            resolved.forkPoint.kind === "assistant-response" ? resolved.forkPoint.messageId : null,
-          sourceUserMessageId:
-            resolved.forkPoint.kind === "user-message" ? resolved.forkPoint.messageId : null,
+            forkPoint.kind === "assistant-response" ? forkPoint.messageId : null,
+          sourceUserMessageId: forkPoint.kind === "user-message" ? forkPoint.messageId : null,
+          sourceRunningTurnId: forkPoint.kind === "running-turn" ? forkPoint.turnId : null,
           newWorktree,
         };
       }).pipe(
@@ -706,10 +749,17 @@ const make = Effect.gen(function* () {
     },
   );
 
+  const liveTurnFlush = yield* Effect.serviceOption(ScientLiveTurnFlush);
+  const prepareFork: NonNullable<ScientForkReactorShape["prepareFork"]> = (command) =>
+    command.sourceRunningTurnId === undefined || Option.isNone(liveTurnFlush)
+      ? Effect.void
+      : liveTurnFlush.value.flush(command.originThreadId);
+
   return {
     start,
     drain: worker.drain,
     awaitCompletion,
+    prepareFork,
     getDisposition,
     getOptions,
   } satisfies ScientForkReactorShape;

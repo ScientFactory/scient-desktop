@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
 
+import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
 import { VcsProcess } from "../../vcs/VcsProcess.ts";
 
 export interface ScientForkCheckpointBaselineShape {
@@ -22,6 +23,15 @@ export interface ScientForkCheckpointBaselineShape {
     readonly fromCheckpointRef: CheckpointRef;
     readonly toCheckpointRef: CheckpointRef;
   }) => Effect.Effect<boolean, VcsError>;
+  /**
+   * Snapshot the current working tree (untracked, non-ignored files included)
+   * into a checkpoint ref without touching the user's index. A fork of a
+   * running turn starts from the workspace as it stands at the cut.
+   */
+  readonly capture: (input: {
+    readonly cwd: string;
+    readonly toCheckpointRef: CheckpointRef;
+  }) => Effect.Effect<boolean>;
   /**
    * Best-effort removal of what an abandoned fork created: its worktree, its
    * `scient/fork/*` branch and its turn-zero checkpoint ref.
@@ -41,6 +51,7 @@ export class ScientForkCheckpointBaseline extends Context.Service<
 
 const make = Effect.gen(function* () {
   const process = yield* VcsProcess;
+  const checkpointStore = yield* CheckpointStore.CheckpointStore;
   const fs = yield* FileSystem.FileSystem;
   const workspaceExists: ScientForkCheckpointBaselineShape["workspaceExists"] = (cwd) =>
     fs.stat(cwd).pipe(
@@ -97,6 +108,19 @@ const make = Effect.gen(function* () {
       })
       .pipe(Effect.map((result) => result.exitCode === 0));
 
+  const capture: ScientForkCheckpointBaselineShape["capture"] = (input) =>
+    checkpointStore
+      .captureCheckpoint({ cwd: input.cwd, checkpointRef: input.toCheckpointRef })
+      .pipe(
+        Effect.as(true),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("scient fork could not snapshot the running workspace", {
+            cwd: input.cwd,
+            cause,
+          }).pipe(Effect.as(false)),
+        ),
+      );
+
   const discard: ScientForkCheckpointBaselineShape["discard"] = Effect.fn(
     "discardScientForkWorkspace",
   )(function* (input) {
@@ -127,6 +151,7 @@ const make = Effect.gen(function* () {
     hasCheckpoint,
     workspaceExists,
     copy,
+    capture,
     discard,
   } satisfies ScientForkCheckpointBaselineShape;
 });
@@ -141,6 +166,7 @@ export const testLayer = (
     hasCheckpoint: () => Effect.succeed(true),
     workspaceExists: () => Effect.succeed(true),
     copy: () => Effect.succeed(true),
+    capture: () => Effect.succeed(true),
     discard: () => Effect.void,
     ...overrides,
   });

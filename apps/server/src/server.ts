@@ -94,6 +94,7 @@ import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.
 // SCIENT-FORK:START
 import { ScientForkReactorLive } from "./orchestration/Layers/ScientForkReactor.ts";
 import { ScientForkContextDeliveryLive } from "./orchestration/scient-fork/ForkContextDelivery.ts";
+import { ScientLiveTurnFlushLive } from "./orchestration/scient-fork/liveTurnFlush.ts";
 import { ScientForkCheckpointBaselineLive } from "./orchestration/scient-fork/ForkCheckpointBaseline.ts";
 import { ScientForkAttachmentCopierLive } from "./orchestration/scient-fork/ForkAttachmentCopier.ts";
 // SCIENT-FORK:END
@@ -367,6 +368,8 @@ const ReactorLayerLive = Layer.empty.pipe(
   ),
   // One context-delivery instance shared by turn starts and revert handling.
   Layer.provideMerge(ScientForkContextDeliveryLive),
+  // Ingestion registers its ordered flush; running-turn forks call it.
+  Layer.provideMerge(ScientLiveTurnFlushLive),
   // SCIENT-FORK:END
   Layer.provideMerge(StorageCleanup.layer),
   Layer.provideMerge(ThreadDeletionReactorLive),

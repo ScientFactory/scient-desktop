@@ -17,6 +17,7 @@ import { toPersistenceSqlError } from "../../persistence/Errors.ts";
 import {
   resolveForkBoundariesFromList,
   resolveUserForkBoundariesFromList,
+  type ResolvedForkBoundaries,
 } from "./forkBoundaryTypes.ts";
 
 /**
@@ -271,6 +272,8 @@ export function makeForkBoundaryResolver(sql: SqlClient.SqlClient) {
     readonly originThreadId: ThreadId;
     readonly sourceAssistantMessageId?: MessageId;
     readonly sourceUserMessageId?: MessageId;
+    /** Retain every completed turn; the running turn itself is copied as a live tail. */
+    readonly sourceRunningTurnId?: TurnId;
     readonly threadCreatedAt: string;
   }) {
     const rows = yield* listForkBoundaryRowsByThread({ threadId: input.originThreadId }).pipe(
@@ -291,6 +294,21 @@ export function makeForkBoundaryResolver(sql: SqlClient.SqlClient) {
       input.threadCreatedAt,
       copiedBoundaryRow._tag === "Some" ? copiedBoundaryRow.value.copiedBoundaries : [],
     );
+    if (input.sourceRunningTurnId !== undefined) {
+      // Completed boundaries only: the running turn has no row among them.
+      const selectedBoundary = boundaries.at(-1)!;
+      if (selectedBoundary.turnId === input.sourceRunningTurnId) {
+        return yield* new ForkBoundaryResolutionError({
+          detail: `Turn '${input.sourceRunningTurnId}' of origin thread '${input.originThreadId}' has already completed; fork its response instead.`,
+        });
+      }
+      return {
+        originThreadId: input.originThreadId,
+        forkPoint: { kind: "running-turn", turnId: input.sourceRunningTurnId },
+        boundaries,
+        selectedBoundary,
+      } satisfies ResolvedForkBoundaries;
+    }
     const sourceAssistantMessageId =
       input.sourceAssistantMessageId ??
       (input.sourceUserMessageId === undefined

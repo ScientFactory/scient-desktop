@@ -45,7 +45,7 @@ const ForkRow = Schema.Struct({
   baseline_turn_id: TurnId,
   baseline_user_message_id: Schema.NullOr(MessageId),
   baseline_assistant_message_id: Schema.NullOr(MessageId),
-  fork_point_kind: Schema.Literals(["assistant-response", "user-message"]),
+  fork_point_kind: Schema.Literals(["assistant-response", "user-message", "running-turn"]),
   source_user_message_id: Schema.NullOr(MessageId),
   copied_boundaries_json: CopiedBoundariesJson,
   workspace_mode: OrchestrationForkWorkspaceMode,

@@ -53,6 +53,7 @@ import { requireThread, requireThreadAbsent } from "../commandInvariants.ts";
 import type { ResolvedForkBoundaries } from "./forkBoundaryTypes.ts";
 import { retainQuestionAnswers, questionAnswerAttachments } from "./retainedQuestionAnswers.ts";
 import { capForkActivityPayload, isForkCopiedActivity } from "./forkActivityCopy.ts";
+import { collectForkLiveTail, type ForkLiveTail } from "./forkLiveTail.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -180,9 +181,16 @@ const invariant = (detail: string): OrchestrationCommandInvariantError =>
   new OrchestrationCommandInvariantError({ commandType: "thread.fork", detail });
 
 function commandForkPoint(command: ThreadForkCommand): ResolvedForkBoundaries["forkPoint"] {
+  if (command.sourceRunningTurnId !== undefined) {
+    return { kind: "running-turn", turnId: command.sourceRunningTurnId };
+  }
   return command.sourceAssistantMessageId !== undefined
     ? { kind: "assistant-response", messageId: command.sourceAssistantMessageId }
     : { kind: "user-message", messageId: command.sourceUserMessageId! };
+}
+
+function forkPointId(forkPoint: ResolvedForkBoundaries["forkPoint"]): string {
+  return forkPoint.kind === "running-turn" ? forkPoint.turnId : forkPoint.messageId;
 }
 
 /**
@@ -240,7 +248,7 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
   if (
     resolvedBoundaries.originThreadId !== command.originThreadId ||
     resolvedBoundaries.forkPoint.kind !== forkPoint.kind ||
-    resolvedBoundaries.forkPoint.messageId !== forkPoint.messageId
+    forkPointId(resolvedBoundaries.forkPoint) !== forkPointId(forkPoint)
   ) {
     return yield* invariant(
       `Authoritative fork boundaries do not match the public fork request for origin thread '${command.originThreadId}'.`,
@@ -265,12 +273,28 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
     return yield* invariant(
       forkPoint.kind === "assistant-response"
         ? `Assistant message '${forkPoint.messageId}' is not a completed conversation boundary of origin thread '${command.originThreadId}'.`
-        : `User message '${forkPoint.messageId}' has no completed conversation boundary before it in origin thread '${command.originThreadId}'.`,
+        : forkPoint.kind === "user-message"
+          ? `User message '${forkPoint.messageId}' has no completed conversation boundary before it in origin thread '${command.originThreadId}'.`
+          : `The running turn '${forkPoint.turnId}' has no completed conversation boundary before it in origin thread '${command.originThreadId}'.`,
     );
   }
 
-  const sourceMessage = origin.messages.find((message) => message.id === forkPoint.messageId);
-  if (forkPoint.kind === "assistant-response") {
+  const sourceMessage =
+    forkPoint.kind === "running-turn"
+      ? undefined
+      : origin.messages.find((message) => message.id === forkPoint.messageId);
+  if (forkPoint.kind === "running-turn") {
+    // The turn must still be the origin's active one; a turn that already
+    // finished is forked from its response instead.
+    const running =
+      origin.session?.activeTurnId === forkPoint.turnId ||
+      (origin.latestTurn?.turnId === forkPoint.turnId && origin.latestTurn.state === "running");
+    if (!running) {
+      return yield* invariant(
+        `Turn '${forkPoint.turnId}' is no longer running in origin thread '${command.originThreadId}'. Fork its response instead.`,
+      );
+    }
+  } else if (forkPoint.kind === "assistant-response") {
     if (
       !sourceMessage ||
       sourceMessage.role !== "assistant" ||
@@ -306,7 +330,20 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
   );
   const retainedPrefix = retainPrefixMessages(origin.messages, retainedBoundaries, retainedTurnIds);
   const prefixMessages = retainedPrefix.messages;
-  const retainedAnswers = retainQuestionAnswers(origin.activities, retainedTurnIds);
+  // A fork of the running turn also carries everything after the completed
+  // prefix: the request, reasoning, tool work and partial text so far.
+  const liveTail: ForkLiveTail | null =
+    forkPoint.kind === "running-turn"
+      ? collectForkLiveTail({
+          origin,
+          retainedMessageIds: new Set(prefixMessages.map((message) => message.id)),
+          runningTurnId: forkPoint.turnId,
+        })
+      : null;
+  const retainedAnswers = retainQuestionAnswers(
+    origin.activities,
+    liveTail === null ? retainedTurnIds : new Set([...retainedTurnIds, ...liveTail.turnIds]),
+  );
   if (retainedAnswers.error) return yield* invariant(retainedAnswers.error);
   if (
     forkPoint.kind === "user-message" &&
@@ -318,7 +355,7 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
   }
   if (prefixMessages.some((message) => message.streaming)) {
     return yield* invariant(
-      `Message '${forkPoint.messageId}' belongs to an incomplete conversation prefix and cannot be forked.`,
+      `Message '${forkPointId(forkPoint)}' belongs to an incomplete conversation prefix and cannot be forked.`,
     );
   }
 
@@ -328,9 +365,11 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
       checkpoint.turnId === selectedBoundary.turnId &&
       checkpoint.status === "ready",
   );
-  if (command.workspaceMode === "new-worktree" && !selectedCheckpoint) {
+  // A running-turn fork snapshots the current workspace instead of copying a
+  // historical checkpoint.
+  if (command.workspaceMode === "new-worktree" && !selectedCheckpoint && liveTail === null) {
     return yield* invariant(
-      `Message '${forkPoint.messageId}' has no ready Git checkpoint before the selected fork point; fork it in the same workspace or choose a checkpoint-backed message.`,
+      `Message '${forkPointId(forkPoint)}' has no ready Git checkpoint before the selected fork point; fork it in the same workspace or choose a checkpoint-backed message.`,
     );
   }
 
@@ -347,6 +386,7 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
   const attachmentCopies: Array<ThreadForkedPayload["attachmentCopies"][number]> = [];
   for (const source of [
     ...prefixMessages.flatMap((message) => message.attachments ?? []),
+    ...(liveTail?.messages.flatMap((message) => message.attachments ?? []) ?? []),
     ...questionAnswerAttachments(retainedAnswers.answers),
   ]) {
     if (attachmentRemap.has(source.id)) continue;
@@ -403,8 +443,11 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
   ) {
     const existing = importedTurnIds.get(sourceTurnKey);
     if (existing !== undefined) return existing;
+    // The fork's baseline is the newest inherited turn: the running turn for a
+    // running-turn fork, otherwise the selected completed boundary.
+    const baselineSourceTurnId = liveTail?.runningTurnId ?? selectedBoundary.turnId;
     const importedTurnId =
-      sourceTurnId !== null && sourceTurnId === selectedBoundary.turnId
+      sourceTurnId !== null && sourceTurnId === baselineSourceTurnId
         ? baselineTurnId
         : TurnId.make(yield* Crypto.Crypto.pipe(Effect.flatMap((crypto) => crypto.randomUUIDv4)));
     importedTurnIds.set(sourceTurnKey, importedTurnId);
@@ -456,6 +499,60 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
           : {}),
         // Composer context (selected diffs, comments, terminal output) is
         // part of what the user sent; the fork keeps it with the message.
+        ...(message.context !== undefined ? { context: message.context } : {}),
+        turnId: importedTurnId,
+        streaming: false,
+        createdAt: message.createdAt,
+        updatedAt: message.updatedAt,
+      },
+    });
+  }
+
+  // 2b) The running turn's latest state. Rows still streaming at the cut are
+  // copied as they stood; the provider handoff labels them partial.
+  const partialMessageIds: MessageId[] = [];
+  const liveTurnMessages = new Map<
+    string,
+    { user: MessageId | null; assistant: MessageId | null }
+  >();
+  for (const message of liveTail?.messages ?? []) {
+    const messageId = MessageId.make(
+      yield* Crypto.Crypto.pipe(Effect.flatMap((crypto) => crypto.randomUUIDv4)),
+    );
+    messageIdRemap.set(message.id, messageId);
+    // A request that has not been bound to a turn yet belongs to the running turn.
+    const sourceTurnId = message.turnId ?? liveTail!.runningTurnId;
+    const importedTurnId = yield* importedTurnIdFor(sourceTurnId, sourceTurnId);
+    const turnMessages = liveTurnMessages.get(sourceTurnId) ?? { user: null, assistant: null };
+    if (message.role === "user") {
+      baselineUserMessageId = messageId;
+      turnMessages.user = messageId;
+    }
+    if (message.role === "assistant") {
+      baselineAssistantMessageId = messageId;
+      turnMessages.assistant = messageId;
+    }
+    liveTurnMessages.set(sourceTurnId, turnMessages);
+    if (liveTail!.partialMessageIds.has(message.id)) partialMessageIds.push(messageId);
+    events.push({
+      ...(yield* withForkEventBase({
+        commandId: command.commandId,
+        aggregateId: command.newThreadId,
+        occurredAt,
+      })),
+      type: "thread.message-sent",
+      payload: {
+        threadId: command.newThreadId,
+        messageId,
+        role: message.role,
+        text: message.text,
+        ...(message.attachments !== undefined
+          ? {
+              attachments: message.attachments.map(
+                (attachment) => attachmentRemap.get(attachment.id) ?? attachment,
+              ),
+            }
+          : {}),
         ...(message.context !== undefined ? { context: message.context } : {}),
         turnId: importedTurnId,
         streaming: false,
@@ -538,6 +635,30 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
     });
   }
 
+  // The running turn's work log, including the latest row of each unfinished
+  // tool call (recorded in flight; its result is unknown at the cut).
+  const inFlightActivityIds: EventId[] = [];
+  for (const activity of liveTail?.activities ?? []) {
+    const turnId = activity.turnId === null ? undefined : importedTurnIds.get(activity.turnId);
+    if (turnId === undefined) continue;
+    const id = EventId.make(
+      yield* Crypto.Crypto.pipe(Effect.flatMap((crypto) => crypto.randomUUIDv4)),
+    );
+    if (liveTail!.inFlightActivityIds.has(activity.id)) inFlightActivityIds.push(id);
+    events.push({
+      ...(yield* withForkEventBase({
+        commandId: command.commandId,
+        aggregateId: command.newThreadId,
+        occurredAt,
+      })),
+      type: "thread.activity-appended",
+      payload: {
+        threadId: command.newThreadId,
+        activity: { ...activity, id, turnId, payload: capForkActivityPayload(activity.payload) },
+      },
+    });
+  }
+
   const copiedBoundaries = retainedBoundaries.flatMap((boundary) => {
     if (boundary.turnId === null || boundary.assistantMessageId === null) return [];
     const turnId = importedTurnIds.get(boundary.turnId);
@@ -560,8 +681,20 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
   ).length;
   if (copiedBoundaries.length !== retainedCompletedBoundaryCount) {
     return yield* invariant(
-      `The retained transcript for '${forkPoint.messageId}' could not preserve every logical fork boundary.`,
+      `The retained transcript for '${forkPointId(forkPoint)}' could not preserve every logical fork boundary.`,
     );
+  }
+  // A running turn that already produced text is a completed turn of the fork:
+  // the fork can itself be forked from it.
+  for (const [sourceTurnId, turnMessages] of liveTurnMessages) {
+    const turnId = importedTurnIds.get(sourceTurnId);
+    if (turnId === undefined || turnMessages.assistant === null) continue;
+    copiedBoundaries.push({
+      turnId,
+      userMessageId: turnMessages.user,
+      assistantMessageId: turnMessages.assistant,
+      completedAt: occurredAt,
+    });
   }
 
   // 3) Lineage. Folded into scient_thread_lineage by the Scient lineage
@@ -578,7 +711,9 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
       newThreadId: command.newThreadId,
       forkAtTurnId: selectedBoundary.turnId,
       forkAtTurnCount: selectedBoundary.conversationTurnCount,
-      sourceCheckpointTurnCount: selectedCheckpoint?.checkpointTurnCount ?? null,
+      // A running-turn fork snapshots the workspace at the cut instead.
+      sourceCheckpointTurnCount:
+        liveTail === null ? (selectedCheckpoint?.checkpointTurnCount ?? null) : null,
       baselineTurnId,
       baselineUserMessageId,
       baselineAssistantMessageId,
@@ -589,6 +724,20 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
       providerMode: "transcript-bootstrap",
       attachmentCopies,
       inheritedTurnIds: [...new Set(importedTurnIds.values())],
+      ...(liveTail === null
+        ? {}
+        : {
+            midTurnCut: {
+              sourceTurnId: liveTail.runningTurnId,
+              importedTurnId: importedTurnIds.get(liveTail.runningTurnId) ?? baselineTurnId,
+              cutSequence: readModel.snapshotSequence,
+              partialMessageIds,
+              inFlightActivityIds,
+              pendingRequests: [...liveTail.pendingRequests],
+              touchedFiles: [...liveTail.touchedFiles],
+              sharedWorkspace: command.workspaceMode === "local",
+            },
+          }),
       createdAt: occurredAt,
     },
   });

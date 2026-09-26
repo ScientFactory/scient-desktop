@@ -66,6 +66,7 @@ import {
   runtimeEventToActivities,
   splitBufferedAssistantText,
 } from "./ProviderRuntimeIngestion.ts";
+import { ScientLiveTurnFlush, ScientLiveTurnFlushLive } from "../scient-fork/liveTurnFlush.ts";
 import { DEFAULT_THREAD_TITLE } from "../threadTitles.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
@@ -416,6 +417,8 @@ describe("ProviderRuntimeIngestion", () => {
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), serverBaseDir)),
       Layer.provideMerge(NodeServices.layer),
       Layer.provideMerge(Layer.succeed(Tracer.Tracer, sqlCounter.tracer)),
+      // SCIENT-FORK: ingestion registers its ordered fork flush here.
+      Layer.provideMerge(ScientLiveTurnFlushLive),
     );
     const testRuntime = ManagedRuntime.make(layer);
     runtime = testRuntime;
@@ -488,6 +491,10 @@ describe("ProviderRuntimeIngestion", () => {
     return {
       engine,
       dispatch,
+      flushForFork: (threadId: ThreadId) =>
+        testRuntime.runPromise(
+          Effect.flatMap(ScientLiveTurnFlush, (liveTurnFlush) => liveTurnFlush.flush(threadId)),
+        ),
       readModel: () => testRuntime.runPromise(snapshotQuery.getSnapshot()),
       readTurn: (turnId: TurnId) =>
         testRuntime.runPromise(
@@ -4023,6 +4030,75 @@ describe("ProviderRuntimeIngestion", () => {
     ).toBe(
       "First paragraph.\n\nSecond paragraph.\n\n```ts\nconst a = 1;\n\nconst b = 2;\n```\n\nTail without newline",
     );
+  });
+
+  it("persists a running turn's buffered text when it is forked", async () => {
+    const harness = await createHarness({ serverSettings: { responseStreamingMode: "turn" } });
+    const now = "2026-01-01T00:00:00.000Z";
+    const codex = ProviderDriverKind.make("codex");
+    const threadId = asThreadId("thread-1");
+    const turnId = asTurnId("turn-fork-flush");
+    const itemId = asItemId("item-fork-flush");
+    await harness.emitAndDrain([
+      {
+        type: "turn.started",
+        eventId: asEventId("evt-fork-flush-started"),
+        provider: codex,
+        createdAt: now,
+        threadId,
+        turnId,
+      },
+    ]);
+    harness.advanceClock(1_000);
+    await harness.emitAndDrain([
+      {
+        type: "content.delta",
+        eventId: asEventId("evt-fork-flush-delta"),
+        provider: codex,
+        createdAt: now,
+        threadId,
+        turnId,
+        itemId,
+        payload: { streamKind: "assistant_text", delta: "Held in memory so far. " },
+      },
+    ]);
+    const message = async () =>
+      (await harness.readModel()).threads
+        .find((thread) => thread.id === threadId)
+        ?.messages.find((entry: ProviderRuntimeTestMessage) => entry.id === `assistant:${itemId}`);
+    // Turn mode keeps the whole message in memory until it completes.
+    expect(await message()).toBeUndefined();
+
+    await harness.flushForFork(threadId);
+    expect(await message()).toMatchObject({ text: "Held in memory so far. ", streaming: true });
+
+    // The segment stays open: later text appends once, nothing is duplicated.
+    harness.advanceClock(1_000);
+    await harness.emitAndDrain([
+      {
+        type: "content.delta",
+        eventId: asEventId("evt-fork-flush-delta-2"),
+        provider: codex,
+        createdAt: now,
+        threadId,
+        turnId,
+        itemId,
+        payload: { streamKind: "assistant_text", delta: "Then the rest." },
+      },
+    ]);
+    await harness.emitAndDrain([
+      {
+        type: "item.completed",
+        eventId: asEventId("evt-fork-flush-completed"),
+        provider: codex,
+        createdAt: now,
+        threadId,
+        turnId,
+        itemId,
+        payload: { itemType: "assistant_message", status: "completed" },
+      },
+    ]);
+    expect((await message())?.text).toBe("Held in memory so far. Then the rest.");
   });
 
   it("holds every paragraph until completion in turn mode", async () => {

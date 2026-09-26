@@ -8,6 +8,7 @@ import {
   type ScopedThreadRef,
   type ThreadId,
   type ForkOptions,
+  type TurnId,
 } from "@t3tools/contracts";
 import {
   useCallback,
@@ -65,11 +66,15 @@ export type ForkSource =
       readonly messageId: MessageId;
       readonly prompt: string;
       readonly attachments: ReadonlyArray<ChatAttachment>;
-    };
+    }
+  // The running turn, including the work it has done so far.
+  | { readonly kind: "running-turn"; readonly turnId: TurnId };
 const sourceKey = (source: ForkSource) =>
-  source.kind === "assistant-response" && source.latest
-    ? "latest"
-    : `${source.kind}:${source.messageId}`;
+  source.kind === "running-turn"
+    ? `running-turn:${source.turnId}`
+    : source.kind === "assistant-response" && source.latest
+      ? "latest"
+      : `${source.kind}:${source.messageId}`;
 function composerFingerprint(ref: ScopedThreadRef): string {
   const draft = useComposerDraftStore.getState().draftsByThreadKey[scopedThreadKey(ref)];
   const snapshot = JSON.stringify([
@@ -272,9 +277,15 @@ export function useScientThreadFork({
       if (!originId || !environmentId) throw new Error("The original conversation is unavailable.");
       if (!supportsRecovery)
         return {
-          available: source.kind === "user-message" || source.messageId !== null,
+          // Older servers cannot fork a running turn.
+          available:
+            source.kind === "user-message" ||
+            (source.kind === "assistant-response" && source.messageId !== null),
           localAvailable: true,
-          reason: null,
+          reason:
+            source.kind === "running-turn"
+              ? "Update the server to fork a conversation while the agent is working."
+              : null,
           newWorktree: true,
           sourceAssistantMessageId: source.kind === "assistant-response" ? source.messageId : null,
           sourceUserMessageId: source.kind === "user-message" ? source.messageId : null,
@@ -283,11 +294,13 @@ export function useScientThreadFork({
         environmentId,
         input: {
           originThreadId: originId,
-          ...(source.kind === "user-message"
-            ? { sourceUserMessageId: source.messageId }
-            : source.latest || source.messageId === null
-              ? {}
-              : { sourceAssistantMessageId: source.messageId }),
+          ...(source.kind === "running-turn"
+            ? { sourceRunningTurnId: source.turnId }
+            : source.kind === "user-message"
+              ? { sourceUserMessageId: source.messageId }
+              : source.latest || source.messageId === null
+                ? {}
+                : { sourceAssistantMessageId: source.messageId }),
         },
       });
       if (result._tag === "Failure") throw squashAtomCommandFailure(result);
@@ -313,6 +326,7 @@ export function useScientThreadFork({
               newWorktree: pending.command.workspaceMode === "new-worktree",
               sourceAssistantMessageId: pending.command.sourceAssistantMessageId ?? null,
               sourceUserMessageId: pending.command.sourceUserMessageId ?? null,
+              sourceRunningTurnId: pending.command.sourceRunningTurnId ?? null,
             }
           : await resolveOptions(source);
         if (
@@ -405,9 +419,11 @@ export function useScientThreadFork({
                   ...(options.titleOverride === undefined
                     ? {}
                     : { titleOverride: options.titleOverride }),
-                  ...(eligibility.sourceAssistantMessageId
-                    ? { sourceAssistantMessageId: eligibility.sourceAssistantMessageId }
-                    : { sourceUserMessageId: eligibility.sourceUserMessageId! }),
+                  ...(eligibility.sourceRunningTurnId
+                    ? { sourceRunningTurnId: eligibility.sourceRunningTurnId }
+                    : eligibility.sourceAssistantMessageId
+                      ? { sourceAssistantMessageId: eligibility.sourceAssistantMessageId }
+                      : { sourceUserMessageId: eligibility.sourceUserMessageId! }),
                 },
               };
               try {

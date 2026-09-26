@@ -1540,6 +1540,9 @@ export const ThreadForkCommand = Schema.Struct({
   // an unsent composer draft in the destination thread.
   sourceAssistantMessageId: Schema.optional(MessageId),
   sourceUserMessageId: Schema.optional(MessageId),
+  // The running turn itself: retain every completed turn plus that turn's
+  // latest state (reasoning, tool work and text produced so far).
+  sourceRunningTurnId: Schema.optional(TurnId),
   workspaceMode: OrchestrationForkWorkspaceMode,
   // Explicit destination title chosen by the user. When absent, the server
   // allocates the automatic collision-safe title at commit time.
@@ -1547,9 +1550,12 @@ export const ThreadForkCommand = Schema.Struct({
 }).check(
   Schema.makeFilter(
     (command) =>
-      (command.sourceAssistantMessageId === undefined) !==
-        (command.sourceUserMessageId === undefined) ||
-      "exactly one fork source message must be specified",
+      [
+        command.sourceAssistantMessageId,
+        command.sourceUserMessageId,
+        command.sourceRunningTurnId,
+      ].filter((source) => source !== undefined).length === 1 ||
+      "exactly one fork source must be specified",
   ),
 );
 export type ThreadForkCommand = typeof ThreadForkCommand.Type;
@@ -1559,6 +1565,7 @@ export const GetForkOptionsInput = Schema.Struct({
   originThreadId: ThreadId,
   sourceAssistantMessageId: Schema.optional(MessageId),
   sourceUserMessageId: Schema.optional(MessageId),
+  sourceRunningTurnId: Schema.optional(TurnId),
 });
 export type GetForkOptionsInput = typeof GetForkOptionsInput.Type;
 export const ForkOptions = Schema.Struct({
@@ -1567,6 +1574,7 @@ export const ForkOptions = Schema.Struct({
   reason: Schema.NullOr(Schema.String),
   sourceAssistantMessageId: Schema.NullOr(MessageId),
   sourceUserMessageId: Schema.NullOr(MessageId),
+  sourceRunningTurnId: Schema.optional(Schema.NullOr(TurnId)),
   newWorktree: Schema.Boolean,
 });
 export type ForkOptions = typeof ForkOptions.Type;
@@ -2205,7 +2213,8 @@ export const ThreadForkMidTurnCut = Schema.Struct({
   cutSequence: NonNegativeInt,
   partialMessageIds: Schema.Array(MessageId),
   inFlightActivityIds: Schema.Array(EventId),
-  pendingRequestActivityIds: Schema.Array(EventId),
+  /** Approvals or questions the origin was waiting on; history only. */
+  pendingRequests: Schema.Array(Schema.String),
   touchedFiles: Schema.Array(Schema.String),
   sharedWorkspace: Schema.Boolean,
 });
@@ -2230,7 +2239,7 @@ export const ThreadForkedPayload = Schema.Struct({
   baselineAssistantMessageId: Schema.NullOr(MessageId).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
-  forkPointKind: Schema.Literals(["assistant-response", "user-message"]).pipe(
+  forkPointKind: Schema.Literals(["assistant-response", "user-message", "running-turn"]).pipe(
     Schema.withDecodingDefault(Effect.succeed("assistant-response" as const)),
     Schema.withConstructorDefault(Effect.succeed("assistant-response" as const)),
   ),

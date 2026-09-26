@@ -168,7 +168,7 @@ describe("buildHandoffItems", () => {
       cutSequence: 42,
       partialMessageIds: [MessageId.make("r2")],
       inFlightActivityIds: [EventId.make("running")],
-      pendingRequestActivityIds: [],
+      pendingRequests: [],
       touchedFiles: ["src/fit.py"],
       sharedWorkspace: true,
     };

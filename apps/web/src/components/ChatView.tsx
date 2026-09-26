@@ -2107,6 +2107,14 @@ function ChatViewContent(props: ChatViewProps) {
         readonly message: ChatMessage;
         readonly source: ScientForkSource;
       }
+    // SCIENT-FORK: the running turn with the work it has done so far.
+    | {
+        readonly threadId: ThreadId;
+        readonly environmentId: EnvironmentId;
+        readonly kind: "running-turn";
+        readonly turnId: TurnId;
+        readonly source: ScientForkSource;
+      }
     | null
   >(null);
   const forkDialogOpen =
@@ -2119,20 +2127,22 @@ function ChatViewContent(props: ChatViewProps) {
     (): ForkSource | null =>
       forkCommandTarget === null
         ? null
-        : forkCommandTarget.kind === "assistant-response"
-          ? {
-              kind: forkCommandTarget.kind,
-              messageId: forkCommandTarget.messageId,
-              latest:
-                forkCommandTarget.source === "latest-response" ||
-                forkCommandTarget.source === "switch-provider",
-            }
-          : {
-              kind: forkCommandTarget.kind,
-              messageId: forkCommandTarget.messageId,
-              prompt: forkCommandTarget.message.text,
-              attachments: forkCommandTarget.message.attachments ?? [],
-            },
+        : forkCommandTarget.kind === "running-turn"
+          ? { kind: "running-turn", turnId: forkCommandTarget.turnId }
+          : forkCommandTarget.kind === "assistant-response"
+            ? {
+                kind: forkCommandTarget.kind,
+                messageId: forkCommandTarget.messageId,
+                latest:
+                  forkCommandTarget.source === "latest-response" ||
+                  forkCommandTarget.source === "switch-provider",
+              }
+            : {
+                kind: forkCommandTarget.kind,
+                messageId: forkCommandTarget.messageId,
+                prompt: forkCommandTarget.message.text,
+                attachments: forkCommandTarget.message.attachments ?? [],
+              },
     [forkCommandTarget],
   );
   useEffect(() => {
@@ -4023,6 +4033,17 @@ function ChatViewContent(props: ChatViewProps) {
   const onForkConversation = useCallback(
     (options?: { readonly preserveComposerDraft?: boolean }) => {
       if (!activeThreadId || !activeThreadEnvironmentId) return;
+      // While the agent works, a fork carries its work in progress.
+      if (activeRunningTurnId !== null && !options?.preserveComposerDraft) {
+        setForkCommandTarget({
+          threadId: activeThreadId,
+          environmentId: activeThreadEnvironmentId,
+          kind: "running-turn",
+          turnId: activeRunningTurnId,
+          source: "running-turn",
+        });
+        return;
+      }
       setForkCommandTarget({
         threadId: activeThreadId,
         environmentId: activeThreadEnvironmentId,
@@ -4031,7 +4052,12 @@ function ChatViewContent(props: ChatViewProps) {
         source: options?.preserveComposerDraft ? "switch-provider" : "latest-response",
       });
     },
-    [activeThreadId, activeThreadEnvironmentId, latestCompletedAssistantMessageId],
+    [
+      activeThreadId,
+      activeThreadEnvironmentId,
+      activeRunningTurnId,
+      latestCompletedAssistantMessageId,
+    ],
   );
 
   const gitCwd = activeProject

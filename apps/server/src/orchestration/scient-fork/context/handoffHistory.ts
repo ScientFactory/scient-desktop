@@ -468,6 +468,13 @@ export function renderHandoff(input: {
             ...(input.midTurnCut.touchedFiles.length > 0
               ? { filesTouchedBeforeFork: input.midTurnCut.touchedFiles }
               : {}),
+            ...(input.midTurnCut.pendingRequests.length > 0
+              ? {
+                  waitingOnAtFork: input.midTurnCut.pendingRequests,
+                  waitingNote:
+                    "The original agent was waiting for these approvals or answers. They were not granted in this conversation; ask the user if you need them.",
+                }
+              : {}),
           },
         }),
     items: input.selection.items.map((item) => itemRecord(item, item.truncated, reattachedIds)),

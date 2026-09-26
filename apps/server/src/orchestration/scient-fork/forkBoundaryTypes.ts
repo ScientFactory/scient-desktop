@@ -8,7 +8,8 @@ export interface ResolvedForkBoundaries {
   readonly originThreadId: ThreadId;
   readonly forkPoint:
     | { readonly kind: "assistant-response"; readonly messageId: MessageId }
-    | { readonly kind: "user-message"; readonly messageId: MessageId };
+    | { readonly kind: "user-message"; readonly messageId: MessageId }
+    | { readonly kind: "running-turn"; readonly turnId: TurnId };
   /** All authoritative boundaries for the origin thread, ordered by turn count. */
   readonly boundaries: ReadonlyArray<OrchestrationForkBoundary>;
   /** The retained completed boundary at or immediately before the fork point. */

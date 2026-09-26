@@ -36,7 +36,9 @@ export type ScientForkSource =
   | "latest-response"
   | "this-response"
   | "this-message"
-  | "switch-provider";
+  | "switch-provider"
+  // SCIENT-FORK: the running turn, with the work it has done so far.
+  | "running-turn";
 
 export function scientForkDialogCopy(source: ScientForkSource): {
   readonly title: string;
@@ -62,6 +64,12 @@ export function scientForkDialogCopy(source: ScientForkSource): {
       return {
         title: "Fork to switch provider",
         description: "Continue this conversation with another provider.",
+      };
+    case "running-turn":
+      return {
+        title: "Fork with work in progress",
+        description:
+          "Create a new conversation that includes what the agent has done so far: its thinking, tool work and partial answer. The original keeps running.",
       };
   }
 }
@@ -318,9 +326,11 @@ export function ScientForkWorkspaceModeDialog({
               <span className="min-w-0">
                 <span className="block">New worktree</span>
                 <span className="mt-0.5 block text-muted-foreground text-xs">
-                  {worktreeAvailability.available
-                    ? "Create an isolated copy of the project"
-                    : unavailableCopy(source, worktreeAvailability.reason)}
+                  {!worktreeAvailability.available
+                    ? unavailableCopy(source, worktreeAvailability.reason)
+                    : source === "running-turn"
+                      ? "Copy the files as they are now. Gitignored files (data, .env, build output) are not copied."
+                      : "Create an isolated copy of the project"}
                 </span>
               </span>
               <Switch
@@ -330,6 +340,12 @@ export function ScientForkWorkspaceModeDialog({
                 onCheckedChange={(checked) => setNewWorktree(Boolean(checked))}
               />
             </label>
+            {source === "running-turn" && !selectedNewWorktree ? (
+              <p className="text-muted-foreground text-xs leading-relaxed">
+                The original agent is still working in this folder. The fork is told which files it
+                touched so far.
+              </p>
+            ) : null}
             {error ? (
               <p role="alert" className="text-destructive text-xs leading-relaxed">
                 {error}
