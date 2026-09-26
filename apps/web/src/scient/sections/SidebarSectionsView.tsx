@@ -21,7 +21,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { type ScopedThreadRef, type ThreadSection, ThreadSectionId } from "@t3tools/contracts";
-import { ChevronRightIcon, EllipsisIcon, PlusIcon } from "lucide-react";
+import { ChevronDownIcon, EllipsisIcon, PlusIcon } from "lucide-react";
 import {
   Fragment,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -494,9 +494,10 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
       </SortableContext>
       <DragOverlay dropAnimation={null}>
         {liftedGroup ? (
-          <div className="flex h-8 items-center gap-1.5 rounded-md bg-sidebar-row-active px-2 text-xs font-medium text-sidebar-foreground shadow-sm">
-            <ChevronRightIcon aria-hidden className="size-3 shrink-0" />
-            <span className="truncate">{liftedGroup.section?.name}</span>
+          <div className="flex h-8 items-center gap-2 rounded-md bg-sidebar-row-active px-2 text-xs font-medium text-sidebar-foreground/80 shadow-sm">
+            <span className="min-w-0 shrink truncate">{liftedGroup.section?.name}</span>
+            <span aria-hidden className="h-px min-w-2 flex-1 bg-sidebar-foreground/25" />
+            <ChevronDownIcon aria-hidden className="size-3 shrink-0" />
           </div>
         ) : null}
       </DragOverlay>
@@ -549,19 +550,20 @@ function SectionHeaderRow(props: {
     event.preventDefault();
     props.onMenu({ x: event.clientX, y: event.clientY });
   };
+  // Same look as the Snoozed and Settled shelf headers, labelled with the name.
+  const label = props.collapsed ? `${props.label} (${group.threads.length})` : props.label;
   return (
     <li
       ref={setNodeRef}
       data-thread-selection-safe
       data-testid={`sidebar-thread-section-${group.id}`}
-      className={cn("list-none pt-1.5 first:pt-0", props.hidden && "opacity-0")}
+      className={cn("mx-0.5 h-8 list-none", props.hidden && "opacity-0")}
       style={{ transform: CSS.Translate.toString(transform), transition }}
     >
       <div
         className={cn(
-          "group/section-header flex h-7 items-center gap-1 rounded-md pr-1 pl-2 text-xs font-medium text-sidebar-muted-foreground",
-          !props.renaming && "hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
-          props.isDropTarget && "bg-primary/5 text-primary",
+          "group/section-header flex h-full w-full items-center gap-2 px-2 text-xs font-medium text-sidebar-muted-foreground/60",
+          props.isDropTarget && "text-primary",
         )}
         onContextMenu={isUserSection ? openMenu : undefined}
       >
@@ -589,54 +591,51 @@ function SectionHeaderRow(props: {
                   }
                 : undefined
             }
-            className="flex h-full min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+            className="flex h-full min-w-0 flex-1 cursor-pointer items-center gap-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
             {...attributes}
             {...listeners}
           >
-            <ChevronRightIcon
-              aria-hidden
-              className={cn(
-                "size-3 shrink-0 transition-transform",
-                !props.collapsed && "rotate-90",
-              )}
-            />
-            <span className="min-w-0 truncate">{props.label}</span>
+            <span className="min-w-0 shrink truncate">{label}</span>
             {runningCount > 0 ? (
               <span
                 aria-label={`${runningCount} working`}
                 className="size-1.5 shrink-0 rounded-full bg-primary"
               />
             ) : null}
+            <span
+              aria-hidden
+              className={cn(
+                "h-px min-w-2 flex-1 bg-sidebar-border/60",
+                props.isDropTarget && "bg-primary/50",
+              )}
+            />
           </button>
         )}
-        {props.renaming ? null : (
-          <span className="relative flex h-5 shrink-0 items-center justify-end">
-            <span
-              className={cn(
-                "px-1 text-2xs tabular-nums opacity-70",
-                isUserSection &&
-                  "group-focus-within/section-header:opacity-0 group-hover/section-header:opacity-0",
-              )}
+        {isUserSection && !props.renaming ? (
+          <span className="pointer-events-none flex shrink-0 items-center opacity-0 group-focus-within/section-header:pointer-events-auto group-focus-within/section-header:opacity-100 group-hover/section-header:pointer-events-auto group-hover/section-header:opacity-100">
+            <HeaderIconButton label="New thread in section" onClick={props.onNewThread}>
+              <PlusIcon className="size-3.5" />
+            </HeaderIconButton>
+            <HeaderIconButton
+              label="Section actions"
+              onClick={(event) => {
+                const rect = event.currentTarget.getBoundingClientRect();
+                props.onMenu({ x: rect.left, y: rect.bottom + 4 });
+              }}
             >
-              {group.threads.length}
-            </span>
-            {isUserSection ? (
-              <span className="pointer-events-none absolute right-0 flex items-center opacity-0 group-focus-within/section-header:pointer-events-auto group-focus-within/section-header:opacity-100 group-hover/section-header:pointer-events-auto group-hover/section-header:opacity-100">
-                <HeaderIconButton label="New thread in section" onClick={props.onNewThread}>
-                  <PlusIcon className="size-3.5" />
-                </HeaderIconButton>
-                <HeaderIconButton
-                  label="Section actions"
-                  onClick={(event) => {
-                    const rect = event.currentTarget.getBoundingClientRect();
-                    props.onMenu({ x: rect.left, y: rect.bottom + 4 });
-                  }}
-                >
-                  <EllipsisIcon className="size-3.5" />
-                </HeaderIconButton>
-              </span>
-            ) : null}
+              <EllipsisIcon className="size-3.5" />
+            </HeaderIconButton>
           </span>
+        ) : null}
+        {props.renaming ? null : (
+          <ChevronDownIcon
+            aria-hidden
+            onClick={props.onToggle}
+            className={cn(
+              "size-3 shrink-0 cursor-pointer transition-transform",
+              !props.collapsed && "rotate-180",
+            )}
+          />
         )}
       </div>
     </li>
@@ -714,9 +713,8 @@ function SectionNameInput(props: {
 
 function NewSectionRow(props: { onSubmit: (name: string) => void; onCancel: () => void }) {
   return (
-    <li className="list-none pb-1.5" data-testid="sidebar-new-section-row">
-      <div className="flex h-7 items-center gap-1.5 px-2">
-        <ChevronRightIcon aria-hidden className="size-3 shrink-0 rotate-90 opacity-60" />
+    <li className="mx-0.5 h-8 list-none" data-testid="sidebar-new-section-row">
+      <div className="flex h-full items-center px-2">
         <SectionNameInput
           initialName=""
           ariaLabel="New section name"

@@ -14,13 +14,11 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from "../../components/ui/menu";
-import { cn } from "../../lib/utils";
 import type { SidebarViewMode } from "./logic";
 
 /**
  * Sidebar view options: group threads by lifecycle status (the default) or by
- * user-defined section. The trigger takes the accent while grouped by section
- * so the current mode is visible without opening the menu.
+ * user-defined section. The tooltip names the current grouping.
  */
 export function SidebarViewMenu(props: {
   readonly mode: SidebarViewMode;
@@ -40,14 +38,13 @@ export function SidebarViewMenu(props: {
             label="View options"
             tooltip={bySection ? "Grouped by section" : "Grouped by status"}
             data-testid="sidebar-view-menu-trigger"
-            className="w-auto"
+            className="w-auto min-w-8"
           />
         }
       >
-        <span className={cn("flex items-center gap-0.5 px-0.5", bySection && "text-primary")}>
-          <ListFilterIcon className="size-4" />
-          <ChevronDownIcon aria-hidden className="size-3 opacity-60" />
-        </span>
+        {/* Direct svg children take the header's shared icon size and color. */}
+        <ListFilterIcon />
+        <ChevronDownIcon aria-hidden className="size-3" />
       </MenuTrigger>
       <MenuPopup align="end" side="bottom" className="min-w-48">
         <MenuGroup>
