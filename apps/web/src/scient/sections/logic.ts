@@ -371,22 +371,43 @@ export function planSectionsThreadDrop(input: {
   };
 }
 
+/** A section's rendered extent (header plus rows), in viewport pixels. */
+export interface SectionBlock {
+  readonly groupId: string;
+  readonly top: number;
+  readonly height: number;
+}
+
 /**
- * Group order after dragging one header, General included like any section.
- * Null (past the last header) means the last slot.
+ * Group order while dragging one section: it lands before the first other
+ * section whose middle is below the pointer. Blocks are where sections were
+ * when the drag began, so the answer never depends on where they are sliding.
  */
-export function resolveSectionHeaderDrop(
-  orderedGroupIds: readonly string[],
-  activeGroupId: string,
-  overGroupId: string | null,
-): string[] | null {
-  const from = orderedGroupIds.indexOf(activeGroupId);
-  if (from === -1) return null;
-  const to =
-    overGroupId === null ? orderedGroupIds.length - 1 : orderedGroupIds.indexOf(overGroupId);
-  if (to === -1 || to === from) return null;
-  const next = [...orderedGroupIds];
-  next.splice(from, 1);
-  next.splice(to, 0, activeGroupId);
-  return next;
+export function resolveSectionDragOrder(
+  blocks: readonly SectionBlock[],
+  draggedGroupId: string,
+  pointerY: number,
+): string[] {
+  const others = blocks.filter((block) => block.groupId !== draggedGroupId);
+  const index = others.filter((block) => block.top + block.height / 2 < pointerY).length;
+  const order = others.map((block) => block.groupId);
+  order.splice(index, 0, draggedGroupId);
+  return order;
+}
+
+/** How far each block slides so `order` stacks down from the first block's top. */
+export function sectionShifts(
+  blocks: readonly SectionBlock[],
+  order: readonly string[],
+): Map<string, number> {
+  const byId = new Map(blocks.map((block) => [block.groupId, block]));
+  const shifts = new Map<string, number>();
+  let top = blocks[0]?.top ?? 0;
+  for (const groupId of order) {
+    const block = byId.get(groupId);
+    if (!block) continue;
+    shifts.set(groupId, top - block.top);
+    top += block.height;
+  }
+  return shifts;
 }

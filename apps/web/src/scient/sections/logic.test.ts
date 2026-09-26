@@ -10,7 +10,8 @@ import {
   groupThreadsBySection,
   layoutFromGroupOrder,
   planSectionsThreadDrop,
-  resolveSectionHeaderDrop,
+  resolveSectionDragOrder,
+  sectionShifts,
   resolveSectionsDropTarget,
   sectionHeaderItemId,
   type SectionsLifecycle,
@@ -224,24 +225,42 @@ describe("Sections view drops", () => {
     expect(plan("s1", "s1")).toEqual({ kind: "none" });
   });
 
-  it("reorders section headers, General included like any section", () => {
-    const ordered = [GENERAL_SECTION_GROUP_ID, "research", "perma"];
-    expect(resolveSectionHeaderDrop(ordered, GENERAL_SECTION_GROUP_ID, "perma")).toEqual([
+  it("orders a dragged section by the frozen block middles, General included", () => {
+    const blocks = [
+      { groupId: GENERAL_SECTION_GROUP_ID, top: 0, height: 100 },
+      { groupId: "research", top: 100, height: 200 },
+      { groupId: "perma", top: 300, height: 40 },
+    ];
+    // Perma lifted from the bottom: above General's middle it goes first.
+    expect(resolveSectionDragOrder(blocks, "perma", 40)).toEqual([
+      "perma",
+      GENERAL_SECTION_GROUP_ID,
+      "research",
+    ]);
+    // Past Research's middle (200) but not below it: after General, before Research.
+    expect(resolveSectionDragOrder(blocks, "perma", 150)).toEqual([
+      GENERAL_SECTION_GROUP_ID,
+      "perma",
+      "research",
+    ]);
+    expect(resolveSectionDragOrder(blocks, GENERAL_SECTION_GROUP_ID, 500)).toEqual([
       "research",
       "perma",
       GENERAL_SECTION_GROUP_ID,
     ]);
-    expect(resolveSectionHeaderDrop(ordered, "perma", GENERAL_SECTION_GROUP_ID)).toEqual([
-      "perma",
-      GENERAL_SECTION_GROUP_ID,
-      "research",
-    ]);
-    // Past the last header: the last slot.
-    expect(resolveSectionHeaderDrop(ordered, "research", null)).toEqual([
-      GENERAL_SECTION_GROUP_ID,
-      "perma",
-      "research",
-    ]);
-    expect(resolveSectionHeaderDrop(ordered, "perma", "perma")).toBeNull();
+  });
+
+  it("slides whole blocks so the preview order stacks without gaps", () => {
+    const blocks = [
+      { groupId: GENERAL_SECTION_GROUP_ID, top: 0, height: 100 },
+      { groupId: "research", top: 100, height: 200 },
+      { groupId: "perma", top: 300, height: 40 },
+    ];
+    const shifts = sectionShifts(blocks, ["perma", GENERAL_SECTION_GROUP_ID, "research"]);
+    expect(Object.fromEntries(shifts)).toEqual({
+      perma: -300,
+      [GENERAL_SECTION_GROUP_ID]: 40,
+      research: 40,
+    });
   });
 });

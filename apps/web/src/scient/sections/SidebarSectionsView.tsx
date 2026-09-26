@@ -1,7 +1,9 @@
 import {
   closestCenter,
+  type CollisionDetection,
   DndContext,
   type DragEndEvent,
+  type DragMoveEvent,
   type DragOverEvent,
   DragOverlay,
   type DragStartEvent,
@@ -48,8 +50,10 @@ import {
   type SectionsLifecycle,
   type SectionsListItem,
   planSectionsThreadDrop,
-  resolveSectionHeaderDrop,
+  resolveSectionDragOrder,
   resolveSectionsDropTarget,
+  type SectionBlock,
+  sectionShifts,
   sectionGroupIdFromHeaderItemId,
   sectionHeaderItemId,
 } from "./logic";
@@ -110,7 +114,54 @@ export interface SidebarSectionsViewProps {
 
 type DragState =
   | { readonly kind: "thread"; readonly key: string; readonly target: SectionsDropTarget | null }
-  | { readonly kind: "section"; readonly groupId: string };
+  | {
+      readonly kind: "section";
+      readonly groupId: string;
+      /** Group ids in the order the drop would produce. */
+      readonly preview: readonly string[];
+      readonly geometry: SectionDragGeometry;
+    };
+
+/**
+ * Geometry frozen at the start of a section drag. Blocks move by transform
+ * only, so nothing reflows under the pointer and targets are judged against
+ * where sections were, never against where they are sliding.
+ */
+type SectionDragGeometry = {
+  readonly blocks: readonly SectionBlock[];
+  readonly pointerY: number;
+  readonly scroller: HTMLElement | null;
+  readonly scrollTop: number;
+};
+
+const SECTION_SLIDE = "transform 160ms ease";
+
+function scrollParentOf(element: HTMLElement | null): HTMLElement | null {
+  for (let node = element?.parentElement ?? null; node; node = node.parentElement) {
+    const overflowY = getComputedStyle(node).overflowY;
+    if (overflowY === "auto" || overflowY === "scroll") return node;
+  }
+  return null;
+}
+
+/** Measures each section block from its header to the next one (or the list's end marker). */
+function measureSectionBlocks(
+  list: HTMLElement,
+  groupIds: readonly string[],
+): SectionBlock[] | null {
+  const tops = groupIds.map(
+    (groupId) =>
+      list
+        .querySelector<HTMLElement>(`[data-section-header="${globalThis.CSS.escape(groupId)}"]`)
+        ?.getBoundingClientRect().top,
+  );
+  const end = list.querySelector<HTMLElement>("[data-sections-end]")?.getBoundingClientRect().top;
+  if (end === undefined || tops.some((top) => top === undefined)) return null;
+  return groupIds.map((groupId, index) => {
+    const top = tops[index]!;
+    return { groupId, top, height: (tops[index + 1] ?? end) - top };
+  });
+}
 
 /** A dropped layout, held until the store reflects it so rows never snap back. */
 type HeldLayout = { readonly ids: readonly string[]; readonly expiresAt: number };
@@ -135,6 +186,7 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
   const { moveThreadsToSection } = useThreadSectionActions();
   const [drag, setDrag] = useState<DragState | null>(null);
   const [held, setHeld] = useState<HeldLayout | null>(null);
+  const listRef = useRef<HTMLUListElement>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
   const threadByKey = useMemo(() => {
@@ -207,12 +259,7 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
   }, [canonicalItems, held]);
   const holding = items !== canonicalItems;
 
-  // While a section header is lifted, its rows fold away so headers move as blocks.
-  const visibleItems = useMemo(
-    () => (drag?.kind === "section" ? items.filter((item) => item.kind !== "thread") : items),
-    [drag, items],
-  );
-  const sortableIds = useMemo(() => visibleItems.map((item) => item.id), [visibleItems]);
+  const sortableIds = useMemo(() => items.map((item) => item.id), [items]);
 
   const lifecycleByKey = useMemo(
     () =>
@@ -232,13 +279,55 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
     [items],
   );
 
-  const handleDragStart = useCallback((event: DragStartEvent) => {
-    const id = String(event.active.id);
-    const groupId = sectionGroupIdFromHeaderItemId(id);
-    setDrag(
-      groupId !== null ? { kind: "section", groupId } : { kind: "thread", key: id, target: null },
-    );
+  const handleDragStart = useCallback(
+    (event: DragStartEvent) => {
+      const id = String(event.active.id);
+      const groupId = sectionGroupIdFromHeaderItemId(id);
+      if (groupId === null) {
+        setDrag({ kind: "thread", key: id, target: null });
+        return;
+      }
+      const groupIds = groups.map((group) => group.id);
+      const list = listRef.current;
+      const blocks = list ? measureSectionBlocks(list, groupIds) : null;
+      const pointer = event.activatorEvent as PointerEvent | null;
+      if (blocks === null || pointer === null || typeof pointer.clientY !== "number") return;
+      const scroller = scrollParentOf(list);
+      setDrag({
+        kind: "section",
+        groupId,
+        preview: groupIds,
+        geometry: {
+          blocks,
+          pointerY: pointer.clientY,
+          scroller,
+          scrollTop: scroller?.scrollTop ?? 0,
+        },
+      });
+    },
+    [groups],
+  );
+
+  const handleDragMove = useCallback((event: DragMoveEvent) => {
+    setDrag((current) => {
+      if (current?.kind !== "section") return current;
+      const { geometry } = current;
+      const scrolled = (geometry.scroller?.scrollTop ?? 0) - geometry.scrollTop;
+      const pointerY = geometry.pointerY + event.delta.y + scrolled;
+      const preview = resolveSectionDragOrder(geometry.blocks, current.groupId, pointerY);
+      return preview.every((groupId, position) => groupId === current.preview[position])
+        ? current
+        : { ...current, preview };
+    });
   }, []);
+
+  // Section drags resolve against the frozen geometry, never dnd-kit's targets,
+  // so the sortable list leaves every row and header where it is.
+  const collisionDetection = useCallback<CollisionDetection>(
+    (args) =>
+      sectionGroupIdFromHeaderItemId(String(args.active.id)) === null ? closestCenter(args) : [],
+    [],
+  );
 
   const handleDragOver = useCallback(
     (event: DragOverEvent) => {
@@ -270,29 +359,27 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
   );
 
   const dropSection = useCallback(
-    (activeGroupId: string, overId: string) => {
-      // Past the last header (over a shelf) means the end of the list.
-      const overGroupId = sectionGroupIdFromHeaderItemId(overId);
-      const orderedGroupIds = groups.map((group) => group.id);
-      const next = resolveSectionHeaderDrop(orderedGroupIds, activeGroupId, overGroupId);
-      if (next === null) return;
-      // Hold the full layout in the new group order, shelves last.
+    (next: readonly string[]) => {
+      const current = groups.map((group) => group.id);
+      if (next.every((groupId, index) => groupId === current[index])) return;
+      // Hold the full layout in the new group order, shelves last, so the
+      // blocks stay where they slid while the catalog write travels.
       const blocks = new Map<string, string[]>();
-      let current: string | null = null;
+      let owner: string | null = null;
       const tail: string[] = [];
       for (const item of items) {
-        if (item.kind === "header") current = item.groupId;
-        else if (item.kind === "shelf") current = null;
-        if (current === null) {
+        if (item.kind === "header") owner = item.groupId;
+        else if (item.kind === "shelf") owner = null;
+        if (owner === null) {
           tail.push(item.id);
         } else {
-          const block = blocks.get(current) ?? [];
+          const block = blocks.get(owner) ?? [];
           block.push(item.id);
-          blocks.set(current, block);
+          blocks.set(owner, block);
         }
       }
       setHeld({
-        ids: [...next.flatMap((id) => blocks.get(id) ?? []), ...tail],
+        ids: [...next.flatMap((groupId) => blocks.get(groupId) ?? []), ...tail],
         expiresAt: Date.now() + HELD_LAYOUT_MS,
       });
       onReorderSections(next);
@@ -397,12 +484,13 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
     (event: DragEndEvent) => {
       const current = drag;
       setDrag(null);
-      if (current === null || event.over === null) return;
-      if (current.kind === "section") dropSection(current.groupId, String(event.over.id));
-      else dropThread(current.key, String(event.over.id));
+      if (current === null) return;
+      if (current.kind === "section") dropSection(current.preview);
+      else if (event.over !== null) dropThread(current.key, String(event.over.id));
     },
     [drag, dropSection, dropThread],
   );
+  const handleDragCancel = useCallback(() => setDrag(null), []);
 
   const dragTarget = drag?.kind === "thread" ? drag.target : null;
   const draggingThreadKey = drag?.kind === "thread" ? drag.key : null;
@@ -416,22 +504,39 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
 
   const groupById = useMemo(() => new Map(groups.map((group) => [group.id, group])), [groups]);
   const liftedGroup = drag?.kind === "section" ? groupById.get(drag.groupId) : undefined;
+  const shifts = useMemo(
+    () => (drag?.kind === "section" ? sectionShifts(drag.geometry.blocks, drag.preview) : null),
+    [drag],
+  );
+  const shiftedSortable = (
+    sortable: SectionsRowSortable,
+    groupId: string | null,
+  ): SectionsRowSortable => {
+    const shift = shifts !== null && groupId !== null ? (shifts.get(groupId) ?? 0) : null;
+    if (shift === null) return sortable;
+    return {
+      ...sortable,
+      transform: { x: 0, y: shift, scaleX: 1, scaleY: 1 },
+      transition: SECTION_SLIDE,
+    };
+  };
 
   return (
     <DndContext
       sensors={sensors}
-      collisionDetection={closestCenter}
+      collisionDetection={collisionDetection}
       measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
       modifiers={[restrictToVerticalAxis, restrictToFirstScrollableAncestor]}
       onDragStart={handleDragStart}
+      onDragMove={handleDragMove}
       onDragOver={handleDragOver}
       onDragEnd={handleDragEnd}
-      onDragCancel={() => setDrag(null)}
+      onDragCancel={handleDragCancel}
     >
       <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
-        <ul role="list" className="relative flex flex-1 flex-col gap-px">
+        <ul ref={listRef} role="list" className="relative flex flex-1 flex-col gap-px">
           {props.leading}
-          {visibleItems.map((item, index) => {
+          {items.map((item, index) => {
             if (item.kind === "header") {
               const group = groupById.get(item.groupId);
               if (group === undefined) return null;
@@ -443,7 +548,8 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
                   label={group.section?.name ?? "General"}
                   collapsed={collapsedGroupIds.has(group.id)}
                   isDropTarget={dragTarget?.kind === "section" && dragTarget.groupId === group.id}
-                  hidden={drag?.kind === "section" && drag.groupId === group.id}
+                  lifted={drag?.kind === "section" && drag.groupId === group.id}
+                  shiftY={shifts?.get(group.id) ?? null}
                   renaming={group.section !== null && props.renamingSectionId === group.id}
                   onToggle={() => props.onToggleGroup(group.id)}
                   onStartRename={() => props.onRenamingSectionChange(group.id)}
@@ -460,11 +566,10 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
             }
             if (item.kind === "shelf") {
               // New sections join the end of the list, so the row sits after the last one.
-              const firstShelf =
-                visibleItems.findIndex((entry) => entry.kind === "shelf") === index;
+              const firstShelf = items.findIndex((entry) => entry.kind === "shelf") === index;
               return (
                 <Fragment key={item.id}>
-                  {firstShelf && drag === null ? (
+                  {firstShelf ? (
                     props.creatingSection !== null ? (
                       <NewSectionRow
                         onSubmit={props.creatingSection.onSubmit}
@@ -493,7 +598,7 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
                   props.renderThreadRow(
                     thread,
                     item.lifecycle,
-                    sortable,
+                    shiftedSortable(sortable, item.groupId),
                     dropVerbFor(item.id, item.lifecycle),
                   )
                 }
@@ -506,7 +611,7 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
       <DragOverlay dropAnimation={null}>
         {liftedGroup ? (
           <div className="flex h-8 items-center gap-2 rounded-md bg-sidebar-row-active px-2 text-xs font-medium text-sidebar-foreground/80 shadow-sm">
-            <FadeTruncate text={liftedGroup.section?.name ?? ""} className="shrink" />
+            <FadeTruncate text={liftedGroup.section?.name ?? "General"} className="shrink" />
             <span aria-hidden className="h-px min-w-2 flex-1 bg-sidebar-foreground/25" />
             <ChevronDownIcon aria-hidden className="size-3 shrink-0" />
           </div>
@@ -539,7 +644,10 @@ function SectionHeaderRow(props: {
   label: string;
   collapsed: boolean;
   isDropTarget: boolean;
-  hidden: boolean;
+  /** The section being dragged: it slides with its rows and takes the accent. */
+  lifted: boolean;
+  /** Section-drag slide, in px; null when no section is being dragged. */
+  shiftY: number | null;
   renaming: boolean;
   onToggle: () => void;
   onStartRename: () => void;
@@ -567,13 +675,18 @@ function SectionHeaderRow(props: {
       ref={setNodeRef}
       data-thread-selection-safe
       data-testid={`sidebar-thread-section-${group.id}`}
-      className={cn("mx-0.5 h-8 list-none", props.hidden && "opacity-0")}
-      style={{ transform: CSS.Translate.toString(transform), transition }}
+      data-section-header={group.id}
+      className="mx-0.5 h-8 list-none"
+      style={
+        props.shiftY === null
+          ? { transform: CSS.Translate.toString(transform), transition }
+          : { transform: `translate3d(0, ${props.shiftY}px, 0)`, transition: SECTION_SLIDE }
+      }
     >
       <div
         className={cn(
           "group/section-header flex h-full w-full items-center gap-2 px-2 text-xs font-medium text-sidebar-muted-foreground/60",
-          props.isDropTarget && "text-primary",
+          (props.isDropTarget || props.lifted) && "text-primary",
         )}
         onContextMenu={isUserSection ? openMenu : undefined}
       >
@@ -731,7 +844,7 @@ function SectionNameInput(props: {
 
 function AddSectionRow(props: { onClick: () => void }) {
   return (
-    <li className="mx-0.5 h-8 list-none">
+    <li className="mx-0.5 h-8 list-none" data-sections-end>
       <button
         type="button"
         onClick={props.onClick}
@@ -747,7 +860,7 @@ function AddSectionRow(props: { onClick: () => void }) {
 
 function NewSectionRow(props: { onSubmit: (name: string) => void; onCancel: () => void }) {
   return (
-    <li className="mx-0.5 h-8 list-none" data-testid="sidebar-new-section-row">
+    <li className="mx-0.5 h-8 list-none" data-testid="sidebar-new-section-row" data-sections-end>
       <div className="flex h-full items-center px-2">
         <SectionNameInput
           initialName=""
