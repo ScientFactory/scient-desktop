@@ -2858,8 +2858,15 @@ export default function Sidebar() {
     () =>
       sectionsView
         ? [
+            // A collapsed section still shows the open thread.
             ...sectionGroups.flatMap((group) =>
-              collapsedSectionIdSet.has(group.id) ? [] : group.threads,
+              collapsedSectionIdSet.has(group.id)
+                ? group.threads.filter(
+                    (thread) =>
+                      scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) ===
+                      routeThreadKey,
+                  )
+                : group.threads,
             ),
             ...visibleSnoozedThreads,
             ...renderedSettledThreads,
@@ -2870,6 +2877,7 @@ export default function Sidebar() {
       collapsedSectionIdSet,
       pinnedThreads,
       renderedSettledThreads,
+      routeThreadKey,
       sectionGroups,
       sectionsView,
       visibleSnoozedThreads,
@@ -4659,7 +4667,7 @@ export default function Sidebar() {
         api.dialogs.confirm(
           memberCount === 0
             ? `Delete the section “${section.name}”?`
-            : `Delete the section “${section.name}”?\n\nIts ${memberCount} thread${memberCount === 1 ? "" : "s"} will move to Other. No conversations are deleted.`,
+            : `Delete the section “${section.name}”?\n\nIts ${memberCount} thread${memberCount === 1 ? "" : "s"} will move to No section. No conversations are deleted.`,
           { variant: "destructive" },
         ),
       );
@@ -5061,6 +5069,7 @@ export default function Sidebar() {
                 groups={sectionGroups}
                 hasSections={sectionCatalog.sections.length > 0}
                 collapsedGroupIds={collapsedSectionIdSet}
+                routeThreadKey={routeThreadKey}
                 onToggleGroup={toggleSectionCollapsed}
                 snoozedThreads={visibleSnoozedThreads}
                 settledThreads={renderedSettledThreads}

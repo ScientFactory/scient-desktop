@@ -65,9 +65,11 @@ export type SectionsRowSortable = Pick<
 
 export interface SidebarSectionsViewProps {
   readonly groups: readonly SectionGroup<Shell>[];
-  /** Label Other as "Other" only once sections exist. */
+  /** Label the unsectioned group "No section" only once sections exist. */
   readonly hasSections: boolean;
   readonly collapsedGroupIds: ReadonlySet<string>;
+  /** The open thread stays visible even inside a collapsed section. */
+  readonly routeThreadKey: string | null;
   readonly onToggleGroup: (groupId: string) => void;
   readonly snoozedThreads: readonly Shell[];
   readonly settledThreads: readonly Shell[];
@@ -152,8 +154,9 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
     const items: SectionsListItem[] = [];
     for (const group of groups) {
       items.push({ kind: "header", id: sectionHeaderItemId(group.id), groupId: group.id });
-      if (collapsedGroupIds.has(group.id)) continue;
+      const collapsed = collapsedGroupIds.has(group.id);
       for (const thread of group.threads) {
+        if (collapsed && keyOf(thread) !== props.routeThreadKey) continue;
         items.push({
           kind: "thread",
           id: keyOf(thread),
@@ -176,6 +179,7 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
   }, [
     collapsedGroupIds,
     groups,
+    props.routeThreadKey,
     props.showSnoozedShelf,
     settledThreads,
     shelfMarkerId,
@@ -268,28 +272,36 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
   const dropSection = useCallback(
     (activeGroupId: string, overId: string) => {
       // Past the last header (over a shelf) means the end of the list.
-      const overGroupId = sectionGroupIdFromHeaderItemId(overId) ?? OTHER_SECTION_GROUP_ID;
+      const overGroupId = sectionGroupIdFromHeaderItemId(overId);
       const orderedGroupIds = groups.map((group) => group.id);
       const next = resolveSectionHeaderDrop(orderedGroupIds, activeGroupId, overGroupId);
       if (next === null) return;
       const nextHeaderIds = new Set(next.map(sectionHeaderItemId));
-      // Hold the full layout in the new section order.
+      // Hold the full layout in the new section order: unsectioned rows first,
+      // then the reordered sections, then the shelves.
       const blocks = new Map<string, string[]>();
       let current: string | null = null;
+      let pastSections = false;
+      const head: string[] = [];
       const tail: string[] = [];
       for (const item of items) {
         if (item.kind === "header") current = item.groupId;
-        else if (item.kind === "shelf") current = null;
+        else if (item.kind === "shelf") {
+          current = null;
+          pastSections = true;
+        }
         if (current !== null && nextHeaderIds.has(sectionHeaderItemId(current))) {
           const block = blocks.get(current) ?? [];
           block.push(item.id);
           blocks.set(current, block);
-        } else {
+        } else if (pastSections) {
           tail.push(item.id);
+        } else {
+          head.push(item.id);
         }
       }
       setHeld({
-        ids: [...next.flatMap((id) => blocks.get(id) ?? []), ...tail],
+        ids: [...head, ...next.flatMap((id) => blocks.get(id) ?? []), ...tail],
         expiresAt: Date.now() + HELD_LAYOUT_MS,
       });
       onReorderSections(next);
@@ -437,7 +449,7 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
                   key={item.id}
                   itemId={item.id}
                   group={group}
-                  label={group.section?.name ?? (props.hasSections ? "Other" : "Threads")}
+                  label={group.section?.name ?? (props.hasSections ? "No section" : "Threads")}
                   collapsed={collapsedGroupIds.has(group.id)}
                   isDropTarget={dragTarget?.kind === "section" && dragTarget.groupId === group.id}
                   hidden={drag?.kind === "section" && drag.groupId === group.id}

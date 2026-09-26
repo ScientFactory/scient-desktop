@@ -158,9 +158,10 @@ export function sectionGroupIdOf(
 }
 
 /**
- * Pinned and active threads grouped by section, in catalog order with Other
- * last. Each group keeps the Status view's order: pinned first, then active.
- * Snoozed and settled threads stay on their own shelves.
+ * Pinned and active threads grouped by section. Unsectioned threads come
+ * first, where new work appears in the Status view too, then sections in
+ * catalog order. Each group keeps the Status view's order: pinned first, then
+ * active. Snoozed and settled threads stay on their own shelves.
  */
 export function groupThreadsBySection<
   T extends { readonly sectionId?: string | null | undefined },
@@ -179,14 +180,14 @@ export function groupThreadsBySection<
     else members.set(groupId, [thread]);
   }
   const groups: SectionGroup<T>[] = [];
+  const other = members.get(OTHER_SECTION_GROUP_ID) ?? [];
+  if (other.length > 0 || input.sections.length === 0) {
+    groups.push({ id: OTHER_SECTION_GROUP_ID, section: null, threads: other });
+  }
   for (const section of input.sections) {
     const threads = members.get(section.id) ?? [];
     if (threads.length === 0 && !input.showEmptySections) continue;
     groups.push({ id: section.id, section, threads });
-  }
-  const other = members.get(OTHER_SECTION_GROUP_ID) ?? [];
-  if (other.length > 0 || input.sections.length === 0) {
-    groups.push({ id: OTHER_SECTION_GROUP_ID, section: null, threads: other });
   }
   return groups;
 }
@@ -335,16 +336,25 @@ export function planSectionsThreadDrop(input: {
   };
 }
 
-/** New section order after dragging one header; Other always stays last. */
+/**
+ * New section order after dragging one header. The unsectioned group stays
+ * first: dropping over it means the first slot, and null (past the last
+ * header) means the last.
+ */
 export function resolveSectionHeaderDrop(
   orderedGroupIds: readonly string[],
   activeGroupId: string,
-  overGroupId: string,
+  overGroupId: string | null,
 ): string[] | null {
   const ids = orderedGroupIds.filter((id) => id !== OTHER_SECTION_GROUP_ID);
   const from = ids.indexOf(activeGroupId);
   if (from === -1) return null;
-  const to = overGroupId === OTHER_SECTION_GROUP_ID ? ids.length - 1 : ids.indexOf(overGroupId);
+  const to =
+    overGroupId === null
+      ? ids.length - 1
+      : overGroupId === OTHER_SECTION_GROUP_ID
+        ? 0
+        : ids.indexOf(overGroupId);
   if (to === -1 || to === from) return null;
   const next = [...ids];
   next.splice(from, 1);

@@ -84,7 +84,7 @@ describe("catalog edits", () => {
 describe("groupThreadsBySection", () => {
   const thread = (id: string, sectionId: string | null) => ({ id, sectionId });
 
-  it("keeps pinned rows first, puts unknown sections in Other, and Other last", () => {
+  it("keeps pinned rows first, puts unknown sections in the unsectioned group, and it first", () => {
     const groups = groupThreadsBySection({
       sections: [RESEARCH, PERMA],
       pinned: [thread("p1", "perma")],
@@ -92,8 +92,8 @@ describe("groupThreadsBySection", () => {
       showEmptySections: false,
     });
     expect(groups.map((group) => [group.id, group.threads.map((entry) => entry.id)])).toEqual([
-      ["perma", ["p1", "a1"]],
       [OTHER_SECTION_GROUP_ID, ["a2", "a3"]],
+      ["perma", ["p1", "a1"]],
     ]);
   });
 
@@ -226,17 +226,24 @@ describe("Sections view drops", () => {
     expect(plan("s1", "s1")).toEqual({ kind: "none" });
   });
 
-  it("reorders section headers, keeping Other last", () => {
-    expect(
-      resolveSectionHeaderDrop(["research", "perma", OTHER_SECTION_GROUP_ID], "research", "perma"),
-    ).toEqual(["perma", "research"]);
-    expect(
-      resolveSectionHeaderDrop(
-        ["research", "perma", OTHER_SECTION_GROUP_ID],
-        "research",
-        OTHER_SECTION_GROUP_ID,
-      ),
-    ).toEqual(["perma", "research"]);
+  it("reorders section headers, keeping the unsectioned group first", () => {
+    const ordered = [OTHER_SECTION_GROUP_ID, "research", "perma", "later"];
+    expect(resolveSectionHeaderDrop(ordered, "research", "perma")).toEqual([
+      "perma",
+      "research",
+      "later",
+    ]);
+    // Over the unsectioned header: the first slot. Past the last header: the last.
+    expect(resolveSectionHeaderDrop(ordered, "later", OTHER_SECTION_GROUP_ID)).toEqual([
+      "later",
+      "research",
+      "perma",
+    ]);
+    expect(resolveSectionHeaderDrop(ordered, "research", null)).toEqual([
+      "perma",
+      "later",
+      "research",
+    ]);
     expect(resolveSectionHeaderDrop(["research", "perma"], "perma", "perma")).toBeNull();
   });
 });

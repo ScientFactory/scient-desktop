@@ -125,19 +125,19 @@ highlighted while it is on. Click it again to return to the default Pinned and A
 Sections view:
 
 - Each section lists its pinned threads first, then the rest in your arranged order. Threads
-  without a section appear under **Other**, which is always last.
+  without a section, including new ones, appear first under **No section**.
 - Snoozed and settled threads stay on their own shelves. A settled or snoozed thread keeps its
   section and returns to it when you un-settle or wake it.
 - Drag a thread to a spot in any section to file it there at that position. Drag a section header
   to reorder sections, or drag a thread onto the **Settled** header to settle it. Dragging never
   unpins a thread.
 - Click a header to collapse it; a collapsed section shows a dot while one of its threads is
-  working. Double-click a header to rename it. Hover a header for **New thread in section** and
+  working, and still shows the thread you have open. Double-click a header to rename it. Hover a header for **New thread in section** and
   the section menu, which also offers **Move up**, **Move down**, and **Delete section**.
 - Empty sections stay visible so you can drag threads into them. **New section**, after the last
   section, adds one at the end.
 
-Deleting a section never deletes conversations: its threads move to **Other**, and **Undo** on the
+Deleting a section never deletes conversations: its threads move to **No section**, and **Undo** on the
 confirmation brings the section and its threads back. The section list is stored on the server of
 your primary environment, so every window and connected client shows the same sections. If
 **Section** is missing from a thread's menu, update the Scient server running that thread's
