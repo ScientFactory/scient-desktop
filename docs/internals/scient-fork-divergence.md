@@ -565,6 +565,50 @@ Interface-wide provider and VCS changes from the prototype were deliberately
 removed. They forced unrelated adapters and test doubles to understand Scient
 forking and would have increased every future upstream merge.
 
+## Omitted-history recovery: `t3_thread_read` bridge
+
+A fork's first provider turn receives a bounded transcript, so older messages
+can be omitted. The Scient MCP tool `t3_thread_read` lets the model read them
+back from the projections. It is a temporary bridge: it keeps the tool name,
+input fields, defaults, and paging semantics of T3 Orchestration V2's
+`t3_thread_read` (`OrchestratorMcpThreadReadInput`, upstream
+`apps/server/src/mcp/toolkits/orchestrator/tools.ts`), so prompts that name the
+tool keep working. **Delete `apps/server/src/mcp/toolkits/threads/`, the
+`threads:read` grant, and the `SCIENT-THREAD-READ` seams when V2's orchestrator
+toolkit lands.**
+
+- Input: `threadId` (required), `view` (`messages` default, or `activity`),
+  `afterPosition` (exclusive), `limit` (1–100, default 50), `itemId`,
+  `textOffset`, `maxCharsPerItem` (1–50,000, default 20,000), and `runLimit`.
+  `runLimit` is accepted and ignored because this server projects only the
+  latest turn, not run history.
+- Output: a V2-compatible subset. `thread` includes identity, project, title,
+  V2-vocabulary `status`, model, modes, fork parent, `itemCount`, and archive
+  state. `items` carry `position`, `itemId`, `type`, `status`, `title`,
+  `activityKind`, `messageId`, `turnId`, windowed `text`, `textTruncated`,
+  `nextTextOffset`, and timestamps. The page also returns `nextPosition` and
+  `hasMore`. There is no `recentRuns` field.
+- Timeline: messages of every role, proposed plans, and thread activities
+  come from `ProjectionSnapshotQuery.getThreadDetailById`. They are merged by
+  creation time, with each source kept in projection order. `position`
+  indexes this full timeline in both views. The `messages` view returns user
+  messages, assistant messages, and proposed plans. The `activity` view also
+  returns reasoning, system messages, and activities. An activity is rendered
+  as its kind and summary, followed by JSON payload capped at 4,000 characters.
+- Paging follows V2: `nextPosition` is the last returned position and is null
+  only when the page is empty, and `hasMore` tells whether to continue. The
+  `itemId` option ignores `view` and `afterPosition`. `textOffset` applies only
+  with `itemId`. Offsets count UTF-16 code units.
+- Authority: the `threads:read` session grant is issued to every
+  MCP-injected provider session. The calling thread comes from the host-issued
+  invocation. It may read itself or a non-deleted thread, including an archived
+  one, in the same project. Other projects fail with `thread_outside_project`.
+  A projectless thread can read only itself. A fork reads its own copied
+  transcript even after the origin is deleted. V2's reads of user-attached
+  context threads are not supported because main has no thread context records.
+  The tool never mutates state. Unlike V2, it never acknowledges delegated-child
+  completion, so it is annotated read-only.
+
 ## Safety and bounded compromises
 
 - Only durable sent user messages and terminal completed assistant responses

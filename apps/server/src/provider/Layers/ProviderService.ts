@@ -988,6 +988,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       "compute:inventory",
       "sources:read",
       "sources:write",
+      // SCIENT-THREAD-READ: every MCP-injected session may read its own project's threads.
+      "threads:read",
       ...(supportsScientSkills ? (["skills:read"] satisfies ReadonlyArray<McpCapability>) : []),
     ]);
     const access = yield* agentAccessSettings(threadId);

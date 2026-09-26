@@ -5906,6 +5906,7 @@ describe("agent browser access", () => {
             "compute:inventory",
             "sources:read",
             "sources:write",
+            "threads:read",
             "skills:read",
           ]),
           skillScope: {
@@ -5934,6 +5935,7 @@ describe("agent browser access", () => {
             "compute:inventory",
             "sources:read",
             "sources:write",
+            "threads:read",
             "skills:read",
           ]),
           skillScope: {
@@ -5983,6 +5985,7 @@ describe("agent browser access", () => {
                 "compute:inventory",
                 "sources:read",
                 "sources:write",
+                "threads:read",
                 "skills:read",
               ]),
               skillScope: {
@@ -6068,6 +6071,7 @@ describe("agent browser access", () => {
             "compute:inventory",
             "sources:read",
             "sources:write",
+            "threads:read",
             "skills:read",
           ]),
           skillScope: {
@@ -6102,6 +6106,7 @@ describe("agent browser access", () => {
           "compute:inventory",
           "sources:read",
           "sources:write",
+          "threads:read",
           "skills:read",
           "device",
         ]),
@@ -6148,6 +6153,7 @@ describe("agent browser access", () => {
           "compute:inventory",
           "sources:read",
           "sources:write",
+          "threads:read",
           "skills:read",
         ]),
       );
