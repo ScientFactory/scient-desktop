@@ -480,6 +480,83 @@ describe("local dev app runner lifecycle", () => {
     ]);
   });
 
+  it("fails instead of reporting success when owned processes survive SIGKILL", async () => {
+    const { paths } = fixture();
+    writeRunnerState(paths);
+    const signals = [];
+    const lines = [];
+    let unloads = 0;
+    let failure;
+
+    try {
+      await stopApp({
+        paths,
+        matchesRunner: () => true,
+        killProcess: (...args) => signals.push(args),
+        resolveOwnedApp: () => ({ pid: 2222, command: "/owned/Electron" }),
+        resolveOwnedBackend: () => null,
+        resolveOwnedApps: () => [],
+        resolveOwnedBackends: () => [],
+        waitUntilStopped: async () => false,
+        unloadService: () => {
+          unloads += 1;
+          return false;
+        },
+        writeLine: (line) => lines.push(line),
+      });
+    } catch (error) {
+      failure = error;
+    }
+
+    assert.instanceOf(failure, Error);
+    assert.equal(
+      failure.message,
+      `Could not stop every owned ${LOCAL_DEV_APP_NAME} process for ${paths.root}; some are still running.`,
+    );
+    assert.deepEqual(signals, [
+      [2222, "SIGTERM"],
+      [1234, "SIGTERM"],
+      [2222, "SIGKILL"],
+      [1234, "SIGKILL"],
+    ]);
+    assert.equal(unloads, 1);
+    assert.deepEqual(lines, []);
+  });
+
+  it("escalates and fails when an app outlives a stop during startup", async () => {
+    const { paths } = fixture();
+    NodeFS.mkdirSync(paths.runnerDir, { recursive: true });
+    const signals = [];
+    const lines = [];
+    let failure;
+
+    try {
+      await stopApp({
+        paths,
+        matchesRunner: () => false,
+        killProcess: (...args) => signals.push(args),
+        resolveOwnedApp: () => null,
+        resolveOwnedBackend: () => null,
+        resolveOwnedApps: () => [{ pid: 2222, command: "/owned/Electron --t3code-dev-root" }],
+        resolveOwnedBackends: () => [],
+        waitUntilStopped: async () => false,
+        unloadService: () => true,
+        serviceIsLoaded: () => false,
+        writeLine: (line) => lines.push(line),
+      });
+    } catch (error) {
+      failure = error;
+    }
+
+    assert.instanceOf(failure, Error);
+    assert.deepEqual(signals, [
+      [2222, "SIGTERM"],
+      [2222, "SIGKILL"],
+    ]);
+    assert.isTrue(NodeFS.existsSync(paths.runnerDir));
+    assert.deepEqual(lines, []);
+  });
+
   it("treats a runner that exits before signaling as already stopped", async () => {
     const { paths } = fixture();
     writeRunnerState(paths);
