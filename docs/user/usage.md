@@ -1,13 +1,20 @@
 # Review usage
 
+Open **Usage** from the sidebar or the command palette, or press `mod+u` on web and
+desktop when the terminal is not focused. Customize `usage.open` in
+**Settings → Keybindings**.
+
 Use the Usage page to understand which providers and models are doing the work,
 compare activity over time, and estimate the token cost of recent project work.
 It is an activity view, not an invoice.
 
-The Usage page combines Codex, Claude Code, and Grok Build activity from your connected
-environments. It reads the providers' local session history and shows API-equivalent token cost,
-processed tokens, cache savings, provider shares, and model breakdowns. Subscription billing is
-separate from the raw token cost shown here.
+## Understand your usage
+
+The Usage page combines Codex, Claude Code, Grok Build, OpenCode, Antigravity, and
+Cursor activity from your connected environments. It reads each provider's own
+history and shows API-equivalent token cost, processed tokens, cache savings,
+provider shares, and model breakdowns. Subscription billing is separate from the
+raw token cost shown here.
 
 The scan happens inside each connected environment. Raw transcript records stay there; only
 summarized time, provider, model, token, and cost totals—plus whether each
@@ -21,6 +28,19 @@ the public LiteLLM model rate table. Tokens from
 an unrecognized model remain in token totals but add no estimated cost. Scient refreshes the rate
 table at most daily and can use its cached copy offline; without either copy, affected records are
 shown as unpriced rather than guessed.
+
+OpenCode reads its SQLite database and older JSON history. Antigravity reads local conversation
+databases, including Scient-managed profiles. Set `OPENCODE_DATA_DIR` or `ANTIGRAVITY_DATA_DIR` on
+the server to read a different data directory; comma-separated paths read multiple directories.
+
+Cursor reads account usage from Cursor's dashboard API using the CLI login saved on the server.
+This includes headless Scient sessions and desktop usage across machines; the same account counts
+once across connected environments. Without an accessible CLI login, Scient shows a
+notice instead of incomplete local totals. Scient does not estimate missing tokens from
+conversation text. On macOS, Cursor account usage is enabled by default when this setting is
+unset, so Scient can read the existing CLI login from Keychain when needed. macOS may ask you to
+allow access on the server Mac. You can turn this off in **Settings → Providers → Usage
+providers**; an existing explicit opt-out remains off.
 
 Usage includes each configured account's history, including disabled accounts. Custom homes follow
 the account's home setting or its `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, or `GROK_HOME` environment
@@ -106,10 +126,11 @@ anything. The command is offered only for providers that appear under **Usage �
 OpenCode Go reports its session, weekly, and monthly allowance when OpenCode runs locally in
 the environment. T3 cannot report limits for external OpenCode servers because their credentials
 belong to the remote server. Cursor reports
-its monthly allowance, including separate Auto and API usage, using a file-based CLI login or
-`CURSOR_AUTH_TOKEN`. Cursor's default macOS keychain login does not currently report limits.
-On macOS, use `AGENT_CLI_CREDENTIAL_STORE=file` when signing in and in the provider's environment
-to use a file-based login.
+its monthly allowance, including separate Auto and API usage, using the CLI login or
+`CURSOR_AUTH_TOKEN`. On macOS, this includes the default Keychain login unless Cursor account
+usage has been turned off. Keychain login is used for limits only with Cursor's default API
+endpoint. If you configure a custom Cursor endpoint, use an explicit token or file-based CLI
+login for limits.
 
 Grok reports the remaining subscription allowance and reset time for its current billing period
 after signing in with `grok login`. Explicit `XAI_API_KEY` connections and custom authentication
@@ -146,4 +167,4 @@ pricing update.
 Add **Subscription usage** from your iOS or Android widget gallery to see remaining Codex and
 Claude quotas. Tap it to open **Usage → Limits**. On iOS, use **Edit Widget** to choose Session,
 Weekly, or both for each provider. Reopen the retained mobile client to refresh
-expired readings.
+expired readings. The Android widget requires Android 12L or later.

@@ -306,6 +306,10 @@ export const LoadBalancingWeights = Schema.Record(
 
 export const DiffColorScheme = Schema.Literals(["red-green", "blue-orange"]);
 
+/** Maximum width of the chat timeline and composer on wide screens. */
+export const ChatWidth = Schema.Literals(["comfortable", "wide", "full"]);
+export type ChatWidth = typeof ChatWidth.Type;
+
 export const ClientSettingsSchema = Schema.Struct({
   notificationMode: NotificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("off" as const)),
@@ -314,6 +318,7 @@ export const ClientSettingsSchema = Schema.Struct({
   diffColorScheme: DiffColorScheme.pipe(
     Schema.withDecodingDefault(Effect.succeed("red-green" as const)),
   ),
+  chatWidth: ChatWidth.pipe(Schema.withDecodingDefault(Effect.succeed("comfortable" as const))),
   loadBalancingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   loadBalancingWeights: LoadBalancingWeights.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   appearanceContrast: AppearanceContrast.pipe(
@@ -1209,9 +1214,7 @@ export const ServerSettings = Schema.Struct({
   customModels: CustomModelsSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   worktreeCleanup: WorktreeCleanup.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   storageCleanup: StorageCleanupSettings.pipe(
-    Schema.withDecodingDefault(
-      Effect.succeed(Schema.decodeUnknownSync(StorageCleanupSettings)({})),
-    ),
+    Schema.withDecodingDefault(Effect.succeed(Schema.decodeSync(StorageCleanupSettings)({}))),
   ),
   // How assistant text reaches clients during a turn. Deliberately a fresh
   // key (was `enableLegacyTokenStreaming`, before that
@@ -1414,6 +1417,8 @@ export const ServerSettings = Schema.Struct({
   usageAccountingSources: Schema.Record(UsageAccountingSourceId, UsageAccountingSourceConfig).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  /** Allows this server to read the Cursor CLI's macOS Keychain login for account usage. */
+  cursorKeychainUsageEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /** Exact model IDs, applied to past and future usage on this environment. */
   usagePriceOverrides: Schema.Record(TrimmedNonEmptyString, UsageModelPriceOverride).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
@@ -1717,6 +1722,7 @@ export const ServerSettingsPatch = Schema.Struct({
   usageAccountingSources: Schema.optionalKey(
     Schema.Record(UsageAccountingSourceId, Schema.NullOr(UsageAccountingSourceConfig)),
   ),
+  cursorKeychainUsageEnabled: Schema.optionalKey(Schema.Boolean),
   /** Each entry replaces one model's rates; `null` restores automatic pricing. */
   usagePriceOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, Schema.NullOr(UsageModelPriceOverride)),
@@ -1728,6 +1734,7 @@ export const ClientSettingsPatch = Schema.Struct({
   notificationMode: Schema.optionalKey(NotificationMode),
   inAppNotificationsEnabled: Schema.optionalKey(Schema.Boolean),
   diffColorScheme: Schema.optionalKey(DiffColorScheme),
+  chatWidth: Schema.optionalKey(ChatWidth),
   loadBalancingEnabled: Schema.optionalKey(Schema.Boolean),
   loadBalancingWeights: Schema.optionalKey(LoadBalancingWeights),
   appearanceContrast: Schema.optionalKey(AppearanceContrast),

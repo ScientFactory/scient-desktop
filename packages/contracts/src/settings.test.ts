@@ -110,6 +110,19 @@ describe("ServerSettings default permissions", () => {
   });
 });
 
+describe("ServerSettings Cursor account usage", () => {
+  it("enables Keychain usage by default while preserving an explicit opt-out", () => {
+    expect(decodeServerSettings({}).cursorKeychainUsageEnabled).toBe(true);
+    expect(DEFAULT_SERVER_SETTINGS.cursorKeychainUsageEnabled).toBe(true);
+    expect(
+      decodeServerSettings({ cursorKeychainUsageEnabled: false }).cursorKeychainUsageEnabled,
+    ).toBe(false);
+    expect(decodeServerSettingsPatch({ cursorKeychainUsageEnabled: false })).toEqual({
+      cursorKeychainUsageEnabled: false,
+    });
+  });
+});
+
 describe("ServerSettings usage price overrides", () => {
   const prices = { inputCostPerMillionTokens: 2, outputCostPerMillionTokens: 8 };
 
@@ -357,6 +370,23 @@ describe("ClientSettings diff colors", () => {
   it("rejects unsupported palettes", () => {
     expect(() => decodeClientSettings({ diffColorScheme: "purple-yellow" })).toThrow();
     expect(() => decodeClientSettingsPatch({ diffColorScheme: "purple-yellow" })).toThrow();
+  });
+});
+
+describe("ClientSettings chat width", () => {
+  it("keeps the comfortable width for existing settings without a saved width", () => {
+    expect(decodeClientSettings({}).chatWidth).toBe("comfortable");
+  });
+
+  it.each(["comfortable", "wide", "full"])("round-trips the %s width", (chatWidth) => {
+    const settings = decodeClientSettings({ chatWidth });
+    expect(encodeClientSettings(settings).chatWidth).toBe(chatWidth);
+    expect(decodeClientSettingsPatch({ chatWidth }).chatWidth).toBe(chatWidth);
+  });
+
+  it("rejects unsupported widths", () => {
+    expect(() => decodeClientSettings({ chatWidth: "huge" })).toThrow();
+    expect(() => decodeClientSettingsPatch({ chatWidth: "huge" })).toThrow();
   });
 });
 

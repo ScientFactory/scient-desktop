@@ -9,7 +9,12 @@ import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexRpc from "effect-codex-app-server/rpc";
 import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
-import { buildCodexDeveloperInstructions } from "../CodexDeveloperInstructions.ts";
+import type { McpCapability } from "../../mcp/McpInvocationContext.ts";
+
+import {
+  buildCodexAdditionalContext,
+  buildCodexDeveloperInstructions,
+} from "../CodexDeveloperInstructions.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import {
   buildTurnStartParams,
@@ -233,12 +238,13 @@ describe("buildTurnStartParams", () => {
         settings: {
           model: "gpt-5.3-codex",
           reasoning_effort: "medium",
-          developer_instructions: buildCodexDeveloperInstructions("plan", {
-            model: "gpt-5.3-codex",
-            reasoningEffort: "medium",
-          }),
+          developer_instructions: buildCodexDeveloperInstructions("plan"),
         },
       },
+      additionalContext: buildCodexAdditionalContext({
+        model: "gpt-5.3-codex",
+        reasoningEffort: "medium",
+      }),
     });
   });
 
@@ -282,12 +288,13 @@ describe("buildTurnStartParams", () => {
         settings: {
           model: "gpt-5.3-codex",
           reasoning_effort: "medium",
-          developer_instructions: buildCodexDeveloperInstructions("default", {
-            model: "gpt-5.3-codex",
-            reasoningEffort: "medium",
-          }),
+          developer_instructions: buildCodexDeveloperInstructions("default"),
         },
       },
+      additionalContext: buildCodexAdditionalContext({
+        model: "gpt-5.3-codex",
+        reasoningEffort: "medium",
+      }),
     });
   });
 
@@ -304,8 +311,28 @@ describe("buildTurnStartParams", () => {
     const settings = params.collaborationMode?.settings;
     NodeAssert.equal(settings?.model, DEFAULT_MODEL);
     NodeAssert.equal(settings?.reasoning_effort, "medium");
-    NodeAssert.ok(settings?.developer_instructions?.includes(`as ${DEFAULT_MODEL} with medium`));
+    NodeAssert.ok(
+      params.additionalContext?.t3_code_runtime?.value.includes(`as ${DEFAULT_MODEL} with medium`),
+    );
   });
+
+  it.effect("names the model by display name and slug in the runtime context", () =>
+    Effect.gen(function* () {
+      const params = yield* buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "full-access",
+        model: "gpt-5.3-codex",
+        modelName: "GPT-5.3-Codex",
+        effort: "high",
+        interactionMode: "plan",
+      });
+
+      NodeAssert.match(
+        params.additionalContext?.t3_code_runtime?.value ?? "",
+        /as GPT-5\.3-Codex \(model slug: gpt-5\.3-codex\) with high reasoning effort/,
+      );
+    }),
+  );
 
   it.effect("routes approvals to the auto reviewer in auto mode", () =>
     Effect.gen(function* () {
@@ -333,17 +360,18 @@ describe("buildTurnStartParams", () => {
           settings: {
             model: DEFAULT_MODEL,
             reasoning_effort: "medium",
-            developer_instructions: buildCodexDeveloperInstructions("default", {
-              model: DEFAULT_MODEL,
-              reasoningEffort: "medium",
-            }),
+            developer_instructions: buildCodexDeveloperInstructions("default"),
           },
         },
+        additionalContext: buildCodexAdditionalContext({
+          model: DEFAULT_MODEL,
+          reasoningEffort: "medium",
+        }),
       });
     }),
   );
 
-  it("defaults an absent interaction mode so Scient awareness is never omitted", () => {
+  it("defaults an absent interaction mode and still delivers the product awareness", () => {
     const params = Effect.runSync(
       buildTurnStartParams({
         threadId: "provider-thread-1",
@@ -370,12 +398,13 @@ describe("buildTurnStartParams", () => {
         settings: {
           model: DEFAULT_MODEL,
           reasoning_effort: "medium",
-          developer_instructions: buildCodexDeveloperInstructions("default", {
-            model: DEFAULT_MODEL,
-            reasoningEffort: "medium",
-          }),
+          developer_instructions: buildCodexDeveloperInstructions("default"),
         },
       },
+      additionalContext: buildCodexAdditionalContext({
+        model: DEFAULT_MODEL,
+        reasoningEffort: "medium",
+      }),
     });
   });
 });
@@ -583,116 +612,119 @@ describe("Codex MCP elicitation approvals", () => {
 });
 
 describe("buildCodexDeveloperInstructions", () => {
-  it("appends runtime info after the mode instructions", () => {
-    const instructions = buildCodexDeveloperInstructions("default", {
-      model: "gpt-5.3-codex",
-      reasoningEffort: "high",
-    });
-
-    NodeAssert.match(instructions, /^<collaboration_mode># Collaboration Mode: Default/);
-    NodeAssert.match(instructions, /Scient/);
-    NodeAssert.match(instructions, /Codex harness/);
-    NodeAssert.match(instructions, /as gpt-5\.3-codex with high reasoning effort/);
-  });
-
-  it("describes Markdown media support in the runtime context in both modes", () => {
+  it("keeps the harness context out of the mode prompt, which the model catalog can replace", () => {
     for (const mode of ["default", "plan"] as const) {
-      const instructions = buildCodexDeveloperInstructions(mode, {
-        model: "gpt-5.3-codex",
-        reasoningEffort: "high",
-      });
-      NodeAssert.match(
-        instructions,
-        /<runtime_info>.*embed images and videos.*Markdown.*<\/runtime_info>/,
-      );
+      const instructions = buildCodexDeveloperInstructions(mode);
+      NodeAssert.match(instructions, /^<collaboration_mode>[\s\S]*<\/collaboration_mode>$/);
+      NodeAssert.doesNotMatch(instructions, /runtime_info|pull_request_linking|preview_|device_/);
     }
   });
+});
 
-  it("includes runtime info alongside plan mode instructions", () => {
-    const instructions = buildCodexDeveloperInstructions("plan", {
-      model: "gpt-5.3-codex",
-      reasoningEffort: "medium",
-    });
+describe("buildCodexAdditionalContext", () => {
+  const runtime = { model: "gpt-5.3-codex", reasoningEffort: "high" };
+  const runtimeValue = (context: ReturnType<typeof buildCodexAdditionalContext>) =>
+    context.t3_code_runtime?.value ?? "";
 
-    NodeAssert.match(instructions, /^<collaboration_mode># Plan Mode/);
-    NodeAssert.match(instructions, /as gpt-5\.3-codex with medium reasoning effort/);
+  it("describes the harness, model, effort, and Markdown media support", () => {
+    const context = buildCodexAdditionalContext(runtime);
+
+    NodeAssert.equal(context.t3_code_runtime?.kind, "application");
+    NodeAssert.match(
+      runtimeValue(context),
+      /<runtime_info>.*Codex harness, as gpt-5\.3-codex with high reasoning effort.*embed images and videos.*Markdown.*<\/runtime_info>/,
+    );
   });
 
   it("varies with the model and effort of each turn", () => {
-    const first = buildCodexDeveloperInstructions("default", {
-      model: "gpt-5.3-codex",
-      reasoningEffort: "medium",
-    });
-    const second = buildCodexDeveloperInstructions("default", {
-      model: "gpt-5.4",
-      reasoningEffort: "high",
-    });
-
-    NodeAssert.notEqual(first, second);
+    NodeAssert.notEqual(
+      runtimeValue(
+        buildCodexAdditionalContext({ model: "gpt-5.3-codex", reasoningEffort: "medium" }),
+      ),
+      runtimeValue(buildCodexAdditionalContext({ model: "gpt-5.4", reasoningEffort: "high" })),
+    );
   });
 
   it("flattens multiline metadata into single-line runtime info", () => {
-    const instructions = buildCodexDeveloperInstructions("default", {
-      model: "gpt\n5.3\ncodex",
-      reasoningEffort: " high\neffort ",
-    });
+    const value = runtimeValue(
+      buildCodexAdditionalContext({ model: "gpt\n5.3\ncodex", reasoningEffort: " high\neffort " }),
+    );
 
-    NodeAssert.match(instructions, /as gpt 5\.3 codex with high effort reasoning effort/);
-    NodeAssert.doesNotMatch(instructions, /<runtime_info>[^<]*\n/);
+    NodeAssert.match(value, /as gpt 5\.3 codex with high effort reasoning effort/);
+    NodeAssert.doesNotMatch(value, /<runtime_info>[^<]*\n/);
+  });
+
+  it("keeps every entry under Codex's 1,000 token cap per entry", () => {
+    const context = buildCodexAdditionalContext(
+      runtime,
+      new Set<McpCapability>(["preview", "device", "documents:build", "skills:read"]),
+    );
+    for (const entry of Object.values(context)) {
+      // Codex estimates 4 bytes per token and truncates the middle of longer values.
+      NodeAssert.ok(Buffer.byteLength(entry.value) < 4_000);
+    }
   });
 });
 
-describe("Scient browser awareness", () => {
-  const previewCapabilities = new Set(["preview"] as const);
+describe("Scient awareness", () => {
   const runtime = { model: "gpt-5.3-codex", reasoningEffort: "high" };
+  const awarenessFor = (capabilities?: ReadonlySet<McpCapability>) =>
+    buildCodexAdditionalContext(runtime, capabilities).scient_awareness?.value ?? "";
+  const previewCapabilities = new Set<McpCapability>(["preview"]);
+  const deviceCapabilities = new Set<McpCapability>(["device"]);
 
-  it("prefers the product-native preview tools in both collaboration modes", () => {
-    for (const mode of ["default", "plan"] as const) {
-      const instructions = buildCodexDeveloperInstructions(mode, runtime, previewCapabilities);
-      NodeAssert.match(instructions, /Scient browser/);
-      NodeAssert.match(instructions, /preview_status/);
-      NodeAssert.match(instructions, /preview_open/);
-      NodeAssert.match(instructions, /another browser system only when/);
-    }
+  it("prefers the product-native preview tools when the credential grants them", () => {
+    const awareness = awarenessFor(previewCapabilities);
+    NodeAssert.match(awareness, /Scient browser/);
+    NodeAssert.match(awareness, /preview_status/);
+    NodeAssert.match(awareness, /preview_open/);
+    NodeAssert.match(awareness, /another browser system only when/);
   });
 
-  it("omits the browser block entirely when the preview tools are not attached", () => {
-    for (const mode of ["default", "plan"] as const) {
-      const instructions = buildCodexDeveloperInstructions(mode, runtime);
-      NodeAssert.doesNotMatch(instructions, /preview_status/);
-      NodeAssert.doesNotMatch(instructions, /preview_open/);
-      NodeAssert.doesNotMatch(instructions, /Scient browser/);
-      // The rest of the collaboration mode is untouched.
-      NodeAssert.match(instructions, /<collaboration_mode>/);
-      NodeAssert.match(instructions, /<\/collaboration_mode>/);
-    }
+  it("describes device tools only when the credential grants them", () => {
+    const awareness = awarenessFor(deviceCapabilities);
+    NodeAssert.match(awareness, /device_list/);
+    NodeAssert.match(awareness, /device_open/);
+    NodeAssert.doesNotMatch(awareness, /Scient browser/);
+    NodeAssert.doesNotMatch(awareness, /preview_status/);
+  });
+
+  it("omits every capability block when the credential grants none", () => {
+    const awareness = awarenessFor();
+    NodeAssert.doesNotMatch(awareness, /preview_status/);
+    NodeAssert.doesNotMatch(awareness, /preview_open/);
+    NodeAssert.doesNotMatch(awareness, /Scient browser/);
+    NodeAssert.doesNotMatch(awareness, /device_open/);
+    // The rest of the product identity is untouched.
+    NodeAssert.match(awareness, /## Scient/);
   });
 
   it("tracks the turn's MCP configuration rather than defaulting to on", () => {
-    const runtime = { model: "gpt-5.3-codex", reasoningEffort: "high" };
-    NodeAssert.match(
-      buildCodexDeveloperInstructions("default", runtime, previewCapabilities),
-      /preview_open/,
-    );
-    NodeAssert.doesNotMatch(buildCodexDeveloperInstructions("default", runtime), /preview_open/);
+    NodeAssert.match(awarenessFor(previewCapabilities), /preview_open/);
+    NodeAssert.doesNotMatch(awarenessFor(), /preview_open/);
   });
-});
 
-describe("Scient core awareness", () => {
-  it("advertises the same rich-fence capabilities in both collaboration modes", () => {
-    for (const instructions of [
-      buildCodexDeveloperInstructions("default", {
-        model: "gpt-5.3-codex",
-        reasoningEffort: "high",
-      }),
-      buildCodexDeveloperInstructions("plan", { model: "gpt-5.3-codex", reasoningEffort: "high" }),
-    ]) {
-      NodeAssert.match(instructions, /## Scient/);
-      NodeAssert.match(instructions, /workspace-relative Markdown images/);
-      NodeAssert.match(instructions, /diagram declaration before its contents/);
-      NodeAssert.match(instructions, /Create workspace files for standalone deliverables/);
-      NodeAssert.match(instructions, /clickable project-relative Markdown links/);
+  it("advertises the product's rich-fence capabilities with the always-on identity", () => {
+    for (const awareness of [awarenessFor(), awarenessFor(previewCapabilities)]) {
+      NodeAssert.match(awareness, /## Scient/);
+      NodeAssert.match(awareness, /workspace-relative Markdown images/);
+      NodeAssert.match(awareness, /diagram declaration before its contents/);
+      NodeAssert.match(awareness, /Create workspace files for standalone deliverables/);
+      NodeAssert.match(awareness, /clickable project-relative Markdown links/);
     }
+  });
+
+  it("keeps the product identity out of the mode prompt, which the model catalog can replace", () => {
+    for (const mode of ["default", "plan"] as const) {
+      NodeAssert.doesNotMatch(buildCodexDeveloperInstructions(mode), /## Scient/);
+    }
+  });
+
+  it("carries the runtime and awareness entries, and nothing else", () => {
+    const context = buildCodexAdditionalContext(runtime);
+
+    NodeAssert.deepStrictEqual(Object.keys(context), ["t3_code_runtime", "scient_awareness"]);
+    NodeAssert.equal(context.scient_awareness?.kind, "application");
   });
 });
 

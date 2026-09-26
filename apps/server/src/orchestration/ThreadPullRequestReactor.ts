@@ -6,6 +6,9 @@ import {
   CommandId,
   type OrchestrationEvent,
   type OrchestrationProjectShell,
+  type OrchestrationShellSnapshot,
+  type OrchestrationThreadShell,
+  type ProjectId,
   type ThreadId,
   type ThreadLinkedPullRequest,
 } from "@t3tools/contracts";
@@ -16,11 +19,13 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import * as GitManager from "../git/GitManager.ts";
+import type { ProjectionRepositoryError } from "../persistence/Errors.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import { forkParked } from "../serverActivation.ts";
@@ -48,6 +53,12 @@ function samePullRequest(
   );
 }
 
+/**
+ * A thread shell that still names a project. A projectless thread has no
+ * checkout to read and no host to ask, so it takes no part in discovery.
+ */
+export type ProjectThreadShell = OrchestrationThreadShell & { readonly projectId: ProjectId };
+
 /** Startup lookups per settled thread before discovery gives up on it. */
 export const BACKFILL_ATTEMPTS = 5;
 
@@ -68,6 +79,39 @@ export function pullRequestMatchesProject(
       canonicalRepositoryKey(project.repositoryIdentity.canonicalKey)
   );
 }
+
+/**
+ * Read the shell state for a discovery or settlement sweep. A sweep for one
+ * thread reads that thread and the projects it names, not every thread.
+ */
+export const readSweepSnapshot = (
+  snapshots: ProjectionSnapshotQuery.ProjectionSnapshotQueryShape,
+  threadId: ThreadId | null,
+): Effect.Effect<
+  Pick<OrchestrationShellSnapshot, "snapshotSequence" | "projects" | "threads">,
+  ProjectionRepositoryError
+> =>
+  threadId === null
+    ? snapshots.getShellSnapshot()
+    : Effect.gen(function* () {
+        // Read the sequence first. The thread is then at least this new, so a
+        // command guarded by the sequence is rejected rather than missing a change.
+        const { snapshotSequence } = yield* snapshots.getSnapshotSequence();
+        const thread = yield* snapshots.getThreadShellById(threadId);
+        if (Option.isNone(thread)) return { snapshotSequence, projects: [], threads: [] };
+        // Settlement also checks the project a saved pull request names. A projectless
+        // thread names none, so it reads no project shell and takes no part in a sweep.
+        const reference = thread.value.linkedPullRequest ?? thread.value.branchPullRequest;
+        const ownProjectId = thread.value.projectId;
+        const projectIds =
+          ownProjectId === null
+            ? []
+            : reference == null
+              ? [ownProjectId]
+              : [ownProjectId, reference.projectId];
+        const projects = yield* snapshots.getProjectShells(projectIds);
+        return { snapshotSequence, projects, threads: [thread.value] };
+      });
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
@@ -97,7 +141,7 @@ export const make = Effect.gen(function* () {
   const synchronize = Effect.fn("ThreadPullRequestReactor.synchronize")(function* (
     request: RefreshRequest,
   ) {
-    const snapshot = yield* snapshots.getShellSnapshot();
+    const snapshot = yield* readSweepSnapshot(snapshots, request.threadId);
     const projects = new Map(snapshot.projects.map((project) => [project.id, project]));
     if (request.backfill) {
       for (const thread of snapshot.threads) {
@@ -109,20 +153,22 @@ export const make = Effect.gen(function* () {
         }
       }
     }
+    // A single-thread read only shows whether its own thread is gone.
     const threadIds = new Set(snapshot.threads.map((thread) => thread.id));
-    for (const threadId of pendingBackfill.keys()) {
+    const checkedIds = request.threadId === null ? pendingBackfill.keys() : [request.threadId];
+    for (const threadId of checkedIds) {
       if (!threadIds.has(threadId)) pendingBackfill.delete(threadId);
     }
-    const threads = snapshot.threads.flatMap((thread) =>
-      thread.projectId !== null &&
-      thread.archivedAt === null &&
-      (request.threadId === null || thread.id === request.threadId) &&
-      ((thread.settledOverride !== "settled" && thread.settledAt === null) ||
-        request.threadId !== null ||
-        pendingBackfill.has(thread.id)) &&
-      (thread.branch !== null || thread.branchPullRequest != null)
-        ? [{ ...thread, projectId: thread.projectId }]
-        : [],
+    const threads = snapshot.threads.filter(
+      (thread): thread is ProjectThreadShell =>
+        // A projectless thread has no checkout to read and no host to ask.
+        thread.projectId !== null &&
+        thread.archivedAt === null &&
+        (request.threadId === null || thread.id === request.threadId) &&
+        ((thread.settledOverride !== "settled" && thread.settledAt === null) ||
+          request.threadId !== null ||
+          pendingBackfill.has(thread.id)) &&
+        (thread.branch !== null || thread.branchPullRequest != null),
     );
     const groups = Map.groupBy(threads, (thread) =>
       JSON.stringify([thread.projectId, thread.worktreePath, thread.branch]),
@@ -133,8 +179,19 @@ export const make = Effect.gen(function* () {
       (group) =>
         Effect.gen(function* () {
           const first = group[0]!;
-          const project = projects.get(first.projectId);
-          if (project === undefined) return finishBackfill(group);
+          const snapshotProject = projects.get(first.projectId);
+          if (snapshotProject === undefined) return finishBackfill(group);
+          // A finished turn may have added the remote this PR lives on. A failed
+          // refresh resolves to null, so keep the snapshot's identity then.
+          const project = request.refresh
+            ? {
+                ...snapshotProject,
+                repositoryIdentity:
+                  (yield* repositoryIdentities.resolve(snapshotProject.workspaceRoot, {
+                    refresh: true,
+                  })) ?? snapshotProject.repositoryIdentity,
+              }
+            : snapshotProject;
           const repository = sourceControlRepositorySelector(project.repositoryIdentity);
           if (first.branch !== null && repository === null) return finishBackfill(group);
           const worktreeExists =
@@ -209,16 +266,16 @@ export const make = Effect.gen(function* () {
               }
               return { thread, branchPullRequest, replacement };
             }).pipe(
-              Effect.catchCause((cause) =>
-                Cause.hasInterruptsOnly(cause)
-                  ? Effect.failCause(cause)
-                  : Effect.logWarning("thread pull request discovery failed", {
-                      threadId: thread.id,
-                      cause: Cause.pretty(cause),
-                    }).pipe(
-                      Effect.tap(() => Effect.sync(() => failBackfill([thread]))),
-                      Effect.as(null),
-                    ),
+              Effect.catchCauseIf(
+                (cause) => !Cause.hasInterruptsOnly(cause),
+                (cause) =>
+                  Effect.logWarning("thread pull request discovery failed", {
+                    threadId: thread.id,
+                    cause: Cause.pretty(cause),
+                  }).pipe(
+                    Effect.tap(() => Effect.sync(() => failBackfill([thread]))),
+                    Effect.as(null),
+                  ),
               ),
             ),
           );
@@ -275,25 +332,25 @@ export const make = Effect.gen(function* () {
                   OrchestrationCommandInvariantError: () =>
                     Effect.sync(() => finishBackfill([thread])),
                 }),
-                Effect.catchCause((cause) =>
-                  Cause.hasInterruptsOnly(cause)
-                    ? Effect.failCause(cause)
-                    : Effect.logWarning("thread pull request update failed", {
-                        threadId: thread.id,
-                        cause: Cause.pretty(cause),
-                      }).pipe(Effect.tap(() => Effect.sync(() => failBackfill([thread])))),
+                Effect.catchCauseIf(
+                  (cause) => !Cause.hasInterruptsOnly(cause),
+                  (cause) =>
+                    Effect.logWarning("thread pull request update failed", {
+                      threadId: thread.id,
+                      cause: Cause.pretty(cause),
+                    }).pipe(Effect.tap(() => Effect.sync(() => failBackfill([thread])))),
                 ),
               ),
             { discard: true },
           );
         }).pipe(
-          Effect.catchCause((cause) =>
-            Cause.hasInterruptsOnly(cause)
-              ? Effect.failCause(cause)
-              : Effect.logWarning("thread branch pull request lookup failed", {
-                  threadIds: group.map((thread) => thread.id),
-                  cause: Cause.pretty(cause),
-                }).pipe(Effect.tap(() => Effect.sync(() => failBackfill(group)))),
+          Effect.catchCauseIf(
+            (cause) => !Cause.hasInterruptsOnly(cause),
+            (cause) =>
+              Effect.logWarning("thread branch pull request lookup failed", {
+                threadIds: group.map((thread) => thread.id),
+                cause: Cause.pretty(cause),
+              }).pipe(Effect.tap(() => Effect.sync(() => failBackfill(group)))),
           ),
         ),
       { concurrency: 8, discard: true },
@@ -302,12 +359,12 @@ export const make = Effect.gen(function* () {
 
   const worker = yield* makeDrainableWorker((request: RefreshRequest) =>
     synchronize(request).pipe(
-      Effect.catchCause((cause) =>
-        Cause.hasInterruptsOnly(cause)
-          ? Effect.failCause(cause)
-          : Effect.logWarning("thread pull request refresh failed", {
-              cause: Cause.pretty(cause),
-            }),
+      Effect.catchCauseIf(
+        (cause) => !Cause.hasInterruptsOnly(cause),
+        (cause) =>
+          Effect.logWarning("thread pull request refresh failed", {
+            cause: Cause.pretty(cause),
+          }),
       ),
     ),
   );

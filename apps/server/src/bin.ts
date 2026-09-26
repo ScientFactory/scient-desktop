@@ -19,6 +19,7 @@ import { runServerCommand, serveCommand, startCommand } from "./cli/server.ts";
 import { serviceCommand } from "./cli/service.ts";
 import { servicePreflightCommand } from "./cli/servicePreflight.ts";
 import { themeCommand } from "./cli/theme.ts";
+import { traceCommand } from "./cli/trace.ts";
 import { triageCommand } from "./cli/triage.ts";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 
@@ -64,6 +65,7 @@ export const makeCli = ({
       projectCommand,
       ...(serviceEnabled ? [serviceCommand, servicePreflightCommand] : []),
       themeCommand,
+      traceCommand,
       triageCommand,
       cloudEnabled ? connectCommand : connectUnavailableCommand,
     ]),

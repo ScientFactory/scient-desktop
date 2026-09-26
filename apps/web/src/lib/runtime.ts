@@ -24,7 +24,7 @@ const httpClientLayer = remoteHttpClientLayer((input, init) => globalThis.fetch(
 const relayTracingLayer = makeRelayClientTracingLayer(
   SCIENT_DESKTOP_IDENTITY.outboundTelemetryEnabled ? resolveRelayTracingConfig() : null,
   {
-    serviceName: "t3-web-relay-client",
+    serviceName: "t3code-web",
     serviceVersion: import.meta.env.APP_VERSION,
     runtime: "browser",
     client: typeof window !== "undefined" && window.desktopBridge ? "desktop" : "web",

@@ -491,8 +491,16 @@ by default for other uses and lets the user hide or reveal the email. These defa
 External runtime maintenance uses T3's ownership resolver in
 `apps/server/src/provider/providerMaintenance.ts`. It proves the resolved binary's installer,
 pins npm's owning prefix, and uses Homebrew's available version rather than npm's version for a
-Homebrew install. Unproven ownership stays manual-only. Resolution is cached per instance and
-revalidated immediately before mutation; the runner verifies the installed version afterward.
+Homebrew install. Homebrew and npm ownership are proven from the real path with symlinks
+followed: a versioned keg or cask under `brew --prefix`, or `<prefix>/lib/node_modules/<pkg>/`
+(Windows: the shim beside `node_modules`). Native installer layouts and the global bin
+directories of pnpm, Bun, and Vite+ may match on either the resolved path or its real target,
+because those installers place real files or their own symlinks there. Cursor and Grok are the
+exception: the provider CLI is its own updater and detects the installer that owns it, so any
+resolved executable runs `<binary> update`. Anything unproven stays manual-only but still reports
+the version gap. Resolution is cached per instance and revalidated immediately before mutation;
+the runner refuses when the lock key changed since the advisory and reports success only when the
+refreshed provider is still installed with a readable, current version.
 Scient-managed paths remain manual-only at this generic boundary: their separate runtime actions
 own discovery, verification, activation, leases, and rollback. Never send a managed binary through
 an inferred system-package update command.

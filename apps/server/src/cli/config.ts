@@ -81,6 +81,15 @@ const tailscaleServePortFlag = Flag.Int("tailscale-serve-port").pipe(
   Flag.optional,
 );
 
+// Trace file location, shared by the server and `t3 trace summary`.
+export const traceFileConfig = Config.String("T3CODE_TRACE_FILE").pipe(
+  Config.option,
+  Config.map(Option.getOrUndefined),
+);
+export const traceMaxFilesConfig = Config.Int("T3CODE_TRACE_MAX_FILES").pipe(
+  Config.withDefault(10),
+);
+
 const EnvServerConfig = Config.all({
   scientNextHome: Config.String("SCIENT_NEXT_HOME").pipe(
     Config.option,
@@ -95,12 +104,9 @@ const EnvServerConfig = Config.all({
   logLevel: Config.LogLevel("T3CODE_LOG_LEVEL").pipe(Config.withDefault("Info")),
   traceMinLevel: Config.LogLevel("T3CODE_TRACE_MIN_LEVEL").pipe(Config.withDefault("Info")),
   traceTimingEnabled: Config.Boolean("T3CODE_TRACE_TIMING_ENABLED").pipe(Config.withDefault(true)),
-  traceFile: Config.String("T3CODE_TRACE_FILE").pipe(
-    Config.option,
-    Config.map(Option.getOrUndefined),
-  ),
+  traceFile: traceFileConfig,
   traceMaxBytes: Config.Int("T3CODE_TRACE_MAX_BYTES").pipe(Config.withDefault(10 * 1024 * 1024)),
-  traceMaxFiles: Config.Int("T3CODE_TRACE_MAX_FILES").pipe(Config.withDefault(10)),
+  traceMaxFiles: traceMaxFilesConfig,
   traceBatchWindowMs: Config.Int("T3CODE_TRACE_BATCH_WINDOW_MS").pipe(Config.withDefault(1_000)),
   otlpTracesUrl: Config.String("T3CODE_OTLP_TRACES_URL").pipe(
     Config.option,
@@ -117,7 +123,6 @@ const EnvServerConfig = Config.all({
   otlpExportIntervalMs: Config.Int("T3CODE_OTLP_EXPORT_INTERVAL_MS").pipe(
     Config.withDefault(10_000),
   ),
-  otlpServiceName: Config.String("T3CODE_OTLP_SERVICE_NAME").pipe(Config.withDefault("t3-server")),
   otlpHeaders: Config.schema(OtlpHeadersFromString, "T3CODE_OTLP_HEADERS").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
@@ -435,6 +440,27 @@ export const resolveServerConfig = (
       headers: env.otlpHeaders,
       exportIntervalMs: env.otlpExportIntervalMs,
     };
+    const traces = OtelEnvironment.resolveSignalEndpoint(
+      otel,
+      "traces",
+      { url: env.otlpTracesUrl, export: signalExport },
+      bootstrap?.otlpTracesUrl,
+      persistedObservabilitySettings.otlpTracesUrl,
+    );
+    const metrics = OtelEnvironment.resolveSignalEndpoint(
+      otel,
+      "metrics",
+      { url: env.otlpMetricsUrl, export: signalExport },
+      bootstrap?.otlpMetricsUrl,
+      persistedObservabilitySettings.otlpMetricsUrl,
+    );
+    const logs = OtelEnvironment.resolveSignalEndpoint(
+      otel,
+      "logs",
+      { url: env.otlpLogsUrl, export: signalExport },
+      bootstrap?.otlpLogsUrl,
+      persistedObservabilitySettings.otlpLogsUrl,
+    );
 
     const config: ServerConfig.ServerConfig["Service"] = {
       logLevel,
@@ -443,37 +469,26 @@ export const resolveServerConfig = (
       traceBatchWindowMs: env.traceBatchWindowMs,
       traceMaxBytes: env.traceMaxBytes,
       traceMaxFiles: env.traceMaxFiles,
-      // SCIENT-FORK: Scient's fail-closed safety envelope stays authoritative;
-      // upstream's OpenTelemetry kill switch (OTEL_SDK_DISABLED /
-      // T3CODE_OTEL_SDK_DISABLED) is honored as an additional off-switch.
+      // SCIENT-FORK: Scient's fail-closed safety envelope stays authoritative
+      // and gates the endpoints upstream resolved. The resolution above already
+      // honors upstream's OpenTelemetry kill switch (OTEL_SDK_DISABLED /
+      // T3CODE_OTEL_SDK_DISABLED), per-signal Off, and the standard OTEL_*
+      // endpoint/header/protocol variables, so this only ever removes more.
       otlpTracesUrl:
-        SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled ||
-        env.scientNextSafetyEnvelope ||
-        otel.disabled
+        SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled || env.scientNextSafetyEnvelope
           ? undefined
-          : (env.otlpTracesUrl ??
-            bootstrap?.otlpTracesUrl ??
-            persistedObservabilitySettings.otlpTracesUrl),
+          : traces?.url,
       otlpMetricsUrl:
-        SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled ||
-        env.scientNextSafetyEnvelope ||
-        otel.disabled
+        SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled || env.scientNextSafetyEnvelope
           ? undefined
-          : (env.otlpMetricsUrl ??
-            bootstrap?.otlpMetricsUrl ??
-            persistedObservabilitySettings.otlpMetricsUrl),
+          : metrics?.url,
       otlpLogsUrl:
-        SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled ||
-        env.scientNextSafetyEnvelope ||
-        otel.disabled
+        SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled || env.scientNextSafetyEnvelope
           ? undefined
-          : (env.otlpLogsUrl ??
-            bootstrap?.otlpLogsUrl ??
-            persistedObservabilitySettings.otlpLogsUrl),
-      otlpTracesExport: signalExport,
-      otlpMetricsExport: signalExport,
-      otlpLogsExport: signalExport,
-      otlpServiceName: env.otlpServiceName,
+          : logs?.url,
+      otlpTracesExport: traces?.export ?? signalExport,
+      otlpMetricsExport: metrics?.export ?? signalExport,
+      otlpLogsExport: logs?.export ?? signalExport,
       otelEnvironment: otel,
       mode,
       port,
