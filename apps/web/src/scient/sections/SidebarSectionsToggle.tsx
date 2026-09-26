@@ -5,8 +5,8 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/toolt
 
 /**
  * Two-state sidebar grouping: off shows the Status layout, on groups threads
- * by section. While on, it keeps the sidebar's light hover tint so the mode
- * stays visible without the heavier selected-row fill.
+ * by section. While on, it sits in the sidebar's control-well gray so the
+ * mode stays visible without the white selected-row fill.
  */
 export function SidebarSectionsToggle(props: {
   readonly active: boolean;

@@ -685,10 +685,10 @@ const sidebarMenuButtonVariants = cva(
       variant: {
         default: "font-medium text-sidebar-muted-foreground/80",
         outline: "bg-sidebar-control-surface ring-1 ring-sidebar-border",
-        // SCIENT-FORK:START — a pressed toggle keeps the light hover tint rather
-        // than the selected-row fill, so it reads as "on" without a heavy shape.
+        // SCIENT-FORK:START — a pressed toggle sits in the control-well gray,
+        // hovered or not, instead of the white selected-row fill.
         toggle:
-          "font-medium text-sidebar-muted-foreground/80 data-[active=true]:bg-sidebar-row-hover",
+          "font-medium text-sidebar-muted-foreground/80 data-[active=true]:bg-sidebar-control-surface data-[active=true]:hover:bg-sidebar-control-surface",
         // SCIENT-FORK:END
       },
     },
