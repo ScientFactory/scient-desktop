@@ -84,6 +84,8 @@ export interface ProviderMaintenanceCommandAction {
    * server credentials. The default preserves the existing provider behavior.
    */
   readonly inheritEnv?: boolean;
+  /** Optional provider-owned guard evaluated immediately before the command. */
+  readonly canUpdate?: () => Effect.Effect<boolean>;
 }
 
 /** Where the provider executable was found; every path is absolute. */

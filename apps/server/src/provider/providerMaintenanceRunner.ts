@@ -403,6 +403,16 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
                 }),
               );
             }
+            if (fresh.update.canUpdate && !(yield* fresh.update.canUpdate())) {
+              return yield* finish(
+                makeUpdateState({
+                  status: "failed",
+                  startedAt,
+                  finishedAt: yield* nowIso,
+                  message: "The provider has active work. Wait for it to settle and try again.",
+                }),
+              );
+            }
 
             const manifest = yield* manifestService.current;
             const candidateVersion =

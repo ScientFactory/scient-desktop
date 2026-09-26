@@ -187,11 +187,32 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
               binaryPath: launchConfig.binaryPath,
               env: processEnv,
             })
-        ).pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-          Effect.provideService(FileSystem.FileSystem, fs),
-          Effect.provideService(Path.Path, path),
-        ),
+        )
+          .pipe(
+            Effect.map((capabilities) =>
+              capabilities.update
+                ? {
+                    ...capabilities,
+                    update: {
+                      ...capabilities.update,
+                      canUpdate: () =>
+                        adapter
+                          .listSessions()
+                          .pipe(
+                            Effect.map((sessions) =>
+                              sessions.every((session) => session.status !== "running"),
+                            ),
+                          ),
+                    },
+                  }
+                : capabilities,
+            ),
+          )
+          .pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.provideService(FileSystem.FileSystem, fs),
+            Effect.provideService(Path.Path, path),
+          ),
       );
       // Routine snapshot reads use the cached ownership resolution. An
       // explicit update must re-resolve the GitHub release channel so the

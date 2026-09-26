@@ -429,6 +429,42 @@ describe("providerMaintenanceRunner", () => {
     );
   });
 
+  it.effect("refuses an update when the provider reports active work", () => {
+    const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry(baseProvider);
+      const updater = yield* makeTestRunner({
+        ...registry,
+        getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
+          Effect.succeed({
+            ...lifecycleFor(provider),
+            update: {
+              command: "codex update",
+              executable: "/work/codex",
+              args: ["update"],
+              lockKey: "codex-native",
+              canUpdate: () => Effect.succeed(false),
+            },
+          }),
+      });
+
+      const result = yield* updater.updateProvider(CODEX_DRIVER);
+      assert.strictEqual(result.providers[0]?.updateState?.status, "failed");
+      assert.deepStrictEqual(calls, []);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NonWindowsPlatform,
+          latestVersionHttpClient("0.0.0"),
+          mockSpawnerLayer((command, args) => {
+            calls.push({ command, args });
+            return { stdout: "updated" };
+          }),
+        ),
+      ),
+    );
+  });
+
   it.effect("re-resolves ownership before running and executes the fresh command", () => {
     const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
     const fresh: Array<boolean> = [];
