@@ -67,6 +67,13 @@ export const ProviderSessionStartInput = Schema.Struct({
 });
 export type ProviderSessionStartInput = typeof ProviderSessionStartInput.Type;
 
+// SCIENT-FORK:START — conversation context handed to a provider session that
+// does not hold it natively (a fork, or a session that lost its history). It is
+// budgeted against the model's context window by its producer, so it is bounded
+// here only by a transport ceiling, never by the user-input limit.
+export const PROVIDER_CONTEXT_PREAMBLE_MAX_CHARS = 4_000_000;
+// SCIENT-FORK:END
+
 export const ProviderSendTurnInput = Schema.Struct({
   threadId: ThreadId,
   selectedScientSkillNames: Schema.optional(SelectedScientSkillNames),
@@ -75,6 +82,10 @@ export const ProviderSendTurnInput = Schema.Struct({
   continuation: Schema.optional(Schema.Boolean),
   input: Schema.optional(
     TrimmedNonEmptyString.check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_INPUT_CHARS)),
+  ),
+  // SCIENT-FORK: prepended to the prepared input immediately before dispatch.
+  contextPreamble: Schema.optional(
+    TrimmedNonEmptyString.check(Schema.isMaxLength(PROVIDER_CONTEXT_PREAMBLE_MAX_CHARS)),
   ),
   attachments: Schema.optional(
     Schema.Array(ChatAttachment).check(

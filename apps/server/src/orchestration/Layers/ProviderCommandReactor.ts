@@ -8,6 +8,7 @@ import {
   ProviderDriverKind,
   type ProviderInstanceId,
   type ProjectId,
+  type OrchestrationMessage,
   type OrchestrationSession,
   ThreadId,
   type ProviderSession,
@@ -68,7 +69,13 @@ import {
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
-import { ScientForkContextBootstrap } from "../scient-fork/ForkContextBootstrap.ts";
+import {
+  ScientForkContextDelivery,
+  type ForkDeliveryOutcome,
+  type ForkTurnContext,
+} from "../scient-fork/ForkContextDelivery.ts";
+import { nativeThreadKey } from "../scient-fork/context/nativeThreadKey.ts";
+import { classifyTurnDispatchFailure } from "../../provider/turnDispatchPhase.ts";
 import * as TerminalManager from "../../terminal/Manager.ts";
 const isProviderAdapterProcessError = Schema.is(ProviderAdapterProcessError);
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
@@ -235,7 +242,7 @@ const make = Effect.gen(function* () {
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
   const serverSettingsService = yield* ServerSettingsService;
-  const scientForkContextBootstrap = yield* ScientForkContextBootstrap;
+  const scientForkContextDelivery = yield* ScientForkContextDelivery;
   const terminalManager = yield* TerminalManager.TerminalManager;
   /** Environment settings with the thread's project overrides applied. */
   const projectSettingsForThread = Effect.fnUntraced(function* (threadId: ThreadId) {
@@ -552,6 +559,66 @@ const make = Effect.gen(function* () {
       .getThreadDetailById(threadId, { activityKinds: [] })
       .pipe(Effect.map(Option.getOrUndefined));
   });
+
+  // SCIENT-FORK:START — conversation context for fork turns. The full detail
+  // (activities included) carries question answers and the work log.
+  const prepareScientForkContext = Effect.fnUntraced(function* (input: {
+    readonly thread: { readonly id: ThreadId; readonly session: OrchestrationSession | null };
+    readonly message: OrchestrationMessage;
+    readonly providerMessageText: string;
+    readonly modelSelection: ModelSelection | undefined;
+    readonly createdAt: string;
+  }) {
+    const toTurnStartError = (detail: string, cause?: unknown) =>
+      new ProviderAdapterRequestError({
+        provider: providerErrorLabel(input.thread.session?.providerName ?? undefined),
+        method: "thread.turn.start",
+        detail,
+        ...(cause === undefined ? {} : { cause }),
+      });
+    const detail = yield* projectionSnapshotQuery
+      .getThreadDetailById(input.thread.id)
+      .pipe(Effect.map(Option.getOrUndefined));
+    if (!detail) return yield* toTurnStartError("The forked conversation is unavailable.");
+    const liveSession = (yield* providerService.listSessions()).find(
+      (session) => session.threadId === input.thread.id,
+    );
+    const context = yield* scientForkContextDelivery
+      .prepareTurn({
+        thread: detail,
+        message: input.message,
+        userText: input.providerMessageText,
+        attachments: input.message.attachments ?? [],
+        nativeThreadKey:
+          liveSession === undefined
+            ? null
+            : nativeThreadKey(liveSession.provider, liveSession.resumeCursor),
+        sessionRunning: input.thread.session?.status === "running",
+      })
+      .pipe(Effect.mapError((error) => toTurnStartError(error.detail, error)));
+    if (context.kind !== "deliver") return context;
+    if (context.requireFreshSession && providerService.discardSessionContinuity !== undefined) {
+      // The previous delivery may have reached this provider-native thread:
+      // deliver on a new one so the provider never holds the context twice.
+      yield* providerService.discardSessionContinuity({ threadId: input.thread.id });
+      yield* ensureSessionForThread(input.thread.id, input.createdAt, {
+        ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
+        pendingTurnStart: true,
+      });
+    }
+    yield* scientForkContextDelivery
+      .beginDelivery({
+        threadId: input.thread.id,
+        handoffId: context.handoffId,
+        messageId: input.message.id,
+        includedItemCount: context.includedItemCount,
+        omittedItemCount: context.omittedItemCount,
+        budgetTokens: context.budgetTokens,
+      })
+      .pipe(Effect.mapError((error) => toTurnStartError(error.detail, error)));
+    return context;
+  });
+  // SCIENT-FORK:END
 
   const rejectStartedThreadModelChangeIfRequired = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
@@ -1515,67 +1582,14 @@ const make = Effect.gen(function* () {
       text: message.text,
       records: message.context?.records ?? [],
     });
-    const preparedTurn = yield* (
-      thread.forkLineage == null
-        ? Effect.succeed({
-            input: providerMessageText,
-            attachments: message.attachments ?? [],
-            bootstrapPending: false,
-            omittedMessageCount: 0,
-            omittedAttachmentCount: 0,
-          })
-        : Effect.gen(function* () {
-            const threadDetail = yield* resolveThreadDetail(thread.id);
-            if (!threadDetail) {
-              return yield* new ProviderAdapterRequestError({
-                provider: providerErrorLabelFromInstanceHint({
-                  modelSelectionInstanceId:
-                    event.payload.modelSelection?.instanceId ?? thread.modelSelection.instanceId,
-                  sessionProvider: thread.session?.providerName ?? undefined,
-                }),
-                method: "thread.turn.start",
-                detail: "The forked conversation is unavailable.",
-              });
-            }
-            return yield* scientForkContextBootstrap.prepareTurn({
-              thread: threadDetail,
-              currentMessageId: message.id,
-              messageText: providerMessageText,
-              attachments: message.attachments ?? [],
-            });
-          })
-    ).pipe(
-      Effect.mapError((error) => {
-        const detail =
-          "detail" in error && typeof error.detail === "string"
-            ? error.detail
-            : "Unable to load the forked thread.";
-        return new ProviderAdapterRequestError({
-          provider: providerErrorLabelFromInstanceHint({
-            modelSelectionInstanceId:
-              event.payload.modelSelection?.instanceId ?? thread.modelSelection.instanceId,
-            sessionProvider: thread.session?.providerName ?? undefined,
-          }),
-          method: "thread.turn.start",
-          detail,
-          cause: error,
-        });
-      }),
-      Effect.map(Option.some),
-      Effect.catchCause((cause) => handleTurnStartFailure(cause).pipe(Effect.as(Option.none()))),
-    );
-
-    if (Option.isNone(preparedTurn)) {
-      return;
-    }
     const sendTurnRequest = yield* buildSendTurnRequestForThread({
       ...(event.payload.selectedScientSkillNames === undefined
         ? {}
         : { selectedScientSkillNames: event.payload.selectedScientSkillNames }),
       threadId: event.payload.threadId,
-      messageText: preparedTurn.value.input,
-      ...(preparedTurn.value.attachments.length > 0
-        ? { attachments: preparedTurn.value.attachments }
+      messageText: providerMessageText,
+      ...(message.attachments !== undefined && message.attachments.length > 0
+        ? { attachments: message.attachments }
         : {}),
       ...(event.payload.modelSelection !== undefined
         ? { modelSelection: event.payload.modelSelection }
@@ -1596,58 +1610,81 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    if (preparedTurn.value.bootstrapPending) {
-      const reserved = yield* scientForkContextBootstrap
-        .beginAttempt({
-          threadId: event.payload.threadId,
-          messageId: message.id,
-        })
-        .pipe(
-          Effect.map(Option.some),
-          Effect.catchCause((cause) =>
-            handleTurnStartFailure(cause).pipe(Effect.as(Option.none())),
-          ),
-        );
-      if (Option.isNone(reserved)) return;
-    }
+    // SCIENT-FORK:START — a fork's provider session does not hold the
+    // conversation natively. Decide after the session is ensured, so the
+    // delivery is tied to the provider-native thread that will receive it.
+    const forkContext: ForkTurnContext | { readonly kind: "skip" } =
+      thread.forkLineage == null
+        ? { kind: "none" }
+        : yield* prepareScientForkContext({
+            thread,
+            message,
+            providerMessageText,
+            modelSelection: event.payload.modelSelection,
+            createdAt: event.payload.createdAt,
+          }).pipe(
+            Effect.catchCause((cause) =>
+              handleTurnStartFailure(cause).pipe(Effect.as({ kind: "skip" } as const)),
+            ),
+          );
+    if (forkContext.kind === "skip") return;
+    const request =
+      forkContext.kind === "deliver"
+        ? {
+            ...sendTurnRequest.value,
+            contextPreamble: forkContext.contextPreamble,
+            ...(forkContext.attachments.length > 0 ? { attachments: forkContext.attachments } : {}),
+          }
+        : sendTurnRequest.value;
+    const settleForkContext = (outcome: ForkDeliveryOutcome) =>
+      forkContext.kind !== "deliver"
+        ? Effect.void
+        : scientForkContextDelivery
+            .settleDelivery({
+              threadId: event.payload.threadId,
+              handoffId: forkContext.handoffId,
+              outcome,
+            })
+            .pipe(
+              Effect.retry({ times: 2 }),
+              Effect.catchCause((cause) =>
+                Effect.logWarning("provider command reactor could not settle fork context", {
+                  threadId: event.payload.threadId,
+                  outcome: outcome.type,
+                  cause: Cause.pretty(cause),
+                }),
+              ),
+            );
+    // SCIENT-FORK:END
 
-    const send = providerService.sendTurn(sendTurnRequest.value).pipe(
-      Effect.asVoid,
-      Effect.tap(() =>
-        preparedTurn.value.bootstrapPending
-          ? scientForkContextBootstrap
-              .markAccepted({ threadId: event.payload.threadId, messageId: message.id })
-              .pipe(
-                Effect.retry({ times: 2 }),
-                Effect.catchCause((cause) =>
-                  Effect.logWarning(
-                    "provider command reactor could not persist accepted Scient fork context",
-                    {
-                      threadId: event.payload.threadId,
-                      cause: Cause.pretty(cause),
-                    },
-                  ),
-                ),
-              )
-          : Effect.void,
+    const send = providerService.sendTurn(request).pipe(
+      Effect.tap((turn) =>
+        forkContext.kind !== "deliver"
+          ? Effect.void
+          : providerService.listSessions().pipe(
+              Effect.flatMap((sessions) => {
+                const session = sessions.find(
+                  (candidate) => candidate.threadId === event.payload.threadId,
+                );
+                return settleForkContext({
+                  type: "accepted",
+                  nativeThreadKey:
+                    session === undefined
+                      ? null
+                      : nativeThreadKey(
+                          session.provider,
+                          turn.resumeCursor ?? session.resumeCursor,
+                        ),
+                });
+              }),
+            ),
       ),
+      Effect.asVoid,
       Effect.catchCause((cause) =>
-        (preparedTurn.value.bootstrapPending
-          ? scientForkContextBootstrap
-              .markAmbiguous({ threadId: event.payload.threadId, messageId: message.id })
-              .pipe(
-                Effect.retry({ times: 2 }),
-                Effect.catchCause((markCause) =>
-                  Effect.logWarning(
-                    "provider command reactor could not persist ambiguous Scient fork context",
-                    {
-                      threadId: event.payload.threadId,
-                      cause: Cause.pretty(markCause),
-                    },
-                  ),
-                ),
-              )
-          : Effect.void
+        settleForkContext(
+          classifyTurnDispatchFailure(cause) === "notSent"
+            ? { type: "notSent" }
+            : { type: "maybeDelivered" },
         ).pipe(Effect.andThen(recoverTurnStartFailure(cause))),
       ),
     );

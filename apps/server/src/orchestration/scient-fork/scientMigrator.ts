@@ -50,6 +50,7 @@ import Migration010 from "./migrations/010_RetireProjectlessThreadLineage.ts";
 import Migration011 from "./migrations/011_ThreadQueue.ts";
 import Migration012 from "./migrations/012_WorkspaceBindings.ts";
 import Migration013 from "./migrations/013_WorkspaceBindingRootFileSystemIdentity.ts";
+import Migration014 from "./migrations/014_ContextTransfers.ts";
 // ---------------------------------------------------------------------------
 // Error types
 // ---------------------------------------------------------------------------
@@ -103,6 +104,7 @@ export const SCIENT_MIGRATIONS: ReadonlyArray<ScientMigration> = [
   { id: 11, name: "thread-queue", effect: Migration011 },
   { id: 12, name: "workspace-bindings", effect: Migration012 },
   { id: 13, name: "workspace-binding-root-filesystem-identity", effect: Migration013 },
+  { id: 14, name: "context-transfers", effect: Migration014 },
 ] as const;
 
 const loader = Migrator.fromRecord(

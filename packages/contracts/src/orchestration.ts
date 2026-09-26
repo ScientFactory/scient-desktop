@@ -682,6 +682,11 @@ export const isForkBaselineBoundary = (boundary: OrchestrationForkBoundary): boo
 export const OrchestrationForkLineage = Schema.Struct({
   originThreadId: ThreadId,
   baselineAssistantMessageId: Schema.NullOr(MessageId),
+  /**
+   * Server read model only: destination turns holding inherited transcript.
+   * Revert never removes them. Client-facing payloads omit it.
+   */
+  inheritedTurnIds: Schema.optional(Schema.Array(TurnId)),
 });
 export type OrchestrationForkLineage = typeof OrchestrationForkLineage.Type;
 // SCIENT-FORK:END
@@ -2184,6 +2189,24 @@ export const ThreadForkCopiedBoundary = Schema.Struct({
 });
 export type ThreadForkCopiedBoundary = typeof ThreadForkCopiedBoundary.Type;
 
+/**
+ * What a fork taken while the origin agent was still working captured of its
+ * running turn. Items listed here were copied as they stood at the cut; the
+ * provider handoff labels them so the fork's agent does not mistake a cut-off
+ * reasoning trace or an unfinished tool call for a completed one.
+ */
+export const ThreadForkMidTurnCut = Schema.Struct({
+  sourceTurnId: TurnId,
+  importedTurnId: TurnId,
+  cutSequence: NonNegativeInt,
+  partialMessageIds: Schema.Array(MessageId),
+  inFlightActivityIds: Schema.Array(EventId),
+  pendingRequestActivityIds: Schema.Array(EventId),
+  touchedFiles: Schema.Array(Schema.String),
+  sharedWorkspace: Schema.Boolean,
+});
+export type ThreadForkMidTurnCut = typeof ThreadForkMidTurnCut.Type;
+
 export const ThreadForkedPayload = Schema.Struct({
   originThreadId: ThreadId,
   newThreadId: ThreadId,
@@ -2222,6 +2245,12 @@ export const ThreadForkedPayload = Schema.Struct({
   attachmentCopies: Schema.Array(ThreadForkAttachmentCopy).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
+  /**
+   * Every destination turn id holding inherited transcript; revert keeps them.
+   * Older events omit it: derive it from `copiedBoundaries` and `baselineTurnId`.
+   */
+  inheritedTurnIds: Schema.optional(Schema.Array(TurnId)),
+  midTurnCut: Schema.optional(ThreadForkMidTurnCut),
   createdAt: IsoDateTime,
 });
 export type ThreadForkedPayload = typeof ThreadForkedPayload.Type;

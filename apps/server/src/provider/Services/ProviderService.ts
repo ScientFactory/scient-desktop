@@ -88,6 +88,15 @@ export interface ProviderServiceShape {
     input: ProviderStopSessionInput,
   ) => Effect.Effect<void, ProviderServiceError>;
 
+  /**
+   * SCIENT-FORK: stop the thread's provider session and forget its resume
+   * cursor, so the next session starts a new provider-native thread. Used when
+   * conversation context may have reached the old one without confirmation.
+   */
+  readonly discardSessionContinuity?: (input: {
+    readonly threadId: ThreadId;
+  }) => Effect.Effect<void, ProviderServiceError>;
+
   /** Capture the currently bound runtime without recovering or starting a session. */
   readonly captureTurnStop?: (input: {
     readonly threadId: ThreadId;

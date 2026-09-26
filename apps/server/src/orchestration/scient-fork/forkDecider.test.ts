@@ -1,5 +1,7 @@
 import {
   CheckpointRef,
+  EventId,
+  type OrchestrationThreadActivity,
   CommandId,
   MessageId,
   ProjectId,
@@ -1491,6 +1493,85 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
       expect(
         forked?.type === "thread.forked" ? forked.payload.sourceCheckpointTurnCount : undefined,
       ).toBeNull();
+    }),
+  );
+
+  it.effect("copies reasoning in its own turn, the work log, and composer context", () =>
+    Effect.gen(function* () {
+      const base = makeOriginThread();
+      const bigOutput = "o".repeat(40_000);
+      const activity = (
+        id: string,
+        kind: string,
+        turnId: string,
+        payload: unknown,
+      ): OrchestrationThreadActivity => ({
+        id: EventId.make(id),
+        tone: "tool",
+        kind,
+        summary: id,
+        payload,
+        turnId: TurnId.make(turnId),
+        createdAt: NOW,
+      });
+      const origin = makeOriginThread({
+        messages: [
+          ...base.messages
+            .slice(0, 3)
+            .map((entry) =>
+              entry.id === MessageId.make("user-2")
+                ? { ...entry, context: { version: 1 as const, records: [] } }
+                : entry,
+            ),
+          message({
+            id: "reasoning-2",
+            role: "reasoning",
+            text: "thinking about the second prompt",
+            turnId: "turn-2",
+            createdAt: "2026-01-01T00:00:03.500Z",
+          }),
+          base.messages[3]!,
+        ],
+        activities: [
+          activity("tool-done", "tool.completed", "turn-2", {
+            toolCallId: "call-1",
+            data: { output: bigOutput },
+          }),
+          activity("approval", "approval.requested", "turn-2", { requestId: "req-1" }),
+          activity("usage", "context-window.updated", "turn-2", { usedTokens: 10 }),
+        ],
+      });
+      const events = yield* forkThreadForTest({
+        command: forkCommand({ sourceAssistantMessageId: A2 }),
+        readModel: makeReadModel({ origin }),
+      });
+
+      const sent = events.flatMap((event) =>
+        event.type === "thread.message-sent" ? [event.payload] : [],
+      );
+      const reasoning = sent.find((entry) => entry.role === "reasoning");
+      const answer = sent.find((entry) => entry.text === "second answer");
+      expect(reasoning?.turnId).not.toBeNull();
+      expect(reasoning?.turnId).toBe(answer?.turnId);
+      expect(sent.find((entry) => entry.text === "second prompt")?.context).toEqual({
+        version: 1,
+        records: [],
+      });
+
+      const copied = events.flatMap((event) =>
+        event.type === "thread.activity-appended" ? [event.payload.activity] : [],
+      );
+      expect(copied.map((entry) => entry.kind)).toEqual(["tool.completed"]);
+      expect(copied[0]?.turnId).toBe(answer?.turnId);
+      const copiedPayload = copied[0]?.payload as { data: { output: string } } | undefined;
+      const output = copiedPayload?.data.output ?? "";
+      expect(output.length).toBeLessThan(bigOutput.length);
+      expect(output).toContain("truncated in fork");
+
+      const forked = events.find((event) => event.type === "thread.forked");
+      const inherited = forked?.type === "thread.forked" ? forked.payload.inheritedTurnIds : [];
+      const copiedTurns = new Set(sent.flatMap((entry) => (entry.turnId ? [entry.turnId] : [])));
+      expect(new Set(inherited)).toEqual(copiedTurns);
     }),
   );
 });

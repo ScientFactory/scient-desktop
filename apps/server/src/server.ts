@@ -93,7 +93,7 @@ import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderComma
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.ts";
 // SCIENT-FORK:START
 import { ScientForkReactorLive } from "./orchestration/Layers/ScientForkReactor.ts";
-import { ScientForkContextBootstrapLive } from "./orchestration/scient-fork/ForkContextBootstrap.ts";
+import { ScientForkContextDeliveryLive } from "./orchestration/scient-fork/ForkContextDelivery.ts";
 import { ScientForkCheckpointBaselineLive } from "./orchestration/scient-fork/ForkCheckpointBaseline.ts";
 import { ScientForkAttachmentCopierLive } from "./orchestration/scient-fork/ForkAttachmentCopier.ts";
 // SCIENT-FORK:END
@@ -355,11 +355,7 @@ const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(OrchestrationReactorLive),
   Layer.provideMerge(ScientQueueWorkerLive),
   Layer.provideMerge(ProviderRuntimeIngestionLive),
-  // SCIENT-FORK:START — one narrow provider-neutral context seam.
-  Layer.provideMerge(
-    ProviderCommandReactorLive.pipe(Layer.provide(ScientForkContextBootstrapLive)),
-  ),
-  // SCIENT-FORK:END
+  Layer.provideMerge(ProviderCommandReactorLive),
   Layer.provideMerge(CheckpointReactorLive),
   // SCIENT-FORK:START
   Layer.provideMerge(
@@ -369,6 +365,8 @@ const ReactorLayerLive = Layer.empty.pipe(
       ),
     ),
   ),
+  // One context-delivery instance shared by turn starts and revert handling.
+  Layer.provideMerge(ScientForkContextDeliveryLive),
   // SCIENT-FORK:END
   Layer.provideMerge(StorageCleanup.layer),
   Layer.provideMerge(ThreadDeletionReactorLive),

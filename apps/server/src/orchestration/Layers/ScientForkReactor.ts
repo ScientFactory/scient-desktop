@@ -32,6 +32,7 @@ import {
   type ScientForkWorkspaceStatus,
 } from "../scient-fork/forkRepository.ts";
 import { ScientForkCheckpointBaseline } from "../scient-fork/ForkCheckpointBaseline.ts";
+import { ScientForkContextDelivery } from "../scient-fork/ForkContextDelivery.ts";
 import { makeForkBoundaryResolver } from "../scient-fork/ForkBoundaryReadModel.ts";
 import { retainPrefixMessages } from "../scient-fork/forkDecider.ts";
 import {
@@ -101,6 +102,7 @@ function exactRef(refs: ReadonlyArray<VcsRef>, refName: string): VcsRef | null {
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const orchestrationEngine = yield* OrchestrationEngineService;
+  const contextDelivery = yield* ScientForkContextDelivery;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const checkpointBaseline = yield* ScientForkCheckpointBaseline;
   const attachmentCopier = yield* ScientForkAttachmentCopier;
@@ -364,9 +366,27 @@ const make = Effect.gen(function* () {
     // operations it may be queued twice, but the database claim makes the
     // second delivery a no-op.
     yield* forkParked(
-      Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) =>
-        event.type === "thread.forked" ? enqueue(event.payload) : Effect.void,
-      ),
+      Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
+        if (event.type === "thread.forked") return enqueue(event.payload);
+        // A revert that removed the turn carrying a fork's context supersedes
+        // that delivery; the next turn delivers it again.
+        if (event.type === "thread.reverted") {
+          return contextDelivery
+            .onThreadReverted({
+              threadId: event.payload.threadId,
+              turnCount: event.payload.turnCount,
+            })
+            .pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("scient fork reactor could not reconcile reverted context", {
+                  threadId: event.payload.threadId,
+                  cause: Cause.pretty(cause),
+                }),
+              ),
+            );
+        }
+        return Effect.void;
+      }),
     );
     // A failed recovery query means the durable fork queue cannot be trusted.
     // Fail reactor startup instead of silently accepting forks that could be

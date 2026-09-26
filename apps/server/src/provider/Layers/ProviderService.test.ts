@@ -66,6 +66,7 @@ import {
   ProviderWorkspaceMissingError,
   type ProviderAdapterError,
 } from "../Errors.ts";
+import { classifyTurnDispatchFailure } from "../turnDispatchPhase.ts";
 import type {
   ProviderAdapterShape,
   ProviderAdapterSendTurnInput,
@@ -5035,6 +5036,79 @@ validation.layer("ProviderServiceLive validation", (it) => {
     }),
   );
 
+  // SCIENT-FORK:START — fork context travels beside the user's input.
+  it.effect("sends fork context beside a full-size user message", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-fork-context-preamble");
+      yield* provider.startSession(threadId, {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      validation.codex.sendTurn.mockClear();
+      const input = "x".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS);
+      const contextPreamble = `SCIENT_CONTEXT_HANDOFF_JSON\n${"h".repeat(200_000)}`;
+      yield* provider.sendTurn({ threadId, input, contextPreamble });
+      const sent = validation.codex.sendTurn.mock.calls[0]?.[0];
+      assert.isTrue(sent?.input?.startsWith(`${contextPreamble}\n\n${input}`));
+      assert.equal(sent?.originalInput, input);
+      assert.notProperty(sent ?? {}, "contextPreamble");
+    }),
+  );
+
+  it.effect("classifies rejections before dispatch as not sent", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      validation.codex.sendTurn.mockClear();
+      const cause = yield* provider
+        .sendTurn({
+          threadId: asThreadId("thread-dispatch-phase-before"),
+          input: "x".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS),
+          attachments: [
+            {
+              type: "file",
+              id: "thread-attach-12345678-1234-1234-1234-123456789abc-zip",
+              name: "archive.zip",
+              mimeType: "application/zip",
+              sizeBytes: 1024,
+            },
+          ],
+        })
+        .pipe(Effect.sandbox, Effect.flip);
+      assert.equal(classifyTurnDispatchFailure(cause), "notSent");
+      assert.equal(validation.codex.sendTurn.mock.calls.length, 0);
+    }),
+  );
+
+  it.effect("classifies adapter failures as possibly delivered", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-dispatch-phase-after");
+      yield* provider.startSession(threadId, {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      validation.codex.sendTurn.mockImplementationOnce(() =>
+        Effect.fail(
+          new ProviderAdapterRequestError({
+            provider: "codex",
+            method: "turn/start",
+            detail: "connection reset",
+          }),
+        ),
+      );
+      const cause = yield* provider
+        .sendTurn({ threadId, input: "continue" })
+        .pipe(Effect.sandbox, Effect.flip);
+      assert.equal(classifyTurnDispatchFailure(cause), "maybeDelivered");
+    }),
+  );
+  // SCIENT-FORK:END
+
   it.effect("rejects citation-expanded input over the provider character limit", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;
@@ -5736,7 +5810,20 @@ describe("agent browser access", () => {
         assert.notInclude(codex.sendTurn.mock.calls.at(-1)![0].input!, "selected by the user");
 
         const overhead = sentCombined.input!.length - expanded.length;
-        for (const delta of [-1, 0, 1]) {
+        // SCIENT-FORK: optional skill discovery is dropped before rejecting, so
+        // an input just over the limit still goes out with the user's selection.
+        {
+          const attempt = yield* provider.sendTurn({
+            ...combined,
+            input: "x".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS - overhead + 1),
+          });
+          assert.isDefined(attempt);
+          const sent = codex.sendTurn.mock.calls.at(-1)![0].input!;
+          assert.notInclude(sent, "skill scope for this turn");
+          assert.include(sent, "Scient selected skills");
+          assert.isAtMost(sent.length, PROVIDER_SEND_TURN_MAX_INPUT_CHARS);
+        }
+        for (const delta of [-1, 0, 1_000]) {
           const beforeCalls = codex.sendTurn.mock.calls.length;
           const beforeScopes = replaced.length;
           const attempt = provider.sendTurn({

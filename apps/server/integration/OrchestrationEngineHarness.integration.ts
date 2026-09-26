@@ -63,7 +63,7 @@ import { ProviderRuntimeIngestionLive } from "../src/orchestration/Layers/Provid
 import { CheckpointReactor } from "../src/orchestration/Services/CheckpointReactor.ts";
 // SCIENT-FORK:START
 import { ScientForkReactor } from "../src/orchestration/Services/ScientForkReactor.ts";
-import { ScientForkContextBootstrapLive } from "../src/orchestration/scient-fork/ForkContextBootstrap.ts";
+import { ScientForkContextDeliveryLive } from "../src/orchestration/scient-fork/ForkContextDelivery.ts";
 // SCIENT-FORK:END
 import { ProviderRuntimeIngestionService } from "../src/orchestration/Services/ProviderRuntimeIngestion.ts";
 import {
@@ -341,7 +341,7 @@ export const makeOrchestrationIntegrationHarness = (
       generateThreadTitle: () => Effect.succeed({ title: "New thread" }),
     } as unknown as TextGeneration["Service"]);
     const providerCommandReactorLayer = ProviderCommandReactorLive.pipe(
-      Layer.provide(ScientForkContextBootstrapLive),
+      Layer.provide(ScientForkContextDeliveryLive.pipe(Layer.provide(serverSettingsLayer))),
       Layer.provide(
         Layer.mock(ProviderAuthService)({
           tryHandlePromptCommand: () => Effect.succeed(false),

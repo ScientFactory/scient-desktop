@@ -52,6 +52,7 @@ import { OrchestrationCommandInvariantError } from "../Errors.ts";
 import { requireThread, requireThreadAbsent } from "../commandInvariants.ts";
 import type { ResolvedForkBoundaries } from "./forkBoundaryTypes.ts";
 import { retainQuestionAnswers, questionAnswerAttachments } from "./retainedQuestionAnswers.ts";
+import { capForkActivityPayload, isForkCopiedActivity } from "./forkActivityCopy.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -394,6 +395,21 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
   let baselineAssistantMessageId: MessageId | null = null;
   const importedTurnIds = new Map<string, TurnId>();
   const messageIdRemap = new Map<string, MessageId>();
+  // Every source turn maps to one destination turn, so a turn's user message,
+  // reasoning, answer and work log stay grouped together in the fork.
+  const importedTurnIdFor = Effect.fnUntraced(function* (
+    sourceTurnKey: string,
+    sourceTurnId: string | null,
+  ) {
+    const existing = importedTurnIds.get(sourceTurnKey);
+    if (existing !== undefined) return existing;
+    const importedTurnId =
+      sourceTurnId !== null && sourceTurnId === selectedBoundary.turnId
+        ? baselineTurnId
+        : TurnId.make(yield* Crypto.Crypto.pipe(Effect.flatMap((crypto) => crypto.randomUUIDv4)));
+    importedTurnIds.set(sourceTurnKey, importedTurnId);
+    return importedTurnId;
+  });
 
   // 2) Re-emit the prefix transcript into the new thread's stream. Payload
   // timestamps preserve message history, while event occurrence stays at the
@@ -406,20 +422,18 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
     messageIdRemap.set(message.id, messageId);
     if (message.role === "user") baselineUserMessageId = messageId;
     if (message.role === "assistant") baselineAssistantMessageId = messageId;
+    // System messages stay turnless. Reasoning keeps its own turn so it folds
+    // into the response it produced instead of floating detached.
     let importedTurnId: TurnId | null = null;
-    if (message.role === "user" || message.role === "assistant") {
-      const sourceTurnId = retainedPrefix.sourceTurnIdByMessageId.get(message.id) ?? message.turnId;
-      const sourceTurnKey = sourceTurnId ?? `message:${message.id}`;
-      importedTurnId = importedTurnIds.get(sourceTurnKey) ?? null;
-      if (importedTurnId === null) {
-        importedTurnId =
-          sourceTurnId === selectedBoundary.turnId
-            ? baselineTurnId
-            : TurnId.make(
-                yield* Crypto.Crypto.pipe(Effect.flatMap((crypto) => crypto.randomUUIDv4)),
-              );
-        importedTurnIds.set(sourceTurnKey, importedTurnId);
-      }
+    if (message.role !== "system") {
+      const sourceTurnId =
+        message.role === "user" || message.role === "assistant"
+          ? (retainedPrefix.sourceTurnIdByMessageId.get(message.id) ?? message.turnId)
+          : message.turnId;
+      importedTurnId = yield* importedTurnIdFor(
+        sourceTurnId ?? `message:${message.id}`,
+        sourceTurnId,
+      );
     }
     events.push({
       ...(yield* withForkEventBase({
@@ -440,6 +454,9 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
               ),
             }
           : {}),
+        // Composer context (selected diffs, comments, terminal output) is
+        // part of what the user sent; the fork keeps it with the message.
+        ...(message.context !== undefined ? { context: message.context } : {}),
         turnId: importedTurnId,
         streaming: false,
         createdAt: message.createdAt,
@@ -488,6 +505,34 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
               ]),
             ),
           },
+        },
+      },
+    });
+  }
+
+  // The visible work log of every retained turn. Payloads are bounded; nothing
+  // executable (approvals, questions) is copied.
+  for (const activity of origin.activities) {
+    if (activity.turnId === null || !retainedTurnIds.has(activity.turnId)) continue;
+    if (!isForkCopiedActivity(activity)) continue;
+    const turnId = importedTurnIds.get(activity.turnId);
+    if (turnId === undefined) continue;
+    events.push({
+      ...(yield* withForkEventBase({
+        commandId: command.commandId,
+        aggregateId: command.newThreadId,
+        occurredAt,
+      })),
+      type: "thread.activity-appended",
+      payload: {
+        threadId: command.newThreadId,
+        activity: {
+          ...activity,
+          id: EventId.make(
+            yield* Crypto.Crypto.pipe(Effect.flatMap((crypto) => crypto.randomUUIDv4)),
+          ),
+          turnId,
+          payload: capForkActivityPayload(activity.payload),
         },
       },
     });
@@ -543,6 +588,7 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
       workspaceMode: command.workspaceMode,
       providerMode: "transcript-bootstrap",
       attachmentCopies,
+      inheritedTurnIds: [...new Set(importedTurnIds.values())],
       createdAt: occurredAt,
     },
   });

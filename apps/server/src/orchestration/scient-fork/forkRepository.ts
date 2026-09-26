@@ -7,9 +7,11 @@ import {
   TurnId,
   ThreadForkAttachmentCopy,
   ThreadForkCopiedBoundary,
+  ThreadForkMidTurnCut,
   type ThreadForkedPayload,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import { inheritedTurnIdsOf } from "./inheritedTurns.ts";
 import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/unstable/sql/SqlClient";
 
@@ -20,6 +22,20 @@ const AttachmentCopiesJson = Schema.fromJsonString(Schema.Array(ThreadForkAttach
 const encodeAttachmentCopiesJson = Schema.encodeEffect(AttachmentCopiesJson);
 const CopiedBoundariesJson = Schema.fromJsonString(Schema.Array(ThreadForkCopiedBoundary));
 const encodeCopiedBoundariesJson = Schema.encodeEffect(CopiedBoundariesJson);
+const InheritedTurnIdsJson = Schema.fromJsonString(Schema.Array(TurnId));
+const encodeInheritedTurnIdsJson = Schema.encodeEffect(InheritedTurnIdsJson);
+const MidTurnCutJson = Schema.fromJsonString(ThreadForkMidTurnCut);
+const encodeMidTurnCutJson = Schema.encodeEffect(MidTurnCutJson);
+const SourcePointJson = Schema.fromJsonString(
+  Schema.Struct({
+    threadId: ThreadId,
+    turnId: Schema.NullOr(TurnId),
+    turnCount: NonNegativeInt,
+    cutSequence: Schema.optional(NonNegativeInt),
+  }),
+);
+const encodeSourcePointJson = Schema.encodeEffect(SourcePointJson);
+
 const ForkRow = Schema.Struct({
   thread_id: ThreadId,
   forked_from_thread_id: ThreadId,
@@ -34,6 +50,8 @@ const ForkRow = Schema.Struct({
   copied_boundaries_json: CopiedBoundariesJson,
   workspace_mode: OrchestrationForkWorkspaceMode,
   attachment_copies_json: AttachmentCopiesJson,
+  inherited_turn_ids_json: InheritedTurnIdsJson,
+  mid_turn_cut_json: Schema.NullOr(MidTurnCutJson),
   created_at: IsoDateTime,
 });
 const decodeForkRow = Schema.decodeUnknownEffect(ForkRow);
@@ -59,6 +77,8 @@ function forkRowToPayload(row: typeof ForkRow.Type): ThreadForkedPayload {
     workspaceMode: row.workspace_mode,
     providerMode: "transcript-bootstrap",
     attachmentCopies: row.attachment_copies_json,
+    inheritedTurnIds: row.inherited_turn_ids_json,
+    ...(row.mid_turn_cut_json === null ? {} : { midTurnCut: row.mid_turn_cut_json }),
     createdAt: row.created_at,
   };
 }
@@ -73,6 +93,19 @@ export const insertPendingFork = Effect.fn("insertPendingFork")(function* (
   const copiedBoundariesJson = yield* encodeCopiedBoundariesJson(payload.copiedBoundaries).pipe(
     Effect.orDie,
   );
+  const inheritedTurnIdsJson = yield* encodeInheritedTurnIdsJson(inheritedTurnIdsOf(payload)).pipe(
+    Effect.orDie,
+  );
+  const midTurnCutJson =
+    payload.midTurnCut === undefined
+      ? null
+      : yield* encodeMidTurnCutJson(payload.midTurnCut).pipe(Effect.orDie);
+  const sourcePointJson = yield* encodeSourcePointJson({
+    threadId: payload.originThreadId,
+    turnId: payload.forkAtTurnId,
+    turnCount: payload.forkAtTurnCount,
+    ...(payload.midTurnCut === undefined ? {} : { cutSequence: payload.midTurnCut.cutSequence }),
+  }).pipe(Effect.orDie);
   yield* sql`
     INSERT INTO scient_thread_lineage (
       thread_id,
@@ -90,6 +123,8 @@ export const insertPendingFork = Effect.fn("insertPendingFork")(function* (
       provider_mode,
       provider_bootstrap_status,
       attachment_copies_json,
+      inherited_turn_ids_json,
+      mid_turn_cut_json,
       fidelity_mode,
       status,
       checkpoint_status,
@@ -114,6 +149,8 @@ export const insertPendingFork = Effect.fn("insertPendingFork")(function* (
       ${payload.providerMode},
       'pending',
       ${attachmentCopiesJson},
+      ${inheritedTurnIdsJson},
+      ${midTurnCutJson},
       'transcript-bootstrap',
       'pending',
       'pending',
@@ -135,7 +172,33 @@ export const insertPendingFork = Effect.fn("insertPendingFork")(function* (
         WHEN scient_thread_lineage.copied_boundaries_json = '[]'
           THEN excluded.copied_boundaries_json
         ELSE scient_thread_lineage.copied_boundaries_json
-      END
+      END,
+      inherited_turn_ids_json = CASE
+        WHEN scient_thread_lineage.inherited_turn_ids_json = '[]'
+          THEN excluded.inherited_turn_ids_json
+        ELSE scient_thread_lineage.inherited_turn_ids_json
+      END,
+      mid_turn_cut_json = COALESCE(scient_thread_lineage.mid_turn_cut_json, excluded.mid_turn_cut_json)
+  `;
+  // The fork's provider context is resolved lazily on its first dispatch.
+  yield* sql`
+    INSERT OR IGNORE INTO scient_context_transfers (
+      thread_id,
+      type,
+      source_thread_id,
+      source_point_json,
+      status,
+      created_at,
+      updated_at
+    ) VALUES (
+      ${payload.newThreadId},
+      'fork',
+      ${payload.originThreadId},
+      ${sourcePointJson},
+      'pending',
+      ${payload.createdAt},
+      ${payload.createdAt}
+    )
   `;
 });
 
@@ -244,6 +307,8 @@ export const listRecoverableForks = Effect.fn("listRecoverableForks")(function* 
       COALESCE(copied_boundaries_json, '[]') AS copied_boundaries_json,
       workspace_mode,
       attachment_copies_json,
+      inherited_turn_ids_json,
+      mid_turn_cut_json,
       created_at
     FROM scient_thread_lineage
     WHERE status IN ('pending', 'provisioning', 'failed')
@@ -274,6 +339,8 @@ export const getRecoverableFork = Effect.fn("getRecoverableFork")(function* (
       COALESCE(copied_boundaries_json, '[]') AS copied_boundaries_json,
       workspace_mode,
       attachment_copies_json,
+      inherited_turn_ids_json,
+      mid_turn_cut_json,
       created_at
     FROM scient_thread_lineage
     WHERE thread_id = ${threadId}

@@ -33,6 +33,7 @@ import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { ScientForkReactor } from "../Services/ScientForkReactor.ts";
+import { testLayer as ScientForkContextDeliveryTest } from "../scient-fork/ForkContextDelivery.ts";
 import {
   testLayer as ScientForkCheckpointBaselineTest,
   type ScientForkCheckpointBaselineShape,
@@ -167,6 +168,7 @@ function makeHarnessLayer(
       makeCheckpointBaselineFake(forkBaselineCalls, baselineResult, baselineOverrides),
     ),
     Layer.provideMerge(ScientForkAttachmentCopierTest(attachmentCopierOverrides)),
+    Layer.provideMerge(ScientForkContextDeliveryTest()),
     Layer.provideMerge(makeGitWorkflowFake(NEW_WORKTREE_FIXTURE, createWorktreeCalls)),
     // Expose SqlClient (shared, memoized instance) so the test can read the
     // Scient lineage table directly.

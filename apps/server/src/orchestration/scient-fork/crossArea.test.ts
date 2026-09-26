@@ -64,10 +64,8 @@ import {
   ScientForkAttachmentCopier,
   ScientForkAttachmentCopierLive,
 } from "./ForkAttachmentCopier.ts";
-import {
-  ScientForkContextBootstrap,
-  ScientForkContextBootstrapLive,
-} from "./ForkContextBootstrap.ts";
+import { ScientForkContextDelivery, ScientForkContextDeliveryLive } from "./ForkContextDelivery.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 
 const makeCrossAreaTestLayer = (prefix: string) =>
@@ -75,8 +73,9 @@ const makeCrossAreaTestLayer = (prefix: string) =>
     OrchestrationProjectionPipelineLive,
     OrchestrationProjectionSnapshotQueryLive,
     ScientForkAttachmentCopierLive,
-    ScientForkContextBootstrapLive,
+    ScientForkContextDeliveryLive,
   ).pipe(
+    Layer.provide(ServerSettingsService.layerTest()),
     Layer.provide(ThreadBackgroundLiveness.layer),
     Layer.provide(ThreadPlanProgress.layer),
     Layer.provide(RepositoryIdentityResolver.layer),
@@ -254,7 +253,7 @@ it.layer(Layer.fresh(makeCrossAreaTestLayer("scient-fork-question-files-")))(
           const store = yield* OrchestrationEventStore;
           const query = yield* ProjectionSnapshotQuery;
           const copier = yield* ScientForkAttachmentCopier;
-          const bootstrap = yield* ScientForkContextBootstrap;
+          const contextDelivery = yield* ScientForkContextDelivery;
           const fs = yield* FileSystem.FileSystem;
           const config = yield* ServerConfig;
           yield* runScientMigrations(sql);
@@ -345,13 +344,25 @@ it.layer(Layer.fresh(makeCrossAreaTestLayer("scient-fork-question-files-")))(
               .length,
             1,
           );
-          const prepared = yield* bootstrap.prepareTurn({
+          const prepared = yield* contextDelivery.prepareTurn({
             thread: destination,
-            currentMessageId: "next",
-            messageText: "Continue",
+            message: {
+              id: MessageId.make("next"),
+              role: "user",
+              text: "Continue",
+              turnId: null,
+              streaming: false,
+              createdAt: NOW,
+              updatedAt: NOW,
+            },
+            userText: "Continue",
             attachments: [],
+            nativeThreadKey: null,
+            sessionRunning: false,
           });
-          assert.include(prepared.input, "Which dataset?");
+          assert.strictEqual(prepared.kind, "deliver");
+          if (prepared.kind !== "deliver") return;
+          assert.include(prepared.contextPreamble, "Which dataset?");
           assert.deepEqual(
             prepared.attachments.map((file) => file.id),
             [lineage.attachmentCopies[0]!.target.id],
@@ -1824,6 +1835,180 @@ it.layer(Layer.fresh(makeCrossAreaTestLayer("t3-boundary-008-")))(
           e.type === "thread.message-sent" ? `${e.payload.role}:${e.payload.text}` : "",
         );
         assert.deepEqual(prefixTexts, ["user:first 008", "assistant:answer 008-1"]);
+      }),
+    );
+  },
+);
+
+// ---------------------------------------------------------------------------
+// A multi-turn inherited transcript survives revert and replay, and the
+// reverted fork can itself be forked again.
+it.layer(Layer.fresh(makeCrossAreaTestLayer("scient-fork-multi-turn-revert-")))(
+  "multi-turn inherited transcript revert",
+  (it) => {
+    it.effect("keeps every inherited turn, its reasoning and work log across revert", () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const pipeline = yield* OrchestrationProjectionPipeline;
+        const store = yield* OrchestrationEventStore;
+        const query = yield* ProjectionSnapshotQuery;
+        yield* runScientMigrations(sql);
+        const project = (event: Parameters<typeof store.append>[0]) =>
+          store.append(event).pipe(Effect.flatMap((saved) => pipeline.projectEvent(saved)));
+
+        yield* project(projectCreatedEvent());
+        yield* project(threadCreatedEvent(ORIGIN, "Three turns", "mt-origin"));
+        const turns = [
+          [T1, U1, A1, 1],
+          [T2, U2, A2, 2],
+          [T3, U3, A3, 3],
+        ] as const;
+        for (const [turnId, userId, assistantId, count] of turns) {
+          const at = `2026-04-01T00:0${count}:00.000Z`;
+          const thinkingAt = `2026-04-01T00:0${count}:10.000Z`;
+          const toolAt = `2026-04-01T00:0${count}:20.000Z`;
+          const answerAt = `2026-04-01T00:0${count}:30.000Z`;
+          yield* project(
+            messageSentEvent(ORIGIN, userId, "user", `prompt ${count}`, turnId, at, `mt-u${count}`),
+          );
+          yield* project({
+            ...messageSentEvent(
+              ORIGIN,
+              MessageId.make(`origin-reasoning-${count}`),
+              "user",
+              `thinking ${count}`,
+              turnId,
+              thinkingAt,
+              `mt-r${count}`,
+            ),
+            payload: {
+              threadId: ORIGIN,
+              messageId: MessageId.make(`origin-reasoning-${count}`),
+              role: "reasoning",
+              text: `thinking ${count}`,
+              turnId,
+              streaming: false,
+              createdAt: thinkingAt,
+              updatedAt: thinkingAt,
+            },
+          });
+          yield* project({
+            ...threadCreatedEvent(ORIGIN, "unused", `mt-tool${count}`),
+            type: "thread.activity-appended",
+            payload: {
+              threadId: ORIGIN,
+              activity: {
+                id: EventId.make(`origin-tool-${count}`),
+                tone: "tool",
+                kind: "tool.completed",
+                summary: `tool ${count}`,
+                payload: { toolCallId: `call-${count}` },
+                turnId,
+                createdAt: toolAt,
+              },
+            },
+          });
+          yield* project(
+            messageSentEvent(
+              ORIGIN,
+              assistantId,
+              "assistant",
+              `answer ${count}`,
+              turnId,
+              answerAt,
+              `mt-a${count}`,
+            ),
+          );
+          yield* project(
+            turnDiffCompletedEvent(ORIGIN, turnId, count, assistantId, answerAt, `mt-d${count}`),
+          );
+        }
+
+        const resolver = makeForkBoundaryResolver(sql);
+        const fork = (originId: ThreadId, sourceId: MessageId, newId: ThreadId) =>
+          Effect.gen(function* () {
+            const origin = Option.getOrThrow(yield* query.getThreadDetailById(originId));
+            const resolved = yield* resolver.resolve({
+              originThreadId: originId,
+              sourceAssistantMessageId: sourceId,
+              threadCreatedAt: origin.createdAt,
+            });
+            const events = yield* forkThread({
+              command: {
+                type: "thread.fork",
+                commandId: CommandId.make(`fork-${newId}`),
+                originThreadId: originId,
+                newThreadId: newId,
+                sourceAssistantMessageId: sourceId,
+                workspaceMode: "local",
+              },
+              resolvedBoundaries: resolved,
+              readModel: withForkOriginDetail(createEmptyReadModel(NOW), origin),
+            });
+            for (const event of events) yield* project(event);
+            yield* sql`UPDATE scient_thread_lineage SET status = 'ready' WHERE thread_id = ${newId}`;
+            return events.find((event) => event.type === "thread.forked")!.payload;
+          });
+
+        const forkId = ThreadId.make("multi-turn-fork");
+        const lineage = yield* fork(ORIGIN, A3, forkId);
+        const inheritedTexts = (thread: { readonly messages: ReadonlyArray<{ text: string }> }) =>
+          thread.messages.map((entry) => entry.text);
+        const before = Option.getOrThrow(yield* query.getThreadDetailById(forkId));
+        assert.strictEqual(before.messages.length, 9);
+        assert.strictEqual(
+          before.activities.filter((entry) => entry.kind === "tool.completed").length,
+          3,
+        );
+
+        // One post-fork turn, then revert the fork back to its start.
+        const postTurn = TurnId.make("fork-turn-1");
+        yield* project(
+          messageSentEvent(
+            forkId,
+            MessageId.make("fork-user-1"),
+            "user",
+            "post",
+            postTurn,
+            NOW,
+            "mt-fu",
+          ),
+        );
+        const postAssistant = MessageId.make("fork-assistant-1");
+        yield* project(
+          messageSentEvent(
+            forkId,
+            postAssistant,
+            "assistant",
+            "post answer",
+            postTurn,
+            NOW,
+            "mt-fa",
+          ),
+        );
+        yield* project(turnDiffCompletedEvent(forkId, postTurn, 1, postAssistant, NOW, "mt-fd"));
+        yield* project(revertedEvent(forkId, 0, "mt-revert"));
+
+        const assertInherited = Effect.gen(function* () {
+          const reverted = Option.getOrThrow(yield* query.getThreadDetailById(forkId));
+          assert.deepEqual(inheritedTexts(reverted), inheritedTexts(before));
+          assert.strictEqual(
+            reverted.activities.filter((entry) => entry.kind === "tool.completed").length,
+            3,
+          );
+        });
+        yield* assertInherited;
+        // Replay rebuilds the same projection.
+        yield* pipeline.bootstrap;
+        yield* assertInherited;
+
+        // The reverted fork can be forked again from an inherited response.
+        const reforked = yield* fork(
+          forkId,
+          lineage.baselineAssistantMessageId!,
+          ThreadId.make("multi-turn-refork"),
+        );
+        assert.strictEqual(reforked.copiedBoundaries.length, 3);
       }),
     );
   },
