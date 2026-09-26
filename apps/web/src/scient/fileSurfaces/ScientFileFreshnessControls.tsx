@@ -1,7 +1,8 @@
-import { AlertTriangle, RefreshCw } from "lucide-react";
+import { AlertTriangle, Check, RefreshCw } from "lucide-react";
 
 import { Button } from "~/components/ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { Popover, PopoverTrigger, PopoverPopup, PopoverTitle } from "~/components/ui/popover";
 import { cn } from "~/lib/utils";
 
 import type { FileReloadNotice, FileSaveErrorNotice } from "./useWorkspaceFileRefresh";
@@ -137,5 +138,65 @@ export function ScientFileFreshnessNotices(props: {
         </div>
       ) : null}
     </>
+  );
+}
+
+/** A fixed toolbar slot keeps asynchronous save notices outside the document flow. */
+export function ScientFileFreshnessStatus(
+  props: Parameters<typeof ScientFileFreshnessNotices>[0] & { readonly pending: boolean },
+) {
+  const conflict = props.notice?.relativePath === props.relativePath && props.notice !== null;
+  const failed = props.saveError?.relativePath === props.relativePath && props.saveError !== null;
+  const readFailed = Boolean(props.relativePath && props.readError && props.hasFallbackData);
+  const needsAttention = conflict || failed || readFailed;
+  const status = conflict
+    ? "File changed: review your save options"
+    : failed
+      ? "Changes have not been saved"
+      : readFailed
+        ? "The latest file could not be loaded"
+        : props.pending
+          ? "Saving changes"
+          : "No file warnings";
+  return (
+    <Popover>
+      <PopoverTrigger
+        render={
+          <Button
+            size="xs"
+            variant="ghost"
+            className={cn("w-24 shrink-0", needsAttention && "text-warning")}
+            aria-label={`File status: ${status}`}
+            title={status}
+          />
+        }
+      >
+        {needsAttention ? (
+          <AlertTriangle className="size-3.5" aria-hidden="true" />
+        ) : props.pending ? (
+          <RefreshCw className="size-3.5" aria-hidden="true" />
+        ) : (
+          <Check className="size-3.5" aria-hidden="true" />
+        )}
+        File status
+      </PopoverTrigger>
+      <span className="sr-only" role="status">
+        {status}
+      </span>
+      <PopoverPopup align="end" className="w-96 max-w-[calc(100vw-24px)] p-3">
+        <PopoverTitle>File status</PopoverTitle>
+        {needsAttention ? (
+          <div className="mt-2 [&>div]:flex-wrap [&>div]:rounded-md [&>div]:border-0 [&>div>span]:whitespace-normal [&>div>span]:overflow-visible">
+            <ScientFileFreshnessNotices {...props} />
+          </div>
+        ) : (
+          <p className="mt-2 text-xs text-muted-foreground">
+            {props.pending
+              ? "Your changes are being saved to the project file."
+              : "There are no pending file warnings."}
+          </p>
+        )}
+      </PopoverPopup>
+    </Popover>
   );
 }

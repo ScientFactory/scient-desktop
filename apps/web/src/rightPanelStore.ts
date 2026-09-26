@@ -45,7 +45,7 @@ export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
 export interface LatexFilePresentationRequest {
   readonly id: number;
-  readonly mode: "split";
+  readonly mode: "split" | "visual";
 }
 
 export interface HtmlFilePresentationRequest {
@@ -278,6 +278,9 @@ const fileSurface = (
   revealLine,
   revealRequestId,
   ...(options?.fileCitation ? { fileCitation: options.fileCitation } : {}),
+  ...(options?.latexRootRelativePath === undefined
+    ? {}
+    : { latexRootRelativePath: options.latexRootRelativePath }),
   ...(options?.htmlPreviewMode === undefined
     ? {}
     : {

@@ -104,6 +104,7 @@ import { markdownPersistenceRegistry } from "~/scient/markdownEditor/persistence
 import { workspacePdfSourceForPreview } from "~/scient/pdf/pdfSource";
 import {
   ScientFileFreshnessNotices,
+  ScientFileFreshnessStatus,
   ScientFileReloadButton,
 } from "~/scient/fileSurfaces/ScientFileFreshnessControls";
 import {
@@ -822,7 +823,7 @@ export function MarkdownSourceSurface({
   return <EditableFileEditor {...props} {...bindings} />;
 }
 
-function EditableFileEditor({
+export function EditableFileEditor({
   environmentId,
   cwd,
   relativePath,
@@ -1736,6 +1737,20 @@ export default function FilePreviewPanel({
     threadRef,
   ]);
 
+  const freshnessNoticeProps = {
+    relativePath,
+    notice: reloadNotice,
+    readError: isDirectory ? null : file.error,
+    saveError,
+    saveRetryReady,
+    hasFallbackData: file.data !== null,
+    onCancel: cancelReloadNotice,
+    onReload: requestManualReload,
+    onRequestOverwrite: requestOverwrite,
+    onRetrySave: requestRetrySave,
+    onResolve: resolveReloadNotice,
+  };
+
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
       {relativePath && attachment === undefined ? (
@@ -1855,6 +1870,9 @@ export default function FilePreviewPanel({
               <Globe className="size-3.5" />
             </FileSurfaceAction>
           ) : null}
+          {relativePath && isLatexPreviewFile(relativePath) ? (
+            <ScientFileFreshnessStatus {...freshnessNoticeProps} pending={effectiveSourcePending} />
+          ) : null}
           {attachment === undefined && previewPath !== null ? (
             <ScientFileReloadButton
               automaticRefreshUnavailable={automaticRefreshUnavailable}
@@ -1881,20 +1899,8 @@ export default function FilePreviewPanel({
       ) : null}
       {markdownLease ? (
         <ScientMarkdownPersistenceNotice key={relativePath} persistence={markdownLease} />
-      ) : (
-        <ScientFileFreshnessNotices
-          relativePath={relativePath}
-          notice={reloadNotice}
-          readError={isDirectory ? null : file.error}
-          saveError={saveError}
-          saveRetryReady={saveRetryReady}
-          hasFallbackData={file.data !== null}
-          onCancel={cancelReloadNotice}
-          onReload={requestManualReload}
-          onRequestOverwrite={requestOverwrite}
-          onRetrySave={requestRetrySave}
-          onResolve={resolveReloadNotice}
-        />
+      ) : attachment === undefined && relativePath && isLatexPreviewFile(relativePath) ? null : (
+        <ScientFileFreshnessNotices {...freshnessNoticeProps} />
       )}
       {relativePath && !markdownLease && !isPdf && file.data?.readOnly ? (
         <div className="shrink-0 border-b border-border/50 bg-muted/35 px-3 py-1.5 scient-reading-micro text-muted-foreground">

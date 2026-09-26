@@ -68,6 +68,8 @@ describe("electron development launcher", () => {
     assert.include(script, 'if [ -n "${SCIENT_DEV_APP_ENV_FILE:-}" ]; then');
     assert.include(script, '. "$SCIENT_DEV_APP_ENV_FILE"');
     assert.include(script, 'mv -f "$dev_pid_file_tmp" "$SCIENT_DEV_APP_PID_FILE"');
+    assert.include(script, "Could not publish the managed development app PID.");
+    assert.include(script, "    exit 78");
     assert.notInclude(script, "osascript");
     assert.notInclude(script, "open -a Terminal");
     assert.include(script, "run-scient-next-dev.command");

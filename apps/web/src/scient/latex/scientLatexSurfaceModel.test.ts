@@ -344,6 +344,28 @@ describe("latexSnapshotsEqual", () => {
         snapshot("running", { installingPackages: ["mathtools"] }),
       ),
     ).toBe(true);
+    expect(
+      latexSnapshotsEqual(
+        snapshot("succeeded", {
+          visualSourceRevisions: { "chapter.tex": "sha256:b", "main.tex": "sha256:a" },
+        }),
+        snapshot("succeeded", {
+          visualSourceRevisions: { "main.tex": "sha256:a", "chapter.tex": "sha256:b" },
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      latexSnapshotsEqual(
+        snapshot("succeeded"),
+        snapshot("succeeded", { visualSourceRevisions: {} }),
+      ),
+    ).toBe(false);
+    expect(
+      latexSnapshotsEqual(
+        snapshot("succeeded", { visualSourceRevisions: { "main.tex": "sha256:a" } }),
+        snapshot("succeeded", { visualSourceRevisions: { "main.tex": "sha256:b" } }),
+      ),
+    ).toBe(false);
   });
 });
 

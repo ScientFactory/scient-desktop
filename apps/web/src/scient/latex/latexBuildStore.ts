@@ -2,7 +2,7 @@
  * Per-document LaTeX build state and the poll loop that keeps it current.
  *
  * The server owns the build; this store owns one watcher per open document.
- * A watcher starts a build, then polls the status endpoint on a self-scheduling
+ * A watcher reads status without compiling, then polls on a self-scheduling
  * timeout while the server still has work to do. Successful documents retain a
  * low-frequency currentness check so edits made by agents or external editors
  * cannot leave an open reader calling an old PDF current indefinitely.
@@ -136,18 +136,11 @@ interface WatchLoop {
 
 const loops = new Map<string, WatchLoop>();
 
-/**
- * Documents that need a build as soon as anything watches them again. A
- * closing editor flushes its pending save on the way out, so the confirmation
- * can arrive after the last watcher is gone; without this the next open would
- * adopt the PDF built from the text before that save. Keys leave the set the
- * moment their build is issued, so it holds nothing but documents closed
- * mid-save.
- */
+/** Explicit rebuild requests made while no surface is watching. */
 const pendingRebuilds = new Set<string>();
 
-/** What a freshly opened document does with the status it reads first. */
-type LatexOpenBuild = "none" | "when-idle" | "always";
+/** Only an explicitly requested build may be resumed when a watcher opens. */
+type LatexOpenBuild = "none" | "always";
 
 function issueSequence(loop: WatchLoop): number {
   loop.sequence += 1;
@@ -197,9 +190,9 @@ function scheduleFollowUp(
     return;
   }
   // The server's status read verifies persisted build evidence. Saves inside
-  // Scient already request a rebuild directly; this slower lane covers writes
+  // Scient trigger an immediate status refresh; this slower lane covers writes
   // with no browser event, without paying the active-build cadence forever.
-  if (snapshot.state === "succeeded") {
+  if (snapshot.state === "succeeded" || snapshot.descriptor !== null) {
     schedulePoll(key, target, loop, LATEX_CURRENTNESS_POLL_INTERVAL_MS);
   }
 }
@@ -231,7 +224,7 @@ async function pollStatus(
     });
     if (!isCurrentIssue(loop, issued)) return;
     applySnapshot(key, snapshot);
-    if (buildOnOpen === "always" || (buildOnOpen === "when-idle" && snapshot.state === "idle")) {
+    if (buildOnOpen === "always") {
       pendingRebuilds.delete(key);
       runBuild(key, target, loop);
       return;
@@ -295,24 +288,20 @@ async function pollToolchain(
   try {
     const report = await readLatexToolchain(target.environmentId, { refresh });
     const managedInstall = report.managedInstall ?? null;
-    const justInstalled =
-      managedInstall?.state === "ready" &&
-      (useLatexBuildStore.getState().entries[key] ?? EMPTY_ENTRY).managedInstall?.state !== "ready";
     updateEntry(key, (current) => ({
       ...current,
       toolchain: report,
       canInstallManaged: report.canInstallManaged,
       managedInstall: managedInstall ?? current.managedInstall,
     }));
-    if (justInstalled) requestLatexRebuild(target);
   } catch {
     // Build snapshots carry the toolchain too; a failed probe is not a build failure.
   }
 }
 
 /**
- * Watch one document: read what the environment already has, build only if it
- * has nothing, then keep the snapshot current until every watcher is gone.
+ * Watch one document without compiling; keep its snapshot current until all
+ * watchers leave. Compilation belongs only to explicit requests.
  * Repeat calls for the same document share the single loop.
  */
 export function startWatchingLatexBuild(target: LatexBuildTarget): () => void {
@@ -323,16 +312,20 @@ export function startWatchingLatexBuild(target: LatexBuildTarget): () => void {
     return () => releaseWatcher(key, existing);
   }
 
-  const loop: WatchLoop = { watchers: 1, timer: null, polling: false, stopped: false, sequence: 0 };
+  const loop: WatchLoop = {
+    watchers: 1,
+    timer: null,
+    polling: false,
+    stopped: false,
+    sequence: 0,
+  };
   loops.set(key, loop);
   // One probe per opened document: the empty state has to know whether this
   // environment can install an engine before any build has run. Every later
   // toolchain read belongs to an install this loop is already watching.
   void pollToolchain(key, target);
-  // Status first, so a document the environment built earlier paints its
-  // stored PDF at once and a build already running is joined rather than
-  // restarted. Only a document with nothing behind it is built on open.
-  void pollStatus(key, target, loop, pendingRebuilds.has(key) ? "always" : "when-idle");
+  // Opening is observational unless an explicit request was deferred.
+  void pollStatus(key, target, loop, pendingRebuilds.has(key) ? "always" : "none");
   return () => releaseWatcher(key, loop);
 }
 

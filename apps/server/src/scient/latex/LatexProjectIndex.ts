@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- The index walks the server-owned workspace.
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -60,6 +61,7 @@ interface IndexedLatexSource {
 
 interface ProjectIndex {
   readonly sources: ReadonlyMap<string, IndexedLatexSource>;
+  readonly generation: string;
   readonly skippedSymlinkPaths: ReadonlySet<string>;
   readonly incompleteReasons: ReadonlySet<ScientLatexResolutionIncompleteReason>;
 }
@@ -224,6 +226,7 @@ async function buildProjectIndex(
   sourceRelativePath: string,
 ): Promise<ProjectIndex> {
   const sources = new Map<string, IndexedLatexSource>();
+  const sourceHashes = new Map<string, string>();
   const skippedSymlinkPaths = new Set<string>();
   const incompleteReasons = new Set<ScientLatexResolutionIncompleteReason>();
   let fileCount = 0;
@@ -298,6 +301,7 @@ async function buildProjectIndex(
       return;
     }
     const parsed = parseLatexDependencyDirectives(contents);
+    sourceHashes.set(relativePath, NodeCrypto.createHash("sha256").update(contents).digest("hex"));
     const rootResolution = resolveLatexRoot({ relativePath, contents });
     const documentRoot =
       rootResolution.reason === "documentclass" ||
@@ -372,8 +376,13 @@ async function buildProjectIndex(
     }
   };
   await visit(workspaceRoot, 0);
+  const generation = NodeCrypto.createHash("sha256");
+  for (const [path, hash] of [...sourceHashes].sort(([left], [right]) => left.localeCompare(right))) {
+    generation.update(path).update("\0").update(hash).update("\0");
+  }
   return {
     sources,
+    generation: generation.digest("hex").slice(0, 32),
     skippedSymlinkPaths,
     incompleteReasons,
   };
@@ -560,6 +569,7 @@ export async function resolveLatexDocument(
   const shared = () => ({
     sourceRelativePath,
     candidates: renderedCandidates(candidates),
+    indexGeneration: index.generation,
     complete,
     incompleteReasons: [...incompleteReasons],
   });

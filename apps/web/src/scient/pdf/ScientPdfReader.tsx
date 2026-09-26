@@ -1,6 +1,7 @@
 import type {
   PdfSourceActions,
   PdfSourceDescriptor,
+  PdfSourceResolution,
   PdfSourceResolver,
 } from "@scientfactory/document-artifacts";
 import { LegendList } from "@legendapp/list/react";
@@ -27,7 +28,15 @@ import {
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 
 import {
   DropdownMenu,
@@ -49,6 +58,7 @@ import {
 import { labelKeys } from "../keyboard/keys";
 
 import { PdfOutline } from "./PdfOutline";
+import { useRetainedPdfSource } from "./useRetainedPdfSource";
 import { announcePdfSaveCopyResult } from "./pdfSaveCopyNotification";
 import { observePdfCopy } from "./pdfCopyAnalytics";
 import { PdfThumbnail } from "./PdfThumbnail";
@@ -61,7 +71,12 @@ import {
   type PdfSidebarMode,
 } from "./pdfReaderModel";
 import { pdfReaderSessionDocumentKey, pdfReaderSessionStore } from "./pdfReaderSessionStore";
-import { useScientPdfReader } from "./useScientPdfReader";
+import { usePresentedPdfSourceBundle } from "./usePresentedPdfSourceBundle";
+import {
+  useScientPdfReader,
+  type PresentedPdfTextEvidence,
+  type RequestedPdfPresentation,
+} from "./useScientPdfReader";
 
 import "pdfjs-dist/legacy/web/pdf_viewer.css";
 import "./scientPdfReader.css";
@@ -143,7 +158,29 @@ function PdfPasswordPrompt(props: {
   );
 }
 
+/** Interaction only; extensions never replace PDF.js's authoritative page rendering. */
+export interface PdfInteractionHost {
+  readonly registerAnchorProvider?: (
+    provider: (() => import("./pdfPresentation").PdfPresentationAnchor | null) | null,
+  ) => void;
+  readonly scale?: number;
+  /** Revision owning `container`; never the requested-but-unpublished replacement. */
+  readonly revisionId: string | null;
+  readonly rotation?: number;
+  readonly container: HTMLDivElement | null;
+  readonly ready: boolean;
+  /** Complete text-item evidence for the immutable PDF owning `container`. */
+  readonly readDocumentTextItems: () => Promise<PresentedPdfTextEvidence | null>;
+  readonly pointFromClient: (input: {
+    pageElement: HTMLElement;
+    clientX: number;
+    clientY: number;
+  }) => PdfInverseSyncPoint | null;
+}
+
 export function ScientPdfReader(props: {
+  readonly canPublishPresentation?: (candidate: RequestedPdfPresentation) => boolean;
+  readonly renderInteraction?: (host: PdfInteractionHost) => ReactNode;
   readonly actions?: PdfSourceActions;
   readonly refreshKey?: number;
   readonly resolver?: PdfSourceResolver;
@@ -152,13 +189,15 @@ export function ScientPdfReader(props: {
 }) {
   const resolver = props.resolver ?? webPdfSourceResolver;
   const asset = resolver.useResolve(props.source);
+  const documentKey = pdfReaderSessionDocumentKey(props.source);
+  const displayed = useRetainedPdfSource(documentKey, props.source, asset);
   const previousRefreshKey = useRef(props.refreshKey);
   useEffect(() => {
     if (previousRefreshKey.current === props.refreshKey) return;
     previousRefreshKey.current = props.refreshKey;
     asset.refresh();
   }, [asset.refresh, props.refreshKey]);
-  if (asset._tag === "Failure") {
+  if (asset._tag === "Failure" && displayed === null) {
     return (
       <div className="scient-pdf-reader">
         <div className="scient-pdf-state-card text-destructive">
@@ -169,7 +208,7 @@ export function ScientPdfReader(props: {
       </div>
     );
   }
-  if (asset._tag !== "Success") {
+  if (displayed === null) {
     return (
       <div className="scient-pdf-reader">
         <div className="scient-pdf-state-card">
@@ -179,30 +218,47 @@ export function ScientPdfReader(props: {
       </div>
     );
   }
-  const documentKey = pdfReaderSessionDocumentKey(props.source);
   return (
     <LoadedScientPdfReader
       key={documentKey}
       documentKey={documentKey}
-      source={props.source}
-      sourceUrl={asset.url}
-      sourceExpiresAt={asset.expiresAt}
+      source={displayed.source}
+      sourceAsset={displayed.asset}
+      interactionReady={asset._tag === "Success"}
+      sourceNotice={
+        asset._tag === "Failure"
+          ? "Unable to load the updated PDF. Showing the previous revision."
+          : asset._tag === "Loading"
+            ? "Loading the updated PDF…"
+            : null
+      }
       refreshSource={asset.refresh}
       actions={props.actions ?? webPdfSourceActions}
+      {...(props.canPublishPresentation === undefined
+        ? {}
+        : { canPublishPresentation: props.canPublishPresentation })}
+      {...(props.renderInteraction === undefined
+        ? {}
+        : { renderInteraction: props.renderInteraction })}
       {...(props.syncNavigation === undefined ? {} : { syncNavigation: props.syncNavigation })}
     />
   );
 }
 
 function LoadedScientPdfReader(props: {
+  readonly canPublishPresentation?: (candidate: RequestedPdfPresentation) => boolean;
+  readonly sourceNotice: string | null;
+  readonly interactionReady: boolean;
+  readonly renderInteraction?: (host: PdfInteractionHost) => ReactNode;
   readonly actions: PdfSourceActions;
   readonly documentKey: string;
   readonly source: PdfSourceDescriptor;
+  readonly sourceAsset: Extract<PdfSourceResolution, { readonly _tag: "Success" }>;
   readonly refreshSource: () => void;
-  readonly sourceExpiresAt: number;
-  readonly sourceUrl: string;
   readonly syncNavigation?: PdfSyncNavigation;
 }) {
+  const requestedRevisionId =
+    props.source._tag === "generated-pdf" ? props.source.revisionId : null;
   const [container, setContainer] = useState<HTMLDivElement | null>(null);
   const [viewerElement, setViewerElement] = useState<HTMLDivElement | null>(null);
   const [sidebar, setSidebarState] = useState<PdfSidebarMode>(
@@ -252,13 +308,28 @@ function LoadedScientPdfReader(props: {
   const [pageInput, setPageInput] = useState("1");
   const [sourceSyncHintVisible, setSourceSyncHintVisible] = useState(false);
   const reader = useScientPdfReader({
+    ...(props.canPublishPresentation === undefined
+      ? {}
+      : { canPublishPresentation: props.canPublishPresentation }),
     documentKey: props.documentKey,
     onSourceInvalidated: props.refreshSource,
-    sourceUrl: props.sourceUrl,
+    revisionId: requestedRevisionId,
+    sourceUrl: props.sourceAsset.url,
     container,
     viewerElement,
   });
   const { state } = reader;
+  const presentedSource = usePresentedPdfSourceBundle({
+    documentKey: props.documentKey,
+    source: props.source,
+    asset: props.sourceAsset,
+    presentation: reader.presentation,
+  });
+  const currentPresentation =
+    props.interactionReady &&
+    state.phase === "ready" &&
+    reader.presentation?.revisionId === requestedRevisionId &&
+    reader.presentation.sourceUrl === props.sourceAsset.url;
   const thumbnailPages = useMemo(
     () => Array.from({ length: state.pageCount }, (_, index) => index + 1),
     [state.pageCount],
@@ -284,9 +355,9 @@ function LoadedScientPdfReader(props: {
   }, [reader.prepareSearch, searchOpen]);
   useEffect(() => {
     const target = props.syncNavigation?.forwardTarget;
-    if (target === null || target === undefined || state.phase !== "ready") return;
+    if (target === null || target === undefined || !currentPresentation) return;
     reader.goToSyncPoint(target);
-  }, [props.syncNavigation?.forwardTarget, reader.goToSyncPoint, state.phase]);
+  }, [props.syncNavigation?.forwardTarget, reader.goToSyncPoint, currentPresentation]);
 
   const closeSearch = useCallback(() => {
     setSearchOpen(false);
@@ -295,19 +366,16 @@ function LoadedScientPdfReader(props: {
   }, [reader.closeSearch]);
 
   const saveCopy = useCallback(async () => {
-    if (saveCopyPendingRef.current) return;
+    if (saveCopyPendingRef.current || presentedSource === null) return;
+    const bundle = presentedSource;
     saveCopyPendingRef.current = true;
     setSavingCopy(true);
     try {
-      const result = await observePdfCopy(EnvironmentId.make(props.source.authority), () =>
-        props.actions.saveCopy(props.source, {
-          url: props.sourceUrl,
-          expiresAt: props.sourceExpiresAt,
-          refresh: props.refreshSource,
-        }),
+      const result = await observePdfCopy(EnvironmentId.make(bundle.source.authority), () =>
+        props.actions.saveCopy(bundle.source, bundle.resolved),
       );
       const presentation = announcePdfSaveCopyResult(result);
-      if (presentation.refreshSource) props.refreshSource();
+      if (presentation.refreshSource) bundle.resolved.refresh();
     } catch {
       toastManager.add({
         type: "error",
@@ -318,7 +386,7 @@ function LoadedScientPdfReader(props: {
       saveCopyPendingRef.current = false;
       setSavingCopy(false);
     }
-  }, [props.actions, props.refreshSource, props.source, props.sourceExpiresAt, props.sourceUrl]);
+  }, [presentedSource, props.actions]);
 
   const clearSourceSyncHintTimers = useCallback(() => {
     if (sourceSyncHintShowTimerRef.current !== null) {
@@ -353,7 +421,8 @@ function LoadedScientPdfReader(props: {
     (event: React.MouseEvent<HTMLDivElement>) => {
       if (
         props.syncNavigation?.onInverseSearch === undefined ||
-        state.phase !== "ready" ||
+        props.renderInteraction !== undefined ||
+        !currentPresentation ||
         pdfSourceSyncHintLearnedThisSession ||
         event.ctrlKey ||
         event.metaKey
@@ -381,7 +450,13 @@ function LoadedScientPdfReader(props: {
         showSourceSyncHint();
       }, PDF_SOURCE_SYNC_HINT_DELAY_MS);
     },
-    [props.syncNavigation?.onInverseSearch, showSourceSyncHint, sourceSyncHintVisible, state.phase],
+    [
+      props.syncNavigation?.onInverseSearch,
+      props.renderInteraction,
+      showSourceSyncHint,
+      sourceSyncHintVisible,
+      currentPresentation,
+    ],
   );
 
   const onReaderKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
@@ -407,7 +482,8 @@ function LoadedScientPdfReader(props: {
   };
   const canRevealSource =
     props.source.capabilities.canRevealSource && props.actions.revealSource !== undefined;
-  const hasSourceActions = props.source.capabilities.canSaveCopy || canRevealSource;
+  const canSaveCopy = presentedSource?.source.capabilities.canSaveCopy === true;
+  const hasSourceActions = canSaveCopy || canRevealSource;
 
   return (
     <div
@@ -550,7 +626,7 @@ function LoadedScientPdfReader(props: {
               <Search /> Search PDF
             </DropdownMenuItem>
             {hasSourceActions ? <DropdownMenuSeparator /> : null}
-            {props.source.capabilities.canSaveCopy ? (
+            {canSaveCopy ? (
               <DropdownMenuItem disabled={savingCopy} onClick={() => void saveCopy()}>
                 {savingCopy ? <LoaderCircle className="animate-spin" /> : <Download />}
                 {savingCopy ? "Saving copy…" : "Save a copy…"}
@@ -560,8 +636,8 @@ function LoadedScientPdfReader(props: {
               <DropdownMenuItem
                 onClick={() =>
                   props.actions.revealSource?.(props.source, {
-                    url: props.sourceUrl,
-                    expiresAt: props.sourceExpiresAt,
+                    url: props.sourceAsset.url,
+                    expiresAt: props.sourceAsset.expiresAt,
                     refresh: props.refreshSource,
                   })
                 }
@@ -698,13 +774,17 @@ function LoadedScientPdfReader(props: {
         <div className="scient-pdf-content">
           <div
             ref={setContainer}
-            className="scient-pdf-viewer-container"
+            className="scient-pdf-presentation-mount"
             tabIndex={0}
             onClick={scheduleSourceSyncHint}
             onDoubleClick={(event) => {
               dismissSourceSyncHint();
+              if (!currentPresentation) return;
               const onInverseSearch = props.syncNavigation?.onInverseSearch;
               if (onInverseSearch === undefined) return;
+              // An editable page uses the ordinary click gesture. Keep inverse
+              // search available in Split without making a direct edit also navigate.
+              if (props.renderInteraction !== undefined && !event.ctrlKey && !event.metaKey) return;
               const target = event.target;
               if (!(target instanceof Element)) return;
               const pageElement = target.closest<HTMLElement>(".page[data-page-number]");
@@ -719,10 +799,25 @@ function LoadedScientPdfReader(props: {
                 onInverseSearch(point);
               }
             }}
-            onScroll={dismissSourceSyncHint}
+            onScrollCapture={dismissSourceSyncHint}
           >
-            <div ref={setViewerElement} className="pdfViewer" />
+            <div ref={setViewerElement} className="scient-pdf-presentation-layers" />
           </div>
+          {props.sourceNotice || state.updateError ? (
+            <div className="scient-pdf-update-notice" role="status">
+              {state.updateError ?? props.sourceNotice}
+            </div>
+          ) : null}
+          {props.renderInteraction?.({
+            container: reader.presentation?.container ?? null,
+            registerAnchorProvider: reader.registerAnchorProvider,
+            scale: state.scale,
+            revisionId: reader.presentation?.revisionId ?? null,
+            rotation: state.rotation,
+            ready: reader.presentation !== null,
+            readDocumentTextItems: reader.readDocumentTextItems,
+            pointFromClient: reader.syncPointFromClient,
+          })}
           {sourceSyncHintVisible ? (
             <div className="scient-pdf-source-sync-hint" role="status">
               Double-click a PDF word to show its matching source line

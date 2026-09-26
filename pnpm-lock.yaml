@@ -109,6 +109,7 @@ patchedDependencies:
   expo-notifications@57.0.15: f89252c2c08dc7b3acb8415f319ebbe15fff8c9f88a64ebe1830cd5ac5c9ac40
   expo-sharing@57.0.17: 8d2e3b10eb3f52036a9a086800180ec6cebf3b75bccc5b1775117a7244d4ac45
   expo-widgets@57.0.15: 319a9ded5db49c5b5215c511a138b33f44c7ea2972eb418192e8d5342fe75ce6
+  mathlive@0.108.2: abadf99ceb2542588eda76bb60dcda2406b1f177b953a0b220d9aa83ec2c1079
   react-native-gesture-handler@2.32.0: 0579f8e4dad02bf3183d95b02620358412983c36f9bda7425dc8bcb9643b5ce2
   react-native-keyboard-controller@1.21.13: 6e4339347bc5bb3c9ea67d85ff5c814058b211c5750f247aba59d07869a2e787
   react-native-nitro-modules@0.35.9: 825622aae63a8fb5b904f3c77908a0e216261d727ea171709f2c0b6088422675
@@ -817,6 +818,9 @@ importers:
       mathjax:
         specifier: 3.2.2
         version: 3.2.2
+      mathlive:
+        specifier: 0.108.2
+        version: 0.108.2(patch_hash=abadf99ceb2542588eda76bb60dcda2406b1f177b953a0b220d9aa83ec2c1079)
       mermaid:
         specifier: 12.0.0
         version: 12.0.0
@@ -2585,6 +2589,10 @@ packages:
 
   '@codemirror/view@6.43.12':
     resolution: {integrity: sha512-Nv0vxQ19NAqvB/c2pFzjIzFlzzJl7jmdtNkwOwGbn0Ks9mFAzibvumz7cQem5cRsFA2cEw2fg+uHZGbcHupLQQ==}
+
+  '@cortex-js/compute-engine@0.30.2':
+    resolution: {integrity: sha512-Zx+iisk9WWdbxjm8EYsneIBszvjfUs7BHNwf1jBtSINIgfWGpHrTTq9vW0J59iGCFt6bOFxbmWyxNMRSmksHMA==}
+    engines: {node: '>=21.7.3', npm: '>=10.5.0'}
 
   '@crowecawcaw/xa11y-darwin-arm64@0.13.0':
     resolution: {integrity: sha512-wT+f9lbE6IfSPs8unb7IHr6/V/EkB4SCMFisTtV3jsTseCKr4/vkgpI1LRdul2r+KrmgQ4JxRpUDVB25dmpqNw==}
@@ -7635,6 +7643,10 @@ packages:
     resolution: {integrity: sha512-pJDh5/4wrEnXX/VWRZvruAGHkzKdr46z11OlTPN+VrATlWWhSKewNCJ1futCO5C7eJB3nPMFZA1LeYtcFboZ2A==}
     engines: {node: '>=0.10.0'}
 
+  complex-esm@2.1.1-esm1:
+    resolution: {integrity: sha512-IShBEWHILB9s7MnfyevqNGxV0A1cfcSnewL/4uPFiSxkcQL4Mm3FxJ0pXMtCXuWLjYz3lRRyk6OfkeDZcjD6nw==}
+    engines: {node: '>=16.14.2', npm: '>=8.5.0'}
+
   compressible@2.0.18:
     resolution: {integrity: sha512-AF3r7P5dWxL8MxyITRMlORQNaOA2IkAFaTr4k7BUumjPtRpGDTZpl0Pb1XCO6JeDCBdp126Cgs9sMxqSjgYyRg==}
     engines: {node: '>= 0.6'}
@@ -7971,6 +7983,9 @@ packages:
     peerDependenciesMeta:
       supports-color:
         optional: true
+
+  decimal.js@10.6.0:
+    resolution: {integrity: sha512-YpgQiITW3JXGntzdUmyUR1V812Hn8T1YVXhCu+wO3OpS4eU9l4YdD3qjyiKdV6mvV29zapkMeD390UVEf2lkUg==}
 
   decode-named-character-reference@1.3.0:
     resolution: {integrity: sha512-GtpQYB283KrPp6nRw50q3U9/VfOutZOe103qlN7BPP6Ad27xYnOIWv4lPzo8HCAL+mMZofJ9KEy30fq6MfaK6Q==}
@@ -9745,6 +9760,9 @@ packages:
 
   mathjax@3.2.2:
     resolution: {integrity: sha512-Bt+SSVU8eBG27zChVewOicYs7Xsdt40qm4+UpHyX7k0/O9NliPc+x77k1/FEsPsjKPZGJvtRZM1vO+geW0OhGw==}
+
+  mathlive@0.108.2:
+    resolution: {integrity: sha512-GIZkfprGTxrbHckOvwo92ZmOOxdD018BHDzlrEwYUU+pzR5KabhqI1s43lxe/vqXdF5RLiQKgDcuk5jxEjhkYg==}
 
   mdast-util-directive@3.1.0:
     resolution: {integrity: sha512-I3fNFt+DHmpWCYAT7quoM6lHf9wuqtI+oCOfvILnoicNIqjh5E3dEJWiXuYME2gNe8vl1iMQwyUHa7bgFmak6Q==}
@@ -14123,6 +14141,11 @@ snapshots:
       crelt: 1.0.7
       style-mod: 4.1.3
       w3c-keyname: 2.2.8
+
+  '@cortex-js/compute-engine@0.30.2':
+    dependencies:
+      complex-esm: 2.1.1-esm1
+      decimal.js: 10.6.0
 
   '@crowecawcaw/xa11y-darwin-arm64@0.13.0':
     optional: true
@@ -19437,6 +19460,8 @@ snapshots:
 
   compare-version@0.1.2: {}
 
+  complex-esm@2.1.1-esm1: {}
+
   compressible@2.0.18:
     dependencies:
       mime-db: 1.54.0
@@ -19805,6 +19830,8 @@ snapshots:
   debug@4.4.3:
     dependencies:
       ms: 2.1.3
+
+  decimal.js@10.6.0: {}
 
   decode-named-character-reference@1.3.0:
     dependencies:
@@ -21772,6 +21799,10 @@ snapshots:
   math-intrinsics@1.1.0: {}
 
   mathjax@3.2.2: {}
+
+  mathlive@0.108.2(patch_hash=abadf99ceb2542588eda76bb60dcda2406b1f177b953a0b220d9aa83ec2c1079):
+    dependencies:
+      '@cortex-js/compute-engine': 0.30.2
 
   mdast-util-directive@3.1.0:
     dependencies:

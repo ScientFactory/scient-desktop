@@ -591,12 +591,16 @@ native page handling and focused-guest checks remain authoritative.
 
 LaTeX compilation is isolated under `apps/server/src/scient/latex` and
 `apps/web/src/scient/latex`, with `packages/contracts/src/scientLatex.ts` and
-`packages/client-runtime/src/state/scientLatexHttp.ts` as the two owned files
-outside those roots. The inherited-host seams are limited to file-preview
+`packages/client-runtime/src/state/scientLatexHttp.ts` as owned contracts and
+transport. The pure source-preserving visual projection lives in
+`packages/shared/src/latexVisual.ts`. The inherited-host seams are limited to file-preview
 recognition, the file-panel surface mount, server config and service wiring, and
 the contract and client export points. Future T3 merges should preserve those
 narrow mounts rather than moving build coordination or toolchain discovery into
 inherited T3 components. See [Scient LaTeX build](docs/internals/scient-latex.md).
+Visual mode reuses the existing controlled file editor and save coordinator;
+preserve the controlled-editor export and optional save debounce rather than
+forking persistence. Its interaction host stays in the source-neutral PDF reader.
 
 Browser HTML-to-PDF export keeps rendering under
 `apps/desktop/src/scient/documentExport`, publication under

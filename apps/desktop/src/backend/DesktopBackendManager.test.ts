@@ -119,6 +119,7 @@ function decodeBootstrap(raw: string) {
 
 interface MakeInstanceInput {
   readonly spawnerLayer: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>;
+  readonly fileSystemLayer?: Layer.Layer<FileSystem.FileSystem>;
   readonly httpClientLayer?: Layer.Layer<HttpClient.HttpClient>;
   readonly backendOutputLog?: Partial<DesktopObservability.DesktopBackendOutputLogShape>;
   readonly onReady?: Effect.Effect<void>;
@@ -153,9 +154,10 @@ function makeTestInstance(input: MakeInstanceInput) {
     ...input.backendOutputLog,
   };
   const servicesLayer = Layer.mergeAll(
-    FileSystem.layerNoop({
-      exists: () => Effect.succeed(true),
-    }),
+    input.fileSystemLayer ??
+      FileSystem.layerNoop({
+        exists: () => Effect.succeed(true),
+      }),
     input.spawnerLayer,
     input.httpClientLayer ?? healthyHttpClientLayer,
     Layer.succeed(DesktopObservability.DesktopBackendOutputLogFactory, {
@@ -271,6 +273,74 @@ describe("DesktopBackendManager", () => {
           telemetryJson,
           '{"version":1,"type":"desktopTelemetryHello","electronPid":123}\n',
         );
+      }),
+    ),
+  );
+
+  it.effect("publishes the generation-scoped backend PID at the started boundary", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const operations: Array<readonly [string, ...ReadonlyArray<unknown>]> = [];
+        const pidFilePath = "/state/local-dev-app-runtime/launches/abc-1-def/backend.pid";
+        const pendingFilePath = "/state/local-dev-app-runtime/launches/abc-1-def/backend.pending";
+        const spawnerLayer = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.succeed(
+              makeProcess({
+                exitCode: Deferred.await(release).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+              }),
+            ),
+          ),
+        );
+        const fileSystemLayer = FileSystem.layerNoop({
+          exists: () => Effect.succeed(true),
+          writeFileString: (path, contents, options) =>
+            Effect.sync(() => {
+              operations.push(["write", path, contents, options?.flag, options?.mode]);
+            }),
+          rename: (source, destination) =>
+            Effect.sync(() => {
+              operations.push(["rename", source, destination]);
+            }),
+          remove: (path, options) =>
+            Effect.sync(() => {
+              operations.push(["remove", path, options?.force]);
+            }),
+        });
+        const instance = yield* makeTestInstance({
+          config: {
+            ...baseConfig,
+            developmentBackendPidHandoff: {
+              generation: "abc-1-def",
+              pidFilePath,
+              pendingFilePath,
+            },
+          },
+          spawnerLayer,
+          fileSystemLayer,
+          backendOutputLog: {
+            beginSession: () => Deferred.succeed(started, void 0).pipe(Effect.asVoid),
+          },
+        });
+
+        yield* instance.start;
+        yield* Deferred.await(started);
+
+        const write = operations.find(([operation]) => operation === "write");
+        const rename = operations.find(([operation]) => operation === "rename");
+        assert.deepEqual(write?.slice(2), ["123\n", "wx", 0o600]);
+        assert.equal(rename?.[2], pidFilePath);
+        assert.isUndefined(
+          operations.find(
+            ([operation, path]) => operation === "remove" && path === pendingFilePath,
+          ),
+        );
+        assert.deepEqual((yield* instance.snapshot).activePid, Option.some(123));
+
+        yield* Deferred.succeed(release, void 0);
       }),
     ),
   );

@@ -10,6 +10,7 @@
     "packages/scient-pdf-validation"
   ],
   "ownedFiles": [
+    "packages/shared/src/latexVisual.ts",
     "apps/server/src/mcp/toolkits/documents/handlers.ts",
     "apps/server/src/mcp/toolkits/documents/latexHandler.ts",
     "apps/server/src/mcp/toolkits/documents/tools.ts",
@@ -85,8 +86,18 @@
     },
     {
       "path": "apps/web/src/components/files/FilePreviewPanel.tsx",
-      "anchor": "export function EditableFileSurface",
-      "purpose": "Mount the additive LaTeX build surface in the inherited file viewer, and export the panel's editable file surface so the LaTeX split view reuses it instead of forking the editor and its save coordination."
+      "anchor": "export function EditableFileEditor",
+      "purpose": "Expose the existing controlled editor so LaTeX Source and Visual share one existing save coordinator without forking the editor."
+    },
+    {
+      "path": "apps/web/src/components/files/useFileSaveCoordinator.ts",
+      "anchor": "debounceMs = FILE_SAVE_DEBOUNCE_MS",
+      "purpose": "Permit a LaTeX-specific save debounce while preserving the default for other file editors."
+    },
+    {
+      "path": "packages/shared/package.json",
+      "anchor": "./latexVisual",
+      "purpose": "Expose the pure source-preserving prose projection for editing and real-engine conformance tests."
     },
     {
       "path": "packages/client-runtime/src/rpc/client.ts",

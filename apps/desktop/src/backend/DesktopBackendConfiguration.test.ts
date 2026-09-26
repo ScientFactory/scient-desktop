@@ -65,6 +65,7 @@ function makeEnvironmentLayer(
     readonly otlpTracesUrl?: string;
     readonly otlpMetricsUrl?: string;
     readonly otlpLogsUrl?: string;
+    readonly developmentBackendPidHandoff?: boolean;
   },
 ) {
   return DesktopEnvironment.layer({
@@ -91,6 +92,17 @@ function makeEnvironmentLayer(
           T3CODE_OTLP_TRACES_URL: options?.otlpTracesUrl,
           T3CODE_OTLP_METRICS_URL: options?.otlpMetricsUrl,
           T3CODE_OTLP_LOGS_URL: options?.otlpLogsUrl,
+          SCIENT_LOCAL_DEV_APP_MANAGED: options?.developmentBackendPidHandoff ? "1" : undefined,
+          SCIENT_NEXT_DEV_RUNNER_ACTIVE: options?.developmentBackendPidHandoff ? "1" : undefined,
+          SCIENT_DEV_APP_LAUNCH_GENERATION: options?.developmentBackendPidHandoff
+            ? "abc-1-def"
+            : undefined,
+          SCIENT_DEV_APP_PID_FILE: options?.developmentBackendPidHandoff
+            ? `${baseDir}/local-dev-app-runtime/launches/abc-1-def/electron.pid`
+            : undefined,
+          SCIENT_DEV_BACKEND_PID_FILE: options?.developmentBackendPidHandoff
+            ? `${baseDir}/local-dev-app-runtime/launches/abc-1-def/backend.pid`
+            : undefined,
         }),
       ),
     ),
@@ -308,6 +320,27 @@ describe("DesktopBackendConfiguration", () => {
       );
       assert.equal(config.env.ELECTRON_RUN_AS_NODE, "1");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("passes only a validated development PID handoff to the local backend child", () =>
+    withHarness(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        const config = yield* configuration.resolvePrimary;
+        const pidFilePath = `${environment.baseDir}/local-dev-app-runtime/launches/abc-1-def/backend.pid`;
+
+        assert.deepEqual(config.developmentBackendPidHandoff, {
+          generation: "abc-1-def",
+          pidFilePath,
+          pendingFilePath: `${environment.baseDir}/local-dev-app-runtime/launches/abc-1-def/backend.pending`,
+        });
+        assert.equal(config.env.SCIENT_DESKTOP_DEV_BACKEND_PID_HANDOFF, "1");
+        assert.equal(config.env.SCIENT_DESKTOP_DEV_BACKEND_PID_FILE, pidFilePath);
+        assert.equal(config.env.SCIENT_DESKTOP_DEV_BACKEND_LAUNCH_GENERATION, "abc-1-def");
+      }),
+      { isPackaged: false, developmentBackendPidHandoff: true },
+    ),
   );
 
   it.effect("resolveWsl reuses the primary's bootstrap token", () =>

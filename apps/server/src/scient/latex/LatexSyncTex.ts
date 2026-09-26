@@ -377,9 +377,45 @@ export const make = Effect.gen(function* () {
         return unavailable("query-timed-out", "Source navigation took too long. Try again.");
       if (result.value.code !== 0)
         return unavailable("navigator-failed", "Source navigation could not be completed.");
-      const location = parseSyncTexForwardLocation(
-        `${result.value.stdout}\n${result.value.stderr}`,
-      );
+      let location = parseSyncTexForwardLocation(`${result.value.stdout}\n${result.value.stderr}`);
+      // Engines can record canonical paths (notably /private/var on macOS)
+      // while the workspace is opened through a symlink. Keep the logical
+      // workspace identity, but retry that same source's physical spelling.
+      if (location === null) {
+        const canonicalRoot = yield* fileSystem
+          .realPath(input.workspaceRoot)
+          .pipe(Effect.orElseSucceed(() => input.workspaceRoot));
+        const canonicalSource = yield* fileSystem
+          .realPath(source.absolutePath)
+          .pipe(Effect.orElseSucceed(() => source.absolutePath));
+        const relative = path.relative(canonicalRoot, canonicalSource);
+        if (
+          canonicalSource !== source.absolutePath &&
+          relative !== ".." &&
+          !relative.startsWith(`..${path.sep}`) &&
+          !path.isAbsolute(relative)
+        ) {
+          const canonicalPosition =
+            input.pageHint === undefined
+              ? `${input.line}:${input.column ?? 0}:${canonicalSource}`
+              : `${input.line}:${input.column ?? 0}:${input.pageHint}:${canonicalSource}`;
+          const retry = yield* runNavigation({
+            ...navigation,
+            command: resolvedRuntime.command,
+            args: [
+              "view",
+              "-i",
+              canonicalPosition,
+              "-o",
+              navigation.outputPath,
+              "-d",
+              navigation.directory,
+            ],
+          });
+          if (Option.isSome(retry) && retry.value.code === 0 && !retry.value.timedOut)
+            location = parseSyncTexForwardLocation(`${retry.value.stdout}\n${retry.value.stderr}`);
+        }
+      }
       return location === null
         ? unavailable("position-unmapped", "No PDF position is mapped to this source line.")
         : ({
@@ -425,12 +461,24 @@ export const make = Effect.gen(function* () {
       if (locations.length === 0) {
         return unavailable("position-unmapped", "No source line is mapped to this PDF position.");
       }
+      const canonicalWorkspace = yield* fileSystem
+        .realPath(input.workspaceRoot)
+        .pipe(Effect.orElseSucceed(() => path.resolve(input.workspaceRoot)));
       for (const location of locations) {
         const absoluteInput = path.isAbsolute(location.input)
           ? path.resolve(location.input)
           : path.resolve(navigation.metadata.compileDirectory, location.input);
-        const relative = path.relative(path.resolve(input.workspaceRoot), absoluteInput);
-        if (relative === "" || relative === ".." || relative.startsWith(`..${path.sep}`)) continue;
+        const canonicalInput = yield* fileSystem
+          .realPath(absoluteInput)
+          .pipe(Effect.orElseSucceed(() => absoluteInput));
+        const relative = path.relative(canonicalWorkspace, canonicalInput);
+        if (
+          relative === "" ||
+          relative === ".." ||
+          relative.startsWith(`..${path.sep}`) ||
+          path.isAbsolute(relative)
+        )
+          continue;
         return {
           _tag: "found",
           relativePath: normalizeRelativePath(relative),

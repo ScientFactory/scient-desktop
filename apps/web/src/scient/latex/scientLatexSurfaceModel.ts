@@ -22,16 +22,17 @@ import { isActiveLatexInstall } from "./latexToolchainSetupModel";
 export const LATEX_PREVIEW_MODE_STORAGE_KEY = "scient.latexPreviewMode";
 export const LATEX_SPLIT_RATIO_STORAGE_KEY = "scient.latexSplitRatio";
 
-export const LATEX_PREVIEW_MODES = ["source", "split", "pdf"] as const;
+export const LATEX_PREVIEW_MODES = ["source", "split", "visual", "pdf"] as const;
 export type ScientLatexPreviewMode = (typeof LATEX_PREVIEW_MODES)[number];
 
 export const LATEX_PREVIEW_MODE_LABELS: Readonly<Record<ScientLatexPreviewMode, string>> = {
-  source: "Source",
-  split: "Split",
-  pdf: "PDF",
+  source: "LaTeX source",
+  split: "Source + PDF",
+  visual: "Write",
+  pdf: "PDF preview",
 };
 
-export const DEFAULT_LATEX_PREVIEW_MODE: ScientLatexPreviewMode = "split";
+export const DEFAULT_LATEX_PREVIEW_MODE: ScientLatexPreviewMode = "visual";
 export const DEFAULT_LATEX_SPLIT_FRACTION = 0.5;
 /** Neither half may be squeezed into a strip too narrow to work in. */
 export const MIN_LATEX_SPLIT_FRACTION = 0.2;
@@ -333,6 +334,21 @@ function diagnosticsEqual(
   });
 }
 
+function sourceRevisionsEqual(
+  left: Readonly<Record<string, string>> | undefined,
+  right: Readonly<Record<string, string>> | undefined,
+): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  const leftPaths = Object.keys(left);
+  const rightPaths = Object.keys(right);
+  return (
+    leftPaths.length === rightPaths.length &&
+    leftPaths.every(
+      (path) => Object.prototype.hasOwnProperty.call(right, path) && left[path] === right[path],
+    )
+  );
+}
+
 /**
  * Whether two polls of the same document say the same thing. A build that
  * takes ten seconds answers the same snapshot six times over; holding onto
@@ -356,6 +372,7 @@ export function latexSnapshotsEqual(
     stringListsEqual(left.installingPackages, right.installingPackages) &&
     descriptorsEqual(left.descriptor, right.descriptor) &&
     toolchainsEqual(left.toolchain, right.toolchain) &&
+    sourceRevisionsEqual(left.visualSourceRevisions, right.visualSourceRevisions) &&
     diagnosticsEqual(left.diagnostics, right.diagnostics)
   );
 }
@@ -417,7 +434,9 @@ export function latexStatusStripModel(
             ? buildLabel(status.requesting && !active ? "running" : state)
             : offline
               ? "Build status unavailable"
-              : buildLabel(state),
+              : generated?.bindingStatus === "stale" && state === "idle"
+                ? "Rebuild required"
+                : buildLabel(state),
     errorCount: counts.errors,
     warningCount: counts.warnings,
     stale: generated?.bindingStatus === "stale",

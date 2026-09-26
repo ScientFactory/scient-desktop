@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./latexVisual": "./src/latexVisual.ts",
     "./legacyCliLauncher": {
       "types": "./src/legacyCliLauncher.ts",
       "import": "./src/legacyCliLauncher.ts"

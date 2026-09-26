@@ -117,6 +117,49 @@ describe("GeneratedDocumentStore", () => {
     ),
   );
 
+  it.effect("commits bounded revision attachments atomically with the immutable PDF", () =>
+    Effect.gen(function* () {
+      const store = yield* GeneratedDocumentStore;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const production = yield* store.beginProduction(operation(1));
+      const proof = new TextEncoder().encode('{"source":"exact"}\n');
+      const descriptor = generatedSource(
+        yield* store.publishPdf({
+          ...production,
+          bytes: minimalPdf("attached-proof"),
+          title: "Attached proof",
+          provenanceKind: "document-build",
+          revisionAttachments: [{ name: "latex-visual-revision.json", bytes: proof }],
+        }),
+      );
+      proof.fill(0);
+
+      const attached = yield* store.readRevisionAttachment({
+        authority: descriptor.authority,
+        artifactId: descriptor.artifactId,
+        revisionId: descriptor.revisionId,
+        name: "latex-visual-revision.json",
+      });
+      expect(new TextDecoder().decode(attached ?? new Uint8Array())).toBe('{"source":"exact"}\n');
+      const revision = yield* store.resolveRevision(descriptor);
+      expect((yield* fileSystem.readDirectory(path.dirname(revision.path))).toSorted()).toEqual([
+        "document.pdf",
+        "latex-visual-revision.json",
+        "metadata.json",
+      ]);
+    }).pipe(
+      Effect.provide(
+        makeStoreLayer(
+          ServerConfig.ServerConfig.layerTest(process.cwd(), {
+            prefix: "scient-document-store-attachments-",
+          }),
+        ).pipe(Layer.provideMerge(NodeServices.layer)),
+      ),
+      Effect.scoped,
+    ),
+  );
+
   it.effect("publishes immutable revisions and preserves the last success after failure", () =>
     Effect.gen(function* () {
       const store = yield* GeneratedDocumentStore;

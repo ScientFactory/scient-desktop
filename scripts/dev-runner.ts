@@ -689,6 +689,18 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       devUrl: input.devUrl,
     });
 
+    // Electron proxies each unbundled module through its custom protocol.
+    // On Windows the full renderer graph can exhaust Chromium's request pool
+    // before main.tsx loads. Bundled dev keeps this route usable while an
+    // explicit T3CODE_BUNDLED_DEV=0 still allows unbundled debugging.
+    if (
+      input.mode === "dev:desktop" &&
+      NodeOS.platform() === "win32" &&
+      env.T3CODE_BUNDLED_DEV === undefined
+    ) {
+      env.T3CODE_BUNDLED_DEV = "1";
+    }
+
     const selectionSuffix =
       serverOffset !== offset || webOffset !== offset
         ? ` selectedOffset(server=${serverOffset},web=${webOffset})`

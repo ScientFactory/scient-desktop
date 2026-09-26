@@ -36,17 +36,33 @@ describe("Scient PDF reader source seam", () => {
     expect(source).toContain("viewportSession.flush()");
   });
 
+  it("binds interaction geometry to the actually presented revision during staged updates", () => {
+    const readerSource = NodeFS.readFileSync(
+      new URL("./ScientPdfReader.tsx", import.meta.url),
+      "utf8",
+    );
+
+    expect(readerSource).toContain("container: reader.presentation?.container ?? null");
+    expect(readerSource).toContain("revisionId: reader.presentation?.revisionId ?? null");
+    expect(readerSource).toContain("ready: reader.presentation !== null");
+    expect(readerSource).not.toContain(
+      'revisionId: props.source._tag === "generated-pdf" ? props.source.revisionId : null',
+    );
+  });
+
   it("reconciles page and rotation geometry against the current pane width", () => {
     const source = NodeFS.readFileSync(new URL("./useScientPdfReader.ts", import.meta.url), "utf8");
 
     expect(source).toContain(
       `const onPageChanging = ({ pageNumber }: { pageNumber: number }) => {
+          if (!displayed()) return;
           setState((previous) => ({ ...previous, page: pageNumber }));
           runtime.refreshForContainerSize();
         };`,
     );
     expect(source).toContain(
       `const onRotationChanging = ({ pagesRotation }: { pagesRotation: number }) => {
+          if (!displayed()) return;
           setState((previous) => ({ ...previous, rotation: pagesRotation }));
           runtime.refreshForContainerSize();
         };`,
@@ -91,7 +107,7 @@ describe("Scient PDF reader source seam", () => {
     expect(source).toContain("let pdfSourceSyncHintLearnedThisSession = false;");
     expect(source).not.toContain("pdfSourceSyncHintShownThisSession");
     expect(source).toContain("onClick={scheduleSourceSyncHint}");
-    expect(source).toContain("onScroll={dismissSourceSyncHint}");
+    expect(source).toContain("onScrollCapture={dismissSourceSyncHint}");
     expect(source).toContain("showSourceSyncHint();");
     expect(source).toContain("Double-click a PDF word to show its matching source line");
     expect(source).toContain("const onInverseSearch = props.syncNavigation?.onInverseSearch;");
