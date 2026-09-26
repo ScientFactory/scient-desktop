@@ -5,10 +5,12 @@ interface. It does not embed Oh My Pi's Bun SDK, and it does not run Oh My Pi th
 
 Oh My Pi keeps its own home, credentials, skills, extensions, and model sign-in. Scient does not
 offer a universal sign-in. When provider update checks are on, a system installation shows a newer
-stable release in the same major version. Scient does not run Oh My Pi's updater or a package
-manager for that copy. On the desktop app for macOS Apple silicon, Scient can install a private Oh
-My Pi 18.2.8. That copy updates only when a reviewed catalog release is newer, and only after you
-click Update. Enable Oh My Pi only after `omp` 18.2.8 or newer is available to the Scient server.
+stable release in the same major version. For an official `omp` executable, Scient runs OMP's own
+`omp update --stable` command when you click Update, then verifies the reported version. Scient
+does not replace an unknown or custom executable with an assumed package-manager command.
+On the desktop app for macOS Apple silicon, Scient can install a private Oh My Pi 18.2.8. That copy
+updates only when a reviewed catalog release is newer, and only after you click Update. Enable Oh
+My Pi only after `omp` 18.2.8 or newer is available to the Scient server.
 
 ## Setup
 
@@ -22,7 +24,9 @@ Oh My Pi instance with an empty home shares that login. Set **Oh My Pi home**
 agent directory; choose one, not both, because a named OMP profile owns its agent directory. Scient
 passes an explicit per-conversation `--session-dir` and stores only the session transcript path it
 can prove sits in that directory. If Oh My Pi writes the transcript somewhere else, the live
-conversation can continue, and Scient will say that the conversation cannot be resumed.
+conversation can continue, and Scient will say that the conversation cannot be resumed. Session
+cursors created by older builds with the previous `PATH`-based identity are rejected rather than
+silently migrated; start a new OMP session after upgrading.
 
 The first version supports **Full access** only. The launch always passes `--approval-mode yolo`.
 That flag matches the pinned Oh My Pi 18.2.8 interface. The launch, protocol negotiation, model
@@ -30,6 +34,27 @@ catalog, and session-directory behavior were qualified against the official macO
 Scient still does not claim that every model, extension, or provider backend is qualified. It is
 not an operating-system sandbox. Scient does not register its project or
 scientific tools with this provider.
+
+## Custom models
+
+Scient's shared **Custom models** settings can attach an OpenAI-compatible, OpenAI Responses, or
+Anthropic Messages connection to an Oh My Pi instance. For each attached model, Scient starts the
+agent with a small generated OMP extension that registers the model through OMP's provider API.
+The extension is passed explicitly with `--extension`; it is not written into the user's OMP
+profile, and `--no-extensions` does not disable this explicit extension.
+
+API keys are placed only in the scoped child process environment under generated variable names.
+The generated extension and command-line arguments contain no key. Model definitions are served
+over an authenticated loopback endpoint and refreshed inside the running OMP process when Scient's
+model metadata changes. Removing a connection, changing its endpoint or protocol, or rotating its
+credential retires that OMP process; the next turn starts a fresh process with the new
+configuration. This fail-closed boundary prevents an old credential or removed model from being used
+by a live conversation.
+
+A model must have usable context and output limits before OMP advertises it. Automatic models with
+unknown limits, and models whose stored credential is unavailable, stay out of the OMP catalog.
+Image and reasoning controls are advertised only when the shared custom-model settings explicitly
+enable them or provide compatible evidence.
 
 ## What you can do
 

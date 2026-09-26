@@ -1,14 +1,15 @@
 # Custom model connections
 
-Status: implemented on the Pi feature branch; not merged. Earlier manual reviews do not qualify
-the latest lifecycle, automatic-settings and readiness changes. Hosted-account and visual acceptance
-of this pass remain separate from automated fixtures.
+Status: implemented on the Pi, Droid, and Oh My Pi feature branch; not merged. Earlier manual
+reviews do not qualify the latest lifecycle, automatic-settings and readiness changes. Hosted-account
+and visual acceptance of this pass remain separate from automated fixtures.
 
 ## Ownership and boundaries
 
 Scient owns environment-scoped connections, server-side credentials and model-specific agent
-attachments. Pi and Droid own inference, conversation construction and compaction. Other agents
-need their own adapters; neither another credential store nor a mandatory inference proxy is needed.
+attachments. Pi, Droid, and Oh My Pi own inference, conversation construction and compaction. Other
+agents need their own adapters; neither another credential store nor a mandatory inference proxy is
+needed.
 
 The UI calls these **Custom models**. This catalog is distinct from the inherited
 `providerInstances[id].config.customModels` slug list. Preserve that list and native Factory
@@ -34,17 +35,21 @@ no automatic orphan collector.
 A credential cannot move to another origin without explicit re-entry/removal. Keys are literals,
 not shell expressions. Adding a model to an existing connection does not copy or rotate its key.
 
-Discovery freshness, current-turn configuration and authority revocation are different:
-adding a model or changing non-revoking capabilities leaves the current turn on its coherent
-configuration. Droid resumes into a fresh overlay at the next idle boundary; Pi refreshes its
-signature-cached registration before selection. Names and next-turn preferences do not interrupt
-work. Explicit conversation reasoning choices still win.
+Discovery freshness, current-turn configuration and authority revocation are different. Adding a
+model to a connection whose credential was already published, or changing non-revoking metadata,
+leaves the current turn on its coherent configuration. Droid resumes into a fresh overlay at the
+next idle boundary; Pi refreshes its signature-cached registration before selection. OMP updates
+its extension registration through an explicit refresh command and a timer backed by the settings
+change cache. A newly attached keyed connection, or a connection that becomes publishable after
+starting without its key, is withheld until the next OMP process rather than interrupting the
+current turn. Removing or rotating a loaded key, detaching a loaded model, or changing its endpoint
+retires that process. Names and next-turn preferences do not interrupt work. Explicit
+conversation reasoning choices still win.
 
-Removing/rotating a loaded key, detaching a loaded model, or changing its endpoint retires that
-process. This includes a loaded but unselected credential. Partial output is preserved and settlement
-is exactly once; the next request uses a fresh generation and existing resume state. A pending
-non-revoking update must not make an active session appear absent. Local retirement cannot undo
-submitted requests or revoke a key at its upstream service.
+Partial output is preserved and settlement is exactly once; the next request uses a fresh
+generation and existing resume state. A pending non-revoking update must not make an active session
+appear absent. Local retirement cannot undo submitted requests or revoke a key at its upstream
+service.
 
 ## Agent bridges
 
@@ -59,7 +64,19 @@ Droid receives a disposable private settings overlay (directory 0700, file 0600)
 randomized environment references, not raw keys; only the owning child receives those variables.
 Its [BYOK API formats](https://docs.factory.ai/model-independence/byok) map Chat Completions to
 `generic-chat-completion-api`, Responses to `openai`, and Messages to `anthropic`.
-Both bridges are shared by discovery, conversations and structured background generation.
+
+OMP receives a generated, credential-free extension through its explicit `--extension` path. The
+extension reads model definitions from an authenticated loopback endpoint, while connection keys
+are referenced by generated environment-variable names only for connections that are publishable
+when that process starts. The extension moves those values into a private registration closure
+and removes the generated variables from the OMP process environment. A newly attached key is
+not published to the old process; the next OMP process receives it with the rest of its scoped
+environment. The extension supports Chat
+Completions, Responses, and Messages, and is used by discovery, conversations, and structured
+background generation. Model removal, endpoint/protocol changes, and credential rotation retire
+the OMP process rather than allowing a stale provider registration to continue.
+
+These bridges are shared by discovery, conversations and structured background generation.
 
 ## Automatic limits and availability
 
@@ -70,7 +87,9 @@ verified service metadata can supply missing definitions. Unknown extension mode
 configuration: defaults documented for Pi's separate `models.json` path are not silently injected.
 
 Automatic Droid entries use complete verified limits when available; otherwise the optional fields
-are omitted and Droid owns its defaults. This does not mean unlimited or endpoint-aware budgeting.
+are omitted and Droid owns its defaults. OMP entries likewise require explicit or independently
+verified context/output limits before registration; unknown automatic models stay out of its
+catalog. This does not mean unlimited or endpoint-aware budgeting.
 The pinned fixture observes a 32k output ceiling for an unknown model and 1024 when explicitly
 configured. For `z-ai/glm-5.3-flash`, Droid sends 131072 across all three API formats with limits
 omitted. Defaults are model-dependent; these fixtures do not establish the native effective context size. Unreported defaults remain
@@ -91,7 +110,10 @@ chosen agent; charges may apply. A concurrent catalog edit invalidates its resul
 **Check again** explicitly rechecks the selected model's metadata, preserving IDs, keys and manual
 intent, then refreshes agent discovery. Failed lookups retain applicable prior evidence as stale.
 Public OpenRouter catalog bytes are shared across keys; authenticated evidence stays scoped.
-There is no startup, periodic or per-turn metadata fetch.
+There is no startup, periodic, or per-turn **public catalog** metadata fetch. OMP's local
+model-definition endpoint is refreshed at process start, on the explicit
+`scient-models-refresh` command, and by a timer that reads the settings-change cache. A cache
+refresh does not reread the secret store on every poll.
 
 ## Recovery and qualification
 

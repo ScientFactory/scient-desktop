@@ -459,13 +459,16 @@ orchestration types. The adapter owns the process and the turn mapping.
   `--approval-mode yolo`. Scient does not call `login` during discovery. A desktop macOS Apple
   silicon app can install the qualified private binary. Other machines use an executable the user
   installed.
-  Update checks are read-only. A Bun, npm, pnpm, or Homebrew install is compared with that
-  channel's stable version. Any other located binary is compared with the latest stable GitHub
-  release. A different major or a prerelease is not offered as a routine update, and Scient does
-  not run an update command. A desktop macOS Apple silicon app can install a private Oh My Pi
-  from the qualified catalog. That copy hides the external advisory. Its resume identity ignores
-  the managed version directory, so a later qualified update can reopen the same session. Oh My
-  Pi's own updater is not offered for that copy.
+  Update checks compare the running version with the latest stable same-major release. For an
+  official `omp` launcher, Scient runs `omp update --stable` through the shared one-click update
+  flow. Fresh maintenance resolution carries that release candidate through compatibility checks
+  and verifies the version again after the command. A different major, a prerelease, an unknown
+  launcher, or any executable under Scient's private managed-runtime root is not offered as a
+  routine native update. A desktop macOS Apple silicon app can install a private Oh My Pi from the
+  qualified catalog. That copy is updated only through the managed-runtime actions. Its resume
+  identity ignores the managed version directory, so a later qualified update can reopen the same
+  session. Managed activation also runs an isolated RPC-v2 handshake and state probe after staging;
+  a binary that only answers `--version` is rejected and the previous runtime is restored.
 - One process serves one thread. Stop closes that process only. The child receives an explicit
   `--session-dir` under Scient's per-instance/per-thread state root; the legacy session environment
   variable is retained only as a compatibility fallback in the process environment.
@@ -473,13 +476,23 @@ orchestration types. The adapter owns the process and the turn mapping.
   idle with `get_state`. Stop first requests an abort; the process remains available when OMP
   confirms an idle terminal state, and forced process termination produces an uncertain outcome.
   Process exit during a turn is an uncertain failure.
-- Resume cursors must match the provider instance, workspace, effective OMP home/profile, executable,
-  protocol, and launch policy, and must stay inside Scient's session directory.
+- Resume cursors must match the provider instance, workspace, effective OMP home/profile, canonical
+  executable, protocol, and launch policy, and must stay inside Scient's session directory. `PATH`
+  is not part of the persisted executable identity. Legacy v2 cursors that hashed `PATH` are
+  rejected rather than migrated without independent executable evidence.
 - Subagent frames stay on the parent turn and preserve native IDs. Native compact reports a compacted
   thread only when OMP confirms success. Only explicitly qualified commands are exposed; discovered
   session, export, sharing, model, configuration, and extension commands are rejected. The
   v18.2.8 runtime exposes context usage through `get_state`, not a standalone event, so OMP does not
-  advertise a context-window projection yet.
+  advertise a native context-window projection yet.
+- `provider/omp/OmpCustomModels.ts` adapts the shared custom-model connection contract to OMP's
+  explicit extension API for discovery, chat, and background generation. It passes credentials only
+  through scoped child-process environment names for connections published at process start,
+  refreshes metadata through an authenticated loopback endpoint, and retires the process on
+  credential, endpoint, or model-removal changes. A newly attached keyed connection is withheld
+  until the next OMP process instead of interrupting an active turn. Custom-model readiness is
+  projected separately from native OMP models. See [Custom model connections](./custom-models.md)
+  for ownership and qualification limits.
 - Awareness and Scient skill delivery are unsupported. Unexpected host-tool calls are rejected.
   Full access is the only runtime mode. There is no Orchestration V2 adapter.
 

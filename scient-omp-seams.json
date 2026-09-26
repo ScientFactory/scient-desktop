@@ -26,15 +26,7 @@
       "anchor": "props.provider === \"omp\""
     },
     { "path": "apps/server/src/provider/builtInDrivers.ts", "anchor": "OmpDriver" },
-    {
-      "path": "apps/server/src/provider/ProviderInstanceEnvironment.ts",
-      "anchor": "PI_CODING_AGENT_DIR"
-    },
     { "path": "apps/server/src/provider/Layers/ProviderRegistry.test.ts", "anchor": "omp" },
-    {
-      "path": "apps/server/src/provider/ProviderInstanceEnvironment.test.ts",
-      "anchor": "PI_CODING_AGENT_DIR"
-    },
     { "path": "packages/contracts/src/settings.ts", "anchor": "OmpSettings" },
     { "path": "packages/contracts/src/model.ts", "anchor": "OMP_DRIVER_KIND" },
     { "path": "apps/web/src/session-logic.ts", "anchor": "ProviderDriverKind.make(\"omp\")" },
