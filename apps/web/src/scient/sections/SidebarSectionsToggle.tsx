@@ -5,8 +5,8 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/toolt
 
 /**
  * Two-state sidebar grouping: off shows the Status layout, on groups threads
- * by section. The pressed state uses the sidebar's selected-row fill so the
- * current mode is visible without hovering.
+ * by section. While on, it keeps the sidebar's light hover tint so the mode
+ * stays visible without the heavier selected-row fill.
  */
 export function SidebarSectionsToggle(props: {
   readonly active: boolean;
@@ -19,6 +19,7 @@ export function SidebarSectionsToggle(props: {
         render={
           <SidebarMenuButton
             size="icon"
+            variant="toggle"
             type="button"
             aria-label={label}
             aria-pressed={props.active}
