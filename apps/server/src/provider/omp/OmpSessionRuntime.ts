@@ -294,6 +294,11 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
   readonly client: OmpRpcClient;
   readonly scope: Scope.Scope;
   readonly onUpdate: (update: OmpSessionUpdate) => Effect.Effect<void, never, never>;
+  /**
+   * Observes every raw Oh My Pi notification before it is interpreted. Used by
+   * the shared native provider event log; failures must never affect the turn.
+   */
+  readonly onNativeNotification?: (notification: OmpRpcNotification) => Effect.Effect<void>;
 }): Effect.fn.Return<OmpSessionRuntime, never, Scope.Scope> {
   const inbox = yield* Queue.bounded<InboxItem>(OMP_INBOX_CAPACITY);
   let catalog = emptyOmpCommandCatalog();
@@ -771,6 +776,10 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
 
   const applyNotification = (notification: OmpRpcNotification) =>
     Effect.gen(function* () {
+      const onNativeNotification = input.onNativeNotification;
+      if (onNativeNotification) {
+        yield* onNativeNotification(notification).pipe(Effect.ignore);
+      }
       if (notification._tag === "ProtocolFailure") {
         yield* publish({ type: "error", message: notification.detail });
         if (turnIsOpen(turn) || turn.phase === "accepted") {

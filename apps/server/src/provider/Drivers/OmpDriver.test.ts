@@ -11,11 +11,13 @@ import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { makeOmpProcessEnvironment, OmpDriver } from "./OmpDriver.ts";
+import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 
 const testLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-omp-driver-managed-actions-",
 }).pipe(
   Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
   Layer.provideMerge(ServerSettingsService.layerTest()),
   Layer.provideMerge(
     Layer.mock(BackgroundPolicy.BackgroundPolicy)({
@@ -50,15 +52,36 @@ it.effect("keeps unrelated server secrets out of the OMP process environment", (
       {
         PATH: "/usr/bin",
         HOME: "/home/test",
-        OPENAI_API_KEY: "must-not-cross",
+        // A named model-provider credential is intended for the agent, and the
+        // host, proxy, and certificate coordinates an agent session needs.
+        OPENAI_API_KEY: "intended-for-the-agent",
+        HTTPS_PROXY: "http://proxy.internal:3128",
+        NODE_EXTRA_CA_CERTS: "/etc/ssl/corp.pem",
+        XDG_CONFIG_HOME: "/home/test/.config",
+        SHELL: "/bin/zsh",
+        SSH_AUTH_SOCK: "/tmp/ssh-agent.sock",
+        VIRTUAL_ENV: "/home/test/.venv",
+        // Nothing else crosses over.
         UNRELATED_SERVER_SECRET: "must-not-cross",
+        SCIENT_SERVER_TOKEN: "must-not-cross",
+        NPM_TOKEN: "must-not-cross",
+        SOME_OTHER_SERVICE_API_KEY: "must-not-cross",
       },
     );
     expect(environment.OMP_EXPLICIT_SETTING).toBe("kept");
     expect(environment.PATH).toBe("/usr/bin");
     expect(environment.HOME).toBe("/home/test");
-    expect(environment.OPENAI_API_KEY).toBeUndefined();
+    expect(environment.OPENAI_API_KEY).toBe("intended-for-the-agent");
+    expect(environment.HTTPS_PROXY).toBe("http://proxy.internal:3128");
+    expect(environment.NODE_EXTRA_CA_CERTS).toBe("/etc/ssl/corp.pem");
+    expect(environment.XDG_CONFIG_HOME).toBe("/home/test/.config");
+    expect(environment.SHELL).toBe("/bin/zsh");
+    expect(environment.SSH_AUTH_SOCK).toBe("/tmp/ssh-agent.sock");
+    expect(environment.VIRTUAL_ENV).toBe("/home/test/.venv");
     expect(environment.UNRELATED_SERVER_SECRET).toBeUndefined();
+    expect(environment.SCIENT_SERVER_TOKEN).toBeUndefined();
+    expect(environment.NPM_TOKEN).toBeUndefined();
+    expect(environment.SOME_OTHER_SERVICE_API_KEY).toBeUndefined();
   }),
 );
 

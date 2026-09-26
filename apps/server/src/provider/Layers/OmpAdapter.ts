@@ -47,6 +47,7 @@ import {
   type ProviderAdapterError,
 } from "../Errors.ts";
 import type { ProviderAdapterShape, ProviderThreadSnapshot } from "../Services/ProviderAdapter.ts";
+import type { EventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { ompCommandDecision } from "../omp/OmpCommandPolicy.ts";
 import {
   decodeOmpModelSlug,
@@ -106,6 +107,8 @@ export interface OmpAdapterOptions {
   readonly profile?: string | undefined;
   /** Test/host override for the fail-closed event byte budget. */
   readonly eventQueueByteLimit?: number | undefined;
+  /** Shared native provider-protocol event log (NDJSON). */
+  readonly nativeEventLogger?: EventNdjsonLogger | undefined;
   readonly makeProcess?: (options: OmpRpcProcessOptions) => Effect.Effect<
     OmpRpcClient & {
       readonly version: string;
@@ -164,6 +167,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
   const sessions = new Map<ThreadId, SessionContext>();
   const threadLocks = yield* SynchronizedRef.make(new Map<ThreadId, Semaphore.Semaphore>());
   const eventQueueByteLimit = Math.max(1, options.eventQueueByteLimit ?? OMP_EVENT_QUEUE_MAX_BYTES);
+  const nativeEventLogger = options.nativeEventLogger;
   // Never block a turn.started/settlement producer on a stalled consumer. The
   // dropping queue is paired with a byte budget and a fail-closed overflow path.
   const events = yield* Queue.dropping<ProviderRuntimeEvent, Cause.Done>(OMP_EVENT_QUEUE_MAX_ITEMS);
@@ -970,6 +974,33 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
               client,
               scope,
               onUpdate: (update) => locally(applyUpdate(ctx, update)).pipe(Effect.ignore),
+              ...(nativeEventLogger
+                ? {
+                    onNativeNotification: (notification) =>
+                      Effect.gen(function* () {
+                        const observedAt = yield* now;
+                        yield* nativeEventLogger.write(
+                          {
+                            observedAt,
+                            event: {
+                              id: yield* uuid,
+                              kind: "notification",
+                              provider: PROVIDER,
+                              createdAt: observedAt,
+                              method:
+                                notification._tag === "Event"
+                                  ? notification.event.type
+                                  : notification._tag,
+                              threadId: input.threadId,
+                              ...(ctx.turnId ? { turnId: ctx.turnId } : {}),
+                              payload: notification,
+                            },
+                          },
+                          input.threadId,
+                        );
+                      }).pipe(Effect.catchCause(() => Effect.void)),
+                  }
+                : {}),
             }).pipe(Effect.provideService(Scope.Scope, scope));
             const ready = yield* client.ready.pipe(
               Effect.timeoutOrElse({

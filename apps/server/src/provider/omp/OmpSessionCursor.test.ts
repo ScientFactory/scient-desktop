@@ -36,6 +36,19 @@ describe("Oh My Pi session cursor", () => {
     expect(ompBinaryFingerprint("/usr/local/bin/omp")).not.toBe(current);
   });
 
+  it("keeps a package-manager binary identity across an in-place upgrade", () => {
+    const installed = ompBinaryFingerprint("/opt/homebrew/Cellar/oh-my-pi/18.2.8/bin/omp");
+    const upgraded = ompBinaryFingerprint("/opt/homebrew/Cellar/oh-my-pi/18.3.1/bin/omp");
+    expect(installed).toBe(upgraded);
+    // A different formula, a different prefix, and a non-package install stay
+    // distinct identities.
+    expect(ompBinaryFingerprint("/opt/homebrew/Cellar/other-tool/18.2.8/bin/omp")).not.toBe(
+      installed,
+    );
+    expect(ompBinaryFingerprint("/usr/local/Cellar/oh-my-pi/18.2.8/bin/omp")).not.toBe(installed);
+    expect(ompBinaryFingerprint("/home/test/.local/bin/omp")).not.toBe(installed);
+  });
+
   it.effect("rejects unverifiable legacy cursor identity", () =>
     Effect.gen(function* () {
       const cursor = makeOmpSessionCursor({

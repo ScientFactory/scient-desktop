@@ -4945,7 +4945,7 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
             rel="noreferrer"
             onClick={stopRowToggle}
           >
-            Open Oh My Pi browser action
+            Open in browser
           </a>
         </div>
       ) : null}

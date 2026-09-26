@@ -73,14 +73,25 @@ export const ompSessionDirectoryKey = (instanceId: string, threadId: string): st
  * A Scient-managed binary lives under `versions/<release>/`. Resume identity
  * keeps the managed family and drops that release directory, so a qualified
  * update can reopen the same session. A custom or system binary stays exact.
+ *
+ * A Homebrew or MacPorts install lives under a versioned `Cellar/<formula>/<version>/`
+ * or `.../<port>/<version>/` directory that the package manager replaces on every
+ * upgrade. Treating that directory as identity would refuse to resume every
+ * conversation after an ordinary `brew upgrade`, so the formula identity is kept
+ * and only the version directory is dropped. The running executable is still
+ * verified by OMP itself, and the session file, workspace, home, profile, launch
+ * policy, protocol and major version all remain part of the cursor.
  */
 export const ompBinaryFingerprint = (binaryPath: string): string => {
   const resolved = NodePath.resolve(binaryPath).replaceAll("\\", "/");
-  const managed = resolved.replace(
-    /\/provider-runtimes\/omp\/versions\/[^/]+\//u,
-    "/provider-runtimes/omp/versions/current/",
-  );
-  return fingerprint(["binary", managed]);
+  const stable = resolved
+    .replace(
+      /\/provider-runtimes\/omp\/versions\/[^/]+\//u,
+      "/provider-runtimes/omp/versions/current/",
+    )
+    .replace(/\/Cellar\/([^/]+)\/[^/]+\//u, "/Cellar/$1/current/")
+    .replace(/^\/opt\/([^/]+)\/[^/]+\//u, "/opt/$1/current/");
+  return fingerprint(["binary", stable]);
 };
 
 /** Resume across patch versions of the same major. A different major is refused. */

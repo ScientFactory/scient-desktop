@@ -22,6 +22,7 @@ import type { OmpRpcClient, OmpRpcNotification } from "effect-omp-rpc/client";
 import type { OmpRpcResponse } from "effect-omp-rpc/schema";
 import type { OmpProcessExit, OmpRpcProcessOptions } from "../omp/OmpRpcProcess.ts";
 import { makeOmpAdapter } from "./OmpAdapter.ts";
+import type { EventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
 const success = (command: string, data: unknown = {}): OmpRpcResponse => ({
   id: "qualification-request",
@@ -182,6 +183,7 @@ const makeAdapter = (input: {
   readonly environment?: NodeJS.ProcessEnv;
   readonly homePath?: string;
   readonly eventQueueByteLimit?: number;
+  readonly nativeEventLogger?: EventNdjsonLogger;
 }) =>
   makeOmpAdapter({
     binaryPath: "omp",
@@ -193,10 +195,51 @@ const makeAdapter = (input: {
     ...(input.eventQueueByteLimit === undefined
       ? {}
       : { eventQueueByteLimit: input.eventQueueByteLimit }),
+    ...(input.nativeEventLogger ? { nativeEventLogger: input.nativeEventLogger } : {}),
     makeProcess: input.makeProcess,
   });
 
 describe("Oh My Pi production qualification seams", () => {
+  it.effect("writes raw Oh My Pi notifications to the shared native event log", () =>
+    Effect.gen(function* () {
+      const root = makeRoot("native-event-log");
+      const events = yield* Queue.unbounded<OmpRpcNotification, Cause.Done>();
+      const written: Array<{ readonly event: unknown; readonly threadId: ThreadId | null }> = [];
+      const adapter = yield* makeAdapter({
+        root,
+        instanceId: ProviderInstanceId.make("omp-qualification-native-log"),
+        nativeEventLogger: {
+          filePath: "/dev/null",
+          write: (event, threadId) =>
+            Effect.sync(() => {
+              written.push({ event, threadId });
+            }),
+          close: () => Effect.void,
+        },
+        makeProcess: (options) =>
+          Effect.sync(() => makeClient({ events, sessionDir: options.sessionDir ?? root })),
+      });
+      const runtimeEvents = yield* collectRuntimeEvents(adapter);
+      const threadId = ThreadId.make("omp-native-log");
+      yield* adapter.startSession({ threadId, cwd: root, runtimeMode: "full-access" });
+      yield* adapter
+        .sendTurn({ threadId, input: "log the raw frames" })
+        .pipe(Effect.timeout("2 seconds"), TestClock.withLive);
+      yield* Queue.offer(events, { _tag: "Event", event: { type: "agent_start" } });
+      yield* takeMatching(runtimeEvents, (event) => event.type === "turn.started");
+      yield* Effect.sleep("200 millis").pipe(TestClock.withLive);
+      const nativeMethods = (record: { readonly event: unknown }): ReadonlyArray<string> => {
+        if (typeof record.event !== "object" || record.event === null) return [];
+        const envelope = record.event as { readonly event?: { readonly method?: unknown } };
+        return typeof envelope.event?.method === "string" ? [envelope.event.method] : [];
+      };
+      expect(written.some((record) => record.threadId === threadId)).toBe(true);
+      expect(written.some((record) => nativeMethods(record).includes("agent_start"))).toBe(true);
+      yield* adapter.stopAll();
+      NodeFS.rmSync(root, { recursive: true, force: true });
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("cancels an accepted turn without killing its process", () =>
     Effect.gen(function* () {
       const root = makeRoot("early-cancel");
