@@ -664,7 +664,7 @@ function HeaderIconButton(props: {
             type="button"
             aria-label={props.label}
             onClick={props.onClick}
-            className="inline-flex size-5 cursor-pointer items-center justify-center rounded text-sidebar-muted-foreground hover:bg-sidebar-row-active hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+            className="inline-flex size-5 cursor-pointer items-center justify-center rounded text-(--sidebar-icon-color) hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
           >
             {props.children}
           </button>
