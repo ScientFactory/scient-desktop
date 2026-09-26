@@ -231,17 +231,24 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
       ).pipe(
         Effect.flatMap((snapshot) =>
           effectiveConfig.enabled && snapshot.installed
-            ? Effect.all({
-                skills: readMachineSkills,
-                usageLimits:
-                  snapshot.auth.status === "authenticated"
-                    ? readCursorUsageLimits(effectiveConfig, processEnv).pipe(
-                        Effect.map((usageLimits) => ({ usageLimits })),
-                      )
-                    : Effect.succeed({}),
-              }).pipe(
-                Effect.map(({ skills, usageLimits }) => ({ ...snapshot, ...usageLimits, skills })),
-              )
+            ? Effect.gen(function* () {
+                const { skills, usageLimits } = yield* Effect.all({
+                  skills: readMachineSkills,
+                  usageLimits: Effect.gen(function* () {
+                    const settings = yield* serverSettings.getSettings;
+                    // The macOS Keychain read stays opt-in: the setting defaults
+                    // to false and `readCursorUsageLimits` also defaults to it.
+                    return snapshot.auth.status === "authenticated"
+                      ? yield* readCursorUsageLimits(
+                          effectiveConfig,
+                          processEnv,
+                          settings.cursorKeychainUsageEnabled,
+                        )
+                      : undefined;
+                  }),
+                });
+                return { ...snapshot, ...(usageLimits ? { usageLimits } : {}), skills };
+              })
             : Effect.succeed(snapshot),
         ),
         Effect.map(stampIdentity),

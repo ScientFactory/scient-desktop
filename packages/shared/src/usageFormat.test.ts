@@ -5,6 +5,7 @@ import {
   enumerateHourStarts,
   formatDateTimeShort,
   formatHourShort,
+  formatPercent,
   formatRelativeHourShort,
   formatUsdPrecise,
   makeWindow,
@@ -17,6 +18,17 @@ describe("usage currency formatting", () => {
     expect(formatUsdPrecise(-0.00001)).toBe("-<$0.0001");
     expect(formatUsdPrecise(0.00138)).toBe("$0.0014");
     expect(formatUsdPrecise(12.5)).toBe("$12.50");
+  });
+});
+
+describe("formatPercent", () => {
+  it("distinguishes a small positive share from zero", () => {
+    expect(formatPercent(0)).toBe("0.0%");
+    expect(formatPercent(0.0004)).toBe("<0.1%");
+    expect(formatPercent(0.0009)).toBe("<0.1%");
+    expect(formatPercent(0.001)).toBe("0.1%");
+    expect(formatPercent(0.023)).toBe("2.3%");
+    expect(formatPercent(0.00004, 2)).toBe("<0.01%");
   });
 });
 

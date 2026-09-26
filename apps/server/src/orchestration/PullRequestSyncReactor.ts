@@ -1,7 +1,7 @@
 import { siblingPullRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import {
   CommandId,
-  type OrchestrationThreadShell,
+  type ProjectId,
   type PullRequestSummary,
   type ThreadPullRequestKey,
   type ThreadPullRequestLink,
@@ -36,11 +36,23 @@ const SLOW_SYNC_INTERVAL_MS = 15 * 60 * 1_000;
 type SnapshotFields = Omit<ThreadPullRequestSnapshot, "syncedAt">;
 
 interface LinkEntry {
-  readonly thread: OrchestrationThreadShell & {
-    readonly projectId: NonNullable<OrchestrationThreadShell["projectId"]>;
-  };
+  readonly thread: ProjectThread;
   readonly link: ThreadPullRequestLink;
 }
+
+type ProjectThread = ProjectionSnapshotQuery.ProjectionThreadPullRequests & {
+  readonly projectId: ProjectId;
+};
+
+/**
+ * A projectless thread has no checkout to read and no host to ask, so it can
+ * never be synced. Narrowing needs an explicit predicate: `ProjectId` is a
+ * branded string rather than a discriminant, so a bare `=== null` check would
+ * not narrow the containing object.
+ */
+const isProjectThread = (
+  thread: ProjectionSnapshotQuery.ProjectionThreadPullRequests,
+): thread is ProjectThread => thread.projectId !== null;
 
 function snapshotFieldsOf(summary: PullRequestSummary): SnapshotFields {
   return {
@@ -106,15 +118,15 @@ function stacksEqual(
   );
 }
 
-function isUnsettled(thread: OrchestrationThreadShell): boolean {
+function isUnsettled(thread: ProjectionSnapshotQuery.ProjectionThreadPullRequests): boolean {
   return thread.settledOverride !== "settled" && thread.settledAt === null;
 }
 
 /**
  * Keeps every thread ↔ pull request link's host snapshot current. One sweep a minute reads
- * the shell snapshot, groups visible links by pull request so the host is asked once per PR
- * no matter how many threads share it, and writes back only what changed. Native stacks the
- * host reports are auto-linked to the thread as `source: "stack"`.
+ * only the active threads that have links, groups visible links by pull request so the host
+ * is asked once per PR no matter how many threads share it, and writes back only what
+ * changed. Native stacks the host reports are auto-linked to the thread as `source: "stack"`.
  */
 export class PullRequestSyncReactor extends Context.Service<
   PullRequestSyncReactor,
@@ -155,18 +167,19 @@ export const make = Effect.gen(function* () {
       Cause.hasInterruptsOnly(cause) ? Effect.failCause(cause) : Effect.logWarning(message, fields);
 
   const sweep = Effect.fn("PullRequestSyncReactor.sweep")(function* (requestedKey?: string) {
-    const snapshot = yield* snapshots.getShellSnapshot();
+    const threads = yield* snapshots.listThreadsWithPullRequests();
     const now = yield* DateTime.now;
     const nowMs = DateTime.toEpochMillis(now);
     const nowIso = DateTime.formatIso(now);
 
     const groups = new Map<string, Array<LinkEntry>>();
-    for (const thread of snapshot.threads) {
-      if (thread.archivedAt !== null || thread.projectId === null) continue;
+    for (const thread of threads) {
+      // The read already excludes archived and deleted threads.
+      if (!isProjectThread(thread)) continue;
       for (const link of visibleThreadPullRequests(thread.pullRequests)) {
         const key = threadPullRequestKeyOf(link);
         const entries = groups.get(key) ?? [];
-        entries.push({ thread: { ...thread, projectId: thread.projectId }, link });
+        entries.push({ thread, link });
         groups.set(key, entries);
       }
     }
@@ -261,12 +274,12 @@ export const make = Effect.gen(function* () {
             Effect.map((stack) => ({
               stack: stack === null ? null : ({ kind: "native", ...stack } as const),
             })),
-            Effect.catchCause((cause) =>
-              Cause.hasInterruptsOnly(cause)
-                ? Effect.failCause(cause)
-                : Effect.logWarning("pull request stack lookup failed", {
-                    key,
-                  }).pipe(Effect.as(null)),
+            Effect.catchCauseIf(
+              (cause) => !Cause.hasInterruptsOnly(cause),
+              () =>
+                Effect.logWarning("pull request stack lookup failed", {
+                  key,
+                }).pipe(Effect.as(null)),
             ),
           )
         : null;
