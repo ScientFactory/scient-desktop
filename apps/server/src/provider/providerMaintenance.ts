@@ -79,6 +79,11 @@ export interface ProviderMaintenanceCommandAction {
    * must update that home and not the default one.
    */
   readonly env?: NodeJS.ProcessEnv;
+  /**
+   * Set false for a provider-owned updater that must not inherit ambient
+   * server credentials. The default preserves the existing provider behavior.
+   */
+  readonly inheritEnv?: boolean;
 }
 
 /** Where the provider executable was found; every path is absolute. */

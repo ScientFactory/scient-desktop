@@ -1,6 +1,8 @@
+import { managedRuntimeSmokeEnvironment } from "@scientfactory/provider-runtime";
 import {
   OmpSettings,
   ProviderDriverKind,
+  type ProviderInstanceEnvironment,
   type ServerProvider,
   type ServerSettings,
 } from "@t3tools/contracts";
@@ -53,6 +55,14 @@ import { withInstanceIdentity } from "./instanceIdentity.ts";
 const DRIVER_KIND = ProviderDriverKind.make("omp");
 const decodeSettings = Schema.decodeSync(OmpSettings);
 
+export const makeOmpProcessEnvironment = (
+  environment: ProviderInstanceEnvironment | undefined,
+  baseEnv: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv => ({
+  ...managedRuntimeSmokeEnvironment(baseEnv),
+  ...mergeProviderInstanceEnvironment(environment, {}),
+});
+
 export type OmpDriverEnv =
   | BackgroundPolicy
   | ChildProcessSpawner.ChildProcessSpawner
@@ -77,7 +87,7 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
       const path = yield* Path.Path;
       const httpClient = yield* HttpClient.HttpClient;
       const effectiveConfig = { ...config, enabled } satisfies OmpSettings;
-      const processEnv: NodeJS.ProcessEnv = { ...mergeProviderInstanceEnvironment(environment) };
+      const processEnv: NodeJS.ProcessEnv = makeOmpProcessEnvironment(environment);
       const home = effectiveConfig.homePath.trim();
       const profile = effectiveConfig.profile.trim();
       if (home.length > 0 && profile.length > 0) {

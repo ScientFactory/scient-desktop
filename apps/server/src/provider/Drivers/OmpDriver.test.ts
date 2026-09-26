@@ -10,7 +10,7 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import { OmpDriver } from "./OmpDriver.ts";
+import { makeOmpProcessEnvironment, OmpDriver } from "./OmpDriver.ts";
 
 const testLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-omp-driver-managed-actions-",
@@ -41,6 +41,25 @@ const testLayer = ServerConfig.layerTest(process.cwd(), {
 
 const noSpawn = ChildProcessSpawner.make(() =>
   Effect.die("OMP driver test must not spawn a process"),
+);
+
+it.effect("keeps unrelated server secrets out of the OMP process environment", () =>
+  Effect.sync(() => {
+    const environment = makeOmpProcessEnvironment(
+      [{ name: "OMP_EXPLICIT_SETTING", value: "kept", sensitive: false }],
+      {
+        PATH: "/usr/bin",
+        HOME: "/home/test",
+        OPENAI_API_KEY: "must-not-cross",
+        UNRELATED_SERVER_SECRET: "must-not-cross",
+      },
+    );
+    expect(environment.OMP_EXPLICIT_SETTING).toBe("kept");
+    expect(environment.PATH).toBe("/usr/bin");
+    expect(environment.HOME).toBe("/home/test");
+    expect(environment.OPENAI_API_KEY).toBeUndefined();
+    expect(environment.UNRELATED_SERVER_SECRET).toBeUndefined();
+  }),
 );
 
 it.layer(testLayer)("OmpDriver", (it) => {

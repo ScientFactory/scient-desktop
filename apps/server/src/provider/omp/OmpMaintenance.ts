@@ -1,3 +1,4 @@
+import { managedRuntimeSmokeEnvironment } from "@scientfactory/provider-runtime";
 import { ProviderDriverKind, type ServerProviderVersionAdvisory } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -16,7 +17,7 @@ import {
 } from "../providerMaintenance.ts";
 
 /** Global installs of the official CLI. Homebrew and GitHub binaries are separate channels. */
-export const OMP_NPM_PACKAGE = "@oh-my-pi/pi-coding-agent";
+const OMP_NPM_PACKAGE = "@oh-my-pi/pi-coding-agent";
 export const OMP_LATEST_RELEASE_URL =
   "https://api.github.com/repos/can1357/oh-my-pi/releases/latest";
 
@@ -72,6 +73,16 @@ const parentDirectory = (commandPath: string): string => {
   return separator > 0 ? normalized.slice(0, separator) : "/";
 };
 
+const OMP_UPDATER_CONFIG_KEYS = [
+  "PI_CODING_AGENT_DIR",
+  "OMP_PROFILE",
+  "PI_PROFILE",
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
+  "XDG_STATE_HOME",
+  "XDG_CACHE_HOME",
+] as const;
+
 const ompUpdateEnvironment = (input: {
   readonly commandPath: string;
   readonly env: NodeJS.ProcessEnv;
@@ -79,21 +90,25 @@ const ompUpdateEnvironment = (input: {
 }): NodeJS.ProcessEnv => {
   const separator = input.platform === "win32" ? ";" : ":";
   const configuredPath = input.env.PATH ?? input.env.Path ?? input.env.path ?? "";
-  // Do not copy the provider's full environment (which may contain credentials)
-  // into the updater. The server environment is inherited by the runner; only
-  // make the configured executable's directory win PATH resolution.
+  // Keep the updater's environment explicit. The maintenance runner normally
+  // inherits the server environment for other providers; OMP must not receive
+  // unrelated credentials just to run its own updater.
+  const safe = managedRuntimeSmokeEnvironment(input.env);
   const path = [parentDirectory(input.commandPath), configuredPath].filter(Boolean).join(separator);
-  return {
-    PATH: path,
-    ...(input.platform === "win32" ? { Path: path } : {}),
-  };
+  const result: NodeJS.ProcessEnv = { ...safe, PATH: path };
+  if (input.platform === "win32") result.Path = path;
+  for (const key of OMP_UPDATER_CONFIG_KEYS) {
+    const value = input.env[key];
+    if (value !== undefined) result[key] = value;
+  }
+  return result;
 };
 
 /**
  * A routine notice is a newer stable release in the same major. A prerelease
  * install and a future major stay unqualified.
  */
-export const ompRoutineLatestVersion = (
+const ompRoutineLatestVersion = (
   currentVersion: string | null,
   latestVersion: string | null,
 ): string | null => {
@@ -142,6 +157,7 @@ export const ompMaintenance: ProviderMaintenanceCapabilitiesResolver = {
         packageName: null,
         update: {
           ...update,
+          inheritEnv: false,
           env: ompUpdateEnvironment({
             commandPath: context.resolvedCommandPath,
             env: context.env,
