@@ -9,6 +9,7 @@ import {
   resolveElectronLaunchCommand,
 } from "./electron-launcher.mjs";
 import {
+  createCoalescedRestartScheduler,
   developmentLauncherIsActive,
   findOwnedDevelopmentProcesses,
   inspectProcessCommand,
@@ -103,9 +104,7 @@ const backendPidFilePath = NodePath.join(launchStateDir, "backend.pid");
 const backendEntryPath = NodePath.resolve(desktopDir, "..", "server", "dist", "bin.mjs");
 
 let shuttingDown = false;
-let restartTimer = null;
 let currentApp = null;
-let restartQueue = Promise.resolve();
 const expectedExits = new WeakSet();
 const watchers = [];
 let launchSequence = 0;
@@ -313,7 +312,7 @@ function startApp() {
     }
 
     if (!shuttingDown) {
-      scheduleRestart();
+      restartScheduler.request();
     }
   });
 
@@ -328,7 +327,7 @@ function startApp() {
 
     const exitedAbnormally = signal !== null || code !== 0;
     if (!shuttingDown && !expectedExits.has(launcher) && exitedAbnormally) {
-      scheduleRestart();
+      restartScheduler.request();
     }
   });
 }
@@ -384,27 +383,15 @@ async function stopApp() {
   }).finally(() => cleanupLaunchFiles(app));
 }
 
-function scheduleRestart() {
-  if (shuttingDown) {
-    return;
-  }
-
-  if (restartTimer) {
-    clearTimeout(restartTimer);
-  }
-
-  restartTimer = setTimeout(() => {
-    restartTimer = null;
-    restartQueue = restartQueue
-      .catch(() => undefined)
-      .then(async () => {
-        await stopApp();
-        if (!shuttingDown) {
-          startApp();
-        }
-      });
-  }, restartDebounceMs);
-}
+const restartScheduler = createCoalescedRestartScheduler({
+  debounceMs: restartDebounceMs,
+  restart: async () => {
+    await stopApp();
+    if (!shuttingDown) {
+      startApp();
+    }
+  },
+});
 
 function startWatchers() {
   for (const { directory, files } of watchedDirectories) {
@@ -416,7 +403,7 @@ function startWatchers() {
           return;
         }
 
-        scheduleRestart();
+        restartScheduler.request();
       },
     );
 
@@ -428,15 +415,14 @@ async function shutdown(exitCode) {
   if (shuttingDown) return;
   shuttingDown = true;
 
-  if (restartTimer) {
-    clearTimeout(restartTimer);
-    restartTimer = null;
-  }
-
   for (const watcher of watchers) {
     watcher.close();
   }
 
+  // A restart may still be stopping the previous app. stopApp() alone would
+  // see no current app and exit before that stop (and its SIGKILL fallback)
+  // finished, leaving the app or backend running.
+  await restartScheduler.close();
   await stopApp();
 
   process.exit(exitCode);

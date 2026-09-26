@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 import { afterEach, assert, describe, it } from "vite-plus/test";
 
 import {
+  createCoalescedRestartScheduler,
   developmentLauncherIsActive,
   findOwnedDevelopmentChildProcess,
   findOwnedDevelopmentProcesses,
@@ -16,6 +17,31 @@ import {
 } from "./dev-app-process.mjs";
 
 const roots = [];
+
+function flushPromises() {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+function makeManualTimers() {
+  const timers = [];
+  return {
+    set: (callback) => {
+      const timer = { callback, cancelled: false, fired: false };
+      timers.push(timer);
+      return timer;
+    },
+    clear: (timer) => {
+      timer.cancelled = true;
+    },
+    pending: () => timers.filter((timer) => !timer.cancelled && !timer.fired).length,
+    fireNext: () => {
+      const timer = timers.find((candidate) => !candidate.cancelled && !candidate.fired);
+      assert.isDefined(timer);
+      timer.fired = true;
+      timer.callback();
+    },
+  };
+}
 
 afterEach(() => {
   for (const root of roots.splice(0)) {
@@ -138,6 +164,83 @@ describe("macOS development app process ownership", () => {
     assert.isFalse(
       developmentLauncherIsActive({ pid: undefined, exitCode: null, signalCode: null }),
     );
+  });
+
+  it("coalesces restart requests made during an active restart into one follow-up", async () => {
+    const timers = makeManualTimers();
+    const releases = [];
+    let restarts = 0;
+    const scheduler = createCoalescedRestartScheduler({
+      debounceMs: 120,
+      setTimer: timers.set,
+      clearTimer: timers.clear,
+      restart: () => {
+        restarts += 1;
+        return new Promise((resolve) => releases.push(resolve));
+      },
+    });
+
+    scheduler.request();
+    scheduler.request();
+    scheduler.request();
+    assert.equal(timers.pending(), 1);
+    timers.fireNext();
+    await flushPromises();
+    assert.equal(restarts, 1);
+
+    scheduler.request();
+    scheduler.request();
+    assert.equal(timers.pending(), 0);
+    releases.shift()();
+    await flushPromises();
+    assert.equal(timers.pending(), 1);
+    timers.fireNext();
+    await flushPromises();
+    assert.equal(restarts, 2);
+
+    releases.shift()();
+    await scheduler.close();
+    assert.equal(restarts, 2);
+  });
+
+  it("waits for an in-flight restart on close and drops pending requests", async () => {
+    const timers = makeManualTimers();
+    let release;
+    let finished = false;
+    let restarts = 0;
+    const scheduler = createCoalescedRestartScheduler({
+      debounceMs: 120,
+      setTimer: timers.set,
+      clearTimer: timers.clear,
+      restart: () => {
+        restarts += 1;
+        return new Promise((resolve) => {
+          release = resolve;
+        }).then(() => {
+          finished = true;
+        });
+      },
+    });
+
+    scheduler.request();
+    timers.fireNext();
+    await flushPromises();
+    scheduler.request();
+
+    let closed = false;
+    const closing = scheduler.close().then(() => {
+      closed = true;
+    });
+    await flushPromises();
+    assert.isFalse(closed);
+
+    release();
+    await closing;
+    assert.isTrue(finished);
+    assert.equal(timers.pending(), 0);
+    scheduler.request();
+    assert.equal(timers.pending(), 0);
+    assert.equal(restarts, 1);
   });
 
   it("uses a concise automatic label while keeping stable canonical", () => {
