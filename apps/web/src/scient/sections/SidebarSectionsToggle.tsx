@@ -1,0 +1,42 @@
+import { ArrowDownWideNarrowIcon } from "lucide-react";
+
+import { SidebarMenuButton } from "../../components/ui/sidebar";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
+
+/**
+ * Two-state sidebar grouping: off shows the Status layout, on groups threads
+ * by section. The pressed state uses the sidebar's selected-row fill so the
+ * current mode is visible without hovering.
+ */
+export function SidebarSectionsToggle(props: {
+  readonly active: boolean;
+  readonly onActiveChange: (active: boolean) => void;
+}) {
+  const label = props.active ? "Stop grouping by section" : "Group by section";
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <SidebarMenuButton
+            size="icon"
+            type="button"
+            aria-label={label}
+            aria-pressed={props.active}
+            isActive={props.active}
+            data-testid="sidebar-sections-toggle"
+            onClick={() => props.onActiveChange(!props.active)}
+            className="relative size-7 shrink-0"
+          />
+        }
+      >
+        <ArrowDownWideNarrowIcon />
+        {/* Coarse-pointer hit area, matching the rest of the sidebar chrome. */}
+        <span
+          aria-hidden
+          className="pointer-events-none absolute left-1/2 top-1/2 size-[max(100%,3rem)] -translate-1/2 pointer-fine:hidden"
+        />
+      </TooltipTrigger>
+      <TooltipPopup side="top">{label}</TooltipPopup>
+    </Tooltip>
+  );
+}

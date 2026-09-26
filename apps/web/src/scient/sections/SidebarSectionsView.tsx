@@ -100,8 +100,9 @@ export interface SidebarSectionsViewProps {
   readonly renamingSectionId: string | null;
   readonly onRenamingSectionChange: (sectionId: string | null) => void;
   readonly onRenameSection: (sectionId: string, name: string) => void;
-  /** Inline "New section" row; null when not creating. */
+  /** Inline name input replacing the "New section" row; null when not creating. */
   readonly creatingSection: { readonly onSubmit: (name: string) => void } | null;
+  readonly onStartCreateSection: () => void;
   readonly onCancelCreateSection: () => void;
 }
 
@@ -427,13 +428,7 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
       <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
         <ul role="list" className="relative flex flex-1 flex-col gap-px">
           {props.leading}
-          {props.creatingSection !== null ? (
-            <NewSectionRow
-              onSubmit={props.creatingSection.onSubmit}
-              onCancel={props.onCancelCreateSection}
-            />
-          ) : null}
-          {visibleItems.map((item) => {
+          {visibleItems.map((item, index) => {
             if (item.kind === "header") {
               const group = groupById.get(item.groupId);
               if (group === undefined) return null;
@@ -461,8 +456,21 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
               );
             }
             if (item.kind === "shelf") {
+              // New sections join the end of the list, so the row sits after the last one.
+              const firstShelf =
+                visibleItems.findIndex((entry) => entry.kind === "shelf") === index;
               return (
                 <Fragment key={item.id}>
+                  {firstShelf && drag === null ? (
+                    props.creatingSection !== null ? (
+                      <NewSectionRow
+                        onSubmit={props.creatingSection.onSubmit}
+                        onCancel={props.onCancelCreateSection}
+                      />
+                    ) : (
+                      <AddSectionRow onClick={props.onStartCreateSection} />
+                    )
+                  ) : null}
                   {props.renderShelfHeader(item.shelf, {
                     dragging: drag?.kind === "thread",
                     isDropTarget: item.shelf === "settled" && dragTarget?.kind === "settled",
@@ -708,6 +716,22 @@ function SectionNameInput(props: {
       onBlur={() => finish(true)}
       className="h-6 min-w-0 flex-1 rounded border border-ring bg-background px-1.5 text-xs font-medium text-foreground outline-none"
     />
+  );
+}
+
+function AddSectionRow(props: { onClick: () => void }) {
+  return (
+    <li className="mx-0.5 h-8 list-none">
+      <button
+        type="button"
+        onClick={props.onClick}
+        data-testid="sidebar-add-section"
+        className="flex h-full w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left text-xs font-medium text-sidebar-muted-foreground/60 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+      >
+        <PlusIcon aria-hidden className="size-3 shrink-0" />
+        New section
+      </button>
+    </li>
   );
 }
 

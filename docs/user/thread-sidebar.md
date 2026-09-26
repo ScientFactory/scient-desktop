@@ -120,8 +120,9 @@ Right-click a thread and choose **Section** to file it. The current section is c
 With several threads selected, **Move to section** files them together. Each move shows
 **Undo** in the sidebar, and `mod+z` restores the previous section.
 
-Open the view menu next to search and choose **Group threads by → Sections** to see the sidebar by
-section. **Status**, the default, keeps the Pinned and Active layout. In the Sections view:
+Click **Group by section** next to search to see the sidebar by section; the button stays
+highlighted while it is on. Click it again to return to the default Pinned and Active layout. In the
+Sections view:
 
 - Each section lists its pinned threads first, then the rest in your arranged order. Threads
   without a section appear under **Other**, which is always last.
@@ -133,7 +134,8 @@ section. **Status**, the default, keeps the Pinned and Active layout. In the Sec
 - Click a header to collapse it; a collapsed section shows a dot while one of its threads is
   working. Double-click a header to rename it. Hover a header for **New thread in section** and
   the section menu, which also offers **Move up**, **Move down**, and **Delete section**.
-- **Show empty sections** in the view menu controls whether sections without active threads show.
+- Empty sections stay visible so you can drag threads into them. **New section**, after the last
+  section, adds one at the end.
 
 Deleting a section never deletes conversations: its threads move to **Other**, and **Undo** on the
 confirmation brings the section and its threads back. The section list is stored on the server of

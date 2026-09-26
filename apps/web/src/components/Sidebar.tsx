@@ -255,7 +255,7 @@ import {
   useApplyPendingNewThreadSections,
 } from "../scient/sections/pendingNewThreadSections";
 import { SidebarSectionsView } from "../scient/sections/SidebarSectionsView";
-import { SidebarViewMenu } from "../scient/sections/SidebarViewMenu";
+import { SidebarSectionsToggle } from "../scient/sections/SidebarSectionsToggle";
 import { useNewSectionForThreads } from "../scient/sections/useNewSectionForThreads";
 // SCIENT-FORK:END
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuShortcut, MenuTrigger } from "./ui/menu";
@@ -279,7 +279,6 @@ const SETTLED_SHELF_EXPANDED_KEY = "t3code:sidebar:settled-expanded";
 const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar:snoozed-expanded";
 // SCIENT-FORK:START — thread sections view state.
 const SIDEBAR_VIEW_MODE_KEY = "scient:sidebar:view-mode";
-const SHOW_EMPTY_SECTIONS_KEY = "scient:sidebar:show-empty-sections";
 const COLLAPSED_SECTIONS_KEY = "scient:sidebar:collapsed-sections";
 const CollapsedSectionIds = Schema.Array(Schema.String);
 // SCIENT-FORK:END
@@ -2264,11 +2263,6 @@ export default function Sidebar() {
     "status" as SidebarViewMode,
     SidebarViewMode,
   );
-  const [showEmptySections, setShowEmptySections] = useLocalStorage(
-    SHOW_EMPTY_SECTIONS_KEY,
-    true,
-    Schema.Boolean,
-  );
   const [collapsedSectionIds, setCollapsedSectionIds] = useLocalStorage(
     COLLAPSED_SECTIONS_KEY,
     [] as string[],
@@ -2855,9 +2849,10 @@ export default function Sidebar() {
         sections: sectionCatalog.sections,
         pinned: pinnedThreads,
         active: activeThreads,
-        showEmptySections,
+        // Empty sections stay visible: they are drop targets.
+        showEmptySections: true,
       }),
-    [activeThreads, pinnedThreads, sectionCatalog.sections, showEmptySections],
+    [activeThreads, pinnedThreads, sectionCatalog.sections],
   );
   const orderedThreads = useMemo(
     () =>
@@ -4819,16 +4814,12 @@ export default function Sidebar() {
               // SCIENT-FORK:START
               viewMenu={
                 primarySupportsSections ? (
-                  <SidebarViewMenu
-                    mode={sectionsView ? "sections" : "status"}
-                    onModeChange={(mode) => {
+                  <SidebarSectionsToggle
+                    active={sectionsView}
+                    onActiveChange={(active) => {
                       setCreatingSection(null);
-                      setSidebarViewMode(mode);
+                      setSidebarViewMode(active ? "sections" : "status");
                     }}
-                    showEmptySections={showEmptySections}
-                    onShowEmptySectionsChange={setShowEmptySections}
-                    sectionsAvailable={sectionCatalog.available}
-                    onNewSection={() => requestNewSection([])}
                   />
                 ) : null
               }
@@ -5121,15 +5112,7 @@ export default function Sidebar() {
                     {sectionCatalog.sections.length === 0 && creatingSection === null ? (
                       <li className="list-none px-2 pb-2 text-xs text-sidebar-muted-foreground">
                         Group related threads into sections. Right-click a thread and choose
-                        Section, or{" "}
-                        <button
-                          type="button"
-                          onClick={() => requestNewSection([])}
-                          className="cursor-pointer font-medium text-sidebar-foreground underline-offset-2 hover:underline"
-                        >
-                          create a section
-                        </button>
-                        .
+                        Section, or use New section below.
                       </li>
                     ) : null}
                   </>
@@ -5156,6 +5139,7 @@ export default function Sidebar() {
                 onRenamingSectionChange={setRenamingSectionId}
                 onRenameSection={renameSection}
                 creatingSection={creatingSection === null ? null : { onSubmit: submitNewSection }}
+                onStartCreateSection={() => setCreatingSection({ threadRefs: [] })}
                 onCancelCreateSection={() => setCreatingSection(null)}
               />
             </TooltipProvider>
