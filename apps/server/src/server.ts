@@ -211,6 +211,10 @@ import { scientSourcesHttpApiLayer } from "./scient/sources/http.ts";
 import { scientLatexHttpApiLayer } from "./scient/latex/http.ts";
 import { scientMarkdownHttpApiLayer } from "./scient/markdown/http.ts";
 import { scientThreadQueueHttpApiLayer } from "./scient/threadQueue/http.ts";
+import { scientConversationExportHttpApiLayer } from "./scient/conversationExport/http.ts";
+import * as ConversationExportFiles from "./scient/conversationExport/ConversationExportFiles.ts";
+import * as ConversationExportService from "./scient/conversationExport/ConversationExportService.ts";
+import * as ConversationSnapshotService from "./scient/conversationExport/ConversationSnapshotService.ts";
 import { scientAnalyticsHttpApiLayer } from "./telemetry/http.ts";
 
 // MCP handoff thread IDs include escaped provenance and can exceed find-my-way's
@@ -721,6 +725,11 @@ const commandReadinessLayer = HttpRouter.middleware(
 );
 
 const AnalysisRunIndexLive = AnalysisRunIndex.layer.pipe(Layer.provide(PersistenceLayerLive));
+// Conversation export reads one transactional snapshot and writes temporary files.
+const ConversationExportServiceLive = ConversationExportService.layer.pipe(
+  Layer.provide(ConversationSnapshotService.layer.pipe(Layer.provide(PersistenceLayerLive))),
+  Layer.provide(ConversationExportFiles.layer),
+);
 const ScientificRuntimePreferencesLive = ScientificRuntimePreferences.layer.pipe(
   Layer.provide(ServerSettingsLayerLive),
   Layer.provide(LocalAnalysisStore.layer),
@@ -767,6 +776,7 @@ export const makeRoutesLayer = Layer.mergeAll(
       Layer.provide(scientLatexHttpApiLayer),
       Layer.provide(scientMarkdownHttpApiLayer),
       Layer.provide(scientThreadQueueHttpApiLayer.pipe(Layer.provide(PersistenceLayerLive))),
+      Layer.provide(scientConversationExportHttpApiLayer),
       Layer.provide(serverEnvironmentHttpApiLayer),
       Layer.provide(environmentAuthenticatedAuthLayer),
     ),
@@ -795,6 +805,7 @@ export const makeRoutesLayer = Layer.mergeAll(
   // and mutations observed on WebSocket invalidate patches subsequently read over HTTP.
   Layer.provide(PullRequestServiceLive),
   Layer.provide(AnalysisServiceLive),
+  Layer.provide(ConversationExportServiceLive),
   Layer.provide(ComputeMcpGatewayLive),
   Layer.provide(ComputeSessionServiceLive),
   Layer.provide(ScientificRuntimePreferencesLive),

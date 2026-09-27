@@ -5,6 +5,7 @@ import {
   ConversationExportOptions,
   ConversationSnapshotV1,
   DocumentBundle,
+  DocumentCitation,
   ScientConversationExportRequest,
   ScientConversationExportResult,
 } from "./scientConversationExport.ts";
@@ -17,6 +18,7 @@ const decodeUnknownBundle = Schema.decodeUnknownSync(DocumentBundle);
 const decodeOptions = Schema.decodeUnknownSync(ConversationExportOptions);
 const decodeRequest = Schema.decodeSync(ScientConversationExportRequest);
 const decodeResult = Schema.decodeSync(ScientConversationExportResult);
+const decodeCitation = Schema.decodeUnknownSync(DocumentCitation);
 
 const snapshot = {
   format: "scient.conversation-snapshot",
@@ -260,5 +262,81 @@ describe("conversation export contracts", () => {
         warnings: [],
       }).file?.fileName,
     ).toBe("Export design.md");
+  });
+
+  it("carries complete CSL-JSON for a journal article", () => {
+    const citation = decodeCitation({
+      _tag: "bibliographic",
+      id: "c1",
+      key: "smith2024",
+      reference: {
+        id: "src-1",
+        type: "article-journal",
+        title: "Measured outcomes",
+        author: [
+          { family: "Smith", given: "Ada" },
+          { family: "Beethoven", given: "Ludwig", "non-dropping-particle": "van" },
+        ],
+        issued: { "date-parts": [[2024, 3, 7]] },
+        "container-title": "Journal of Results",
+        volume: "12",
+        issue: "4",
+        page: "101-119",
+        DOI: "10.1000/xyz",
+        ISSN: "1234-5678",
+        URL: "https://example.org/a",
+      },
+    });
+    if (citation._tag !== "bibliographic" || citation.reference === null)
+      throw new Error("Expected a bibliographic reference.");
+    expect(citation.reference).toMatchObject({ volume: "12", issue: "4", page: "101-119" });
+    expect(citation.reference.author?.[1]).toEqual({
+      family: "Beethoven",
+      given: "Ludwig",
+      "non-dropping-particle": "van",
+    });
+  });
+
+  it("carries a book with an editor and a corporate author, and no unknown fields", () => {
+    const citation = decodeCitation({
+      _tag: "bibliographic",
+      id: "c2",
+      key: "who2023",
+      reference: {
+        id: "src-2",
+        type: "book",
+        title: "Global report",
+        author: [{ literal: "World Health Organization" }],
+        editor: [{ family: "Jones", given: "B." }],
+        issued: { "date-parts": [[2023]] },
+        accessed: { "date-parts": [[2026, 9, 1]] },
+        publisher: "WHO Press",
+        "publisher-place": "Geneva",
+        edition: "2",
+        ISBN: "978-92-4-000000-0",
+        custom: { secret: "never carried" },
+      },
+    });
+    if (citation._tag !== "bibliographic" || citation.reference === null)
+      throw new Error("Expected a bibliographic reference.");
+    expect(citation.reference.author).toEqual([{ literal: "World Health Organization" }]);
+    expect(citation.reference.editor).toEqual([{ family: "Jones", given: "B." }]);
+    expect(citation.reference).not.toHaveProperty("custom");
+    expect(() =>
+      decodeCitation({
+        _tag: "bibliographic",
+        id: "c3",
+        key: "x",
+        reference: { id: "x", type: "not-a-csl-type" },
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeCitation({
+        _tag: "bibliographic",
+        id: "c3",
+        key: "x",
+        reference: { id: "x", type: "book", author: [{ suffix: "Jr." }] },
+      }),
+    ).toThrow();
   });
 });

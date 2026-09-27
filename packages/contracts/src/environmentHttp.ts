@@ -1184,5 +1184,6 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentScientLatexHttpApi)
   // SCIENT-FORK:START
   .add(EnvironmentScientThreadQueueHttpApi)
+  .add(EnvironmentScientConversationExportHttpApi)
   // SCIENT-FORK:END
   .add(EnvironmentConnectHttpApi) {}

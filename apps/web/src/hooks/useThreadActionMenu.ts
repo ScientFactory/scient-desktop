@@ -44,6 +44,7 @@ import { useClientSettings } from "./useSettings";
 import { useThreadActions } from "./useThreadActions";
 // SCIENT-FORK:START
 import { useThreadSectionMenu } from "../scient/sections/useThreadSectionMenu";
+import { handleConversationExportMenuAction } from "../scient/conversationExport/menu";
 // SCIENT-FORK:END
 
 function failureToast(title: string, error: unknown) {
@@ -187,6 +188,7 @@ export function useThreadActionMenu(input: {
         }
         // SCIENT-FORK:START
         if (await handleSectionMenuAction(action, [threadRef])) return;
+        if (handleConversationExportMenuAction(action, threadRef)) return;
         // SCIENT-FORK:END
         const reportFailure = async (
           title: string,
