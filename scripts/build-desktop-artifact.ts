@@ -1025,6 +1025,19 @@ interface StagePackageJson {
 
 export const STAGE_INSTALL_ARGS = ["install", "--prod"] as const;
 export const DESKTOP_ELECTRON_LANGUAGES = ["en-US"] as const;
+// SCIENT-FORK:START — Scient conversation files open with Scient on every
+// platform. The extension and media type are the `.scic` contract's
+// (SCIC_FILE_EXTENSION, SCIC_MEDIA_TYPE in @t3tools/contracts).
+export const DESKTOP_FILE_ASSOCIATIONS = [
+  {
+    ext: "scic",
+    name: "Scient Conversation",
+    description: "Scient conversation",
+    mimeType: "application/vnd.scient.conversation+zip",
+    role: "Editor",
+  },
+] as const;
+// SCIENT-FORK:END
 export const DESKTOP_FILE_EXCLUSIONS = [
   // Scient always passes the user's installed Claude executable to the SDK,
   // so the SDK's optional platform packages (each a ~200MB bundled executable)
@@ -2830,6 +2843,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     productName: resolveDesktopProductName(version),
     artifactName: "Scient-${version}-${arch}.${ext}",
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
+    // SCIENT-FORK:START
+    fileAssociations: DESKTOP_FILE_ASSOCIATIONS.map((association) => ({ ...association })),
+    // SCIENT-FORK:END
     files: [
       ...DESKTOP_FILE_EXCLUSIONS,
       ...(platform === "mac"

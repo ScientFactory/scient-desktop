@@ -117,6 +117,13 @@ import { AdvertisedEndpoint } from "./remoteAccess.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import { type ClientSettings, type QuitConfirmationMode, SnapShotShortcut } from "./settings.ts";
 import type { EditorId } from "./editor.ts";
+// SCIENT-FORK:START — conversation files the OS opened with Scient.
+import type {
+  DesktopConversationFileUploadRequest,
+  DesktopConversationFileUploadResult,
+  DesktopOpenedConversationFile,
+} from "./scientConversationImport.ts";
+// SCIENT-FORK:END
 import type {
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
@@ -1348,6 +1355,16 @@ export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
 export interface DesktopBridge {
   /** Scient: macOS conversations with unread completed answers; zero clears the badge. */
   setUnreadAnswerCount?: (count: number) => Promise<boolean>;
+  // SCIENT-FORK:START — conversation files the OS opened with Scient.
+  /** Scient: removes and returns the `.scic` files opened with Scient that await import. */
+  takeOpenedConversationFiles?: () => Promise<ReadonlyArray<DesktopOpenedConversationFile>>;
+  /** Scient: called when the OS opens another `.scic` with Scient; then take them. */
+  onConversationFilesOpened?: (listener: () => void) => () => void;
+  /** Scient: streams an opened `.scic` to a signed import upload URL. */
+  uploadOpenedConversationFile?: (
+    request: DesktopConversationFileUploadRequest,
+  ) => Promise<DesktopConversationFileUploadResult>;
+  // SCIENT-FORK:END
   getAppBranding: () => DesktopAppBranding | null;
   /** The desktop client's OS platform, read from Electron's preload process. */
   getClientPlatform?: () => string;

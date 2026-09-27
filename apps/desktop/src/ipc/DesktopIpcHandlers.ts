@@ -1,4 +1,10 @@
 import { setUnreadAnswerCount } from "../scient/answerAttention/ipc.ts";
+// SCIENT-FORK:START — conversation files the OS opened with Scient.
+import {
+  takeOpenedConversationFiles,
+  uploadOpenedConversationFile,
+} from "../scient/conversationImport/openedConversationFiles.ts";
+// SCIENT-FORK:END
 import * as Effect from "effect/Effect";
 
 import * as DesktopIpc from "./DesktopIpc.ts";
@@ -86,6 +92,10 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* PreviewIpc.installPreviewEventForwarding();
 
   yield* ipc.handle(setUnreadAnswerCount);
+  // SCIENT-FORK:START — conversation files the OS opened with Scient.
+  yield* ipc.handle(takeOpenedConversationFiles);
+  yield* ipc.handle(uploadOpenedConversationFile);
+  // SCIENT-FORK:END
   yield* ipc.handle(AppActivationIpc.setReady);
   yield* ipc.handle(AppActivationIpc.complete);
 
