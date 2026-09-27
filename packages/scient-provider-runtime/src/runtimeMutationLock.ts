@@ -132,7 +132,7 @@ async function processStartIdentity(pid: number): Promise<string | undefined> {
     }
     const { stdout } = await execFile("ps", ["-o", "lstart=", "-p", String(pid)], {
       timeout: 3_000,
-      env: { ...process.env, LC_ALL: "C" },
+      env: { ...process.env, LC_ALL: "C", TZ: "UTC" },
     });
     const started = stdout.trim().replace(/\s+/gu, " ");
     return started.length > 0 ? `ps:${started}` : undefined;
