@@ -137,6 +137,15 @@ import {
   ScientThreadQueueUpdateRequest,
 } from "./scientThreadQueue.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient conversation export contracts.
+import {
+  ScientConversationExportError,
+  ScientConversationExportPreparation,
+  ScientConversationExportPrepareRequest,
+  ScientConversationExportRequest,
+  ScientConversationExportResult,
+} from "./scientConversationExport.ts";
+// SCIENT-FORK:END
 
 const OptionalBearerHeaders = Schema.Struct({
   authorization: Schema.optionalKey(Schema.String),
@@ -191,6 +200,7 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "scient_analytics_deletion_failed",
   // SCIENT-FORK:START
   "scient_thread_queue_operation_failed",
+  "scient_conversation_export_failed",
   // SCIENT-FORK:END
   "internal_error",
 ]);
@@ -1081,6 +1091,29 @@ export class EnvironmentScientThreadQueueHttpApi extends HttpApiGroup.make("scie
       payload: ScientThreadQueueControlRequest,
       success: ScientThreadQueueSnapshot,
       error: [EnvironmentHttpCommonError, ScientThreadQueueOperationError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+// SCIENT-FORK:END
+
+// SCIENT-FORK:START — Scient conversation export group, appended like the
+// thread queue group so upstream additions never collide with it.
+export class EnvironmentScientConversationExportHttpApi extends HttpApiGroup.make(
+  "scientConversationExport",
+)
+  .add(
+    HttpApiEndpoint.post("prepare", "/api/scient/conversation-export/v1/prepare", {
+      headers: OptionalBearerHeaders,
+      payload: ScientConversationExportPrepareRequest,
+      success: ScientConversationExportPreparation,
+      error: [EnvironmentHttpCommonError, ScientConversationExportError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("export", "/api/scient/conversation-export/v1/export", {
+      headers: OptionalBearerHeaders,
+      payload: ScientConversationExportRequest,
+      success: ScientConversationExportResult,
+      error: [EnvironmentHttpCommonError, ScientConversationExportError],
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 // SCIENT-FORK:END

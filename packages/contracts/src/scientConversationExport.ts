@@ -1,0 +1,524 @@
+import * as Schema from "effect/Schema";
+import * as HttpServerRespondable from "effect/unstable/http/HttpServerRespondable";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+
+import {
+  IsoDateTime,
+  MessageId,
+  NonNegativeInt,
+  PositiveInt,
+  ThreadId,
+  TrimmedNonEmptyString,
+  TurnId,
+} from "./baseSchemas.ts";
+import { OrchestrationMessageContext } from "./composerContext.ts";
+import { ToolLifecycleItemType } from "./providerRuntime.ts";
+
+/**
+ * Conversation export contracts: the versioned conversation snapshot, the
+ * source-neutral document bundle every readable-output writer consumes, and
+ * the HTTP surface a client uses to request an export.
+ *
+ * The snapshot is captured on the server from durable projections at a known
+ * sequence; readable formats (Markdown, PDF, Word) are functions of a document
+ * bundle built from it, and a transfer file is the snapshot serialized with its
+ * attachments. See docs/internals/scient-conversation-export.md.
+ */
+
+const ShortText = (max: number) => Schema.String.check(Schema.isMaxLength(max));
+
+export const Sha256Digest = Schema.String.check(Schema.isPattern(/^sha256:[a-f0-9]{64}$/));
+export type Sha256Digest = typeof Sha256Digest.Type;
+
+/**
+ * Text kept to a head and tail by the export projection. `omittedLines` and
+ * `omittedChars` describe what was cut from the middle; both are zero when the
+ * text is complete.
+ */
+export const ConversationBoundedText = Schema.Struct({
+  text: Schema.String,
+  omittedLines: NonNegativeInt,
+  omittedChars: NonNegativeInt,
+});
+export type ConversationBoundedText = typeof ConversationBoundedText.Type;
+
+// ---------------------------------------------------------------------------
+// Conversation snapshot
+// ---------------------------------------------------------------------------
+
+export const CONVERSATION_SNAPSHOT_FORMAT = "scient.conversation-snapshot";
+
+export const ConversationMessageRole = Schema.Literals(["user", "assistant", "system"]);
+export type ConversationMessageRole = typeof ConversationMessageRole.Type;
+
+export const ConversationAttachmentKind = Schema.Literals(["image", "file", "other"]);
+export type ConversationAttachmentKind = typeof ConversationAttachmentKind.Type;
+
+/**
+ * One attachment as recorded on a message or a submitted answer.
+ * `localId` is the installation-local attachment identity the server resolves
+ * bytes with; readable outputs never print it and transfer files replace it.
+ */
+export const ConversationAttachment = Schema.Struct({
+  localId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+  kind: ConversationAttachmentKind,
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  mimeType: TrimmedNonEmptyString.check(Schema.isMaxLength(100)),
+  sizeBytes: NonNegativeInt,
+  /** Clipboard text a client folded into a file attachment. */
+  pastedText: Schema.Boolean,
+  /** Whether the bytes were present when the snapshot was captured. */
+  available: Schema.Boolean,
+});
+export type ConversationAttachment = typeof ConversationAttachment.Type;
+
+/**
+ * A completed transcript message. `n` is the 1-based position among the
+ * snapshot's messages; it is stable for one snapshot and is what Markdown
+ * markers and range selection refer to.
+ */
+export const ConversationMessage = Schema.Struct({
+  n: PositiveInt,
+  id: MessageId,
+  role: ConversationMessageRole,
+  turnId: Schema.NullOr(TurnId),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+  /** Message Markdown exactly as stored, including Scient inline references. */
+  text: Schema.String,
+  attachments: Schema.Array(ConversationAttachment),
+  context: Schema.optionalKey(OrchestrationMessageContext),
+});
+export type ConversationMessage = typeof ConversationMessage.Type;
+
+/** The provider reasoning text chat shows in a collapsed block. Nothing is reconstructed. */
+export const ConversationReasoning = Schema.Struct({
+  id: MessageId,
+  turnId: Schema.NullOr(TurnId),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+  text: Schema.String,
+});
+export type ConversationReasoning = typeof ConversationReasoning.Type;
+
+export const ConversationProposedPlan = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  turnId: Schema.NullOr(TurnId),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+  markdown: Schema.String,
+  implemented: Schema.Boolean,
+});
+export type ConversationProposedPlan = typeof ConversationProposedPlan.Type;
+
+/** A question the agent asked and the answer the user submitted. Unanswered questions never appear. */
+export const ConversationQuestionAnswer = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  turnId: Schema.NullOr(TurnId),
+  createdAt: IsoDateTime,
+  items: Schema.Array(
+    Schema.Struct({
+      question: Schema.NullOr(Schema.String),
+      answer: Schema.String,
+      attachments: Schema.Array(ConversationAttachment),
+    }),
+  ),
+});
+export type ConversationQuestionAnswer = typeof ConversationQuestionAnswer.Type;
+
+export const ConversationWorkLogStatus = Schema.Literals([
+  "in-progress",
+  "completed",
+  "failed",
+  "declined",
+  "stopped",
+]);
+export type ConversationWorkLogStatus = typeof ConversationWorkLogStatus.Type;
+
+const workLogBase = {
+  id: TrimmedNonEmptyString,
+  turnId: Schema.NullOr(TurnId),
+  createdAt: IsoDateTime,
+} as const;
+
+/**
+ * The work log's export projection: an explicit set of display fields per
+ * supported activity kind. Provider payload objects are never carried, and
+ * nothing executable (approval requests, unanswered questions) is included.
+ */
+export const ConversationWorkLogEntry = Schema.Union([
+  Schema.TaggedStruct("tool", {
+    ...workLogBase,
+    title: ShortText(512),
+    itemType: Schema.NullOr(ToolLifecycleItemType),
+    toolName: Schema.NullOr(ShortText(256)),
+    status: Schema.NullOr(ConversationWorkLogStatus),
+    command: Schema.NullOr(ConversationBoundedText),
+    detail: Schema.NullOr(ConversationBoundedText),
+    output: Schema.NullOr(ConversationBoundedText),
+    changedFiles: Schema.Array(ShortText(1_024)),
+    omittedChangedFiles: NonNegativeInt,
+  }),
+  Schema.TaggedStruct("task", {
+    ...workLogBase,
+    title: ShortText(512),
+    status: Schema.NullOr(ConversationWorkLogStatus),
+    agentRole: Schema.NullOr(ShortText(256)),
+    detail: Schema.NullOr(ConversationBoundedText),
+  }),
+  Schema.TaggedStruct("notice", {
+    ...workLogBase,
+    level: Schema.Literals(["info", "warning", "error"]),
+    title: ShortText(512),
+    detail: Schema.NullOr(ConversationBoundedText),
+  }),
+  Schema.TaggedStruct("compaction", {
+    ...workLogBase,
+    title: ShortText(512),
+  }),
+  Schema.TaggedStruct("plan-steps", {
+    ...workLogBase,
+    explanation: Schema.NullOr(ConversationBoundedText),
+    steps: Schema.Array(
+      Schema.Struct({
+        step: ShortText(2_048),
+        status: Schema.Literals(["pending", "in-progress", "completed"]),
+      }),
+    ),
+    omittedSteps: NonNegativeInt,
+  }),
+]);
+export type ConversationWorkLogEntry = typeof ConversationWorkLogEntry.Type;
+
+export const ConversationThreadInfo = Schema.Struct({
+  title: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+  /** Informational only: the provider driver and model the conversation ran on. */
+  provider: Schema.NullOr(TrimmedNonEmptyString),
+  model: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type ConversationThreadInfo = typeof ConversationThreadInfo.Type;
+
+export const ConversationProvenance = Schema.Union([
+  Schema.TaggedStruct("original", {}),
+  Schema.TaggedStruct("fork", { originThreadId: ThreadId }),
+]);
+export type ConversationProvenance = typeof ConversationProvenance.Type;
+
+/** What the capture policy selected. Unselected content is never read into the snapshot. */
+export const ConversationSnapshotSelection = Schema.Struct({
+  workLog: Schema.Boolean,
+  reasoning: Schema.Boolean,
+  /** Last included message when the range stops early; null for the whole conversation. */
+  throughMessageId: Schema.NullOr(MessageId),
+});
+export type ConversationSnapshotSelection = typeof ConversationSnapshotSelection.Type;
+
+export const ConversationSnapshotWarning = Schema.Union([
+  Schema.TaggedStruct("running-turn-omitted", { turnId: TurnId }),
+  Schema.TaggedStruct("attachment-unavailable", {
+    name: TrimmedNonEmptyString,
+    messageN: Schema.NullOr(PositiveInt),
+  }),
+  Schema.TaggedStruct("attachment-unsupported", {
+    name: TrimmedNonEmptyString,
+    messageN: Schema.NullOr(PositiveInt),
+  }),
+  Schema.TaggedStruct("records-skipped", {
+    kind: Schema.Literals(["activity", "question-answer", "context"]),
+    count: PositiveInt,
+  }),
+]);
+export type ConversationSnapshotWarning = typeof ConversationSnapshotWarning.Type;
+
+export const ConversationSnapshotV1 = Schema.Struct({
+  format: Schema.Literal(CONVERSATION_SNAPSHOT_FORMAT),
+  version: Schema.Literal(1),
+  thread: ConversationThreadInfo,
+  provenance: ConversationProvenance,
+  /** Where and when the snapshot was read. Excluded from the content digest. */
+  captured: Schema.Struct({
+    threadId: ThreadId,
+    snapshotSequence: NonNegativeInt,
+    threadSequence: NonNegativeInt,
+    capturedAt: IsoDateTime,
+  }),
+  selection: ConversationSnapshotSelection,
+  messages: Schema.Array(ConversationMessage),
+  reasoning: Schema.Array(ConversationReasoning),
+  workLog: Schema.Array(ConversationWorkLogEntry),
+  proposedPlans: Schema.Array(ConversationProposedPlan),
+  questionAnswers: Schema.Array(ConversationQuestionAnswer),
+  /** The in-progress turn left out of this snapshot, if any. */
+  omittedRunningTurn: Schema.NullOr(Schema.Struct({ turnId: TurnId })),
+  warnings: Schema.Array(ConversationSnapshotWarning),
+  /** SHA-256 of the canonical content (everything except `captured` and this field). */
+  contentDigest: Sha256Digest,
+});
+export type ConversationSnapshotV1 = typeof ConversationSnapshotV1.Type;
+
+// ---------------------------------------------------------------------------
+// Document bundle
+// ---------------------------------------------------------------------------
+
+/**
+ * `chat` bundles come from a conversation; their line breaks are already
+ * written explicitly, so a document renderer needs no chat plugins. `document`
+ * bundles follow Scient's document profile (CommonMark, GFM, alerts, math,
+ * fenced code, Mermaid).
+ */
+export const DocumentMarkdownProfile = Schema.Literals(["chat", "document"]);
+export type DocumentMarkdownProfile = typeof DocumentMarkdownProfile.Type;
+
+export const DocumentDirection = Schema.Literals(["ltr", "rtl", "auto"]);
+export type DocumentDirection = typeof DocumentDirection.Type;
+
+export const DocumentSourceRef = Schema.Union([
+  Schema.TaggedStruct("conversation", {
+    threadId: ThreadId,
+    contentDigest: Sha256Digest,
+    snapshotSequence: NonNegativeInt,
+  }),
+  Schema.TaggedStruct("workspace-file", {
+    cwd: TrimmedNonEmptyString,
+    relativePath: TrimmedNonEmptyString,
+    revision: TrimmedNonEmptyString,
+  }),
+]);
+export type DocumentSourceRef = typeof DocumentSourceRef.Type;
+
+/**
+ * Bundle Markdown refers to its assets as `scient-asset:<id>` link or image
+ * destinations. Each writer resolves them: a packaged Markdown export rewrites
+ * them to relative paths, a text-only export to names, a PDF page to asset URLs.
+ */
+export const DOCUMENT_ASSET_URL_PREFIX = "scient-asset:";
+
+export const DocumentAssetId = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(128),
+  Schema.isPattern(/^[a-z0-9][a-z0-9-]*$/),
+);
+export type DocumentAssetId = typeof DocumentAssetId.Type;
+
+export const DocumentAssetUnavailableReason = Schema.Literals([
+  "missing",
+  "unreadable",
+  "unsupported",
+  "too-large",
+]);
+export type DocumentAssetUnavailableReason = typeof DocumentAssetUnavailableReason.Type;
+
+export const DocumentAsset = Schema.Struct({
+  id: DocumentAssetId,
+  role: Schema.Literals(["attachment", "image", "rendered-diagram"]),
+  fileName: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  mediaType: TrimmedNonEmptyString.check(Schema.isMaxLength(100)),
+  byteLength: NonNegativeInt,
+  /** Relative POSIX path a packaging writer stores the file under. */
+  packagePath: TrimmedNonEmptyString.check(Schema.isMaxLength(512)),
+  content: Schema.Union([
+    Schema.TaggedStruct("bytes", { bytes: Schema.Uint8Array, sha256: Sha256Digest }),
+    Schema.TaggedStruct("unavailable", { reason: DocumentAssetUnavailableReason }),
+  ]),
+});
+export type DocumentAsset = typeof DocumentAsset.Type;
+
+export const DocumentCitation = Schema.Union([
+  /** "Cite selected text" from a project file: a quotation plus the file it came from. */
+  Schema.TaggedStruct("file-excerpt", {
+    id: TrimmedNonEmptyString,
+    path: TrimmedNonEmptyString.check(Schema.isMaxLength(4_096)),
+    startLine: PositiveInt,
+    endLine: PositiveInt,
+    /** The quote came from an unsaved editor draft. */
+    unsaved: Schema.Boolean,
+    text: Schema.String,
+    comment: Schema.NullOr(Schema.String),
+  }),
+  /** A quote of an earlier assistant message. */
+  Schema.TaggedStruct("message-excerpt", {
+    id: TrimmedNonEmptyString,
+    text: Schema.String,
+    comment: Schema.NullOr(Schema.String),
+  }),
+  /** A bibliographic citation, kept as a key and reference so a converter can format it. */
+  Schema.TaggedStruct("bibliographic", {
+    id: TrimmedNonEmptyString,
+    key: TrimmedNonEmptyString.check(Schema.isMaxLength(512)),
+    reference: Schema.NullOr(
+      Schema.Struct({
+        title: Schema.NullOr(Schema.String),
+        authors: Schema.Array(Schema.String),
+        issued: Schema.NullOr(Schema.String),
+        containerTitle: Schema.NullOr(Schema.String),
+        doi: Schema.NullOr(Schema.String),
+        url: Schema.NullOr(Schema.String),
+      }),
+    ),
+  }),
+]);
+export type DocumentCitation = typeof DocumentCitation.Type;
+
+export const DocumentWarningCode = Schema.Literals([
+  "running-turn-omitted",
+  "attachment-unavailable",
+  "attachment-unsupported",
+  "records-skipped",
+  "context-reference-unresolved",
+  "unsupported-construct",
+  "resource-unresolved",
+  "converter-reported",
+]);
+export type DocumentWarningCode = typeof DocumentWarningCode.Type;
+
+/** One human-readable line, shown in the export dialog and written into the output. */
+export const DocumentWarning = Schema.Struct({
+  code: DocumentWarningCode,
+  message: TrimmedNonEmptyString.check(Schema.isMaxLength(2_048)),
+});
+export type DocumentWarning = typeof DocumentWarning.Type;
+
+export const DocumentBundle = Schema.Struct({
+  /** Scient-dialect Markdown; asset destinations use `DOCUMENT_ASSET_URL_PREFIX`. */
+  markdown: Schema.String,
+  profile: DocumentMarkdownProfile,
+  metadata: Schema.Struct({
+    title: TrimmedNonEmptyString,
+    language: Schema.NullOr(TrimmedNonEmptyString),
+    direction: DocumentDirection,
+    createdAt: Schema.NullOr(IsoDateTime),
+    source: DocumentSourceRef,
+  }),
+  assets: Schema.Array(DocumentAsset),
+  citations: Schema.Array(DocumentCitation),
+  warnings: Schema.Array(DocumentWarning),
+});
+export type DocumentBundle = typeof DocumentBundle.Type;
+
+// ---------------------------------------------------------------------------
+// Export options, format capabilities, and the HTTP contract
+// ---------------------------------------------------------------------------
+
+export const ConversationExportFormat = Schema.Literals(["markdown", "pdf", "docx", "scic"]);
+export type ConversationExportFormat = typeof ConversationExportFormat.Type;
+
+export const ConversationExportRange = Schema.Union([
+  Schema.TaggedStruct("whole", {}),
+  Schema.TaggedStruct("through-message", { messageId: MessageId }),
+]);
+export type ConversationExportRange = typeof ConversationExportRange.Type;
+
+/** `text`: one `.md`, attachments listed by name. `with-attachments`: a `.zip` with `attachments/`. */
+export const ConversationMarkdownPackaging = Schema.Literals(["text", "with-attachments"]);
+export type ConversationMarkdownPackaging = typeof ConversationMarkdownPackaging.Type;
+
+/** Work log and reasoning default to off on every format and are chosen again for each export. */
+export const ConversationExportOptions = Schema.Struct({
+  includeWorkLog: Schema.Boolean,
+  includeReasoning: Schema.Boolean,
+  range: ConversationExportRange,
+  markdownPackaging: Schema.optionalKey(ConversationMarkdownPackaging),
+});
+export type ConversationExportOptions = typeof ConversationExportOptions.Type;
+
+/** Whether this host can produce a format now, and why not when it cannot. */
+export const ConversationExportFormatCapability = Schema.Struct({
+  format: ConversationExportFormat,
+  available: Schema.Boolean,
+  unavailableReason: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type ConversationExportFormatCapability = typeof ConversationExportFormatCapability.Type;
+
+export const SCIENT_CONVERSATION_EXPORT_EXCERPT_MAX_CHARS = 160;
+/** Clipboard delivery returns the text inline; larger conversations must be saved as a file. */
+export const SCIENT_CONVERSATION_EXPORT_CLIPBOARD_MAX_CHARS = 8 * 1024 * 1024;
+/** Attachment bytes one packaged export may carry. */
+export const SCIENT_CONVERSATION_EXPORT_MAX_ASSET_BYTES = 512 * 1024 * 1024;
+
+export const ScientConversationExportPrepareRequest = Schema.Struct({
+  threadId: ThreadId,
+});
+export type ScientConversationExportPrepareRequest =
+  typeof ScientConversationExportPrepareRequest.Type;
+
+/** A message the dialog offers as the end of an "up to selected message" range. */
+export const ScientConversationExportMessageChoice = Schema.Struct({
+  messageId: MessageId,
+  n: PositiveInt,
+  role: ConversationMessageRole,
+  createdAt: IsoDateTime,
+  excerpt: ShortText(SCIENT_CONVERSATION_EXPORT_EXCERPT_MAX_CHARS),
+});
+export type ScientConversationExportMessageChoice =
+  typeof ScientConversationExportMessageChoice.Type;
+
+/** Everything the export dialog needs before the user chooses; carries no exported content. */
+export const ScientConversationExportPreparation = Schema.Struct({
+  threadId: ThreadId,
+  title: TrimmedNonEmptyString,
+  formats: Schema.Array(ConversationExportFormatCapability),
+  messageCount: NonNegativeInt,
+  attachmentCount: NonNegativeInt,
+  workLogEntryCount: NonNegativeInt,
+  reasoningCount: NonNegativeInt,
+  runningTurnOmitted: Schema.Boolean,
+  messages: Schema.Array(ScientConversationExportMessageChoice),
+});
+export type ScientConversationExportPreparation = typeof ScientConversationExportPreparation.Type;
+
+/** `file` writes a temporary export read through a signed asset; `clipboard` returns text inline. */
+export const ScientConversationExportDelivery = Schema.Literals(["file", "clipboard"]);
+export type ScientConversationExportDelivery = typeof ScientConversationExportDelivery.Type;
+
+export const ScientConversationExportRequest = Schema.Struct({
+  threadId: ThreadId,
+  format: ConversationExportFormat,
+  options: ConversationExportOptions,
+  delivery: ScientConversationExportDelivery,
+});
+export type ScientConversationExportRequest = typeof ScientConversationExportRequest.Type;
+
+export const ScientConversationExportFile = Schema.Struct({
+  fileName: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  mediaType: TrimmedNonEmptyString.check(Schema.isMaxLength(100)),
+  byteLength: NonNegativeInt,
+  /** Signed asset path, resolved against the environment's HTTP base URL. */
+  relativeUrl: TrimmedNonEmptyString.check(Schema.isMaxLength(32_768)),
+  expiresAt: Schema.Number,
+});
+export type ScientConversationExportFile = typeof ScientConversationExportFile.Type;
+
+export const ScientConversationExportResult = Schema.Struct({
+  exportId: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+  format: ConversationExportFormat,
+  contentDigest: Sha256Digest,
+  messageCount: NonNegativeInt,
+  file: Schema.NullOr(ScientConversationExportFile),
+  text: Schema.NullOr(Schema.String),
+  warnings: Schema.Array(DocumentWarning),
+});
+export type ScientConversationExportResult = typeof ScientConversationExportResult.Type;
+
+export const ScientConversationExportErrorReason = Schema.Literals([
+  "thread-not-found",
+  "format-unavailable",
+  "message-not-found",
+  "nothing-to-export",
+  "too-large",
+  "delivery-unsupported",
+]);
+export type ScientConversationExportErrorReason = typeof ScientConversationExportErrorReason.Type;
+
+export class ScientConversationExportError extends Schema.TaggedError<ScientConversationExportError>()(
+  "ScientConversationExportError",
+  {
+    reason: ScientConversationExportErrorReason,
+    message: Schema.String,
+  },
+  { httpApiStatus: 409 },
+) {
+  [HttpServerRespondable.symbol]() {
+    return HttpServerResponse.schemaJson(ScientConversationExportError)(this, { status: 409 });
+  }
+}

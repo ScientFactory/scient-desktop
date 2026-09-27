@@ -132,6 +132,7 @@ export function mapRemoteEnvironmentError(
         traceId: error.traceId,
       });
     case "ScientThreadQueueOperationError":
+    case "ScientConversationExportError":
       return new ConnectionBlockedError({ reason: "configuration", detail: error.message });
     case "EnvironmentRequestInvalidError":
       return new ConnectionBlockedError({
