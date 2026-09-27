@@ -604,6 +604,15 @@ this hierarchy rather than joining both with an inline separator. Providers with
 a label retain the account row without an empty subscription row. The shared
 `ProviderInstanceCard.test.ts` covers the layout independently of provider kind.
 
+The same card carries two more narrow divergences, each marked `Scient:` in place.
+Its version label renders through the Scient-owned `ProviderVersionLabel`, which
+fades a clipped version and shows the full text on hover or keyboard focus instead
+of truncating it. A Scient-managed runtime renders as a `row` of the card's Runtime
+section rather than inside an extra padded wrapper. Pi's mark is Pi's own colour
+mark in both web `Icons.tsx` (`PiIcon`) and mobile `ProviderIcon.tsx`, replacing
+T3's monochrome glyph. When T3 changes these spots, keep its surrounding layout and
+reapply only the marked lines.
+
 Scient keeps ordinary browser interaction visually quiet: `PreviewView` shows
 the control badge only during agent control. Preserve the underlying human-input
 interruption and cursor behavior. The desktop preview editing-shortcut gate also

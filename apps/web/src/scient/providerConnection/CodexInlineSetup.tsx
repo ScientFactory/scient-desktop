@@ -6,7 +6,6 @@ import {
   ExternalLinkIcon,
   LoaderIcon,
   RefreshCwIcon,
-  ShieldCheckIcon,
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
@@ -16,23 +15,33 @@ import { Button } from "../../components/ui/button";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import {
   AssistedSetupActions,
+  AssistedSetupDiagnostics,
   AssistedSetupFrame,
   AssistedSetupStatus,
+  AssistedSetupUpdateButton,
+  AssistedSetupUpdateStatus,
+  ProviderSetupIcon,
 } from "./AssistedProviderSetup";
 import {
-  hasExternalCodexUpdate,
-  hasManagedCodexUpdate,
   startCodexBrowserSignIn,
   startCodexDeviceSignIn,
   startReviewedCodexRuntimeAction,
   updateCodexRuntime,
 } from "./codexLifecycleActions";
-import { ProviderRuntimeDiagnosticsDetails } from "./ProviderRuntimeDiagnostics";
+import {
+  externalProviderUpdate,
+  externalProviderUpdateProgress,
+  providerUpdateIssue,
+  providerUpdateOffer,
+} from "./providerLifecycleActions";
 import { ProviderAccountManagementLink } from "./ProviderAccountManagementLink";
 import {
+  cancelRuntimeActionLabel,
+  failedRuntimeOperationMessage,
   isActiveProviderConnectionOperation,
   isActiveProviderRuntimeOperation,
   isProviderRuntimePresentedAsInstalled,
+  managedRuntimeRepairMessage,
   needsManagedRuntimeRecovery,
   providerLifecycleFailureMessage,
   providerRuntimeComputerLabel,
@@ -43,6 +52,7 @@ type PendingAction =
   | "install"
   | "repair"
   | "update"
+  | "external-update"
   | "sign-in"
   | "device-sign-in"
   | "cancel-runtime"
@@ -114,12 +124,13 @@ export function CodexInlineSetup(props: {
       : signInMethod === "codex_device_code" && supportsBrowserSignIn
         ? "codex_browser"
         : null;
-  const managedUpdateAvailable =
-    !props.managedRuntimePresentedExternally && hasManagedCodexUpdate(props.provider);
-  const externalUpdateAvailable = hasExternalCodexUpdate(props.provider);
-  const updateAvailable = managedUpdateAvailable || externalUpdateAvailable;
-  const updateState = props.provider.updateState;
-  const updateRunning = updateState?.status === "queued" || updateState?.status === "running";
+  const updateOffer = providerUpdateOffer(props.provider, {
+    managed: !props.managedRuntimePresentedExternally,
+  });
+  const externalUpdateProgress = externalProviderUpdateProgress(
+    props.provider,
+    pendingAction === "external-update",
+  );
   const needsRuntimeRepair =
     !props.managedRuntimePresentedExternally && needsManagedRuntimeRecovery(props.provider);
 
@@ -137,7 +148,7 @@ export function CodexInlineSetup(props: {
 
   const update = async () => {
     setLocalError(null);
-    setPendingAction("update");
+    setPendingAction(updateOffer?.path === "external" ? "external-update" : "update");
     try {
       await updateCodexRuntime(props.controller, props.provider);
     } catch (error) {
@@ -164,26 +175,6 @@ export function CodexInlineSetup(props: {
       setPendingAction(null);
     }
   };
-
-  const canShowInlineRepair =
-    !props.managedRuntimePresentedExternally && runtime?.actions.includes("repair");
-  const connectedActions =
-    canShowInlineRepair || props.accountAction ? (
-      <div className="flex flex-wrap items-center justify-end gap-1">
-        {canShowInlineRepair ? (
-          <Button
-            disabled={pendingAction !== null}
-            onClick={() => void repair()}
-            size="sm"
-            type="button"
-            variant="ghost-muted"
-          >
-            <RefreshCwIcon aria-hidden /> Repair
-          </Button>
-        ) : null}
-        {props.accountAction}
-      </div>
-    ) : undefined;
 
   const cancelRuntime = async () => {
     if (!activeRuntimeOperation) return;
@@ -232,6 +223,13 @@ export function CodexInlineSetup(props: {
     }
   };
 
+  const runtimeDiagnostics = (
+    <AssistedSetupDiagnostics
+      displayName={props.displayName}
+      presentedExternally={props.managedRuntimePresentedExternally}
+      provider={props.provider}
+    />
+  );
   if (
     activeRuntimeOperation ||
     pendingAction === "install" ||
@@ -251,6 +249,7 @@ export function CodexInlineSetup(props: {
         {activeRuntimeOperation ? (
           <AssistedSetupActions>
             <Button
+              aria-label={cancelRuntimeActionLabel("Codex", activeRuntimeOperation.action)}
               disabled={pendingAction === "cancel-runtime"}
               onClick={() => void cancelRuntime()}
               size="sm"
@@ -270,12 +269,22 @@ export function CodexInlineSetup(props: {
     );
   }
 
+  if (externalUpdateProgress) {
+    return (
+      <SetupFrame>
+        <AssistedSetupUpdateStatus
+          name="Codex"
+          provider={props.provider}
+          trailing={props.accountAction}
+          update={externalProviderUpdate(props.provider)}
+          working={externalUpdateProgress}
+        />
+      </SetupFrame>
+    );
+  }
+
   if (needsRuntimeRepair) {
-    const error =
-      localError ??
-      (runtimeOperation?.status === "failed"
-        ? runtimeOperation.message
-        : (props.provider.message ?? "Codex's private runtime could not start."));
+    const error = localError ?? managedRuntimeRepairMessage(props.provider, "Codex");
     return (
       <SetupFrame>
         <AssistedSetupStatus
@@ -289,13 +298,13 @@ export function CodexInlineSetup(props: {
             <RefreshCwIcon aria-hidden /> Repair Codex
           </Button>
         </AssistedSetupActions>
+        {runtimeDiagnostics}
       </SetupFrame>
     );
   }
 
   if (!isProviderRuntimePresentedAsInstalled(props.provider)) {
-    const error =
-      localError ?? (runtimeOperation?.status === "failed" ? runtimeOperation.message : null);
+    const error = localError ?? failedRuntimeOperationMessage(runtimeOperation, "install");
     const canInstall = runtime?.actions.includes("install") ?? false;
     return (
       <SetupFrame>
@@ -310,7 +319,7 @@ export function CodexInlineSetup(props: {
             error ? (
               <TriangleAlertIcon className="size-5 text-destructive" />
             ) : (
-              <ShieldCheckIcon className="size-5 text-primary" />
+              <ProviderSetupIcon displayName={props.displayName} driver={props.provider.driver} />
             )
           }
           role={error ? "alert" : undefined}
@@ -318,12 +327,19 @@ export function CodexInlineSetup(props: {
         />
         {canInstall ? (
           <AssistedSetupActions>
-            <Button onClick={() => void install()} size="sm" type="button" variant="ghost-primary">
+            <Button
+              aria-label={error ? "Retry installation of Codex" : "Install Codex"}
+              onClick={() => void install()}
+              size="sm"
+              type="button"
+              variant="ghost-primary"
+            >
               {error ? <RefreshCwIcon aria-hidden /> : <DownloadIcon aria-hidden />}
               {error ? "Retry installation" : "Install"}
             </Button>
           </AssistedSetupActions>
         ) : null}
+        {error ? runtimeDiagnostics : null}
       </SetupFrame>
     );
   }
@@ -380,6 +396,7 @@ export function CodexInlineSetup(props: {
             </Button>
             {activeConnectionOperation ? (
               <Button
+                aria-label="Cancel Codex sign-in"
                 disabled={pendingAction === "cancel-sign-in"}
                 onClick={() => void cancelSignIn()}
                 size="sm"
@@ -393,6 +410,7 @@ export function CodexInlineSetup(props: {
         ) : activeConnectionOperation ? (
           <AssistedSetupActions>
             <Button
+              aria-label="Cancel Codex sign-in"
               disabled={pendingAction === "cancel-sign-in"}
               onClick={() => void cancelSignIn()}
               size="sm"
@@ -408,51 +426,31 @@ export function CodexInlineSetup(props: {
   }
 
   if (isAuthenticated) {
-    if (updateRunning) {
-      return (
-        <StatusFrame
-          accountAction={props.accountAction}
-          title="Updating Codex"
-          body={updateState?.message ?? "Updating and verifying Codex…"}
-          loading
-        />
-      );
-    }
-    if (updateAvailable) {
-      const error = localError ?? (updateState?.status === "failed" ? updateState.message : null);
+    if (updateOffer) {
+      const issue = providerUpdateIssue(props.provider, updateOffer, localError);
       return (
         <SetupFrame>
-          <AssistedSetupStatus
-            body={
-              error ?? (
-                <>
-                  Install the reviewed update when you’re ready. Your current version remains
-                  available until the update is verified.
-                </>
-              )
-            }
-            icon={
-              error ? (
-                <TriangleAlertIcon className="size-5 text-destructive" />
-              ) : (
-                <RefreshCwIcon className="size-5 text-primary" />
-              )
-            }
-            role={error ? "alert" : undefined}
-            title={error ? "Codex couldn’t be updated" : "Codex update available"}
+          <AssistedSetupUpdateStatus
+            issue={issue}
+            name="Codex"
+            provider={props.provider}
+            update={updateOffer}
           />
           <AssistedSetupActions>
             {props.accountAction}
-            <Button onClick={() => void update()} size="sm" type="button" variant="ghost-primary">
-              <RefreshCwIcon aria-hidden /> {error ? "Try again" : "Update"}
-            </Button>
+            <AssistedSetupUpdateButton
+              name="Codex"
+              onClick={() => void update()}
+              retry={issue !== null}
+            />
           </AssistedSetupActions>
+          {issue ? runtimeDiagnostics : null}
         </SetupFrame>
       );
     }
     return (
       <StatusFrame
-        accountAction={connectedActions}
+        accountAction={props.accountAction}
         title="Codex is ready"
         body={
           <>
@@ -495,7 +493,7 @@ export function CodexInlineSetup(props: {
           signInError ? (
             <TriangleAlertIcon className="size-5 text-destructive" />
           ) : (
-            <ShieldCheckIcon className="size-5 text-primary" />
+            <ProviderSetupIcon displayName={props.displayName} driver={props.provider.driver} />
           )
         }
         role={signInError ? "alert" : undefined}
@@ -514,7 +512,13 @@ export function CodexInlineSetup(props: {
               : "Use browser sign-in"}
           </Button>
         ) : null}
-        <Button onClick={() => void signIn()} size="sm" type="button" variant="ghost-primary">
+        <Button
+          aria-label={signInError ? "Try again to sign in to Codex" : undefined}
+          onClick={() => void signIn()}
+          size="sm"
+          type="button"
+          variant="ghost-primary"
+        >
           {signInError ? <RefreshCwIcon aria-hidden /> : <ExternalLinkIcon aria-hidden />}
           {signInError
             ? "Try again"
@@ -523,14 +527,14 @@ export function CodexInlineSetup(props: {
               : "Sign in with ChatGPT"}
         </Button>
       </AssistedSetupActions>
-      <div className="flex justify-end">
-        <ProviderRuntimeDiagnosticsDetails
+      {signInError && !props.managedRuntimePresentedExternally ? (
+        <AssistedSetupDiagnostics
           displayName={props.displayName}
           managedActionBusy={pendingAction !== null}
           onUseManaged={canInstallManaged ? () => void useManaged() : undefined}
           provider={props.provider}
         />
-      </div>
+      ) : null}
     </SetupFrame>
   );
 }
@@ -539,19 +543,12 @@ function StatusFrame(props: {
   readonly accountAction?: ReactNode;
   readonly title: string;
   readonly body: ReactNode;
-  readonly loading?: boolean;
 }) {
   return (
     <SetupFrame>
       <AssistedSetupStatus
         body={props.body}
-        icon={
-          props.loading ? (
-            <LoaderIcon className="size-5 animate-spin text-primary" />
-          ) : (
-            <CheckCircle2Icon className="size-5 text-success" />
-          )
-        }
+        icon={<CheckCircle2Icon className="size-5 text-success" />}
         title={props.title}
         trailing={props.accountAction}
       />

@@ -1,11 +1,5 @@
 import type { EnvironmentId, ProviderDriverKind, ServerProvider } from "@t3tools/contracts";
-import {
-  LoaderIcon,
-  LogOutIcon,
-  PowerIcon,
-  ShieldCheckIcon,
-  TriangleAlertIcon,
-} from "lucide-react";
+import { LoaderIcon, LogOutIcon, PowerIcon, TriangleAlertIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
 import { Button } from "../../components/ui/button";
@@ -13,6 +7,7 @@ import {
   AssistedSetupActions,
   AssistedSetupFrame,
   AssistedSetupStatus,
+  ProviderSetupIcon,
 } from "./AssistedProviderSetup";
 import { AntigravityInlineSetup } from "./AntigravityInlineSetup";
 import { ClaudeInlineSetup } from "./ClaudeInlineSetup";
@@ -211,7 +206,7 @@ function SupportedAssistedProviderSetupHost(props: AssistedProviderSetupHostProp
       );
       break;
     case "droid":
-      setup = (
+      setup = isManagement ? (
         <>
           <DroidInlineSetup
             {...managementProps}
@@ -226,6 +221,28 @@ function SupportedAssistedProviderSetupHost(props: AssistedProviderSetupHostProp
             />
           ) : null}
         </>
+      ) : (
+        <DroidInlineSetup
+          controller={controller}
+          displayName={displayName}
+          modelsActions={{
+            primary: (
+              <ConnectModelsButton
+                appearance="setup-action"
+                environmentId={props.environmentId}
+                instanceId={props.provider.instanceId}
+              />
+            ),
+            secondary: (
+              <ConnectModelsButton
+                appearance="setup-secondary"
+                environmentId={props.environmentId}
+                instanceId={props.provider.instanceId}
+              />
+            ),
+          }}
+          provider={props.provider}
+        />
       );
       break;
     case "grok":
@@ -305,7 +322,7 @@ export function DisabledProviderSetup(props: {
           error ? (
             <TriangleAlertIcon className="size-5 text-destructive" />
           ) : (
-            <ShieldCheckIcon className="size-5 text-primary" />
+            <ProviderSetupIcon displayName={props.displayName} driver={props.provider.driver} />
           )
         }
         role={error ? "alert" : undefined}

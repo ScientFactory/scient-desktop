@@ -125,6 +125,83 @@ function findActionButton(
 }
 
 describe("ProviderRuntimeSection", () => {
+  describe("settings row presentation", () => {
+    const managedProvider: ServerProvider = {
+      ...provider,
+      installed: true,
+      version: "1.1.17",
+      status: "ready",
+      connection: {
+        ...provider.connection!,
+        runtime: {
+          ...provider.connection!.runtime!,
+          source: "scient_managed",
+          actions: ["repair", "remove"],
+          managedVersion: "1.1.17",
+          message: "Managed Antigravity is ready.",
+        },
+      },
+    };
+    const render = (input: {
+      readonly provider: ServerProvider;
+      readonly presentation?: "card" | "row";
+    }) => {
+      hooks.beginRender();
+      return renderToStaticMarkup(
+        ProviderRuntimeSection({
+          environmentId,
+          provider: input.provider,
+          displayName: "Antigravity",
+          ...(input.presentation ? { presentation: input.presentation } : {}),
+        }),
+      );
+    };
+
+    it("renders the managed runtime as a frameless row with its actions beside the status", () => {
+      const markup = render({ provider: managedProvider, presentation: "row" });
+      expect(markup).toContain("Managed by Scient");
+      expect(markup).toContain("Repair");
+      expect(markup).toContain("Remove");
+      // The surrounding settings section is the only frame.
+      expect(markup).not.toContain("rounded-lg border");
+      // Status and actions share one line once the row is wide enough.
+      expect(markup).toContain("@min-[32rem]/runtime-row:grid-cols-[minmax(0,1fr)_auto]");
+      expect(markup).toContain("px-3 py-3 sm:px-4");
+    });
+
+    it("keeps its own frame outside settings", () => {
+      expect(render({ provider: managedProvider })).toContain("rounded-lg border p-3");
+    });
+
+    it("keeps an in-progress operation frameless in a settings row", () => {
+      const markup = render({
+        presentation: "row",
+        provider: {
+          ...managedProvider,
+          connection: {
+            ...managedProvider.connection!,
+            runtime: {
+              ...managedProvider.connection!.runtime!,
+              operation: {
+                operationId: "repair-running",
+                action: "repair",
+                status: "downloading",
+                startedAt: "2026-08-22T12:00:00.000Z",
+                finishedAt: null,
+                message: "Downloading Antigravity.",
+                downloadedBytes: 50,
+                totalBytes: 100,
+              },
+            },
+          },
+        },
+      });
+      expect(markup).toContain("Downloading Antigravity.");
+      expect(markup).toContain("Cancel");
+      expect(markup).not.toContain("rounded-lg border");
+    });
+  });
+
   it.each([true, false])(
     "keeps Pi installation concise without hiding unsupported-platform guidance (canInstall=%s)",
     (canInstall) => {
@@ -1439,5 +1516,58 @@ describe("ProviderRuntimeSection", () => {
     expect(markup).toContain(">Install</button>");
     expect(markup).not.toContain("Antigravity removed");
     expect(markup).not.toContain("private provider runtime was removed");
+  });
+});
+
+describe("ProviderRuntimeSection accessible names", () => {
+  const managed = (actions: ProviderManagedRuntimeAction[]): ServerProvider => ({
+    ...provider,
+    installed: true,
+    status: "ready",
+    connection: {
+      ...provider.connection!,
+      runtime: {
+        ...provider.connection!.runtime!,
+        source: "scient_managed",
+        managedVersion: "1.1.17",
+        actions,
+      },
+    },
+  });
+  const render = (snapshot: ServerProvider) => {
+    hooks.beginRender();
+    return renderToStaticMarkup(
+      ProviderRuntimeSection({ environmentId, provider: snapshot, displayName: "Antigravity" }),
+    );
+  };
+
+  it("names the provider on its short-verb runtime actions", () => {
+    expect(render(provider)).toContain('aria-label="Install Antigravity"');
+    const markup = render(managed(["update", "repair", "remove"]));
+    expect(markup).toContain('aria-label="Update Antigravity"');
+    expect(markup).toContain('aria-label="Repair Antigravity"');
+    expect(markup).toContain('aria-label="Remove Antigravity"');
+  });
+
+  it("names the provider and the operation on Cancel", () => {
+    const snapshot = managed(["repair", "remove"]);
+    const markup = render({
+      ...snapshot,
+      connection: {
+        ...snapshot.connection!,
+        runtime: {
+          ...snapshot.connection!.runtime!,
+          operation: {
+            operationId: "repair-active",
+            action: "repair",
+            status: "downloading",
+            startedAt: "2026-08-22T12:00:00.000Z",
+            finishedAt: null,
+            message: "Downloading Antigravity.",
+          },
+        },
+      },
+    });
+    expect(markup).toContain('aria-label="Cancel Antigravity repair"');
   });
 });
