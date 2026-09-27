@@ -11,7 +11,6 @@ import {
   TrimmedNonEmptyString,
   TurnId,
 } from "./baseSchemas.ts";
-import { OrchestrationMessageContext } from "./composerContext.ts";
 import { ToolLifecycleItemType } from "./providerRuntime.ts";
 
 /**
@@ -73,6 +72,94 @@ export const ConversationAttachment = Schema.Struct({
 export type ConversationAttachment = typeof ConversationAttachment.Type;
 
 /**
+ * Link destinations in snapshot message text that point at one of the
+ * message's typed inline references: `[label](scient-ref:r1)`.
+ */
+export const CONVERSATION_REFERENCE_URL_PREFIX = "scient-ref:";
+
+export const ConversationReferenceId = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(32),
+  Schema.isPattern(/^r[0-9]+$/),
+);
+export type ConversationReferenceId = typeof ConversationReferenceId.Type;
+
+const referenceBase = {
+  id: ConversationReferenceId,
+  label: ShortText(512),
+} as const;
+
+/**
+ * The export projection of Scient's inline message references: composer
+ * context chips and captured quotes. Each supported kind keeps an explicit set
+ * of display fields; installation-local identities (environment, thread, and
+ * message ids, absolute workspace roots, document revisions, editor positions)
+ * and open payloads are never carried. Unsupported kinds are dropped, their
+ * label kept as plain text, and counted in a `records-skipped` warning.
+ */
+export const ConversationInlineReference = Schema.Union([
+  /** An image or file chip bound to one of the message's attachments. */
+  Schema.TaggedStruct("attachment", {
+    ...referenceBase,
+    attachmentLocalId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+    image: Schema.Boolean,
+  }),
+  /** "Cite selected text" from a project file. `path` is relative to the project. */
+  Schema.TaggedStruct("file-excerpt", {
+    ...referenceBase,
+    path: TrimmedNonEmptyString.check(Schema.isMaxLength(4_096)),
+    startLine: PositiveInt,
+    endLine: PositiveInt,
+    unsaved: Schema.Boolean,
+    text: Schema.String,
+    comment: Schema.NullOr(Schema.String),
+  }),
+  /** A quote of an earlier assistant message. */
+  Schema.TaggedStruct("message-excerpt", {
+    ...referenceBase,
+    text: Schema.String,
+    comment: Schema.NullOr(Schema.String),
+  }),
+  Schema.TaggedStruct("terminal", {
+    ...referenceBase,
+    terminal: ShortText(255),
+    lineStart: NonNegativeInt,
+    lineEnd: NonNegativeInt,
+    text: ConversationBoundedText,
+  }),
+  /** An @-mentioned workspace path, relative to the project. */
+  Schema.TaggedStruct("mention", {
+    ...referenceBase,
+    path: TrimmedNonEmptyString.check(Schema.isMaxLength(2_048)),
+  }),
+  Schema.TaggedStruct("skill", {
+    ...referenceBase,
+    name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  }),
+  Schema.TaggedStruct("review-comment", {
+    ...referenceBase,
+    filePath: TrimmedNonEmptyString.check(Schema.isMaxLength(2_048)),
+    rangeLabel: ShortText(2_048),
+    comment: ConversationBoundedText,
+    diff: ConversationBoundedText,
+  }),
+  Schema.TaggedStruct("page-element", {
+    ...referenceBase,
+    pageUrl: ShortText(2_048),
+    pageTitle: Schema.NullOr(ShortText(2_048)),
+    tagName: ShortText(255),
+    selector: Schema.NullOr(ShortText(2_048)),
+  }),
+  Schema.TaggedStruct("preview-annotation", {
+    ...referenceBase,
+    pageUrl: ShortText(2_048),
+    pageTitle: Schema.NullOr(ShortText(2_048)),
+    comment: ConversationBoundedText,
+    targetSummary: ShortText(2_048),
+  }),
+]);
+export type ConversationInlineReference = typeof ConversationInlineReference.Type;
+
+/**
  * A completed transcript message. `n` is the 1-based position among the
  * snapshot's messages; it is stable for one snapshot and is what Markdown
  * markers and range selection refer to.
@@ -84,10 +171,13 @@ export const ConversationMessage = Schema.Struct({
   turnId: Schema.NullOr(TurnId),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
-  /** Message Markdown exactly as stored, including Scient inline references. */
+  /**
+   * Message Markdown as stored, except that Scient inline references point at
+   * `references` through `scient-ref:` destinations.
+   */
   text: Schema.String,
   attachments: Schema.Array(ConversationAttachment),
-  context: Schema.optionalKey(OrchestrationMessageContext),
+  references: Schema.Array(ConversationInlineReference),
 });
 export type ConversationMessage = typeof ConversationMessage.Type;
 
@@ -203,6 +293,21 @@ export type ConversationThreadInfo = typeof ConversationThreadInfo.Type;
 export const ConversationProvenance = Schema.Union([
   Schema.TaggedStruct("original", {}),
   Schema.TaggedStruct("fork", { originThreadId: ThreadId }),
+  /**
+   * Imported from a transfer file or from Scient-exported Markdown. Carries
+   * external provenance only: the source ids are opaque strings from another
+   * installation and never local thread ids. Both sources are unverified;
+   * Markdown imports are text only.
+   */
+  Schema.TaggedStruct("import", {
+    source: Schema.Literals(["scic", "markdown"]),
+    exportId: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+    sourceThreadId: Schema.NullOr(TrimmedNonEmptyString.check(Schema.isMaxLength(512))),
+    packageDigest: Sha256Digest,
+    sourceFormat: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+    sourceFormatVersion: PositiveInt,
+    importedAt: IsoDateTime,
+  }),
 ]);
 export type ConversationProvenance = typeof ConversationProvenance.Type;
 
@@ -324,6 +429,152 @@ export const DocumentAsset = Schema.Struct({
 });
 export type DocumentAsset = typeof DocumentAsset.Type;
 
+// CSL-JSON (CSL 1.0.2), the reference data Pandoc's `--citeproc` consumes. The
+// field names and name/date shapes match `scientSourceToCslJson` in
+// `@scientfactory/scient-citations`; unknown fields are not carried.
+
+const CSL_ITEM_TYPES = [
+  "article",
+  "article-journal",
+  "article-magazine",
+  "article-newspaper",
+  "bill",
+  "book",
+  "broadcast",
+  "chapter",
+  "classic",
+  "collection",
+  "dataset",
+  "document",
+  "entry",
+  "entry-dictionary",
+  "entry-encyclopedia",
+  "event",
+  "figure",
+  "graphic",
+  "hearing",
+  "interview",
+  "legal_case",
+  "legislation",
+  "manuscript",
+  "map",
+  "motion_picture",
+  "musical_score",
+  "pamphlet",
+  "paper-conference",
+  "patent",
+  "performance",
+  "periodical",
+  "personal_communication",
+  "post",
+  "post-weblog",
+  "regulation",
+  "report",
+  "review",
+  "review-book",
+  "software",
+  "song",
+  "speech",
+  "standard",
+  "thesis",
+  "treaty",
+  "webpage",
+] as const;
+export const CslItemType = Schema.Literals(CSL_ITEM_TYPES);
+export type CslItemType = typeof CslItemType.Type;
+
+const CslText = Schema.String.check(Schema.isMaxLength(8_192));
+
+/** A person or organization: structured parts, or a `literal` for corporate and single-field names. */
+export const CslName = Schema.Struct({
+  family: Schema.optionalKey(CslText),
+  given: Schema.optionalKey(CslText),
+  literal: Schema.optionalKey(CslText),
+  suffix: Schema.optionalKey(CslText),
+  "non-dropping-particle": Schema.optionalKey(CslText),
+  "dropping-particle": Schema.optionalKey(CslText),
+}).check(
+  Schema.makeFilter(
+    (name) => name.family !== undefined || name.given !== undefined || name.literal !== undefined,
+    { identifier: "CslName" },
+  ),
+);
+export type CslName = typeof CslName.Type;
+
+const CslDatePart = Schema.Array(Schema.Int).check(Schema.isMinLength(1), Schema.isMaxLength(3));
+
+/** One date or a range of two: `date-parts` of year, month, day; or free `literal` text. */
+export const CslDate = Schema.Struct({
+  "date-parts": Schema.optionalKey(
+    Schema.Array(CslDatePart).check(Schema.isMinLength(1), Schema.isMaxLength(2)),
+  ),
+  literal: Schema.optionalKey(CslText),
+  circa: Schema.optionalKey(Schema.Boolean),
+  season: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 4 }))),
+}).check(
+  Schema.makeFilter((date) => date["date-parts"] !== undefined || date.literal !== undefined, {
+    identifier: "CslDate",
+  }),
+);
+export type CslDate = typeof CslDate.Type;
+
+const CslNames = Schema.optionalKey(Schema.Array(CslName).check(Schema.isMaxLength(500)));
+const CslString = Schema.optionalKey(CslText);
+
+export const CslItem = Schema.Struct({
+  id: TrimmedNonEmptyString.check(Schema.isMaxLength(512)),
+  type: CslItemType,
+  title: CslString,
+  "title-short": CslString,
+  author: CslNames,
+  editor: CslNames,
+  translator: CslNames,
+  "container-author": CslNames,
+  "collection-editor": CslNames,
+  "editorial-director": CslNames,
+  director: CslNames,
+  composer: CslNames,
+  illustrator: CslNames,
+  interviewer: CslNames,
+  recipient: CslNames,
+  "reviewed-author": CslNames,
+  issued: Schema.optionalKey(CslDate),
+  accessed: Schema.optionalKey(CslDate),
+  "original-date": Schema.optionalKey(CslDate),
+  "event-date": Schema.optionalKey(CslDate),
+  abstract: CslString,
+  "container-title": CslString,
+  "container-title-short": CslString,
+  "collection-title": CslString,
+  "collection-number": CslString,
+  "event-title": CslString,
+  "event-place": CslString,
+  publisher: CslString,
+  "publisher-place": CslString,
+  volume: CslString,
+  "number-of-volumes": CslString,
+  issue: CslString,
+  number: CslString,
+  "chapter-number": CslString,
+  page: CslString,
+  "page-first": CslString,
+  "number-of-pages": CslString,
+  edition: CslString,
+  version: CslString,
+  medium: CslString,
+  genre: CslString,
+  status: CslString,
+  language: CslString,
+  note: CslString,
+  URL: CslString,
+  DOI: CslString,
+  ISBN: CslString,
+  ISSN: CslString,
+  PMID: CslString,
+  PMCID: CslString,
+});
+export type CslItem = typeof CslItem.Type;
+
 export const DocumentCitation = Schema.Union([
   /** "Cite selected text" from a project file: a quotation plus the file it came from. */
   Schema.TaggedStruct("file-excerpt", {
@@ -342,20 +593,14 @@ export const DocumentCitation = Schema.Union([
     text: Schema.String,
     comment: Schema.NullOr(Schema.String),
   }),
-  /** A bibliographic citation, kept as a key and reference so a converter can format it. */
+  /**
+   * A bibliographic citation, kept as a key and a CSL-JSON reference so a
+   * converter can format it; `reference` is null when only the key is known.
+   */
   Schema.TaggedStruct("bibliographic", {
     id: TrimmedNonEmptyString,
     key: TrimmedNonEmptyString.check(Schema.isMaxLength(512)),
-    reference: Schema.NullOr(
-      Schema.Struct({
-        title: Schema.NullOr(Schema.String),
-        authors: Schema.Array(Schema.String),
-        issued: Schema.NullOr(Schema.String),
-        containerTitle: Schema.NullOr(Schema.String),
-        doi: Schema.NullOr(Schema.String),
-        url: Schema.NullOr(Schema.String),
-      }),
-    ),
+    reference: Schema.NullOr(CslItem),
   }),
 ]);
 export type DocumentCitation = typeof DocumentCitation.Type;
@@ -476,6 +721,8 @@ export const ScientConversationExportRequest = Schema.Struct({
   format: ConversationExportFormat,
   options: ConversationExportOptions,
   delivery: ScientConversationExportDelivery,
+  /** IANA time zone for human-readable times in the output; UTC when absent or unknown. */
+  timeZone: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(64))),
 });
 export type ScientConversationExportRequest = typeof ScientConversationExportRequest.Type;
 

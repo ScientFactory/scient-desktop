@@ -47,18 +47,28 @@ describe("buildThreadActionMenuItems", () => {
           titleRegeneration: false,
         },
       }),
-    ).toEqual(["rename", "mark-unread", "copy", "project-settings", "archive", "delete"]);
+    ).toEqual([
+      "rename",
+      "mark-unread",
+      "copy",
+      "export-conversation",
+      "project-settings",
+      "archive",
+      "delete",
+    ]);
   });
 
   it("groups project settings with utility actions before archive", () => {
     const items = buildThreadActionMenuItems(baseState);
     const copyIndex = items.findIndex((item) => item.id === "copy");
-    expect(items[copyIndex + 1]).toMatchObject({
+    // SCIENT-FORK: conversation export sits between Copy and Project settings.
+    expect(items[copyIndex + 1]).toMatchObject({ id: "export-conversation", label: "Export…" });
+    expect(items[copyIndex + 2]).toMatchObject({
       id: "project-settings",
       label: "Project settings",
       icon: "settings",
     });
-    expect(items[copyIndex + 2]?.id).toBe("archive");
+    expect(items[copyIndex + 3]?.id).toBe("archive");
   });
 
   it("offers project filtering only for surfaces with a scoped thread list", () => {

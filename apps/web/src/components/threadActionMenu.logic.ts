@@ -2,6 +2,10 @@ import type { ContextMenuItem } from "@t3tools/contracts";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 // SCIENT-FORK:START
 import type { SectionMenuId } from "../scient/sections/menu";
+import {
+  CONVERSATION_EXPORT_MENU_ITEM,
+  type ConversationExportMenuId,
+} from "../scient/conversationExport/menu";
 // SCIENT-FORK:END
 
 /**
@@ -12,6 +16,7 @@ import type { SectionMenuId } from "../scient/sections/menu";
 export type ThreadActionMenuId =
   // SCIENT-FORK:START
   | SectionMenuId
+  | ConversationExportMenuId
   // SCIENT-FORK:END
   | "new-thread-on-branch"
   | "filter-by-project"
@@ -188,6 +193,9 @@ export function buildThreadActionMenuItems(
         { id: "copy-thread-id", label: "Thread ID", icon: "hash" },
       ],
     },
+    // SCIENT-FORK:START
+    CONVERSATION_EXPORT_MENU_ITEM,
+    // SCIENT-FORK:END
     { id: "project-settings", label: "Project settings", icon: "settings" },
     // Archive removes the thread from the sidebar while keeping its
     // conversation under Settings > Archived threads — distinct from Settle
