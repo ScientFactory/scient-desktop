@@ -33,7 +33,9 @@ of the canonical content and excludes them, so two captures of the same state ha
   are left out, and exactly one `running-turn-omitted` warning names it.
 - **Selection.** Work log, reasoning, and range are applied while capturing. Unselected content is
   never read into the snapshot.
-- **Messages.** User, assistant, and system messages that finished streaming, numbered `n = 1…`.
+- **Messages.** User, assistant, and system messages outside the running turn, numbered `n = 1…`.
+  As in chat, a settled turn's message counts as complete even if a crashed provider left its
+  streaming flag set.
   Reasoning-role messages are a separate list. Inline references (composer context chips and
   captured quotes) are rewritten to `scient-ref:<id>` links with typed entries; environment, thread,
   and message ids, absolute workspace roots, file revisions, and editor positions are dropped, and
@@ -67,7 +69,10 @@ attached to the message chat shows them under (the terminal answer of their turn
 grouping shared with chat (`@scientfactory/conversation/work-log-grouping`, the same functions
 `MessagesTimeline.logic.ts` imports; that subpath has no parser code). Assets are addressed as
 `scient-asset:<id>`; file-excerpt quotes become a quotation plus the project-relative source file
-and are listed in `citations`.
+and are listed in `citations`. Images referenced by a path on the original computer (for example
+`![Plot](./figures/plot.png)`) become an "Image not included" placeholder with a
+`resource-unresolved` warning; remote and data images are kept. When work log or reasoning is
+included, a `sensitive-content-included` warning puts the dialog's caution into the file.
 
 ## Scient conversation Markdown v1
 
@@ -136,11 +141,14 @@ exported content. `POST /api/scient/conversation-export/v1/export` produces the 
 `orchestration:read`.
 
 - **File delivery** writes `<state>/scient/conversation-exports/<exportId>/<name>.md` or `.zip`
-  (`name.md` plus `attachments/NN-name`, written with `yazl`) and returns a signed
+  (`name.md` plus `attachments/NN-name`, written with `yazl`). The name comes from the title and is
+  at most 200 UTF-8 bytes including the extension. The server returns a signed
   `environment-file` asset URL that expires with the file. The directory is cleared when the server
   starts and swept every five minutes; exports older than 30 minutes are removed.
 - **Clipboard delivery** returns text-only Markdown inline, up to 8 MiB of text.
-- Scient's own state and base directories are replaced with `«scient-data»` in every output.
+- Scient's own state and base directories (as configured and as resolved) are replaced with
+  `«scient-data»` in the snapshot's text before any writer escapes it, with either path separator
+  and, for Windows roots, in any case.
 - The client saves a file with the shared Save Copy path: the native save dialog in desktop
   (`apps/desktop/src/scient/documentArtifacts/AssetCopy.ts`) and a download in a browser.
 

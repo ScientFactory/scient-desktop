@@ -192,9 +192,18 @@ function ConversationExportDialog({ threadRef }: { readonly threadRef: ScopedThr
         </DialogHeader>
         <DialogPanel>
           {loading._tag === "failed" ? (
-            <p role="alert" className="text-destructive">
-              {loading.message}
-            </p>
+            <div className="flex flex-col items-start gap-3">
+              <p role="alert" className="text-destructive">
+                {loading.message}
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => requestConversationExport(threadRef)}
+              >
+                Try again
+              </Button>
+            </div>
           ) : null}
           {loading._tag === "ready" && state !== null ? (
             <ConversationExportForm

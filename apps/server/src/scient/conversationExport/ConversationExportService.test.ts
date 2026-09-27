@@ -67,14 +67,16 @@ const QueryLive = OrchestrationProjectionSnapshotQueryLive.pipe(
   ),
 );
 
-const TestLayer = ConversationExportService.layer.pipe(
-  Layer.provideMerge(ConversationSnapshotService.layer),
-  Layer.provideMerge(ConversationExportFiles.layer),
-  Layer.provideMerge(QueryLive),
-  Layer.provideMerge(SqlitePersistenceMemory),
-  Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "scient-convexport-" })),
-  Layer.provideMerge(NodeServices.layer),
-);
+const exportLayer = (prefix: string) =>
+  ConversationExportService.layer.pipe(
+    Layer.provideMerge(ConversationSnapshotService.layer),
+    Layer.provideMerge(ConversationExportFiles.layer),
+    Layer.provideMerge(QueryLive),
+    Layer.provideMerge(SqlitePersistenceMemory),
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix })),
+    Layer.provideMerge(NodeServices.layer),
+  );
+const TestLayer = exportLayer("scient-convexport-");
 
 const AssetConfigLive = ServerConfig.layerTest(process.cwd(), {
   prefix: "scient-convexport-asset-",
@@ -313,12 +315,50 @@ describe("ConversationExportService", () => {
   it.effect("returns clipboard text and never publishes Scient storage paths", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
-      yield* seedThread({ pairs: 1, firstUserText: `Look in ${config.stateDir}/logs/server.log` });
-      const { produced, text } = yield* produceText(request({ delivery: "clipboard" }));
+      // A root whose name Markdown would escape (`_`, `*`).
+      assert.include(config.baseDir, "scient_conv*export");
+      yield* seedThread({
+        pairs: 1,
+        activitiesPerTurn: 1,
+        firstUserText: `Look in ${config.stateDir}/logs/server_1.log`,
+      });
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE projection_threads SET title = ${`Logs in ${config.baseDir}`}`;
+      yield* sql`UPDATE projection_thread_activities SET payload_json = ${encodeJson({
+        title: "Ran command",
+        itemType: "command_execution",
+        data: { item: { command: `cat ${config.stateDir}/logs/a_b.log` } },
+      })}`;
+      const { produced, text } = yield* produceText(
+        request({ delivery: "clipboard" }, { includeWorkLog: true }),
+      );
       assert.strictEqual(produced.output._tag, "text");
-      assert.include(text, "Look in «scient-data»/logs/server.log");
-      assert.notInclude(text, config.stateDir);
-      assert.notInclude(text, config.baseDir);
+      assert.include(text, "Look in «scient-data»/logs/server_1.log");
+      assert.include(text, "cat «scient-data»/logs/a_b.log");
+      const leaf = config.baseDir.split("/").at(-1)!;
+      assert.notInclude(text, leaf);
+      assert.notInclude(text, leaf.replaceAll("_", "\\_").replaceAll("*", "\\*"));
+    }).pipe(Effect.provide(exportLayer("scient_conv*export-"))),
+  );
+
+  it.effect("writes a long non-Latin title as a file name the file system accepts", () =>
+    Effect.gen(function* () {
+      yield* seedThread({ pairs: 1 });
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE projection_threads SET title = ${"研究結果".repeat(23)}`;
+      const service = yield* ConversationExportService.ConversationExportService;
+      const produced = yield* service.produce(
+        request({}, { markdownPackaging: "with-attachments" }),
+      );
+      assert(produced.output._tag === "file");
+      assert.isAtMost(new TextEncoder().encode(produced.output.fileName).byteLength, 200);
+      const fileSystem = yield* FileSystem.FileSystem;
+      assert.isTrue(yield* fileSystem.exists(produced.output.path));
+      const entries = yield* Effect.promise(() =>
+        readZip((produced.output as { readonly path: string }).path),
+      );
+      const [markdownEntry] = [...entries.keys()];
+      assert.isAtMost(new TextEncoder().encode(markdownEntry!).byteLength, 200);
     }).pipe(Effect.provide(TestLayer)),
   );
 
@@ -509,6 +549,36 @@ describe("conversation PDF preparation", () => {
       );
       assert.include(ranged.markdown, "Answer 2");
       assert.notInclude(ranged.markdown, "Question 3");
+    }).pipe(Effect.provide(PdfTestLayer)),
+  );
+
+  it.effect("redacts storage paths from the PDF title, text, and warnings end to end", () =>
+    Effect.gen(function* () {
+      yield* seedThread({ pairs: 1, activitiesPerTurn: 1 });
+      const config = yield* ServerConfig.ServerConfig;
+      const sql = yield* SqlClient.SqlClient;
+      const secretTitle = `Report from ${config.stateDir}/attachments`;
+      yield* sql`UPDATE projection_threads SET title = ${secretTitle} WHERE thread_id = ${THREAD}`;
+      const prepared = yield* prepareConversationPdf(
+        request({ format: "pdf" }, { includeWorkLog: true }),
+      );
+      const page = yield* readCapturedPageInput(prepared.inputRelativeUrl);
+      for (const text of [
+        prepared.title,
+        page.title,
+        page.markdown,
+        ...page.warnings.map((warning) => warning.message),
+      ]) {
+        assert.notInclude(text, config.stateDir);
+        assert.notInclude(text, config.baseDir);
+      }
+      assert.include(page.title, "«scient-data»");
+      // The page title is the document title and the running header of every page.
+      assert.strictEqual(prepared.title, page.title);
+      assert.include(
+        page.warnings.map((warning) => warning.code),
+        "sensitive-content-included",
+      );
     }).pipe(Effect.provide(PdfTestLayer)),
   );
 

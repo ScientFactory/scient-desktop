@@ -39,4 +39,21 @@ describe("message bodies", () => {
     const options = { ...OPTIONS, preserveLineBreaks: true, rawHtml: "literal" } as const;
     expect(writeMessageBody(body, options)).toEqual(writeMessageBody(body, options));
   });
+
+  it("namespaces quoted and unquoted anchors and the HTML links that target them", () => {
+    const body = [
+      "<a id=\"top\"></a><a name='mid'></a><a id=end></a>",
+      "",
+      '<p><a href="#top">up</a> <a href=\'#mid\'>mid</a> <a href=#end>down</a> <a href="#other">x</a></p>',
+    ].join("\n");
+    const written = writeMessageBody(body, OPTIONS).markdown;
+    expect(written).toBe(
+      [
+        "<a id=\"m3-top\"></a><a name='m3-mid'></a><a id=m3-end></a>",
+        "",
+        '<p><a href="#m3-top">up</a> <a href=\'#m3-mid\'>mid</a> <a href=#m3-end>down</a> <a href="#other">x</a></p>',
+      ].join("\n"),
+    );
+    expect(readMessageBody(written, "m3-")).toBe(body);
+  });
 });

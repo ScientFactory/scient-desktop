@@ -607,6 +607,8 @@ export type DocumentCitation = typeof DocumentCitation.Type;
 
 export const DocumentWarningCode = Schema.Literals([
   "running-turn-omitted",
+  /** The export includes work log or reasoning, which can hold paths, output, and secrets. */
+  "sensitive-content-included",
   "attachment-unavailable",
   "attachment-unsupported",
   "records-skipped",

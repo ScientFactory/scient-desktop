@@ -49,7 +49,19 @@ export interface WrittenBody {
   readonly containedAsLiteral: boolean;
 }
 
-const HTML_ANCHOR_ATTRIBUTE = /(\s(?:id|name)\s*=\s*)(["'])([^"']*)\2/giu;
+// An attribute value is double-quoted, single-quoted, or unquoted.
+const HTML_ANCHOR_ATTRIBUTE = /(\s(?:id|name)\s*=\s*)(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/giu;
+const HTML_FRAGMENT_REFERENCE = /(\shref\s*=\s*)(?:"#([^"]*)"|'#([^']*)'|#([^\s"'=<>`]+))/giu;
+
+/** The value of an attribute match and its offset within the match (after a quote and a `#`). */
+function attributeValue(
+  match: RegExpMatchArray,
+  hashPrefix: boolean,
+): { value: string; offset: number } {
+  const value = match[2] ?? match[3] ?? match[4] ?? "";
+  const quoted = match[4] === undefined;
+  return { value, offset: match[1]!.length + (quoted ? 1 : 0) + (hashPrefix ? 1 : 0) };
+}
 const HEADING_ANCHOR = /\{#([A-Za-z][\w:.-]*)\}\s*$/u;
 
 interface LabelSite {
@@ -182,11 +194,16 @@ function namespaceEdits(
         if (!includeHtml) break;
         const value = source.slice(range.start, range.end);
         for (const match of value.matchAll(HTML_ANCHOR_ATTRIBUTE)) {
-          const renamed = renameLabel(match[3]!, namespace, direction);
-          if (renamed === null || match[3]!.length === 0) continue;
-          anchors.add(direction.kind === "add" ? match[3]! : renamed);
-          const valueStart = range.start + match.index + match[1]!.length + 1;
-          edits.push({ start: valueStart, end: valueStart + match[3]!.length, text: renamed });
+          const attribute = attributeValue(match, false);
+          const renamed = renameLabel(attribute.value, namespace, direction);
+          if (renamed === null || attribute.value.length === 0) continue;
+          anchors.add(direction.kind === "add" ? attribute.value : renamed);
+          const valueStart = range.start + match.index! + attribute.offset;
+          edits.push({
+            start: valueStart,
+            end: valueStart + attribute.value.length,
+            text: renamed,
+          });
         }
         break;
       }
@@ -197,6 +214,27 @@ function namespaceEdits(
 
   if (anchors.size > 0) {
     visitNodes(root, (node) => {
+      if (node.type === "html" && includeHtml) {
+        // `href="#anchor"` inside raw HTML targets the same renamed anchors.
+        const range = nodeRange(node);
+        if (!range) return;
+        const value = source.slice(range.start, range.end);
+        for (const match of value.matchAll(HTML_FRAGMENT_REFERENCE)) {
+          const attribute = attributeValue(match, true);
+          const original =
+            direction.kind === "add"
+              ? attribute.value
+              : renameLabel(attribute.value, namespace, direction);
+          if (original === null || !anchors.has(original)) continue;
+          const valueStart = range.start + match.index! + attribute.offset;
+          edits.push({
+            start: valueStart,
+            end: valueStart + attribute.value.length,
+            text: direction.kind === "add" ? `${namespace}${attribute.value}` : original,
+          });
+        }
+        return;
+      }
       if (node.type !== "link" && node.type !== "definition") return;
       const url = (node as Link | Definition).url;
       if (!url.startsWith("#")) return;

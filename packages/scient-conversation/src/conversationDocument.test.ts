@@ -277,6 +277,10 @@ describe("conversation document", () => {
     expect(full).toContain("file-a\n  file-b");
     expect(full).toContain("<summary>Reasoning</summary>\n\nThinking\\\nhard");
     expect(full).not.toContain("sk-secret");
+    expect(full).toContain(
+      "- This export includes the work log and reasoning, which can contain file paths, command output, and secrets.",
+    );
+    expect(plain).not.toContain("This export includes");
     const parsed = parseConversationMarkdown(full);
     if (parsed.kind !== "conversation") throw new Error("Expected a conversation.");
     expect(parsed.messages[1]!.body).toBe("Done");
@@ -335,5 +339,41 @@ describe("conversation document", () => {
     );
     expect(bodies(markdown)).toEqual(["Ask me"]);
     expect(markdown).toContain("**Q:** Which color?\\\n**A:** Blue");
+  });
+
+  it("labels images that only exist on the original computer and warns about them", () => {
+    const { markdown, document } = exportMarkdown(
+      snapshotOf(
+        thread({
+          messages: [
+            message({ id: "m1", role: "user", text: "Plot please" }),
+            message({
+              id: "m2",
+              role: "assistant",
+              text: "![Plot](./figures/plot.png)\n\n![remote](https://example.org/a.png)\n\n![Ref][fig]\n\n[fig]: /Users/someone/fig.png",
+              turnId: "t1",
+            }),
+          ],
+        }),
+      ),
+    );
+    expect(bodies(markdown)[1]).toBe(
+      "*\\[Image not included: Plot\\]*\n\n![remote](https://example.org/a.png)\n\n*\\[Image not included: Ref\\]*\n\n[fig]: /Users/someone/fig.png",
+    );
+    expect(
+      document.bundle.warnings.filter((warning) => warning.code === "resource-unresolved"),
+    ).toEqual([
+      {
+        code: "resource-unresolved",
+        message:
+          "Image “Plot” in message 2 refers to a file on the original computer and is not included.",
+      },
+      {
+        code: "resource-unresolved",
+        message:
+          "Image “Ref” in message 2 refers to a file on the original computer and is not included.",
+      },
+    ]);
+    expect(markdown).toContain("**Export notes**");
   });
 });
