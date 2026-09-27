@@ -31,7 +31,7 @@ does not authorize a release or publication.
     `79f62ba2cf6c4dd01dced564a0a4c5b2c179f933`
   - second parent: exact latest owned `main` `12437d152…`
 - Branch: `codex/t3-sync-a727d1d9-20260927`
-- Alignment PR: to be created after the reviewed branch is pushed
+- Alignment PR: [#384](https://github.com/ScientFactory/scient-desktop/pull/384)
 - Nearest reachable official tag: `v0.0.43-nightly.20260927.2344`
 - `upstream` remains fetch-only; push URL re-verified `DISABLED`
 

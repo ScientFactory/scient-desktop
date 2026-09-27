@@ -55,8 +55,8 @@ and in `upstream-state.json`. It extends the integration through
 is `a556a6905fdbd9b6121f8952a994531b4870671d`, whose second parent is the exact
 official target. The reviewed candidate was then brought forward to owned `main`
 `12437d152ee30d7d39313a05200fcf1c27c82d1a` through catch-up merge
-`70a9f9d980ab4e4aa8ae391211875cfd3ff05cbc`. The alignment PR number is recorded
-in the receipt once the branch is pushed. The preceding alignment
+`70a9f9d980ab4e4aa8ae391211875cfd3ff05cbc`. The alignment is prepared in
+[PR #384](https://github.com/ScientFactory/scient-desktop/pull/384). The preceding alignment
 ([PR #372](docs/internals/2026-09-26-upstream-sync-95030dc6.md)) remains literal
 ancestry.
 
