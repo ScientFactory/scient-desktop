@@ -1,0 +1,375 @@
+// @effect-diagnostics nodeBuiltinImport:off -- entry digests are computed synchronously while the package is assembled.
+/**
+ * Assembles a portable conversation file from a captured snapshot and the
+ * attachment bytes present at capture.
+ *
+ * The package's snapshot is the captured one made portable: every attachment
+ * is renamed to a package resource (`attachment-N`), attachments outside the
+ * chat attachment media policy or whose bytes contradict their declared type
+ * travel as unavailable, the attachment warnings are rebuilt from those facts,
+ * Scient's own storage paths are redacted from every string, and the content
+ * digest is recomputed over the result. The readable copy is written from that
+ * same snapshot, with its attachment links pointing into the package.
+ */
+import * as NodeCrypto from "node:crypto";
+
+import {
+  SCIC_FORMAT,
+  SCIC_FORMAT_MAJOR_VERSION,
+  SCIC_FORMAT_MINOR_VERSION,
+  SCIC_MEDIA_TYPE,
+  type ConversationAttachment,
+  type ConversationImportResourceId,
+  type ConversationSnapshotV1,
+  type ConversationSnapshotWarning,
+  type DocumentWarning,
+  type Sha256Digest,
+} from "@t3tools/contracts";
+import {
+  buildConversationDocument,
+  writeConversationMarkdown,
+  type ResolvedAttachmentContent,
+} from "@scientfactory/conversation";
+
+import { conversationContentDigest } from "../conversationImport/ConversationImporter.ts";
+import {
+  SCIC_MANIFEST_ENTRY,
+  SCIC_MARKDOWN_ENTRY,
+  SCIC_MARKDOWN_MEDIA_TYPE,
+  SCIC_MAX_MANIFEST_BYTES,
+  SCIC_MAX_MARKDOWN_BYTES,
+  SCIC_MAX_SNAPSHOT_BYTES,
+  SCIC_MIMETYPE_ENTRY,
+  SCIC_SNAPSHOT_ENTRY,
+  SCIC_SNAPSHOT_MEDIA_TYPE,
+  SNIFF_BYTES,
+  contradictsDeclaredType,
+  scicAttachmentPath,
+  withinAttachmentPolicy,
+  type ScicManifest,
+  type ScicManifestEntry,
+  type ScicManifestResource,
+  type ScicUnavailableReason,
+} from "./scicFormat.ts";
+
+/** Attachment bytes read at capture, or why they could not be, by local attachment ID. */
+export type ScicAttachmentBytes = ResolvedAttachmentContent;
+
+export interface ScicPackageInput {
+  readonly snapshot: ConversationSnapshotV1;
+  /** Attachments whose bytes were read; an available attachment missing here is `missing`. */
+  readonly attachments: ReadonlyMap<string, ScicAttachmentBytes>;
+  /** The export's marker value; also the manifest's export ID. */
+  readonly exportValue: string;
+  readonly exportedAt: string;
+  readonly exporter: { readonly name: string; readonly version: string };
+  readonly timeZone: string;
+  /** Removes Scient's own storage locations from text. */
+  readonly redact: (text: string) => string;
+}
+
+export interface ScicPackageFile {
+  readonly path: string;
+  readonly bytes: Uint8Array;
+  /** Stored as is (the `mimetype` entry, already-compressed images) or deflated. */
+  readonly compress: boolean;
+}
+
+export interface ScicPackage {
+  /** In archive order: `mimetype` first, then the manifest, documents, and attachments. */
+  readonly files: ReadonlyArray<ScicPackageFile>;
+  readonly manifest: ScicManifest;
+  readonly snapshot: ConversationSnapshotV1;
+  readonly contentDigest: Sha256Digest;
+  readonly messageCount: number;
+  readonly warnings: ReadonlyArray<DocumentWarning>;
+}
+
+export type ScicPackageFailure =
+  | { readonly _tag: "nothing-to-export" }
+  | { readonly _tag: "too-large"; readonly entry: string };
+
+const encoder = new TextEncoder();
+
+export function sha256Digest(bytes: Uint8Array): Sha256Digest {
+  return `sha256:${NodeCrypto.createHash("sha256").update(bytes).digest("hex")}`;
+}
+
+function redactStrings<A>(value: A, redact: (text: string) => string): A {
+  if (typeof value === "string") return redact(value) as A;
+  if (Array.isArray(value)) return value.map((item) => redactStrings(item, redact)) as A;
+  if (typeof value === "object" && value !== null && !(value instanceof Uint8Array)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, redactStrings(item, redact)]),
+    ) as A;
+  }
+  return value;
+}
+
+interface Resource {
+  readonly id: ConversationImportResourceId;
+  readonly attachment: ConversationAttachment;
+  readonly content:
+    | { readonly _tag: "included"; readonly bytes: Uint8Array; readonly sha256: Sha256Digest }
+    | { readonly _tag: "unavailable"; readonly reason: ScicUnavailableReason };
+}
+
+function resolveResource(
+  attachment: ConversationAttachment,
+  read: ScicAttachmentBytes | undefined,
+): Resource["content"] {
+  if (!attachment.available || read === undefined)
+    return { _tag: "unavailable", reason: "missing" };
+  if (read._tag === "unavailable") return { _tag: "unavailable", reason: read.reason };
+  const acceptable =
+    withinAttachmentPolicy({
+      kind: attachment.kind,
+      mediaType: attachment.mimeType,
+      byteLength: read.bytes.byteLength,
+    }) && !contradictsDeclaredType(attachment.mimeType, read.bytes.subarray(0, SNIFF_BYTES));
+  return acceptable
+    ? { _tag: "included", bytes: read.bytes, sha256: read.sha256 }
+    : { _tag: "unavailable", reason: "unsupported" };
+}
+
+const UNAVAILABLE_NOTES: Record<Exclude<ScicUnavailableReason, "missing">, string> = {
+  unreadable: "could not be read",
+  unsupported: "is not a type or size Scient can import",
+  "too-large": "did not fit within the export's attachment limit",
+};
+
+/** Makes the captured snapshot portable, then assembles every package entry. */
+export function prepareScicPackage(
+  input: ScicPackageInput,
+): { readonly _tag: "ok"; readonly value: ScicPackage } | ScicPackageFailure {
+  const { snapshot } = input;
+
+  // Resources in order of first appearance: message attachments, then answers.
+  const occurrences = [
+    ...snapshot.messages.flatMap((message) =>
+      message.attachments.map((attachment) => ({
+        attachment,
+        messageN: message.n as number | null,
+      })),
+    ),
+    ...snapshot.questionAnswers.flatMap((answer) =>
+      answer.items.flatMap((item) =>
+        item.attachments.map((attachment) => ({ attachment, messageN: null as number | null })),
+      ),
+    ),
+  ];
+  const resources = new Map<string, Resource>();
+  for (const { attachment } of occurrences) {
+    if (resources.has(attachment.localId)) continue;
+    resources.set(attachment.localId, {
+      id: `attachment-${resources.size + 1}` as ConversationImportResourceId,
+      attachment,
+      content: resolveResource(attachment, input.attachments.get(attachment.localId)),
+    });
+  }
+
+  const portableAttachment = (attachment: ConversationAttachment): ConversationAttachment => {
+    const resource = resources.get(attachment.localId)!;
+    return {
+      ...attachment,
+      localId: resource.id,
+      available: resource.content._tag === "included",
+      sizeBytes:
+        resource.content._tag === "included"
+          ? resource.content.bytes.byteLength
+          : attachment.sizeBytes,
+    };
+  };
+
+  // Attachment warnings restated from the facts: one per unavailable attachment
+  // on a message, and per unavailable answer attachment.
+  const attachmentWarnings: ConversationSnapshotWarning[] = occurrences.flatMap(
+    ({ attachment, messageN }) =>
+      resources.get(attachment.localId)!.content._tag === "included"
+        ? []
+        : [{ _tag: "attachment-unavailable", name: attachment.name, messageN }],
+  );
+  const warnings: ConversationSnapshotWarning[] = [
+    ...snapshot.warnings.filter((warning) => warning._tag === "running-turn-omitted"),
+    ...attachmentWarnings,
+    ...snapshot.warnings.filter((warning) => warning._tag === "records-skipped"),
+  ];
+
+  const portable = redactStrings(
+    {
+      ...snapshot,
+      messages: snapshot.messages.map((message) => ({
+        ...message,
+        attachments: message.attachments.map(portableAttachment),
+        references: message.references.map((reference) =>
+          reference._tag === "attachment" && resources.has(reference.attachmentLocalId)
+            ? { ...reference, attachmentLocalId: resources.get(reference.attachmentLocalId)!.id }
+            : reference,
+        ),
+      })),
+      questionAnswers: snapshot.questionAnswers.map((answer) => ({
+        ...answer,
+        items: answer.items.map((item) => ({
+          ...item,
+          attachments: item.attachments.map(portableAttachment),
+        })),
+      })),
+      warnings,
+    },
+    input.redact,
+  );
+  const contentDigest = conversationContentDigest(portable);
+  const packageSnapshot: ConversationSnapshotV1 = { ...portable, contentDigest };
+
+  const includedById = new Map<string, Extract<Resource["content"], { _tag: "included" }>>();
+  for (const resource of resources.values()) {
+    if (resource.content._tag === "included") includedById.set(resource.id, resource.content);
+  }
+  const document = buildConversationDocument({
+    snapshot: packageSnapshot,
+    exportValue: input.exportValue,
+    timeZone: input.timeZone,
+    resolveAttachment: (attachment): ResolvedAttachmentContent => {
+      const included = includedById.get(attachment.localId);
+      return included
+        ? { _tag: "bytes", bytes: included.bytes, sha256: included.sha256 }
+        : { _tag: "unavailable", reason: "missing" };
+    },
+  });
+  if (document.messageCount === 0) return { _tag: "nothing-to-export" };
+
+  // The readable copy links each attachment to its file in the package.
+  const bundle = {
+    ...document.bundle,
+    assets: document.bundle.assets.map((asset) =>
+      asset.content._tag === "bytes"
+        ? { ...asset, packagePath: scicAttachmentPath(asset.content.sha256, asset.fileName) }
+        : asset,
+    ),
+  };
+  const markdown = input.redact(
+    writeConversationMarkdown({
+      bundle,
+      exportValue: input.exportValue,
+      exported: input.exportedAt,
+      packaging: "with-attachments",
+    }),
+  );
+  const exportWarnings: DocumentWarning[] = [
+    ...bundle.warnings,
+    ...[...resources.values()].flatMap((resource): DocumentWarning[] =>
+      resource.content._tag === "unavailable" && resource.content.reason !== "missing"
+        ? [
+            {
+              code: "attachment-unavailable",
+              message: `Attachment “${resource.attachment.name}” ${UNAVAILABLE_NOTES[resource.content.reason]} and is listed by name only.`,
+            },
+          ]
+        : [],
+    ),
+  ].map((warning) => ({ ...warning, message: input.redact(warning.message) }));
+
+  const snapshotBytes = encoder.encode(JSON.stringify(packageSnapshot));
+  if (snapshotBytes.byteLength > SCIC_MAX_SNAPSHOT_BYTES) {
+    return { _tag: "too-large", entry: SCIC_SNAPSHOT_ENTRY };
+  }
+  const markdownBytes = encoder.encode(markdown);
+  if (markdownBytes.byteLength > SCIC_MAX_MARKDOWN_BYTES) {
+    return { _tag: "too-large", entry: SCIC_MARKDOWN_ENTRY };
+  }
+
+  const attachmentFiles = new Map<
+    string,
+    ScicPackageFile & { readonly sha256: Sha256Digest; readonly mediaType: string }
+  >();
+  const manifestResources: ScicManifestResource[] = [];
+  for (const resource of resources.values()) {
+    const { attachment, content } = resource;
+    if (content._tag === "unavailable") {
+      manifestResources.push({
+        _tag: "unavailable",
+        id: resource.id,
+        name: attachment.name,
+        reason: content.reason,
+      });
+      continue;
+    }
+    const path = scicAttachmentPath(content.sha256, attachment.name);
+    attachmentFiles.set(path, {
+      path,
+      bytes: content.bytes,
+      sha256: content.sha256,
+      mediaType: attachment.mimeType,
+      // Images are already compressed.
+      compress: attachment.kind !== "image",
+    });
+    manifestResources.push({
+      _tag: "included",
+      id: resource.id,
+      path,
+      name: attachment.name,
+      kind: attachment.kind === "image" ? "image" : "file",
+      mediaType: attachment.mimeType,
+      byteLength: content.bytes.byteLength,
+      sha256: content.sha256,
+    });
+  }
+  const orderedAttachments = [...attachmentFiles.values()].toSorted((left, right) =>
+    left.path < right.path ? -1 : left.path > right.path ? 1 : 0,
+  );
+
+  const entries: ScicManifestEntry[] = [
+    {
+      path: SCIC_SNAPSHOT_ENTRY,
+      mediaType: SCIC_SNAPSHOT_MEDIA_TYPE,
+      byteLength: snapshotBytes.byteLength,
+      sha256: sha256Digest(snapshotBytes),
+    },
+    {
+      path: SCIC_MARKDOWN_ENTRY,
+      mediaType: SCIC_MARKDOWN_MEDIA_TYPE,
+      byteLength: markdownBytes.byteLength,
+      sha256: sha256Digest(markdownBytes),
+    },
+    ...orderedAttachments.map((file) => ({
+      path: file.path,
+      mediaType: file.mediaType,
+      byteLength: file.bytes.byteLength,
+      sha256: file.sha256,
+    })),
+  ];
+  const manifest: ScicManifest = {
+    format: SCIC_FORMAT,
+    formatVersion: { major: SCIC_FORMAT_MAJOR_VERSION, minor: SCIC_FORMAT_MINOR_VERSION },
+    exporter: input.exporter,
+    exportId: input.exportValue,
+    exportedAt: input.exportedAt,
+    sourceThreadId: packageSnapshot.captured.threadId,
+    contentDigest,
+    entries,
+    resources: manifestResources,
+    warnings: exportWarnings,
+  };
+  const manifestBytes = encoder.encode(JSON.stringify(manifest));
+  if (manifestBytes.byteLength > SCIC_MAX_MANIFEST_BYTES) {
+    return { _tag: "too-large", entry: SCIC_MANIFEST_ENTRY };
+  }
+
+  return {
+    _tag: "ok",
+    value: {
+      files: [
+        { path: SCIC_MIMETYPE_ENTRY, bytes: encoder.encode(SCIC_MEDIA_TYPE), compress: false },
+        { path: SCIC_MANIFEST_ENTRY, bytes: manifestBytes, compress: true },
+        { path: SCIC_SNAPSHOT_ENTRY, bytes: snapshotBytes, compress: true },
+        { path: SCIC_MARKDOWN_ENTRY, bytes: markdownBytes, compress: true },
+        ...orderedAttachments.map(({ path, bytes, compress }) => ({ path, bytes, compress })),
+      ],
+      manifest,
+      snapshot: packageSnapshot,
+      contentDigest,
+      messageCount: document.messageCount,
+      warnings: exportWarnings,
+    },
+  };
+}

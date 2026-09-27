@@ -1,6 +1,6 @@
 import { registerConversationExportFormat } from "./formatRegistry";
 
-/** Formats this build offers. Later formats (PDF, Word, `.scic`) register here. */
+/** Formats this build offers, in display order. Later formats (PDF, Word) register here. */
 registerConversationExportFormat({
   format: "markdown",
   label: "Markdown",
@@ -23,4 +23,12 @@ registerConversationExportFormat({
     preparation.attachmentCount > 0
       ? "A text-only file lists attachments by name. The .zip keeps them next to the Markdown."
       : null,
+});
+
+registerConversationExportFormat({
+  format: "scic",
+  label: "Scient (.scic)",
+  supportsCopy: false,
+  note: () =>
+    "Another Scient can import this file and continue the conversation in a fresh session.",
 });

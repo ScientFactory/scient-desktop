@@ -216,6 +216,7 @@ describe("ConversationExportService", () => {
       assert.strictEqual(preparation.workLogEntryCount, 1_050);
       assert.deepStrictEqual(preparation.formats, [
         { format: "markdown", available: true, unavailableReason: null },
+        { format: "scic", available: true, unavailableReason: null },
       ]);
 
       const { produced, text } = yield* produceText(request({}, { includeWorkLog: true }));

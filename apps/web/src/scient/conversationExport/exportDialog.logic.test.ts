@@ -47,11 +47,46 @@ const preparation: ScientConversationExportPreparation = {
 const registrations = registeredConversationExportFormats();
 
 describe("export dialog", () => {
-  it("registers Markdown through the format registry", () => {
-    expect(registrations.map((entry) => entry.format)).toEqual(["markdown"]);
+  it("registers Markdown and the Scient conversation file through the format registry", () => {
+    expect(registrations.map((entry) => entry.format)).toEqual(["markdown", "scic"]);
     expect(exportFormatOptions(preparation, registrations)).toEqual([
       { registration: registrations[0], available: true, unavailableReason: null },
+      {
+        registration: registrations[1],
+        available: false,
+        unavailableReason: "Not available on this Scient.",
+      },
     ]);
+  });
+
+  it("offers a .scic without Copy and with work log and reasoning off", () => {
+    const scicPreparation = {
+      ...preparation,
+      formats: [
+        ...preparation.formats,
+        { format: "scic" as const, available: true, unavailableReason: null },
+      ],
+    };
+    const state = {
+      ...initialExportDialogState(scicPreparation, registrations),
+      format: "scic" as const,
+    };
+    expect(canCopyExport(state, scicPreparation, registrations)).toBe(false);
+    expect(
+      buildExportRequest({
+        threadId: ThreadId.make("t1"),
+        state,
+        preparation: scicPreparation,
+        registrations,
+        delivery: "file",
+        timeZone: null,
+      }),
+    ).toEqual({
+      threadId: "t1",
+      format: "scic",
+      options: { includeWorkLog: false, includeReasoning: false, range: { _tag: "whole" } },
+      delivery: "file",
+    });
   });
 
   it("starts with work log and reasoning off and the whole conversation", () => {
@@ -85,7 +120,7 @@ describe("export dialog", () => {
       },
       [...registrations, pdf],
     );
-    expect(options[1]).toMatchObject({
+    expect(options.at(-1)).toMatchObject({
       available: false,
       unavailableReason: "A connected Scient desktop is required.",
     });
