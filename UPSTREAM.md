@@ -48,30 +48,30 @@ or observed tip.
 The current T3 alignment is recorded in
 [`docs/internals/2026-09-27-upstream-sync-a727d1d9.md`](docs/internals/2026-09-27-upstream-sync-a727d1d9.md)
 and in `upstream-state.json`. It extends the integration through
-`a727d1d97690c9bb12cee5760e91cfd1aa7c017d`: 14 official commits after
+`de251fc2971a884cb5b1305ba4daf309dc8cccb0`: 15 official commits after
 `95030dc674883f0f2a7fd034b32ce742c8cf55d0`, merged onto owned base
-`1ad094bbc3ffc58ad4e171f1e1ea5ce1d859ed5c` as `0c33fa4233` (first parent owned
-base, second parent the exact official target). The alignment is prepared in
-[PR #378](https://github.com/ScientFactory/scient-desktop/pull/378). No
-owned-main catch-up was needed because the frozen base was already the current
-owned `main` tip. The
-preceding alignment ([PR #372](docs/internals/2026-09-26-upstream-sync-95030dc6.md))
-remains literal ancestry.
+`1ad094bbc3ffc58ad4e171f1e1ea5ce1d859ed5c`. The original a727 merge is
+`0c33fa4233ad8c2293349803bf2ce50c5f1e876b`; the exact upstream extension merge
+is `a556a6905fdbd9b6121f8952a994531b4870671d`, whose second parent is the exact
+official target. The reviewed candidate was then brought forward to owned `main`
+`12437d152ee30d7d39313a05200fcf1c27c82d1a` through catch-up merge
+`70a9f9d980ab4e4aa8ae391211875cfd3ff05cbc`. The alignment PR number is recorded
+in the receipt once the branch is pushed. The preceding alignment
+([PR #372](docs/internals/2026-09-26-upstream-sync-95030dc6.md)) remains literal
+ancestry.
 
-This was a routine maintenance range that activates no protected boundary. It
-adds per-signal `OTEL_*_EXPORTER=none` without changing unset telemetry
-behaviour, sidebar and control accessibility announcements, a Cursor Keychain
-prompt timeout, client-version mismatch reporting on the Usage page, and the
-removal of a banner that described an offline server as finishing an update.
-`node-pty` stays on `^1.1.0`; the Usage page keeps its Spend metric; the
-usage contract decodes unknown bucket and source elements instead of losing the
-whole payload, which keeps version-skew reporting reachable. Two upstream
-strings naming the inherited product were relabelled to `Scient`, and the
-relaxed `simctl`/`adb` guidance was applied to Scient's relocated copy of the
-device instructions so the always-on awareness and the `device_open`
-quick-start agree. The receipt records the resolved conflicts, the verified
-contract behavior, and the pre-existing local gate failures that are not
-attributable to this range.
+This routine range activates no protected boundary. In addition to the original
+a727 accessibility, Usage, telemetry, and offline-banner work, the extension
+makes partially successful onboarding history imports complete instead of
+trapping the user, and carries that behavior into Scient's extracted local
+Getting Started import step. `node-pty` stays on `^1.1.0`; the Usage page keeps
+its Spend metric; unknown usage elements remain forward-compatible; two
+upstream product strings remain labelled `Scient`; and the relaxed
+`simctl`/`adb` guidance stays consistent across the always-on awareness and
+`device_open` quick start. The owned-main catch-up preserves the fork redesign,
+sidebar sections, dev-app signing isolation, and migration `058` beside the
+alignment's `057`. The receipt records the exact conflict compositions,
+clean-merge audits, complete gate results, and remaining owner follow-ups.
 
 ## Receiving T3 updates
 
