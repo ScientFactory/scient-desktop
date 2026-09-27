@@ -22,21 +22,29 @@ export function ConnectModelsButton({
   environmentId,
   instanceId,
 }: {
-  /** `setup-action` matches the primary action of an assisted setup frame. */
-  appearance?: "outline" | "setup-action";
+  /**
+   * `setup-action` is an assisted setup frame's one primary action;
+   * `setup-secondary` sits quietly under another primary action.
+   */
+  appearance?: "outline" | "setup-action" | "setup-secondary";
   environmentId: EnvironmentId;
   instanceId: ProviderInstanceId;
 }) {
   const [open, setOpen] = useState(false);
   return (
     <>
-      {appearance === "setup-action" ? (
-        <Button size="sm" type="button" variant="ghost-primary" onClick={() => setOpen(true)}>
-          <PlugIcon aria-hidden />
+      {appearance === "outline" ? (
+        <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
           Connect models
         </Button>
       ) : (
-        <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
+        <Button
+          size="sm"
+          type="button"
+          variant={appearance === "setup-action" ? "ghost-primary" : "ghost-muted"}
+          onClick={() => setOpen(true)}
+        >
+          <PlugIcon aria-hidden />
           Connect models
         </Button>
       )}

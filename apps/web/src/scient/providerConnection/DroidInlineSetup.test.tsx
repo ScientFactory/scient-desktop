@@ -157,4 +157,37 @@ describe("DroidInlineSetup", () => {
     expect(markup).toContain("Factory account");
     expect(markup).toContain("Sign out");
   });
+
+  it("renders the composer's models action as the connected frame's action, and quietly elsewhere", () => {
+    const renderWithModels = (snapshot: ServerProvider) =>
+      renderToStaticMarkup(
+        <DroidInlineSetup
+          controller={controller}
+          displayName="Droid"
+          modelsActions={{
+            primary: <button type="button">Connect models (primary)</button>,
+            secondary: <button type="button">Connect models (secondary)</button>,
+          }}
+          provider={snapshot}
+        />,
+      );
+    const connected = renderWithModels({
+      ...provider,
+      status: "ready",
+      auth: { status: "authenticated", required: true, label: "Factory account" },
+      models: [{ slug: "auto", name: "Auto", isCustom: false, capabilities: null }],
+    });
+
+    expect(connected.match(/data-provider-onboarding-view="assisted"/g)).toHaveLength(1);
+    expect(connected).toMatch(/^<div[^>]*data-provider-onboarding-view="assisted"/);
+    expect(connected).toMatch(
+      /Droid is ready.*<button type="button">Connect models \(primary\)<\/button>/,
+    );
+    // Custom models need Droid, not a Factory account.
+    expect(renderWithModels(provider)).toMatch(
+      /Sign in with Factory.*<button type="button">Connect models \(secondary\)<\/button>/,
+    );
+    expect(renderWithModels({ ...provider, installed: false })).not.toContain("Connect models");
+    expect(renderWithModels({ ...provider, probePending: true })).not.toContain("Connect models");
+  });
 });

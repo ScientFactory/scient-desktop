@@ -90,15 +90,17 @@ export function ManagedRuntimeComposerSetup(props: {
     }
   };
 
-  const connectModels = (
-    <AssistedSetupActions>
-      <ConnectModelsButton
-        appearance="setup-action"
-        environmentId={props.environmentId}
-        instanceId={props.provider.instanceId}
-      />
-    </AssistedSetupActions>
-  );
+  /** Models need the tool's own probe, so the entry point waits for it. */
+  const connectModels = (appearance: "setup-action" | "setup-secondary") =>
+    props.provider.probePending ? null : (
+      <AssistedSetupActions>
+        <ConnectModelsButton
+          appearance={appearance}
+          environmentId={props.environmentId}
+          instanceId={props.provider.instanceId}
+        />
+      </AssistedSetupActions>
+    );
   const primaryAction = (action: Exclude<Pending, "cancel">, label: string, icon: ReactNode) => (
     <AssistedSetupActions>
       <Button onClick={() => void run(action)} size="sm" type="button" variant="ghost-primary">
@@ -213,7 +215,7 @@ export function ManagedRuntimeComposerSetup(props: {
           role={failed ? "alert" : undefined}
           title={failed ? `Could not load ${name} models` : "Connect a model provider"}
         />
-        {connectModels}
+        {connectModels("setup-action")}
       </AssistedSetupFrame>
     );
   }
@@ -242,6 +244,7 @@ export function ManagedRuntimeComposerSetup(props: {
           error ? "Try again" : `Update ${name}`,
           <RefreshCwIcon aria-hidden />,
         )}
+        {connectModels("setup-secondary")}
       </AssistedSetupFrame>
     );
   }
@@ -260,7 +263,7 @@ export function ManagedRuntimeComposerSetup(props: {
         icon={<CheckCircle2Icon className="size-5 text-success" />}
         title={`${name} is ready`}
       />
-      {connectModels}
+      {connectModels("setup-action")}
     </AssistedSetupFrame>
   );
 }

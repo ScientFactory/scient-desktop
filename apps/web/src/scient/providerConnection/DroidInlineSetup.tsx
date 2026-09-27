@@ -38,6 +38,11 @@ export function DroidInlineSetup(props: {
   readonly provider: ServerProvider;
   readonly displayName: string;
   readonly managedRuntimePresentedExternally?: boolean;
+  /**
+   * Composer only: the model setup entry point. `primary` is the ready
+   * frame's one action; `secondary` sits quietly under another frame's.
+   */
+  readonly modelsActions?: { readonly primary: ReactNode; readonly secondary: ReactNode };
   readonly onRepairSucceeded?: () => void;
 }) {
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
@@ -67,6 +72,12 @@ export function DroidInlineSetup(props: {
     props.provider.status === "ready" && isAuthenticated && props.provider.models.length > 0;
   const needsRepair =
     !props.managedRuntimePresentedExternally && needsManagedRuntimeRecovery(props.provider);
+  // Custom models need Droid itself, not a Factory account.
+  const modelsActions =
+    props.provider.installed && !props.provider.probePending ? props.modelsActions : undefined;
+  const secondaryActions = modelsActions ? (
+    <AssistedSetupActions>{modelsActions.secondary}</AssistedSetupActions>
+  ) : null;
 
   useEffect(() => {
     const localOperation = localRuntime?.operation;
@@ -301,6 +312,9 @@ export function DroidInlineSetup(props: {
           title={isReady ? "Droid is ready" : "Droid needs attention"}
           trailing={props.accountAction}
         />
+        {modelsActions ? (
+          <AssistedSetupActions>{modelsActions.primary}</AssistedSetupActions>
+        ) : null}
       </SetupFrame>
     );
   }
@@ -316,6 +330,7 @@ export function DroidInlineSetup(props: {
           role={signInError ? "alert" : undefined}
           title="Assisted sign in unavailable"
         />
+        {secondaryActions}
       </SetupFrame>
     );
   }
@@ -343,6 +358,7 @@ export function DroidInlineSetup(props: {
           {signInError ? "Try sign in again" : "Sign in with Factory"}
         </Button>
       </AssistedSetupActions>
+      {secondaryActions}
     </SetupFrame>
   );
 }

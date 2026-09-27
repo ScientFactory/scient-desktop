@@ -211,7 +211,7 @@ function SupportedAssistedProviderSetupHost(props: AssistedProviderSetupHostProp
       );
       break;
     case "droid":
-      setup = (
+      setup = isManagement ? (
         <>
           <DroidInlineSetup
             {...managementProps}
@@ -226,6 +226,28 @@ function SupportedAssistedProviderSetupHost(props: AssistedProviderSetupHostProp
             />
           ) : null}
         </>
+      ) : (
+        <DroidInlineSetup
+          controller={controller}
+          displayName={displayName}
+          modelsActions={{
+            primary: (
+              <ConnectModelsButton
+                appearance="setup-action"
+                environmentId={props.environmentId}
+                instanceId={props.provider.instanceId}
+              />
+            ),
+            secondary: (
+              <ConnectModelsButton
+                appearance="setup-secondary"
+                environmentId={props.environmentId}
+                instanceId={props.provider.instanceId}
+              />
+            ),
+          }}
+          provider={props.provider}
+        />
       );
       break;
     case "grok":

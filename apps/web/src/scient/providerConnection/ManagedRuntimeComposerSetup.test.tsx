@@ -136,10 +136,13 @@ describe("Pi composer setup", () => {
     expect(buttons(markup)).toEqual([{ variant: "ghost-primary", label: "Connect models" }]);
   });
 
-  it("offers the reviewed managed update as the single action", () => {
+  it("offers the reviewed managed update as the primary action, with Connect models under it", () => {
     const markup = render(withRuntime(base, { actions: ["update", "repair", "remove"] }));
     expect(markup).toContain(`${name} update available`);
-    expect(buttons(markup)).toEqual([{ variant: "ghost-primary", label: `Update ${name}` }]);
+    expect(buttons(markup)).toEqual([
+      { variant: "ghost-primary", label: `Update ${name}` },
+      { variant: "ghost-muted", label: "Connect models" },
+    ]);
   });
 
   it("asks for repair with the server's error and a warning icon", () => {
