@@ -273,7 +273,7 @@ export function ScientForkWorkspaceModeDialog({
       <DialogPopup className="max-w-[23rem] -translate-y-4">
         {/* Pulled toward the name field so the subtitle groups with the title. */}
         <DialogHeader size="compact" className="-mb-1">
-          <div className="grid gap-1.5 pe-10">
+          <div className="grid gap-1 pe-10">
             <DialogTitle size="large">
               <span className="inline-flex items-center gap-2">
                 <SplitIcon className="size-4 rotate-90" />
