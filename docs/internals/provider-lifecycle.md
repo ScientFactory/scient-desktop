@@ -243,7 +243,7 @@ An install, update, or repair:
 7. activates the verified directory atomically and cleans staging.
 
 Routine status refresh never deletes staging because a serialized mutation may still own it.
-Abandoned staging is reconciled when the next mutation acquires ownership. A newly qualified artifact
+Abandoned staging is reconciled when the next mutation acquires ownership. Cross-process mutation locks are reclaimed only when their owner is known to be gone. An overdue heartbeat alone does not revoke ownership: a suspended process can resume. If a live PID may have been reused and its identity cannot be established, the runtime remains busy until that process exits or the stale lock is explicitly recovered while all owners are stopped. A newly qualified artifact
 does not invalidate the currently activated healthy copy; replacement happens only after successful
 activation.
 
