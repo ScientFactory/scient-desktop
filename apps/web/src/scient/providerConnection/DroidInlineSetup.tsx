@@ -210,7 +210,7 @@ export function DroidInlineSetup(props: {
   ) {
     const action = activeRuntimeOperation?.action ?? pendingAction ?? "install";
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupStatus
           body={activeRuntimeOperation?.message ?? "Preparing the private Droid runtime…"}
           icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
@@ -241,13 +241,13 @@ export function DroidInlineSetup(props: {
             </Button>
           </AssistedSetupActions>
         ) : null}
-      </SetupFrame>
+      </AssistedSetupFrame>
     );
   }
 
   if (externalUpdateProgress) {
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupUpdateStatus
           name="Droid"
           provider={props.provider}
@@ -255,13 +255,13 @@ export function DroidInlineSetup(props: {
           update={externalProviderUpdate(props.provider)}
           working={externalUpdateProgress}
         />
-      </SetupFrame>
+      </AssistedSetupFrame>
     );
   }
 
   if (needsRepair) {
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupStatus
           body={
             localError ?? managedRuntimeRepairMessage(props.provider, "Droid", runtimeOperation)
@@ -281,7 +281,7 @@ export function DroidInlineSetup(props: {
           </Button>
         </AssistedSetupActions>
         {runtimeDiagnostics}
-      </SetupFrame>
+      </AssistedSetupFrame>
     );
   }
 
@@ -290,7 +290,7 @@ export function DroidInlineSetup(props: {
     const installationError =
       localError ?? failedRuntimeOperationMessage(runtimeOperation, "install");
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupStatus
           body={
             installationError ??
@@ -323,7 +323,7 @@ export function DroidInlineSetup(props: {
           </AssistedSetupActions>
         ) : null}
         {installationError ? runtimeDiagnostics : null}
-      </SetupFrame>
+      </AssistedSetupFrame>
     );
   }
 
@@ -331,7 +331,7 @@ export function DroidInlineSetup(props: {
     const starting = pendingAction === "sign-in" && !activeConnectionOperation;
     const verifying = activeConnectionOperation?.status === "verifying";
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupStatus
           body={
             starting
@@ -362,14 +362,14 @@ export function DroidInlineSetup(props: {
             </Button>
           </AssistedSetupActions>
         ) : null}
-      </SetupFrame>
+      </AssistedSetupFrame>
     );
   }
 
   if (isAuthenticated && isReady && updateOffer) {
     const issue = providerUpdateIssue(props.provider, updateOffer, localError);
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupUpdateStatus
           issue={issue}
           name="Droid"
@@ -386,13 +386,13 @@ export function DroidInlineSetup(props: {
         </AssistedSetupActions>
         {secondaryActions}
         {issue ? runtimeDiagnostics : null}
-      </SetupFrame>
+      </AssistedSetupFrame>
     );
   }
 
   if (isAuthenticated) {
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupStatus
           body={
             isReady
@@ -413,7 +413,7 @@ export function DroidInlineSetup(props: {
           <AssistedSetupActions>{modelsActions.primary}</AssistedSetupActions>
         ) : null}
         {isReady ? null : runtimeDiagnostics}
-      </SetupFrame>
+      </AssistedSetupFrame>
     );
   }
 
@@ -423,7 +423,7 @@ export function DroidInlineSetup(props: {
     !props.managedRuntimePresentedExternally && (runtime?.actions.includes("install") ?? false);
   if (!supportsDevicePairing) {
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupStatus
           body={signInError ?? props.provider.message ?? "Assisted sign in is unavailable."}
           icon={<TriangleAlertIcon className="size-5 text-warning" />}
@@ -432,12 +432,12 @@ export function DroidInlineSetup(props: {
         />
         {secondaryActions}
         {runtimeDiagnostics}
-      </SetupFrame>
+      </AssistedSetupFrame>
     );
   }
 
   return (
-    <SetupFrame>
+    <AssistedSetupFrame>
       <AssistedSetupStatus
         body={
           signInError ??
@@ -474,10 +474,6 @@ export function DroidInlineSetup(props: {
           provider={props.provider}
         />
       ) : null}
-    </SetupFrame>
+    </AssistedSetupFrame>
   );
-}
-
-function SetupFrame(props: { readonly children: ReactNode }) {
-  return <AssistedSetupFrame>{props.children}</AssistedSetupFrame>;
 }

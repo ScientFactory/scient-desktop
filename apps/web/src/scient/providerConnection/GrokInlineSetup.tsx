@@ -202,7 +202,7 @@ export function GrokInlineSetup(props: {
   if (activeRuntimeOperation || ["install", "repair", "update"].includes(pendingAction ?? "")) {
     const action = activeRuntimeOperation?.action ?? pendingAction;
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupStatus
           body={runtimeStage(activeRuntimeOperation)}
           icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
@@ -234,13 +234,13 @@ export function GrokInlineSetup(props: {
             </Button>
           </AssistedSetupActions>
         ) : null}
-      </SetupFrame>
+      </AssistedSetupFrame>
     );
   }
 
   if (externalUpdateProgress) {
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupUpdateStatus
           name="Grok"
           provider={props.provider}
@@ -248,13 +248,13 @@ export function GrokInlineSetup(props: {
           update={externalProviderUpdate(props.provider)}
           working={externalUpdateProgress}
         />
-      </SetupFrame>
+      </AssistedSetupFrame>
     );
   }
 
   if (needsRepair) {
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupStatus
           body={localError ?? managedRuntimeRepairMessage(props.provider, "Grok", runtimeOperation)}
           icon={<TriangleAlertIcon className="size-5 text-warning" />}
@@ -271,7 +271,7 @@ export function GrokInlineSetup(props: {
           </Button>
         </AssistedSetupActions>
         {runtimeDiagnostics}
-      </SetupFrame>
+      </AssistedSetupFrame>
     );
   }
 
@@ -280,7 +280,7 @@ export function GrokInlineSetup(props: {
     const installationError =
       localError ?? failedRuntimeOperationMessage(runtimeOperation, "install");
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupStatus
           body={
             installationError ??
@@ -312,7 +312,7 @@ export function GrokInlineSetup(props: {
           </AssistedSetupActions>
         ) : null}
         {installationError ? runtimeDiagnostics : null}
-      </SetupFrame>
+      </AssistedSetupFrame>
     );
   }
 
@@ -324,7 +324,7 @@ export function GrokInlineSetup(props: {
     const verifying = activeConnectionOperation?.status === "verifying";
     const deviceFlow = activeConnectionOperation?.method === "grok_device_code";
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupStatus
           body={
             verifying
@@ -394,14 +394,14 @@ export function GrokInlineSetup(props: {
             ) : null}
           </AssistedSetupActions>
         ) : null}
-      </SetupFrame>
+      </AssistedSetupFrame>
     );
   }
 
   if ((accountConnected || apiKeyReady) && updateOffer) {
     const issue = providerUpdateIssue(props.provider, updateOffer, localError);
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupUpdateStatus
           issue={issue}
           name="Grok"
@@ -419,7 +419,7 @@ export function GrokInlineSetup(props: {
           />
         </AssistedSetupActions>
         {issue ? runtimeDiagnostics : null}
-      </SetupFrame>
+      </AssistedSetupFrame>
     );
   }
 
@@ -436,7 +436,7 @@ export function GrokInlineSetup(props: {
 
   if (apiKeyReady) {
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupStatus
           body="Grok is available through the xAI API key configured on this computer."
           icon={<CheckCircle2Icon className="size-5 text-success" />}
@@ -454,13 +454,13 @@ export function GrokInlineSetup(props: {
             <ExternalLinkIcon aria-hidden /> Use a Grok subscription
           </Button>
         </AssistedSetupActions>
-      </SetupFrame>
+      </AssistedSetupFrame>
     );
   }
 
   if (props.provider.auth.status === "unknown") {
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupStatus
           body={props.provider.message ?? "Scient could not confirm Grok’s account state."}
           icon={<TriangleAlertIcon className="size-5 text-warning" />}
@@ -468,7 +468,7 @@ export function GrokInlineSetup(props: {
           title="Couldn’t verify Grok"
         />
         {runtimeDiagnostics}
-      </SetupFrame>
+      </AssistedSetupFrame>
     );
   }
 
@@ -477,7 +477,7 @@ export function GrokInlineSetup(props: {
   const canInstallManaged =
     !props.managedRuntimePresentedExternally && (runtime?.actions.includes("install") ?? false);
   return (
-    <SetupFrame>
+    <AssistedSetupFrame>
       <AssistedSetupStatus
         body={
           signInError ??
@@ -524,7 +524,7 @@ export function GrokInlineSetup(props: {
           provider={props.provider}
         />
       ) : null}
-    </SetupFrame>
+    </AssistedSetupFrame>
   );
 }
 
@@ -534,17 +534,13 @@ function StatusFrame(props: {
   readonly body: ReactNode;
 }) {
   return (
-    <SetupFrame>
+    <AssistedSetupFrame>
       <AssistedSetupStatus
         body={props.body}
         icon={<CheckCircle2Icon className="size-5 text-success" />}
         title={props.title}
         trailing={props.accountAction}
       />
-    </SetupFrame>
+    </AssistedSetupFrame>
   );
-}
-
-function SetupFrame(props: { readonly children: ReactNode }) {
-  return <AssistedSetupFrame>{props.children}</AssistedSetupFrame>;
 }
