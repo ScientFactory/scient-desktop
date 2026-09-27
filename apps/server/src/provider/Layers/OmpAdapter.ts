@@ -59,6 +59,7 @@ import {
 import type { ProviderAdapterShape, ProviderThreadSnapshot } from "../Services/ProviderAdapter.ts";
 import type { EventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { ompCommandDecision } from "../omp/OmpCommandPolicy.ts";
+import { markTurnDispatchNotSent } from "../turnDispatchPhase.ts";
 import { writeOmpExtensionFiles } from "../omp/OmpExtensionBootstrap.ts";
 import {
   ompScientExtensionSource,
@@ -1918,10 +1919,12 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
             );
           }
           if (decision === "allowed" && input.hasContextPreamble) {
-            return yield* validation(
+            const failure = validation(
               "sendTurn",
               "Start this fork with a normal message so Oh My Pi receives its conversation history. Send the slash command afterward; nothing was sent.",
             );
+            markTurnDispatchNotSent(failure);
+            return yield* failure;
           }
           let steering = ctx.session.status === "running" && ctx.turnId !== undefined;
           if (!steering && ctx.session.status === "running") {

@@ -66,7 +66,7 @@ import {
   ProviderWorkspaceMissingError,
   type ProviderAdapterError,
 } from "../Errors.ts";
-import { classifyTurnDispatchFailure } from "../turnDispatchPhase.ts";
+import { classifyTurnDispatchFailure, markTurnDispatchNotSent } from "../turnDispatchPhase.ts";
 import type {
   ProviderAdapterShape,
   ProviderAdapterSendTurnInput,
@@ -5172,6 +5172,30 @@ validation.layer("ProviderServiceLive validation", (it) => {
         .pipe(Effect.sandbox, Effect.flip);
       assert.equal(classifyTurnDispatchFailure(cause), "notSent");
       assert.equal(validation.codex.sendTurn.mock.calls.length, 0);
+    }),
+  );
+
+  it.effect("preserves an adapter's proof that a preflight rejection sent nothing", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-dispatch-explicit-not-sent");
+      yield* provider.startSession(threadId, {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const failure = new ProviderAdapterRequestError({
+        provider: "codex",
+        method: "turn/start",
+        detail: "preflight rejected before writing",
+      });
+      markTurnDispatchNotSent(failure);
+      validation.codex.sendTurn.mockImplementationOnce(() => Effect.fail(failure));
+      const cause = yield* provider
+        .sendTurn({ threadId, input: "continue" })
+        .pipe(Effect.sandbox, Effect.flip);
+      assert.equal(classifyTurnDispatchFailure(cause), "notSent");
     }),
   );
 

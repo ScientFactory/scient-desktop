@@ -16,6 +16,13 @@ import * as Cause from "effect/Cause";
 export type TurnDispatchDelivery = "notSent" | "maybeDelivered";
 
 const dispatchAttemptedFailures = new WeakSet<object>();
+const definitelyUnsentFailures = new WeakSet<object>();
+
+/** An adapter may certify a rejection only before any prompt/steer write.
+ * Error classes alone are not proof; use this for explicit preflight exits. */
+export function markTurnDispatchNotSent(error: object): void {
+  definitelyUnsentFailures.add(error);
+}
 
 export function markTurnDispatchAttempted(error: unknown): void {
   if (typeof error === "object" && error !== null) dispatchAttemptedFailures.add(error);
@@ -24,7 +31,8 @@ export function markTurnDispatchAttempted(error: unknown): void {
 /**
  * Classifies a failure of `ProviderService.sendTurn`. Only typed failures that
  * were never handed to an adapter count as `notSent`; interrupts, defects and
- * anything raised at or after dispatch are `maybeDelivered`.
+ * anything raised at or after dispatch are `maybeDelivered`, unless the adapter
+ * explicitly certifies that it rejected the request before writing it.
  */
 export function classifyTurnDispatchFailure(cause: Cause.Cause<unknown>): TurnDispatchDelivery {
   if (cause.reasons.length === 0) return "maybeDelivered";
@@ -32,7 +40,8 @@ export function classifyTurnDispatchFailure(cause: Cause.Cause<unknown>): TurnDi
     if (!Cause.isFailReason(reason)) return "maybeDelivered";
     const error = reason.error;
     if (typeof error !== "object" || error === null) return "maybeDelivered";
-    if (dispatchAttemptedFailures.has(error)) return "maybeDelivered";
+    if (dispatchAttemptedFailures.has(error) && !definitelyUnsentFailures.has(error))
+      return "maybeDelivered";
   }
   return "notSent";
 }
