@@ -14,13 +14,15 @@ function prepared(environmentId: EnvironmentId) {
   return connection;
 }
 
-export function prepareConversationExport(environmentId: EnvironmentId, threadId: ThreadId) {
+// Async so a disconnected environment rejects the promise instead of throwing
+// synchronously past the caller's rejection handler.
+export async function prepareConversationExport(environmentId: EnvironmentId, threadId: ThreadId) {
   return runtime.runPromise(
     prepareEnvironmentConversationExport({ prepared: prepared(environmentId), threadId }),
   );
 }
 
-export function exportConversation(
+export async function exportConversation(
   environmentId: EnvironmentId,
   request: ScientConversationExportRequest,
 ) {

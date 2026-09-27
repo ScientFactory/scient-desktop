@@ -1,0 +1,75 @@
+/**
+ * Removes Scient's own storage locations from exported content. User and
+ * agent text is exported as written, but Scient never publishes where it keeps
+ * its data. Redaction runs on the structured snapshot, before any Markdown
+ * escaping can change how a path is spelled.
+ */
+import type { ConversationSnapshotV1 } from "@t3tools/contracts";
+import { isWindowsAbsolutePath } from "@t3tools/shared/path";
+
+export const STORAGE_PATH_PLACEHOLDER = "«scient-data»";
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+/**
+ * A matcher for each root that accepts either separator, so `C:\Users\a` and
+ * `C:/Users/a` are both found. Windows roots match case-insensitively, as the
+ * file system does. Longer roots are tried first.
+ */
+function rootPatterns(roots: ReadonlyArray<string>): ReadonlyArray<RegExp> {
+  return [...new Set(roots)]
+    .map((root) => root.replace(/[\\/]+$/u, ""))
+    .filter((root) => root.length > 1)
+    .toSorted((left, right) => right.length - left.length)
+    .map((root) => {
+      const segments = root.split(/[\\/]+/u).map(escapeRegExp);
+      const windows = isWindowsAbsolutePath(root);
+      return new RegExp(segments.join("[\\\\/]+"), windows ? "giu" : "gu");
+    });
+}
+
+export function redactStoragePaths(text: string, roots: ReadonlyArray<string>): string {
+  let result = text;
+  for (const pattern of rootPatterns(roots))
+    result = result.replace(pattern, STORAGE_PATH_PLACEHOLDER);
+  return result;
+}
+
+function redactValue(value: unknown, patterns: ReadonlyArray<RegExp>): unknown {
+  if (typeof value === "string") {
+    let result = value;
+    for (const pattern of patterns) result = result.replace(pattern, STORAGE_PATH_PLACEHOLDER);
+    return result;
+  }
+  if (Array.isArray(value)) return value.map((item) => redactValue(item, patterns));
+  if (value !== null && typeof value === "object" && !(value instanceof Uint8Array)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, redactValue(entry, patterns)]),
+    );
+  }
+  return value;
+}
+
+/**
+ * The snapshot with every text value redacted: titles, messages, reasoning,
+ * work-log fields, plans, answers, references, and warnings. Identifiers and
+ * the capture record keep their values.
+ */
+export function redactSnapshotStoragePaths(
+  snapshot: ConversationSnapshotV1,
+  roots: ReadonlyArray<string>,
+): ConversationSnapshotV1 {
+  const patterns = rootPatterns(roots);
+  if (patterns.length === 0) return snapshot;
+  const { captured, contentDigest, ...content } = snapshot;
+  return {
+    ...(redactValue(content, patterns) as Omit<
+      ConversationSnapshotV1,
+      "captured" | "contentDigest"
+    >),
+    captured,
+    contentDigest,
+  };
+}

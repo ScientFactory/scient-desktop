@@ -213,4 +213,34 @@ describe("conversation snapshot", () => {
       { _tag: "running-turn-omitted", turnId: running.omittedRunningTurn!.turnId },
     ]);
   });
+
+  it("keeps settled-turn messages whose streaming flag went stale", () => {
+    const snapshot = snapshotOf(
+      thread({
+        messages: [
+          message({ id: "m1", role: "user", text: "q" }),
+          message({
+            id: "r1",
+            role: "reasoning",
+            text: "stranded thought",
+            turnId: "t1",
+            streaming: true,
+          }),
+          message({ id: "m2", role: "assistant", text: "answer", turnId: "t1", streaming: true }),
+        ],
+        latestTurn: {
+          turnId: TurnId.make("t1"),
+          state: "completed",
+          requestedAt: "2026-09-27T14:00:00.000Z",
+          startedAt: "2026-09-27T14:00:00.000Z",
+          completedAt: "2026-09-27T14:05:00.000Z",
+          assistantMessageId: null,
+        },
+      }),
+      { workLog: false, reasoning: true, throughMessageId: null },
+    );
+    expect(snapshot.messages.map((entry) => entry.text)).toEqual(["q", "answer"]);
+    expect(snapshot.reasoning.map((entry) => entry.text)).toEqual(["stranded thought"]);
+    expect(snapshot.omittedRunningTurn).toBeNull();
+  });
 });
