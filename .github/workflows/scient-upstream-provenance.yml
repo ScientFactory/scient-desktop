@@ -35,9 +35,9 @@ jobs:
             --head "$VERIFY_HEAD" \
             --allow-owned-head-merge "$ALLOW_OWNED_HEAD_MERGE" \
             --official-ref refs/remotes/upstream-verification/main
-          node scripts/verify-scient-analysis-seams.mjs \
-            --base "$VERIFY_BASE" \
-            --head "$VERIFY_HEAD"
-          node scripts/verify-scient-latex-seams.mjs \
+          # Every scient-*-seams.json manifest in one pass: each changed path
+          # matching a seam's signals must be classified, and every owned path
+          # and mount anchor must hold.
+          node scripts/scient-seam-check.mjs \
             --base "$VERIFY_BASE" \
             --head "$VERIFY_HEAD"

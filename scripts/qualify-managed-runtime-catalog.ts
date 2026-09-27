@@ -13,6 +13,7 @@ import {
   ManagedCursorRuntime,
   ManagedDroidRuntime,
   ManagedGrokRuntime,
+  ManagedOmpRuntime,
   ManagedPiRuntime,
   detectManagedRuntimeTarget,
   hydrateManagedRuntimeArtifact,
@@ -24,6 +25,7 @@ import {
   resolveReviewedCursorArtifact,
   resolveReviewedDroidArtifact,
   resolveReviewedGrokArtifact,
+  resolveReviewedOmpArtifact,
   resolveReviewedPiArtifact,
   type ManagedProviderRuntime,
   type ManagedRuntimeArtifact,
@@ -92,6 +94,32 @@ async function verifyPiIntegration(
   });
 }
 
+/**
+ * Oh My Pi is published only after the installed binary completes the app's
+ * managed-activation check: the RPC v2 handshake, its version, and
+ * `get_state`. The check lives with the server code that clients run, so it
+ * needs the server workspace dependencies installed.
+ */
+async function verifyOmpRpc(binary: string, version: string): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const child = NodeChildProcess.spawn(
+      process.execPath,
+      ["apps/server/scripts/qualify-omp-rpc.ts", "--binary", binary, "--version", version],
+      { cwd: process.cwd(), env: process.env, stdio: "inherit", windowsHide: true },
+    );
+    child.once("error", reject);
+    child.once("exit", (code, signal) => {
+      if (code === 0) resolve();
+      else
+        reject(
+          new Error(
+            `Oh My Pi RPC qualification failed${signal ? ` with signal ${signal}` : ` with exit code ${String(code)}`}.`,
+          ),
+        );
+    });
+  });
+}
+
 const providerFactories: Readonly<
   Record<
     ManagedRuntimeProvider,
@@ -130,6 +158,10 @@ const providerFactories: Readonly<
   pi: {
     policy: resolveReviewedPiArtifact,
     runtime: (baseDir) => new ManagedPiRuntime(baseDir),
+  },
+  omp: {
+    policy: resolveReviewedOmpArtifact,
+    runtime: (baseDir) => new ManagedOmpRuntime(baseDir),
   },
 };
 
@@ -189,12 +221,14 @@ try {
   if (runPiLiveTests) {
     await verifyPiIntegration(runtime.launchPath(artifact), artifact.version, target.platform);
   }
+  if (provider === "omp") await verifyOmpRpc(status.launchPath, artifact.version);
   if (process.argv.includes("--repair")) {
     await runtime.install({ artifact, signal: AbortSignal.timeout(15 * 60_000) });
     const repaired = await runtime.status(artifact);
     if (!repaired.installed || !repaired.selected || repaired.activeVersion !== artifact.version) {
       throw new Error(`${provider} ${targetKey} did not repair the qualified release.`);
     }
+    if (provider === "omp") await verifyOmpRpc(repaired.launchPath, artifact.version);
   }
   await runtime.remove();
   const removed = await runtime.status(artifact);

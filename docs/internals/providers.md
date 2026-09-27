@@ -7,7 +7,7 @@ orchestration layer does not know which one is behind a thread.
 
 ## Built-in drivers
 
-[`builtInDrivers.ts`][drivers] exports `BUILT_IN_DRIVERS` with eight entries:
+[`builtInDrivers.ts`][drivers] exports `BUILT_IN_DRIVERS` with nine entries:
 
 | Driver kind   | Driver source                                 |
 | ------------- | --------------------------------------------- |
@@ -19,6 +19,7 @@ orchestration layer does not know which one is behind a thread.
 | `droid`       | [`Drivers/DroidDriver.ts`][droid]             |
 | `antigravity` | [`Drivers/AntigravityDriver.ts`][antigravity] |
 | `pi`          | [`Drivers/PiDriver.ts`][pi]                   |
+| `omp`         | [`Drivers/OmpDriver.ts`][omp]                 |
 
 Each driver declares its `driverKind`, a `configSchema`, and a `create` function that builds an
 adapter in a child scope. Adapter implementations live beside them in
@@ -337,7 +338,9 @@ Each built-in driver has an explicit native delivery decision, guarded against `
 
 - Codex uses developer instructions; Claude appends to its preset system prompt; OpenCode uses its
   per-prompt system field; Grok uses `--rules`; Droid uses `--append-system-prompt`; Pi appends
-  awareness through its session-local `before_agent_start` extension hook.
+  awareness through its session-local `before_agent_start` extension hook. Oh My Pi uses the same
+  hook from the same generated extension; its hook receives the prompt as `string[]` and treats a
+  returned value as the whole replacement, so awareness is appended as one more element.
 - Cursor accepts a documented `--plugin-dir`, but live CLI and ACP verification found that
   session-local plugin rules were not applied. Antigravity likewise has no verified
   application-private system extension. Both integrations are therefore marked unsupported for
@@ -448,12 +451,147 @@ profiles and local model/MCP endpoints. It exercises the real binary without use
 Passing it proves native protocol/tool integration, not hosted authentication, every third-party
 extension, cross-platform runtime support, or human product acceptance.
 
+### Oh My Pi driver
+
+[`OmpDriver.ts`][omp] is an external provider on the current adapter. `packages/effect-omp-rpc` speaks
+Oh My Pi's newline JSON protocol, including protocol v2 chunk reassembly, and imports no Scient
+orchestration types. The adapter owns the process and the turn mapping.
+
+- The executable is `omp` 18.2.8 or newer and below major 19; a newer major is refused until it is
+  qualified. Launch arguments are `--mode rpc` and
+  `--approval-mode yolo`. Scient does not call `login` during discovery. A desktop macOS Apple
+  silicon app can install the qualified private binary. Other machines use an executable the user
+  installed.
+  Scient never runs `omp update`: it cannot pin a version, follows npm `latest` across majors,
+  and has no rollback. The maintenance capabilities are manual-only for every channel. The
+  advisory compares the running version with the latest stable release in the supported major,
+  read from the channel that installed the executable (`OmpMaintenance.ts`): npm `latest` for
+  bun, npm and standalone installs, the `can1357/tap` formula for Homebrew (the formulae API does
+  not publish third-party taps), and GitHub `releases/latest` for mise and as the fallback. Only
+  successful lookups are cached. Nix installations are not checked. The notice carries the
+  copyable `omp update` command and names Scient-managed Oh My Pi when a managed artifact exists
+  for the target. A desktop
+  macOS Apple silicon app can install a private Oh My Pi from the qualified catalog. That copy is
+  updated only through the managed-runtime actions. Managed activation also runs an isolated
+  RPC-v2 handshake and state probe after staging; a binary that only answers `--version` is
+  rejected and the previous runtime is restored.
+- `OmpExecutableGate` (one per server, in the runtime layer) serializes runtime mutation against
+  new OMP processes. `makeOmpRpcProcess` resolves the command once, leases the executable's real
+  path before probing or spawning, and holds the lease for the process scope; it fails closed when
+  the gate is absent. The custom-model process factory provides the gate, so sessions, discovery,
+  text generation and custom-model tests are all covered. Managed activation holds the active and
+  destination identities from #374's `beforeActivate` hook (after `awaitActivationWindow`) through
+  the state commit; a waiting process fails after 30 seconds, one-shot work gets a 30-second drain,
+  and a remaining conversation fails the activation. The qualification process carries the
+  activation token, so a repair does not deadlock on its own hold. The gate is per server, which is
+  sufficient because Scient never runs `omp update`.
+- The child environment (`OmpEnvironment.ts`) is the server's login environment minus Scient's
+  internals (`T3CODE_*`, `T3_*`, `SCIENT_*`, `VITE_*`, `ELECTRON_RUN_AS_NODE`,
+  `ELECTRON_RENDERER_PORT`, `PORT`, case-insensitive), then the instance environment as configured
+  (the filter applies only to what the server inherited), then without
+  `PI_CODING_AGENT_SESSION_DIR`. The predicate is OMP's own; other drivers keep their existing
+  policies. Scient adds nothing back: its bridge secrets travel in extension bootstrap files.
+  `NO_PROXY` and `no_proxy` both receive the union of their entries plus loopback (one
+  case-insensitive variable on Windows). An instance home removes inherited `OMP_PROFILE`/
+  `PI_PROFILE`, an instance profile removes inherited `PI_PROFILE`/`PI_CODING_AGENT_DIR`, and a
+  defined `OMP_PROFILE` drops `PI_PROFILE`, matching OMP's precedence so the resume identity does.
+- One process serves one thread. Stop closes that process only. The child receives an explicit
+  `--session-dir` under Scient's per-instance/per-thread state root; the legacy session environment
+  variable is retained only as a compatibility fallback in the process environment.
+- A prompt response is acceptance. Completion is a local prompt, or a yielded `agent_end` confirmed
+  idle with `get_state` (older runtimes use `isTerminal`). Background work may still wake the parent.
+  Stop closes this thread's session and marks its active turn interrupted; an unexpected process
+  exit during a turn is an uncertain failure. OMP reports model failures as turn data, so
+  `omp/OmpTurnOutcome.ts` classifies each settled turn once: a user cancel is interrupted; an
+  unrequested abort, a model error (`stopReason: "error"`), or an exhausted session retry fails the
+  turn with OMP's message (clipped to 512 characters); `length` completes with that stop reason.
+  From 18.3 `prompt_result.status` is authoritative. A failed compaction is a warning.
+- At startup the adapter pins the session to `OMP_KNOWN_EVENT_TYPES` with `set_event_filter` on
+  18.3.1 and newer, so new event kinds can neither break nor flood a conversation. 18.2.x answers
+  that unknown command without an id, so the filter is not sent there.
+- Images are planned against the outbound frame limit OMP advertises in `ready.maxFrameBytes`
+  (1 MiB on 18.x), because OMP reads inbound commands unchunked. Images that fit with the message
+  go inline; the rest, up to `PROVIDER_SEND_TURN_MAX_IMAGE_BYTES` (10 MB), are listed in the
+  message as attachment paths for OMP's `read` tool, which returns image content to image-capable
+  models (verified live on 18.3.1). Larger images are rejected with the limit in the message. Audio
+  is advertised nowhere.
+- The shared native event log records OMP notifications, every command the client writes, and
+  every `ready` and `response` frame it reads. Each process exposes its `OmpRedaction`, built from
+  its final environment and every secret it received by bootstrap (the MCP bearer, custom-model
+  keys, the models endpoint token). Its `log` form replaces credential fields, bearer and
+  key-shaped text, credential variable values, image data, and extension UI answers before the
+  logger bounds and writes the record. The adapter also applies its `text` form to provider error
+  text (turn errors, warnings, failed commands, `lastError`) and its `exact` form (known secrets
+  of 12 or more characters, nothing else) to every runtime event it emits; OMP text generation
+  redacts its failures the same way. OMP's own log (`~/.omp/logs`) and session transcript still
+  hold whatever the provider echoed. Persisted
+  `open-url` activity keeps only the URL's origin and path; the web links through OMP's loopback
+  `launchUrl` when present.
+- Resume cursors (v4) must match the provider instance, workspace, effective OMP home/profile,
+  protocol, launch policy and OMP major version, and must stay inside Scient's session directory.
+  The executable is not part of the identity, because the transcript lives in Scient's explicit
+  `--session-dir`; a system-to-managed switch or a package-manager upgrade resumes, which #374's
+  idle-aware managed activation relies on. v3 cursors, whose scope hash bound an executable
+  fingerprint, migrate only when that scope recomputed with their own recorded fingerprint still
+  matches; otherwise they, and every v2 cursor (which hashed `PATH`), are refused with the same
+  "start a new session" message.
+- A known event that no longer matches its schema is reported as an observable `UndecodableEvent`
+  warning when it is informational; routing-critical frames (turn boundaries, host requests,
+  subagent identity) stay fail-closed. A slash invocation OMP does not know is forwarded as text,
+  matching OMP itself, while a failed command catalog keeps every slash invocation blocked.
+- Subagent frames preserve native IDs and report under the turn that started the task, with or
+  without an open turn: OMP 18.3.1 runs `task` spawns as background jobs that can outlive the
+  turn and an abort. A task closes on its own terminal `subagent_lifecycle`, on `session_settled`,
+  or when the session closes. A fresh native run delivering a background result starts a visible
+  continuation turn. A user message arriving during that continuation steers it. Pending native
+  async work uses the shared Monitoring indicator; live subagents retain the Working indicator.
+  Stop closes the provider session, including background jobs, even between turns: native abort
+  alone does not cancel detached work. Late output from a stopped session cannot reopen a turn.
+  Native compact reports a compacted
+  thread only when OMP confirms success. Only explicitly qualified commands are exposed; discovered
+  session, export, sharing, model, configuration, and extension commands are rejected. The
+  v18.2.8 runtime exposes context usage through `get_state`, not a standalone event, so OMP does not
+  advertise a native context-window projection yet.
+- `provider/omp/OmpCustomModels.ts` adapts the shared custom-model connection contract to OMP's
+  explicit extension API for discovery, chat, and background generation. It passes credentials only
+  through a per-process bootstrap file for connections published at process start,
+  refreshes metadata through an authenticated loopback endpoint, and retires the process on
+  credential, endpoint, or model-removal changes. A newly attached keyed connection is withheld
+  until the next OMP process instead of interrupting an active turn. Custom-model readiness is
+  projected separately from native OMP models. See [Custom model connections](./custom-models.md)
+  for ownership and qualification limits.
+- Scient tools, Scient skills, and awareness reach OMP like Pi: `OmpAdapter.startSession` reads the
+  thread's MCP provider session, rejects one issued to another provider instance, and writes the
+  extension from `provider/omp/OmpScientExtension.ts` (an explicit source template; Pi's
+  `PiScientExtension.ts` is untouched) as a 0600 file in the session scope, between the session
+  lock and the process, so it is removed after the process on every close path. The file carries
+  no secret. The endpoint, bearer token, and awareness are in a 0600 bootstrap file beside it
+  (`provider/omp/OmpExtensionBootstrap.ts`), which the extension reads and deletes while OMP
+  loads; the adapter deletes it after `ready` if OMP left it unread. Creating an OMP instance
+  sweeps extension files and bootstraps a crashed server left (`sweepStaleOmpExtensionFiles`:
+  only files older than this server's start, skipping another live server's by pid or session
+  lock). No Scient secret is in OMP's
+  environment: OMP's bash tool is a native shell that copies the process's real OS environment,
+  which `delete process.env.X` under Bun does not change, and a child can read its parent's
+  start-up environment anyway. OMP re-imports an extension for every load and re-runs it for
+  in-process subagents after the bootstrap is gone, so each generated extension keeps its first
+  read in a process-wide `globalThis` slot keyed by the bootstrap path: subagents get the same
+  tools over the one MCP connection, and only the first run owns the custom-model refresh loop.
+  The extension proxies Scient's MCP tools with
+  `loadMode: "essential"`, because OMP presents extension tools as `discoverable` by default and
+  keeps those out of the top-level tool list. Tool calls go through Scient's MCP server, which
+  authorizes each one against the session token; `stopSession` revokes it. The adapter declares
+  `mcpSessionInjection`, and `SCIENT_SKILL_DELIVERY.omp` is `mcp`.
+- OMP's RPC host tools (`set_host_tools`) are not used. An unexpected host-tool call is rejected
+  with an explicit warning rather than being silently dropped. Full access is the only runtime
+  mode. There is no Orchestration V2 adapter.
+
 ## Scient-assisted provider lifecycle
 
 Codex, Claude, Cursor, Antigravity, Grok, and Droid optionally expose assisted runtime and account
 capabilities on their existing provider instances. OpenCode keeps its inherited multi-provider setup.
-Pi exposes assisted runtime management, but leaves model-specific credentials to Pi rather than
-inventing a single account login or logout flow.
+Pi and Oh My Pi expose assisted runtime management, but leave model-specific credentials to the
+agent rather than inventing a single account login or logout flow.
 The lifecycle extension does not create another provider registry, session router, model catalog,
 credential store, or updater.
 
@@ -579,7 +717,8 @@ before announcing closure, and continues under an owned scope if the caller's wa
 Starting a replacement session joins that cleanup before acquiring the thread's runtime.
 A provider-confirmed idle turn leaves its session ready, not stopped.
 
-Other adapters retain native interrupt behavior. Automatic destructive recovery is available only
+Claude and OMP close their sessions on Stop so native background work cannot continue. Other
+adapters retain native interrupt behavior. Automatic destructive recovery is available only
 through an adapter-owned cancellation handle; shared code must not stop whichever runtime happens
 to occupy a thread later. An unconfirmed result keeps execution state intact and reports the
 failure through the existing activity and session-error surfaces. Stale terminal-event guards
@@ -630,6 +769,7 @@ when a request opens (approval) or user input is requested, via
 [opencode-server-owner]: ../../apps/server/src/provider/OpenCodeServerOwner.ts
 [droid]: ../../apps/server/src/provider/Drivers/DroidDriver.ts
 [pi]: ../../apps/server/src/provider/Drivers/PiDriver.ts
+[omp]: ../../apps/server/src/provider/Drivers/OmpDriver.ts
 [pi-notice]: ../../apps/server/src/provider/pi/NOTICE.md
 [agy-session]: ../../apps/server/src/provider/antigravity/AgySession.ts
 [adapter]: ../../apps/server/src/provider/Services/ProviderAdapter.ts

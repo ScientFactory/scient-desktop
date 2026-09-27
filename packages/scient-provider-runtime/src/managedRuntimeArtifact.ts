@@ -12,6 +12,7 @@ export const MANAGED_RUNTIME_CATALOG_PROVIDERS = [
   "droid",
   "grok",
   "pi",
+  "omp",
 ] as const;
 export type ManagedRuntimeCatalogProvider = (typeof MANAGED_RUNTIME_CATALOG_PROVIDERS)[number];
 export type ManagedRuntimeProvider = Exclude<ManagedRuntimeCatalogProvider, "antigravityAcp">;

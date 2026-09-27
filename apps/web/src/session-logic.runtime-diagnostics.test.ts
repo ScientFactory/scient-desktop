@@ -65,6 +65,48 @@ describe("runtime diagnostics in the work log", () => {
     expect(entry?.detail).toBeUndefined();
   });
 
+  it("keeps an Oh My Pi browser action visible and clickable", () => {
+    const [entry] = deriveWorkLogEntries([
+      makeActivity({
+        kind: "runtime.warning",
+        tone: "info",
+        summary: "Oh My Pi requested a browser action.",
+        payload: {
+          message: "Oh My Pi requested a browser action.",
+          detail: {
+            kind: "open-url",
+            url: "https://example.com/authorize",
+          },
+        },
+      }),
+    ]);
+
+    expect(entry?.externalUrl).toEqual({ href: "https://example.com/authorize" });
+    expect(entry?.detail).toContain("https://example.com/authorize");
+  });
+
+  it("links an OAuth browser action through its loopback launch URL", () => {
+    const [entry] = deriveWorkLogEntries([
+      makeActivity({
+        kind: "runtime.warning",
+        tone: "info",
+        summary: "Oh My Pi requested a browser action.",
+        payload: {
+          message: "Oh My Pi requested a browser action.",
+          detail: {
+            kind: "open-url",
+            url: "https://auth.example.com/authorize",
+            launchUrl: "http://127.0.0.1:43199/launch",
+          },
+        },
+      }),
+    ]);
+
+    expect(entry?.externalUrl).toEqual({ href: "http://127.0.0.1:43199/launch" });
+    expect(entry?.detail).toContain("https://auth.example.com/authorize");
+    expect(entry?.detail).not.toContain("127.0.0.1");
+  });
+
   it("does not interpret an unrelated activity message as a runtime diagnostic", () => {
     const [entry] = deriveWorkLogEntries([
       makeActivity({ kind: "tool.completed", tone: "tool", summary: "Read file" }),

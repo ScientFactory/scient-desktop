@@ -276,6 +276,12 @@ function stableChannelFetch(codexVersion = bundledCatalogJson.providers.codex.ve
         draft: false,
         prerelease: false,
       });
+    if (url === "https://api.github.com/repos/can1357/oh-my-pi/releases/latest")
+      return Response.json({
+        tag_name: `v${bundledCatalogJson.providers.omp.version}`,
+        draft: false,
+        prerelease: false,
+      });
     throw new Error(`Unexpected release request: ${url}`);
   };
   return { fetch_, requested };
@@ -570,6 +576,24 @@ describe("managed runtime release discovery", () => {
     expect(Object.keys(result.catalog.providers.droid!.artifacts)).toHaveLength(6);
   });
 
+  it("refuses an Oh My Pi release outside the supported major", async () => {
+    const current = validateManagedRuntimeCatalog(bundledCatalogJson);
+    const requested: string[] = [];
+    const fetch_ = async (input: URL) => {
+      const url = input.toString();
+      requested.push(url);
+      if (url === "https://api.github.com/repos/can1357/oh-my-pi/releases/latest") {
+        return Response.json({ tag_name: "v19.0.0", draft: false, prerelease: false, assets: [] });
+      }
+      throw new Error(`Unexpected release request: ${url}`);
+    };
+    await expect(refreshManagedRuntimeProvider(current, "omp", fetch_)).rejects.toThrow(
+      /19\.0\.0.*major 18/u,
+    );
+    // Discovery stops at the stable pointer; no artifact metadata is fetched.
+    expect(requested).toEqual(["https://api.github.com/repos/can1357/oh-my-pi/releases/latest"]);
+  });
+
   it("accepts only a strict Grok stable version", () => {
     expect(parseGrokStableVersion("1.0.13\n")).toBe("1.0.13");
     expect(() => parseGrokStableVersion("latest")).toThrow(/invalid/u);
@@ -580,7 +604,7 @@ describe("managed runtime release discovery", () => {
     const result = await refreshManagedRuntimeCatalog(currentCatalog, fetch_);
     expect(result.changedProviders).toEqual([]);
     expect(result.catalog).toEqual(currentCatalog);
-    expect(requested).toHaveLength(8);
+    expect(requested).toHaveLength(9);
   });
 
   it("discovers one provider without coupling it to another provider channel", async () => {

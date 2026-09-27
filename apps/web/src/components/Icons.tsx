@@ -778,7 +778,7 @@ export const ACPRegistryIcon: Icon = ({ className, ...props }) => (
   </svg>
 );
 
-// Scient: Pi's colour mark (pi.dev/social.png), drawn from the pi.dev favicon paths.
+// Pi's colour mark (pi.dev/social.png), drawn from the pi.dev favicon paths.
 export const PiIcon: Icon = ({ className, ...props }) => (
   <svg {...props} viewBox="-40 -40 640 640" className={cn("fill-none", className)}>
     <path fill="#F09082" d="M420 280H280V140H0V0H420V280Z" />
@@ -786,6 +786,24 @@ export const PiIcon: Icon = ({ className, ...props }) => (
     <path fill="#F1BE58" d="M560 560H420V280H560V560Z" />
   </svg>
 );
+
+// Oh My Pi's official mark (can1357/oh-my-pi packages/collab-web/public/favicon.svg).
+export const OhMyPiIcon: Icon = ({ className, ...props }) => {
+  const gradientId = useId();
+  return (
+    <svg {...props} viewBox="0 0 64 64" className={cn("fill-none", className)}>
+      <defs>
+        <linearGradient id={gradientId} x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#ed4abf" />
+          <stop offset=".5" stopColor="#9b4dff" />
+          <stop offset="1" stopColor="#5ad8e6" />
+        </linearGradient>
+      </defs>
+      <rect width="64" height="64" rx="12" fill="#0f0a14" />
+      <path fill={`url(#${gradientId})`} d="M14 16h36v8H40v32h-8V24h-6v22h-8V24h-4z" />
+    </svg>
+  );
+};
 
 // Official two-color mark from https://forgejo.org/favicon.svg.
 export const ForgejoIcon: Icon = (props) => (
