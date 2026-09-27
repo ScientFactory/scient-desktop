@@ -721,7 +721,12 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
           const completed = yield* Deferred.make<ProviderRuntimeEvent>();
           yield* Stream.fromQueue(events).pipe(
             Stream.runForEach((event) =>
-              event.type === "turn.completed" ? Deferred.succeed(completed, event) : Effect.void,
+              // Newer OMP versions may finish the parent turn before the
+              // child starts. Wait for the continuation after its tool call.
+              event.type === "turn.completed" &&
+              mcp.calls.some((call) => call.method === "tools/call")
+                ? Deferred.succeed(completed, event)
+                : Effect.void,
             ),
             Effect.forkScoped,
           );
@@ -737,7 +742,14 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
 
           // The subagent ran on the custom model and saw the Scient tool...
           const subagent = requests.filter((request) => request.subagent);
-          expect(subagent.length).toBeGreaterThan(0);
+          expect(
+            subagent.length,
+            requests
+              .flatMap((request) => request.messages ?? [])
+              .filter((message) => message.role === "tool")
+              .map((message) => textOf(message.content))
+              .join("\n"),
+          ).toBeGreaterThan(0);
           expect(subagent[0]?.tools?.map((tool) => tool.function?.name)).toContain(SCIENT_TOOL);
           // ...and its call went through the session's bearer, over the MCP
           // connection the parent opened: one initialize, one catalog.
