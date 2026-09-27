@@ -69,14 +69,15 @@ already-running agent without the CLI.
 How to drive a device is returned from `device_open`, not kept in an
 always-loaded prompt or skill: it costs nothing in threads that never open a
 device and cannot drift from the pinned CLI version. The always-on prompt block
-is a few lines that point at the tools and forbid raw `simctl` and `adb`.
+is a few lines that point at the tools and prefer them over raw `simctl` and
+`adb`, which stay available for what the tools do not cover.
 
 ## The viewer decodes both vendored protocols
 
 The hub vendors two streaming servers with different wire formats. iOS video is
 an HTTP body of AVCC envelopes decoded with WebCodecs, with input on a separate
 binary WebSocket; Android multiplexes SEMU-framed H.264 and JSON gestures over
-one WebSocket. [`deviceStream.ts`](../../apps/web/src/components/device/deviceStream.ts)
+one WebSocket. [`DeviceStreamView.tsx`](../../apps/web/src/components/device/DeviceStreamView.tsx)
 speaks both so one panel covers both platforms.
 
 Simulators encode H.264 High 5.1. Hardware decoders on some machines and all

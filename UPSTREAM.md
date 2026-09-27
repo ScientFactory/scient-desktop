@@ -46,25 +46,34 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current T3 alignment is recorded in
-[`docs/internals/2026-09-26-upstream-sync-95030dc6.md`](docs/internals/2026-09-26-upstream-sync-95030dc6.md)
+[`docs/internals/2026-09-27-upstream-sync-a727d1d9.md`](docs/internals/2026-09-27-upstream-sync-a727d1d9.md)
 and in `upstream-state.json`. It extends the integration through
-`95030dc674883f0f2a7fd034b32ce742c8cf55d0`: 21 official commits after
-`dd8332da57355bccd7e666289267f2c94597debd`, merged onto owned base
-`01cc063c77edcad0e5110e843ebf08162bcc7013` as `f164dde1ff` (first parent owned
-base, second parent the exact official target). The alignment is prepared in
-[PR #372](https://github.com/ScientFactory/scient-desktop/pull/372). No
-owned-main catch-up was needed because the frozen base was already the current
-owned `main` tip. The
-preceding alignment ([PR #370](docs/internals/2026-09-26-upstream-sync-dd8332da.md))
-remains literal ancestry.
+`de251fc2971a884cb5b1305ba4daf309dc8cccb0`: 15 official commits after
+`95030dc674883f0f2a7fd034b32ce742c8cf55d0`, merged onto owned base
+`1ad094bbc3ffc58ad4e171f1e1ea5ce1d859ed5c`. The original a727 merge is
+`0c33fa4233ad8c2293349803bf2ce50c5f1e876b`; the exact upstream extension merge
+is `a556a6905fdbd9b6121f8952a994531b4870671d`, whose second parent is the exact
+official target. The reviewed candidate was then brought forward through owned
+`main` catch-up merges: first to `12437d152ee30d7d39313a05200fcf1c27c82d1a`
+through `70a9f9d980ab4e4aa8ae391211875cfd3ff05cbc`, then to the latest
+`4d95770a0404ac0e0463352b174a5eb40a67c9c8` through
+`4cb506b80b3e553c0d74a3765b697ba6f97a574d`. The alignment is prepared in
+[PR #384](https://github.com/ScientFactory/scient-desktop/pull/384). The preceding alignment
+([PR #372](docs/internals/2026-09-26-upstream-sync-95030dc6.md)) remains literal
+ancestry.
 
-This was a routine maintenance range that activates no protected boundary. The
-deliberate queued-messages revert is preserved whole, `node-pty` stays on `^1.1.0`
-because Scient builds its Linux arm64 artifact on arm64 hardware and does not
-consume upstream's new prebuild, and the Usage page keeps its Spend metric
-alongside upstream's new usage keybindings. Review also fixed an upstream change
-that aliased `projection_threads` in a new query and so silently broke Scient's
-`completedAnswerSql` correlation, which Git had merged without a conflict.
+This routine range activates no protected boundary. In addition to the original
+a727 accessibility, Usage, telemetry, and offline-banner work, the extension
+makes partially successful onboarding history imports complete instead of
+trapping the user, and carries that behavior into Scient's extracted local
+Getting Started import step. `node-pty` stays on `^1.1.0`; the Usage page keeps
+its Spend metric; unknown usage elements remain forward-compatible; two
+upstream product strings remain labelled `Scient`; and the relaxed
+`simctl`/`adb` guidance stays consistent across the always-on awareness and
+`device_open` quick start. The owned-main catch-up preserves the fork redesign,
+sidebar sections, dev-app signing isolation, and migration `058` beside the
+alignment's `057`. The receipt records the exact conflict compositions,
+clean-merge audits, complete gate results, and remaining owner follow-ups.
 
 ## Receiving T3 updates
 

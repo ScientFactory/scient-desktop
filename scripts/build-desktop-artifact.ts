@@ -3578,6 +3578,11 @@ export const validateWindowsPackagedPayload = Effect.fn(
       );
     }
     const wslArch = resolveWslPrebuildArch(input.targetArch);
+    // Upstream #13867 also validates the bundled Linux node-pty here. This
+    // check is already stricter: when a prebuild is expected it requires both
+    // `pty.node` and its staging marker, and when none was supplied
+    // `stageWslNodePtyPrebuild` has already warned that the backend will not
+    // start, rather than packaging an unusable runtime silently.
     const requiredMembers = [
       "apps/server/dist/bin.mjs",
       "node_modules/node-pty/package.json",

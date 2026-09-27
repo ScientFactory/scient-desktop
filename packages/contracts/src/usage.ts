@@ -11,13 +11,15 @@
  */
 import * as Schema from "effect/Schema";
 
-import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ForwardCompatibleArray, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { UsageAccountingSourceId } from "./usageAccountingSourceId.ts";
 
 /**
  * Bumped whenever the shape of {@link UsageSummary} changes incompatibly. The
  * client renders partial coverage when an environment reports an older version
  * rather than failing the whole page.
+ * Adding providers or other array-element variants is additive: unknown
+ * entries are skipped on decode and do not require a version bump.
  */
 export const USAGE_CONTRACT_VERSION = 6 as const;
 
@@ -296,8 +298,8 @@ export const UsageSummary = Schema.Struct({
   timeZone: TrimmedNonEmptyString,
   sinceDay: UsageDay,
   untilDay: UsageDay,
-  buckets: Schema.Array(UsageBucket),
-  sources: Schema.Array(UsageSource),
+  buckets: ForwardCompatibleArray(UsageBucket),
+  sources: ForwardCompatibleArray(UsageSource),
   pricing: UsagePricing,
   /** Optional for version-skew compatibility with servers before v6. */
   accounting: Schema.optional(UsageAccountingSummary),
