@@ -54,7 +54,11 @@ PDF reading state belongs to the thread as well as the document. The fork copies
 the origin's current reading state once, then the two conversations navigate
 independently even in a shared workspace. For a separate worktree, the client
 freezes file-PDF viewports at handoff and seeds the destination paths before
-mounting their viewers. Repeated restoration never overwrites a destination's
+mounting their viewers. Seeding happens when the fork is created, before the
+client switches to it, because a PDF viewer records its own position as soon
+as it opens. If the fork's folder is not yet known then (for example after a
+reload), only that fork's right panel is held until its positions are applied,
+once. Other threads and later folder changes never hide or remount the panel. Repeated restoration never overwrites a destination's
 newer position. Continuity is best-effort and cannot make a provisioned fork fail.
 
 The fork lifecycle has three separate readiness milestones:
@@ -592,15 +596,17 @@ meaning is the same.
   remain on the recovery path. Already-broken legacy sessions can remain broken
   until a tracked discontinuity; preservation deliberately retains that pre-existing
   uncertainty to avoid discarding healthy sessions' provider-only memory.
-- A later message waits for an in-flight handoff to settle, then rechecks the
-  current binding. The send fiber owns the pending record and releases waiters
-  on every exit, including interruption. A later-message waiter has a
-  65-second bound; its timeout does not cancel the original delivery or discard
-  its evidence. There is no fork-specific deadline on the send itself: adapters
-  such as Droid keep that call open through turn completion, including tool
-  work and approvals. Provider lifecycle handling owns that call's failure and
-  cancellation. A later message cannot bypass history merely because an
-  earlier send was still awaiting its outcome.
+- A later message never waits for an in-flight handoff: that decision runs on
+  the provider command queue shared by every thread. There is no fork-specific
+  deadline on the send itself, because adapters such as Droid keep that call
+  open through turn completion, including tool work and approvals; provider
+  lifecycle handling owns its failure and cancellation. Delivery is proven by
+  the provider starting the turn that carries the history
+  (`projection_turns.pending_message_id`) on the same provider session. With
+  that proof, a later message (for example a steer) is sent without history
+  immediately. Without it (the second or two before the provider confirms),
+  the later message is refused with a retryable error. It never bypasses the
+  history and never blocks other threads.
 - **Separate channel.** The handoff travels as `ProviderSendTurnInput.contextPreamble`,
   concatenated immediately before adapter dispatch. The 120,000-character input
   limit keeps measuring only what the user sent; optional skill discovery is

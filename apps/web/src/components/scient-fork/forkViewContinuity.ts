@@ -146,6 +146,14 @@ function readPending(): ReadonlyArray<PendingPdfContinuity> {
   }
 }
 
+const pendingListeners = new Set<() => void>();
+
+/** Notifies when a fork's pending PDF positions are staged or applied. */
+export function subscribeForkPdfContinuity(listener: () => void): () => void {
+  pendingListeners.add(listener);
+  return () => pendingListeners.delete(listener);
+}
+
 function writePending(entries: ReadonlyArray<PendingPdfContinuity>): void {
   if (typeof window === "undefined") return;
   try {
@@ -158,6 +166,7 @@ function writePending(entries: ReadonlyArray<PendingPdfContinuity>): void {
   } catch {
     // Panel continuity is best-effort and must never block a successful fork.
   }
+  for (const listener of pendingListeners) listener();
 }
 
 export function stageForkViewContinuity(input: {
@@ -219,6 +228,17 @@ export function stageForkViewContinuity(input: {
       createdAt: Date.now(),
     },
   ]);
+}
+
+/** Whether a fork still has PDF positions waiting for its workspace folder. */
+export function hasPendingForkPdfContinuity(input: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+}): boolean {
+  return readPending().some(
+    (entry) =>
+      entry.environmentId === input.environmentId && entry.destinationThreadId === input.threadId,
+  );
 }
 
 export function restoreForkPdfContinuity(input: {

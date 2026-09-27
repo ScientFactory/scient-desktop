@@ -11,7 +11,9 @@ import {
 } from "~/scient/pdf/pdfReaderSessionStore";
 import {
   forkRightPanelState,
+  hasPendingForkPdfContinuity,
   stageForkViewContinuity,
+  subscribeForkPdfContinuity,
   restoreForkPdfContinuity,
 } from "./forkViewContinuity";
 
@@ -193,3 +195,44 @@ it.each(["/origin", "/new-worktree"])(
     expect(pdfReaderSessionStore.get(forkKey).viewport?.page).toBe(20);
   },
 );
+
+it("keeps a fork's PDF positions pending until its folder is known, then only once", () => {
+  const environmentId = EnvironmentId.make("continuity-pending");
+  const originRef = scopeThreadRef(environmentId, ThreadId.make("origin"));
+  const fork = { environmentId, threadId: ThreadId.make("fork") };
+  vi.stubGlobal("window", { localStorage: createMemoryStorage() });
+  useRightPanelStore.getState().restoreThreadState(originRef, {
+    isOpen: true,
+    activeSurfaceId: "file:paper.pdf",
+    surfaces: [
+      {
+        id: "file:paper.pdf",
+        kind: "file",
+        relativePath: "paper.pdf",
+        revealLine: null,
+        revealRequestId: 1,
+      },
+    ],
+  });
+  // Normal threads never have anything pending, so their panel is never held.
+  expect(hasPendingForkPdfContinuity(originRef)).toBe(false);
+  const notified = vi.fn();
+  const unsubscribe = subscribeForkPdfContinuity(notified);
+
+  stageForkViewContinuity({
+    originRef,
+    destinationThreadId: fork.threadId,
+    originWorkspaceRoot: "/origin",
+  });
+  expect(hasPendingForkPdfContinuity(fork)).toBe(true);
+
+  // The fork's folder is not known yet (for example right after a reload).
+  restoreForkPdfContinuity({ ...fork, destinationWorkspaceRoot: undefined });
+  expect(hasPendingForkPdfContinuity(fork)).toBe(true);
+
+  restoreForkPdfContinuity({ ...fork, destinationWorkspaceRoot: "/origin" });
+  expect(hasPendingForkPdfContinuity(fork)).toBe(false);
+  // Staging and applying both notify, so a held panel is released right away.
+  expect(notified).toHaveBeenCalledTimes(2);
+  unsubscribe();
+});

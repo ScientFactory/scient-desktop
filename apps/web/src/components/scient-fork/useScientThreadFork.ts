@@ -1,6 +1,10 @@
 import { sha256 } from "@noble/hashes/sha2";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import {
+  scopeProjectRef,
+  scopeThreadRef,
+  scopedThreadKey,
+} from "@t3tools/client-runtime/environment";
 import {
   CommandId,
   type EnvironmentId,
@@ -29,8 +33,13 @@ import { newThreadId } from "~/lib/utils";
 import { isImageAttachment, type ChatAttachment } from "~/types";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { type ForkAcceptanceOutcome, readFileAsDataUrl } from "../ChatView.logic";
-import { stageForkViewContinuity } from "./forkViewContinuity";
+import { readProject, readThreadShell } from "../../state/entities";
+import {
+  type ForkAcceptanceOutcome,
+  readFileAsDataUrl,
+  resolveThreadWorkspaceRoot,
+} from "../ChatView.logic";
+import { restoreForkPdfContinuity, stageForkViewContinuity } from "./forkViewContinuity";
 import {
   createForkAttemptStore,
   deliverForkAttempt,
@@ -477,6 +486,22 @@ export function useScientThreadFork({
                   destinationThreadId: attempt.command.newThreadId,
                   originWorkspaceRoot,
                   attachmentIdMap: attempt.attachmentIdMap,
+                });
+                // The fork is ready, so its folder is usually known: apply the
+                // PDF positions now, before any reader in the fork can open.
+                // Otherwise the fork applies them when it first knows its folder.
+                const destinationShell = readThreadShell(destinationRef);
+                const destinationProject =
+                  destinationShell?.projectId == null
+                    ? null
+                    : readProject(scopeProjectRef(environmentId, destinationShell.projectId));
+                restoreForkPdfContinuity({
+                  environmentId,
+                  threadId: attempt.command.newThreadId,
+                  destinationWorkspaceRoot: resolveThreadWorkspaceRoot({
+                    worktreePath: destinationShell?.worktreePath,
+                    projectCwd: destinationProject?.workspaceRoot,
+                  }),
                 });
               } catch {
                 /* Panel continuity is optional; it cannot undo a ready fork. */

@@ -120,6 +120,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import { flushSync } from "react-dom";
 import { useLocation, useNavigate } from "@tanstack/react-router";
@@ -441,7 +442,11 @@ import {
 import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
 import { resolveComposerTimelineInset, resolveScrollToEndClearance } from "./composerFooterLayout";
 import { ChatHeader } from "./chat/ChatHeader";
-import { restoreForkPdfContinuity } from "./scient-fork/forkViewContinuity";
+import {
+  hasPendingForkPdfContinuity,
+  restoreForkPdfContinuity,
+  subscribeForkPdfContinuity,
+} from "./scient-fork/forkViewContinuity";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
 import { expandedImageKey, type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
@@ -4180,17 +4185,23 @@ function ChatViewContent(props: ChatViewProps) {
     activeWorkspaceRoot,
     runAfterPendingFileSave,
   );
-  const forkViewKey = JSON.stringify([activeThreadRef, activeWorkspaceRoot]);
-  const [restoredForkViewKey, setRestoredForkViewKey] = useState<string | null>(null);
+  // SCIENT-FORK: a fork normally applies its PDF positions when it is created.
+  // If they are still waiting (for example the app reloaded before the fork's
+  // folder was known), hold that fork's panel until they are applied, because
+  // a PDF reader records its own position as soon as it opens. Other threads,
+  // and later folder changes, never hide or remount the panel.
+  const forkPdfContinuityPending = useSyncExternalStore(
+    subscribeForkPdfContinuity,
+    () => activeThreadRef !== null && hasPendingForkPdfContinuity(activeThreadRef),
+  );
   useLayoutEffect(() => {
-    if (!activeThreadRef) return;
+    if (!activeThreadRef || !forkPdfContinuityPending || activeWorkspaceRoot === undefined) return;
     restoreForkPdfContinuity({
       environmentId: activeThreadRef.environmentId,
       threadId: activeThreadRef.threadId,
       destinationWorkspaceRoot: activeWorkspaceRoot,
     });
-    setRestoredForkViewKey(forkViewKey);
-  }, [activeThreadRef, activeWorkspaceRoot, forkViewKey]);
+  }, [activeThreadRef, activeWorkspaceRoot, forkPdfContinuityPending]);
   const activeTerminalTarget = useMemo(
     () =>
       hasProjectWorkspace
@@ -11417,7 +11428,7 @@ function ChatViewContent(props: ChatViewProps) {
           deviceAvailable={activeThreadRef !== null}
           liveAgentCount={agentPanelModel.liveCount}
         >
-          {restoredForkViewKey === forkViewKey ? rightPanelContent : null}
+          {forkPdfContinuityPending ? null : rightPanelContent}
         </RightPanelTabs>
       ) : null}
       {rightPanelPresent && shouldUseRightPanelSheet && activeThreadRef ? (
@@ -11480,7 +11491,7 @@ function ChatViewContent(props: ChatViewProps) {
             deviceAvailable={activeThreadRef !== null}
             liveAgentCount={agentPanelModel.liveCount}
           >
-            {restoredForkViewKey === forkViewKey ? rightPanelContent : null}
+            {forkPdfContinuityPending ? null : rightPanelContent}
           </RightPanelTabs>
         </RightPanelSheet>
       ) : null}
