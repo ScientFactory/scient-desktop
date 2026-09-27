@@ -1,13 +1,15 @@
+import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useMemo } from "react";
 
 import { toastManager } from "../../components/ui/toast";
 import { usePrimarySettings } from "../../hooks/useSettings";
+import { allEnvironmentProjectSnapshotsReadyAtom } from "../../state/shell";
 import { useThreadSectionCatalog } from "./catalog";
 import type { SectionOccupancy } from "./logic";
 
 const SWEEP_INTERVAL_MS = 5 * 60 * 1000;
-// Threads load shortly after an environment connects; judge emptiness only then.
-const CONNECTED_GRACE_MS = 60 * 1000;
+// Debounce cleanup after the complete shell inventories become live.
+const SYNCHRONIZED_GRACE_MS = 60 * 1000;
 
 /**
  * Keeps the catalog's occupancy current and runs the optional cleanup
@@ -17,7 +19,7 @@ const CONNECTED_GRACE_MS = 60 * 1000;
  * Occupancy is recorded as soon as membership changes: seeing a thread in a
  * section clears its empty stamp and records the thread's environment. That
  * runs whether or not cleanup is on, so turning it on later is safe. Judging
- * a section empty waits until every environment has been connected for a
+ * a section empty waits until every environment has a live shell snapshot for a
  * minute, and only covers sections whose recorded environments are all
  * visible here. Removals can be undone.
  */
@@ -30,6 +32,7 @@ export function useEmptySectionCleanup(input: {
   /** Every environment this client knows, once all are connected; else null. */
   readonly connectedEnvironmentIds: ReadonlySet<string> | null;
 }): void {
+  const snapshotsReady = useAtomValue(allEnvironmentProjectSnapshotsReadyAtom);
   const { available, restoreAll, sweepEmpty } = useThreadSectionCatalog();
   const afterDays = usePrimarySettings((settings) => settings.threadSectionsDeleteEmptyAfterDays);
   // A stable key, so ordinary thread activity doesn't restart the timers.
@@ -65,11 +68,18 @@ export function useEmptySectionCleanup(input: {
     void sweepEmpty({ occupancy, visibleEnvironmentIds: null, afterDays: afterDays ?? 1 });
   }, [afterDays, available, occupancy, sweepEmpty]);
 
-  const visibleEnvironmentIds = input.connectedEnvironmentIds;
+  const visibleEnvironmentIds = snapshotsReady ? input.connectedEnvironmentIds : null;
   useEffect(() => {
     if (afterDays === null || !available || visibleEnvironmentIds === null) return;
+    let current = true;
     const sweep = async () => {
-      const removed = await sweepEmpty({ occupancy, visibleEnvironmentIds, afterDays });
+      const removed = await sweepEmpty({
+        occupancy,
+        visibleEnvironmentIds,
+        afterDays,
+        // Rechecked inside the catalog queue and on conflict retries.
+        isCurrent: () => current,
+      });
       if (removed.length === 0) return;
       toastManager.add({
         type: "success",
@@ -85,9 +95,10 @@ export function useEmptySectionCleanup(input: {
         },
       });
     };
-    const first = setTimeout(() => void sweep(), CONNECTED_GRACE_MS);
+    const first = setTimeout(() => void sweep(), SYNCHRONIZED_GRACE_MS);
     const interval = setInterval(() => void sweep(), SWEEP_INTERVAL_MS);
     return () => {
+      current = false;
       clearTimeout(first);
       clearInterval(interval);
     };

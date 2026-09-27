@@ -120,7 +120,8 @@ rows) by transform.
 
 - **Remembering:** the section is remembered for the draft's thread id, and
   filed once that thread exists. The entry is dropped only after the write
-  succeeds, so a failed write is retried on a later update.
+  succeeds, so a failed write is retried on a later update. Its own optimistic
+  membership does not acknowledge the write.
 - **Forgetting:** T3 reuses an empty draft for any New thread request. So
   reusing one forgets its remembered section; the only seam for this is in
   `useHandleNewThread.ts`. "New thread in section" then remembers the section
@@ -137,11 +138,14 @@ rows) by transform.
   - **Recording:** whenever membership changes, a client records the
     environments holding each section's threads in `environmentIds`, and
     clears any `emptySince` stamp. This runs whether or not cleanup is on, so
-    turning it on later is safe. Filing a thread records its environment first.
+    turning it on later is safe. Filing a thread requires successful registration
+    of its environment first; a failed registration leaves membership unchanged.
   - **Judging:** a client stamps a section `emptySince`, or removes it once
     stamped for the configured days, only when it sees every environment in
-    `environmentIds`. Every environment must also have been connected for a
-    minute. No single client or server sees every environment's threads.
+    `environmentIds`. Every environment must also have a live, synchronized shell
+    snapshot for a minute. A connected transport alone is insufficient. Losing
+    synchronization cancels timers and invalidates queued sweeps. No single
+    client or server sees every environment's threads.
 - **Undo:** removals offer Undo.
 
 ### Presentation
@@ -252,7 +256,9 @@ Upstream-owned files touched. JavaScript mounts are additive and carry
   - `logic.test.ts`: catalog edits, grouping, drop planning, drag order,
     environment-aware cleanup sweeps, and capitalization;
   - `catalogWrite.test.ts`: concurrent edits from two clients both survive;
-  - `pendingNewThreadSections.test.ts`: filing retries and draft reuse;
+  - `pendingNewThreadSections.test.ts`: optimistic rollback, filing retries and draft reuse;
+  - `actions.test.tsx`, `catalog.test.tsx`: registration failures, conflicts and queued cleanup;
+  - `useEmptySectionCleanup.test.tsx`: synchronization gating and cancellation;
   - `menu.test.ts`.
 - **Browser tests** (Chromium, `layout` project): `SidebarSectionsView`,
   `SidebarSectionsToggle` and `scient/sidebar/SidebarNewThreadRow` cover

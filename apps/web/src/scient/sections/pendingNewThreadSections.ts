@@ -94,20 +94,26 @@ export function applyPendingNewThreadSections(
       if (now - entry.rememberedAt > MAX_AGE_MS) expired.push(id);
       continue;
     }
+    // Our optimistic membership is not an acknowledgment of the pending write.
+    if (filing.has(id)) continue;
     // Already filed (here or by another window): nothing left to do.
     if (thread.sectionId != null) {
       forgetSectionForNewThread(id);
       continue;
     }
-    if (filing.has(id)) continue;
     filing.add(id);
     void apply(
       scopeThreadRef(thread.environmentId, thread.id),
       ThreadSectionId.make(entry.sectionId),
     )
-      .then((filed) => {
-        if (filed) forgetSectionForNewThread(id);
-      })
+      .then(
+        (filed) => {
+          if (filed && read()[id] === entry) forgetSectionForNewThread(id);
+        },
+        () => {
+          // Preserve the entry when a transport unexpectedly rejects.
+        },
+      )
       .finally(() => filing.delete(id));
   }
   if (expired.length > 0) {

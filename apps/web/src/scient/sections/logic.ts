@@ -51,10 +51,7 @@ export function normalizeSectionName(name: string): string {
 }
 
 /** Case- and accent-insensitive: "Research" and "research" are one section. */
-export function findSectionByName(
-  sections: ThreadSections,
-  name: string,
-): ThreadSection | undefined {
+function findSectionByName(sections: ThreadSections, name: string): ThreadSection | undefined {
   const normalized = normalizeSectionName(name);
   return sections.find(
     (section) => section.name.localeCompare(normalized, undefined, { sensitivity: "base" }) === 0,
@@ -188,7 +185,7 @@ export type SectionOccupancy = ReadonlyMap<string, ReadonlySet<string>>;
 
 /**
  * Records that `environmentIds` hold threads in `sectionId`. Null when they
- * are all recorded already (or the section is gone).
+ * are all recorded already and no empty stamp needs clearing (or the section is gone).
  */
 export function catalogWithEnvironments(
   sections: ThreadSections,
@@ -200,8 +197,9 @@ export function catalogWithEnvironments(
   if (index < 0) return null;
   const section = ordered[index]!;
   const merged = mergeEnvironmentIds(section.environmentIds, environmentIds);
-  if (merged === null) return null;
-  ordered[index] = { ...section, environmentIds: merged };
+  if (merged === null && section.emptySince == null) return null;
+  const { emptySince: _emptySince, ...occupied } = section;
+  ordered[index] = { ...occupied, environmentIds: merged ?? section.environmentIds ?? [] };
   return ordered;
 }
 
@@ -317,7 +315,7 @@ export interface SectionGroup<T> {
 }
 
 /** The group a thread renders in. Unknown ids (a removed section) read as General. */
-export function sectionGroupIdOf(
+function sectionGroupIdOf(
   thread: { readonly sectionId?: string | null | undefined },
   knownSectionIds: ReadonlySet<string>,
 ): string {

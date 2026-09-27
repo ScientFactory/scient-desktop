@@ -57,6 +57,7 @@ export interface ThreadSectionCatalog {
     readonly occupancy: SectionOccupancy;
     readonly visibleEnvironmentIds: ReadonlySet<string> | null;
     readonly afterDays: number;
+    readonly isCurrent?: () => boolean;
   }) => Promise<readonly RemovedSection[]>;
   /** Records that these environments hold threads in the section. */
   readonly recordEnvironments: (
@@ -191,8 +192,10 @@ export function useThreadSectionCatalog(): ThreadSectionCatalog {
       readonly occupancy: SectionOccupancy;
       readonly visibleEnvironmentIds: ReadonlySet<string> | null;
       readonly afterDays: number;
+      readonly isCurrent?: () => boolean;
     }) => {
       const { ok, result } = await write((layout) => {
+        if (input.isCurrent?.() === false) return { layout: null, result: [] };
         const swept = sweepEmptySections({
           sections: layout.sections,
           generalIndex: layout.generalIndex,
@@ -207,16 +210,19 @@ export function useThreadSectionCatalog(): ThreadSectionCatalog {
   );
 
   const recordEnvironments = useCallback(
-    async (sectionId: string, environmentIds: readonly string[]) =>
-      (
-        await write((layout) => {
-          const catalog = catalogWithEnvironments(layout.sections, sectionId, environmentIds);
-          return {
-            layout: catalog === null ? null : { catalog, generalIndex: layout.generalIndex },
-            result: true,
-          };
-        })
-      ).ok,
+    async (sectionId: string, environmentIds: readonly string[]) => {
+      const { ok, result } = await write((layout) => {
+        if (!layout.sections.some((section) => section.id === sectionId)) {
+          return { layout: null, result: false };
+        }
+        const catalog = catalogWithEnvironments(layout.sections, sectionId, environmentIds);
+        return {
+          layout: catalog === null ? null : { catalog, generalIndex: layout.generalIndex },
+          result: true,
+        };
+      });
+      return ok && result === true;
+    },
     [write],
   );
 

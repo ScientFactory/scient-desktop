@@ -53,6 +53,37 @@ describe("pending new-thread sections", () => {
     expect(apply).not.toHaveBeenCalled();
   });
 
+  it("retains intent through its optimistic membership and a rejected write", async () => {
+    rememberSectionForNewThread("t1", research);
+    let resolve!: (value: boolean) => void;
+    const pending = new Promise<boolean>((done) => {
+      resolve = done;
+    });
+    const apply = vi.fn(() => pending);
+    applyPendingNewThreadSections([thread("t1")], apply);
+    applyPendingNewThreadSections([thread("t1", research)], apply);
+    expect(apply).toHaveBeenCalledTimes(1);
+
+    resolve(false);
+    await settle();
+    apply.mockResolvedValue(true);
+    applyPendingNewThreadSections([thread("t1")], apply);
+    await settle();
+    expect(apply).toHaveBeenCalledTimes(2);
+    applyPendingNewThreadSections([thread("t1")], apply);
+    expect(apply).toHaveBeenCalledTimes(2);
+  });
+
+  it("retains intent and releases the in-flight guard when the transport throws", async () => {
+    rememberSectionForNewThread("t1", research);
+    const apply = vi.fn().mockRejectedValueOnce(new Error("disconnected")).mockResolvedValue(true);
+    applyPendingNewThreadSections([thread("t1")], apply);
+    await settle();
+    applyPendingNewThreadSections([thread("t1")], apply);
+    await settle();
+    expect(apply).toHaveBeenCalledTimes(2);
+  });
+
   it("drops an entry once the thread is already filed", async () => {
     rememberSectionForNewThread("t1", research);
     const apply = vi.fn(async () => true);

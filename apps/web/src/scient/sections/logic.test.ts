@@ -445,6 +445,16 @@ describe("sweepEmptySections", () => {
 });
 
 describe("catalogWithEnvironments", () => {
+  it("clears an old cleanup deadline before filing into an already recorded environment", () => {
+    const recorded = catalogWithEnvironments(
+      [{ ...RESEARCH, environmentIds: ["remote"], emptySince: "2020-01-01T00:00:00.000Z" }],
+      RESEARCH.id,
+      ["remote"],
+    );
+    expect(recorded?.[0]?.emptySince).toBeUndefined();
+    expect(recorded?.[0]?.environmentIds).toEqual(["remote"]);
+    expect(recorded).not.toBeNull();
+  });
   it("adds only environments not yet recorded", () => {
     const recorded = catalogWithEnvironments([RESEARCH, PERMA], "perma", ["a"]);
     expect(recorded?.[1]?.environmentIds).toEqual(["a"]);

@@ -33,6 +33,15 @@ export class ThreadSectionsUnsupportedError extends Schema.TaggedError<ThreadSec
   }
 }
 
+class ThreadSectionRegistrationError extends Schema.TaggedError<ThreadSectionRegistrationError>()(
+  "ThreadSectionRegistrationError",
+  {},
+) {
+  override get message(): string {
+    return "Could not save the section's environment on the primary server. Try moving the thread again.";
+  }
+}
+
 /** Whether the thread's server accepts thread.section.set. */
 export function readEnvironmentSupportsSections(environmentId: EnvironmentId): boolean {
   return (
@@ -66,7 +75,9 @@ export function useThreadSectionActions() {
       }
       // Record the environment first, so optional cleanup never judges this
       // section from a client that can't see this thread. A no-op once recorded.
-      if (sectionId !== null) await recordEnvironments(sectionId, [target.environmentId]);
+      if (sectionId !== null && !(await recordEnvironments(sectionId, [target.environmentId]))) {
+        return AsyncResult.failure(Cause.fail(new ThreadSectionRegistrationError({})));
+      }
       return setSectionMutation({
         environmentId: target.environmentId,
         input: { threadId: target.threadId, sectionId },
