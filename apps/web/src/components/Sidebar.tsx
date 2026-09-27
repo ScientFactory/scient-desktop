@@ -4467,6 +4467,25 @@ export default function Sidebar() {
     if (isMobile) setOpenMobile(false);
     openCommandPalette({ open: "new-thread-in" });
   }, [isMobile, newThreadContext, opensNewThreadTargetPicker, setOpenMobile]);
+  // SCIENT-FORK:START — the New thread row honours the Shift+click its tooltip
+  // advertises: straight into the current project, skipping the picker.
+  const handleNewThreadRowClick = useCallback(
+    (event: { readonly shiftKey: boolean }) => {
+      if (!event.shiftKey || projectGroups.length === 0) {
+        handleNewThreadClick();
+        return;
+      }
+      if (isMobile) setOpenMobile(false);
+      void startNewThreadFromContext({
+        activeDraftThread: newThreadContext.activeDraftThread,
+        activeThread: newThreadContext.activeThread ?? undefined,
+        defaultProjectRef: newThreadContext.defaultProjectRef,
+        handleNewThread: newThreadContext.handleNewThread,
+      });
+    },
+    [handleNewThreadClick, isMobile, newThreadContext, projectGroups.length, setOpenMobile],
+  );
+  // SCIENT-FORK:END
 
   // chat.newLocal is a valid fallback label only when both commands create
   // directly. When the picker is available, it is advertised separately as
@@ -4716,11 +4735,10 @@ export default function Sidebar() {
             />
             {/* SCIENT-FORK:START — New thread gets its own labelled row below search. */}
             <SidebarNewThreadRow
-              onNewThread={handleNewThreadClick}
-              disabled={projects.length === 0}
+              onNewThread={handleNewThreadRowClick}
               shortcutLabel={newThreadShortcutLabel}
               inProjectShortcutLabel={newThreadInProjectShortcutLabel}
-              showInProjectHint={projectGroups.length > 1}
+              showInProjectHint={showNewThreadInProjectHint}
             />
             {/* SCIENT-FORK:END */}
           </SidebarGroup>

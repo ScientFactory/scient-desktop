@@ -511,8 +511,11 @@ concurrent clients never overwrite each other. Scient code lives under
 `apps/server/src/scient/threadSections`; upstream files carry `SCIENT-FORK`-marked
 mounts. A few lines change in place: two in `Sidebar.tsx`, the search field's class
 list and the New thread icon's `hidden` attribute in `SidebarThreadHeader.tsx`, and
-the undo-action union in `showThreadUndoNotice.ts`. The Sections view reuses T3's
-rows, shelves and order keys and never changes pin state. If T3 ships its own
+the undo-action union in `showThreadUndoNotice.ts`. New thread always opens the
+"New thread in…" picker (`shouldOpenNewThreadTargetPicker` changes in place), which
+ends with Add project, so a project, including the first, can be added from New
+thread; Shift+click and ⇧⌘N still start directly in the current project. The
+Sections view reuses T3's rows, shelves and order keys and never changes pin state. If T3 ships its own
 grouping or collapsible shelves, reconcile against these seams instead of layering a
 second grouping. Decisions, invariants and the full seam list are in
 [sidebar sections](docs/internals/scient-sidebar-sections.md).

@@ -490,6 +490,16 @@ describe("shouldOpenNewThreadTargetPicker", () => {
       }),
     ).toBe(false);
   });
+
+  // SCIENT-FORK:START
+  it("opens for any number of projects, so Add project is always offered", () => {
+    for (const projectGroupCount of [0, 1, 3]) {
+      expect(
+        shouldOpenNewThreadTargetPicker({ legacySidebarEnabled: false, projectGroupCount }),
+      ).toBe(true);
+    }
+  });
+  // SCIENT-FORK:END
 });
 
 const LOCAL_ENVIRONMENT_ID = EnvironmentId.make("environment-local");

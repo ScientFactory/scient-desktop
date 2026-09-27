@@ -52,7 +52,6 @@ async function mountSidebarTop(onNewThread: () => void) {
         />
         <SidebarNewThreadRow
           onNewThread={onNewThread}
-          disabled={false}
           shortcutLabel="⌘N"
           inProjectShortcutLabel={null}
           showInProjectHint={false}

@@ -111,8 +111,12 @@ their default order until the server is updated.
 
 ## Start a new thread
 
-**New thread**, the row directly below search, starts a thread. With one project it opens right
-away; with more than one, it first asks which project to use.
+**New thread**, the row directly below search, starts a thread. It first asks which project to
+use, with the current project first, so **Enter** starts there. The list ends with **Add project**,
+which runs the usual Add project flow and then opens a new thread in that project. With no projects
+yet, that is the only choice, so New thread is also how you add your first project. **⌘N** works
+the same way. To skip the list and start in the current project, **Shift+click** New thread or
+press **⇧⌘N**.
 
 ## Group threads into sections
 

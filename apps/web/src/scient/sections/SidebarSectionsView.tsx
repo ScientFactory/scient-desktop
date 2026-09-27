@@ -547,12 +547,6 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
       <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
         <ul ref={listRef} role="list" className="relative flex flex-1 flex-col gap-px">
           {props.leading}
-          {groups.every((group) => group.section === null) && props.creatingSection === null ? (
-            <li className="list-none px-2 pb-2 text-xs text-sidebar-muted-foreground">
-              Group related threads into sections. Right-click a thread and choose Section, or use
-              New section below.
-            </li>
-          ) : null}
           {items.map((item, index) => {
             if (item.kind === "header") {
               const group = groupById.get(item.groupId);

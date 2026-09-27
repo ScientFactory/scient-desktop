@@ -7,8 +7,10 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/toolt
 /**
  * Scient's New thread control: a labelled row of its own below the sidebar
  * search, in place of T3's icon in the header group. It takes the header's
- * own new-thread inputs, so the click, shortcut and Shift+click hint behave
- * exactly as the icon did.
+ * own new-thread inputs (shortcut labels and the Shift+click hint), and its
+ * caller makes Shift+click start in the current project, as the hint says. It
+ * is never disabled: New thread opens the "New thread in…" picker, which ends
+ * with Add project, even when there are no projects yet.
  *
  * Its spacing and sizing are local to this row, not shared sidebar tokens: a
  * small gap separates it from the search row, and its icon and label sit one
@@ -16,10 +18,9 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/toolt
  */
 export function SidebarNewThreadRow(props: {
   readonly onNewThread: (event: ReactMouseEvent) => void;
-  readonly disabled: boolean;
   readonly shortcutLabel: string | null | undefined;
   readonly inProjectShortcutLabel: string | null | undefined;
-  /** Shift+click only matters once there is more than one project to pick. */
+  /** Shift+click only matters once there is a project to start in. */
   readonly showInProjectHint: boolean;
 }) {
   const label = props.shortcutLabel ? `New thread (${props.shortcutLabel})` : "New thread";
@@ -31,7 +32,6 @@ export function SidebarNewThreadRow(props: {
             <SidebarMenuButton
               type="button"
               data-testid="sidebar-new-thread-row"
-              disabled={props.disabled}
               onClick={props.onNewThread}
             />
           }
