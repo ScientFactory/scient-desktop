@@ -774,6 +774,18 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.deepStrictEqual((linux.linux as Record<string, unknown>).protocols, [
         { name: "Scient", schemes: ["scient"] },
       ]);
+      // Every platform opens Scient conversation files with Scient.
+      for (const config of [mac, linux, win]) {
+        assert.deepStrictEqual(config.fileAssociations, [
+          {
+            ext: "scic",
+            name: "Scient Conversation",
+            description: "Scient conversation",
+            mimeType: "application/vnd.scient.conversation+zip",
+            role: "Editor",
+          },
+        ]);
+      }
       assert.deepStrictEqual(mac.files, [...DESKTOP_FILE_EXCLUSIONS, ...MAC_FILE_EXCLUSIONS]);
       assert.deepStrictEqual(linux.files, [...DESKTOP_FILE_EXCLUSIONS, ...LINUX_FILE_EXCLUSIONS]);
       assert.deepStrictEqual(win.files, [

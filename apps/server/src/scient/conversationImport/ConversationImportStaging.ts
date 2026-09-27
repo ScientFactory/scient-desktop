@@ -17,6 +17,7 @@ import {
   ATTACHMENT_UPLOAD_URL_TTL_MS,
   ConversationImportId,
   SCIENT_CONVERSATION_IMPORT_MAX_PACKAGE_BYTES,
+  SCIENT_CONVERSATION_IMPORT_UPLOAD_PATH,
   ScientConversationImportError,
   type ConversationImportRejection,
   type EnvironmentSessionPrincipalShape,
@@ -71,7 +72,7 @@ import {
   type ValidatedConversationImport,
 } from "./ConversationImporter.ts";
 
-export const CONVERSATION_IMPORT_UPLOAD_ROUTE_PREFIX = "/api/scient/conversation-import/v1/upload";
+export const CONVERSATION_IMPORT_UPLOAD_ROUTE_PREFIX = SCIENT_CONVERSATION_IMPORT_UPLOAD_PATH;
 const SIGNING_SECRET_NAME = "asset-access-signing-key";
 const COMPLETIONS_DIRECTORY = "completions";
 const PACKAGE_FILE = "package.scic";

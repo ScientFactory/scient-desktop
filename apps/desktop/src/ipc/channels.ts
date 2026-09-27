@@ -129,6 +129,11 @@ export const VOICE_TRANSCRIBE_CHANNEL = "desktop:voice-transcribe";
 export const VOICE_CANCEL_TRANSCRIPTION_CHANNEL = "desktop:voice-cancel-transcription";
 
 export const SET_UNREAD_ANSWER_COUNT_CHANNEL = "scient:answer-attention:set-count";
+// SCIENT-FORK:START — conversation files the OS opened with Scient.
+export const TAKE_OPENED_CONVERSATION_FILES_CHANNEL = "scient:conversation-import:take-opened";
+export const CONVERSATION_FILES_OPENED_CHANNEL = "scient:conversation-import:opened";
+export const UPLOAD_OPENED_CONVERSATION_FILE_CHANNEL = "scient:conversation-import:upload-opened";
+// SCIENT-FORK:END
 export const MAC_PERMISSION_HELPER_CHANNEL = "desktop:mac-permission-helper";
 
 export const CHECK_SYSTEM_PERMISSION_CHANNEL = "desktop:check-system-permission";

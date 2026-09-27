@@ -74,6 +74,19 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   getClientPlatform: () => clientPlatform,
   setUnreadAnswerCount: (count) =>
     ipcRenderer.invoke(IpcChannels.SET_UNREAD_ANSWER_COUNT_CHANNEL, count),
+  // SCIENT-FORK:START — conversation files the OS opened with Scient.
+  takeOpenedConversationFiles: () =>
+    ipcRenderer.invoke(IpcChannels.TAKE_OPENED_CONVERSATION_FILES_CHANNEL),
+  onConversationFilesOpened: (listener) => {
+    const wrappedListener = () => listener();
+    ipcRenderer.on(IpcChannels.CONVERSATION_FILES_OPENED_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.CONVERSATION_FILES_OPENED_CHANNEL, wrappedListener);
+    };
+  },
+  uploadOpenedConversationFile: (request) =>
+    ipcRenderer.invoke(IpcChannels.UPLOAD_OPENED_CONVERSATION_FILE_CHANNEL, request),
+  // SCIENT-FORK:END
   setNotificationBadge: (badge) =>
     ipcRenderer.invoke(IpcChannels.SET_NOTIFICATION_BADGE_CHANNEL, badge),
   onNotificationBadgeClear: (listener) => {

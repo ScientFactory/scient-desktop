@@ -67,6 +67,9 @@ export const SCIC_FORMAT_MINOR_VERSION = 0;
 export const SCIENT_CONVERSATION_IMPORT_MAX_PACKAGE_BYTES =
   SCIENT_CONVERSATION_EXPORT_MAX_ASSET_BYTES + 256 * 1024 * 1024;
 
+/** The route a package's bytes are posted to; the signed token is the last path segment. */
+export const SCIENT_CONVERSATION_IMPORT_UPLOAD_PATH = "/api/scient/conversation-import/v1/upload";
+
 /** The scope every conversation import endpoint requires of the caller. */
 export const SCIENT_CONVERSATION_IMPORT_REQUIRED_SCOPE = AuthOrchestrationOperateScope;
 
@@ -351,3 +354,44 @@ export class ScientConversationImportError extends Schema.TaggedError<ScientConv
     return HttpServerResponse.schemaJson(ScientConversationImportError)(this, { status: 409 });
   }
 }
+
+// ---------------------------------------------------------------------------
+// Desktop: files the operating system opened with Scient
+// ---------------------------------------------------------------------------
+
+/**
+ * A `.scic` the desktop received from the operating system (double-click,
+ * Open With, or a launch argument), waiting to be imported. The renderer never
+ * sees the file's path; it refers to the file by `token`.
+ */
+export const DesktopOpenedConversationFile = Schema.Struct({
+  token: ShortText(64),
+  fileName: ShortText(255),
+  sizeBytes: NonNegativeInt,
+});
+export type DesktopOpenedConversationFile = typeof DesktopOpenedConversationFile.Type;
+
+/** Asks the desktop to stream an opened file to a signed import upload URL. */
+export const DesktopConversationFileUploadRequest = Schema.Struct({
+  token: ShortText(64),
+  /** Absolute upload URL; the desktop only posts to the import upload route. */
+  url: ShortText(8_192),
+});
+export type DesktopConversationFileUploadRequest = typeof DesktopConversationFileUploadRequest.Type;
+
+export const DesktopConversationFileUploadResult = Schema.Union([
+  Schema.TaggedStruct("uploaded", {}),
+  Schema.TaggedStruct("failed", {
+    reason: Schema.Literals([
+      /** Unknown token, or the file can no longer be read. */
+      "file-unavailable",
+      /** The file's size changed since it was opened. */
+      "file-changed",
+      "invalid-url",
+      "network-failed",
+      /** The server refused the upload. */
+      "rejected",
+    ]),
+  }),
+]);
+export type DesktopConversationFileUploadResult = typeof DesktopConversationFileUploadResult.Type;
