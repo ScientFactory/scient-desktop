@@ -109,6 +109,61 @@ If dragging is unavailable for one environment, update the Scient server running
 environment. Pinned and active reordering require server support. Threads from older servers keep
 their default order until the server is updated.
 
+## Start a new thread
+
+**New thread**, the row directly below search, starts a thread. With one project it opens right
+away; with more than one, it first asks which project to use.
+
+## Group threads into sections
+
+On web and desktop, sections let you group related threads by topic, such as **To look at** or
+**Research**, across projects. A thread belongs to at most one section. Sections only organize the
+list: filing a thread never pins, settles, snoozes, or reorders it, and does not count as activity.
+
+Right-click a thread and choose **Section** to file it. The current section is checked. Choose
+**New section…** to name a section and file the thread in one step. Choose **General** to take it
+out of its section.
+With several threads selected, **Move to section** files them together. Each move shows
+**Undo** in the sidebar, and `mod+z` restores the previous section.
+
+Click **Group by section** next to search to see the sidebar by section; the button stays
+highlighted while it is on. Click it again to return to the default Pinned and Active layout. In the
+Sections view:
+
+- Each section lists its pinned threads first, then the rest in your arranged order. Threads
+  without a section, including new ones, appear in **General**, which comes first until you move
+  it. You can drag **General** like any section, but not rename or delete it.
+- Snoozed and settled threads stay on their own shelves. A settled or snoozed thread keeps its
+  section and returns to it when you un-settle or wake it.
+- Drag a thread to a spot in any section to file it there at that position. Drag a section header
+  to reorder sections, or drag a thread onto the **Settled** header to settle it. Dragging never
+  unpins a thread.
+- Click a header to collapse it. A collapsed section's arrow points right; it shows a dot while
+  one of its threads is working, and still shows the thread you have open. An open section's
+  arrow points down and appears when you hover the header. Double-click a header to rename it.
+- Each header's buttons start a **New thread in section** and open the section menu, which also
+  offers **Rename**, **Move up**, **Move down**, and **Delete section**.
+- Empty sections stay visible so you can drag threads into them. **New section**, after the last
+  section, adds one at the end.
+- Section names start with a capital letter, capitalized as you type. A first word that mixes case
+  on purpose, such as _mRNA_ or _iOS_, is kept as written: paste it, or type it and then change the
+  first letter back.
+
+To remove sections you no longer use, turn on **Settings → General → Delete empty sections** and
+choose how many days a section may stay empty (7 by default). It is off unless you turn it on. A
+section counts as empty when no active, pinned, snoozed, or settled thread belongs to it; archived
+threads do not keep a section. Adding a thread restarts the count, and **General** is never
+removed. Cleanup runs only while Scient is open and every environment is connected, and a device
+only removes a section when it is connected to every environment whose threads have been in it.
+It shows **Undo** when it removes a section. The setting is stored with the section list on your
+primary environment.
+
+Deleting a section never deletes conversations: its threads move to **General**, and **Undo** on the
+confirmation brings the section and its threads back. The section list is stored on the server of
+your primary environment, so every window and connected client shows the same sections. If
+**Section** is missing from a thread's menu, update the Scient server running that thread's
+environment. The mobile app does not show sections yet; it keeps its usual layout.
+
 ## Settle finished work
 
 Choose **Settle thread** from its menu to move finished work out of the active list

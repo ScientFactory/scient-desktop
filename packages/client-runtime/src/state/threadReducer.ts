@@ -297,6 +297,9 @@ export function applyThreadDetailEvent(
           ...(event.payload.activeOrderKey !== undefined
             ? { activeOrderKey: event.payload.activeOrderKey }
             : {}),
+          // SCIENT-FORK:START — thread sections
+          ...(event.payload.sectionId !== undefined ? { sectionId: event.payload.sectionId } : {}),
+          // SCIENT-FORK:END
           updatedAt: event.payload.updatedAt,
         },
       };

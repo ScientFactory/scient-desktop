@@ -21,6 +21,9 @@ import {
   ProjectId,
   ProviderItemId,
   ThreadId,
+  // SCIENT-FORK:START
+  ThreadSectionId,
+  // SCIENT-FORK:END
   TrimmedNonEmptyString,
   TrimmedString,
   TurnId,
@@ -877,6 +880,10 @@ export const OrchestrationThread = Schema.Struct({
   // Manual Active placement. Keyless threads retain their creation/re-entry
   // order above the arranged run. Settling clears this slot.
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  // SCIENT-FORK:START — user-defined section. Independent of lifecycle state;
+  // optional so snapshots from servers without sections still decode.
+  sectionId: Schema.optional(Schema.NullOr(ThreadSectionId)),
+  // SCIENT-FORK:END
   // Set while the user has turned automatic settlement off for this thread.
   // Survives manual settle, un-settle, and activity: only the user clears it.
   // Optional so payloads from older servers still decode.
@@ -961,6 +968,10 @@ export const OrchestrationThreadShell = Schema.Struct({
   pinnedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  // SCIENT-FORK:START — user-defined section. Independent of lifecycle state;
+  // optional so snapshots from servers without sections still decode.
+  sectionId: Schema.optional(Schema.NullOr(ThreadSectionId)),
+  // SCIENT-FORK:END
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
   titleState: Schema.optional(Schema.NullOr(ThreadTitleState)),
@@ -1290,6 +1301,17 @@ const ThreadActiveReorderCommand = Schema.Struct({
   orderKey: TrimmedNonEmptyString,
 });
 
+// SCIENT-FORK:START — file a thread into a user-defined section (null clears it).
+// A dedicated command, like thread.active.reorder, so organizing the list
+// never reads as thread activity.
+const ThreadSectionSetCommand = Schema.Struct({
+  type: Schema.Literal("thread.section.set"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  sectionId: Schema.NullOr(ThreadSectionId),
+});
+// SCIENT-FORK:END
+
 const ThreadMetaUpdateCommand = Schema.Struct({
   type: Schema.Literal("thread.meta.update"),
   commandId: CommandId,
@@ -1594,6 +1616,9 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadPinReorderCommand,
   ThreadAutoSettleSetCommand,
   ThreadActiveReorderCommand,
+  // SCIENT-FORK:START
+  ThreadSectionSetCommand,
+  // SCIENT-FORK:END
   ThreadMetaUpdateCommand,
   ThreadPullRequestLinkCommand,
   ThreadPullRequestUnlinkCommand,
@@ -1631,6 +1656,9 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadPinReorderCommand,
   ThreadAutoSettleSetCommand,
   ThreadActiveReorderCommand,
+  // SCIENT-FORK:START
+  ThreadSectionSetCommand,
+  // SCIENT-FORK:END
   ThreadMetaUpdateCommand,
   ThreadPullRequestLinkCommand,
   ThreadPullRequestUnlinkCommand,
@@ -2041,6 +2069,10 @@ export const ThreadMetaUpdatedPayload = Schema.Struct({
   // Order updates use this existing event so older clients can ignore the
   // new field while continuing to decode the event stream.
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  // SCIENT-FORK:START — user-defined section. Absent means unchanged: other
+  // meta updates omit it, and null files the thread back into General.
+  sectionId: Schema.optional(Schema.NullOr(ThreadSectionId)),
+  // SCIENT-FORK:END
   title: Schema.optional(TrimmedNonEmptyString),
   /** Intent marker consumed by the title-generation reactor. Keeping this on
       the existing event lets older clients safely ignore the new field. */

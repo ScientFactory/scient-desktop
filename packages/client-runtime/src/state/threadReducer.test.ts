@@ -9,6 +9,9 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  // SCIENT-FORK:START
+  ThreadSectionId,
+  // SCIENT-FORK:END
   TurnId,
 } from "@t3tools/contracts";
 import type { OrchestrationThread } from "@t3tools/contracts";
@@ -357,6 +360,45 @@ describe("applyThreadDetailEvent", () => {
         }
       },
     );
+
+    // SCIENT-FORK:START — thread sections
+    it.each([ThreadSectionId.make("research"), null] as const)(
+      "files the thread into section %s without activity, and keeps it on other updates",
+      (sectionId) => {
+        const filed = applyThreadDetailEvent(
+          { ...baseThread, sectionId: ThreadSectionId.make("perma") },
+          {
+            ...baseEventFields,
+            sequence: 5,
+            occurredAt: "2026-04-01T05:00:00.000Z",
+            aggregateKind: "thread",
+            aggregateId: baseThread.id,
+            type: "thread.meta-updated",
+            payload: { threadId: baseThread.id, sectionId, updatedAt: baseThread.updatedAt },
+          },
+        );
+        expect(filed.kind).toBe("updated");
+        if (filed.kind !== "updated") return;
+        expect(filed.thread.sectionId).toBe(sectionId);
+        expect(filed.thread.updatedAt).toBe(baseThread.updatedAt);
+
+        const renamed = applyThreadDetailEvent(filed.thread, {
+          ...baseEventFields,
+          sequence: 6,
+          occurredAt: "2026-04-01T06:00:00.000Z",
+          aggregateKind: "thread",
+          aggregateId: baseThread.id,
+          type: "thread.meta-updated",
+          payload: {
+            threadId: baseThread.id,
+            title: "Renamed",
+            updatedAt: "2026-04-01T06:00:00.000Z",
+          },
+        });
+        if (renamed.kind === "updated") expect(renamed.thread.sectionId).toBe(sectionId);
+      },
+    );
+    // SCIENT-FORK:END
 
     it("patches title and branch", () => {
       const result = applyThreadDetailEvent(
