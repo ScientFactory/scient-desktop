@@ -12,8 +12,6 @@ import {
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
-import * as TestClock from "effect/testing/TestClock";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
@@ -268,14 +266,14 @@ it.layer(layer)("ScientForkContextDelivery", (it) => {
   );
 
   it.effect(
-    "a queued message waits for delivery certainty and carries context after a not-sent failure",
+    "a message while delivery is unconfirmed is refused and carries context after a not-sent failure",
     () =>
       Effect.gen(function* () {
         yield* reset;
         const first = yield* deliver(yield* prepare());
-        const waiting = yield* prepare().pipe(Effect.forkChild);
+        yield* Effect.flip(prepare());
         yield* settle(first.handoffId, { type: "notSent" });
-        assert.strictEqual((yield* Fiber.join(waiting)).kind, "deliver");
+        assert.strictEqual((yield* prepare()).kind, "deliver");
       }),
   );
 
@@ -745,25 +743,39 @@ it.layer(layer)("ScientForkContextDelivery", (it) => {
     }),
   );
 
-  it.effect("bounds a later-message wait without abandoning the active delivery", () =>
+  it.effect("a steer during a long delivering turn goes through without waiting", () =>
+    Effect.gen(function* () {
+      yield* reset;
+      // The provider holds the send open for the whole turn (for example Droid),
+      // but it has started the turn that carries the history.
+      const first = yield* deliver(yield* prepare({ nativeThreadKey: "codex:thread-a" }));
+      yield* recordProviderTurn("provider-turn-1", 1);
+
+      // No clock advance: the decision must not wait for the send to return.
+      const steer = yield* prepare({ nativeThreadKey: "codex:thread-a", sessionRunning: true });
+      assert.strictEqual(steer.kind, "none");
+
+      // The slow send still settles normally afterwards, without a duplicate.
+      yield* settle(first.handoffId, { type: "accepted", nativeThreadKey: "codex:thread-a" });
+      assert.strictEqual((yield* prepare({ nativeThreadKey: "codex:thread-a" })).kind, "none");
+    }),
+  );
+
+  it.effect("a message before the provider confirms the delivery fails fast", () =>
     Effect.gen(function* () {
       const sql = yield* reset;
       const first = yield* deliver(yield* prepare({ nativeThreadKey: "codex:thread-a" }));
-      const waiting = yield* prepare({ nativeThreadKey: "codex:thread-a" }).pipe(
-        Effect.result,
-        Effect.forkChild,
-      );
-      yield* TestClock.adjust("65 seconds");
-      assert.strictEqual((yield* Fiber.join(waiting))._tag, "Failure");
+
+      // No clock advance: refusing must not wait on the shared command queue.
+      const error = yield* Effect.flip(prepare({ nativeThreadKey: "codex:thread-a" }));
+      assert.match(error.detail, /still sending its conversation history/u);
       const rows = yield* sql<{ readonly delivery_status: string }>`
         SELECT delivery_status FROM scient_context_handoffs WHERE handoff_id = ${first.handoffId}
       `;
       assert.strictEqual(rows[0]?.delivery_status, "pending");
 
-      // The slow original send can still finish normally. Its context is then
-      // reused, not duplicated or reset because a different caller timed out.
+      // Once the provider starts the carrying turn, the next message is sent.
       yield* recordProviderTurn("provider-turn-1", 1);
-      yield* settle(first.handoffId, { type: "accepted", nativeThreadKey: "codex:thread-a" });
       assert.strictEqual((yield* prepare({ nativeThreadKey: "codex:thread-a" })).kind, "none");
     }),
   );

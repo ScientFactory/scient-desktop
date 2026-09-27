@@ -42,7 +42,6 @@ import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Deferred from "effect/Deferred";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
@@ -215,7 +214,7 @@ const make = Effect.gen(function* () {
     Effect.orElseSucceed(() => undefined),
   );
   /** Handoffs whose send is in flight in this process. */
-  const inFlight = new Map<string, Deferred.Deferred<void>>();
+  const inFlight = new Set<string>();
 
   const fail = (threadId: ThreadId, detail: string) => (cause: unknown) =>
     new ScientForkContextError({ threadId, detail, cause });
@@ -354,36 +353,24 @@ const make = Effect.gen(function* () {
     ScientForkContextError
   > {
     for (const handoff of yield* readActiveHandoffs(input.threadId)) {
-      const pending = inFlight.get(handoff.handoff_id);
-      if (pending !== undefined) {
-        yield* Deferred.await(pending).pipe(
-          Effect.timeout("65 seconds"),
-          Effect.mapError(
-            fail(
-              input.threadId,
-              "The preceding history send has not settled. Retry after its provider session has stopped.",
-            ),
-          ),
-        );
-        const binding = (yield* sql<{
-          readonly provider_name: string;
-          readonly provider_instance_id: string | null;
-          readonly resume_cursor_json: string | null;
-        }>`
-          SELECT provider_name, provider_instance_id, resume_cursor_json FROM provider_session_runtime WHERE thread_id = ${input.threadId}
-        `.pipe(
-          Effect.mapError(fail(input.threadId, "Unable to refresh the receiving session.")),
-        ))[0];
-        const cursor =
-          binding?.resume_cursor_json == null
-            ? undefined
-            : Option.getOrUndefined(decodeUnknownJson(binding.resume_cursor_json));
-        return yield* resolveExistingDelivery({
-          ...input,
-          nativeThreadKey:
-            binding === undefined
-              ? input.nativeThreadKey
-              : nativeThreadKey(binding.provider_name, cursor, binding.provider_instance_id),
+      if (inFlight.has(handoff.handoff_id)) {
+        // This caller runs on the provider command queue shared by every
+        // thread, so it must never wait for the send to return: some providers
+        // hold it open for the whole turn. The provider starting the turn that
+        // carries the history is the proof of delivery; until then (usually a
+        // second or two) the next message is refused, not queued behind it.
+        const carriedBy = yield* providerTurnFor(input.threadId, handoff.message_id);
+        const sameSession =
+          handoff.native_thread_key === null ||
+          input.nativeThreadKey === null ||
+          handoff.native_thread_key === input.nativeThreadKey;
+        if (carriedBy !== undefined && sameSession) {
+          return { delivered: true, requireFreshSession: false };
+        }
+        return yield* new ScientForkContextError({
+          threadId: input.threadId,
+          detail:
+            "This fork is still sending its conversation history to the provider. Send your message again in a moment.",
         });
       }
       const sameThread =
@@ -637,7 +624,7 @@ const make = Effect.gen(function* () {
         }),
       )
       .pipe(Effect.mapError(fail(input.threadId, "Unable to record the context delivery.")));
-    inFlight.set(input.handoffId, yield* Deferred.make<void>());
+    inFlight.add(input.handoffId);
   });
 
   const settleOutcome: ScientForkContextDeliveryShape["settleDelivery"] = Effect.fn(
@@ -678,15 +665,7 @@ const make = Effect.gen(function* () {
   // Clear the in-flight mark only once the outcome is durable, so a concurrent
   // turn never sees a pending row that is neither in flight nor settled.
   const settleDelivery: ScientForkContextDeliveryShape["settleDelivery"] = (input) =>
-    settleOutcome(input).pipe(
-      Effect.ensuring(
-        Effect.gen(function* () {
-          const pending = inFlight.get(input.handoffId);
-          inFlight.delete(input.handoffId);
-          if (pending !== undefined) yield* Deferred.succeed(pending, undefined);
-        }),
-      ),
-    );
+    settleOutcome(input).pipe(Effect.ensuring(Effect.sync(() => inFlight.delete(input.handoffId))));
 
   const planNativeFork: ScientForkContextDeliveryShape["planNativeFork"] = Effect.fn(
     "planScientNativeFork",
