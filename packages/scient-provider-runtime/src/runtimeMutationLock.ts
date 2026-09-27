@@ -1,7 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalDate:off globalConsole:off -- This package is the reviewed Node process and filesystem boundary for app-private provider runtimes.
 import * as NodeCrypto from "node:crypto";
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import { promisify } from "node:util";
 
 /**
  * This process instance. A lock carrying this process's pid but another id
@@ -31,6 +33,8 @@ interface ManagedRuntimeMutationLockRecord {
   readonly token: string;
   /** Absent in locks written by builds that predate the heartbeat. */
   readonly heartbeatIntervalMs?: number;
+  /** OS process start identity; a PID alone can be reused after a crash. */
+  readonly ownerStartedAt?: string;
 }
 
 export interface ManagedRuntimeMutationLock {
@@ -77,14 +81,20 @@ function decodeLock(raw: string): ManagedRuntimeMutationLockRecord | undefined {
     ) {
       return undefined;
     }
-    const { heartbeatIntervalMs, ...record } = value;
+    const { heartbeatIntervalMs, ownerStartedAt, ...record } = value;
     // An unusable interval is treated like a legacy lock rather than as
     // unreadable, which would expire after only the short unreadable grace.
-    return (typeof heartbeatIntervalMs === "number" &&
+    const parsed = (typeof heartbeatIntervalMs === "number" &&
     Number.isSafeInteger(heartbeatIntervalMs) &&
     heartbeatIntervalMs > 0
       ? { ...record, heartbeatIntervalMs }
       : record) as unknown as ManagedRuntimeMutationLockRecord;
+    return {
+      ...parsed,
+      ...(typeof ownerStartedAt === "string" && ownerStartedAt.length > 0
+        ? { ownerStartedAt }
+        : {}),
+    };
   } catch {
     return undefined;
   }
@@ -98,6 +108,43 @@ export function isProcessAlive(pid: number): boolean {
   } catch (cause) {
     return errorCode(cause) === "EPERM";
   }
+}
+
+const execFile = promisify(NodeChildProcess.execFile);
+/** Unknown identities fail closed: a live PID is never reclaimed on a failed probe. */
+async function processStartIdentity(pid: number): Promise<string | undefined> {
+  try {
+    if (process.platform === "win32") {
+      const { stdout } = await execFile(
+        "powershell.exe",
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          `(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToUniversalTime().Ticks`,
+        ],
+        { timeout: 3_000, windowsHide: true },
+      );
+      const ticks = stdout.trim();
+      return /^\d+$/u.test(ticks) ? `windows:${ticks}` : undefined;
+    }
+    const { stdout } = await execFile("ps", ["-o", "lstart=", "-p", String(pid)], {
+      timeout: 3_000,
+      env: { ...process.env, LC_ALL: "C" },
+    });
+    const started = stdout.trim().replace(/\s+/gu, " ");
+    return started.length > 0 ? `ps:${started}` : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+const ownStartIdentity = processStartIdentity(process.pid);
+
+async function isReusedPid(pid: number, ownerStartedAt: string | undefined): Promise<boolean> {
+  if (!ownerStartedAt) return false;
+  const actual = await processStartIdentity(pid);
+  return actual !== undefined && actual !== ownerStartedAt;
 }
 
 interface ObservedLock {
@@ -218,10 +265,11 @@ async function publishLock(
 interface TakeoverClaimRecord {
   readonly pid: number;
   readonly processId: string;
+  readonly ownerStartedAt?: string;
 }
 
 /** A claim is reclaimable only after its contender exits. */
-function isStaleTakeoverClaim({ raw }: ObservedLock): boolean {
+async function isStaleTakeoverClaim({ raw }: ObservedLock): Promise<boolean> {
   let claimant: TakeoverClaimRecord | undefined;
   try {
     claimant = JSON.parse(raw) as TakeoverClaimRecord;
@@ -229,8 +277,10 @@ function isStaleTakeoverClaim({ raw }: ObservedLock): boolean {
     // Written with its contents in one call; empty only while being written.
     return false;
   }
+  if (!claimant || !Number.isSafeInteger(claimant.pid) || typeof claimant.processId !== "string")
+    return false;
   if (claimant.pid === process.pid) return claimant.processId !== PROCESS_INSTANCE_ID;
-  return !isProcessAlive(claimant.pid);
+  return !isProcessAlive(claimant.pid) || isReusedPid(claimant.pid, claimant.ownerStartedAt);
 }
 
 /**
@@ -253,11 +303,13 @@ async function withTakeoverClaim(
     .update(`${lockPath}\0${target.raw}\0${target.ino}`)
     .digest("hex");
   const claimPath = NodePath.join(NodePath.dirname(lockPath), `.mutation-claim-${digest}`);
+  const ownerStartedAt = await ownStartIdentity;
   const claimant: ManagedRuntimeMutationLockRecord = {
     schemaVersion: 1,
     pid: process.pid,
     processId: PROCESS_INSTANCE_ID,
     token: NodeCrypto.randomUUID(),
+    ...(ownerStartedAt ? { ownerStartedAt } : {}),
   };
   try {
     await publishLock(claimPath, claimant);
@@ -265,13 +317,13 @@ async function withTakeoverClaim(
     if (errorCode(cause) !== "EEXIST") throw cause;
     const claim = await readLock(claimPath);
     // A contender that died inside its claim; the next attempt claims afresh.
-    if (claim && isStaleTakeoverClaim(claim)) {
+    if (claim && (await isStaleTakeoverClaim(claim))) {
       await withTakeoverClaim(
         claimPath,
         claim,
         async () => {
           const current = await readLock(claimPath);
-          if (current && isSameLock(current, claim) && isStaleTakeoverClaim(current)) {
+          if (current && isSameLock(current, claim) && (await isStaleTakeoverClaim(current))) {
             await removeLockFile(claimPath);
           }
         },
@@ -298,7 +350,7 @@ async function removeLockFile(lockPath: string) {
 async function removeStaleLock(lockPath: string, observed: ObservedLock) {
   await withTakeoverClaim(lockPath, observed, async () => {
     const current = await readLock(lockPath);
-    if (current && isSameLock(current, observed) && !isHeldByLiveOwner(current)) {
+    if (current && isSameLock(current, observed) && !(await isHeldByLiveOwner(current))) {
       await removeLockFile(lockPath);
     }
   });
@@ -310,14 +362,14 @@ async function removeStaleLock(lockPath: string, observed: ObservedLock) {
  * heartbeat cannot distinguish a suspended owner from a reused pid. Favor
  * exclusive ownership over automatic recovery when that identity is unknown.
  */
-function isHeldByLiveOwner({ raw, mtimeMs }: ObservedLock): boolean {
+async function isHeldByLiveOwner({ raw, mtimeMs }: ObservedLock): Promise<boolean> {
   const age = Date.now() - mtimeMs;
   const owner = decodeLock(raw);
   if (!owner) return age < UNREADABLE_LOCK_GRACE_MS;
   if (owner.processId === PROCESS_INSTANCE_ID) return heldTokens.has(owner.token);
   // An earlier process that happened to get this process's pid.
   if (owner.pid === process.pid) return false;
-  return isProcessAlive(owner.pid);
+  return isProcessAlive(owner.pid) && !(await isReusedPid(owner.pid, owner.ownerStartedAt));
 }
 
 /**
@@ -334,6 +386,7 @@ export async function tryAcquireManagedRuntimeMutationLock(
   options: ManagedRuntimeMutationLockOptions = {},
 ): Promise<ManagedRuntimeMutationLock | undefined> {
   const heartbeatIntervalMs = options.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
+  const ownerStartedAt = await ownStartIdentity;
   for (let attempt = 0; attempt < MAX_ACQUIRE_ATTEMPTS; attempt += 1) {
     const token = NodeCrypto.randomUUID();
     let published: ObservedLock;
@@ -346,13 +399,14 @@ export async function tryAcquireManagedRuntimeMutationLock(
         processId: PROCESS_INSTANCE_ID,
         token,
         heartbeatIntervalMs,
+        ...(ownerStartedAt ? { ownerStartedAt } : {}),
       });
     } catch (cause) {
       heldTokens.delete(token);
       if (errorCode(cause) !== "EEXIST") throw cause;
       const observed = await readLock(lockPath);
       if (observed === undefined) continue;
-      if (isHeldByLiveOwner(observed)) return undefined;
+      if (await isHeldByLiveOwner(observed)) return undefined;
       await removeStaleLock(lockPath, observed);
       continue;
     }
