@@ -420,9 +420,14 @@ export interface QuestionAnswerProjection {
 }
 
 /**
- * One entry per question request that received a submitted answer. Pending,
- * dismissed, and unanswered requests produce nothing. `toAttachment` resolves
- * a recorded answer attachment to its descriptor, or null when unreadable.
+ * One entry per question request that received an answer, folded the way chat
+ * folds it (`foldUserInputActivities`): question texts and option labels from
+ * the request, answers from the latest `user-input.answer-submitted` or, when
+ * there is none, the latest `user-input.resolved`, and attachments from every
+ * activity of the request. Providers report ordinary answers only through
+ * `user-input.resolved`; `answer-submitted` is added for attachment-bearing
+ * responses. Pending, dismissed, and unanswered requests produce nothing.
+ * `toAttachment` resolves a recorded answer attachment, or null when unreadable.
  */
 export function projectQuestionAnswers(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
@@ -433,10 +438,17 @@ export function projectQuestionAnswers(
     questionTexts: Map<string, string>;
     optionLabels: Map<string, Map<string, string>>;
     submitted: OrchestrationThreadActivity | null;
+    resolved: OrchestrationThreadActivity | null;
+    attachmentsByQuestionId: Map<string, ReadonlyArray<unknown>>;
+    malformed: boolean;
   }
   const requests = new Map<string, Request>();
   for (const activity of activities) {
-    if (activity.kind !== "user-input.requested" && activity.kind !== "user-input.answer-submitted")
+    if (
+      activity.kind !== "user-input.requested" &&
+      activity.kind !== "user-input.resolved" &&
+      activity.kind !== "user-input.answer-submitted"
+    )
       continue;
     const requestId = text(field(activity.payload, "requestId"));
     if (requestId === null) continue;
@@ -447,6 +459,9 @@ export function projectQuestionAnswers(
         questionTexts: new Map(),
         optionLabels: new Map(),
         submitted: null,
+        resolved: null,
+        attachmentsByQuestionId: new Map(),
+        malformed: false,
       };
       requests.set(requestId, request);
     }
@@ -472,34 +487,41 @@ export function projectQuestionAnswers(
       }
       request.optionLabels.set(id, labels);
     }
-    if (activity.kind === "user-input.answer-submitted") request.submitted = activity;
+    const attachmentsByQuestionId = field(activity.payload, "attachmentsByQuestionId");
+    if (Predicate.isObject(attachmentsByQuestionId)) {
+      for (const [id, value] of Object.entries(attachmentsByQuestionId)) {
+        if (Array.isArray(value)) request.attachmentsByQuestionId.set(id, value);
+      }
+    }
+    if (activity.kind !== "user-input.requested") {
+      if (Predicate.isObject(field(activity.payload, "answers"))) {
+        if (activity.kind === "user-input.answer-submitted") request.submitted = activity;
+        else request.resolved = activity;
+      } else if (field(activity.payload, "answers") !== undefined) {
+        request.malformed = true;
+      }
+    }
   }
 
   const questionAnswers: ConversationQuestionAnswer[] = [];
   let skipped = 0;
   for (const [requestId, request] of requests) {
-    if (request.submitted === null) continue;
-    const answers = field(request.submitted.payload, "answers");
-    const attachmentsByQuestionId = field(request.submitted.payload, "attachmentsByQuestionId");
-    if (!Predicate.isObject(answers)) {
-      skipped += 1;
+    const answering = request.submitted ?? request.resolved;
+    const answers =
+      answering === null ? {} : (field(answering.payload, "answers") as UnknownRecord);
+    if (answering === null && request.attachmentsByQuestionId.size === 0) {
+      if (request.malformed) skipped += 1;
       continue;
     }
     const questionIds = [
-      ...new Set([
-        ...Object.keys(answers),
-        ...(Predicate.isObject(attachmentsByQuestionId)
-          ? Object.keys(attachmentsByQuestionId)
-          : []),
-      ]),
+      ...new Set([...Object.keys(answers), ...request.attachmentsByQuestionId.keys()]),
     ];
     const items = questionIds.flatMap((questionId) => {
       const answer = answerText(
-        (answers as UnknownRecord)[questionId],
+        answers[questionId],
         request.optionLabels.get(questionId) ?? new Map(),
       ).trim();
-      const rawAttachments = field(attachmentsByQuestionId, questionId);
-      const attachments = (Array.isArray(rawAttachments) ? rawAttachments : []).flatMap(
+      const attachments = (request.attachmentsByQuestionId.get(questionId) ?? []).flatMap(
         (value: unknown) => {
           const attachment = toAttachment(value);
           return attachment === null ? [] : [attachment];
@@ -511,7 +533,7 @@ export function projectQuestionAnswers(
     if (items.length === 0) continue;
     questionAnswers.push({
       id: requestId,
-      turnId: request.submitted.turnId ?? request.first.turnId,
+      turnId: request.first.turnId ?? answering?.turnId ?? null,
       createdAt: request.first.createdAt,
       items,
     });

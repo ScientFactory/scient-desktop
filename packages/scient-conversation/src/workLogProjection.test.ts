@@ -210,4 +210,126 @@ describe("work-log export projection", () => {
       },
     ]);
   });
+
+  it("keeps answers providers report only through user-input.resolved", () => {
+    const { questionAnswers } = projectQuestionAnswers(
+      [
+        // Codex: ids with option values, answered through item/tool/requestUserInput/answered.
+        activity({
+          id: "c1",
+          kind: "user-input.requested",
+          turnId: "t1",
+          payload: {
+            requestId: "codex-req",
+            questions: [
+              {
+                id: "q_1",
+                question: "Which runtime?",
+                options: [{ value: "node", label: "Node.js" }],
+              },
+              { id: "q_2", question: "Features?" },
+            ],
+          },
+        }),
+        activity({
+          id: "c2",
+          kind: "user-input.resolved",
+          turnId: "t1",
+          payload: { requestId: "codex-req", answers: { q_1: "node", q_2: ["tests", "docs"] } },
+        }),
+        // Claude: answers keyed by the question text itself.
+        activity({
+          id: "k1",
+          kind: "user-input.requested",
+          turnId: "t2",
+          payload: {
+            requestId: "claude-req",
+            questions: [{ id: "Which framework?", question: "Which framework?" }],
+          },
+        }),
+        activity({
+          id: "k2",
+          kind: "user-input.resolved",
+          turnId: "t2",
+          payload: { requestId: "claude-req", answers: { "Which framework?": "React" } },
+        }),
+        // Dismissed: resolved with no answers.
+        activity({
+          id: "d1",
+          kind: "user-input.requested",
+          payload: { requestId: "gone", questions: [] },
+        }),
+        activity({
+          id: "d2",
+          kind: "user-input.resolved",
+          payload: { requestId: "gone", answers: {} },
+        }),
+      ],
+      () => null,
+    );
+    expect(questionAnswers).toEqual([
+      {
+        id: "codex-req",
+        turnId: "t1",
+        createdAt: "2026-09-27T14:00:01.000Z",
+        items: [
+          { question: "Which runtime?", answer: "Node.js", attachments: [] },
+          { question: "Features?", answer: "tests, docs", attachments: [] },
+        ],
+      },
+      {
+        id: "claude-req",
+        turnId: "t2",
+        createdAt: "2026-09-27T14:00:03.000Z",
+        items: [{ question: "Which framework?", answer: "React", attachments: [] }],
+      },
+    ]);
+  });
+
+  it("combines resolved answers with attachments from answer-submitted", () => {
+    const attachment = {
+      localId: "thread-1-file",
+      kind: "file" as const,
+      name: "data.csv",
+      mimeType: "text/csv",
+      sizeBytes: 3,
+      pastedText: false,
+      available: true,
+    };
+    const { questionAnswers } = projectQuestionAnswers(
+      [
+        activity({
+          id: "a1",
+          kind: "user-input.requested",
+          turnId: "t1",
+          payload: { requestId: "r", questions: [{ id: "file", question: "Upload data" }] },
+        }),
+        activity({
+          id: "a2",
+          kind: "user-input.answer-submitted",
+          turnId: "t1",
+          payload: {
+            requestId: "r",
+            answers: { file: "attached" },
+            attachmentsByQuestionId: { file: [{ id: "thread-1-file" }] },
+          },
+        }),
+        activity({
+          id: "a3",
+          kind: "user-input.resolved",
+          turnId: "t1",
+          payload: { requestId: "r", answers: { file: "attached" } },
+        }),
+      ],
+      () => attachment,
+    );
+    expect(questionAnswers).toEqual([
+      {
+        id: "r",
+        turnId: "t1",
+        createdAt: "2026-09-27T14:00:01.000Z",
+        items: [{ question: "Upload data", answer: "attached", attachments: [attachment] }],
+      },
+    ]);
+  });
 });
