@@ -24,8 +24,12 @@
  * - A revert that removes the turn which carried the handoff supersedes it
  *   (V2: rollback supersedes handoffs); the next turn delivers again.
  *
- * Only threads with a transfer row (forks) use this path. The mechanism itself
- * is thread-generic so it can later cover every thread, as V2 does.
+ * Only threads with a transfer row use this path: forks, and imported
+ * conversations (`type = 'import'`, no local source thread; their history is
+ * the thread's own imported records). Fork-only operations (native-fork
+ * planning, which reads the source thread and its lineage) never apply to
+ * imports. The mechanism itself is thread-generic so it can later cover every
+ * thread, as V2 does.
  */
 import {
   PROVIDER_CONTEXT_PREAMBLE_MAX_CHARS,
@@ -173,8 +177,10 @@ type HandoffRow = typeof HandoffRow.Type;
 const decodeHandoffRows = Schema.decodeUnknownEffect(Schema.Array(HandoffRow));
 
 const TransferRow = Schema.Struct({
+  type: Schema.String,
   status: Schema.String,
-  source_thread_id: Schema.String,
+  /** Null for imports: an imported thread has no local source. */
+  source_thread_id: Schema.NullOr(Schema.String),
   mid_turn_cut_json: Schema.NullOr(Schema.String),
 });
 const decodeTransferRows = Schema.decodeUnknownEffect(Schema.Array(TransferRow));
@@ -224,6 +230,7 @@ const make = Effect.gen(function* () {
   const readTransfer = (threadId: ThreadId) =>
     sql<Record<string, unknown>>`
       SELECT
+        transfer.type AS type,
         transfer.status AS status,
         transfer.source_thread_id AS source_thread_id,
         lineage.mid_turn_cut_json AS mid_turn_cut_json
@@ -370,7 +377,7 @@ const make = Effect.gen(function* () {
         return yield* new ScientForkContextError({
           threadId: input.threadId,
           detail:
-            "This fork is still sending its conversation history to the provider. Send your message again in a moment.",
+            "This thread is still sending its conversation history to the provider. Send your message again in a moment.",
         });
       }
       const sameThread =
@@ -530,6 +537,7 @@ const make = Effect.gen(function* () {
         },
         totalItemCount: items.length,
         midTurnCut,
+        imported: transfer.type === "import",
       }).preamble,
     );
     const selection = selectHistory({
@@ -544,6 +552,7 @@ const make = Effect.gen(function* () {
       selection,
       totalItemCount: items.length,
       midTurnCut,
+      imported: transfer.type === "import",
     });
     const renderedTokens =
       estimateTokens(rendered.preamble) + attachmentTokenAllowance(selection.reattached);
@@ -551,7 +560,7 @@ const make = Effect.gen(function* () {
       return yield* new ScientForkContextError({
         threadId: input.thread.id,
         detail:
-          "This model has insufficient room for the fork history header and current message. Shorten the message or choose a larger-context model; nothing was sent.",
+          "This model has insufficient room for the conversation history header and current message. Shorten the message or choose a larger-context model; nothing was sent.",
       });
     const handoffId = `handoff:${yield* crypto.randomUUIDv4.pipe(
       Effect.mapError(fail(input.thread.id, "Unable to identify the context delivery.")),
@@ -675,6 +684,7 @@ const make = Effect.gen(function* () {
       readonly source_thread_id: string;
       readonly fork_point_turn_id: string | null;
       readonly inherited_turn_ids_json: string;
+      readonly imported_turn_ids_json: string;
       readonly mid_turn_cut_json: string | null;
     }>`
       SELECT
@@ -682,12 +692,15 @@ const make = Effect.gen(function* () {
         transfer.source_thread_id AS source_thread_id,
         lineage.fork_point_turn_id AS fork_point_turn_id,
         lineage.mid_turn_cut_json AS mid_turn_cut_json,
-        COALESCE(source_lineage.inherited_turn_ids_json, '[]') AS inherited_turn_ids_json
+        COALESCE(source_lineage.inherited_turn_ids_json, '[]') AS inherited_turn_ids_json,
+        COALESCE(source_import.inherited_turn_ids_json, '[]') AS imported_turn_ids_json
       FROM scient_context_transfers AS transfer
       JOIN scient_thread_lineage AS lineage ON lineage.thread_id = transfer.thread_id
       LEFT JOIN scient_thread_lineage AS source_lineage
         ON source_lineage.thread_id = transfer.source_thread_id
-      WHERE transfer.thread_id = ${input.threadId}
+      LEFT JOIN scient_context_transfers AS source_import
+        ON source_import.thread_id = transfer.source_thread_id AND source_import.type = 'import'
+      WHERE transfer.thread_id = ${input.threadId} AND transfer.type = 'fork'
       LIMIT 1
     `.pipe(Effect.mapError(fail(input.threadId, "Unable to read the fork's source.")));
     const fork = rows[0];
@@ -703,7 +716,7 @@ const make = Effect.gen(function* () {
     // A turn the source itself inherited was never a turn of its provider thread.
     // Imported history has no strong native source ref. Keep portable until
     // that complete prefix has explicit native coverage of its own.
-    if (fork.inherited_turn_ids_json !== "[]") return null;
+    if (fork.inherited_turn_ids_json !== "[]" || fork.imported_turn_ids_json !== "[]") return null;
     if ((yield* readActiveHandoffs(input.threadId)).length > 0) return null;
     // A native fork creates the fork's first provider thread; there must be none.
     const forkBinding = yield* sql<{ readonly resume_cursor_json: string | null }>`

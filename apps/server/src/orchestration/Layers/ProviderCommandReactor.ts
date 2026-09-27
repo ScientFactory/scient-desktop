@@ -715,7 +715,7 @@ const make = Effect.gen(function* () {
     const detail = yield* projectionSnapshotQuery
       .getThreadDetailById(input.thread.id, { fullHistory: true })
       .pipe(Effect.map(Option.getOrUndefined));
-    if (!detail) return yield* toTurnStartError("The forked conversation is unavailable.");
+    if (!detail) return yield* toTurnStartError("The conversation history is unavailable.");
     const liveSession = (yield* providerService.listSessions()).find(
       (session) => session.threadId === input.thread.id,
     );
@@ -1772,11 +1772,11 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    // SCIENT-FORK:START — a fork's provider session does not hold the
-    // conversation natively. Decide after the session is ensured, so the
+    // SCIENT-FORK:START — a fork's or an imported thread's provider session
+    // does not hold the conversation natively. Decide after the session is ensured, so the
     // delivery is tied to the provider-native thread that will receive it.
     const forkContext: ForkTurnContext | { readonly kind: "skip" } =
-      thread.forkLineage == null
+      thread.forkLineage == null && thread.conversationImport == null
         ? { kind: "none" }
         : yield* prepareScientForkContext({
             thread,

@@ -5,6 +5,7 @@ import {
   ThreadId,
   TurnId,
   ThreadForkCopiedBoundary,
+  type OrchestrationConversationImport,
   type OrchestrationForkBoundary,
   type OrchestrationForkLineage,
 } from "@t3tools/contracts";
@@ -19,6 +20,7 @@ import {
   resolveUserForkBoundariesFromList,
   type ResolvedForkBoundaries,
 } from "./forkBoundaryTypes.ts";
+import { toConversationImportMarker } from "./importRepository.ts";
 
 /**
  * Error raised when the Scient-owned resolver cannot find or validate a fork
@@ -187,21 +189,37 @@ function makeForkBoundaryQueries(sql: SqlClient.SqlClient) {
 }
 
 /**
- * Row schema for the narrow fork-lineage marker read from
- * `scient_thread_lineage`.
+ * Row schema for a thread's origin marker: the narrow fork-lineage marker read
+ * from `scient_thread_lineage`, or an import's provenance read from its
+ * `import` context transfer.
  */
 export const ProjectionForkLineageRow = Schema.Struct({
   threadId: ThreadId,
-  originThreadId: ThreadId,
+  originThreadId: Schema.NullOr(ThreadId),
   baselineAssistantMessageId: Schema.NullOr(MessageId),
+  importOriginJson: Schema.NullOr(Schema.String),
 });
 export type ProjectionForkLineageRow = typeof ProjectionForkLineageRow.Type;
 
+const threadOriginRows = (sql: SqlClient.SqlClient) => sql`
+  SELECT
+    thread_id AS "threadId",
+    forked_from_thread_id AS "originThreadId",
+    baseline_assistant_message_id AS "baselineAssistantMessageId",
+    NULL AS "importOriginJson"
+  FROM scient_thread_lineage
+  UNION ALL
+  SELECT thread_id, NULL, NULL, origin_json
+  FROM scient_context_transfers
+  WHERE type = 'import'
+`;
+
 /**
- * SQL queries for the narrow fork-lineage marker. The marker carries only
+ * SQL queries for the narrow origin markers. The fork marker carries only
  * the origin thread ID and inherited baseline assistant message ID needed
  * for client presentation; it replaces the complete boundary array in
- * shell and detail payloads.
+ * shell and detail payloads. The import marker carries the import banner's
+ * provenance and omissions.
  */
 export function makeForkLineageQueries(sql: SqlClient.SqlClient) {
   return {
@@ -209,25 +227,14 @@ export function makeForkLineageQueries(sql: SqlClient.SqlClient) {
       Request: Schema.Void,
       Result: ProjectionForkLineageRow,
       execute: () => sql`
-        SELECT
-          thread_id AS "threadId",
-          forked_from_thread_id AS "originThreadId",
-          baseline_assistant_message_id AS "baselineAssistantMessageId"
-        FROM scient_thread_lineage
-        ORDER BY thread_id ASC
+        SELECT * FROM (${threadOriginRows(sql)}) ORDER BY "threadId" ASC
       `,
     }),
     getForkLineageRowByThread: SqlSchema.findOneOption({
       Request: Schema.Struct({ threadId: ThreadId }),
       Result: ProjectionForkLineageRow,
       execute: ({ threadId }) => sql`
-        SELECT
-          thread_id AS "threadId",
-          forked_from_thread_id AS "originThreadId",
-          baseline_assistant_message_id AS "baselineAssistantMessageId"
-        FROM scient_thread_lineage
-        WHERE thread_id = ${threadId}
-        LIMIT 1
+        SELECT * FROM (${threadOriginRows(sql)}) WHERE "threadId" = ${threadId} LIMIT 1
       `,
     }),
   } as const;
@@ -239,13 +246,21 @@ export function makeForkLineageQueries(sql: SqlClient.SqlClient) {
 export function toForkLineageMarker(
   row: ProjectionForkLineageRow | undefined,
 ): OrchestrationForkLineage | null {
-  if (row === undefined) {
+  if (row === undefined || row.originThreadId === null) {
     return null;
   }
   return {
     originThreadId: row.originThreadId,
     baselineAssistantMessageId: row.baselineAssistantMessageId,
   };
+}
+
+/** The thread's import marker as a payload field; absent on threads that were not imported. */
+export function importMarkerField(row: ProjectionForkLineageRow | undefined): {
+  readonly conversationImport?: OrchestrationConversationImport;
+} {
+  const marker = toConversationImportMarker(row?.importOriginJson);
+  return marker === null ? {} : { conversationImport: marker };
 }
 
 /**

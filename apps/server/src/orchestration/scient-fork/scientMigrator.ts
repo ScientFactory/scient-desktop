@@ -53,6 +53,7 @@ import Migration013 from "./migrations/013_WorkspaceBindingRootFileSystemIdentit
 import Migration014 from "./migrations/014_ContextTransfers.ts";
 import Migration015 from "./migrations/015_ForkEvidence.ts";
 import Migration016 from "./migrations/016_PreserveLegacyForkSessions.ts";
+import Migration017 from "./migrations/017_ImportContextTransfers.ts";
 // ---------------------------------------------------------------------------
 // Error types
 // ---------------------------------------------------------------------------
@@ -109,6 +110,7 @@ export const SCIENT_MIGRATIONS: ReadonlyArray<ScientMigration> = [
   { id: 14, name: "context-transfers", effect: Migration014 },
   { id: 15, name: "fork-evidence", effect: Migration015 },
   { id: 16, name: "preserve-legacy-fork-sessions", effect: Migration016 },
+  { id: 17, name: "import-context-transfers", effect: Migration017 },
 ] as const;
 
 const loader = Migrator.fromRecord(
