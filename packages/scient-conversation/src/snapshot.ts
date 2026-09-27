@@ -177,11 +177,11 @@ export function buildConversationSnapshot(input: {
       roots,
     });
     skippedContext += projected.skipped;
+    // One warning per unavailable attachment, naming it and its message; none for
+    // available ones. Importers check these warnings against the facts.
     for (const attachment of attachments) {
       if (!attachment.available)
         warnings.push({ _tag: "attachment-unavailable", name: attachment.name, messageN: n });
-      else if (attachment.kind === "other")
-        warnings.push({ _tag: "attachment-unsupported", name: attachment.name, messageN: n });
     }
     messages.push({
       n,

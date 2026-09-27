@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { beforeEach } from "vite-plus/test";
-import { MessageId, ThreadId, TurnId } from "@t3tools/contracts";
+import { MessageId, ThreadId, TurnId, type ChatAttachment } from "@t3tools/contracts";
 
 import {
   SnapshotRangeError,
@@ -153,5 +153,64 @@ describe("conversation snapshot", () => {
       forkLineage: { originThreadId: ThreadId.make("origin"), baselineAssistantMessageId: null },
     };
     expect(snapshotOf(source).provenance).toEqual({ _tag: "fork", originThreadId: "origin" });
+  });
+
+  it("states warnings that agree with the snapshot's facts", () => {
+    const available: ChatAttachment = {
+      type: "image",
+      id: "thread-1-available",
+      name: "shown.png",
+      mimeType: "image/png",
+      sizeBytes: 1,
+    };
+    const gone: ChatAttachment = {
+      type: "file",
+      id: "thread-1-gone",
+      name: "gone.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 1,
+    };
+    const other: ChatAttachment = {
+      type: "audio-note",
+      id: "thread-1-other",
+      name: "note.bin",
+      mimeType: "application/octet-stream",
+      sizeBytes: 1,
+    };
+    const answerGone = { ...gone, id: "thread-1-answer-gone", name: "answer.pdf" };
+    const source = thread({
+      messages: [
+        message({ id: "m1", role: "user", text: "first", attachments: [available] }),
+        message({ id: "m2", role: "assistant", text: "a", turnId: "t1" }),
+        message({ id: "m3", role: "user", text: "second", attachments: [gone, other] }),
+      ],
+      activities: [
+        activity({
+          id: "q1",
+          kind: "user-input.answer-submitted",
+          turnId: "t1",
+          payload: {
+            requestId: "req",
+            answers: { a: "yes" },
+            attachmentsByQuestionId: { a: [answerGone] },
+          },
+        }),
+      ],
+    });
+    const snapshot = snapshotOf(
+      source,
+      WHOLE,
+      (attachment) => attachment.id === available.id || attachment.id === other.id,
+    );
+    expect(snapshot.omittedRunningTurn).toBeNull();
+    expect(snapshot.warnings).toEqual([
+      { _tag: "attachment-unavailable", name: "gone.pdf", messageN: 3 },
+      { _tag: "attachment-unavailable", name: "answer.pdf", messageN: null },
+    ]);
+
+    const running = snapshotOf(runningThread());
+    expect(running.warnings.filter((warning) => warning._tag === "running-turn-omitted")).toEqual([
+      { _tag: "running-turn-omitted", turnId: running.omittedRunningTurn!.turnId },
+    ]);
   });
 });
