@@ -778,15 +778,12 @@ export const ACPRegistryIcon: Icon = ({ className, ...props }) => (
   </svg>
 );
 
+// Scient: Pi's colour mark (pi.dev/social.png), drawn from the pi.dev favicon paths.
 export const PiIcon: Icon = ({ className, ...props }) => (
-  <svg {...props} viewBox="0 0 800 800" className={cn("fill-none", className)}>
-    <rect width="800" height="800" rx="160" fill="#000" />
-    <path
-      fill="#fff"
-      fillRule="evenodd"
-      d="M165.29 165.29H517.36V400H400V517.36H282.65V634.72H165.29ZM282.65 282.65V400H400V282.65Z"
-    />
-    <path fill="#fff" d="M517.36 400H634.72V634.72H517.36Z" />
+  <svg {...props} viewBox="-40 -40 640 640" className={cn("fill-none", className)}>
+    <path fill="#F09082" d="M420 280H280V140H0V0H420V280Z" />
+    <path fill="#4D9ABF" d="M140 560H0V140H140V280H280V420H140V560Z" />
+    <path fill="#F1BE58" d="M560 560H420V280H560V560Z" />
   </svg>
 );
 

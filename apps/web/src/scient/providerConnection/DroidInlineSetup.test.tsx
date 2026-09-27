@@ -59,7 +59,7 @@ const render = (snapshot: ServerProvider, accountAction?: ReactNode) =>
   );
 
 describe("DroidInlineSetup", () => {
-  it("keeps the Droid mark mounted across enabled composer lifecycle states", () => {
+  it("uses the shared status icons instead of a separate Droid mark", () => {
     const snapshots = [
       {
         ...provider,
@@ -83,9 +83,15 @@ describe("DroidInlineSetup", () => {
       },
     ];
 
-    for (const snapshot of snapshots) {
-      expect(render(snapshot)).toContain('data-droid-provider-mark="true"');
+    const [missing, signIn, ready] = snapshots.map((snapshot) => render(snapshot));
+    for (const markup of [missing!, signIn!, ready!]) {
+      expect(markup).not.toContain("data-droid-provider-mark");
+      expect(markup).not.toContain("[data-assisted-setup-icon=true]]:hidden");
     }
+    // The Droid logo is the install and sign-in status icon; ready shows a check.
+    expect(missing).toContain("lucide-shield-check");
+    expect(signIn).toContain("lucide-shield-check");
+    expect(ready).toContain("lucide-circle-check");
   });
 
   it("offers the capability-advertised Factory pairing action", () => {
@@ -156,5 +162,38 @@ describe("DroidInlineSetup", () => {
     expect(markup).toContain("Droid is ready");
     expect(markup).toContain("Factory account");
     expect(markup).toContain("Sign out");
+  });
+
+  it("renders the composer's models action as the connected frame's action, and quietly elsewhere", () => {
+    const renderWithModels = (snapshot: ServerProvider) =>
+      renderToStaticMarkup(
+        <DroidInlineSetup
+          controller={controller}
+          displayName="Droid"
+          modelsActions={{
+            primary: <button type="button">Connect models (primary)</button>,
+            secondary: <button type="button">Connect models (secondary)</button>,
+          }}
+          provider={snapshot}
+        />,
+      );
+    const connected = renderWithModels({
+      ...provider,
+      status: "ready",
+      auth: { status: "authenticated", required: true, label: "Factory account" },
+      models: [{ slug: "auto", name: "Auto", isCustom: false, capabilities: null }],
+    });
+
+    expect(connected.match(/data-provider-onboarding-view="assisted"/g)).toHaveLength(1);
+    expect(connected).toMatch(/^<div[^>]*data-provider-onboarding-view="assisted"/);
+    expect(connected).toMatch(
+      /Droid is ready.*<button type="button">Connect models \(primary\)<\/button>/,
+    );
+    // Custom models need Droid, not a Factory account.
+    expect(renderWithModels(provider)).toMatch(
+      /Sign in with Factory.*<button type="button">Connect models \(secondary\)<\/button>/,
+    );
+    expect(renderWithModels({ ...provider, installed: false })).not.toContain("Connect models");
+    expect(renderWithModels({ ...provider, probePending: true })).not.toContain("Connect models");
   });
 });

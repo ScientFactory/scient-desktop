@@ -214,6 +214,14 @@ describe("ProviderSettingsLifecycleAction", () => {
     ).toContain(">Update<");
   });
 
+  it("names the provider on its short Install and Update actions", () => {
+    const name = provider({ source: "missing" }).displayName ?? "Provider";
+    expect(render(provider({ source: "missing" }))).toContain(`aria-label="Install ${name}"`);
+    expect(
+      render(provider({ source: "scient_managed", actions: ["update", "repair", "remove"] })),
+    ).toContain(`aria-label="Update ${name}"`);
+  });
+
   it.each([
     ["codex", "Codex"],
     ["claudeAgent", "Claude"],

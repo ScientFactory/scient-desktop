@@ -98,8 +98,24 @@ describe("CursorInlineSetup", () => {
   });
 
   it("does not duplicate a managed switch owned by the shared management surface", () => {
-    expect(render(provider())).toContain("Use Scient-managed Cursor");
-    expect(render(provider(), true)).not.toContain("Use Scient-managed Cursor");
+    const failedSignIn = provider({
+      connection: {
+        ...provider().connection!,
+        operation: {
+          operationId: "cursor-login-failed",
+          method: "cursor_browser",
+          status: "failed",
+          startedAt: "2026-08-23T08:00:00.000Z",
+          finishedAt: "2026-08-23T08:01:00.000Z",
+          message: "Cursor could not complete sign-in.",
+        },
+      },
+    });
+
+    // Runtime diagnostics, and the managed switch inside them, wait for a failure.
+    expect(render(provider())).not.toContain("Runtime diagnostics");
+    expect(render(failedSignIn)).toContain("Use Scient-managed Cursor");
+    expect(render(failedSignIn, true)).not.toContain("Use Scient-managed Cursor");
   });
 
   it("uses the Cursor mark for composer installation while preserving dialog status styling", () => {
@@ -151,16 +167,14 @@ describe("CursorInlineSetup", () => {
 
     expect(markup).toContain("Installing Cursor");
     expect(markup).toContain("Downloading Cursor.");
-    expect(markup).toContain('viewBox="0 0 466.73 532.09"');
-    expect(markup).toContain("in-[[data-model-picker-content=true]]:inline-flex");
+    expect(markup).not.toContain('viewBox="0 0 466.73 532.09"');
+    expect(markup.match(/animate-spin/g)).toHaveLength(1);
     expect(markup).toContain(">Cancel<");
     expect(markup).toContain("text-destructive/80");
     expect(markup).not.toContain("progressbar");
     expect(markup).toContain('data-provider-onboarding-view="assisted"');
-    expect(markup).toContain(
-      "hidden size-4.5 animate-spin text-primary in-[[data-model-picker-content=true]]:inline",
-    );
-    expect(markup).not.toContain("hidden size-3.5 animate-spin");
+    // The status icon is the only spinner: no second one beside the title.
+    expect(markup.match(/animate-spin/g)).toHaveLength(1);
   });
 
   it("shows model discovery as part of the final installation check", () => {
@@ -257,10 +271,8 @@ describe("CursorInlineSetup", () => {
     expect(markup).toContain("Finish signing in");
     expect(markup).toContain("Reopen Cursor sign-in");
     expect(markup).toContain(">Cancel<");
-    expect(markup).toContain(
-      "hidden size-4.5 animate-spin text-primary in-[[data-model-picker-content=true]]:inline",
-    );
-    expect(markup).not.toContain("hidden size-3.5 animate-spin");
+    // The status icon is the only spinner: no second one beside the title.
+    expect(markup.match(/animate-spin/g)).toHaveLength(1);
   });
 
   it("shows model discovery while verifying a completed sign-in", () => {
@@ -282,6 +294,7 @@ describe("CursorInlineSetup", () => {
 
     expect(markup).toContain("Checking your account");
     expect(markup).toContain("Finding models for your account…");
-    expect(markup).toContain('viewBox="0 0 466.73 532.09"');
+    expect(markup).toContain("animate-spin");
+    expect(markup).not.toContain('viewBox="0 0 466.73 532.09"');
   });
 });

@@ -298,8 +298,17 @@ function ManagedRuntimeActionButton(props: {
     }
   };
 
+  const label =
+    props.action === "install"
+      ? pending
+        ? "Installing"
+        : "Install"
+      : pending
+        ? "Updating"
+        : "Update";
   return (
     <Button
+      aria-label={`${label} ${props.displayName}`}
       onClick={run}
       size="compact"
       type="button"
@@ -312,13 +321,7 @@ function ManagedRuntimeActionButton(props: {
       ) : (
         <RefreshCwIcon />
       )}
-      {props.action === "install"
-        ? pending
-          ? "Installing"
-          : "Install"
-        : pending
-          ? "Updating"
-          : "Update"}
+      {label}
     </Button>
   );
 }

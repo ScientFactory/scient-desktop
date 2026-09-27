@@ -1,5 +1,6 @@
 import { lazy, Suspense, useState } from "react";
 import type { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
+import { PlugIcon } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import {
   Dialog,
@@ -17,18 +18,36 @@ const CustomModelsContent = lazy(() =>
 );
 
 export function ConnectModelsButton({
+  appearance = "outline",
   environmentId,
   instanceId,
 }: {
+  /**
+   * `setup-action` is an assisted setup frame's one primary action;
+   * `setup-secondary` sits quietly under another primary action.
+   */
+  appearance?: "outline" | "setup-action" | "setup-secondary";
   environmentId: EnvironmentId;
   instanceId: ProviderInstanceId;
 }) {
   const [open, setOpen] = useState(false);
   return (
     <>
-      <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
-        Connect models
-      </Button>
+      {appearance === "outline" ? (
+        <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
+          Connect models
+        </Button>
+      ) : (
+        <Button
+          size="sm"
+          type="button"
+          variant={appearance === "setup-action" ? "ghost-primary" : "ghost-muted"}
+          onClick={() => setOpen(true)}
+        >
+          <PlugIcon aria-hidden />
+          Connect models
+        </Button>
+      )}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogPopup className="max-w-xl">
           <DialogHeader>
