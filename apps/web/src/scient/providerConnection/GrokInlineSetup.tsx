@@ -15,7 +15,6 @@ import {
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
-import { ProviderInstanceIcon } from "../../components/chat/ProviderInstanceIcon";
 import { Button } from "../../components/ui/button";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import {
@@ -121,8 +120,6 @@ export function GrokInlineSetup(props: {
     props.provider.auth.status === "authenticated" && props.provider.auth.type === "grok_account";
   const apiKeyReady =
     props.provider.auth.status === "authenticated" && props.provider.auth.type === "api_key";
-  const canRepair =
-    !props.managedRuntimePresentedExternally && (runtime?.actions.includes("repair") ?? false);
   const needsRepair =
     !props.managedRuntimePresentedExternally && needsManagedRuntimeRecovery(props.provider);
 
@@ -170,17 +167,15 @@ export function GrokInlineSetup(props: {
       <SetupFrame>
         <AssistedSetupStatus
           body={runtimeStage(activeRuntimeOperation)}
-          icon={<GrokLoadingIcon displayName={props.displayName} driver={props.provider.driver} />}
+          icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
           title={
-            <GrokLoadingTitle>
-              {action === "repair"
-                ? "Repairing Grok"
-                : action === "update"
-                  ? "Updating Grok"
-                  : action === "remove"
-                    ? "Removing Grok"
-                    : "Installing Grok"}
-            </GrokLoadingTitle>
+            action === "repair"
+              ? "Repairing Grok"
+              : action === "update"
+                ? "Updating Grok"
+                : action === "remove"
+                  ? "Removing Grok"
+                  : "Installing Grok"
           }
         />
         {activeRuntimeOperation ? (
@@ -282,12 +277,8 @@ export function GrokInlineSetup(props: {
                 ? "Enter this code on Grok’s secure sign-in page."
                 : "Complete sign in in your browser."
           }
-          icon={<GrokLoadingIcon displayName={props.displayName} driver={props.provider.driver} />}
-          title={
-            <GrokLoadingTitle>
-              {verifying ? "Checking your account" : "Finish signing in"}
-            </GrokLoadingTitle>
-          }
+          icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
+          title={verifying ? "Checking your account" : "Finish signing in"}
         />
         {deviceFlow && activeConnectionOperation?.userCode ? (
           <div className="ms-8 flex items-center justify-between gap-3 rounded-md border bg-background/40 px-3 py-2 in-[[data-model-picker-content=true]]:mx-auto in-[[data-model-picker-content=true]]:ms-0 in-[[data-model-picker-content=true]]:w-full in-[[data-model-picker-content=true]]:max-w-64">
@@ -350,28 +341,11 @@ export function GrokInlineSetup(props: {
     );
   }
 
-  const connectedActions =
-    canRepair || props.accountAction ? (
-      <div className="flex flex-wrap items-center justify-end gap-1">
-        {canRepair ? (
-          <Button
-            disabled={pendingAction !== null}
-            onClick={() => void run("repair", () => runtimeAction("repair"))}
-            size="sm"
-            variant="ghost-muted"
-          >
-            <RefreshCwIcon aria-hidden /> Repair
-          </Button>
-        ) : null}
-        {props.accountAction}
-      </div>
-    ) : undefined;
-
   if (accountConnected) {
     const account = providerAccountIdentity(props.provider) ?? "Grok subscription";
     return (
       <StatusFrame
-        accountAction={connectedActions}
+        accountAction={props.accountAction}
         body={`${account} is connected.`}
         title="Grok is ready"
       />
@@ -385,7 +359,7 @@ export function GrokInlineSetup(props: {
           body="Grok is available through the xAI API key configured on this computer."
           icon={<CheckCircle2Icon className="size-5 text-success" />}
           title="Ready via API key"
-          trailing={connectedActions}
+          trailing={props.accountAction}
         />
         <AssistedSetupActions>
           <Button
@@ -475,30 +449,4 @@ function StatusFrame(props: {
 
 function SetupFrame(props: { readonly children: ReactNode }) {
   return <AssistedSetupFrame>{props.children}</AssistedSetupFrame>;
-}
-
-function GrokLoadingIcon(props: {
-  readonly displayName: string;
-  readonly driver: ServerProvider["driver"];
-}) {
-  return (
-    <>
-      <LoaderIcon className="size-5 animate-spin text-primary in-[[data-model-picker-content=true]]:hidden" />
-      <ProviderInstanceIcon
-        className="hidden size-8 in-[[data-model-picker-content=true]]:inline-flex"
-        displayName={props.displayName}
-        driverKind={props.driver}
-        iconClassName="size-8"
-      />
-    </>
-  );
-}
-
-function GrokLoadingTitle(props: { readonly children: ReactNode }) {
-  return (
-    <span className="inline-flex items-center justify-center gap-1.5">
-      <LoaderIcon className="hidden size-3.5 animate-spin text-primary in-[[data-model-picker-content=true]]:block" />
-      {props.children}
-    </span>
-  );
 }

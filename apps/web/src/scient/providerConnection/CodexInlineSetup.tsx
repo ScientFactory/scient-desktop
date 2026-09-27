@@ -165,26 +165,6 @@ export function CodexInlineSetup(props: {
     }
   };
 
-  const canShowInlineRepair =
-    !props.managedRuntimePresentedExternally && runtime?.actions.includes("repair");
-  const connectedActions =
-    canShowInlineRepair || props.accountAction ? (
-      <div className="flex flex-wrap items-center justify-end gap-1">
-        {canShowInlineRepair ? (
-          <Button
-            disabled={pendingAction !== null}
-            onClick={() => void repair()}
-            size="sm"
-            type="button"
-            variant="ghost-muted"
-          >
-            <RefreshCwIcon aria-hidden /> Repair
-          </Button>
-        ) : null}
-        {props.accountAction}
-      </div>
-    ) : undefined;
-
   const cancelRuntime = async () => {
     if (!activeRuntimeOperation) return;
     setLocalError(null);
@@ -452,7 +432,7 @@ export function CodexInlineSetup(props: {
     }
     return (
       <StatusFrame
-        accountAction={connectedActions}
+        accountAction={props.accountAction}
         title="Codex is ready"
         body={
           <>

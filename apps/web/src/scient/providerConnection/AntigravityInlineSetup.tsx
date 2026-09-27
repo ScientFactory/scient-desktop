@@ -13,7 +13,6 @@ import {
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
-import { ProviderInstanceIcon } from "../../components/chat/ProviderInstanceIcon";
 import { Button } from "../../components/ui/button";
 import {
   AssistedSetupActions,
@@ -203,22 +202,15 @@ export function AntigravityInlineSetup(props: {
       <SetupFrame>
         <AssistedSetupStatus
           body={runtimeStage(activeRuntimeOperation)}
-          icon={
-            <AntigravityLoadingIcon
-              displayName={props.displayName}
-              driver={props.provider.driver}
-            />
-          }
+          icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
           title={
-            <AntigravityLoadingTitle>
-              {action === "update"
-                ? "Updating Antigravity"
-                : action === "repair"
-                  ? "Repairing Antigravity"
-                  : action === "remove"
-                    ? "Removing Antigravity"
-                    : "Installing Antigravity"}
-            </AntigravityLoadingTitle>
+            action === "update"
+              ? "Updating Antigravity"
+              : action === "repair"
+                ? "Repairing Antigravity"
+                : action === "remove"
+                  ? "Removing Antigravity"
+                  : "Installing Antigravity"
           }
         />
         {activeRuntimeOperation ? (
@@ -395,20 +387,13 @@ export function AntigravityInlineSetup(props: {
               ? "Finding the models available to your account…"
               : "Complete the official Antigravity sign-in in your browser."
           }
-          icon={
-            <AntigravityLoadingIcon
-              displayName={props.displayName}
-              driver={props.provider.driver}
-            />
-          }
+          icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
           title={
-            <AntigravityLoadingTitle>
-              {verifying
-                ? usesCredentials
-                  ? "Checking credentials"
-                  : "Checking your Google account"
-                : "Finish signing in"}
-            </AntigravityLoadingTitle>
+            verifying
+              ? usesCredentials
+                ? "Checking credentials"
+                : "Checking your Google account"
+              : "Finish signing in"
           }
         />
         {waitingForAuthorizationCode &&
@@ -644,30 +629,4 @@ function StatusFrame(props: {
 
 function SetupFrame(props: { readonly children: ReactNode }) {
   return <AssistedSetupFrame>{props.children}</AssistedSetupFrame>;
-}
-
-function AntigravityLoadingIcon(props: {
-  readonly displayName: string;
-  readonly driver: ServerProvider["driver"];
-}) {
-  return (
-    <>
-      <LoaderIcon className="size-5 animate-spin text-primary in-[[data-model-picker-content=true]]:hidden" />
-      <ProviderInstanceIcon
-        className="hidden size-8 in-[[data-model-picker-content=true]]:inline-flex"
-        displayName={props.displayName}
-        driverKind={props.driver}
-        iconClassName="size-8"
-      />
-    </>
-  );
-}
-
-function AntigravityLoadingTitle(props: { readonly children: ReactNode }) {
-  return (
-    <span className="inline-flex items-center justify-center gap-1.5">
-      <LoaderIcon className="hidden size-3.5 animate-spin text-primary in-[[data-model-picker-content=true]]:block" />
-      {props.children}
-    </span>
-  );
 }

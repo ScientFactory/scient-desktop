@@ -11,7 +11,6 @@ import {
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
-import { ProviderInstanceIcon } from "../../components/chat/ProviderInstanceIcon";
 import { Button } from "../../components/ui/button";
 import {
   AssistedSetupActions,
@@ -61,32 +60,6 @@ function accountDescription(provider: ServerProvider): string {
   const label = provider.auth.label?.trim();
   if (email && label) return `${email} · ${label}`;
   return email ?? label ?? "Your Cursor account is connected.";
-}
-
-function CursorLoadingIcon(props: {
-  readonly displayName: string;
-  readonly provider: ServerProvider;
-}) {
-  return (
-    <>
-      <LoaderIcon className="size-5 animate-spin text-primary in-[[data-model-picker-content=true]]:hidden" />
-      <ProviderInstanceIcon
-        className="hidden size-8 in-[[data-model-picker-content=true]]:inline-flex"
-        displayName={props.displayName}
-        driverKind={props.provider.driver}
-        iconClassName="size-8"
-      />
-    </>
-  );
-}
-
-function CursorLoadingTitle(props: { readonly children: ReactNode }) {
-  return (
-    <span className="inline-flex items-center gap-2">
-      <LoaderIcon className="hidden size-4.5 animate-spin text-primary in-[[data-model-picker-content=true]]:inline" />
-      {props.children}
-    </span>
-  );
 }
 
 export function CursorInlineSetup(props: {
@@ -216,26 +189,6 @@ export function CursorInlineSetup(props: {
     }
   };
 
-  const canShowInlineRepair =
-    !props.managedRuntimePresentedExternally && runtime?.actions.includes("repair");
-  const connectedActions =
-    canShowInlineRepair || props.accountAction ? (
-      <div className="flex flex-wrap items-center justify-end gap-1">
-        {canShowInlineRepair ? (
-          <Button
-            disabled={pendingAction !== null}
-            onClick={() => void repair()}
-            size="sm"
-            type="button"
-            variant="ghost-muted"
-          >
-            <RefreshCwIcon aria-hidden /> Repair
-          </Button>
-        ) : null}
-        {props.accountAction}
-      </div>
-    ) : undefined;
-
   const cancelRuntime = async () => {
     if (!activeRuntimeOperation) return;
     await run(
@@ -272,15 +225,13 @@ export function CursorInlineSetup(props: {
       <SetupFrame>
         <AssistedSetupStatus
           body={runtimeStage(activeRuntimeOperation)}
-          icon={<CursorLoadingIcon displayName={props.displayName} provider={props.provider} />}
+          icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
           title={
-            <CursorLoadingTitle>
-              {action === "update"
-                ? "Updating Cursor"
-                : action === "repair"
-                  ? "Repairing Cursor"
-                  : "Installing Cursor"}
-            </CursorLoadingTitle>
+            action === "update"
+              ? "Updating Cursor"
+              : action === "repair"
+                ? "Repairing Cursor"
+                : "Installing Cursor"
           }
         />
         <AssistedSetupActions>
@@ -369,12 +320,8 @@ export function CursorInlineSetup(props: {
           body={
             verifying ? "Finding models for your account…" : "Complete sign-in in your browser."
           }
-          icon={<CursorLoadingIcon displayName={props.displayName} provider={props.provider} />}
-          title={
-            <CursorLoadingTitle>
-              {verifying ? "Checking your account" : "Finish signing in"}
-            </CursorLoadingTitle>
-          }
+          icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
+          title={verifying ? "Checking your account" : "Finish signing in"}
         />
         <AssistedSetupActions>
           {!verifying && activeConnectionOperation?.authorizationUrl ? (
@@ -411,7 +358,7 @@ export function CursorInlineSetup(props: {
     if (!isReady) {
       return (
         <StatusFrame
-          accountAction={connectedActions}
+          accountAction={props.accountAction}
           body={
             props.provider.message ??
             (hasModels
@@ -463,7 +410,7 @@ export function CursorInlineSetup(props: {
     }
     return (
       <StatusFrame
-        accountAction={connectedActions}
+        accountAction={props.accountAction}
         body={accountDescription(props.provider)}
         title="Cursor is ready"
       />

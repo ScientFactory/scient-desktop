@@ -59,7 +59,7 @@ const render = (snapshot: ServerProvider, accountAction?: ReactNode) =>
   );
 
 describe("DroidInlineSetup", () => {
-  it("keeps the Droid mark mounted across enabled composer lifecycle states", () => {
+  it("uses the shared status icons instead of a separate Droid mark", () => {
     const snapshots = [
       {
         ...provider,
@@ -83,9 +83,15 @@ describe("DroidInlineSetup", () => {
       },
     ];
 
-    for (const snapshot of snapshots) {
-      expect(render(snapshot)).toContain('data-droid-provider-mark="true"');
+    const [missing, signIn, ready] = snapshots.map((snapshot) => render(snapshot));
+    for (const markup of [missing!, signIn!, ready!]) {
+      expect(markup).not.toContain("data-droid-provider-mark");
+      expect(markup).not.toContain("[data-assisted-setup-icon=true]]:hidden");
     }
+    // The Droid logo is the install and sign-in status icon; ready shows a check.
+    expect(missing).toContain("lucide-shield-check");
+    expect(signIn).toContain("lucide-shield-check");
+    expect(ready).toContain("lucide-circle-check");
   });
 
   it("offers the capability-advertised Factory pairing action", () => {

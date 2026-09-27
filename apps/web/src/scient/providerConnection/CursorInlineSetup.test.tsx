@@ -151,16 +151,14 @@ describe("CursorInlineSetup", () => {
 
     expect(markup).toContain("Installing Cursor");
     expect(markup).toContain("Downloading Cursor.");
-    expect(markup).toContain('viewBox="0 0 466.73 532.09"');
-    expect(markup).toContain("in-[[data-model-picker-content=true]]:inline-flex");
+    expect(markup).not.toContain('viewBox="0 0 466.73 532.09"');
+    expect(markup.match(/animate-spin/g)).toHaveLength(1);
     expect(markup).toContain(">Cancel<");
     expect(markup).toContain("text-destructive/80");
     expect(markup).not.toContain("progressbar");
     expect(markup).toContain('data-provider-onboarding-view="assisted"');
-    expect(markup).toContain(
-      "hidden size-4.5 animate-spin text-primary in-[[data-model-picker-content=true]]:inline",
-    );
-    expect(markup).not.toContain("hidden size-3.5 animate-spin");
+    // The status icon is the only spinner: no second one beside the title.
+    expect(markup.match(/animate-spin/g)).toHaveLength(1);
   });
 
   it("shows model discovery as part of the final installation check", () => {
@@ -257,10 +255,8 @@ describe("CursorInlineSetup", () => {
     expect(markup).toContain("Finish signing in");
     expect(markup).toContain("Reopen Cursor sign-in");
     expect(markup).toContain(">Cancel<");
-    expect(markup).toContain(
-      "hidden size-4.5 animate-spin text-primary in-[[data-model-picker-content=true]]:inline",
-    );
-    expect(markup).not.toContain("hidden size-3.5 animate-spin");
+    // The status icon is the only spinner: no second one beside the title.
+    expect(markup.match(/animate-spin/g)).toHaveLength(1);
   });
 
   it("shows model discovery while verifying a completed sign-in", () => {
@@ -282,6 +278,7 @@ describe("CursorInlineSetup", () => {
 
     expect(markup).toContain("Checking your account");
     expect(markup).toContain("Finding models for your account…");
-    expect(markup).toContain('viewBox="0 0 466.73 532.09"');
+    expect(markup).toContain("animate-spin");
+    expect(markup).not.toContain('viewBox="0 0 466.73 532.09"');
   });
 });

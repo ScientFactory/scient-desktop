@@ -178,26 +178,6 @@ export function ClaudeInlineSetup(props: {
     }
   };
 
-  const canShowInlineRepair =
-    !props.managedRuntimePresentedExternally && runtime?.actions.includes("repair");
-  const connectedActions =
-    canShowInlineRepair || props.accountAction ? (
-      <div className="flex flex-wrap items-center justify-end gap-1">
-        {canShowInlineRepair ? (
-          <Button
-            disabled={pendingAction !== null}
-            onClick={() => void repair()}
-            size="sm"
-            type="button"
-            variant="ghost-muted"
-          >
-            <RefreshCwIcon aria-hidden /> Repair
-          </Button>
-        ) : null}
-        {props.accountAction}
-      </div>
-    ) : undefined;
-
   const cancelRuntime = async () => {
     if (!activeRuntimeOperation) return;
     setLocalError(null);
@@ -440,7 +420,7 @@ export function ClaudeInlineSetup(props: {
     if (!isReady) {
       return (
         <StatusFrame
-          accountAction={connectedActions}
+          accountAction={props.accountAction}
           body={
             props.provider.message ??
             (hasModels
@@ -498,7 +478,7 @@ export function ClaudeInlineSetup(props: {
     const isSubscriptionAccount = accountLabel?.toLowerCase().includes("subscription") ?? false;
     return (
       <StatusFrame
-        accountAction={connectedActions}
+        accountAction={props.accountAction}
         title="Claude is ready"
         body={
           accountLabel && isSubscriptionAccount ? (

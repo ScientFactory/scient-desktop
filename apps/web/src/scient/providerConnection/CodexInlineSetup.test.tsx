@@ -169,7 +169,7 @@ describe("CodexInlineSetup", () => {
     expect(markup).toContain(">Sign out<");
   });
 
-  it("offers repair only when the server advertises managed repair", () => {
+  it("leaves repair of a healthy runtime to Settings", () => {
     const managed = provider({
       auth: { status: "authenticated", required: true },
       connection: {
@@ -184,7 +184,8 @@ describe("CodexInlineSetup", () => {
     });
     const system = provider({ auth: { status: "authenticated", required: true } });
 
-    expect(render(managed)).toContain("Repair</button>");
+    expect(render(managed)).toContain("Codex is ready");
+    expect(render(managed)).not.toContain("Repair</button>");
     expect(render(system)).not.toContain("Repair</button>");
   });
 

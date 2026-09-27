@@ -127,8 +127,9 @@ describe("GrokInlineSetup", () => {
     );
 
     expect(markup).toContain("GROK-1234");
-    expect(markup).toContain("dark:fill-[#F5F5F5]");
-    expect(markup).toContain("in-[[data-model-picker-content=true]]:inline-flex");
+    // One spinner is the status icon; the Grok mark marks only install and sign-in prompts.
+    expect(markup.match(/animate-spin/g)).toHaveLength(1);
+    expect(markup).not.toContain("dark:fill-[#F5F5F5]");
     expect(markup).toContain("in-[[data-model-picker-content=true]]:max-w-64");
     expect(markup).not.toContain("Paste authorization code");
     expect(markup).toContain("Open sign-in page");

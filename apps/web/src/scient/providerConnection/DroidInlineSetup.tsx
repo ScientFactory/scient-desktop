@@ -10,7 +10,6 @@ import {
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
-import { DroidIcon } from "../../components/Icons";
 import { Button } from "../../components/ui/button";
 import {
   AssistedSetupActions,
@@ -158,11 +157,7 @@ export function DroidInlineSetup(props: {
         <AssistedSetupStatus
           body={activeRuntimeOperation?.message ?? "Preparing the private Droid runtime…"}
           icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
-          title={
-            <DroidLoadingTitle>
-              {repairing ? "Repairing Droid" : "Installing Droid"}
-            </DroidLoadingTitle>
-          }
+          title={repairing ? "Repairing Droid" : "Installing Droid"}
         />
         {activeRuntimeOperation ? (
           <AssistedSetupActions>
@@ -265,11 +260,7 @@ export function DroidInlineSetup(props: {
                 : "Complete Factory sign in in the browser opened by Droid."
           }
           icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
-          title={
-            <DroidLoadingTitle>
-              {starting ? "Starting sign in" : verifying ? "Verifying sign in" : "Finish sign in"}
-            </DroidLoadingTitle>
-          }
+          title={starting ? "Starting sign in" : verifying ? "Verifying sign in" : "Finish sign in"}
         />
         {activeConnectionOperation ? (
           <AssistedSetupActions>
@@ -364,25 +355,5 @@ export function DroidInlineSetup(props: {
 }
 
 function SetupFrame(props: { readonly children: ReactNode }) {
-  return (
-    <AssistedSetupFrame>
-      <DroidIcon
-        aria-hidden
-        className="hidden size-8 shrink-0 in-[[data-model-picker-content=true]]:block"
-        data-droid-provider-mark="true"
-      />
-      <div className="contents in-[[data-model-picker-content=true]]:[&_[data-assisted-setup-icon=true]]:hidden">
-        {props.children}
-      </div>
-    </AssistedSetupFrame>
-  );
-}
-
-function DroidLoadingTitle(props: { readonly children: ReactNode }) {
-  return (
-    <span className="inline-flex items-center justify-center gap-1.5">
-      <LoaderIcon className="hidden size-3.5 animate-spin text-primary in-[[data-model-picker-content=true]]:block" />
-      {props.children}
-    </span>
-  );
+  return <AssistedSetupFrame>{props.children}</AssistedSetupFrame>;
 }
