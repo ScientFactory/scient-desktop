@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveScientForkSubmission, scientForkDialogCopy } from "./ScientForkWorkspaceModeDialog";
+import {
+  resolveScientForkSubmission,
+  scientForkDialogTitle,
+} from "./ScientForkWorkspaceModeDialog";
 
 const WORKTREE_AVAILABLE = { available: true } as const;
 const WORKTREE_UNAVAILABLE = { available: false, reason: "no-checkpoint" } as const;
@@ -23,18 +26,13 @@ function resolve(input: {
   });
 }
 
-describe("scientForkDialogCopy", () => {
-  it("uses one title and names the fork point in the subtitle", () => {
-    const cases = [
-      ["latest-response", "From the latest response"],
-      ["this-response", "From this response"],
-      ["this-message", "Edit this message"],
-      ["switch-provider", "To switch provider"],
-      ["running-turn", "With work in progress"],
-    ] as const;
-    for (const [source, description] of cases) {
-      expect(scientForkDialogCopy(source)).toEqual({ title: "Fork chat", description });
-    }
+describe("scientForkDialogTitle", () => {
+  it("gives every fork source a complete title", () => {
+    expect(scientForkDialogTitle("latest-response")).toBe("Fork this chat");
+    expect(scientForkDialogTitle("this-response")).toBe("Fork from this response");
+    expect(scientForkDialogTitle("this-message")).toBe("Fork and edit this message");
+    expect(scientForkDialogTitle("switch-provider")).toBe("Fork to switch provider");
+    expect(scientForkDialogTitle("running-turn")).toBe("Fork with work in progress");
   });
 });
 
