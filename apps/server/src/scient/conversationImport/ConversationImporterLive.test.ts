@@ -112,6 +112,69 @@ function allMessageIds(thread: OrchestrationThread) {
 }
 
 describe("ConversationImporter", () => {
+  it.effect("preserves omissions from an already-imported source", () =>
+    withImporter(
+      Effect.gen(function* () {
+        const fixture = importFixture();
+        const input: typeof fixture.input = {
+          ...fixture.input,
+          snapshot: {
+            ...fixture.input.snapshot,
+            provenance: {
+              _tag: "import",
+              source: "scic",
+              exportId: "previous-export",
+              sourceThreadId: "previous-thread",
+              packageDigest: `sha256:${"a".repeat(64)}`,
+              sourceFormat: "scient.conversation-file",
+              sourceFormatVersion: 1,
+              importedAt: "2026-09-27T10:00:00.000Z",
+              omissions: [{ _tag: "range-truncated", throughMessageN: 2 }],
+            },
+          },
+        };
+        const ids = yield* mintConversationImportIds(input);
+        const command = buildConversationImportCommand({
+          validated: input,
+          ids,
+          destination: destination(),
+          importedAt: "2026-09-28T10:00:00.000Z",
+        });
+        assert.deepInclude(command.origin.omissions, {
+          _tag: "range-truncated",
+          throughMessageN: 2,
+        });
+      }),
+    ),
+  );
+
+  it.effect("gives null-turn imported reasoning a retained inherited turn", () =>
+    withImporter(
+      Effect.gen(function* () {
+        const fixture = importFixture({ reasoning: true });
+        const input: typeof fixture.input = {
+          ...fixture.input,
+          snapshot: {
+            ...fixture.input.snapshot,
+            reasoning: fixture.input.snapshot.reasoning.map((item, index) =>
+              index === 0 ? { ...item, turnId: null } : item,
+            ),
+          },
+        };
+        const ids = yield* mintConversationImportIds(input);
+        const command = buildConversationImportCommand({
+          validated: input,
+          ids,
+          destination: destination(),
+          importedAt: "2026-09-28T10:00:00.000Z",
+        });
+        const reasoning = command.messages.find((item) => item.role === "reasoning");
+        assert.isNotNull(reasoning?.turnId ?? null);
+        assert.include(command.inheritedTurnIds, reasoning!.turnId!);
+      }),
+    ),
+  );
+
   it.effect("maps prototype-shaped external record ids as own ids", () =>
     withImporter(
       Effect.gen(function* () {

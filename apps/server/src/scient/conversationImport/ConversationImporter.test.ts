@@ -695,8 +695,12 @@ describe("validated conversation import", () => {
 
     // The imported thread, exported again from the second installation, carries
     // that provenance as history and validates as a new import.
+    const exportedProvenance = {
+      ...provenance,
+      omissions: [{ _tag: "range-truncated" as const, throughMessageN: 2 }],
+    };
     const exportedAgain = withSnapshot({
-      provenance,
+      provenance: exportedProvenance,
       captured: { ...snapshot.captured, threadId: "thread-on-second-machine" },
     });
     const reExported = {
@@ -711,7 +715,7 @@ describe("validated conversation import", () => {
     // Provenance is content: the second export's digest differs from the first.
     expect(reExported.snapshot.contentDigest).not.toBe(snapshot.contentDigest);
     const again = decode(reExported);
-    expect(again.snapshot.provenance).toEqual(provenance);
+    expect(again.snapshot.provenance).toEqual(exportedProvenance);
     expect(conversationImportProvenance(again.package, "2026-09-29T10:00:00.000Z")).toMatchObject({
       exportId: "a91b0c2d3e4f",
       sourceThreadId: "thread-on-second-machine",

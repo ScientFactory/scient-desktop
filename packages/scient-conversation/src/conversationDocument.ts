@@ -24,6 +24,7 @@ import {
   type DocumentBundle,
   type DocumentCitation,
   type DocumentWarning,
+  type OrchestrationConversationImportOmission,
   type Sha256Digest,
   type TurnId,
 } from "@t3tools/contracts";
@@ -175,6 +176,26 @@ function warningMessage(warning: ConversationSnapshotWarning): DocumentWarning {
   }
 }
 
+function sourceOmissionWarning(omission: OrchestrationConversationImportOmission): DocumentWarning {
+  const message = (() => {
+    switch (omission._tag) {
+      case "work-log-excluded":
+        return "An earlier transfer excluded the work log; it is not available in this conversation.";
+      case "reasoning-excluded":
+        return "An earlier transfer excluded reasoning; it is not available in this conversation.";
+      case "range-truncated":
+        return `An earlier transfer stopped at message ${omission.throughMessageN}; later source messages may be missing.`;
+      case "running-turn-omitted":
+        return "An earlier transfer omitted a turn that was still running.";
+      case "attachments-unavailable":
+        return `An earlier transfer lacked ${omission.count} attachment${omission.count === 1 ? "" : "s"}.`;
+      case "records-skipped":
+        return `An earlier transfer skipped ${omission.count} record${omission.count === 1 ? "" : "s"}.`;
+    }
+  })();
+  return { code: "source-history-incomplete", message };
+}
+
 /** The same caution the export dialog shows, kept with the file it applies to. */
 function sensitiveContentWarning(
   selection: ConversationSnapshotV1["selection"],
@@ -291,6 +312,9 @@ export function buildConversationDocument(input: ConversationDocumentInput): Con
   const warnings: DocumentWarning[] = [
     ...sensitiveContentWarning(snapshot.selection),
     ...snapshot.warnings.map(warningMessage),
+    ...(snapshot.provenance._tag === "import"
+      ? (snapshot.provenance.omissions ?? []).map(sourceOmissionWarning)
+      : []),
   ];
   const assets: DocumentAsset[] = [];
   const citations: DocumentCitation[] = [];

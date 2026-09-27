@@ -538,6 +538,7 @@ const make = Effect.gen(function* () {
         totalItemCount: items.length,
         midTurnCut,
         imported: transfer.type === "import",
+        importOmissions: input.thread.conversationImport?.omissions,
       }).preamble,
     );
     const selection = selectHistory({
@@ -553,6 +554,7 @@ const make = Effect.gen(function* () {
       totalItemCount: items.length,
       midTurnCut,
       imported: transfer.type === "import",
+      importOmissions: input.thread.conversationImport?.omissions,
     });
     const renderedTokens =
       estimateTokens(rendered.preamble) + attachmentTokenAllowance(selection.reattached);

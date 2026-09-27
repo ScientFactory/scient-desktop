@@ -249,6 +249,7 @@ export function buildConversationSnapshot(input: {
             sourceFormat: thread.conversationImport.sourceFormat,
             sourceFormatVersion: thread.conversationImport.sourceFormatVersion,
             importedAt: thread.conversationImport.importedAt,
+            omissions: thread.conversationImport.omissions,
           }
         : { _tag: "original" },
     captured: {

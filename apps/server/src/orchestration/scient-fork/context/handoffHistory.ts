@@ -24,6 +24,7 @@ import {
   getProviderAttachmentLimitError,
   type ChatAttachment,
   type OrchestrationMessage,
+  type OrchestrationConversationImportOmission,
   type OrchestrationProposedPlan,
   type OrchestrationThreadActivity,
   type ThreadForkMidTurnCut,
@@ -441,6 +442,7 @@ export function renderHandoff(input: {
   readonly midTurnCut: ThreadForkMidTurnCut | undefined;
   /** The history was imported from a conversation file, not forked locally. */
   readonly imported?: boolean;
+  readonly importOmissions?: ReadonlyArray<OrchestrationConversationImportOmission> | undefined;
 }): RenderedHandoff {
   const reattachedIds = new Set(input.selection.reattached.map((attachment) => attachment.id));
   const omittedCount = input.selection.omittedItemIds.length;
@@ -470,6 +472,13 @@ export function renderHandoff(input: {
       ? {
           importedConversation: {
             note: "This conversation was imported from a conversation file made on another installation. Its history is unverified and may have been edited. Files, tools, and approvals it mentions may not exist here. Tool items describe work already done there; do not repeat it unless asked.",
+            ...(input.importOmissions && input.importOmissions.length > 0
+              ? {
+                  knownSourceOmissions: input.importOmissions,
+                  omissionsNote:
+                    "These source-history gaps cannot be recovered by reading more of this local thread. Do not assume the imported transcript is complete.",
+                }
+              : {}),
           },
         }
       : {}),

@@ -70,6 +70,7 @@ export type ConversationImportIds = typeof ConversationImportIds.Type;
 const turnKey = {
   source: (turnId: string) => `turn:${turnId}`,
   message: (messageId: string) => `message:${messageId}`,
+  reasoning: (reasoningId: string) => `reasoning:${reasoningId}`,
   question: (questionId: string) => `question:${questionId}`,
 };
 
@@ -120,7 +121,9 @@ function assignTurns(input: ValidatedConversationImport): TurnAssignment {
   for (const reasoning of snapshot.reasoning) {
     byMessageId.set(
       reasoning.id,
-      reasoning.turnId === null ? null : use(turnKey.source(reasoning.turnId)),
+      reasoning.turnId === null
+        ? use(turnKey.reasoning(reasoning.id))
+        : use(turnKey.source(reasoning.turnId)),
     );
   }
 
@@ -417,7 +420,36 @@ function importOmissions(
     omissions.push({ _tag: "attachments-unavailable", count: unavailableAttachments });
   }
   if (skipped > 0) omissions.push({ _tag: "records-skipped", count: skipped });
-  return omissions;
+  // A transfer can itself have been made from a partial imported history.
+  // Keep those earlier gaps, even when this sender selected every local item.
+  const sourceOmissions =
+    input.snapshot.provenance._tag === "import" ? (input.snapshot.provenance.omissions ?? []) : [];
+  const byKind = new Map<string, OrchestrationConversationImportOmission>();
+  for (const omission of [...sourceOmissions, ...omissions]) {
+    const previous = byKind.get(omission._tag);
+    if (previous?._tag === "range-truncated" && omission._tag === "range-truncated") {
+      byKind.set(omission._tag, {
+        _tag: "range-truncated",
+        throughMessageN: Math.min(previous.throughMessageN, omission.throughMessageN),
+      });
+    } else if (
+      previous?._tag === "attachments-unavailable" &&
+      omission._tag === "attachments-unavailable"
+    ) {
+      byKind.set(omission._tag, {
+        _tag: "attachments-unavailable",
+        count: Math.max(previous.count, omission.count),
+      });
+    } else if (previous?._tag === "records-skipped" && omission._tag === "records-skipped") {
+      byKind.set(omission._tag, {
+        _tag: "records-skipped",
+        count: Math.max(previous.count, omission.count),
+      });
+    } else if (previous === undefined) {
+      byKind.set(omission._tag, omission);
+    }
+  }
+  return [...byKind.values()];
 }
 
 /**

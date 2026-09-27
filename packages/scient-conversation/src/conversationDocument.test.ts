@@ -305,6 +305,32 @@ describe("conversation document", () => {
     });
   });
 
+  it("carries known source omissions into an imported thread's next export", () => {
+    const source = {
+      ...thread({ messages: [message({ id: "m1", role: "user", text: "partial history" })] }),
+      conversationImport: {
+        source: "scic" as const,
+        exportId: "earlier-export",
+        sourceThreadId: "other-installation-thread",
+        packageDigest: `sha256:${"a".repeat(64)}`,
+        sourceFormat: "scient-conversation",
+        sourceFormatVersion: 1,
+        importedAt: "2026-09-27T14:00:00.000Z",
+        omissions: [{ _tag: "range-truncated" as const, throughMessageN: 1 }],
+      },
+    };
+    const snapshot = snapshotOf(source);
+    expect(snapshot.provenance).toMatchObject({
+      _tag: "import",
+      omissions: [{ _tag: "range-truncated", throughMessageN: 1 }],
+    });
+    const { markdown, document } = exportMarkdown(snapshot);
+    expect(document.bundle.warnings).toContainEqual(
+      expect.objectContaining({ code: "source-history-incomplete" }),
+    );
+    expect(markdown).toContain("earlier transfer stopped at message 1");
+  });
+
   it("skips async answer messages chat folds into their question", () => {
     const { markdown } = exportMarkdown(
       snapshotOf(

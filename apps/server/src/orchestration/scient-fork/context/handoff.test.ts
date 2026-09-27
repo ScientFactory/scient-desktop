@@ -197,6 +197,26 @@ describe("buildHandoffItems", () => {
 });
 
 describe("selectHistory", () => {
+  it("tells the provider about gaps in imported source history", () => {
+    const rendered = renderHandoff({
+      threadId: "imported-thread",
+      title: "Partial transcript",
+      selection: selectHistory({
+        items: [],
+        budget: 1_000,
+        currentAttachments: [],
+        midTurnCut: undefined,
+      }),
+      totalItemCount: 0,
+      midTurnCut: undefined,
+      imported: true,
+      importOmissions: [{ _tag: "range-truncated", throughMessageN: 4 }],
+    });
+    expect(rendered.preamble).toContain('"knownSourceOmissions"');
+    expect(rendered.preamble).toContain('"throughMessageN":4');
+    expect(rendered.preamble).toContain("cannot be recovered");
+  });
+
   const conversation = Array.from({ length: 20 }, (_, index) =>
     message(
       `m${index}`,

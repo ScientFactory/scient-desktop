@@ -12,6 +12,7 @@ import {
   TurnId,
 } from "./baseSchemas.ts";
 import { ToolLifecycleItemType } from "./providerRuntime.ts";
+import { OrchestrationConversationImportOmission } from "./orchestration.ts";
 
 /**
  * Conversation export contracts: the versioned conversation snapshot, the
@@ -307,6 +308,10 @@ export const ConversationProvenance = Schema.Union([
     sourceFormat: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
     sourceFormatVersion: PositiveInt,
     importedAt: IsoDateTime,
+    /** Known gaps in the source history survive re-export to another installation. */
+    omissions: Schema.optionalKey(
+      Schema.Array(OrchestrationConversationImportOmission).check(Schema.isMaxLength(16)),
+    ),
   }),
 ]);
 export type ConversationProvenance = typeof ConversationProvenance.Type;
@@ -612,6 +617,7 @@ export const DocumentWarningCode = Schema.Literals([
   "attachment-unavailable",
   "attachment-unsupported",
   "records-skipped",
+  "source-history-incomplete",
   "context-reference-unresolved",
   "unsupported-construct",
   "resource-unresolved",
