@@ -6,7 +6,6 @@ import {
   ExternalLinkIcon,
   LoaderIcon,
   RefreshCwIcon,
-  ShieldCheckIcon,
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
@@ -18,6 +17,7 @@ import {
   AssistedSetupActions,
   AssistedSetupFrame,
   AssistedSetupStatus,
+  ProviderSetupIcon,
 } from "./AssistedProviderSetup";
 import {
   hasExternalCodexUpdate,
@@ -310,7 +310,7 @@ export function CodexInlineSetup(props: {
             error ? (
               <TriangleAlertIcon className="size-5 text-destructive" />
             ) : (
-              <ShieldCheckIcon className="size-5 text-primary" />
+              <ProviderSetupIcon displayName={props.displayName} driver={props.provider.driver} />
             )
           }
           role={error ? "alert" : undefined}
@@ -495,7 +495,7 @@ export function CodexInlineSetup(props: {
           signInError ? (
             <TriangleAlertIcon className="size-5 text-destructive" />
           ) : (
-            <ShieldCheckIcon className="size-5 text-primary" />
+            <ProviderSetupIcon displayName={props.displayName} driver={props.provider.driver} />
           )
         }
         role={signInError ? "alert" : undefined}

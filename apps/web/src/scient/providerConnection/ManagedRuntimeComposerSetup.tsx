@@ -8,7 +8,6 @@ import {
   DownloadIcon,
   LoaderIcon,
   RefreshCwIcon,
-  ShieldCheckIcon,
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
@@ -20,6 +19,7 @@ import {
   AssistedSetupActions,
   AssistedSetupFrame,
   AssistedSetupStatus,
+  ProviderSetupIcon,
 } from "./AssistedProviderSetup";
 import { ConnectModelsButton } from "./ConnectModelsButton";
 import {
@@ -181,7 +181,7 @@ export function ManagedRuntimeComposerSetup(props: {
             error ? (
               <TriangleAlertIcon className="size-5 text-destructive" />
             ) : (
-              <ShieldCheckIcon className="size-5 text-primary" />
+              <ProviderSetupIcon displayName={props.displayName} driver={props.provider.driver} />
             )
           }
           role={error ? "alert" : undefined}

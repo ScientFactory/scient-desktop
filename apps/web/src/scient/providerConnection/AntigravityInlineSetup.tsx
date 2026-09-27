@@ -8,7 +8,6 @@ import {
   LogInIcon,
   LoaderIcon,
   RefreshCwIcon,
-  ShieldCheckIcon,
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
@@ -20,6 +19,7 @@ import {
   AssistedSetupActions,
   AssistedSetupFrame,
   AssistedSetupStatus,
+  ProviderSetupIcon,
 } from "./AssistedProviderSetup";
 import {
   cancelAntigravitySignIn,
@@ -340,10 +340,7 @@ export function AntigravityInlineSetup(props: {
             localError ? (
               <TriangleAlertIcon className="size-5 text-destructive" />
             ) : (
-              <AntigravitySetupIcon
-                displayName={props.displayName}
-                driver={props.provider.driver}
-              />
+              <ProviderSetupIcon displayName={props.displayName} driver={props.provider.driver} />
             )
           }
           role={localError ? "alert" : undefined}
@@ -512,10 +509,7 @@ export function AntigravityInlineSetup(props: {
             signInError ? (
               <TriangleAlertIcon className="size-5 text-destructive" />
             ) : (
-              <AntigravitySetupIcon
-                displayName={props.displayName}
-                driver={props.provider.driver}
-              />
+              <ProviderSetupIcon displayName={props.displayName} driver={props.provider.driver} />
             )
           }
           role={signInError ? "alert" : undefined}
@@ -650,23 +644,6 @@ function StatusFrame(props: {
 
 function SetupFrame(props: { readonly children: ReactNode }) {
   return <AssistedSetupFrame>{props.children}</AssistedSetupFrame>;
-}
-
-function AntigravitySetupIcon(props: {
-  readonly displayName: string;
-  readonly driver: ServerProvider["driver"];
-}) {
-  return (
-    <>
-      <ShieldCheckIcon className="size-5 text-primary in-[[data-model-picker-content=true]]:hidden" />
-      <ProviderInstanceIcon
-        className="hidden size-8 in-[[data-model-picker-content=true]]:inline-flex"
-        displayName={props.displayName}
-        driverKind={props.driver}
-        iconClassName="size-8"
-      />
-    </>
-  );
 }
 
 function AntigravityLoadingIcon(props: {

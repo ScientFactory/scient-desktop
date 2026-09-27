@@ -17,6 +17,7 @@ import {
   AssistedSetupActions,
   AssistedSetupFrame,
   AssistedSetupStatus,
+  ProviderSetupIcon,
 } from "./AssistedProviderSetup";
 import {
   hasExternalCursorUpdate,
@@ -60,23 +61,6 @@ function accountDescription(provider: ServerProvider): string {
   const label = provider.auth.label?.trim();
   if (email && label) return `${email} · ${label}`;
   return email ?? label ?? "Your Cursor account is connected.";
-}
-
-function CursorSetupIcon(props: {
-  readonly displayName: string;
-  readonly provider: ServerProvider;
-}) {
-  return (
-    <>
-      <ShieldCheckIcon className="size-5 text-primary in-[[data-model-picker-content=true]]:hidden" />
-      <ProviderInstanceIcon
-        className="hidden size-8 in-[[data-model-picker-content=true]]:inline-flex"
-        displayName={props.displayName}
-        driverKind={props.provider.driver}
-        iconClassName="size-8"
-      />
-    </>
-  );
 }
 
 function CursorLoadingIcon(props: {
@@ -359,7 +343,7 @@ export function CursorInlineSetup(props: {
             error ? (
               <TriangleAlertIcon className="size-5 text-destructive" />
             ) : (
-              <CursorSetupIcon displayName={props.displayName} provider={props.provider} />
+              <ProviderSetupIcon displayName={props.displayName} driver={props.provider.driver} />
             )
           }
           role={error ? "alert" : undefined}
@@ -540,7 +524,7 @@ export function CursorInlineSetup(props: {
           signInError ? (
             <TriangleAlertIcon className="size-5 text-destructive" />
           ) : (
-            <CursorSetupIcon displayName={props.displayName} provider={props.provider} />
+            <ProviderSetupIcon displayName={props.displayName} driver={props.provider.driver} />
           )
         }
         role={signInError ? "alert" : undefined}

@@ -5,7 +5,6 @@ import {
   ExternalLinkIcon,
   LoaderIcon,
   RefreshCwIcon,
-  ShieldCheckIcon,
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
@@ -16,6 +15,7 @@ import {
   AssistedSetupActions,
   AssistedSetupFrame,
   AssistedSetupStatus,
+  ProviderSetupIcon,
 } from "./AssistedProviderSetup";
 import {
   hasExternalClaudeUpdate,
@@ -361,7 +361,7 @@ export function ClaudeInlineSetup(props: {
             error ? (
               <TriangleAlertIcon className="size-5 text-destructive" />
             ) : (
-              <ShieldCheckIcon className="size-5 text-primary" />
+              <ProviderSetupIcon displayName={props.displayName} driver={props.provider.driver} />
             )
           }
           role={error ? "alert" : undefined}
@@ -557,7 +557,7 @@ export function ClaudeInlineSetup(props: {
           signInError ? (
             <TriangleAlertIcon className="size-5 text-destructive" />
           ) : (
-            <ShieldCheckIcon className="size-5 text-primary" />
+            <ProviderSetupIcon displayName={props.displayName} driver={props.provider.driver} />
           )
         }
         role={signInError ? "alert" : undefined}

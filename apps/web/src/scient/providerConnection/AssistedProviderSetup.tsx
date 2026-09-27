@@ -1,6 +1,9 @@
+import type { ProviderDriverKind } from "@t3tools/contracts";
+import { ShieldCheckIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
+import { ProviderInstanceIcon } from "../../components/chat/ProviderInstanceIcon";
 
 export function AssistedSetupFrame(props: { readonly children: ReactNode }) {
   return (
@@ -67,5 +70,35 @@ export function AssistedSetupActions(props: {
     >
       {props.children}
     </div>
+  );
+}
+
+/**
+ * The icon for a provider's install, sign-in and disabled states. The composer's
+ * provider picker shows the provider's own logo, so the user sees which provider
+ * they picked; elsewhere a quieter shield marks a reviewed, Scient-assisted step.
+ */
+export function ProviderSetupIcon(props: {
+  readonly displayName: string;
+  readonly driver: ProviderDriverKind;
+}) {
+  return (
+    <>
+      <ShieldCheckIcon
+        className="size-5 text-primary in-[[data-model-picker-content=true]]:hidden"
+        data-provider-setup-mark="shield"
+      />
+      <span
+        className="hidden in-[[data-model-picker-content=true]]:inline-flex"
+        data-provider-setup-mark="logo"
+      >
+        <ProviderInstanceIcon
+          className="size-8"
+          displayName={props.displayName}
+          driverKind={props.driver}
+          iconClassName="size-8"
+        />
+      </span>
+    </>
   );
 }

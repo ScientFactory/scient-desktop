@@ -1,3 +1,4 @@
+import { ProviderDriverKind } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -5,6 +6,7 @@ import {
   AssistedSetupActions,
   AssistedSetupFrame,
   AssistedSetupStatus,
+  ProviderSetupIcon,
 } from "./AssistedProviderSetup";
 
 describe("AssistedProviderSetup", () => {
@@ -53,5 +55,21 @@ describe("AssistedProviderSetup", () => {
     expect(markup).toContain('data-provider-onboarding-view="assisted"');
     expect(markup).not.toContain("translate-x-2.5");
     expect(markup).not.toContain("translate-y-2.5");
+  });
+});
+
+describe("ProviderSetupIcon", () => {
+  it.each([
+    ["pi", "Pi", "#F09082"],
+    ["codex", "Codex", "<svg"],
+  ])("shows %s's own logo in the composer picker and a shield elsewhere", (driver, name, mark) => {
+    const markup = renderToStaticMarkup(
+      <ProviderSetupIcon displayName={name} driver={ProviderDriverKind.make(driver)} />,
+    );
+    // The shield hides inside the picker; the logo only shows there.
+    expect(markup).toContain("lucide-shield-check");
+    expect(markup).toContain("in-[[data-model-picker-content=true]]:hidden");
+    expect(markup).toContain("in-[[data-model-picker-content=true]]:inline-flex");
+    expect(markup).toContain(mark);
   });
 });

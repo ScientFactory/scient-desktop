@@ -5,7 +5,6 @@ import {
   ExternalLinkIcon,
   LoaderIcon,
   RefreshCwIcon,
-  ShieldCheckIcon,
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
@@ -17,6 +16,7 @@ import {
   AssistedSetupActions,
   AssistedSetupFrame,
   AssistedSetupStatus,
+  ProviderSetupIcon,
 } from "./AssistedProviderSetup";
 import {
   isActiveProviderConnectionOperation,
@@ -228,7 +228,7 @@ export function DroidInlineSetup(props: {
             installationError ? (
               <TriangleAlertIcon className="size-5 text-destructive" />
             ) : (
-              <ShieldCheckIcon className="size-5 text-primary" />
+              <ProviderSetupIcon displayName={props.displayName} driver={props.provider.driver} />
             )
           }
           role={installationError ? "alert" : undefined}
@@ -346,7 +346,7 @@ export function DroidInlineSetup(props: {
           signInError ? (
             <TriangleAlertIcon className="size-5 text-destructive" />
           ) : (
-            <ShieldCheckIcon className="size-5 text-primary" />
+            <ProviderSetupIcon displayName={props.displayName} driver={props.provider.driver} />
           )
         }
         role={signInError ? "alert" : undefined}
