@@ -11,7 +11,6 @@ import {
   TrimmedNonEmptyString,
   TurnId,
 } from "./baseSchemas.ts";
-import { OrchestrationMessageContext } from "./composerContext.ts";
 import { ToolLifecycleItemType } from "./providerRuntime.ts";
 
 /**
@@ -73,6 +72,94 @@ export const ConversationAttachment = Schema.Struct({
 export type ConversationAttachment = typeof ConversationAttachment.Type;
 
 /**
+ * Link destinations in snapshot message text that point at one of the
+ * message's typed inline references: `[label](scient-ref:r1)`.
+ */
+export const CONVERSATION_REFERENCE_URL_PREFIX = "scient-ref:";
+
+export const ConversationReferenceId = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(32),
+  Schema.isPattern(/^r[0-9]+$/),
+);
+export type ConversationReferenceId = typeof ConversationReferenceId.Type;
+
+const referenceBase = {
+  id: ConversationReferenceId,
+  label: ShortText(512),
+} as const;
+
+/**
+ * The export projection of Scient's inline message references: composer
+ * context chips and captured quotes. Each supported kind keeps an explicit set
+ * of display fields; installation-local identities (environment, thread, and
+ * message ids, absolute workspace roots, document revisions, editor positions)
+ * and open payloads are never carried. Unsupported kinds are dropped, their
+ * label kept as plain text, and counted in a `records-skipped` warning.
+ */
+export const ConversationInlineReference = Schema.Union([
+  /** An image or file chip bound to one of the message's attachments. */
+  Schema.TaggedStruct("attachment", {
+    ...referenceBase,
+    attachmentLocalId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+    image: Schema.Boolean,
+  }),
+  /** "Cite selected text" from a project file. `path` is relative to the project. */
+  Schema.TaggedStruct("file-excerpt", {
+    ...referenceBase,
+    path: TrimmedNonEmptyString.check(Schema.isMaxLength(4_096)),
+    startLine: PositiveInt,
+    endLine: PositiveInt,
+    unsaved: Schema.Boolean,
+    text: Schema.String,
+    comment: Schema.NullOr(Schema.String),
+  }),
+  /** A quote of an earlier assistant message. */
+  Schema.TaggedStruct("message-excerpt", {
+    ...referenceBase,
+    text: Schema.String,
+    comment: Schema.NullOr(Schema.String),
+  }),
+  Schema.TaggedStruct("terminal", {
+    ...referenceBase,
+    terminal: ShortText(255),
+    lineStart: NonNegativeInt,
+    lineEnd: NonNegativeInt,
+    text: ConversationBoundedText,
+  }),
+  /** An @-mentioned workspace path, relative to the project. */
+  Schema.TaggedStruct("mention", {
+    ...referenceBase,
+    path: TrimmedNonEmptyString.check(Schema.isMaxLength(2_048)),
+  }),
+  Schema.TaggedStruct("skill", {
+    ...referenceBase,
+    name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  }),
+  Schema.TaggedStruct("review-comment", {
+    ...referenceBase,
+    filePath: TrimmedNonEmptyString.check(Schema.isMaxLength(2_048)),
+    rangeLabel: ShortText(2_048),
+    comment: ConversationBoundedText,
+    diff: ConversationBoundedText,
+  }),
+  Schema.TaggedStruct("page-element", {
+    ...referenceBase,
+    pageUrl: ShortText(2_048),
+    pageTitle: Schema.NullOr(ShortText(2_048)),
+    tagName: ShortText(255),
+    selector: Schema.NullOr(ShortText(2_048)),
+  }),
+  Schema.TaggedStruct("preview-annotation", {
+    ...referenceBase,
+    pageUrl: ShortText(2_048),
+    pageTitle: Schema.NullOr(ShortText(2_048)),
+    comment: ConversationBoundedText,
+    targetSummary: ShortText(2_048),
+  }),
+]);
+export type ConversationInlineReference = typeof ConversationInlineReference.Type;
+
+/**
  * A completed transcript message. `n` is the 1-based position among the
  * snapshot's messages; it is stable for one snapshot and is what Markdown
  * markers and range selection refer to.
@@ -84,10 +171,13 @@ export const ConversationMessage = Schema.Struct({
   turnId: Schema.NullOr(TurnId),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
-  /** Message Markdown exactly as stored, including Scient inline references. */
+  /**
+   * Message Markdown as stored, except that Scient inline references point at
+   * `references` through `scient-ref:` destinations.
+   */
   text: Schema.String,
   attachments: Schema.Array(ConversationAttachment),
-  context: Schema.optionalKey(OrchestrationMessageContext),
+  references: Schema.Array(ConversationInlineReference),
 });
 export type ConversationMessage = typeof ConversationMessage.Type;
 
@@ -203,6 +293,21 @@ export type ConversationThreadInfo = typeof ConversationThreadInfo.Type;
 export const ConversationProvenance = Schema.Union([
   Schema.TaggedStruct("original", {}),
   Schema.TaggedStruct("fork", { originThreadId: ThreadId }),
+  /**
+   * Imported from a transfer file or from Scient-exported Markdown. Carries
+   * external provenance only: the source ids are opaque strings from another
+   * installation and never local thread ids. Both sources are unverified;
+   * Markdown imports are text only.
+   */
+  Schema.TaggedStruct("import", {
+    source: Schema.Literals(["scic", "markdown"]),
+    exportId: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+    sourceThreadId: Schema.NullOr(TrimmedNonEmptyString.check(Schema.isMaxLength(512))),
+    packageDigest: Sha256Digest,
+    sourceFormat: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+    sourceFormatVersion: PositiveInt,
+    importedAt: IsoDateTime,
+  }),
 ]);
 export type ConversationProvenance = typeof ConversationProvenance.Type;
 

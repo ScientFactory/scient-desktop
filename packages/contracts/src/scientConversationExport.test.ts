@@ -44,7 +44,7 @@ const snapshot = {
       turnId: null,
       createdAt: "2026-09-27T14:05:00.000Z",
       updatedAt: "2026-09-27T14:05:00.000Z",
-      text: "Please investigate",
+      text: "Please investigate [File quote](scient-ref:r1)",
       attachments: [
         {
           localId: "thread-1-5b8f1c2e",
@@ -54,6 +54,19 @@ const snapshot = {
           sizeBytes: 12,
           pastedText: false,
           available: true,
+        },
+      ],
+      references: [
+        {
+          _tag: "file-excerpt",
+          id: "r1",
+          label: "File quote",
+          path: "notes/report.md",
+          startLine: 3,
+          endLine: 4,
+          unsaved: false,
+          text: "quoted",
+          comment: null,
         },
       ],
     },
@@ -92,6 +105,54 @@ describe("conversation export contracts", () => {
   it("rejects an unknown snapshot version and a malformed digest", () => {
     expect(() => decodeSnapshot({ ...snapshot, version: 2 })).toThrow();
     expect(() => decodeSnapshot({ ...snapshot, contentDigest: "sha256:x" })).toThrow();
+  });
+
+  it("types inline references and never carries an open context payload", () => {
+    const withReference = (reference: unknown) => ({
+      ...snapshot,
+      messages: [{ ...snapshot.messages[0], references: [reference] }],
+    });
+    const decoded = decodeSnapshot(
+      withReference({
+        ...snapshot.messages[0]!.references[0],
+        cwd: "/Users/someone/project",
+        environmentId: "environment-1",
+      }),
+    );
+    expect(decoded.messages[0]!.references[0]).not.toHaveProperty("cwd");
+    expect(decoded.messages[0]!.references[0]).not.toHaveProperty("environmentId");
+    expect(() =>
+      decodeSnapshot(withReference({ _tag: "unknown-kind", id: "r1", label: "x", payload: {} })),
+    ).toThrow();
+    expect(
+      decodeSnapshot({
+        ...snapshot,
+        messages: [{ ...snapshot.messages[0], context: { version: 1, records: [] } }],
+      }).messages[0],
+    ).not.toHaveProperty("context");
+  });
+
+  it("records import provenance with external identities only", () => {
+    const decoded = decodeSnapshot({
+      ...snapshot,
+      provenance: {
+        _tag: "import",
+        source: "markdown",
+        exportId: "7f3c9a2e41b8",
+        sourceThreadId: null,
+        packageDigest: DIGEST,
+        sourceFormat: "scient-conversation-markdown",
+        sourceFormatVersion: 1,
+        importedAt: "2026-09-28T09:00:00.000Z",
+      },
+    });
+    expect(decoded.provenance._tag).toBe("import");
+    expect(() =>
+      decodeSnapshot({
+        ...snapshot,
+        provenance: { _tag: "import", source: "email", exportId: "x" },
+      }),
+    ).toThrow();
   });
 
   it("never accepts a provider payload on a work-log entry", () => {
