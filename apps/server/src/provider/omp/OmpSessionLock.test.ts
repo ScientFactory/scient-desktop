@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
+import * as NodeCrypto from "node:crypto";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
@@ -162,4 +163,70 @@ describe("Oh My Pi session lock", () => {
       expect(interleavings).toBeGreaterThanOrEqual(5);
     }),
   );
+  it("keeps one owner when two other contenders interleave stale recovery", () => {
+    for (let secondStep = 0; secondStep < 20; secondStep += 1) {
+      for (let thirdStep = secondStep + 1; thirdStep < 24; thirdStep += 1) {
+        const lockPath = makeRoot(`three-${secondStep}-${thirdStep}`);
+        NodeFS.writeFileSync(lockPath, `${deadHolder}\n`);
+        const first = makeOmpSessionLockRegistry();
+        const second = makeOmpSessionLockRegistry();
+        const third = makeOmpSessionLockRegistry();
+        const winners: string[] = [];
+        let operation = 0;
+        const interleave = <A>(run: () => A): A => {
+          const step = operation++;
+          const registry = step === secondStep ? second : step === thirdStep ? third : undefined;
+          if (registry) {
+            const result = tryAcquireOmpSessionLockSync(lockPath, registry);
+            if (result !== "busy") winners.push(result.token);
+          }
+          return run();
+        };
+        const racingFs: OmpLockFs = {
+          writeExclusive: (file, contents) =>
+            interleave(() => nodeOmpLockFs.writeExclusive(file, contents)),
+          read: (file) => interleave(() => nodeOmpLockFs.read(file)),
+          rename: (from, to) => interleave(() => nodeOmpLockFs.rename(from, to)),
+          link: (from, to) => interleave(() => nodeOmpLockFs.link(from, to)),
+          remove: (file) => interleave(() => nodeOmpLockFs.remove(file)),
+        };
+        try {
+          const result = tryAcquireOmpSessionLockSync(lockPath, first, racingFs);
+          if (result !== "busy") winners.push(result.token);
+          expect(winners).toHaveLength(1);
+          expect(NodeFS.readFileSync(lockPath, "utf8").trim()).toBe(winners[0]);
+          expect(NodeFS.readdirSync(NodePath.dirname(lockPath))).toEqual(["session.lock"]);
+        } finally {
+          cleanup(lockPath);
+        }
+      }
+    }
+  });
+  it("recovers when a stale-lock reclaimer crashed while holding its claim", () => {
+    const lockPath = makeRoot("crashed-reclaimer");
+    const digest = NodeCrypto.createHash("sha256")
+      .update(`${lockPath}\0${deadHolder}`)
+      .digest("hex");
+    const claim = NodePath.join(NodePath.dirname(lockPath), `.omp-reclaim-${digest}`);
+    NodeFS.writeFileSync(lockPath, `${deadHolder}\n`);
+    NodeFS.writeFileSync(claim, `${deadHolder}\n`);
+    try {
+      const result = tryAcquireOmpSessionLockSync(lockPath, makeOmpSessionLockRegistry());
+      expect(result).not.toBe("busy");
+      expect(NodeFS.readdirSync(NodePath.dirname(lockPath))).toEqual(["session.lock"]);
+    } finally {
+      cleanup(lockPath);
+    }
+  });
+
+  it("does not reclaim an incomplete legacy record", () => {
+    const lockPath = makeRoot("incomplete-legacy");
+    NodeFS.writeFileSync(lockPath, "");
+    try {
+      expect(tryAcquireOmpSessionLockSync(lockPath, makeOmpSessionLockRegistry())).toBe("busy");
+      expect(NodeFS.readFileSync(lockPath, "utf8")).toBe("");
+    } finally {
+      cleanup(lockPath);
+    }
+  });
 });
