@@ -40,36 +40,23 @@ export type ScientForkSource =
   // SCIENT-FORK: the running turn, with the work it has done so far.
   | "running-turn";
 
+/** One title for every fork; the subtitle names where the fork starts. */
 export function scientForkDialogCopy(source: ScientForkSource): {
   readonly title: string;
   readonly description: string;
 } {
+  const title = "Fork chat";
   switch (source) {
     case "latest-response":
-      return {
-        title: "Fork latest response",
-        description: "Create a new conversation from the latest response.",
-      };
+      return { title, description: "From the latest response" };
     case "this-response":
-      return {
-        title: "Fork this response",
-        description: "Create a new conversation from this response.",
-      };
+      return { title, description: "From this response" };
     case "this-message":
-      return {
-        title: "Fork this message",
-        description: "Create a new conversation from this message.",
-      };
+      return { title, description: "Edit this message" };
     case "switch-provider":
-      return {
-        title: "Fork to switch provider",
-        description: "Continue this conversation with another provider.",
-      };
+      return { title, description: "To switch provider" };
     case "running-turn":
-      return {
-        title: "Fork with work in progress",
-        description: "Create a new conversation that includes the agent's work so far.",
-      };
+      return { title, description: "With work in progress" };
   }
 }
 
@@ -293,8 +280,7 @@ export function ScientForkWorkspaceModeDialog({
                 {copy.title}
               </span>
             </DialogTitle>
-            {/* The title says it all; the description stays for screen readers. */}
-            <DialogDescription className="sr-only">{copy.description}</DialogDescription>
+            <DialogDescription>{copy.description}</DialogDescription>
           </div>
         </DialogHeader>
         <DialogPanel>
