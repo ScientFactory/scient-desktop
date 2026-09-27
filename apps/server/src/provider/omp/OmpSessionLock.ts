@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Effect FileSystem cannot create a file with O_EXCL or hard-link without replacing.
 import * as NodeFS from "node:fs";
 import * as NodeCrypto from "node:crypto";
+import * as NodePath from "node:path";
 
 import * as Effect from "effect/Effect";
 
@@ -14,6 +15,7 @@ export interface OmpSessionLockRegistry {
   readonly owner: string;
   /** Lock path to the token of the live session that holds it. */
   readonly held: Map<string, string>;
+  readonly publishing: Set<string>;
 }
 
 export interface OmpSessionLockHandle {
@@ -43,6 +45,7 @@ export const nodeOmpLockFs: OmpLockFs = {
 export const makeOmpSessionLockRegistry = (): OmpSessionLockRegistry => ({
   owner: `${process.pid}:${NodeCrypto.randomUUID()}`,
   held: new Map(),
+  publishing: new Set(),
 });
 
 const errorCode = (error: unknown): string | undefined =>
@@ -73,36 +76,69 @@ const holderLive = (
   if (pid !== process.pid) return true;
   // Another adapter in this process may own a live session on this path.
   if (`${pid}:${nonce}` !== registry.owner) return true;
-  return registry.held.get(lockPath) === record;
+  return registry.held.get(lockPath) === record || registry.publishing.has(record);
+};
+
+/** Publish a complete record atomically; readers never see an empty lock. */
+const publishRecord = (
+  file: string,
+  token: string,
+  registry: OmpSessionLockRegistry,
+  fs: OmpLockFs,
+) => {
+  const temporary = `${file}.${NodeCrypto.randomUUID()}.tmp`;
+  registry.publishing.add(token);
+  try {
+    fs.writeExclusive(temporary, `${token}\n`);
+    fs.link(temporary, file);
+    registry.held.set(file, token);
+  } finally {
+    registry.publishing.delete(token);
+    fs.remove(temporary);
+  }
 };
 
 /**
- * Move the stale record aside, then prove it is the record we judged stale.
- * If a contender replaced it in between, put its record back without
- * clobbering anything created since.
+ * Serialize reclamation of this exact record. A live claim is never expired
+ * by age. If its owner crashed, reclaim its claim under another record-specific
+ * claim before retrying. The recursion bound fails closed after repeated crashes.
  */
-const moveStaleAside = (lockPath: string, observed: string, fs: OmpLockFs): void => {
-  const aside = `${lockPath}.${NodeCrypto.randomUUID()}.stale`;
+const removeStaleRecord = (
+  lockPath: string,
+  observed: string,
+  registry: OmpSessionLockRegistry,
+  fs: OmpLockFs,
+  depth = 0,
+): void => {
+  if (depth >= 8) return;
+  const digest = NodeCrypto.createHash("sha256").update(`${lockPath}\0${observed}`).digest("hex");
+  const claimPath = NodePath.join(NodePath.dirname(lockPath), `.omp-reclaim-${digest}`);
+  const token = `${registry.owner}:${NodeCrypto.randomUUID()}`;
   try {
-    fs.rename(lockPath, aside);
+    publishRecord(claimPath, token, registry, fs);
   } catch (error) {
-    if (errorCode(error) === "ENOENT") return;
-    throw error;
-  }
-  let moved: string | undefined;
-  try {
-    moved = fs.read(aside).trim();
-  } catch {
-    moved = undefined;
-  }
-  if (moved !== observed) {
+    if (errorCode(error) !== "EEXIST") throw error;
     try {
-      fs.link(aside, lockPath);
+      const claim = fs.read(claimPath).trim();
+      if (!holderLive(claim, claimPath, registry)) {
+        removeStaleRecord(claimPath, claim, registry, fs, depth + 1);
+      }
     } catch (error) {
-      if (errorCode(error) !== "EEXIST") throw error;
+      if (errorCode(error) !== "ENOENT") throw error;
     }
+    return;
   }
-  fs.remove(aside);
+  try {
+    // All reclaimers of `observed` hold this claim, so none can remove a
+    // replacement published after it. A live replacement is never moved aside.
+    const current = fs.read(lockPath).trim();
+    if (current === observed && !holderLive(current, lockPath, registry)) fs.remove(lockPath);
+  } catch (error) {
+    if (errorCode(error) !== "ENOENT") throw error;
+  } finally {
+    fs.remove(claimPath);
+    registry.held.delete(claimPath);
+  }
 };
 
 /**
@@ -117,8 +153,7 @@ export const tryAcquireOmpSessionLockSync = (
   const token = `${registry.owner}:${NodeCrypto.randomUUID()}`;
   for (let attempt = 0; attempt < 4; attempt += 1) {
     try {
-      fs.writeExclusive(lockPath, `${token}\n`);
-      registry.held.set(lockPath, token);
+      publishRecord(lockPath, token, registry, fs);
       return { path: lockPath, token };
     } catch (error) {
       if (errorCode(error) !== "EEXIST") throw error;
@@ -132,7 +167,9 @@ export const tryAcquireOmpSessionLockSync = (
       throw error;
     }
     if (holderLive(observed, lockPath, registry)) return "busy";
-    moveStaleAside(lockPath, observed, fs);
+    // Unknown legacy records may still be being written by an older server.
+    if (!/^\d+:[^:]+:[^:]+$/u.test(observed)) return "busy";
+    removeStaleRecord(lockPath, observed, registry, fs);
   }
   return "busy";
 };
