@@ -1496,7 +1496,6 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (options: PiAd
   return {
     provider: PROVIDER,
     capabilities: { sessionModelSwitch: "in-session", mcpSessionInjection: true },
-    compaction: { type: "slash-command", command: "/compact" },
     startSession,
     sendTurn,
     interruptTurn,
@@ -1509,6 +1508,7 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (options: PiAd
       Effect.sync(() => [...sessions.values()].map((ctx) => ({ ...ctx.session }))),
     hasSession: (threadId) => Effect.sync(() => sessions.has(threadId)),
     stopAll,
+    compaction: { type: "slash-command", command: "/compact" },
     streamEvents: Stream.fromQueue(events),
   } satisfies ProviderAdapterShape<ProviderAdapterError>;
 });
