@@ -71,6 +71,13 @@ import {
   BrowserPdfExportResult,
 } from "./browserPdfExport.ts";
 import {
+  ScientDocumentPdfExportError,
+  ScientDocumentPdfPrepared,
+  ScientDocumentPdfPublished,
+  ScientDocumentPdfPublishInput,
+  ScientMarkdownPdfPrepareInput,
+} from "./scientDocumentExport.ts";
+import {
   WorktreeSetupCancelInput,
   WorktreeSetupCancelResult,
   WorktreeSetupStreamEvent,
@@ -450,6 +457,8 @@ export const WS_METHODS = {
   agentSessionsImport: "agentSessions.import",
   assetsCreateUrl: "assets.createUrl",
   documentsPublishBrowserPdfExport: "documents.publishBrowserPdfExport",
+  documentsPrepareMarkdownPdf: "documents.prepareMarkdownPdf",
+  documentsPublishDocumentPdf: "documents.publishDocumentPdf",
   attachmentsCreateUploadUrl: "attachments.createUploadUrl",
   attachmentsDelete: "attachments.delete",
 
@@ -1491,6 +1500,16 @@ const WsDocumentsPublishBrowserPdfExportRpc = Rpc.make(
     error: Schema.Union([BrowserPdfExportError, EnvironmentAuthorizationError]),
   },
 );
+const WsDocumentsPrepareMarkdownPdfRpc = Rpc.make(WS_METHODS.documentsPrepareMarkdownPdf, {
+  payload: ScientMarkdownPdfPrepareInput,
+  success: ScientDocumentPdfPrepared,
+  error: Schema.Union([ScientDocumentPdfExportError, EnvironmentAuthorizationError]),
+});
+const WsDocumentsPublishDocumentPdfRpc = Rpc.make(WS_METHODS.documentsPublishDocumentPdf, {
+  payload: ScientDocumentPdfPublishInput,
+  success: ScientDocumentPdfPublished,
+  error: Schema.Union([ScientDocumentPdfExportError, EnvironmentAuthorizationError]),
+});
 const WsAttachmentsCreateUploadUrlRpc = Rpc.make(WS_METHODS.attachmentsCreateUploadUrl, {
   payload: AttachmentCreateUploadUrlInput,
   success: AttachmentCreateUploadUrlResult,
@@ -2041,6 +2060,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsAgentSessionsImportRpc,
   WsAssetsCreateUrlRpc,
   WsDocumentsPublishBrowserPdfExportRpc,
+  WsDocumentsPrepareMarkdownPdfRpc,
+  WsDocumentsPublishDocumentPdfRpc,
   WsAttachmentsCreateUploadUrlRpc,
   WsAttachmentsDeleteRpc,
   WsProviderUploadFeedbackRpc,

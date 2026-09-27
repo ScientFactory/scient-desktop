@@ -160,6 +160,8 @@ import { reconcileManagedRuntimeProviders } from "./scient/providerLifecycle/Man
 import { workspaceEntryDisposition } from "./scient/workspace/WorkspaceEntryPolicy.ts";
 import * as GeneratedDocumentStore from "./scient/documentArtifacts/GeneratedDocumentStore.ts";
 import { publishBrowserPdfExport } from "./scient/documentArtifacts/BrowserPdfExportPublication.ts";
+import { publishCapturedDocumentPdf } from "./scient/documentExport/DocumentPdfPublication.ts";
+import { prepareMarkdownPdf } from "./scient/documentExport/MarkdownPdfPreparation.ts";
 import * as AnalysisService from "./scient/analysis/AnalysisService.ts";
 import { makeComputeRpcGateway } from "./scient/compute/ComputeRpcGateway.ts";
 import { WorkspaceBindingResolver } from "./scient/projectScope/WorkspaceBindingResolver.ts";
@@ -3887,6 +3889,21 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.documentsPublishBrowserPdfExport,
             publishBrowserPdfExport(generatedDocuments, input),
+            { "rpc.aggregate": "documents" },
+          ),
+        [WS_METHODS.documentsPrepareMarkdownPdf]: (input) =>
+          observeRpcEffect(WS_METHODS.documentsPrepareMarkdownPdf, prepareMarkdownPdf(input), {
+            "rpc.aggregate": "documents",
+          }),
+        [WS_METHODS.documentsPublishDocumentPdf]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.documentsPublishDocumentPdf,
+            publishCapturedDocumentPdf(input).pipe(
+              Effect.provideService(
+                GeneratedDocumentStore.GeneratedDocumentStore,
+                generatedDocuments,
+              ),
+            ),
             { "rpc.aggregate": "documents" },
           ),
         [WS_METHODS.attachmentsCreateUploadUrl]: (input) =>

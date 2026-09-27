@@ -27,6 +27,8 @@ import {
 export const SCIENT_DOCUMENT_PAGE_PATH = "/scient-document.html";
 /** The page reads its input from this hash parameter, never from the network location. */
 export const SCIENT_DOCUMENT_PAGE_INPUT_PARAMETER = "input";
+/** The page publishes a promise of its readiness report on this window property. */
+export const SCIENT_DOCUMENT_PAGE_READINESS_GLOBAL = "__scientDocumentPageReadiness";
 /** File names inside one server capture; captured asset bytes live under `assets/`. */
 export const SCIENT_DOCUMENT_CAPTURE_ENTRY_FILE = "index.html";
 export const SCIENT_DOCUMENT_CAPTURE_INPUT_FILE = "document.json";
@@ -196,6 +198,24 @@ export const ScientDocumentPageRenderResult = Schema.Struct({
 });
 export type ScientDocumentPageRenderResult = typeof ScientDocumentPageRenderResult.Type;
 
+/**
+ * Why the desktop refused to print or return a document page. `page-rejected`
+ * means the readiness report did not match the capture or reported a fatal
+ * problem; its detail is the page's own explanation.
+ */
+export const ScientDocumentPageRenderRejection = Schema.TaggedStruct("rejected", {
+  reason: Schema.Literals(["page-rejected", "too-large", "failed"]),
+  detail: BoundedText(2_048),
+});
+export type ScientDocumentPageRenderRejection = typeof ScientDocumentPageRenderRejection.Type;
+
+/** What the document-page host operation returns to the server. */
+export const ScientDocumentPageRenderOutcome = Schema.Union([
+  Schema.TaggedStruct("rendered", { result: ScientDocumentPageRenderResult }),
+  ScientDocumentPageRenderRejection,
+]);
+export type ScientDocumentPageRenderOutcome = typeof ScientDocumentPageRenderOutcome.Type;
+
 const WorkspacePath = Schema.String.check(
   Schema.isTrimmed(),
   Schema.isNonEmpty(),
@@ -297,6 +317,9 @@ export function scientDocumentReadinessRejection(
   readiness: ScientDocumentPageReadiness,
   expected: ScientDocumentPageExpectation,
 ): string | null {
+  // The page's own explanation is the most useful one when it failed.
+  const fatal = readiness.diagnostics.find((diagnostic) => diagnostic.severity === "fatal");
+  if (fatal) return fatal.detail || `The document page reported ${fatal.code}.`;
   if (readiness.captureId !== expected.captureId) {
     return "The document page rendered a different capture than the one requested.";
   }
@@ -306,8 +329,6 @@ export function scientDocumentReadinessRejection(
   if (readiness.sourceDigest !== expected.sourceDigest) {
     return "The document page rendered a different source revision than the one captured.";
   }
-  const fatal = readiness.diagnostics.find((diagnostic) => diagnostic.severity === "fatal");
-  if (fatal) return fatal.detail || `The document page reported ${fatal.code}.`;
   if (readiness.status !== "ready") return "The document page did not finish rendering.";
   if (readiness.unresolvedAssets.length > 0) {
     return "The document page could not load a captured image.";
@@ -340,3 +361,9 @@ export const DesktopDocumentPageRenderArtifact = Schema.Struct({
   blockedRequestCount: NonNegativeInt,
 });
 export type DesktopDocumentPageRenderArtifact = typeof DesktopDocumentPageRenderArtifact.Type;
+
+export const DesktopDocumentPageRenderOutcome = Schema.Union([
+  Schema.TaggedStruct("rendered", { artifact: DesktopDocumentPageRenderArtifact }),
+  ScientDocumentPageRenderRejection,
+]);
+export type DesktopDocumentPageRenderOutcome = typeof DesktopDocumentPageRenderOutcome.Type;
