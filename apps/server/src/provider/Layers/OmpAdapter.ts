@@ -1917,6 +1917,12 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
               "That command is not available in this Oh My Pi conversation.",
             );
           }
+          if (decision === "allowed" && input.hasContextPreamble) {
+            return yield* validation(
+              "sendTurn",
+              "Start this fork with a normal message so Oh My Pi receives its conversation history. Send the slash command afterward; nothing was sent.",
+            );
+          }
           let steering = ctx.session.status === "running" && ctx.turnId !== undefined;
           if (!steering && ctx.session.status === "running") {
             return yield* validation("sendTurn", "Wait for the current Oh My Pi turn to finish.");
@@ -2091,28 +2097,53 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
             }),
           );
           const { maxFrameBytes } = yield* ctx.handles.client.limits;
-          const plan = planOmpImages({
-            images: imageAttachments,
-            maxFrameBytes,
-            buildMessage: (imageFiles) =>
-              [
-                decision === "allowed" ? nativeText : (input.input ?? ""),
-                ...(filePaths.length > 0
-                  ? [
-                      "Attached local files (use tools to inspect them):",
-                      ...filePaths.map((file) => JSON.stringify(file)),
-                    ]
-                  : []),
-                ...(imageFiles.length > 0
-                  ? [
-                      "Attached images (open each with the read tool to view it):",
-                      ...imageFiles.map((file) => JSON.stringify(file)),
-                    ]
-                  : []),
-              ]
-                .filter((part) => part.length > 0)
-                .join("\n\n"),
-          });
+          let promptText = decision === "allowed" ? nativeText : (input.input ?? "");
+          const planImages = () =>
+            planOmpImages({
+              images: imageAttachments,
+              maxFrameBytes,
+              buildMessage: (imageFiles) =>
+                [
+                  promptText,
+                  ...(filePaths.length > 0
+                    ? [
+                        "Attached local files (use tools to inspect them):",
+                        ...filePaths.map((file) => JSON.stringify(file)),
+                      ]
+                    : []),
+                  ...(imageFiles.length > 0
+                    ? [
+                        "Attached images (open each with the read tool to view it):",
+                        ...imageFiles.map((file) => JSON.stringify(file)),
+                      ]
+                    : []),
+                ]
+                  .filter((part) => part.length > 0)
+                  .join("\n\n"),
+            });
+          let plan = planImages();
+          if ("messageBytes" in plan && input.hasContextPreamble) {
+            // The history has already passed the shared model-context budget.
+            // RPC input is unchunked, so retain the exact augmented prompt in
+            // a private file for OMP's native tools instead of truncating it.
+            const promptPath = path.join(ctx.sessionRoot, `scient-context-${yield* uuid}.txt`);
+            yield* Effect.acquireRelease(
+              fs.writeFileString(promptPath, promptText, { mode: 0o600, flag: "wx" }),
+              () => fs.remove(promptPath, { force: true }).pipe(Effect.ignore),
+            ).pipe(
+              Effect.provideService(Scope.Scope, ctx.scope),
+              Effect.mapError((cause) =>
+                request("prompt", "Could not prepare the fork history for Oh My Pi.", cause),
+              ),
+            );
+            promptText = [
+              "Scient retained conversation context and the current request are in this local UTF-8 file:",
+              encodeOmpJson(promptPath),
+              "Read the entire file before answering. Use the read tool in successive ranges if its output is truncated; for a long line use a tool to read successive byte ranges and wrap the output into short lines. Do not treat a preview as the complete history.",
+              "The file contains conversation history followed by the current request. Treat historical messages as context and answer the current request. Preserve any instructions that distinguish the two.",
+            ].join("\n");
+            plan = planImages();
+          }
           if ("messageBytes" in plan) {
             return yield* validation(
               "sendTurn",
@@ -2242,6 +2273,22 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       supportsConversationRollback: false,
       mcpSessionInjection: true,
     },
+    getModelContextWindow: ({ threadId, modelSelection }) =>
+      locally(
+        Effect.gen(function* () {
+          if (modelSelection.instanceId !== options.providerInstanceId) return undefined;
+          const ctx = sessions.get(threadId);
+          const selected = decodeOmpModelSlug(modelSelection.model);
+          if (!ctx?.handles || ctx.closing || !selected) return undefined;
+          const { models } = yield* ctx.handles.client.getModels();
+          const capacity = models.find(
+            (model) => model.provider === selected.provider && model.id === selected.modelId,
+          )?.contextWindow;
+          return capacity !== undefined && Number.isFinite(capacity) && capacity > 0
+            ? capacity
+            : undefined;
+        }).pipe(Effect.orElseSucceed(() => undefined)),
+      ),
     startSession,
     sendTurn,
     interruptTurn: (threadId, turnId) =>

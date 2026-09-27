@@ -1963,6 +1963,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
             dispatchAttempted = true;
             const turn = yield* routed.adapter.sendTurn({
               ...adapterInput,
+              ...(parsed.contextPreamble !== undefined ? { hasContextPreamble: true } : {}),
               ...(parsed.input !== undefined ? { originalInput: parsed.input } : {}),
               ...(dispatchInput !== undefined ? { input: dispatchInput } : {}),
             });

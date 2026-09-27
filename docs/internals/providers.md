@@ -515,6 +515,15 @@ orchestration types. The adapter owns the process and the turn mapping.
   message as attachment paths for OMP's `read` tool, which returns image content to image-capable
   models (verified live on 18.3.1). Larger images are rejected with the limit in the message. Audio
   is advertised nowhere.
+- Fork budgeting queries the selected instance/model's native `contextWindow`. The shared
+  provider service still owns context budgeting and prepends the retained history exactly once.
+  When that augmented text cannot fit the RPC frame, OMP receives a reference to a private
+  `0600` UTF-8 file under its session directory, containing the exact text. The handoff tells
+  the agent to read the whole file, including successive ranges and wrapped long lines when
+  native tools truncate output. Image planning still uses the remaining physical frame budget.
+  The file is removed when the session scope closes. An allowed slash command cannot be the
+  first fork message: it is rejected before dispatch with guidance to send a normal message
+  first, so native command routing never silently discards retained history.
 - The shared native event log records OMP notifications, every command the client writes, and
   every `ready` and `response` frame it reads. Each process exposes its `OmpRedaction`, built from
   its final environment and every secret it received by bootstrap (the MCP bearer, custom-model
