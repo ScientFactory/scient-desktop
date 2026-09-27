@@ -775,7 +775,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         pending
           ? { ...base, type: "task.started", payload: { ...payload, description: payload.title } }
           : { ...base, type: "task.completed", payload: { ...payload, status } },
-        "control",
+        ctx.closing ? "control" : "data",
       );
     });
 
@@ -1257,7 +1257,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
 
   /**
    * The single close path for every exit: stop, stopAll, start failure,
-   * process exit, protocol failure, overflow, interrupt deadline, and adapter
+   * process exit, protocol failure, overflow, and adapter
    * close. Idempotent; a second caller joins the first close.
    */
   const closeSession = (ctx: SessionContext, reason: OmpCloseReason) =>
