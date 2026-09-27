@@ -101,6 +101,62 @@ describe("Markdown conversation import adapter", () => {
     expect(result.validated.attachments).toEqual([]);
   });
 
+  it("preserves submitted provider questions and answers in the imported text", () => {
+    const snapshot = {
+      ...capturedSnapshot,
+      messages: [
+        ...capturedSnapshot.messages,
+        {
+          ...capturedSnapshot.messages[0]!,
+          n: 3,
+          id: "async-answer:answered-request" as never,
+          text: "React & TypeScript",
+          createdAt: "2026-09-27T14:05:30.000Z",
+          updatedAt: "2026-09-27T14:05:30.000Z",
+          attachments: [],
+          references: [],
+        },
+      ],
+      questionAnswers: [
+        {
+          id: "answered-request",
+          turnId: capturedSnapshot.messages[1]!.turnId,
+          createdAt: "2026-09-27T14:05:30.000Z",
+          items: [
+            { question: "Which framework?", answer: "React & TypeScript", attachments: [] },
+            { question: "Why?", answer: "The existing app uses them.", attachments: [] },
+          ],
+        },
+      ],
+    };
+    const document = buildConversationDocument({
+      snapshot,
+      exportValue: EXPORT_VALUE,
+      timeZone: "UTC",
+      resolveAttachment: () => ({ _tag: "unavailable", reason: "missing" }),
+    });
+    const markdown = writeConversationMarkdown({
+      bundle: document.bundle,
+      exportValue: EXPORT_VALUE,
+      exported: "2026-09-28T09:12:00.000Z",
+      packaging: "text",
+    });
+    expect(markdown).toContain(`kind=answers -->`);
+    expect(markdown).toContain("React &amp; TypeScript");
+    expect(markdown).not.toContain("async-answer:answered-request");
+    const result = read(markdown.replace("React &amp; TypeScript", "Vue &amp; TypeScript"));
+    expect(result.kind).toBe("markdown");
+    expect(result.issues).toEqual([]);
+    expect(result.validated.snapshot.messages).toHaveLength(2);
+    expect(result.validated.snapshot.messages[1]?.text).toContain("**Q:** Which framework?");
+    expect(result.validated.snapshot.messages[1]?.text).toContain("**A:** Vue &amp; TypeScript");
+    expect(result.validated.snapshot.messages[1]?.text).toContain("**Q:** Why?");
+    expect(result.validated.snapshot.messages[1]?.text).toContain(
+      "**A:** The existing app uses them.",
+    );
+    expect(result.validated.snapshot.questionAnswers).toEqual([]);
+  });
+
   it("feeds the existing command with fresh local IDs and Markdown provenance", () => {
     const validated = read(fixtureMarkdown()).validated;
     const ids = decodeImportIds({

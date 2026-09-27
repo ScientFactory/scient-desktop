@@ -33,6 +33,7 @@ import {
 
 import { conversationContentDigest } from "../conversationImport/ConversationImporter.ts";
 import {
+  SCIC_COMPRESSION_RATIO_FLOOR_BYTES,
   SCIC_MANIFEST_ENTRY,
   SCIC_MARKDOWN_ENTRY,
   SCIC_MARKDOWN_MEDIA_TYPE,
@@ -71,7 +72,7 @@ export interface ScicPackageInput {
 export interface ScicPackageFile {
   readonly path: string;
   readonly bytes: Uint8Array;
-  /** Stored as is (the `mimetype` entry, already-compressed images) or deflated. */
+  /** Stored as is or deflated, subject to the reader's compression-ratio limit. */
   readonly compress: boolean;
 }
 
@@ -90,6 +91,11 @@ export type ScicPackageFailure =
   | { readonly _tag: "too-large"; readonly entry: string };
 
 const encoder = new TextEncoder();
+
+/** Above this size, deflation could make a valid entry fail the reader's ratio limit. */
+function canCompress(bytes: Uint8Array): boolean {
+  return bytes.byteLength <= SCIC_COMPRESSION_RATIO_FLOOR_BYTES;
+}
 
 export function sha256Digest(bytes: Uint8Array): Sha256Digest {
   return `sha256:${NodeCrypto.createHash("sha256").update(bytes).digest("hex")}`;
@@ -300,8 +306,7 @@ export function prepareScicPackage(
       bytes: content.bytes,
       sha256: content.sha256,
       mediaType: attachment.mimeType,
-      // Images are already compressed.
-      compress: attachment.kind !== "image",
+      compress: attachment.kind !== "image" && canCompress(content.bytes),
     });
     manifestResources.push({
       _tag: "included",
@@ -360,9 +365,21 @@ export function prepareScicPackage(
     value: {
       files: [
         { path: SCIC_MIMETYPE_ENTRY, bytes: encoder.encode(SCIC_MEDIA_TYPE), compress: false },
-        { path: SCIC_MANIFEST_ENTRY, bytes: manifestBytes, compress: true },
-        { path: SCIC_SNAPSHOT_ENTRY, bytes: snapshotBytes, compress: true },
-        { path: SCIC_MARKDOWN_ENTRY, bytes: markdownBytes, compress: true },
+        {
+          path: SCIC_MANIFEST_ENTRY,
+          bytes: manifestBytes,
+          compress: canCompress(manifestBytes),
+        },
+        {
+          path: SCIC_SNAPSHOT_ENTRY,
+          bytes: snapshotBytes,
+          compress: canCompress(snapshotBytes),
+        },
+        {
+          path: SCIC_MARKDOWN_ENTRY,
+          bytes: markdownBytes,
+          compress: canCompress(markdownBytes),
+        },
         ...orderedAttachments.map(({ path, bytes, compress }) => ({ path, bytes, compress })),
       ],
       manifest,

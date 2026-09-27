@@ -299,6 +299,53 @@ describe("the .scic writer", () => {
       "is not a type or size Scient can import",
     );
   });
+
+  it.effect("stores a highly compressible valid attachment so its own reader accepts it", () =>
+    Effect.gen(function* () {
+      const bytes = new Uint8Array(2 * 1024 * 1024).fill(65);
+      const snapshot = decodeSnapshot({
+        ...encodeSnapshot(capturedSnapshot),
+        messages: capturedSnapshot.messages.map((message) =>
+          message.n === 1
+            ? {
+                ...message,
+                attachments: [
+                  attachment("thread-1-text", "file", "repeated.txt", "text/plain", bytes.byteLength),
+                ],
+                references: [],
+              }
+            : message,
+        ),
+        warnings: [],
+      });
+      const pkg = makePackage(
+        snapshot,
+        new Map([
+          ["thread-1-text", { _tag: "bytes" as const, bytes, sha256: sha256Digest(bytes) }],
+        ]),
+      );
+      const resource = pkg.manifest.resources.find((entry) => entry.name === "repeated.txt");
+      if (resource?._tag !== "included") throw new Error("The text attachment was not included.");
+      yield* expectRejected(
+        yield* zipBytes(
+          pkg.files.map((file) =>
+            file.path === resource.path ? { ...file, compress: true } : file,
+          ),
+        ),
+        "compression-ratio",
+        resource.path,
+      );
+      expect(pkg.files.find((file) => file.path === resource.path)?.compress).toBe(false);
+      const { exit, attachmentsDirectory } = yield* read(yield* zipBytes(pkg.files));
+      if (Exit.isFailure(exit)) throw new Error(String(exit.cause));
+      expect(exit.value.attachments).toHaveLength(1);
+      expect(
+        new Uint8Array(
+          NodeFS.readFileSync(stagedAttachmentFile(attachmentsDirectory, resource.sha256)),
+        ),
+      ).toEqual(bytes);
+    }),
+  );
 });
 
 describe("the .scic reader", () => {

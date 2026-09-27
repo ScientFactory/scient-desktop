@@ -132,7 +132,7 @@ export function readMarkdownConversation(input: MarkdownReadInput): MarkdownRead
           text: [
             message.body,
             ...message.parts
-              .filter((part) => part.kind === "attachments")
+              .filter((part) => part.kind === "attachments" || part.kind === "answers")
               .map((part) => part.markdown),
           ]
             .filter(Boolean)
