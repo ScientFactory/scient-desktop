@@ -82,6 +82,7 @@ const preview = {
     },
     { _tag: "newer-minor-version", formatVersion: { major: 1, minor: 3 } },
   ],
+  markdownIssues: [],
   expiresAt: 1_790_000_000_000,
 };
 
@@ -133,6 +134,37 @@ describe("conversation import contracts", () => {
   it("round-trips a preview with omissions and warnings", () => {
     const decoded = decodePreview(preview);
     expect(encodePreview(decoded)).toEqual(preview);
+  });
+
+  it("decodes Markdown previews with explicit damaged ranges and a document choice", () => {
+    const markdown = decodePreview({
+      ...preview,
+      kind: "markdown",
+      fileName: "conversation.md",
+      package: {
+        ...packageSummary,
+        format: "scient-conversation-markdown",
+        sourceThreadId: null,
+      },
+      markdownIssues: [
+        {
+          kind: "unknown-role",
+          startLine: 12,
+          endLine: 17,
+          detail: "Unknown role.",
+        },
+      ],
+    });
+    expect(markdown.markdownIssues[0]?.endLine).toBe(17);
+    expect(
+      decodePreview({
+        ...preview,
+        kind: "document",
+        package: { ...packageSummary, format: "scient-markdown-document", sourceThreadId: null },
+      }).kind,
+    ).toBe("document");
+    const { markdownIssues: _issues, ...oldPreview } = preview;
+    expect(decodePreview(oldPreview).markdownIssues).toEqual([]);
   });
 
   it("refuses a preview that claims another format or a malformed package digest", () => {

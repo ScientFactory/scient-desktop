@@ -272,6 +272,27 @@ describe("Scient conversation Markdown v1", () => {
     ]);
   });
 
+  it("cuts a clean message at a damaged marker and rejects a reopened turn", () => {
+    const { markdown } = roundTrip([
+      message({ id: "m1", role: "user", text: "one" }),
+      message({ id: "m2", role: "assistant", text: "two", turnId: "t1" }),
+      message({ id: "m3", role: "assistant", text: "three", turnId: "t2" }),
+      message({ id: "m4", role: "assistant", text: "four", turnId: "t1" }),
+    ]);
+    const damaged = markdown.replace(
+      `<!-- scient:message export=${EXPORT_VALUE} n=2 role=assistant`,
+      "<!-- scient:message broken",
+    );
+    const parsed = parseConversationMarkdown(damaged);
+    if (parsed.kind !== "conversation") throw new Error("Expected a conversation.");
+    expect(parsed.messages[0]?.body).toBe("one");
+    expect(parsed.messages.some((entry) => entry.body.includes("two"))).toBe(false);
+    expect(parsed.issues.map((issue) => issue.kind)).toContain("malformed-marker");
+    const reopened = parseConversationMarkdown(markdown);
+    if (reopened.kind !== "conversation") throw new Error("Expected a conversation.");
+    expect(reopened.issues.map((issue) => issue.kind)).toContain("out-of-order-turn");
+  });
+
   it("never reads a document without Scient front matter as a transcript", () => {
     expect(
       parseConversationMarkdown(

@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import * as Effect from "effect/Effect";
 import * as HttpServerRespondable from "effect/unstable/http/HttpServerRespondable";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 
@@ -52,6 +53,8 @@ const ShortText = (max: number) => TrimmedNonEmptyString.check(Schema.isMaxLengt
 // ---------------------------------------------------------------------------
 
 export const SCIC_FILE_EXTENSION = ".scic";
+export const SCIENT_CONVERSATION_MARKDOWN_FORMAT = "scient-conversation-markdown";
+export const SCIENT_MARKDOWN_DOCUMENT_FORMAT = "scient-markdown-document";
 /** Media type, and the exact content of the uncompressed first `mimetype` entry. */
 export const SCIC_MEDIA_TYPE = "application/vnd.scient.conversation+zip";
 export const SCIC_FORMAT = "scient.conversation-file";
@@ -121,13 +124,17 @@ export type ConversationImportFormatVersion = typeof ConversationImportFormatVer
  * Hashes establish internal integrity, not who sent the file.
  */
 export const ConversationImportPackageSummary = Schema.Struct({
-  format: Schema.Literal(SCIC_FORMAT),
+  format: Schema.Literals([
+    SCIC_FORMAT,
+    SCIENT_CONVERSATION_MARKDOWN_FORMAT,
+    SCIENT_MARKDOWN_DOCUMENT_FORMAT,
+  ]),
   formatVersion: ConversationImportFormatVersion,
   exporter: Schema.Struct({ name: ShortText(64), version: ShortText(64) }),
   exportId: ConversationExternalExportId,
   exportedAt: IsoDateTime,
   /** The sender's thread ID, external. */
-  sourceThreadId: ConversationExternalId,
+  sourceThreadId: Schema.NullOr(ConversationExternalId),
   contentDigest: Sha256Digest,
   packageSha256: Sha256Digest,
   packageBytes: PositiveInt,
@@ -205,6 +212,8 @@ export const ScientConversationImportCreateUploadRequest = Schema.Struct({
   sizeBytes: PositiveInt.check(
     Schema.isLessThanOrEqualTo(SCIENT_CONVERSATION_IMPORT_MAX_PACKAGE_BYTES),
   ),
+  /** Re-stage the same Markdown as a document after previewing damaged markers. */
+  markdownMode: Schema.optional(Schema.Literals(["messages", "document"])),
 });
 export type ScientConversationImportCreateUploadRequest =
   typeof ScientConversationImportCreateUploadRequest.Type;
@@ -226,7 +235,7 @@ export type ScientConversationImportPreviewRequest =
 /** Everything the preview dialog shows. Carries no message content. */
 export const ScientConversationImportPreview = Schema.Struct({
   importId: ConversationImportId,
-  kind: Schema.Literal("scic"),
+  kind: Schema.Literals(["scic", "markdown", "document"]),
   fileName: ShortText(255),
   package: ConversationImportPackageSummary,
   /** Title, dates, and source provider/model (informational) from the sender's snapshot. */
@@ -242,6 +251,14 @@ export const ScientConversationImportPreview = Schema.Struct({
   }),
   omissions: Schema.Array(ConversationImportOmission),
   warnings: Schema.Array(ConversationImportWarning),
+  markdownIssues: Schema.Array(
+    Schema.Struct({
+      kind: Schema.String,
+      startLine: PositiveInt,
+      endLine: PositiveInt,
+      detail: Schema.String,
+    }),
+  ).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   /** When the staged import expires unless previewed or confirmed again. */
   expiresAt: Schema.Number,
 });
@@ -261,6 +278,8 @@ export const ScientConversationImportConfirmRequest = Schema.Struct({
   /** The package the user previewed; the import is refused if the staged package differs. */
   packageSha256: Sha256Digest,
   destination: ConversationImportDestination,
+  /** Required when damaged Markdown markers left only clean messages importable. */
+  acknowledgeMarkdownIssues: Schema.optional(Schema.Boolean),
 });
 export type ScientConversationImportConfirmRequest =
   typeof ScientConversationImportConfirmRequest.Type;

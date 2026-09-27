@@ -29,9 +29,16 @@
  * message body; parts are generated material the writer attached to it.
  */
 import type { Heading, Html, Root, Yaml } from "mdast";
+import * as DateTime from "effect/DateTime";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
-import { nodeRange, parseMarkdown } from "./markdownAst.ts";
+import {
+  applyEdits,
+  nodeRange,
+  parseMarkdown,
+  visitNodes,
+  type SourceEdit,
+} from "./markdownAst.ts";
 import { readMessageBody } from "./messageBody.ts";
 
 export const SCIENT_CONVERSATION_MARKDOWN_VERSION = 1;
@@ -159,6 +166,7 @@ export type MarkdownIssueKind =
   | "malformed-marker"
   | "duplicate-number"
   | "out-of-order-number"
+  | "out-of-order-turn"
   | "missing-number"
   | "unknown-role"
   | "invalid-time"
@@ -233,6 +241,22 @@ function trimBlankLines(text: string): string {
   return text.replace(/^(?:[ \t]*\n)+/u, "").replace(/\s+$/u, "");
 }
 
+/** Restore the marker collision escape as the reader sees it on screen, outside code. */
+function restoreVisibleMarkers(body: string): string {
+  if (!body.includes("&lt;!-- scient:")) return body;
+  const edits: SourceEdit[] = [];
+  visitNodes(parseMarkdown(body), (node) => {
+    if (node.type !== "text") return;
+    const range = nodeRange(node);
+    if (!range) return;
+    for (const match of body.slice(range.start, range.end).matchAll(/&lt;!-- scient:/gu)) {
+      const start = range.start + match.index;
+      edits.push({ start, end: start + "&lt;".length, text: "<" });
+    }
+  });
+  return applyEdits(body, edits);
+}
+
 /**
  * Recovers messages from Scient conversation Markdown. Markers are recognised
  * only as top-level HTML comment blocks carrying the front matter's export
@@ -261,11 +285,20 @@ export function parseConversationMarkdown(source: string): ParsedConversationMar
         line,
         detail: "The marker does not follow the format.",
       });
+      markers.push({
+        type: "invalid",
+        attributes: new Map(),
+        start: range.start,
+        end: range.end,
+        line,
+      });
       continue;
     }
     const attributes = new Map<string, string>();
+    let duplicateAttribute = false;
     for (const pair of match[2]!.trim().split(" ").filter(Boolean)) {
       const [key, attributeValue] = pair.split("=") as [string, string];
+      if (attributes.has(key)) duplicateAttribute = true;
       attributes.set(key, attributeValue);
     }
     if (attributes.get("export") !== frontMatter.exportValue) {
@@ -276,22 +309,42 @@ export function parseConversationMarkdown(source: string): ParsedConversationMar
       });
       continue;
     }
+    if (duplicateAttribute) {
+      issues.push({ kind: "malformed-marker", line, detail: "The marker repeats an attribute." });
+      markers.push({ type: "invalid", attributes, start: range.start, end: range.end, line });
+      continue;
+    }
     markers.push({ type: match[1]!, attributes, start: range.start, end: range.end, line });
   }
 
-  const boundaries = markers.filter((marker) => marker.type === "message");
+  // A damaged message marker still ends the preceding clean message. Its
+  // following text must never be silently attributed to that speaker.
+  const boundaries = markers.filter(
+    (marker) => marker.type === "message" || marker.type === "invalid",
+  );
   const messages: ParsedMarkdownMessage[] = [];
   const seen = new Set<number>();
+  const closedTurns = new Set<number>();
+  let currentTurn: number | null = null;
   for (const [index, marker] of boundaries.entries()) {
     const nextBoundary = boundaries[index + 1]?.start ?? normalized.length;
+    if (marker.type === "invalid") continue;
     const expected = index + 1;
     const nValue = marker.attributes.get("n") ?? "";
-    const n = /^[1-9]\d*$/u.test(nValue) ? Number(nValue) : null;
+    const n =
+      /^[1-9]\d*$/u.test(nValue) && Number.isSafeInteger(Number(nValue)) ? Number(nValue) : null;
     const role = marker.attributes.get("role");
     const time = marker.attributes.get("time") ?? "";
     const turnValue = marker.attributes.get("turn");
     let clean = true;
-    if (n === null || (turnValue !== undefined && !/^[1-9]\d*$/u.test(turnValue))) {
+    if (
+      n === null ||
+      (turnValue !== undefined &&
+        (!/^[1-9]\d*$/u.test(turnValue) || !Number.isSafeInteger(Number(turnValue)))) ||
+      [...marker.attributes.keys()].some(
+        (key) => !["export", "n", "role", "time", "turn"].includes(key),
+      )
+    ) {
       issues.push({
         kind: "malformed-marker",
         line: marker.line,
@@ -323,11 +376,15 @@ export function parseConversationMarkdown(source: string): ParsedConversationMar
       issues.push({
         kind: "unknown-role",
         line: marker.line,
-        detail: `Unknown role "${role ?? ""}".`,
+        detail: `Unknown role "${(role ?? "").slice(0, 80)}".`,
       });
       clean = false;
     }
-    if (!ISO_TIME_PATTERN.test(time) || !Number.isFinite(Date.parse(time))) {
+    if (
+      !ISO_TIME_PATTERN.test(time) ||
+      !Number.isFinite(Date.parse(time)) ||
+      DateTime.formatIso(DateTime.makeUnsafe(Date.parse(time))).slice(0, 19) !== time.slice(0, 19)
+    ) {
       issues.push({
         kind: "invalid-time",
         line: marker.line,
@@ -337,6 +394,19 @@ export function parseConversationMarkdown(source: string): ParsedConversationMar
     }
     if (n !== null) seen.add(n);
     if (!clean || n === null || (role !== "user" && role !== "assistant")) continue;
+    const turn = turnValue === undefined ? null : Number(turnValue);
+    if (turn !== null && turn !== currentTurn) {
+      if (currentTurn !== null) closedTurns.add(currentTurn);
+      if (closedTurns.has(turn)) {
+        issues.push({
+          kind: "out-of-order-turn",
+          line: marker.line,
+          detail: `Turn ${turn} reappears after another turn.`,
+        });
+        continue;
+      }
+      currentTurn = turn;
+    }
 
     const parts = markers.filter(
       (candidate) =>
@@ -374,7 +444,7 @@ export function parseConversationMarkdown(source: string): ParsedConversationMar
         issues.push({
           kind: "unknown-part",
           line: part.line,
-          detail: `Unknown part "${kind ?? ""}".`,
+          detail: `Unknown part "${(kind ?? "").slice(0, 80)}".`,
         });
         return [];
       }
@@ -390,10 +460,9 @@ export function parseConversationMarkdown(source: string): ParsedConversationMar
       n,
       role,
       time,
-      turn: turnValue === undefined ? null : Number(turnValue),
-      body: readMessageBody(
-        trimBlankLines(normalized.slice(bodyStart, bodyEnd)),
-        messageNamespace(n),
+      turn,
+      body: restoreVisibleMarkers(
+        readMessageBody(trimBlankLines(normalized.slice(bodyStart, bodyEnd)), messageNamespace(n)),
       ),
       parts: parsedParts,
       line: marker.line,
