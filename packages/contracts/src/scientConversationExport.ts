@@ -429,6 +429,152 @@ export const DocumentAsset = Schema.Struct({
 });
 export type DocumentAsset = typeof DocumentAsset.Type;
 
+// CSL-JSON (CSL 1.0.2), the reference data Pandoc's `--citeproc` consumes. The
+// field names and name/date shapes match `scientSourceToCslJson` in
+// `@scientfactory/scient-citations`; unknown fields are not carried.
+
+export const CSL_ITEM_TYPES = [
+  "article",
+  "article-journal",
+  "article-magazine",
+  "article-newspaper",
+  "bill",
+  "book",
+  "broadcast",
+  "chapter",
+  "classic",
+  "collection",
+  "dataset",
+  "document",
+  "entry",
+  "entry-dictionary",
+  "entry-encyclopedia",
+  "event",
+  "figure",
+  "graphic",
+  "hearing",
+  "interview",
+  "legal_case",
+  "legislation",
+  "manuscript",
+  "map",
+  "motion_picture",
+  "musical_score",
+  "pamphlet",
+  "paper-conference",
+  "patent",
+  "performance",
+  "periodical",
+  "personal_communication",
+  "post",
+  "post-weblog",
+  "regulation",
+  "report",
+  "review",
+  "review-book",
+  "software",
+  "song",
+  "speech",
+  "standard",
+  "thesis",
+  "treaty",
+  "webpage",
+] as const;
+export const CslItemType = Schema.Literals(CSL_ITEM_TYPES);
+export type CslItemType = typeof CslItemType.Type;
+
+const CslText = Schema.String.check(Schema.isMaxLength(8_192));
+
+/** A person or organization: structured parts, or a `literal` for corporate and single-field names. */
+export const CslName = Schema.Struct({
+  family: Schema.optionalKey(CslText),
+  given: Schema.optionalKey(CslText),
+  literal: Schema.optionalKey(CslText),
+  suffix: Schema.optionalKey(CslText),
+  "non-dropping-particle": Schema.optionalKey(CslText),
+  "dropping-particle": Schema.optionalKey(CslText),
+}).check(
+  Schema.makeFilter(
+    (name) => name.family !== undefined || name.given !== undefined || name.literal !== undefined,
+    { identifier: "CslName" },
+  ),
+);
+export type CslName = typeof CslName.Type;
+
+const CslDatePart = Schema.Array(Schema.Int).check(Schema.isMinLength(1), Schema.isMaxLength(3));
+
+/** One date or a range of two: `date-parts` of year, month, day; or free `literal` text. */
+export const CslDate = Schema.Struct({
+  "date-parts": Schema.optionalKey(
+    Schema.Array(CslDatePart).check(Schema.isMinLength(1), Schema.isMaxLength(2)),
+  ),
+  literal: Schema.optionalKey(CslText),
+  circa: Schema.optionalKey(Schema.Boolean),
+  season: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 4 }))),
+}).check(
+  Schema.makeFilter((date) => date["date-parts"] !== undefined || date.literal !== undefined, {
+    identifier: "CslDate",
+  }),
+);
+export type CslDate = typeof CslDate.Type;
+
+const CslNames = Schema.optionalKey(Schema.Array(CslName).check(Schema.isMaxLength(500)));
+const CslString = Schema.optionalKey(CslText);
+
+export const CslItem = Schema.Struct({
+  id: TrimmedNonEmptyString.check(Schema.isMaxLength(512)),
+  type: CslItemType,
+  title: CslString,
+  "title-short": CslString,
+  author: CslNames,
+  editor: CslNames,
+  translator: CslNames,
+  "container-author": CslNames,
+  "collection-editor": CslNames,
+  "editorial-director": CslNames,
+  director: CslNames,
+  composer: CslNames,
+  illustrator: CslNames,
+  interviewer: CslNames,
+  recipient: CslNames,
+  "reviewed-author": CslNames,
+  issued: Schema.optionalKey(CslDate),
+  accessed: Schema.optionalKey(CslDate),
+  "original-date": Schema.optionalKey(CslDate),
+  "event-date": Schema.optionalKey(CslDate),
+  abstract: CslString,
+  "container-title": CslString,
+  "container-title-short": CslString,
+  "collection-title": CslString,
+  "collection-number": CslString,
+  "event-title": CslString,
+  "event-place": CslString,
+  publisher: CslString,
+  "publisher-place": CslString,
+  volume: CslString,
+  "number-of-volumes": CslString,
+  issue: CslString,
+  number: CslString,
+  "chapter-number": CslString,
+  page: CslString,
+  "page-first": CslString,
+  "number-of-pages": CslString,
+  edition: CslString,
+  version: CslString,
+  medium: CslString,
+  genre: CslString,
+  status: CslString,
+  language: CslString,
+  note: CslString,
+  URL: CslString,
+  DOI: CslString,
+  ISBN: CslString,
+  ISSN: CslString,
+  PMID: CslString,
+  PMCID: CslString,
+});
+export type CslItem = typeof CslItem.Type;
+
 export const DocumentCitation = Schema.Union([
   /** "Cite selected text" from a project file: a quotation plus the file it came from. */
   Schema.TaggedStruct("file-excerpt", {
@@ -447,20 +593,14 @@ export const DocumentCitation = Schema.Union([
     text: Schema.String,
     comment: Schema.NullOr(Schema.String),
   }),
-  /** A bibliographic citation, kept as a key and reference so a converter can format it. */
+  /**
+   * A bibliographic citation, kept as a key and a CSL-JSON reference so a
+   * converter can format it; `reference` is null when only the key is known.
+   */
   Schema.TaggedStruct("bibliographic", {
     id: TrimmedNonEmptyString,
     key: TrimmedNonEmptyString.check(Schema.isMaxLength(512)),
-    reference: Schema.NullOr(
-      Schema.Struct({
-        title: Schema.NullOr(Schema.String),
-        authors: Schema.Array(Schema.String),
-        issued: Schema.NullOr(Schema.String),
-        containerTitle: Schema.NullOr(Schema.String),
-        doi: Schema.NullOr(Schema.String),
-        url: Schema.NullOr(Schema.String),
-      }),
-    ),
+    reference: Schema.NullOr(CslItem),
   }),
 ]);
 export type DocumentCitation = typeof DocumentCitation.Type;
