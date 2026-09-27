@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 import { describe, expect, it } from "@effect/vitest";
 
 import {
+  ConversationImportAttemptBinding,
   ConversationImportCompletion,
   conversationImportOmissions,
   conversationImportProvenance,
@@ -17,6 +18,7 @@ const IMPORT_ID = "cimp_0f8e7d6c-5b4a-4938-8271-605f4e3d2c1b";
 const decode = Schema.decodeUnknownSync(ValidatedConversationImport);
 const decodeCompletion = Schema.decodeUnknownSync(ConversationImportCompletion);
 const encodeCompletion = Schema.encodeSync(ConversationImportCompletion);
+const decodeBinding = Schema.decodeUnknownSync(ConversationImportAttemptBinding);
 
 const figure = {
   localId: "attachment-1",
@@ -158,8 +160,30 @@ const withSnapshot = (changes: SnapshotChanges) => {
   return { ...validated, snapshot: changed, omissions: omissionsFor(changed) };
 };
 
-const withMessages = (messages: ReadonlyArray<object>) =>
-  withSnapshot({ questionAnswers: [], messages });
+type TestAttachment = { readonly name: string; readonly available: boolean };
+type TestMessage = { readonly n: number; readonly attachments: ReadonlyArray<TestAttachment> };
+
+/**
+ * Messages without question answers, with the warnings their facts require:
+ * the omitted running turn and one warning per unavailable attachment.
+ */
+const withMessages = (messages: ReadonlyArray<TestMessage>) =>
+  withSnapshot({
+    questionAnswers: [],
+    messages,
+    warnings: [
+      { _tag: "running-turn-omitted", turnId: "turn-3" },
+      ...messages.flatMap((entry) =>
+        entry.attachments
+          .filter((attachment) => !attachment.available)
+          .map((attachment) => ({
+            _tag: "attachment-unavailable",
+            name: attachment.name,
+            messageN: entry.n,
+          })),
+      ),
+    ],
+  });
 
 describe("validated conversation import", () => {
   it("accepts a consistent package", () => {
@@ -376,6 +400,88 @@ describe("validated conversation import", () => {
     });
   });
 
+  describe("snapshot warnings", () => {
+    const [runningWarning, notesWarning] = snapshot.warnings;
+
+    it("must report the omitted running turn exactly once", () => {
+      expect(() => decode(withSnapshot({ warnings: [notesWarning] }))).toThrow(/running-turn/);
+      expect(() =>
+        decode(withSnapshot({ warnings: [runningWarning, runningWarning, notesWarning] })),
+      ).toThrow(/running-turn/);
+      expect(() =>
+        decode(
+          withSnapshot({
+            warnings: [{ _tag: "running-turn-omitted", turnId: "turn-4" }, notesWarning],
+          }),
+        ),
+      ).toThrow(/running-turn/);
+      expect(() => decode(withSnapshot({ omittedRunningTurn: null }))).toThrow(/running-turn/);
+    });
+
+    it("must report every unavailable attachment, and no other", () => {
+      expect(() => decode(withSnapshot({ warnings: [runningWarning] }))).toThrow(
+        /attachment warnings/,
+      );
+      expect(() =>
+        decode(
+          withSnapshot({
+            warnings: [runningWarning, { ...notesWarning, messageN: 2 }],
+          }),
+        ),
+      ).toThrow(/attachment warnings/);
+      expect(() =>
+        decode(
+          withSnapshot({
+            warnings: [
+              runningWarning,
+              notesWarning,
+              { _tag: "attachment-unavailable", name: "figure.png", messageN: 1 },
+            ],
+          }),
+        ),
+      ).toThrow(/attachment warnings/);
+    });
+
+    it("accepts an unsupported-attachment warning for an unavailable attachment", () => {
+      const input = decode(
+        withSnapshot({
+          warnings: [runningWarning, { ...notesWarning, _tag: "attachment-unsupported" }],
+        }),
+      );
+      expect(input.omissions).toContainEqual({
+        _tag: "snapshot-warning",
+        warning: { _tag: "attachment-unsupported", name: "notes.pdf", messageN: 1 },
+      });
+    });
+
+    it("reports an unavailable answer attachment without a message number", () => {
+      const answer = snapshot.questionAnswers[0]!;
+      const answerWith = (available: boolean) => [
+        {
+          ...answer,
+          items: [{ ...answer.items[0]!, attachments: [{ ...notes, available }] }],
+        },
+      ];
+      expect(
+        decode(
+          withSnapshot({
+            questionAnswers: answerWith(false),
+            warnings: [...snapshot.warnings, { ...notesWarning, messageN: null }],
+          }),
+        ).snapshot.questionAnswers,
+      ).toHaveLength(1);
+      expect(() => decode(withSnapshot({ questionAnswers: answerWith(false) }))).toThrow(
+        /attachment warnings/,
+      );
+    });
+
+    it("passes skipped-records warnings through as omissions", () => {
+      const skipped = { _tag: "records-skipped", kind: "activity", count: 2 };
+      const input = decode(withSnapshot({ warnings: [...snapshot.warnings, skipped] }));
+      expect(input.omissions).toContainEqual({ _tag: "snapshot-warning", warning: skipped });
+    });
+  });
+
   describe("typed message context", () => {
     it("refuses an unknown inline reference kind", () => {
       const [first, ...rest] = snapshot.messages;
@@ -526,43 +632,62 @@ describe("validated conversation import", () => {
   });
 });
 
-describe("committed import binding", () => {
+describe("attempt binding and completion", () => {
   const destination = {
     projectId: "project-1",
     modelSelection: { instanceId: "claude", model: "claude-opus-4" },
     runtimeMode: "approval-required",
     interactionMode: "default",
   };
-  const completion = decodeCompletion({
-    importId: IMPORT_ID,
+  const encodedCompletion = {
     packageSha256: PACKAGE_DIGEST,
-    destination,
-    result: { importId: IMPORT_ID, threadId: "thread-2", messageCount: 4, attachmentCount: 1 },
+    result: {
+      importId: IMPORT_ID,
+      threadId: "thread-2",
+      destination,
+      messageCount: 4,
+      attachmentCount: 1,
+    },
     completedAt: "2026-09-28T10:00:00.000Z",
+  };
+  const completion = decodeCompletion(encodedCompletion);
+  const destinationWith = (change: object) =>
+    decodeCompletion({
+      ...encodedCompletion,
+      result: { ...encodedCompletion.result, destination: { ...destination, ...change } },
+    }).result.destination;
+
+  it("binds an attempt to the confirm's package digest and destination", () => {
+    expect(decodeBinding({ packageSha256: PACKAGE_DIGEST, destination }).destination).toEqual(
+      completion.result.destination,
+    );
+    expect(() => decodeBinding({ destination })).toThrow();
+    expect(() => decodeBinding({ packageSha256: PACKAGE_DIGEST })).toThrow();
   });
 
-  it("keeps the confirm's package digest and destination with the result", () => {
-    expect(completion.packageSha256).toBe(PACKAGE_DIGEST);
-    expect(completion.result.threadId).toBe("thread-2");
+  it("persists a completion with its digest and the committed destination", () => {
+    expect(decodeCompletion(encodeCompletion(completion))).toEqual(completion);
+    expect(completion.result.destination.projectId).toBe("project-1");
+    const { destination: _omitted, ...resultWithoutDestination } = encodedCompletion.result;
+    expect(() =>
+      decodeCompletion({ ...encodedCompletion, result: resultWithoutDestination }),
+    ).toThrow();
+    expect(() => decodeCompletion({ ...encodedCompletion, packageSha256: "sha256:x" })).toThrow();
   });
 
   it("compares destinations by value", () => {
-    const same = decodeCompletion({
-      ...encodeCompletion(completion),
-      destination: { ...destination },
-    }).destination;
-    expect(sameConversationImportDestination(completion.destination, same)).toBe(true);
+    expect(
+      sameConversationImportDestination(completion.result.destination, destinationWith({})),
+    ).toBe(true);
     for (const change of [
       { projectId: "project-2" },
       { runtimeMode: "full-access" },
       { interactionMode: "plan" },
       { modelSelection: { instanceId: "claude", model: "claude-sonnet-4" } },
     ]) {
-      const other = decodeCompletion({
-        ...encodeCompletion(completion),
-        destination: { ...destination, ...change },
-      }).destination;
-      expect(sameConversationImportDestination(completion.destination, other)).toBe(false);
+      expect(
+        sameConversationImportDestination(completion.result.destination, destinationWith(change)),
+      ).toBe(false);
     }
   });
 });

@@ -18,6 +18,12 @@ import { SCIENT_CONVERSATION_EXPORT_MAX_ASSET_BYTES } from "./scientConversation
 const DIGEST = `sha256:${"a".repeat(64)}`;
 const PACKAGE_DIGEST = `sha256:${"b".repeat(64)}`;
 const IMPORT_ID = "cimp_0f8e7d6c-5b4a-4938-8271-605f4e3d2c1b";
+const DESTINATION = {
+  projectId: "project-1",
+  modelSelection: { instanceId: "claude", model: "claude-opus-4" },
+  runtimeMode: "approval-required",
+  interactionMode: "default",
+};
 
 const decodeImportId = Schema.decodeUnknownSync(ConversationImportId);
 const isResourceId = Schema.is(ConversationImportResourceId);
@@ -148,12 +154,7 @@ describe("conversation import contracts", () => {
     const confirm = decodeConfirm({
       importId: IMPORT_ID,
       packageSha256: PACKAGE_DIGEST,
-      destination: {
-        projectId: "project-1",
-        modelSelection: { instanceId: "claude", model: "claude-opus-4" },
-        runtimeMode: "approval-required",
-        interactionMode: "default",
-      },
+      destination: DESTINATION,
     });
     expect(confirm.destination.modelSelection.instanceId).toBe("claude");
     expect(() =>
@@ -168,9 +169,22 @@ describe("conversation import contracts", () => {
     expect(decodeCancelResult({ _tag: "cancelled" })._tag).toBe("cancelled");
     const lost = decodeCancelResult({
       _tag: "already-imported",
-      result: { importId: IMPORT_ID, threadId: "thread-2", messageCount: 12, attachmentCount: 2 },
+      result: {
+        importId: IMPORT_ID,
+        threadId: "thread-2",
+        destination: DESTINATION,
+        messageCount: 12,
+        attachmentCount: 2,
+      },
     });
     expect(lost._tag === "already-imported" && lost.result.threadId).toBe("thread-2");
+    expect(lost._tag === "already-imported" && lost.result.destination.projectId).toBe("project-1");
+    expect(() =>
+      decodeCancelResult({
+        _tag: "already-imported",
+        result: { importId: IMPORT_ID, threadId: "thread-2", messageCount: 12, attachmentCount: 2 },
+      }),
+    ).toThrow();
   });
 
   it("distinguishes a resumable failure, a rejected attempt, and a finished import", () => {
@@ -179,6 +193,7 @@ describe("conversation import contracts", () => {
       "import-rejected",
       "already-imported",
       "package-changed",
+      "destination-changed",
     ]) {
       expect(
         decodeError({

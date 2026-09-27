@@ -271,6 +271,8 @@ export type ScientConversationImportConfirmRequest =
 export const ScientConversationImportResult = Schema.Struct({
   importId: ConversationImportId,
   threadId: ThreadId,
+  /** Where the thread was created: the committed attempt's destination, whichever confirm reports it. */
+  destination: ConversationImportDestination,
   messageCount: NonNegativeInt,
   attachmentCount: NonNegativeInt,
 });
@@ -305,6 +307,12 @@ export const ScientConversationImportErrorReason = Schema.Literals([
   "package-rejected",
   /** Another confirm or cancel is using this import. */
   "import-busy",
+  /**
+   * An unfinished attempt for this import is bound to another destination. It
+   * is neither resumed nor re-targeted; confirm with its destination, or
+   * cancel.
+   */
+  "destination-changed",
   /** The confirm's `packageSha256` is not the staged (or already imported) package's. */
   "package-changed",
   /** This import already committed, to another destination; it is not imported twice. */
