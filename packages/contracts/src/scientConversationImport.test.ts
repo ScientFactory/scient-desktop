@@ -5,12 +5,14 @@ import {
   ConversationImportId,
   ConversationImportResourceId,
   SCIENT_CONVERSATION_IMPORT_MAX_PACKAGE_BYTES,
+  SCIENT_CONVERSATION_IMPORT_REQUIRED_SCOPE,
   ScientConversationImportCancelResult,
   ScientConversationImportConfirmRequest,
   ScientConversationImportCreateUploadRequest,
   ScientConversationImportError,
   ScientConversationImportPreview,
 } from "./scientConversationImport.ts";
+import { AuthOrchestrationOperateScope } from "./auth.ts";
 import { SCIENT_CONVERSATION_EXPORT_MAX_ASSET_BYTES } from "./scientConversationExport.ts";
 
 const DIGEST = `sha256:${"a".repeat(64)}`;
@@ -112,6 +114,16 @@ describe("conversation import contracts", () => {
     ).toThrow();
   });
 
+  it("requires the orchestration operate scope for every import endpoint", () => {
+    expect(SCIENT_CONVERSATION_IMPORT_REQUIRED_SCOPE).toBe(AuthOrchestrationOperateScope);
+  });
+
+  it("bounds the external export ID like the import provenance that records it", () => {
+    expect(() =>
+      decodePreview({ ...preview, package: { ...packageSummary, exportId: "e".repeat(129) } }),
+    ).toThrow();
+  });
+
   it("round-trips a preview with omissions and warnings", () => {
     const decoded = decodePreview(preview);
     expect(encodePreview(decoded)).toEqual(preview);
@@ -159,6 +171,24 @@ describe("conversation import contracts", () => {
       result: { importId: IMPORT_ID, threadId: "thread-2", messageCount: 12, attachmentCount: 2 },
     });
     expect(lost._tag === "already-imported" && lost.result.threadId).toBe("thread-2");
+  });
+
+  it("distinguishes a resumable failure, a rejected attempt, and a finished import", () => {
+    for (const reason of [
+      "import-failed",
+      "import-rejected",
+      "already-imported",
+      "package-changed",
+    ]) {
+      expect(
+        decodeError({
+          _tag: "ScientConversationImportError",
+          reason,
+          rejection: null,
+          message: "x",
+        }).reason,
+      ).toBe(reason);
+    }
   });
 
   it("carries a typed rejection on the import error", () => {

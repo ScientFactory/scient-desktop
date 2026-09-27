@@ -1134,6 +1134,7 @@ export class EnvironmentScientConversationExportHttpApi extends HttpApiGroup.mak
 
 // SCIENT-FORK:START — Scient conversation import group. The file itself is
 // uploaded through the signed URL `createUpload` returns, not through this group.
+// Every handler requires SCIENT_CONVERSATION_IMPORT_REQUIRED_SCOPE.
 export class EnvironmentScientConversationImportHttpApi extends HttpApiGroup.make(
   "scientConversationImport",
 )

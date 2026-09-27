@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 import * as HttpServerRespondable from "effect/unstable/http/HttpServerRespondable";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 
+import { AuthOrchestrationOperateScope } from "./auth.ts";
 import {
   IsoDateTime,
   NonNegativeInt,
@@ -35,6 +36,10 @@ import {
  * 4. `import` (confirm) creates a new independent thread from the staged
  *    package; `cancel` discards it. Unconfirmed imports expire on the server.
  *
+ * Every endpoint, including the signed-URL issuance in `createUpload`, requires
+ * `SCIENT_CONVERSATION_IMPORT_REQUIRED_SCOPE`: each stages files on, or writes a
+ * thread to, the server.
+ *
  * Nothing in a package is authority: every ID it carries is external and is
  * replaced on import, and the thread is labelled "Imported — unverified".
  * See docs/internals/scient-conversation-export-import-proposal.md.
@@ -62,6 +67,9 @@ export const SCIC_FORMAT_MINOR_VERSION = 0;
 export const SCIENT_CONVERSATION_IMPORT_MAX_PACKAGE_BYTES =
   SCIENT_CONVERSATION_EXPORT_MAX_ASSET_BYTES + 256 * 1024 * 1024;
 
+/** The scope every conversation import endpoint requires of the caller. */
+export const SCIENT_CONVERSATION_IMPORT_REQUIRED_SCOPE = AuthOrchestrationOperateScope;
+
 // ---------------------------------------------------------------------------
 // Identities
 // ---------------------------------------------------------------------------
@@ -78,6 +86,10 @@ export type ConversationImportId = typeof ConversationImportId.Type;
  */
 export const ConversationExternalId = ShortText(256);
 export type ConversationExternalId = typeof ConversationExternalId.Type;
+
+/** An export ID from another installation; bounded like the import provenance that records it. */
+export const ConversationExternalExportId = ShortText(128);
+export type ConversationExternalExportId = typeof ConversationExternalExportId.Type;
 
 /**
  * A package-scoped attachment identity. In a `.scic`, every
@@ -109,7 +121,7 @@ export const ConversationImportPackageSummary = Schema.Struct({
   format: Schema.Literal(SCIC_FORMAT),
   formatVersion: ConversationImportFormatVersion,
   exporter: Schema.Struct({ name: ShortText(64), version: ShortText(64) }),
-  exportId: ConversationExternalId,
+  exportId: ConversationExternalExportId,
   exportedAt: IsoDateTime,
   /** The sender's thread ID, external. */
   sourceThreadId: ConversationExternalId,
@@ -250,7 +262,12 @@ export const ScientConversationImportConfirmRequest = Schema.Struct({
 export type ScientConversationImportConfirmRequest =
   typeof ScientConversationImportConfirmRequest.Type;
 
-/** A committed import. Repeating the confirm for the same import returns the same result. */
+/**
+ * A committed import. The server keeps it with the confirm that produced it
+ * (package digest and destination) after the staged files are gone: repeating
+ * that confirm returns the same result; a different digest fails
+ * `package-changed` and a different destination `already-imported`.
+ */
 export const ScientConversationImportResult = Schema.Struct({
   importId: ConversationImportId,
   threadId: ThreadId,
@@ -288,12 +305,23 @@ export const ScientConversationImportErrorReason = Schema.Literals([
   "package-rejected",
   /** Another confirm or cancel is using this import. */
   "import-busy",
-  /** The confirm's `packageSha256` is not the staged package's. */
+  /** The confirm's `packageSha256` is not the staged (or already imported) package's. */
   "package-changed",
+  /** This import already committed, to another destination; it is not imported twice. */
+  "already-imported",
   "project-not-found",
   "provider-unavailable",
-  /** The import did not commit; the staged import is kept and the same confirm may be retried. */
+  /**
+   * The import did not commit and may not have finished; the staged import is
+   * kept, and confirming again resumes the same attempt.
+   */
   "import-failed",
+  /**
+   * The server refused the import command. That attempt is over and nothing
+   * was imported; the staged import is kept, and confirming again (for example
+   * with another project) starts a new attempt.
+   */
+  "import-rejected",
   /** This server cannot import conversations. */
   "importer-unavailable",
   /** A cancel interrupted this confirm before it committed. */
