@@ -142,6 +142,7 @@ import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES,
   PositiveInt,
+  SCIC_FORMAT,
   SCIC_FORMAT_MAJOR_VERSION,
   SCIC_FORMAT_MINOR_VERSION,
   ScientConversationImportResult,
@@ -464,7 +465,10 @@ export function checkValidatedConversationImport(input: {
   if (conversationContentDigest(input.snapshot) !== input.snapshot.contentDigest) {
     return "The snapshot's content does not match its content digest.";
   }
-  if (input.package.sourceThreadId !== input.snapshot.captured.threadId) {
+  if (
+    input.package.format === SCIC_FORMAT &&
+    input.package.sourceThreadId !== input.snapshot.captured.threadId
+  ) {
     return "The package's source thread is not the snapshot's thread.";
   }
   const structure = checkSnapshotStructure(input.snapshot);
@@ -527,7 +531,7 @@ export function conversationImportProvenance(
 ): ConversationImportProvenance {
   return {
     _tag: "import",
-    source: "scic",
+    source: summary.format === SCIC_FORMAT ? "scic" : "markdown",
     exportId: summary.exportId,
     sourceThreadId: summary.sourceThreadId,
     packageDigest: summary.packageSha256,

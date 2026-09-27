@@ -56,6 +56,11 @@ import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
 import { readScicPackage, stagedAttachmentFile } from "../conversationFile/ScicReader.ts";
 import {
+  MARKDOWN_IMPORT_MAX_BYTES,
+  readMarkdownConversation,
+  type MarkdownReadResult,
+} from "./MarkdownConversationReader.ts";
+import {
   CONVERSATION_IMPORT_COMPLETION_RETENTION_MS,
   CONVERSATION_IMPORT_MAX_LIVE,
   CONVERSATION_IMPORT_STAGING_DIRECTORY,
@@ -159,6 +164,8 @@ interface ImportRecord {
   readonly importId: ConversationImportId;
   readonly directory: string;
   readonly fileName: string;
+  readonly markdownMode: "messages" | "document";
+  markdownPreview: Pick<MarkdownReadResult, "kind" | "issues"> | null;
   reservedBytes: number;
   touchedAt: number;
   cancelRequested: boolean;
@@ -423,6 +430,8 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
         importId: name,
         directory,
         fileName: PACKAGE_FILE,
+        markdownMode: "messages",
+        markdownPreview: null,
         reservedBytes: 0,
         touchedAt: startedAt,
         cancelRequested: true,
@@ -452,6 +461,19 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
     const createUpload: ConversationImportStaging["Service"]["createUpload"] = Effect.fn(
       "ConversationImportStaging.createUpload",
     )(function* (request) {
+      if (/[/\\]/u.test(request.fileName)) {
+        return yield* importError("package-rejected", "Choose a file with a valid name.");
+      }
+      const isMarkdown = /\.md$/iu.test(request.fileName);
+      if (!isMarkdown && !/\.scic$/iu.test(request.fileName)) {
+        return yield* importError("package-rejected", "Choose a .scic or .md file.");
+      }
+      if (!isMarkdown && request.markdownMode !== undefined) {
+        return yield* importError("package-rejected", "Markdown mode only applies to .md files.");
+      }
+      if (isMarkdown && request.sizeBytes > MARKDOWN_IMPORT_MAX_BYTES) {
+        return yield* importError("package-too-large", "This Markdown file is too large.");
+      }
       if (request.sizeBytes > SCIENT_CONVERSATION_IMPORT_MAX_PACKAGE_BYTES) {
         return yield* importError("package-too-large", "This file is larger than Scient imports.");
       }
@@ -490,6 +512,8 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
             importId,
             directory,
             fileName: request.fileName,
+            markdownMode: request.markdownMode ?? "messages",
+            markdownPreview: null,
             reservedBytes: request.sizeBytes,
             touchedAt: at,
             cancelRequested: false,
@@ -618,13 +642,36 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
       result: Deferred.Deferred<ValidatedConversationImport, ConversationImportStagingServiceError>,
     ) =>
       Effect.gen(function* () {
+        const packagePath = NodePath.join(record.directory, PACKAGE_FILE);
         const read = yield* Effect.exit(
-          readScicPackage({
-            importId: record.importId,
-            packagePath: NodePath.join(record.directory, PACKAGE_FILE),
-            packageSha256: uploaded.packageSha256,
-            packageBytes: uploaded.packageBytes,
-            attachmentsDirectory: attachmentsDirectory(record),
+          Effect.gen(function* () {
+            if (/\.md$/iu.test(record.fileName))
+              return yield* Effect.try({
+                try: () =>
+                  readMarkdownConversation({
+                    importId: record.importId,
+                    path: packagePath,
+                    fileName: record.fileName,
+                    packageSha256: uploaded.packageSha256,
+                    packageBytes: uploaded.packageBytes,
+                    attachmentsDirectory: attachmentsDirectory(record),
+                    mode: record.markdownMode,
+                    receivedAt: DateTime.formatIso(DateTime.makeUnsafe(record.touchedAt)),
+                  }),
+                catch: (cause) =>
+                  new ConversationImportStagingFailure({
+                    detail: "The Markdown file could not be read.",
+                    cause,
+                  }),
+              });
+            const validated = yield* readScicPackage({
+              importId: record.importId,
+              packagePath,
+              packageSha256: uploaded.packageSha256,
+              packageBytes: uploaded.packageBytes,
+              attachmentsDirectory: attachmentsDirectory(record),
+            });
+            return { validated, kind: "scic" as const, issues: [] };
           }),
         );
         if (Exit.isSuccess(read)) {
@@ -639,7 +686,7 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
             if (record.cancelRequested || records.get(record.importId) !== record) return null;
             if (Exit.isSuccess(read)) {
               const staged = new Map(
-                read.value.attachments.map((attachment) => [
+                read.value.validated.attachments.map((attachment) => [
                   attachment.sha256,
                   attachment.byteLength,
                 ]),
@@ -656,8 +703,15 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
               }
               record.reservedBytes = stagedBytes;
               record.touchedAt = at;
-              record.phase = { _tag: "ready", validated: read.value };
-              yield* Deferred.succeed(result, read.value);
+              record.markdownPreview =
+                read.value.kind === "scic"
+                  ? null
+                  : {
+                      kind: read.value.kind,
+                      issues: read.value.issues,
+                    };
+              record.phase = { _tag: "ready", validated: read.value.validated };
+              yield* Deferred.succeed(result, read.value.validated);
               return null;
             }
             const cause = read.cause.reasons.find((reason) => reason._tag === "Fail")?.error;
@@ -689,7 +743,7 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
       const { snapshot } = validated;
       return {
         importId: record.importId,
-        kind: "scic",
+        kind: record.markdownPreview?.kind ?? "scic",
         fileName: record.fileName,
         package: validated.package,
         conversation: snapshot.thread,
@@ -703,6 +757,7 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
         },
         omissions: validated.omissions,
         warnings: validated.warnings,
+        markdownIssues: record.markdownPreview?.issues ?? [],
         expiresAt: record.touchedAt + ttlMs,
       };
     };
@@ -913,6 +968,19 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
             return yield* importError(
               "package-changed",
               "The staged file is not the one that was previewed.",
+            );
+          }
+          if (
+            record.markdownPreview?.kind === "markdown" &&
+            (phase.validated.snapshot.messages.length === 0 ||
+              (record.markdownPreview.issues.length > 0 &&
+                request.acknowledgeMarkdownIssues !== true))
+          ) {
+            return yield* importError(
+              "package-rejected",
+              phase.validated.snapshot.messages.length === 0
+                ? "No valid messages were found. Import this file as a document instead."
+                : "Review the damaged marker ranges and explicitly choose to import the clean messages.",
             );
           }
           const outcomeDeferred = yield* Deferred.make<ImportOutcome>();

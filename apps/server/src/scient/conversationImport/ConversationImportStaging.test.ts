@@ -142,6 +142,44 @@ const stagedImport = Effect.fnUntraced(function* (staging: Staging) {
   return { importId, preview, packageSha256: sha256Digest(bytes) };
 });
 
+const uploadMarkdown = Effect.fnUntraced(function* (
+  staging: Staging,
+  markdown: string,
+  markdownMode: "messages" | "document" = "messages",
+) {
+  const bytes = new TextEncoder().encode(markdown);
+  const created = yield* staging.createUpload({
+    fileName: "conversation.md",
+    sizeBytes: bytes.byteLength,
+    markdownMode,
+  });
+  const token = created.relativeUrl.split("/").at(-1)!;
+  const claims = yield* staging.validateUploadToken(token);
+  assert(claims !== null);
+  assert.deepStrictEqual(yield* staging.receiveUpload(claims, Stream.make(bytes)), { ok: true });
+  return { importId: created.importId, packageSha256: sha256Digest(bytes) };
+});
+
+const markdownWithDamagedMarker = [
+  "---",
+  "scient: conversation",
+  "scient-format: 1",
+  "scient-export: 7f3c9a2e41b8",
+  "title: Preview decision",
+  "exported: 2026-09-28T09:12:00Z",
+  "---",
+  "",
+  "<!-- scient:message export=7f3c9a2e41b8 n=1 role=user time=2026-09-27T14:05:00Z -->",
+  "## You · 27 Sep 2026, 14:05 UTC",
+  "",
+  "First question",
+  "",
+  "<!-- scient:message export=7f3c9a2e41b8 n=2 role=robot time=2026-09-27T14:06:00Z -->",
+  "## Assistant · 27 Sep 2026, 14:06 UTC",
+  "",
+  "Damaged answer",
+].join("\n");
+
 const confirmRequest = (
   importId: ConversationImportId,
   packageSha256: string,
@@ -162,6 +200,65 @@ const reasonOf = <A, R>(effect: Effect.Effect<A, { readonly _tag: string }, R>) 
   );
 
 describe("ConversationImportStaging", () => {
+  it.effect(
+    "previews damaged Markdown, requires an explicit clean-message choice, and shares import command",
+    () =>
+      Effect.gen(function* () {
+        let importedText: ReadonlyArray<string> = [];
+        resetImporter({
+          importConversation: (lease, request) => {
+            importedText = lease.input.snapshot.messages.map((message) => message.text);
+            return Effect.succeed(completionFor(lease, request));
+          },
+        });
+        const staging = yield* makeStaging();
+        const { importId, packageSha256 } = yield* uploadMarkdown(
+          staging,
+          markdownWithDamagedMarker,
+        );
+        const preview = yield* staging.preview(importId);
+        assert.strictEqual(preview.kind, "markdown");
+        assert.strictEqual(preview.counts.messages, 1);
+        assert.deepStrictEqual(
+          preview.markdownIssues.map((issue) => issue.kind),
+          ["unknown-role"],
+        );
+        assert.strictEqual(fake.imports, 0);
+        assert.strictEqual(
+          yield* reasonOf(staging.confirm(confirmRequest(importId, packageSha256), principal)),
+          "package-rejected",
+        );
+        assert.strictEqual(fake.imports, 0);
+        const result = yield* staging.confirm(
+          confirmRequest(importId, packageSha256, { acknowledgeMarkdownIssues: true }),
+          principal,
+        );
+        assert.strictEqual(result.messageCount, 1);
+        assert.deepStrictEqual(importedText, ["First question"]);
+      }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+  );
+
+  it.effect("re-stages damaged Markdown as one document attachment", () =>
+    Effect.gen(function* () {
+      resetImporter();
+      const staging = yield* makeStaging();
+      const { importId, packageSha256 } = yield* uploadMarkdown(
+        staging,
+        markdownWithDamagedMarker,
+        "document",
+      );
+      const preview = yield* staging.preview(importId);
+      assert.strictEqual(preview.kind, "document");
+      assert.strictEqual(preview.counts.messages, 1);
+      assert.strictEqual(preview.counts.attachments, 1);
+      assert.deepStrictEqual(
+        preview.markdownIssues.map((issue) => issue.kind),
+        ["unknown-role"],
+      );
+      const result = yield* staging.confirm(confirmRequest(importId, packageSha256), principal);
+      assert.strictEqual(result.attachmentCount, 1);
+    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+  );
   it.effect("stages an upload and previews it without touching threads or attachments", () =>
     Effect.gen(function* () {
       resetImporter();

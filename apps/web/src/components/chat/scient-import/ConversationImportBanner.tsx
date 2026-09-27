@@ -39,13 +39,20 @@ export function conversationImportNotice(conversationImport: OrchestrationConver
   readonly description: string;
 } {
   const markdown = conversationImport.source === "markdown";
+  const document = conversationImport.sourceFormat === "scient-markdown-document";
   const omitted = conversationImport.omissions.map(omissionLabel);
   return {
-    title: markdown ? "Imported from Markdown — unverified" : "Imported — unverified",
+    title: document
+      ? "Started with a Markdown document"
+      : markdown
+        ? "Imported from Markdown — unverified"
+        : "Imported — unverified",
     description: [
-      markdown
-        ? "Text copied from a Scient Markdown export, which anyone can edit."
-        : "Copied from a Scient conversation file, which anyone can edit.",
+      document
+        ? "The original document is attached to this conversation."
+        : markdown
+          ? "Text copied from a Scient Markdown export, which anyone can edit."
+          : "Copied from a Scient conversation file, which anyone can edit.",
       omitted.length > 0 ? `Not included: ${listLabels(omitted)}.` : null,
       "Your next message starts a fresh session; the agent receives this history as context.",
     ]
