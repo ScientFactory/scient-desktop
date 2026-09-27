@@ -28,7 +28,6 @@ import {
   DialogTitle,
 } from "../../ui/dialog";
 import { Input } from "../../ui/input";
-import { Label } from "../../ui/label";
 import { Switch } from "../../ui/switch";
 
 type ForkWorkspaceMode = "new-worktree" | "local";
@@ -36,33 +35,27 @@ export type ScientForkSource =
   | "latest-response"
   | "this-response"
   | "this-message"
-  | "switch-provider";
+  | "switch-provider"
+  // SCIENT-FORK: the running turn, with the work it has done so far.
+  | "running-turn";
 
+/** One title for every fork; a one-line subtitle says where it starts. */
 export function scientForkDialogCopy(source: ScientForkSource): {
   readonly title: string;
   readonly description: string;
 } {
+  const title = "Fork this chat";
   switch (source) {
     case "latest-response":
-      return {
-        title: "Fork latest response",
-        description: "Create a new conversation from the latest response.",
-      };
+      return { title, description: "Fork from the latest response" };
     case "this-response":
-      return {
-        title: "Fork this response",
-        description: "Create a new conversation from this response.",
-      };
+      return { title, description: "Fork from this response" };
     case "this-message":
-      return {
-        title: "Fork this message",
-        description: "Create a new conversation from this message.",
-      };
+      return { title, description: "Fork and edit this message" };
     case "switch-provider":
-      return {
-        title: "Fork to switch provider",
-        description: "Continue this conversation with another provider.",
-      };
+      return { title, description: "Fork and continue with another provider" };
+    case "running-turn":
+      return { title, description: "Fork with work in progress" };
   }
 }
 
@@ -278,24 +271,26 @@ export function ScientForkWorkspaceModeDialog({
       }}
     >
       <DialogPopup className="max-w-[23rem] -translate-y-4">
-        <DialogHeader>
-          <div className="pe-12">
-            <DialogTitle>
+        {/* Pulled toward the name field so the subtitle groups with the title. */}
+        <DialogHeader size="compact" className="-mb-1">
+          <div className="grid gap-1 pe-10">
+            <DialogTitle size="large">
               <span className="inline-flex items-center gap-2">
                 <SplitIcon className="size-4 rotate-90" />
                 {copy.title}
               </span>
             </DialogTitle>
-            <DialogDescription>{copy.description}</DialogDescription>
+            {/* Aligned with the title text, not the icon (size-4 + gap-2). */}
+            <DialogDescription className="ms-6">{copy.description}</DialogDescription>
           </div>
         </DialogHeader>
-        <DialogPanel>
-          <form id={formId} className="grid gap-3" onSubmit={handleSubmit}>
+        <DialogPanel padding="none">
+          <form id={formId} className="grid gap-3 px-4 pb-2" onSubmit={handleSubmit}>
             <div className="grid gap-1.5">
-              <Label htmlFor={`${formId}-title`}>Thread title</Label>
               <Input
                 id={`${formId}-title`}
                 ref={titleInputRef}
+                aria-label="Thread title"
                 size="default"
                 value={displayedTitle}
                 disabled={disabled || locked || !titleOverrideSupported}
@@ -317,11 +312,12 @@ export function ScientForkWorkspaceModeDialog({
             <label className="flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm dark:border-transparent dark:bg-white/[0.035]">
               <span className="min-w-0">
                 <span className="block">New worktree</span>
-                <span className="mt-0.5 block text-muted-foreground text-xs">
-                  {worktreeAvailability.available
-                    ? "Create an isolated copy of the project"
-                    : unavailableCopy(source, worktreeAvailability.reason)}
-                </span>
+                {/* Only a disabled switch needs a reason. */}
+                {worktreeAvailability.available ? null : (
+                  <span className="mt-0.5 block text-muted-foreground text-xs">
+                    {unavailableCopy(source, worktreeAvailability.reason)}
+                  </span>
+                )}
               </span>
               <Switch
                 aria-label="New worktree"
@@ -337,7 +333,7 @@ export function ScientForkWorkspaceModeDialog({
             ) : null}
           </form>
         </DialogPanel>
-        <DialogFooter variant="bare">
+        <DialogFooter variant="bare" padding="compact">
           <Button
             type="button"
             variant="ghost"

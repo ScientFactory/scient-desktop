@@ -5608,6 +5608,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       sessionModelSwitch: "in-session",
       mcpSessionInjection: true,
     },
+    getModelContextWindow: ({ modelSelection }) =>
+      modelCatalogEffect.pipe(
+        Effect.map((catalog) => resolveClaudeCatalogContextWindowTokens(catalog, modelSelection)),
+      ),
     compaction: { type: "slash-command", command: "/compact" },
     startSession,
     sendTurn,

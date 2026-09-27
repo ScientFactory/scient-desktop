@@ -174,3 +174,25 @@ describe("durable fork attempts", () => {
     expect(dispatch).not.toHaveBeenCalled();
   });
 });
+
+it("persists the server attachment receipt across reload without redispatch", async () => {
+  const { attempt, store, key, storage } = fixture();
+  await deliverForkAttempt({
+    attempt,
+    store,
+    key,
+    discardDraft: vi.fn(),
+    dispatch: async () => ({ original: "fork-copy" }),
+  });
+  const reloaded = createForkAttemptStore(storage);
+  const dispatch = vi.fn(async () => undefined);
+  const ready = await deliverForkAttempt({
+    attempt: reloaded.get(key)!,
+    store: reloaded,
+    key,
+    discardDraft: vi.fn(),
+    dispatch,
+  });
+  expect(ready.attachmentIdMap).toEqual({ original: "fork-copy" });
+  expect(dispatch).not.toHaveBeenCalled();
+});

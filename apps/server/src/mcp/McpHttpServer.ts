@@ -44,6 +44,9 @@ import { ScientDocumentsToolkitHandlersLive } from "./toolkits/documents/handler
 import { ScientDocumentsToolkit } from "./toolkits/documents/tools.ts";
 import { ScientComputeToolkitHandlersLive } from "./toolkits/compute/handlers.ts";
 import { ScientComputeToolkit } from "./toolkits/compute/tools.ts";
+// SCIENT-THREAD-READ: Scient-owned t3_thread_read bridge; delete with V2's orchestrator toolkit.
+import { ScientThreadsToolkitHandlersLive } from "./toolkits/threads/handlers.ts";
+import { ScientThreadsToolkit } from "./toolkits/threads/tools.ts";
 import { PullRequestsToolkitHandlersLive } from "./toolkits/pullRequests/handlers.ts";
 import { PullRequestsToolkit } from "./toolkits/pullRequests/tools.ts";
 import {
@@ -674,6 +677,11 @@ export const ScientComputeToolkitRegistrationLive = registerScientToolkit(
   ScientComputeToolkit,
 ).pipe(Layer.provide(ScientComputeToolkitHandlersLive));
 
+// SCIENT-THREAD-READ: registered through the Scient operation catalog and grants.
+export const ScientThreadsToolkitRegistrationLive = registerScientToolkit(
+  ScientThreadsToolkit,
+).pipe(Layer.provide(ScientThreadsToolkitHandlersLive));
+
 export const PullRequestsToolkitRegistrationLive = McpServer.toolkit(PullRequestsToolkit).pipe(
   Layer.provide(PullRequestsToolkitHandlersLive),
 );
@@ -707,6 +715,7 @@ export const layer = Layer.mergeAll(
   ScientSkillsToolkitRegistrationLive,
   ScientDocumentsToolkitRegistrationLive,
   ScientComputeToolkitRegistrationLive,
+  ScientThreadsToolkitRegistrationLive,
   PullRequestsToolkitRegistrationLive,
   DeviceToolkitRegistrationLive,
 ).pipe(Layer.provideMerge(McpTransportLive));

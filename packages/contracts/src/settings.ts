@@ -49,6 +49,8 @@ import {
 import { VoiceLanguagePreference } from "./voice.ts";
 import { CustomModelsSettings } from "./customModels.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
+// SCIENT-FORK: conversation-fork preferences.
+import { ScientForkSettings, ScientForkSettingsPatch } from "./scientForkSettings.ts";
 
 // ── Client Settings (local-only) ───────────────────────────────
 
@@ -1449,6 +1451,8 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   scientificComputing: ScientificComputingSettings,
+  // SCIENT-FORK: portable context handoff size for forks.
+  scientFork: ScientForkSettings,
   /**
    * The merge method pull requests start with; `null` reuses the method
    * last chosen on this device. Server-side so a project can override it
@@ -1754,6 +1758,8 @@ export const ServerSettingsPatch = Schema.Struct({
     }),
   ),
   sourceControlWriterModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  // SCIENT-FORK: portable context handoff size for forks.
+  scientFork: Schema.optionalKey(ScientForkSettingsPatch),
   scientificComputing: Schema.optionalKey(
     Schema.Struct({
       schemaVersion: Schema.optionalKey(Schema.Literal(1)),

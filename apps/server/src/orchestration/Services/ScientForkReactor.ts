@@ -19,6 +19,7 @@ import {
   type ForkDisposition,
   type ForkOptions,
   type GetForkOptionsInput,
+  type ThreadForkCommand,
 } from "@t3tools/contracts";
 
 export class ScientForkCompletionError extends Schema.TaggedError<ScientForkCompletionError>()(
@@ -53,7 +54,17 @@ export interface ScientForkReactorShape {
   readonly drain: Effect.Effect<void>;
 
   /** Typed completion receipt used by the RPC acknowledgement gate and tests. */
-  readonly awaitCompletion: (threadId: ThreadId) => Effect.Effect<void, ScientForkCompletionError>;
+  readonly awaitCompletion: (
+    threadId: ThreadId,
+  ) => Effect.Effect<Readonly<Record<string, string>> | void, ScientForkCompletionError>;
+  /**
+   * Runs before a fork command is dispatched. A fork of a running turn first
+   * persists the turn's buffered text so the fork copies its latest state.
+   */
+  readonly prepareFork?: (
+    command: ThreadForkCommand,
+  ) => Effect.Effect<void, ScientForkCompletionError>;
+  readonly discardPreparation?: (threadId: ThreadId) => Effect.Effect<void>;
   readonly getDisposition: (
     threadId: ThreadId,
   ) => Effect.Effect<ForkDisposition, ScientForkCompletionError>;

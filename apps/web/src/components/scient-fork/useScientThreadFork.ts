@@ -1,6 +1,10 @@
 import { sha256 } from "@noble/hashes/sha2";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import {
+  scopeProjectRef,
+  scopeThreadRef,
+  scopedThreadKey,
+} from "@t3tools/client-runtime/environment";
 import {
   CommandId,
   type EnvironmentId,
@@ -8,6 +12,7 @@ import {
   type ScopedThreadRef,
   type ThreadId,
   type ForkOptions,
+  type TurnId,
 } from "@t3tools/contracts";
 import {
   useCallback,
@@ -28,8 +33,13 @@ import { newThreadId } from "~/lib/utils";
 import { isImageAttachment, type ChatAttachment } from "~/types";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { type ForkAcceptanceOutcome, readFileAsDataUrl } from "../ChatView.logic";
-import { stageForkViewContinuity } from "./forkViewContinuity";
+import { readProject, readThreadShell } from "../../state/entities";
+import {
+  type ForkAcceptanceOutcome,
+  readFileAsDataUrl,
+  resolveThreadWorkspaceRoot,
+} from "../ChatView.logic";
+import { restoreForkPdfContinuity, stageForkViewContinuity } from "./forkViewContinuity";
 import {
   createForkAttemptStore,
   deliverForkAttempt,
@@ -65,11 +75,15 @@ export type ForkSource =
       readonly messageId: MessageId;
       readonly prompt: string;
       readonly attachments: ReadonlyArray<ChatAttachment>;
-    };
+    }
+  // The running turn, including the work it has done so far.
+  | { readonly kind: "running-turn"; readonly turnId: TurnId };
 const sourceKey = (source: ForkSource) =>
-  source.kind === "assistant-response" && source.latest
-    ? "latest"
-    : `${source.kind}:${source.messageId}`;
+  source.kind === "running-turn"
+    ? `running-turn:${source.turnId}`
+    : source.kind === "assistant-response" && source.latest
+      ? "latest"
+      : `${source.kind}:${source.messageId}`;
 function composerFingerprint(ref: ScopedThreadRef): string {
   const draft = useComposerDraftStore.getState().draftsByThreadKey[scopedThreadKey(ref)];
   const snapshot = JSON.stringify([
@@ -272,9 +286,15 @@ export function useScientThreadFork({
       if (!originId || !environmentId) throw new Error("The original conversation is unavailable.");
       if (!supportsRecovery)
         return {
-          available: source.kind === "user-message" || source.messageId !== null,
+          // Older servers cannot fork a running turn.
+          available:
+            source.kind === "user-message" ||
+            (source.kind === "assistant-response" && source.messageId !== null),
           localAvailable: true,
-          reason: null,
+          reason:
+            source.kind === "running-turn"
+              ? "Update the server to fork a conversation while the agent is working."
+              : null,
           newWorktree: true,
           sourceAssistantMessageId: source.kind === "assistant-response" ? source.messageId : null,
           sourceUserMessageId: source.kind === "user-message" ? source.messageId : null,
@@ -283,11 +303,13 @@ export function useScientThreadFork({
         environmentId,
         input: {
           originThreadId: originId,
-          ...(source.kind === "user-message"
-            ? { sourceUserMessageId: source.messageId }
-            : source.latest || source.messageId === null
-              ? {}
-              : { sourceAssistantMessageId: source.messageId }),
+          ...(source.kind === "running-turn"
+            ? { sourceRunningTurnId: source.turnId }
+            : source.kind === "user-message"
+              ? { sourceUserMessageId: source.messageId }
+              : source.latest || source.messageId === null
+                ? {}
+                : { sourceAssistantMessageId: source.messageId }),
         },
       });
       if (result._tag === "Failure") throw squashAtomCommandFailure(result);
@@ -313,6 +335,7 @@ export function useScientThreadFork({
               newWorktree: pending.command.workspaceMode === "new-worktree",
               sourceAssistantMessageId: pending.command.sourceAssistantMessageId ?? null,
               sourceUserMessageId: pending.command.sourceUserMessageId ?? null,
+              sourceRunningTurnId: pending.command.sourceRunningTurnId ?? null,
             }
           : await resolveOptions(source);
         if (
@@ -373,6 +396,15 @@ export function useScientThreadFork({
               const eligibility = await resolveOptions(source);
               if (!eligibility.available)
                 throw new Error(eligibility.reason ?? "This fork point is unavailable.");
+              // A server that does not know running-turn forks answers for the
+              // latest response instead; never fork that under this label.
+              if (
+                source.kind === "running-turn" &&
+                eligibility.sourceRunningTurnId !== source.turnId
+              )
+                throw new Error(
+                  "This server cannot fork while the agent is working. Update Scient, or fork once the turn finishes.",
+                );
               if (options.workspaceMode === "local" && !eligibility.localAvailable)
                 throw new Error(eligibility.reason ?? "The original workspace is unavailable.");
               if (options.workspaceMode === "new-worktree" && !eligibility.newWorktree)
@@ -405,9 +437,11 @@ export function useScientThreadFork({
                   ...(options.titleOverride === undefined
                     ? {}
                     : { titleOverride: options.titleOverride }),
-                  ...(eligibility.sourceAssistantMessageId
-                    ? { sourceAssistantMessageId: eligibility.sourceAssistantMessageId }
-                    : { sourceUserMessageId: eligibility.sourceUserMessageId! }),
+                  ...(eligibility.sourceRunningTurnId
+                    ? { sourceRunningTurnId: eligibility.sourceRunningTurnId }
+                    : eligibility.sourceAssistantMessageId
+                      ? { sourceAssistantMessageId: eligibility.sourceAssistantMessageId }
+                      : { sourceUserMessageId: eligibility.sourceUserMessageId! }),
                 },
               };
               try {
@@ -427,6 +461,7 @@ export function useScientThreadFork({
               dispatch: async (current) => {
                 const result = await forkThread({ environmentId, input: current.command });
                 if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+                return result.value.forkAttachmentIdMap;
               },
             });
             // Completing in the background must not steal navigation or a composer
@@ -450,6 +485,23 @@ export function useScientThreadFork({
                   originRef: scopeThreadRef(environmentId, originId),
                   destinationThreadId: attempt.command.newThreadId,
                   originWorkspaceRoot,
+                  attachmentIdMap: attempt.attachmentIdMap,
+                });
+                // The fork is ready, so its folder is usually known: apply the
+                // PDF positions now, before any reader in the fork can open.
+                // Otherwise the fork applies them when it first knows its folder.
+                const destinationShell = readThreadShell(destinationRef);
+                const destinationProject =
+                  destinationShell?.projectId == null
+                    ? null
+                    : readProject(scopeProjectRef(environmentId, destinationShell.projectId));
+                restoreForkPdfContinuity({
+                  environmentId,
+                  threadId: attempt.command.newThreadId,
+                  destinationWorkspaceRoot: resolveThreadWorkspaceRoot({
+                    worktreePath: destinationShell?.worktreePath,
+                    projectCwd: destinationProject?.workspaceRoot,
+                  }),
                 });
               } catch {
                 /* Panel continuity is optional; it cannot undo a ready fork. */

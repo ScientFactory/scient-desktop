@@ -7,6 +7,7 @@ import { ScientDocumentsToolkit } from "./toolkits/documents/tools.ts";
 import { PreviewToolkit } from "./toolkits/preview/tools.ts";
 import { ScientSkillsToolkit } from "./toolkits/skills/tools.ts";
 import { ScientSourcesToolkit } from "./toolkits/sources/tools.ts";
+import { ScientThreadsToolkit } from "./toolkits/threads/tools.ts";
 
 export function makeScientOperationCatalog(tools: ReadonlyArray<Tool.Any>) {
   const byName = new Map<string, string>();
@@ -33,6 +34,7 @@ export const scientTools = [
   ...Object.values(ScientSkillsToolkit.tools),
   ...Object.values(ScientDocumentsToolkit.tools),
   ...Object.values(ScientComputeToolkit.tools),
+  ...Object.values(ScientThreadsToolkit.tools),
 ];
 export type ScientToolName = (typeof scientTools)[number]["name"];
 export const scientOperationCatalog = makeScientOperationCatalog(scientTools);
