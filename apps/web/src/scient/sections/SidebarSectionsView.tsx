@@ -23,7 +23,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { type ScopedThreadRef, type ThreadSection, ThreadSectionId } from "@t3tools/contracts";
-import { ChevronDownIcon, EllipsisIcon, PlusIcon, SquarePenIcon } from "lucide-react";
+import { ChevronRightIcon, EllipsisIcon, PlusIcon, SquarePenIcon } from "lucide-react";
 import {
   Fragment,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -625,8 +625,7 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
         {liftedGroup ? (
           <div className="flex h-8 items-center gap-2 rounded-md bg-sidebar-row-active px-2 text-xs font-medium text-sidebar-foreground/80 shadow-sm">
             <FadeTruncate text={liftedGroup.section?.name ?? "General"} className="shrink" />
-            <span aria-hidden className="h-px min-w-2 flex-1 bg-sidebar-foreground/25" />
-            <ChevronDownIcon aria-hidden className="size-3 shrink-0" />
+            <span aria-hidden className="h-px min-w-6 flex-1 bg-sidebar-foreground/25" />
           </div>
         ) : null}
       </DragOverlay>
@@ -727,39 +726,55 @@ function SectionHeaderRow(props: {
                   }
                 : undefined
             }
-            className="flex h-full min-w-0 flex-1 cursor-pointer items-center gap-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+            // Wraps so the rule can drop to a clipped second line: it shows
+            // only while at least 24px are left beside the name, never as a stub.
+            className="flex h-full min-w-0 flex-1 cursor-pointer flex-wrap content-start gap-x-2 overflow-hidden text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
             {...attributes}
             {...listeners}
           >
-            {/* Long names fade out; the collapsed count stays whole beside them. */}
-            <FadeTruncate text={props.label} className="shrink" />
-            {props.collapsed ? (
-              <span className="-ml-1 shrink-0 tabular-nums">({group.threads.length})</span>
-            ) : null}
-            <ChevronDownIcon
-              aria-hidden
-              className={cn(
-                "-ml-1 size-3 shrink-0 transition-transform",
-                !props.collapsed && "rotate-180",
-              )}
-            />
-            {runningCount > 0 ? (
-              <span
-                aria-label={`${runningCount} working`}
-                className="size-1.5 shrink-0 rounded-full bg-primary"
+            {/* One unit that shrinks as a whole: long names fade out while the
+                collapsed count and chevron stay whole beside them. */}
+            <span className="flex h-full min-w-0 items-center gap-2">
+              <FadeTruncate text={props.label} className="shrink" />
+              {props.collapsed ? (
+                <span className="-ml-1 shrink-0 tabular-nums">({group.threads.length})</span>
+              ) : null}
+              {/* Points where the section is: right when collapsed, down when
+                  open. Shown on hover while open, always while collapsed. */}
+              <ChevronRightIcon
+                aria-hidden
+                className={cn(
+                  "-ml-1 size-3 shrink-0 transition-[rotate,opacity]",
+                  !props.collapsed &&
+                    "rotate-90 opacity-0 group-focus-within/section-header:opacity-100 group-hover/section-header:opacity-100",
+                )}
               />
-            ) : null}
-            <span
-              aria-hidden
-              className={cn(
-                "h-px min-w-2 flex-1 bg-sidebar-border/60",
-                props.isDropTarget && "bg-primary/50",
-              )}
-            />
+              {runningCount > 0 ? (
+                <span
+                  aria-label={`${runningCount} working`}
+                  className="size-1.5 shrink-0 rounded-full bg-primary"
+                />
+              ) : null}
+            </span>
+            <span aria-hidden className="flex h-full min-w-6 flex-1 items-center">
+              <span
+                className={cn(
+                  "h-px w-full bg-sidebar-border/60",
+                  props.isDropTarget && "bg-primary/50",
+                )}
+              />
+            </span>
           </button>
         )}
         {props.renaming ? null : (
-          <span className="pointer-events-none flex shrink-0 items-center gap-1.5 opacity-0 group-focus-within/section-header:pointer-events-auto group-focus-within/section-header:opacity-100 group-hover/section-header:pointer-events-auto group-hover/section-header:opacity-100">
+          // Shown on hover while open, always while collapsed.
+          <span
+            className={cn(
+              "flex shrink-0 items-center gap-1.5",
+              !props.collapsed &&
+                "pointer-events-none opacity-0 group-focus-within/section-header:pointer-events-auto group-focus-within/section-header:opacity-100 group-hover/section-header:pointer-events-auto group-hover/section-header:opacity-100",
+            )}
+          >
             {/* General can't be renamed or deleted, so it has no section menu. */}
             {isUserSection ? (
               <HeaderIconButton

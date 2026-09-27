@@ -3,6 +3,7 @@ import "../../index.css";
 import { CSS } from "@dnd-kit/utilities";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vitest/browser";
 
 vi.mock("../../hooks/useThreadActions", () => {
   const succeed = vi.fn(async () => ({ _tag: "Success" }));
@@ -39,8 +40,15 @@ type Row = { readonly id: string };
 const thread = (id: string, sectionId: string | null) =>
   ({ id, environmentId: "env", sectionId, pinnedAt: null, session: null }) as never;
 
-function renderView(onReorderSections: (ids: readonly string[]) => void) {
-  const sections = ["A", "B", "C"].map((name, order) => ({ id: name.toLowerCase(), name, order }));
+function renderView(
+  onReorderSections: (ids: readonly string[]) => void,
+  options: { readonly names?: readonly string[]; readonly collapsed?: readonly string[] } = {},
+) {
+  const sections = (options.names ?? ["A", "B", "C"]).map((name, order) => ({
+    id: ["a", "b", "c"][order]!,
+    name,
+    order,
+  }));
   const groups = groupThreadsBySection({
     sections: sections as never,
     generalIndex: 0,
@@ -59,7 +67,7 @@ function renderView(onReorderSections: (ids: readonly string[]) => void) {
   root.render(
     <SidebarSectionsView
       groups={groups as never}
-      collapsedGroupIds={new Set()}
+      collapsedGroupIds={new Set(options.collapsed ?? [])}
       routeThreadKey={null}
       onToggleGroup={() => {}}
       snoozedThreads={[]}
@@ -205,4 +213,48 @@ it("sets section names 4px low, nearer their own threads, without growing the he
     expect(header.height).toBe(32);
     expect(name.top + name.height / 2 - (header.top + header.height / 2)).toBe(4);
   }
+});
+
+it("points the chevron where the section is and shows open sections' controls on hover", async () => {
+  renderView(() => {}, { collapsed: ["b"] });
+  await nextFrame();
+  const chevronOf = (groupId: string) =>
+    headerOf(groupId).querySelector<SVGElement>("button[aria-expanded] svg")!;
+  const actionsOf = (groupId: string) =>
+    headerOf(groupId).querySelector<HTMLElement>('button[aria-label="Section actions"]')!
+      .parentElement!;
+  const opacity = (element: Element) => getComputedStyle(element).opacity;
+  const rotated = (element: Element) => getComputedStyle(element).rotate === "90deg";
+
+  // Collapsed: points right, with the chevron and actions always shown.
+  expect(rotated(chevronOf("b"))).toBe(false);
+  expect(opacity(chevronOf("b"))).toBe("1");
+  expect(opacity(actionsOf("b"))).toBe("1");
+
+  // Open: points down, with the chevron and actions shown only on hover.
+  expect(rotated(chevronOf("a"))).toBe(true);
+  expect(opacity(chevronOf("a"))).toBe("0");
+  expect(opacity(actionsOf("a"))).toBe("0");
+  await userEvent.hover(headerOf("a"));
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  expect(opacity(chevronOf("a"))).toBe("1");
+  expect(opacity(actionsOf("a"))).toBe("1");
+});
+
+it("drops the rule entirely when less than 24px would be left beside the name", async () => {
+  renderView(() => {}, {
+    names: ["A", "A section name long enough to fill the whole header row", "C"],
+  });
+  await nextFrame();
+  const ruleOf = (groupId: string) => {
+    const button = headerOf(groupId).querySelector<HTMLElement>("button[aria-expanded]")!;
+    const rule = button.lastElementChild!.getBoundingClientRect();
+    const box = button.getBoundingClientRect();
+    return { visible: rule.top < box.bottom && rule.width > 0, width: rule.width };
+  };
+
+  expect(ruleOf("a").visible).toBe(true);
+  expect(ruleOf("a").width).toBeGreaterThanOrEqual(24);
+  // The long name keeps the row; the rule drops to the clipped second line.
+  expect(ruleOf("b").visible).toBe(false);
 });

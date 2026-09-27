@@ -56,6 +56,15 @@ own threads than to the group above. The row height is unchanged, so nothing
 reflows. The shelves take the class from the Sections branch in `Sidebar.tsx`;
 T3's shelf header component and the Status view are unchanged.
 
+**Headers show state quietly.** A section's chevron points where the section
+is: right when collapsed, down when open. While open, the chevron and the ⋯ and
+pen buttons appear only on hover or focus. While collapsed, they stay visible,
+so a collapsed section still shows how to open it and what it offers. The chevron
+and buttons keep their space when hidden, so hovering never moves the name. The
+rule after the name needs at least 24px: the header's button wraps, and a rule
+without room drops to a clipped second line rather than showing as a stub. This
+is pure layout, so it can't flicker while the sidebar is resized.
+
 **Section drags never reflow the list.** Dragging a header freezes every
 section's measured block at drag start and slides whole blocks (header plus
 rows) by transform. Targets are judged against the frozen geometry, and
