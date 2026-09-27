@@ -53,9 +53,11 @@ and in `upstream-state.json`. It extends the integration through
 `1ad094bbc3ffc58ad4e171f1e1ea5ce1d859ed5c`. The original a727 merge is
 `0c33fa4233ad8c2293349803bf2ce50c5f1e876b`; the exact upstream extension merge
 is `a556a6905fdbd9b6121f8952a994531b4870671d`, whose second parent is the exact
-official target. The reviewed candidate was then brought forward to owned `main`
-`12437d152ee30d7d39313a05200fcf1c27c82d1a` through catch-up merge
-`70a9f9d980ab4e4aa8ae391211875cfd3ff05cbc`. The alignment is prepared in
+official target. The reviewed candidate was then brought forward through owned
+`main` catch-up merges: first to `12437d152ee30d7d39313a05200fcf1c27c82d1a`
+through `70a9f9d980ab4e4aa8ae391211875cfd3ff05cbc`, then to the latest
+`4d95770a0404ac0e0463352b174a5eb40a67c9c8` through
+`4cb506b80b3e553c0d74a3765b697ba6f97a574d`. The alignment is prepared in
 [PR #384](https://github.com/ScientFactory/scient-desktop/pull/384). The preceding alignment
 ([PR #372](docs/internals/2026-09-26-upstream-sync-95030dc6.md)) remains literal
 ancestry.

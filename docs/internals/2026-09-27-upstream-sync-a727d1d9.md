@@ -25,11 +25,19 @@ does not authorize a release or publication.
   - second parent: exact official target `de251fc297…`
 - Narrow Scient composition after the extension merge:
   `79f62ba2cf6c4dd01dced564a0a4c5b2c179f933`
-- Latest owned `main` catch-up: `12437d152ee30d7d39313a05200fcf1c27c82d1a`
-- Owned-main catch-up merge: `70a9f9d980ab4e4aa8ae391211875cfd3ff05cbc`
+- First owned-`main` catch-up: `12437d152ee30d7d39313a05200fcf1c27c82d1a`
+  through merge `70a9f9d980ab4e4aa8ae391211875cfd3ff05cbc`
   - first parent: the composed upstream candidate
     `79f62ba2cf6c4dd01dced564a0a4c5b2c179f933`
-  - second parent: exact latest owned `main` `12437d152…`
+  - second parent: exact owned `main` `12437d152…`
+- Narrow review correction for a stale device-documentation link:
+  `5a2cc63e91a41a1b2704547ebab413db9fa0d1e8`
+- Latest owned-`main` catch-up: `4d95770a0404ac0e0463352b174a5eb40a67c9c8`
+- Latest owned-main catch-up merge:
+  `4cb506b80b3e553c0d74a3765b697ba6f97a574d`
+  - first parent: the reviewed candidate plus the documentation correction
+    `5a2cc63e91a41a1b2704547ebab413db9fa0d1e8`
+  - second parent: exact latest owned `main` `4d95770a04…`
 - Branch: `codex/t3-sync-a727d1d9-20260927`
 - Alignment PR: [#384](https://github.com/ScientFactory/scient-desktop/pull/384)
 - Nearest reachable official tag: `v0.0.43-nightly.20260927.2344`
@@ -41,9 +49,11 @@ No donor commit was squashed, replayed, or omitted.
 
 The initial alignment covered 39 official paths with 21 owned overlaps and six
 materialized conflicts. The extension added one official commit touching three
-web-onboarding paths. The owned-main catch-up contained 64 commits across 187
-files; its three-way simulation was clean and its four overlapping paths were
-audited after the real merge.
+web-onboarding paths. The first owned-main catch-up contained 64 commits across
+187 files; its three-way simulation was clean and its four overlapping paths were
+audited after the real merge. Owned `main` then advanced by 18 more provider-UI
+commits across 45 files; the second catch-up was also clean, overlapped only
+`UPSTREAM.md`, and preserved the alignment's Codex awareness seam.
 
 ## New official advancement: `de251fc297`
 
@@ -97,9 +107,11 @@ lazy import action.
 
 The frozen alignment base was no longer the owned `main` tip. After the upstream
 extension merge was committed and the worktree was clean, exact owned `main`
-`12437d152…` was merged with `--no-ff`. The catch-up is a normal merge commit; it
-does not replace the official second parent or advance `integrationBase` by
-itself.
+`12437d152…` was merged with `--no-ff`. Owned `main` advanced again while the
+review record and PR were being completed; after the review-only device-link
+correction, exact `main` `4d95770a04…` was merged with `--no-ff` as
+`4cb506b80b3e`. Both are normal merge commits; neither replaces the official
+second parent or advances `integrationBase` by itself.
 
 The catch-up brings the already-reviewed fork redesign, sidebar sections,
 `Add project` in the new-thread row, dev-app signing isolation, thread-read MCP
@@ -122,7 +134,12 @@ migration ID was reused or reordered.
 - `UPSTREAM.md`: the owned-main pointer and alignment pointer were reconciled;
   there is one current-alignment record and no duplicated pointer.
 
-The staged catch-up had no conflict markers or unmerged index entries.
+The first staged catch-up had no conflict markers or unmerged index entries. The
+second catch-up contained no textual conflicts; its only shared path was
+`UPSTREAM.md`, whose provider-card/Pi-mark divergence note was appended while
+the single de251 current-alignment pointer remained intact. The provider-polish
+range did not touch `CodexDeveloperInstructions.ts`, so the composed
+`buildScientAwareness` path and provider lifecycle boundaries remained unchanged.
 
 ## Owner decisions applied
 
@@ -180,28 +197,30 @@ no telemetry change.
 
 ## Verification
 
-Qualification ran on the composed code at owned-main catch-up head
-`70a9f9d980ab4e4aa8ae391211875cfd3ff05cbc`. Documentation and state-only commits
-may follow without invalidating runtime evidence.
+Qualification ran on the composed code through the latest owned-main catch-up
+head `4cb506b80b3e553c0d74a3765b697ba6f97a574d`. Documentation and state-only
+commits may follow without invalidating runtime evidence.
 
-| Check                                                                                                                                            | Result                                                                                     |
-| ------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
-| `pnpm exec vp fmt --check`                                                                                                                       | pass                                                                                       |
-| `pnpm exec vp lint --report-unused-disable-directives`                                                                                           | pass; existing advisory warnings only                                                      |
-| `pnpm run typecheck`                                                                                                                             | pass across all workspaces; suggestions only                                               |
-| `pnpm --filter @t3tools/web test -- WelcomeWizard ProjectImportStep ScientProjectImportAction Sidebar ChatView UsagePage ThreadStatusIndicators` | pass; 769 files, 8,924 tests                                                               |
-| `pnpm run test`                                                                                                                                  | pass across all workspaces                                                                 |
-| server package                                                                                                                                   | 558 files passed, 22 skipped; 8,055 tests passed, 73 skipped                               |
-| web package                                                                                                                                      | 769 files passed; 8,924 tests passed                                                       |
-| desktop package                                                                                                                                  | 191 files passed; 1,741 tests passed                                                       |
-| scripts package                                                                                                                                  | 104 files passed; 1,796 tests passed                                                       |
-| `pnpm run build`                                                                                                                                 | pass; existing chunk-size, MathJax `eval`, optional `x11`, and `import.meta` warnings only |
-| `pnpm run test:desktop-smoke`                                                                                                                    | pass                                                                                       |
-| `pnpm brand:check`                                                                                                                               | pass across 2,292 files                                                                    |
-| `pnpm run knip:check`                                                                                                                            | pass                                                                                       |
-| `pnpm run lint:mobile`                                                                                                                           | static pass; SwiftLint, ktlint, and detekt unavailable and explicitly skipped              |
-| `pnpm alignment:seams:check --base 1ad094bbc… --upstream-ref de251fc297… --head HEAD`                                                            | onboarding, skills, analysis, and latex passed                                             |
-| `git diff --check`, `git diff --cached --check`                                                                                                  | pass                                                                                       |
+| Check                                                                                                                                            | Result                                                                                                                                                |
+| ------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm exec vp fmt --check`                                                                                                                       | pass                                                                                                                                                  |
+| `pnpm exec vp lint --report-unused-disable-directives`                                                                                           | pass; existing advisory warnings only                                                                                                                 |
+| `pnpm run typecheck`                                                                                                                             | pass across all workspaces; suggestions only                                                                                                          |
+| `pnpm --filter @t3tools/web test -- WelcomeWizard ProjectImportStep ScientProjectImportAction Sidebar ChatView UsagePage ThreadStatusIndicators` | pass before the second owned-main catch-up; 769 files, 8,924 tests                                                                                    |
+| `pnpm run test` after the latest owned-main catch-up                                                                                             | all non-web workspaces passed; the parallel web aggregate hit one 30 s module-import timeout and three load-sensitive Markdown performance thresholds |
+| isolated failed web lanes                                                                                                                        | pass; `MessagesTimeline.test.tsx` plus `performance.test.ts`, 77 tests                                                                                |
+| `pnpm --filter t3 test`                                                                                                                          | pass; 559 files passed, 22 skipped; 8,058 tests passed, 73 skipped                                                                                    |
+| full web unit project run in isolation                                                                                                           | pass; 771 files passed; 9,114 tests passed                                                                                                            |
+| desktop package                                                                                                                                  | 191 files passed; 1,741 tests passed                                                                                                                  |
+| scripts package                                                                                                                                  | 104 files passed; 1,796 tests passed                                                                                                                  |
+| `pnpm run build`                                                                                                                                 | pass; existing chunk-size, MathJax `eval`, optional `x11`, and `import.meta` warnings only                                                            |
+| `pnpm run test:desktop-smoke`                                                                                                                    | pass                                                                                                                                                  |
+| `pnpm brand:check`                                                                                                                               | pass across 2,295 files                                                                                                                               |
+| `pnpm run knip:check`                                                                                                                            | pass                                                                                                                                                  |
+| `pnpm run lint:mobile`                                                                                                                           | static pass; SwiftLint, ktlint, and detekt unavailable and explicitly skipped                                                                         |
+| `pnpm alignment:seams:check --base 1ad094bbc… --upstream-ref de251fc297… --head HEAD`                                                            | onboarding, skills, analysis, and latex passed                                                                                                        |
+| documentation formatter and local-link check                                                                                                     | pass, including the repaired device stream-viewer link                                                                                                |
+| `git diff --check`, `git diff --cached --check`                                                                                                  | pass                                                                                                                                                  |
 
 ## Not established here
 
