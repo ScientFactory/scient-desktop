@@ -23,6 +23,7 @@ import { useMediaActionUrl } from "~/components/media/MediaActions";
 import { copyStaticImage, downloadStaticImage } from "~/components/preview/staticImageActions";
 import type { ScientImageAction } from "~/scient/images/ScientImageControls";
 
+import { MarkdownPdfExportMenuItems } from "../documentExport/MarkdownPdfExportMenuItems";
 import { ScientMarkdownWorkspaceSurface } from "./ScientMarkdownWorkspaceSurface";
 import type { ScientMarkdownLinkCopyRequest, ScientMarkdownLinkKind } from "./linkContextMenu";
 import { isScientMarkdownDocumentPath } from "./markdownDocumentPaths";
@@ -465,6 +466,15 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
       {...(props.onOpenFileSource
         ? { onOpenSourceLine: (line: number) => props.onOpenFileSource?.(props.relativePath, line) }
         : {})}
+      documentActions={
+        <MarkdownPdfExportMenuItems
+          environmentId={props.environmentId}
+          cwd={props.cwd}
+          relativePath={props.relativePath}
+          threadRef={props.threadRef}
+          persistence={props.persistence}
+        />
+      }
       uploadImage={uploadImage}
       onImageUploadFailure={(error) => {
         toastManager.add({
