@@ -543,8 +543,10 @@ orchestration types. The adapter owns the process and the turn mapping.
   without an open turn: OMP 18.3.1 runs `task` spawns as background jobs that can outlive the
   turn and an abort. A task closes on its own terminal `subagent_lifecycle`, on `session_settled`,
   or when the session closes. A fresh native run delivering a background result starts a visible
-  continuation turn. A user message arriving during that continuation steers it. Pending native
-  async work uses the shared Monitoring indicator; live subagents retain the Working indicator.
+  continuation turn. A user message arriving during that continuation steers it. With native
+  settlement signals (18.3.1), pending async work uses the shared Monitoring indicator; live
+  subagents retain the Working indicator. Older runtimes such as 18.2.8 keep the original turn
+  Working across a nonterminal pause and deliver the result into that same turn.
   Stop closes the provider session, including background jobs, even between turns: native abort
   alone does not cancel detached work. Late output from a stopped session cannot reopen a turn.
   Native compact reports a compacted
