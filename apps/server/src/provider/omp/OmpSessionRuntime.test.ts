@@ -880,3 +880,55 @@ describe("Oh My Pi autonomous continuation ownership", () => {
     }),
   );
 });
+
+it.effect("a buffered idle snapshot cannot resurrect monitoring after session_settled", () =>
+  Effect.gen(function* () {
+    const events = yield* Queue.unbounded<OmpRpcNotification, Cause.Done>();
+    const scope = yield* Scope.make("sequential");
+    const updates = yield* Queue.unbounded<OmpSessionUpdate>();
+    const client = makeClient(events);
+    let settled = false;
+    const runtime = yield* makeOmpSessionRuntime({
+      continuationIdPrefix: "drain-race",
+      scope,
+      client: {
+        ...client,
+        getState: () =>
+          Effect.sync(() => ({
+            isStreaming: false,
+            isSettled: settled,
+            hasPendingAsyncWork: !settled,
+          })),
+        flushEvents: () =>
+          Effect.gen(function* () {
+            if (!settled) {
+              settled = true;
+              yield* Queue.offer(events, { _tag: "Event", event: { type: "session_settled" } });
+            }
+            yield* client.flushEvents();
+          }),
+      },
+      onUpdate: (update) => Queue.offer(updates, update).pipe(Effect.asVoid),
+    });
+    yield* runtime.begin("first");
+    yield* runtime.accepted("first-prompt", true);
+    yield* Queue.offer(events, { _tag: "Event", event: { type: "agent_start" } });
+    yield* Queue.offer(events, {
+      _tag: "Event",
+      event: { type: "agent_end", messages: [], isTerminal: true },
+    });
+    const observed: Array<OmpSessionUpdate> = [];
+    for (;;) {
+      const update = yield* Queue.take(updates);
+      observed.push(update);
+      if (update.type === "turn-outcome") break;
+    }
+    yield* Scope.close(scope, Exit.void);
+    const settledIndex = observed.findIndex((update) => update.type === "session-settled");
+    expect(settledIndex).toBeGreaterThan(-1);
+    expect(observed.slice(settledIndex + 1)).not.toContainEqual({
+      type: "background-work",
+      pending: true,
+    });
+  }),
+);

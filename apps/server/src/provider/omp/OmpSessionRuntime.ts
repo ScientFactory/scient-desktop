@@ -759,6 +759,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       eventSequence += 1;
       const sequence = eventSequence;
       if (event.type === "agent_start") {
+        pendingDrainState = undefined;
         // Only a fresh native run can wake a settled turn. Late message/tool
         // frames, cancelled runs and uncertain exits never manufacture turns.
         if (
@@ -1065,6 +1066,8 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         return;
       }
       if (event.type === "session_settled") {
+        // This event is newer than any state buffered before the event drain.
+        pendingDrainState = undefined;
         yield* publish({ type: "session-settled" });
         return;
       }
