@@ -175,6 +175,26 @@ function warningMessage(warning: ConversationSnapshotWarning): DocumentWarning {
   }
 }
 
+/** The same caution the export dialog shows, kept with the file it applies to. */
+function sensitiveContentWarning(
+  selection: ConversationSnapshotV1["selection"],
+): ReadonlyArray<DocumentWarning> {
+  const included = [
+    selection.workLog ? "the work log" : null,
+    selection.reasoning ? "reasoning" : null,
+  ]
+    .filter((part): part is string => part !== null)
+    .join(" and ");
+  return included.length === 0
+    ? []
+    : [
+        {
+          code: "sensitive-content-included",
+          message: `This export includes ${included}, which can contain file paths, command output, and secrets.`,
+        },
+      ];
+}
+
 function statusLabel(status: string | null): string {
   switch (status) {
     case "in-progress":
@@ -268,7 +288,10 @@ export function buildConversationDocument(input: ConversationDocumentInput): Con
       ),
   );
 
-  const warnings: DocumentWarning[] = snapshot.warnings.map(warningMessage);
+  const warnings: DocumentWarning[] = [
+    ...sensitiveContentWarning(snapshot.selection),
+    ...snapshot.warnings.map(warningMessage),
+  ];
   const assets: DocumentAsset[] = [];
   const citations: DocumentCitation[] = [];
   const assetIdByLocalId = new Map<string, string>();

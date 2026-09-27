@@ -277,6 +277,10 @@ describe("conversation document", () => {
     expect(full).toContain("file-a\n  file-b");
     expect(full).toContain("<summary>Reasoning</summary>\n\nThinking\\\nhard");
     expect(full).not.toContain("sk-secret");
+    expect(full).toContain(
+      "- This export includes the work log and reasoning, which can contain file paths, command output, and secrets.",
+    );
+    expect(plain).not.toContain("This export includes");
     const parsed = parseConversationMarkdown(full);
     if (parsed.kind !== "conversation") throw new Error("Expected a conversation.");
     expect(parsed.messages[1]!.body).toBe("Done");
