@@ -104,6 +104,7 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Custom model connections](./internals/custom-models.md)
 - [Scient mobile release hold](./internals/scient-mobile-release-hold.md)
 - [Scient Browser PDF export](./internals/scient-browser-pdf-export.md)
+- [Scient document PDF export](./internals/scient-document-pdf-export.md)
 - [Historical PDF export and rendering plan](./internals/scient-pdf-export-rendering-plan.md)
 - [Scient analysis runtime foundation](./internals/scient-analysis-runtime-foundation.md)
 - [Scient stateful compute foundation and capability roadmap](./internals/scient-compute-session-foundation.md)
