@@ -20,6 +20,7 @@ import {
 } from "@t3tools/contracts";
 import {
   buildConversationDocument,
+  exportFileName,
   packagedAssets,
   redactSnapshotStoragePaths,
   redactStoragePaths,
@@ -87,19 +88,6 @@ export class ConversationExportService extends Context.Service<
     ) => Effect.Effect<ProducedExport, ConversationExportServiceError>;
   }
 >()("t3/scient/conversationExport/ConversationExportService") {}
-
-/** A file name every desktop file system accepts, derived from the conversation title. */
-function exportBaseName(title: string): string {
-  const cleaned = title
-    .normalize("NFC")
-    .replace(/[\\/:*?"<>|\p{Cc}]+/gu, " ")
-    .replace(/\s+/gu, " ")
-    .trim()
-    .replace(/^\.+|\.+$/gu, "")
-    .slice(0, 100)
-    .trim();
-  return cleaned.length > 0 ? cleaned : "Conversation";
-}
 
 function excerpt(text: string): string {
   const plain = text
@@ -275,8 +263,8 @@ const make = Effect.gen(function* () {
       return { ...base, output: { _tag: "text", text: markdown } };
     }
 
-    const name = exportBaseName(snapshot.thread.title);
-    const fileName = packaging === "text" ? `${name}.md` : `${name}.zip`;
+    const fileName = exportFileName(snapshot.thread.title, packaging === "text" ? ".md" : ".zip");
+    const markdownName = exportFileName(snapshot.thread.title, ".md");
     const written = yield* files.write({
       exportId,
       fileName,
@@ -287,7 +275,7 @@ const make = Effect.gen(function* () {
               _tag: "zip",
               modifiedAt: exported,
               entries: [
-                { path: `${name}.md`, bytes: new TextEncoder().encode(markdown) },
+                { path: markdownName, bytes: new TextEncoder().encode(markdown) },
                 ...packagedAssets(document.bundle),
               ],
             },

@@ -338,6 +338,27 @@ describe("ConversationExportService", () => {
     }).pipe(Effect.provide(exportLayer("scient_conv*export-"))),
   );
 
+  it.effect("writes a long non-Latin title as a file name the file system accepts", () =>
+    Effect.gen(function* () {
+      yield* seedThread({ pairs: 1 });
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE projection_threads SET title = ${"研究結果".repeat(23)}`;
+      const service = yield* ConversationExportService.ConversationExportService;
+      const produced = yield* service.produce(
+        request({}, { markdownPackaging: "with-attachments" }),
+      );
+      assert(produced.output._tag === "file");
+      assert.isAtMost(new TextEncoder().encode(produced.output.fileName).byteLength, 200);
+      const fileSystem = yield* FileSystem.FileSystem;
+      assert.isTrue(yield* fileSystem.exists(produced.output.path));
+      const entries = yield* Effect.promise(() =>
+        readZip((produced.output as { readonly path: string }).path),
+      );
+      const [markdownEntry] = [...entries.keys()];
+      assert.isAtMost(new TextEncoder().encode(markdownEntry!).byteLength, 200);
+    }).pipe(Effect.provide(TestLayer)),
+  );
+
   it.effect("rejects unavailable formats, bad ranges, missing threads, and packaged copies", () =>
     Effect.gen(function* () {
       yield* seedThread({ pairs: 2 });
