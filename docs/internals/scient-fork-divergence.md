@@ -572,9 +572,12 @@ meaning is the same.
   equal provider session ID in a different runtime cannot establish continuity.
 - A later message waits for an in-flight handoff to settle, then rechecks the
   current binding. The send fiber owns the pending record and releases waiters
-  on every exit, including interruption. Provider acknowledgement has a
-  60-second deadline, with timeout classified as uncertain delivery; a waiter
-  has its own 65-second bound. It cannot bypass history merely because an
+  on every exit, including interruption. A later-message waiter has a
+  65-second bound; its timeout does not cancel the original delivery or discard
+  its evidence. There is no fork-specific deadline on the send itself: adapters
+  such as Droid keep that call open through turn completion, including tool
+  work and approvals. Provider lifecycle handling owns that call's failure and
+  cancellation. A later message cannot bypass history merely because an
   earlier send was still awaiting its outcome.
 - **Separate channel.** The handoff travels as `ProviderSendTurnInput.contextPreamble`,
   concatenated immediately before adapter dispatch. The 120,000-character input

@@ -1,4 +1,3 @@
-import { withForkSendDeadline } from "../scient-fork/deliveryDeadline.ts";
 import { withWorkspaceLease } from "../../workspace/workspaceLease.ts";
 import {
   type ChatAttachment,
@@ -1861,7 +1860,10 @@ const make = Effect.gen(function* () {
       }
       return yield* providerSend();
     });
-    const send = (forkContext.kind === "deliver" ? withForkSendDeadline(dispatch) : dispatch).pipe(
+    // A send may remain open through turn completion (for example Droid's ACP
+    // prompt). Bound later-message waits in ForkContextDelivery, not the agent's
+    // work here; cancellation and provider failures still settle the handoff.
+    const send = dispatch.pipe(
       Effect.tap((turn) =>
         forkContext.kind !== "deliver"
           ? Effect.void

@@ -604,16 +604,26 @@ it.layer(layer)("ScientForkContextDelivery", (it) => {
     }),
   );
 
-  it.effect("bounds a wait for a handoff whose owner has not settled", () =>
+  it.effect("bounds a later-message wait without abandoning the active delivery", () =>
     Effect.gen(function* () {
-      yield* reset;
-      yield* deliver(yield* prepare({ nativeThreadKey: "codex:thread-a" }));
+      const sql = yield* reset;
+      const first = yield* deliver(yield* prepare({ nativeThreadKey: "codex:thread-a" }));
       const waiting = yield* prepare({ nativeThreadKey: "codex:thread-a" }).pipe(
         Effect.result,
         Effect.forkChild,
       );
       yield* TestClock.adjust("65 seconds");
       assert.strictEqual((yield* Fiber.join(waiting))._tag, "Failure");
+      const rows = yield* sql<{ readonly delivery_status: string }>`
+        SELECT delivery_status FROM scient_context_handoffs WHERE handoff_id = ${first.handoffId}
+      `;
+      assert.strictEqual(rows[0]?.delivery_status, "pending");
+
+      // The slow original send can still finish normally. Its context is then
+      // reused, not duplicated or reset because a different caller timed out.
+      yield* recordProviderTurn("provider-turn-1", 1);
+      yield* settle(first.handoffId, { type: "accepted", nativeThreadKey: "codex:thread-a" });
+      assert.strictEqual((yield* prepare({ nativeThreadKey: "codex:thread-a" })).kind, "none");
     }),
   );
 

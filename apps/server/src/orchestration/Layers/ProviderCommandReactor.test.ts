@@ -1052,6 +1052,55 @@ describe("ProviderCommandReactor", () => {
     expect(callOrder).toEqual(["prepare", "begin", "send", "settle:accepted"]);
   });
 
+  effectIt.effect("allows a Droid fork send to remain active beyond two minutes", () =>
+    Effect.gen(function* () {
+      const clock = yield* Clock.Clock;
+      const entered = yield* Deferred.make<void>();
+      const complete = yield* Deferred.make<void>();
+      const settled = yield* Deferred.make<void>();
+      let sendExited = false;
+      const settleDelivery = vi.fn<ScientForkContextDeliveryShape["settleDelivery"]>(() =>
+        Deferred.succeed(settled, undefined).pipe(Effect.asVoid),
+      );
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          clock,
+          threadModelSelection: {
+            instanceId: ProviderInstanceId.make("droid"),
+            model: "droid-model",
+          },
+          forkLineage: true,
+          forkContextDelivery: {
+            prepareTurn: () => Effect.succeed(deliverContext()),
+            settleDelivery,
+          },
+          // Droid's prompt RPC returns at turn completion, not acknowledgement.
+          sendTurnEffect: () =>
+            Deferred.succeed(entered, undefined).pipe(
+              Effect.andThen(Deferred.await(complete)),
+              Effect.as({ threadId: ThreadId.make("thread-1"), turnId: asTurnId("turn-1") }),
+              Effect.ensuring(
+                Effect.sync(() => {
+                  sendExited = true;
+                }),
+              ),
+            ),
+        }),
+      );
+      yield* Effect.promise(() => startForkTurn(harness, "long-droid-fork"));
+      yield* Deferred.await(entered);
+      yield* TestClock.adjust("2 minutes");
+      expect(sendExited).toBe(false);
+      expect(settleDelivery).not.toHaveBeenCalled();
+
+      yield* Deferred.succeed(complete, undefined);
+      yield* Deferred.await(settled);
+      expect(sendExited).toBe(true);
+      expect(settleDelivery.mock.calls.map(([input]) => input.outcome.type)).toEqual(["accepted"]);
+      expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+    }),
+  );
+
   it("settles an interruption immediately after recording the pending handoff", async () => {
     const settleDelivery = vi.fn<ScientForkContextDeliveryShape["settleDelivery"]>(
       () => Effect.void,
