@@ -42,8 +42,8 @@ import {
   type ConversationSnapshotReadError,
 } from "./ConversationSnapshotService.ts";
 
-export const MARKDOWN_MEDIA_TYPE = "text/markdown; charset=utf-8";
-export const ZIP_MEDIA_TYPE = "application/zip";
+const MARKDOWN_MEDIA_TYPE = "text/markdown; charset=utf-8";
+const ZIP_MEDIA_TYPE = "application/zip";
 
 /** Formats this server produces. PDF, Word, and `.scic` register here when they land. */
 const FORMAT_CAPABILITIES: ReadonlyArray<ConversationExportFormatCapability> = [
@@ -92,7 +92,7 @@ const STORAGE_PLACEHOLDER = "«scient-data»";
  * Replaces Scient's own storage locations with a placeholder. User and agent
  * text is exported as written, but Scient never publishes where it keeps data.
  */
-export function redactStoragePaths(text: string, roots: ReadonlyArray<string>): string {
+function redactStoragePaths(text: string, roots: ReadonlyArray<string>): string {
   let result = text;
   const variants = roots
     .flatMap((root) => {
@@ -105,7 +105,7 @@ export function redactStoragePaths(text: string, roots: ReadonlyArray<string>): 
 }
 
 /** A file name every desktop file system accepts, derived from the conversation title. */
-export function exportBaseName(title: string): string {
+function exportBaseName(title: string): string {
   const cleaned = title
     .normalize("NFC")
     .replace(/[\\/:*?"<>|\p{Cc}]+/gu, " ")
@@ -130,7 +130,7 @@ function excerpt(text: string): string {
 const reject = (reason: ScientConversationExportError["reason"], message: string) =>
   Effect.fail(new ScientConversationExportError({ reason, message }));
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const snapshots = yield* ConversationSnapshotService;
   const files = yield* ConversationExportFiles;
   const fileSystem = yield* FileSystem.FileSystem;

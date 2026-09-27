@@ -433,7 +433,7 @@ export type DocumentAsset = typeof DocumentAsset.Type;
 // field names and name/date shapes match `scientSourceToCslJson` in
 // `@scientfactory/scient-citations`; unknown fields are not carried.
 
-export const CSL_ITEM_TYPES = [
+const CSL_ITEM_TYPES = [
   "article",
   "article-journal",
   "article-magazine",

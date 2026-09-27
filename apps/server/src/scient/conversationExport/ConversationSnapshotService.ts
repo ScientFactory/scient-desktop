@@ -89,7 +89,7 @@ export class ConversationSnapshotService extends Context.Service<
   }
 >()("t3/scient/conversationExport/ConversationSnapshotService") {}
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const query = yield* ProjectionSnapshotQuery;
   const config = yield* ServerConfig.ServerConfig;
