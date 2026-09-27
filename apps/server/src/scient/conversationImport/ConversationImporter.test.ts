@@ -1,9 +1,11 @@
+import { ConversationSnapshotV1 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "@effect/vitest";
 
 import {
   ConversationImportAttemptBinding,
   ConversationImportCompletion,
+  conversationContentDigest,
   conversationImportOmissions,
   conversationImportProvenance,
   sameConversationImportDestination,
@@ -60,7 +62,7 @@ const message = (n: number, turnId: string | null, extra: object = {}) => ({
   ...extra,
 });
 
-const snapshot = {
+const unsealedSnapshot = {
   format: "scient.conversation-snapshot",
   version: 1,
   thread: {
@@ -107,6 +109,16 @@ const snapshot = {
   contentDigest: DIGEST,
 };
 
+const decodeSnapshot = Schema.decodeUnknownSync(ConversationSnapshotV1);
+
+/** The snapshot with its real content digest, as an exporter writes it. */
+const seal = <A extends object>(value: A): A => ({
+  ...value,
+  contentDigest: conversationContentDigest(decodeSnapshot(value)),
+});
+
+const snapshot = seal(unsealedSnapshot);
+
 const stagedFigure = {
   resourceId: "attachment-1",
   kind: "image",
@@ -124,7 +136,7 @@ const packageSummary = {
   exportId: "7f3c9a2e41b8",
   exportedAt: "2026-09-28T09:12:00.000Z",
   sourceThreadId: "thread-on-another-machine",
-  contentDigest: DIGEST,
+  contentDigest: snapshot.contentDigest,
   packageSha256: PACKAGE_DIGEST,
   packageBytes: 4_096,
 };
@@ -154,10 +166,18 @@ const validated = {
 
 type SnapshotChanges = { readonly [Key in keyof typeof snapshot]?: unknown };
 
-/** A validated import around a changed snapshot, with omissions recomputed to match it. */
+/**
+ * A validated import around a changed snapshot, resealed with its real digest
+ * and with omissions recomputed to match it.
+ */
 const withSnapshot = (changes: SnapshotChanges) => {
-  const changed = { ...snapshot, ...changes } as typeof snapshot;
-  return { ...validated, snapshot: changed, omissions: omissionsFor(changed) };
+  const changed = seal({ ...snapshot, ...changes } as typeof snapshot);
+  return {
+    ...validated,
+    package: { ...packageSummary, contentDigest: changed.contentDigest },
+    snapshot: changed,
+    omissions: omissionsFor(changed),
+  };
 };
 
 type TestAttachment = { readonly name: string; readonly available: boolean };
@@ -190,6 +210,42 @@ describe("validated conversation import", () => {
     const input = decode(validated);
     expect(input.attachments.map((attachment) => attachment.resourceId)).toEqual(["attachment-1"]);
     expect(input.omissions).toEqual(conversationImportOmissions(input.snapshot));
+  });
+
+  describe("content digest", () => {
+    it("is recomputed from the canonical snapshot content", () => {
+      expect(conversationContentDigest(decodeSnapshot(snapshot))).toBe(snapshot.contentDigest);
+      // `captured` is where and when the snapshot was read, not content.
+      expect(
+        conversationContentDigest(
+          decodeSnapshot({ ...snapshot, captured: { ...snapshot.captured, snapshotSequence: 99 } }),
+        ),
+      ).toBe(snapshot.contentDigest);
+    });
+
+    it("refuses content altered under its old digest", () => {
+      const [first, ...rest] = snapshot.messages;
+      for (const changes of [
+        { messages: [{ ...first!, text: "Please investigate something else" }, ...rest] },
+        { thread: { ...snapshot.thread, title: "Another title" } },
+        { provenance: { _tag: "fork", originThreadId: "thread-0" } },
+      ]) {
+        const altered = { ...snapshot, ...changes };
+        expect(() =>
+          decode({ ...validated, snapshot: altered, omissions: omissionsFor(altered) }),
+        ).toThrow(/does not match its content digest/);
+      }
+    });
+
+    it("refuses a digest that is well formed but not the content's", () => {
+      expect(() =>
+        decode({
+          ...validated,
+          package: { ...packageSummary, contentDigest: BYTES_DIGEST },
+          snapshot: { ...snapshot, contentDigest: BYTES_DIGEST },
+        }),
+      ).toThrow(/does not match its content digest/);
+    });
   });
 
   describe("package and snapshot identity", () => {
@@ -329,6 +385,36 @@ describe("validated conversation import", () => {
           }),
         ),
       ).toThrow(/work-log entry activity-1 appears twice/);
+    });
+
+    it("lets turnless steering prompts sit inside a turn", () => {
+      const [first, second, third, fourth] = snapshot.messages;
+      const steered = [
+        first!,
+        second!,
+        { ...third!, turnId: null },
+        { ...fourth!, turnId: "turn-1" },
+        { ...message(5, null), role: "user" },
+        { ...message(6, "turn-1"), role: "assistant" },
+      ];
+      expect(decode(withSnapshot({ messages: steered })).snapshot.messages).toHaveLength(6);
+    });
+
+    it("still refuses a named turn split by another named turn", () => {
+      const [first, second, third, fourth] = snapshot.messages;
+      expect(() =>
+        decode(
+          withSnapshot({
+            messages: [
+              first!,
+              { ...second!, turnId: null },
+              third!,
+              { ...fourth!, turnId: null },
+              { ...message(5, "turn-1"), role: "assistant" },
+            ],
+          }),
+        ),
+      ).toThrow(/split/);
     });
 
     it("requires each turn's messages to be contiguous", () => {
@@ -609,20 +695,21 @@ describe("validated conversation import", () => {
 
     // The imported thread, exported again from the second installation, carries
     // that provenance as history and validates as a new import.
+    const exportedAgain = withSnapshot({
+      provenance,
+      captured: { ...snapshot.captured, threadId: "thread-on-second-machine" },
+    });
     const reExported = {
-      ...validated,
-      snapshot: {
-        ...snapshot,
-        provenance,
-        captured: { ...snapshot.captured, threadId: "thread-on-second-machine" },
-      },
+      ...exportedAgain,
       package: {
-        ...packageSummary,
+        ...exportedAgain.package,
         exportId: "a91b0c2d3e4f",
         sourceThreadId: "thread-on-second-machine",
         packageSha256: `sha256:${"d".repeat(64)}`,
       },
     };
+    // Provenance is content: the second export's digest differs from the first.
+    expect(reExported.snapshot.contentDigest).not.toBe(snapshot.contentDigest);
     const again = decode(reExported);
     expect(again.snapshot.provenance).toEqual(provenance);
     expect(conversationImportProvenance(again.package, "2026-09-29T10:00:00.000Z")).toMatchObject({

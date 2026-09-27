@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- the content digest is checked inside a synchronous schema filter.
 /**
  * The seam between staging a portable conversation file and importing it.
  *
@@ -121,6 +122,9 @@
  * result, another digest fails `package-changed`, another destination
  * `already-imported`.
  */
+import * as NodeCrypto from "node:crypto";
+
+import { canonicalSnapshotContent } from "@scientfactory/conversation";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -165,6 +169,29 @@ export const CONVERSATION_IMPORT_COMPLETION_RETENTION_MS = 24 * 60 * 60_000;
 // ---------------------------------------------------------------------------
 // Validated import input
 // ---------------------------------------------------------------------------
+
+/**
+ * Recomputes a snapshot's content digest the way the exporter computed it:
+ * SHA-256 of `canonicalSnapshotContent`, which leaves out `captured` and the
+ * digest itself.
+ *
+ * It is computed over the decoded snapshot, so it certifies exactly what an
+ * import writes. A package from a newer minor version whose snapshot carries
+ * fields this build does not know is therefore rejected by the reader rather
+ * than verified over content the import would silently drop: the reader
+ * requires the canonical form of `conversation.json` as received to equal the
+ * canonical form of its decoded snapshot, and reports a difference as
+ * `unsupported-version` for a newer minor version and `snapshot-invalid`
+ * otherwise. Newer minor versions that add only manifest data still import,
+ * with a warning.
+ */
+export function conversationContentDigest(snapshot: ConversationSnapshotV1): Sha256Digest {
+  const { contentDigest: _contentDigest, ...content } = snapshot;
+  const hex = NodeCrypto.createHash("sha256")
+    .update(canonicalSnapshotContent(content))
+    .digest("hex");
+  return `sha256:${hex}`;
+}
 
 const stagedAttachmentFields = {
   /** Equals the `localId` of every snapshot attachment it backs. */
@@ -240,7 +267,8 @@ function firstDuplicate(values: Iterable<string>): string | null {
  * The snapshot's own structure is unambiguous enough to map every external
  * record to exactly one new local record: message numbers run 1..N in order,
  * message and reasoning IDs are unique together, other record IDs are unique
- * per kind, each turn's messages are contiguous, the omitted running turn
+ * per kind, each named turn's messages form one run (messages without a turn
+ * may sit inside it, as steering prompts do), the omitted running turn
  * appears nowhere, unselected content is absent, a range ends at its last
  * message, and inline references are unique per message and point at that
  * message's own attachments.
@@ -264,12 +292,14 @@ function checkSnapshotStructure(snapshot: ConversationSnapshotV1): true | string
     if (duplicate !== null) return `The ${kind} ${duplicate} appears twice.`;
   }
 
+  // Messages without a turn (turn-start and steering prompts) sit inside a
+  // turn's run without ending it; only another named turn does.
   const closedTurns = new Set<string>();
   let currentTurn: string | null = null;
   for (const message of snapshot.messages) {
-    if (message.turnId === currentTurn) continue;
+    if (message.turnId === null || message.turnId === currentTurn) continue;
     if (currentTurn !== null) closedTurns.add(currentTurn);
-    if (message.turnId !== null && closedTurns.has(message.turnId)) {
+    if (closedTurns.has(message.turnId)) {
       return `Turn ${message.turnId} is split across the transcript.`;
     }
     currentTurn = message.turnId;
@@ -408,8 +438,9 @@ function checkAttachments(input: {
 
 /**
  * Everything validation guarantees about a `ValidatedConversationImport`
- * beyond the shape of its parts: the package describes this snapshot (digest,
- * source thread, a supported major version), the snapshot's structure is
+ * beyond the shape of its parts: the snapshot's content hashes to its content
+ * digest, the package describes this snapshot (digest, source thread, a
+ * supported major version), the snapshot's structure is
  * unambiguous, its warnings report every omission its facts prove, the
  * omissions and version warning are exactly what the snapshot and package
  * imply, and the staged attachments back exactly the available snapshot
@@ -428,6 +459,9 @@ export function checkValidatedConversationImport(input: {
   }
   if (input.package.contentDigest !== input.snapshot.contentDigest) {
     return "The package digest is not the snapshot's content digest.";
+  }
+  if (conversationContentDigest(input.snapshot) !== input.snapshot.contentDigest) {
+    return "The snapshot's content does not match its content digest.";
   }
   if (input.package.sourceThreadId !== input.snapshot.captured.threadId) {
     return "The package's source thread is not the snapshot's thread.";
