@@ -264,6 +264,7 @@ export const runPandoc = Effect.fn("scient.pandoc.runPandoc")(function* (input: 
           } else if (child.pid !== undefined) {
             NodeChildProcess.spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
               windowsHide: true,
+              timeout: 5_000,
             });
             child.kill("SIGKILL");
           }
@@ -352,7 +353,7 @@ export const runPandoc = Effect.fn("scient.pandoc.runPandoc")(function* (input: 
           if (outputFile === null || outputFile.destroyed) finish(code);
           else outputFile.end(() => finish(code));
         });
-        child.stdin.end(Buffer.from(input.stdin));
+        child.stdin.end(input.stdin);
       }),
     catch: (cause) =>
       isRunError(cause)
