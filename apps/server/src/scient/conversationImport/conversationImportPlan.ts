@@ -167,21 +167,24 @@ export const mintConversationImportIds = Effect.fn("mintConversationImportIds")(
   const threadSegment = toSafeThreadAttachmentSegment(threadId);
   if (threadSegment === null) return yield* Effect.die(new Error("Unsafe thread id."));
   const assignment = assignTurns(input);
-  const messages: Record<string, MessageId> = {};
+  // External IDs are strings, including names such as "__proto__". Never use a
+  // prototype-bearing object as a lookup table for untrusted package IDs.
+  const messages: Record<string, MessageId> = Object.create(null);
   for (const record of [...input.snapshot.messages, ...input.snapshot.reasoning]) {
     messages[record.id] = MessageId.make(yield* uuid);
   }
-  const turns: Record<string, TurnId> = {};
+  const turns: Record<string, TurnId> = Object.create(null);
   for (const key of assignment.keys) turns[key] = TurnId.make(yield* uuid);
-  const attachments: Record<string, string> = {};
+  const attachments: Record<string, string> = Object.create(null);
   for (const attachment of input.attachments) {
     attachments[attachment.resourceId] = attachmentId(threadSegment, yield* uuid, attachment);
   }
-  const proposedPlans: Record<string, string> = {};
+  const proposedPlans: Record<string, string> = Object.create(null);
   for (const plan of input.snapshot.proposedPlans) proposedPlans[plan.id] = `plan:${yield* uuid}`;
-  const workLog: Record<string, EventId> = {};
+  const workLog: Record<string, EventId> = Object.create(null);
   for (const entry of input.snapshot.workLog) workLog[entry.id] = EventId.make(yield* uuid);
-  const questionAnswers: Record<string, { activityId: EventId; requestId: ApprovalRequestId }> = {};
+  const questionAnswers: Record<string, { activityId: EventId; requestId: ApprovalRequestId }> =
+    Object.create(null);
   for (const answer of input.snapshot.questionAnswers) {
     questionAnswers[answer.id] = {
       activityId: EventId.make(yield* uuid),
@@ -208,12 +211,16 @@ export function idsCoverImport(
   const { snapshot } = input;
   const assignment = assignTurns(input);
   return (
-    [...snapshot.messages, ...snapshot.reasoning].every((record) => record.id in ids.messages) &&
-    assignment.keys.every((key) => key in ids.turns) &&
-    input.attachments.every((attachment) => attachment.resourceId in ids.attachments) &&
-    snapshot.proposedPlans.every((plan) => plan.id in ids.proposedPlans) &&
-    snapshot.workLog.every((entry) => entry.id in ids.workLog) &&
-    snapshot.questionAnswers.every((answer) => answer.id in ids.questionAnswers)
+    [...snapshot.messages, ...snapshot.reasoning].every((record) =>
+      Object.hasOwn(ids.messages, record.id),
+    ) &&
+    assignment.keys.every((key) => Object.hasOwn(ids.turns, key)) &&
+    input.attachments.every((attachment) =>
+      Object.hasOwn(ids.attachments, attachment.resourceId),
+    ) &&
+    snapshot.proposedPlans.every((plan) => Object.hasOwn(ids.proposedPlans, plan.id)) &&
+    snapshot.workLog.every((entry) => Object.hasOwn(ids.workLog, entry.id)) &&
+    snapshot.questionAnswers.every((answer) => Object.hasOwn(ids.questionAnswers, answer.id))
   );
 }
 

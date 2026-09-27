@@ -28,6 +28,7 @@ import {
 } from "./ConversationImportJournal.ts";
 import {
   buildConversationImportCommand,
+  idsCoverImport,
   mintConversationImportIds,
   plannedAttachments,
 } from "./conversationImportPlan.ts";
@@ -111,6 +112,32 @@ function allMessageIds(thread: OrchestrationThread) {
 }
 
 describe("ConversationImporter", () => {
+  it.effect("maps prototype-shaped external record ids as own ids", () =>
+    withImporter(
+      Effect.gen(function* () {
+        const fixture = importFixture({ workLog: true });
+        const snapshot = fixture.input.snapshot;
+        const input: typeof fixture.input = {
+          ...fixture.input,
+          snapshot: {
+            ...snapshot,
+            proposedPlans: snapshot.proposedPlans.map((plan, index) =>
+              index === 0 ? { ...plan, id: "__proto__" } : plan,
+            ),
+            workLog: snapshot.workLog.map((entry, index) =>
+              index === 0 ? { ...entry, id: "constructor" } : entry,
+            ),
+          },
+        };
+        const ids = yield* mintConversationImportIds(input);
+        assert.isTrue(Object.hasOwn(ids.proposedPlans, "__proto__"));
+        assert.isTrue(Object.hasOwn(ids.workLog, "constructor"));
+        assert.isTrue(idsCoverImport(ids, input));
+        assert.isFalse(idsCoverImport({ ...ids, proposedPlans: {} }, input));
+      }),
+    ),
+  );
+
   it.effect("imports a package as a new independent thread with fresh ids", () =>
     withImporter(
       Effect.gen(function* () {
