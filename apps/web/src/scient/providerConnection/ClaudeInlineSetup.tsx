@@ -13,6 +13,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Button } from "../../components/ui/button";
 import {
   AssistedSetupActions,
+  AssistedSetupDiagnostics,
   AssistedSetupFrame,
   AssistedSetupStatus,
   ProviderSetupIcon,
@@ -264,6 +265,13 @@ export function ClaudeInlineSetup(props: {
     }
   };
 
+  const runtimeDiagnostics = (
+    <AssistedSetupDiagnostics
+      displayName={props.displayName}
+      presentedExternally={props.managedRuntimePresentedExternally}
+      provider={props.provider}
+    />
+  );
   if (
     activeRuntimeOperation ||
     pendingAction === "install" ||
@@ -320,6 +328,7 @@ export function ClaudeInlineSetup(props: {
             <RefreshCwIcon aria-hidden /> Repair Claude
           </Button>
         </AssistedSetupActions>
+        {runtimeDiagnostics}
       </SetupFrame>
     );
   }
@@ -360,6 +369,7 @@ export function ClaudeInlineSetup(props: {
             </Button>
           </AssistedSetupActions>
         ) : null}
+        {error ? runtimeDiagnostics : null}
       </SetupFrame>
     );
   }
@@ -435,6 +445,7 @@ export function ClaudeInlineSetup(props: {
           }
           title="Claude needs attention"
           warning
+          diagnostics={runtimeDiagnostics}
         />
       );
     }
@@ -483,6 +494,7 @@ export function ClaudeInlineSetup(props: {
               <RefreshCwIcon aria-hidden /> {error ? "Try again" : "Update"}
             </Button>
           </AssistedSetupActions>
+          {error ? runtimeDiagnostics : null}
         </SetupFrame>
       );
     }
@@ -520,6 +532,7 @@ export function ClaudeInlineSetup(props: {
             : (props.provider.message ?? "Claude did not report an available model.")
         }
         warning={!isReady}
+        diagnostics={isReady ? undefined : runtimeDiagnostics}
       />
     );
   }
@@ -530,12 +543,15 @@ export function ClaudeInlineSetup(props: {
         title="Claude needs setup"
         body="Finish configuring this custom Claude provider in Settings."
         warning
+        diagnostics={runtimeDiagnostics}
       />
     );
   }
 
   const signInError =
     localError ?? (connectionOperation?.status === "failed" ? connectionOperation.message : null);
+  const canInstallManaged =
+    !props.managedRuntimePresentedExternally && (runtime?.actions.includes("install") ?? false);
   return (
     <SetupFrame>
       <AssistedSetupStatus
@@ -583,12 +599,22 @@ export function ClaudeInlineSetup(props: {
               : "Sign in with Console"}
         </Button>
       </AssistedSetupActions>
+      {signInError && !props.managedRuntimePresentedExternally ? (
+        <AssistedSetupDiagnostics
+          displayName={props.displayName}
+          managedActionBusy={pendingAction !== null}
+          onUseManaged={canInstallManaged ? () => void install() : undefined}
+          provider={props.provider}
+        />
+      ) : null}
     </SetupFrame>
   );
 }
 
 function StatusFrame(props: {
   readonly accountAction?: ReactNode;
+  /** Runtime diagnostics, shown only for a warning. */
+  readonly diagnostics?: ReactNode;
   readonly title: string;
   readonly body: ReactNode;
   readonly loading?: boolean;
@@ -610,6 +636,7 @@ function StatusFrame(props: {
         title={props.title}
         trailing={props.accountAction}
       />
+      {props.diagnostics}
     </SetupFrame>
   );
 }

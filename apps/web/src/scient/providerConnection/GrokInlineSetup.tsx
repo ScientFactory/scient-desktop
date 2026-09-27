@@ -19,6 +19,7 @@ import { Button } from "../../components/ui/button";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import {
   AssistedSetupActions,
+  AssistedSetupDiagnostics,
   AssistedSetupFrame,
   AssistedSetupStatus,
   ProviderSetupIcon,
@@ -183,6 +184,13 @@ export function GrokInlineSetup(props: {
     setAuthorizationCode("");
   };
 
+  const runtimeDiagnostics = (
+    <AssistedSetupDiagnostics
+      displayName={props.displayName}
+      presentedExternally={props.managedRuntimePresentedExternally}
+      provider={props.provider}
+    />
+  );
   if (activeRuntimeOperation || ["install", "repair", "update"].includes(pendingAction ?? "")) {
     const action = activeRuntimeOperation?.action ?? pendingAction;
     return (
@@ -240,6 +248,7 @@ export function GrokInlineSetup(props: {
             <RefreshCwIcon aria-hidden /> Repair Grok
           </Button>
         </AssistedSetupActions>
+        {runtimeDiagnostics}
       </SetupFrame>
     );
   }
@@ -280,6 +289,7 @@ export function GrokInlineSetup(props: {
             </Button>
           </AssistedSetupActions>
         ) : null}
+        {installationError ? runtimeDiagnostics : null}
       </SetupFrame>
     );
   }
@@ -410,6 +420,7 @@ export function GrokInlineSetup(props: {
             <RefreshCwIcon aria-hidden /> {error ? "Try again" : "Update"}
           </Button>
         </AssistedSetupActions>
+        {error ? runtimeDiagnostics : null}
       </SetupFrame>
     );
   }
@@ -458,12 +469,15 @@ export function GrokInlineSetup(props: {
           role="alert"
           title="Couldn’t verify Grok"
         />
+        {runtimeDiagnostics}
       </SetupFrame>
     );
   }
 
   const signInError =
     localError ?? (connectionOperation?.status === "failed" ? connectionOperation.message : null);
+  const canInstallManaged =
+    !props.managedRuntimePresentedExternally && (runtime?.actions.includes("install") ?? false);
   return (
     <SetupFrame>
       <AssistedSetupStatus
@@ -500,6 +514,18 @@ export function GrokInlineSetup(props: {
           <ExternalLinkIcon aria-hidden /> {signInError ? "Try again" : "Sign in with Grok"}
         </Button>
       </AssistedSetupActions>
+      {signInError && !props.managedRuntimePresentedExternally ? (
+        <AssistedSetupDiagnostics
+          displayName={props.displayName}
+          managedActionBusy={pendingAction !== null}
+          onUseManaged={
+            canInstallManaged
+              ? () => void run("install", () => runtimeAction("install"))
+              : undefined
+          }
+          provider={props.provider}
+        />
+      ) : null}
     </SetupFrame>
   );
 }

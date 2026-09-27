@@ -1,9 +1,13 @@
-import type { ProviderDriverKind } from "@t3tools/contracts";
+import type { ProviderDriverKind, ServerProvider } from "@t3tools/contracts";
 import { ShieldCheckIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import { ProviderInstanceIcon } from "../../components/chat/ProviderInstanceIcon";
+import {
+  ProviderRuntimeDiagnosticsDetails,
+  resolveProviderRuntimeDiagnostics,
+} from "./ProviderRuntimeDiagnostics";
 
 export function AssistedSetupFrame(props: { readonly children: ReactNode }) {
   return (
@@ -100,5 +104,32 @@ export function ProviderSetupIcon(props: {
         />
       </span>
     </>
+  );
+}
+
+/**
+ * The runtime diagnostics disclosure of a failed or repair state. Every
+ * provider shows it only there; healthy, first-run and in-progress states
+ * leave runtime details to Settings.
+ */
+export function AssistedSetupDiagnostics(props: {
+  readonly displayName: string;
+  readonly provider: ServerProvider;
+  /** The management surface presents runtime diagnostics in its own runtime section. */
+  readonly presentedExternally?: boolean | undefined;
+  /** Offers switching a failing system installation to the Scient-managed runtime. */
+  readonly onUseManaged?: (() => void) | undefined;
+  readonly managedActionBusy?: boolean | undefined;
+}) {
+  if (props.presentedExternally || !resolveProviderRuntimeDiagnostics(props.provider)) return null;
+  return (
+    <div className="flex justify-end">
+      <ProviderRuntimeDiagnosticsDetails
+        displayName={props.displayName}
+        managedActionBusy={props.managedActionBusy}
+        onUseManaged={props.onUseManaged}
+        provider={props.provider}
+      />
+    </div>
   );
 }

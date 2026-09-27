@@ -13,6 +13,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Button } from "../../components/ui/button";
 import {
   AssistedSetupActions,
+  AssistedSetupDiagnostics,
   AssistedSetupFrame,
   AssistedSetupStatus,
   ProviderSetupIcon,
@@ -187,6 +188,13 @@ export function DroidInlineSetup(props: {
     }
   };
 
+  const runtimeDiagnostics = (
+    <AssistedSetupDiagnostics
+      displayName={props.displayName}
+      presentedExternally={props.managedRuntimePresentedExternally}
+      provider={props.provider}
+    />
+  );
   if (
     activeRuntimeOperation ||
     pendingAction === "install" ||
@@ -251,6 +259,7 @@ export function DroidInlineSetup(props: {
             <RefreshCwIcon aria-hidden /> Repair Droid
           </Button>
         </AssistedSetupActions>
+        {runtimeDiagnostics}
       </SetupFrame>
     );
   }
@@ -292,6 +301,7 @@ export function DroidInlineSetup(props: {
             </Button>
           </AssistedSetupActions>
         ) : null}
+        {installationError ? runtimeDiagnostics : null}
       </SetupFrame>
     );
   }
@@ -380,6 +390,7 @@ export function DroidInlineSetup(props: {
           </Button>
         </AssistedSetupActions>
         {secondaryActions}
+        {error ? runtimeDiagnostics : null}
       </SetupFrame>
     );
   }
@@ -406,12 +417,15 @@ export function DroidInlineSetup(props: {
         {modelsActions ? (
           <AssistedSetupActions>{modelsActions.primary}</AssistedSetupActions>
         ) : null}
+        {isReady ? null : runtimeDiagnostics}
       </SetupFrame>
     );
   }
 
   const signInError =
     localError ?? (connectionOperation?.status === "failed" ? connectionOperation.message : null);
+  const canInstallManaged =
+    !props.managedRuntimePresentedExternally && (runtime?.actions.includes("install") ?? false);
   if (!supportsDevicePairing) {
     return (
       <SetupFrame>
@@ -422,6 +436,7 @@ export function DroidInlineSetup(props: {
           title="Assisted sign in unavailable"
         />
         {secondaryActions}
+        {runtimeDiagnostics}
       </SetupFrame>
     );
   }
@@ -456,6 +471,14 @@ export function DroidInlineSetup(props: {
         </Button>
       </AssistedSetupActions>
       {secondaryActions}
+      {signInError && !props.managedRuntimePresentedExternally ? (
+        <AssistedSetupDiagnostics
+          displayName={props.displayName}
+          managedActionBusy={pendingAction !== null}
+          onUseManaged={canInstallManaged ? () => void runRuntime("install") : undefined}
+          provider={props.provider}
+        />
+      ) : null}
     </SetupFrame>
   );
 }

@@ -48,6 +48,23 @@ const provider = (patch: Partial<ServerProvider> = {}): ServerProvider => ({
   ...patch,
 });
 
+function failedSignIn(runtime = provider().connection!.runtime!): ServerProvider {
+  return provider({
+    connection: {
+      ...provider().connection!,
+      runtime,
+      operation: {
+        operationId: "connection-failed",
+        method: "codex_browser",
+        status: "failed",
+        startedAt: "2026-08-11T20:00:00.000Z",
+        finishedAt: "2026-08-11T20:01:00.000Z",
+        message: "Codex could not complete sign-in.",
+      },
+    },
+  });
+}
+
 const runtimePlan: ProviderRuntimePlan = {
   instanceId: INSTANCE_ID,
   action: "install",
@@ -210,20 +227,23 @@ describe("CodexInlineSetup", () => {
     expect(markup).toContain("Confirming sign-in with Codex…");
   });
 
-  it("offers managed recovery for an automatically selected system runtime", () => {
-    expect(render(provider())).toContain("Use Scient-managed Codex");
-    expect(render(provider(), true)).not.toContain("Use Scient-managed Codex");
+  it("offers managed recovery once sign-in with an automatically selected system runtime fails", () => {
+    expect(render(provider())).not.toContain("Runtime diagnostics");
+    expect(render(failedSignIn())).toContain("Use Scient-managed Codex");
+    expect(render(failedSignIn(), true)).not.toContain("Use Scient-managed Codex");
+  });
+
+  it("leaves runtime diagnostics to the management surface's runtime section", () => {
+    const failed = failedSignIn();
+
+    expect(render(failed)).toContain("Runtime diagnostics");
+    expect(render(failed, true)).not.toContain("Runtime diagnostics");
   });
 
   it("does not offer a managed switch when the server exposes no install action", () => {
-    const withoutInstall = provider({
-      connection: {
-        ...provider().connection!,
-        runtime: {
-          ...provider().connection!.runtime!,
-          actions: [],
-        },
-      },
+    const withoutInstall = failedSignIn({
+      ...provider().connection!.runtime!,
+      actions: [],
     });
 
     expect(render(withoutInstall)).not.toContain("Use Scient-managed Codex");

@@ -16,6 +16,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Button } from "../../components/ui/button";
 import {
   AssistedSetupActions,
+  AssistedSetupDiagnostics,
   AssistedSetupFrame,
   AssistedSetupStatus,
   ProviderSetupIcon,
@@ -194,6 +195,13 @@ export function AntigravityInlineSetup(props: {
     }
   };
 
+  const runtimeDiagnostics = (
+    <AssistedSetupDiagnostics
+      displayName={props.displayName}
+      presentedExternally={props.managedRuntimePresentedExternally}
+      provider={props.provider}
+    />
+  );
   if (
     activeRuntimeOperation ||
     pendingAction === "install" ||
@@ -258,6 +266,7 @@ export function AntigravityInlineSetup(props: {
             <RefreshCwIcon aria-hidden /> Repair Antigravity
           </Button>
         </AssistedSetupActions>
+        {runtimeDiagnostics}
       </SetupFrame>
     );
   }
@@ -374,6 +383,7 @@ export function AntigravityInlineSetup(props: {
             <span className="truncate">{command}</span>
           </button>
         )}
+        {installationError ? runtimeDiagnostics : null}
       </SetupFrame>
     );
   }
@@ -477,6 +487,7 @@ export function AntigravityInlineSetup(props: {
         }
         title="Couldn’t verify your Google account"
         warning
+        diagnostics={runtimeDiagnostics}
       />
     );
   }
@@ -494,6 +505,8 @@ export function AntigravityInlineSetup(props: {
       (usesCredentials
         ? "Connect with the credentials in the provider settings."
         : "Sign in with your existing Gemini subscription. Scient never sees your password.");
+    const canInstallManaged =
+      !props.managedRuntimePresentedExternally && (runtime?.actions.includes("install") ?? false);
     return (
       <SetupFrame>
         <AssistedSetupStatus
@@ -532,6 +545,18 @@ export function AntigravityInlineSetup(props: {
             {signInError ? "Try again" : usesCredentials ? "Connect" : "Sign in with Google"}
           </Button>
         </AssistedSetupActions>
+        {signInError && !props.managedRuntimePresentedExternally ? (
+          <AssistedSetupDiagnostics
+            displayName={props.displayName}
+            managedActionBusy={pendingAction !== null}
+            onUseManaged={
+              canInstallManaged
+                ? () => void run("install", () => runtimeAction("install"))
+                : undefined
+            }
+            provider={props.provider}
+          />
+        ) : null}
       </SetupFrame>
     );
   }
@@ -546,6 +571,7 @@ export function AntigravityInlineSetup(props: {
         }
         title="Antigravity needs attention"
         warning
+        diagnostics={runtimeDiagnostics}
       />
     );
   }
@@ -612,6 +638,8 @@ export function AntigravityInlineSetup(props: {
 
 function StatusFrame(props: {
   readonly accountAction?: ReactNode;
+  /** Runtime diagnostics, shown only for a warning. */
+  readonly diagnostics?: ReactNode;
   readonly title: string;
   readonly body: ReactNode;
   readonly loading?: boolean;
@@ -633,6 +661,7 @@ function StatusFrame(props: {
         title={props.title}
         trailing={props.accountAction}
       />
+      {props.diagnostics}
     </SetupFrame>
   );
 }

@@ -15,6 +15,7 @@ import { Button } from "../../components/ui/button";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import {
   AssistedSetupActions,
+  AssistedSetupDiagnostics,
   AssistedSetupFrame,
   AssistedSetupStatus,
   ProviderSetupIcon,
@@ -27,7 +28,6 @@ import {
   startReviewedCodexRuntimeAction,
   updateCodexRuntime,
 } from "./codexLifecycleActions";
-import { ProviderRuntimeDiagnosticsDetails } from "./ProviderRuntimeDiagnostics";
 import { ProviderAccountManagementLink } from "./ProviderAccountManagementLink";
 import {
   cancelRuntimeActionLabel,
@@ -215,6 +215,13 @@ export function CodexInlineSetup(props: {
     }
   };
 
+  const runtimeDiagnostics = (
+    <AssistedSetupDiagnostics
+      displayName={props.displayName}
+      presentedExternally={props.managedRuntimePresentedExternally}
+      provider={props.provider}
+    />
+  );
   if (
     activeRuntimeOperation ||
     pendingAction === "install" ||
@@ -269,6 +276,7 @@ export function CodexInlineSetup(props: {
             <RefreshCwIcon aria-hidden /> Repair Codex
           </Button>
         </AssistedSetupActions>
+        {runtimeDiagnostics}
       </SetupFrame>
     );
   }
@@ -309,6 +317,7 @@ export function CodexInlineSetup(props: {
             </Button>
           </AssistedSetupActions>
         ) : null}
+        {error ? runtimeDiagnostics : null}
       </SetupFrame>
     );
   }
@@ -440,6 +449,7 @@ export function CodexInlineSetup(props: {
               <RefreshCwIcon aria-hidden /> {error ? "Try again" : "Update"}
             </Button>
           </AssistedSetupActions>
+          {error ? runtimeDiagnostics : null}
         </SetupFrame>
       );
     }
@@ -522,14 +532,14 @@ export function CodexInlineSetup(props: {
               : "Sign in with ChatGPT"}
         </Button>
       </AssistedSetupActions>
-      <div className="flex justify-end">
-        <ProviderRuntimeDiagnosticsDetails
+      {signInError && !props.managedRuntimePresentedExternally ? (
+        <AssistedSetupDiagnostics
           displayName={props.displayName}
           managedActionBusy={pendingAction !== null}
           onUseManaged={canInstallManaged ? () => void useManaged() : undefined}
           provider={props.provider}
         />
-      </div>
+      ) : null}
     </SetupFrame>
   );
 }

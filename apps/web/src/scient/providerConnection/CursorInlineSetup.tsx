@@ -14,6 +14,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Button } from "../../components/ui/button";
 import {
   AssistedSetupActions,
+  AssistedSetupDiagnostics,
   AssistedSetupFrame,
   AssistedSetupStatus,
   ProviderSetupIcon,
@@ -41,7 +42,6 @@ import {
   providerLifecycleFailureMessage,
   providerRuntimeComputerLabel,
 } from "./providerConnectionPresentation";
-import { ProviderRuntimeDiagnosticsDetails } from "./ProviderRuntimeDiagnostics";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
 
 type PendingAction =
@@ -217,6 +217,13 @@ export function CursorInlineSetup(props: {
     );
   };
 
+  const runtimeDiagnostics = (
+    <AssistedSetupDiagnostics
+      displayName={props.displayName}
+      presentedExternally={props.managedRuntimePresentedExternally}
+      provider={props.provider}
+    />
+  );
   if (
     activeRuntimeOperation ||
     pendingAction === "install" ||
@@ -276,6 +283,7 @@ export function CursorInlineSetup(props: {
             <RefreshCwIcon aria-hidden /> Repair Cursor
           </Button>
         </AssistedSetupActions>
+        {runtimeDiagnostics}
       </SetupFrame>
     );
   }
@@ -316,6 +324,7 @@ export function CursorInlineSetup(props: {
             </Button>
           </AssistedSetupActions>
         ) : null}
+        {error ? runtimeDiagnostics : null}
       </SetupFrame>
     );
   }
@@ -376,6 +385,7 @@ export function CursorInlineSetup(props: {
           }
           title="Cursor needs attention"
           warning
+          diagnostics={runtimeDiagnostics}
         />
       );
     }
@@ -420,6 +430,7 @@ export function CursorInlineSetup(props: {
               <RefreshCwIcon aria-hidden /> {error ? "Try again" : "Update"}
             </Button>
           </AssistedSetupActions>
+          {error ? runtimeDiagnostics : null}
         </SetupFrame>
       );
     }
@@ -442,6 +453,7 @@ export function CursorInlineSetup(props: {
         }
         title={isReady ? "Cursor is ready" : "Cursor needs attention"}
         warning={!isReady}
+        diagnostics={isReady ? undefined : runtimeDiagnostics}
       />
     );
   }
@@ -454,12 +466,6 @@ export function CursorInlineSetup(props: {
           icon={<ShieldCheckIcon className="size-5 text-primary" />}
           title="Custom Cursor setup"
         />
-        <div className="flex justify-end">
-          <ProviderRuntimeDiagnosticsDetails
-            displayName={props.displayName}
-            provider={props.provider}
-          />
-        </div>
       </SetupFrame>
     );
   }
@@ -504,20 +510,22 @@ export function CursorInlineSetup(props: {
           {signInError ? "Try again" : "Sign in to Cursor"}
         </Button>
       </AssistedSetupActions>
-      <div className="flex justify-end">
-        <ProviderRuntimeDiagnosticsDetails
+      {signInError && !props.managedRuntimePresentedExternally ? (
+        <AssistedSetupDiagnostics
           displayName={props.displayName}
           managedActionBusy={pendingAction !== null}
           onUseManaged={canInstallManaged ? () => void useManaged() : undefined}
           provider={props.provider}
         />
-      </div>
+      ) : null}
     </SetupFrame>
   );
 }
 
 function StatusFrame(props: {
   readonly accountAction?: ReactNode;
+  /** Runtime diagnostics, shown only for a warning. */
+  readonly diagnostics?: ReactNode;
   readonly body: ReactNode;
   readonly loading?: boolean;
   readonly title: string;
@@ -539,6 +547,7 @@ function StatusFrame(props: {
         title={props.title}
         trailing={props.accountAction}
       />
+      {props.diagnostics}
     </SetupFrame>
   );
 }

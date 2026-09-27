@@ -17,6 +17,7 @@ import type { Icon } from "../../components/Icons";
 import { Button } from "../../components/ui/button";
 import {
   AssistedSetupActions,
+  AssistedSetupDiagnostics,
   AssistedSetupFrame,
   AssistedSetupStatus,
   ProviderSetupIcon,
@@ -175,6 +176,7 @@ export function ManagedRuntimeComposerSetup(props: {
               <RefreshCwIcon aria-hidden />,
             )
           : null}
+        <AssistedSetupDiagnostics displayName={name} provider={props.provider} />
       </AssistedSetupFrame>
     );
   }
@@ -210,6 +212,7 @@ export function ManagedRuntimeComposerSetup(props: {
               error ? <RefreshCwIcon aria-hidden /> : <DownloadIcon aria-hidden />,
             )
           : null}
+        {error ? <AssistedSetupDiagnostics displayName={name} provider={props.provider} /> : null}
       </AssistedSetupFrame>
     );
   }
@@ -232,6 +235,7 @@ export function ManagedRuntimeComposerSetup(props: {
           title={failed ? `Could not load ${name} models` : "Connect a model provider"}
         />
         {connectModels("setup-action")}
+        {failed ? <AssistedSetupDiagnostics displayName={name} provider={props.provider} /> : null}
       </AssistedSetupFrame>
     );
   }
@@ -262,6 +266,7 @@ export function ManagedRuntimeComposerSetup(props: {
           <RefreshCwIcon aria-hidden />,
         )}
         {connectModels("setup-secondary")}
+        {error ? <AssistedSetupDiagnostics displayName={name} provider={props.provider} /> : null}
       </AssistedSetupFrame>
     );
   }

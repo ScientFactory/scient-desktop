@@ -262,9 +262,9 @@ function view(provider: ServerProvider): HTMLElement {
   return element;
 }
 
-/** The frame's actions. */
+/** The frame's actions, leaving out controls inside the diagnostics disclosure. */
 function frameButtons(element: HTMLElement): HTMLButtonElement[] {
-  return [...element.querySelectorAll("button")];
+  return [...element.querySelectorAll("button")].filter((button) => !button.closest("details"));
 }
 
 function buttonLabels(element: HTMLElement): string[] {
@@ -424,6 +424,21 @@ describe.each(DRIVERS)("$name composer setup", (entry) => {
     expect(buttonLabels(view(managedUpdate(entry)))[0]).toBe("Update");
     expect(accessibleNames(view(managedUpdate(entry)))[0]).toBe(`Update ${entry.name}`);
   });
+
+  it("keeps runtime diagnostics out of healthy and first-run states", () => {
+    for (const provider of [ready(entry), notInstalled(entry), managedUpdate(entry)]) {
+      expect(markupFor(provider)).not.toContain("Runtime diagnostics");
+    }
+  });
+
+  it("shows runtime diagnostics in failure and repair states", () => {
+    const failedWithDiagnostics = withRuntime(installFailed(entry), {
+      diagnostics: ready(entry).connection!.runtime!.diagnostics!,
+    });
+    for (const provider of [needsRepair(entry), failedWithDiagnostics]) {
+      expect(markupFor(provider)).toContain("Runtime diagnostics");
+    }
+  });
 });
 
 describe.each(ACCOUNT_DRIVERS)("$name composer sign-in", (entry) => {
@@ -456,6 +471,26 @@ describe.each(ACCOUNT_DRIVERS)("$name composer sign-in", (entry) => {
     expect(statusIcons(element)).toEqual(["spinner"]);
     expect(element.querySelectorAll(".animate-spin")).toHaveLength(1);
     expect(strayIcons(element)).toBe(0);
+  });
+
+  it("shows runtime diagnostics only once sign-in fails", () => {
+    const failed = view(signInFailed(entry));
+
+    expect(markupFor(signIn(entry))).not.toContain("Runtime diagnostics");
+    expect(failed.textContent).toContain("The sign-in window was closed.");
+    expect(statusIcons(failed)).toEqual(["warning"]);
+    expect(failed.textContent).toContain("Runtime diagnostics");
+  });
+
+  it("offers the Scient-managed runtime when sign-in fails on a system installation", () => {
+    const system = withRuntime(signInFailed(entry), {
+      source: "system",
+      actions: ["install"],
+      managedVersion: null,
+    });
+
+    expect(markupFor(system)).toContain(`Use Scient-managed ${entry.name}`);
+    expect(markupFor(signInFailed(entry))).not.toContain("Use Scient-managed");
   });
 });
 

@@ -98,8 +98,24 @@ describe("CursorInlineSetup", () => {
   });
 
   it("does not duplicate a managed switch owned by the shared management surface", () => {
-    expect(render(provider())).toContain("Use Scient-managed Cursor");
-    expect(render(provider(), true)).not.toContain("Use Scient-managed Cursor");
+    const failedSignIn = provider({
+      connection: {
+        ...provider().connection!,
+        operation: {
+          operationId: "cursor-login-failed",
+          method: "cursor_browser",
+          status: "failed",
+          startedAt: "2026-08-23T08:00:00.000Z",
+          finishedAt: "2026-08-23T08:01:00.000Z",
+          message: "Cursor could not complete sign-in.",
+        },
+      },
+    });
+
+    // Runtime diagnostics, and the managed switch inside them, wait for a failure.
+    expect(render(provider())).not.toContain("Runtime diagnostics");
+    expect(render(failedSignIn)).toContain("Use Scient-managed Cursor");
+    expect(render(failedSignIn, true)).not.toContain("Use Scient-managed Cursor");
   });
 
   it("uses the Cursor mark for composer installation while preserving dialog status styling", () => {
