@@ -230,7 +230,7 @@ export function AssistedSetupUpdateButton(props: {
 }) {
   return (
     <Button
-      aria-label={props.retry ? `Retry ${props.name} update` : `Update ${props.name}`}
+      aria-label={props.retry ? `Try again to update ${props.name}` : `Update ${props.name}`}
       onClick={props.onClick}
       size="sm"
       type="button"

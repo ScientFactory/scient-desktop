@@ -335,7 +335,7 @@ export function CursorInlineSetup(props: {
         {canInstall ? (
           <AssistedSetupActions>
             <Button
-              aria-label={error ? "Retry Cursor installation" : "Install Cursor"}
+              aria-label={error ? "Retry installation of Cursor" : "Install Cursor"}
               onClick={() => void install()}
               size="sm"
               type="button"
@@ -499,7 +499,7 @@ export function CursorInlineSetup(props: {
       />
       <AssistedSetupActions>
         <Button
-          aria-label={signInError ? "Retry Cursor sign-in" : undefined}
+          aria-label={signInError ? "Try again to sign in to Cursor" : undefined}
           onClick={() => void signIn()}
           size="sm"
           type="button"

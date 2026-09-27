@@ -311,7 +311,7 @@ export function DroidInlineSetup(props: {
         {canInstall ? (
           <AssistedSetupActions>
             <Button
-              aria-label={installationError ? "Retry Droid installation" : "Install Droid"}
+              aria-label={installationError ? "Retry installation of Droid" : "Install Droid"}
               onClick={() => void runRuntime("install")}
               size="sm"
               type="button"
@@ -455,7 +455,7 @@ export function DroidInlineSetup(props: {
       />
       <AssistedSetupActions>
         <Button
-          aria-label={signInError ? "Retry Droid sign-in" : undefined}
+          aria-label={signInError ? "Try again to sign in to Droid" : undefined}
           onClick={() => void signIn()}
           size="sm"
           type="button"

@@ -378,7 +378,7 @@ export function AntigravityInlineSetup(props: {
           <AssistedSetupActions>
             <Button
               aria-label={
-                installationError ? "Retry Antigravity installation" : "Install Antigravity"
+                installationError ? "Retry installation of Antigravity" : "Install Antigravity"
               }
               onClick={() => void run("install", () => runtimeAction("install"))}
               size="sm"
@@ -554,7 +554,7 @@ export function AntigravityInlineSetup(props: {
         />
         <AssistedSetupActions>
           <Button
-            aria-label={signInError ? "Retry Antigravity sign-in" : undefined}
+            aria-label={signInError ? "Try again to sign in to Antigravity" : undefined}
             onClick={() =>
               void run("sign-in", () =>
                 startAntigravitySignInAndOpenAuthorizationPage(props.controller, props.provider),

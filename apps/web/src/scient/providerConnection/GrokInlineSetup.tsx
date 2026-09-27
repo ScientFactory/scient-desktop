@@ -301,7 +301,7 @@ export function GrokInlineSetup(props: {
         {canInstall ? (
           <AssistedSetupActions>
             <Button
-              aria-label={installationError ? "Retry Grok installation" : "Install Grok"}
+              aria-label={installationError ? "Retry installation of Grok" : "Install Grok"}
               onClick={() => void run("install", () => runtimeAction("install"))}
               size="sm"
               variant="ghost-primary"
@@ -504,7 +504,7 @@ export function GrokInlineSetup(props: {
           Use device code
         </Button>
         <Button
-          aria-label={signInError ? "Retry Grok sign-in" : undefined}
+          aria-label={signInError ? "Try again to sign in to Grok" : undefined}
           onClick={() => void run("sign-in", () => startGrokSignIn(props.controller))}
           size="sm"
           variant="ghost-primary"

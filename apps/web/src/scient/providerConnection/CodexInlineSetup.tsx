@@ -328,7 +328,7 @@ export function CodexInlineSetup(props: {
         {canInstall ? (
           <AssistedSetupActions>
             <Button
-              aria-label={error ? "Retry Codex installation" : "Install Codex"}
+              aria-label={error ? "Retry installation of Codex" : "Install Codex"}
               onClick={() => void install()}
               size="sm"
               type="button"
@@ -513,7 +513,7 @@ export function CodexInlineSetup(props: {
           </Button>
         ) : null}
         <Button
-          aria-label={signInError ? "Retry Codex sign-in" : undefined}
+          aria-label={signInError ? "Try again to sign in to Codex" : undefined}
           onClick={() => void signIn()}
           size="sm"
           type="button"

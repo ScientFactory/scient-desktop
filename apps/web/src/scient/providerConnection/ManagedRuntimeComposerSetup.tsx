@@ -232,7 +232,7 @@ export function ManagedRuntimeComposerSetup(props: {
           ? primaryAction(
               "install",
               error ? "Retry installation" : "Install",
-              error ? `Retry ${name} installation` : `Install ${name}`,
+              error ? `Retry installation of ${name}` : `Install ${name}`,
               error ? <RefreshCwIcon aria-hidden /> : <DownloadIcon aria-hidden />,
             )
           : null}

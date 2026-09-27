@@ -380,7 +380,7 @@ export function ClaudeInlineSetup(props: {
         {canInstall ? (
           <AssistedSetupActions>
             <Button
-              aria-label={error ? "Retry Claude installation" : "Install Claude"}
+              aria-label={error ? "Retry installation of Claude" : "Install Claude"}
               onClick={() => void install()}
               size="sm"
               type="button"
@@ -580,7 +580,7 @@ export function ClaudeInlineSetup(props: {
           </Button>
         ) : null}
         <Button
-          aria-label={signInError ? "Retry Claude sign-in" : undefined}
+          aria-label={signInError ? "Try again to sign in to Claude" : undefined}
           onClick={() => void signIn()}
           size="sm"
           type="button"

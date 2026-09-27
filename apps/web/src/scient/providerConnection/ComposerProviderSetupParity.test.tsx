@@ -387,7 +387,7 @@ describe.each(DRIVERS)("$name composer setup", (entry) => {
     expect(element.querySelector('[role="alert"]')).not.toBeNull();
     expect(statusIcons(element)).toEqual(["warning"]);
     expect(buttonLabels(element)).toEqual(["Retry installation"]);
-    expect(accessibleNames(element)).toEqual([`Retry ${entry.name} installation`]);
+    expect(accessibleNames(element)).toEqual([`Retry installation of ${entry.name}`]);
   });
 
   it("asks for repair with the server's error", () => {
@@ -470,7 +470,7 @@ describe.each(DRIVERS)("$name composer setup", (entry) => {
     expect(element.textContent).toContain("The reviewed update did not pass its smoke test.");
     expect(statusIcons(element)).toEqual(["warning"]);
     expect(buttonLabels(element)[0]).toBe("Try again");
-    expect(accessibleNames(element)[0]).toBe(`Retry ${entry.name} update`);
+    expect(accessibleNames(element)[0]).toBe(`Try again to update ${entry.name}`);
     expect(element.textContent).toContain("Runtime diagnostics");
   });
 
@@ -618,7 +618,7 @@ describe.each(EXTERNAL_UPDATE_DRIVERS)("$name composer external update", (entry)
     expect(element.textContent).toContain(`${entry.name} update didn’t take effect`);
     expect(element.textContent).toContain("still detects an outdated provider version");
     expect(element.querySelector('[role="alert"]')).not.toBeNull();
-    expect(accessibleNames(element)[0]).toBe(`Retry ${entry.name} update`);
+    expect(accessibleNames(element)[0]).toBe(`Try again to update ${entry.name}`);
   });
 
   it("shows a failed external update with a retry", () => {
