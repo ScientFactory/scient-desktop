@@ -71,9 +71,12 @@ it("replaces the header's New thread icon with a labelled row below search", asy
   const rect = row.getBoundingClientRect();
   expect(rect.height).toBe(32);
   expect(rect.width).toBeGreaterThan(200);
-  // Its icon takes the sidebar's shared icon size.
+  // It sits a small gap below the search row, one size step below thread titles.
+  const header = row.parentElement!.previousElementSibling!.getBoundingClientRect();
+  expect(rect.top - header.bottom).toBe(6);
   const icon = row.querySelector("svg")!.getBoundingClientRect();
-  expect([icon.width, icon.height]).toEqual([16, 16]);
+  expect([icon.width, icon.height]).toEqual([14, 14]);
+  expect(getComputedStyle(row.querySelector("span")!).fontSize).toBe("13px");
 
   row.click();
   expect(onNewThread).toHaveBeenCalledTimes(1);

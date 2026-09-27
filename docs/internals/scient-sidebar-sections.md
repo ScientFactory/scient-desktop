@@ -69,7 +69,9 @@ Removals offer Undo.
 
 **New thread is a row, not an icon.** `SidebarNewThreadRow` takes the header's
 own new-thread inputs (handler, disabled state, shortcut labels, Shift+click
-hint), so both controls behave identically. The Shift+click hint is T3's text;
+hint), so both controls behave identically. Its 6px gap below search and its
+smaller icon (14px) and label (13px) are set inside the row, not through shared
+sidebar tokens, so they don't affect T3's other rows. The Shift+click hint is T3's text;
 on current main the shared click handler does not read the modifier, so fixing
 that belongs to the shared handler, not to the row. The header keeps T3's icon block
 unchanged and hides it with the `hidden` attribute (Tailwind's preflight makes
