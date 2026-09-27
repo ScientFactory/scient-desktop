@@ -231,7 +231,7 @@ describe.skipIf(binary === null)("Word export with the real Pandoc (local integr
         expect(
           [...code.docx.entries.keys()].filter((name) => name.startsWith("word/media/")),
         ).toHaveLength(1);
-        expect(codeXml).toContain("Diagram not rendered");
+        expect(codeXml).toContain("Mermaid diagram source (image unavailable)");
         expect(codeXml).toContain("graph LR; X--&gt;Y");
 
         const images = yield* convert("05-images");

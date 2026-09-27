@@ -42,8 +42,12 @@ import { prepareConversationPdf } from "../documentExport/ConversationPdfPrepara
 import {
   PandocWordConverter,
   WordConversionError,
+  layer as realConverterLayer,
   type WordConversionFailureReason,
 } from "../pandoc/PandocWordConverter.ts";
+import { managedToolLayer, pandocBinaryForTests, readDocx } from "../pandoc/pandocTestSupport.ts";
+
+const pandocBinary = pandocBinaryForTests();
 
 const THREAD = ThreadId.make("thread-1");
 const encodeAttachments = Schema.encodeSync(Schema.fromJsonString(Schema.Array(ChatAttachment)));
@@ -80,6 +84,7 @@ const QueryLive = OrchestrationProjectionSnapshotQueryLive.pipe(
 type WordMode =
   | { readonly _tag: "unavailable" }
   | { readonly _tag: "converts"; readonly seen: Array<DocumentBundle> }
+  | { readonly _tag: "real"; readonly scratchRoot: string }
   | { readonly _tag: "fails"; readonly reason: WordConversionFailureReason };
 
 const wordLayer = (mode: WordMode) =>
@@ -132,7 +137,12 @@ const wordLayer = (mode: WordMode) =>
 
 const exportLayer = (prefix: string, word: WordMode = { _tag: "unavailable" }) =>
   ConversationExportService.layer.pipe(
-    Layer.provideMerge(wordLayer(word)),
+    Layer.provideMerge(word._tag === "real"
+      ? realConverterLayer.pipe(
+          Layer.provide(managedToolLayer({ command: { command: pandocBinary!, leadingArgs: [] }, scratchRoot: word.scratchRoot })),
+          Layer.provideMerge(NodeServices.layer),
+        )
+      : wordLayer(word)),
     Layer.provideMerge(ConversationSnapshotService.layer),
     Layer.provideMerge(ConversationExportFiles.layer),
     Layer.provideMerge(QueryLive),
@@ -275,6 +285,25 @@ const produceText = (input: ScientConversationExportRequest) =>
   });
 
 describe("ConversationExportService", () => {
+  it.skipIf(pandocBinary === null).live("exports Mermaid source and unresolved bibliography keys through the real Word path", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const scratchRoot = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-conversation-word-" });
+      return yield* Effect.gen(function* () {
+        yield* seedThread({ pairs: 1, firstUserText: "See [@unavailable2026].\n\n```mermaid\nflowchart LR\n  A --> B\n```" });
+        const service = yield* ConversationExportService.ConversationExportService;
+        const produced = yield* service.produce(request({ format: "docx" }));
+        assert(produced.output._tag === "file");
+        const docx = yield* readDocx(produced.output.path);
+        const xml = docx.text("word/document.xml");
+        assert.include(xml, "Mermaid diagram source (image unavailable)");
+        assert.include(xml, "A --&gt; B");
+        assert.include(xml, "[@unavailable2026]");
+        assert.include(produced.warnings.map((warning) => warning.message).join("\n"), "@unavailable2026");
+        assert.include(produced.warnings.map((warning) => warning.message).join("\n"), "complete Mermaid source");
+      }).pipe(Effect.provide(exportLayer("scient-convexport-real-word-", { _tag: "real", scratchRoot })));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
   it.effect("exports a 2,100-message thread completely from the server snapshot", () =>
     Effect.gen(function* () {
       yield* seedThread({ pairs: 1_050, activitiesPerTurn: 1 });

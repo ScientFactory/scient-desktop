@@ -183,7 +183,7 @@ describe("applyScientStructure", () => {
     expect(((imageNode.c as Array<unknown>)[2] as Array<string>)[0]).toBe(
       `scient-asset:${mermaidDiagramAssetId(rendered)}`,
     );
-    expect(inlineText(blocks[1]!.c)).toContain("Diagram not rendered");
+    expect(inlineText(blocks[1]!.c)).toContain("Mermaid diagram source (image unavailable)");
     expect(report.diagramsRendered).toBe(1);
     expect(report.diagramsMissing).toBe(1);
     expect(report.warnings[0]?.code).toBe("resource-unresolved");

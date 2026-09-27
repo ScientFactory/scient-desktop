@@ -16,8 +16,8 @@
  *   styles, and work-log steps become paragraphs so the style applies to them;
  * - GitHub alerts get the `Scient Alert` style with their title in bold;
  * - task lists become `Scient Task List` paragraphs with ☐ / ☑ boxes;
- * - Mermaid fences become the bundle's rendered diagram image, or a
- *   placeholder followed by the source when the bundle carries none;
+ * - Mermaid fences become the bundle's rendered diagram image, or a clearly
+ *   labelled, complete Mermaid source block when no image was captured;
  * - wide tables get content-proportional column widths.
  *
  * Citations and text direction live in their own modules.
@@ -332,7 +332,7 @@ export function applyScientStructure(
             para([
               customStyleSpan(
                 SCIENT_WORD_STYLES.placeholder,
-                textInlines("[Diagram not rendered — Mermaid source follows]"),
+                textInlines("Mermaid diagram source (image unavailable):"),
               ),
             ]),
             block,
@@ -360,7 +360,7 @@ export function applyScientStructure(
   if (diagramsMissing > 0) {
     warnings.push({
       code: "resource-unresolved",
-      message: `${diagramsMissing} Mermaid ${diagramsMissing === 1 ? "diagram has" : "diagrams have"} no rendered image; the Word file shows the diagram source instead.`,
+      message: `${diagramsMissing} Mermaid ${diagramsMissing === 1 ? "diagram has" : "diagrams have"} no rendered image; the complete Mermaid source is included in the Word file.`,
     });
   }
   return { warnings, workLogBlocks, reasoningBlocks, diagramsRendered, diagramsMissing };

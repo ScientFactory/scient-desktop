@@ -10,7 +10,7 @@ import * as Layer from "effect/Layer";
 
 import { PandocManagedTool } from "./PandocManagedTool.ts";
 import type { PandocCommand } from "./pandocProcess.ts";
-import { PandocWordConverter, SCIENT_PANDOC_READER, layer } from "./PandocWordConverter.ts";
+import { MAX_WORD_SOURCE_BYTES, PandocWordConverter, SCIENT_PANDOC_READER, layer } from "./PandocWordConverter.ts";
 import { fakePandoc, makeBundle, managedToolLayer } from "./pandocTestSupport.ts";
 
 const run = <A, E>(
@@ -39,6 +39,20 @@ const withCommand = (command: PandocCommand | null) => (scratchRoot: string) =>
   managedToolLayer({ command, scratchRoot });
 
 describe("PandocWordConverter", () => {
+  it.live("rejects oversized UTF-8 input before starting Pandoc or writing an output", () =>
+    run(withCommand(null), ({ converter, directory, scratchRoot }) =>
+      Effect.gen(function* () {
+        const outputPath = NodePath.join(directory, "oversized.docx");
+        const error = yield* converter.convert({
+          bundle: makeBundle({ markdown: "é".repeat(Math.floor(MAX_WORD_SOURCE_BYTES / 2) + 1) }),
+          outputPath,
+        }).pipe(Effect.flip);
+        expect(error.reason).toBe("too-large");
+        expect(NodeFS.existsSync(outputPath)).toBe(false);
+        expect(NodeFS.existsSync(scratchRoot)).toBe(false);
+      }),
+    ),
+  );
   it("reads Scient's profiles with CommonMark and only the profiles' extensions", () => {
     expect(SCIENT_PANDOC_READER.startsWith("commonmark_x-")).toBe(true);
     for (const off of ["attributes", "raw_attribute", "fenced_divs", "smart", "subscript"]) {

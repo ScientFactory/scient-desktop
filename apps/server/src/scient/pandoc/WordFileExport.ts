@@ -5,8 +5,8 @@
  * export PR 2) produces document bundles: it reads the saved file through the
  * workspace file system, refuses when the file on disk is not the revision the
  * editor showed, and builds a `document`-profile bundle whose relative images
- * the converter resolves itself, only inside the project root. Citation keys
- * stay as written until the capture supplies references.
+ * the converter resolves itself, only inside the project root. YAML CSL
+ * references and allowlisted local bibliographies travel with the bundle.
  *
  * The Word file goes to the same temporary export location as conversation
  * exports and is read through a signed asset.
@@ -35,6 +35,7 @@ import {
 } from "../conversationExport/ConversationExportFiles.ts";
 import { PandocWordConverter, type WordConversionFailureReason } from "./PandocWordConverter.ts";
 import { LatexPreparationError, prepareLatexProject } from "./latexProjectPreparation.ts";
+import { citationsFromCslJson, markdownReferenceDeclarations } from "./markdownWordReferences.ts";
 
 const MARKDOWN_FILE = /\.(?:md|markdown|mdown|mkd)$/iu;
 const isLatexPreparationError = Schema.is(LatexPreparationError);
@@ -110,6 +111,49 @@ const make = Effect.gen(function* () {
       }
 
       const title = path.basename(target.relativePath).replace(MARKDOWN_FILE, "") || "Document";
+      const declared = markdownReferenceDeclarations(read.contents);
+      const citations = [...declared.citations];
+      const warnings = [...declared.warnings];
+      const bibliographySources: Array<{ format: "bibtex"; contents: string }> = [];
+      for (const name of declared.bibliographyPaths) {
+        if (path.isAbsolute(name) || /^(?:[a-z][a-z\d+.-]*:|\\\\)/iu.test(name)) {
+          warnings.push({
+            code: "resource-unresolved",
+            message: "An absolute or remote bibliography was not used; its citation keys remain as written.",
+          });
+          continue;
+        }
+        const relativePath = path.join(path.dirname(target.relativePath), name);
+        const bibliography = yield* workspacePaths
+          .resolveRelativePathWithinRoot({ workspaceRoot: root, relativePath })
+          .pipe(Effect.option);
+        const loaded =
+          bibliography._tag === "Some"
+            ? yield* workspaceFiles
+                .readFile({ cwd: root, relativePath: bibliography.value.relativePath })
+                .pipe(Effect.option)
+            : null;
+        if (loaded === null || loaded._tag === "None" || loaded.value.truncated) {
+          warnings.push({
+            code: "resource-unresolved",
+            message: `Bibliography “${path.basename(name)}” could not be read inside this project; its citation keys remain as written.`,
+          });
+          continue;
+        }
+        if (/\.bib$/iu.test(name)) {
+          bibliographySources.push({ format: "bibtex", contents: loaded.value.contents });
+          continue;
+        }
+        const entries = citationsFromCslJson(loaded.value.contents);
+        if (entries === null) {
+          warnings.push({
+            code: "resource-unresolved",
+            message: `Bibliography “${path.basename(name)}” is not valid CSL-JSON; its citation keys remain as written.`,
+          });
+        } else {
+          citations.push(...entries);
+        }
+      }
       const bundle: DocumentBundle = {
         markdown: read.contents,
         profile: "document",
@@ -126,8 +170,8 @@ const make = Effect.gen(function* () {
           },
         },
         assets: [],
-        citations: [],
-        warnings: [],
+        citations,
+        warnings,
       };
       const exportId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
       const fileName = exportFileName(title, ".docx");
@@ -135,6 +179,7 @@ const make = Effect.gen(function* () {
       const converted = yield* words
         .convert({
           bundle,
+          bibliographySources,
           outputPath: reserved.path,
           files: { baseDirectory: path.dirname(target.absolutePath), allowRoots: [root] },
         })

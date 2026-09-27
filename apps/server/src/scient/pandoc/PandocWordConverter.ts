@@ -35,6 +35,7 @@ import type * as ChildProcessSpawner from "effect/unstable/process/ChildProcessS
 
 import { decodePandocDocument, toPandocDocument } from "./pandocAst.ts";
 import { applyCitations, bibliographyFromCitations } from "./pandocCitations.ts";
+import { citationsFromCslJson } from "./markdownWordReferences.ts";
 import { applyDirection } from "./pandocDirection.ts";
 import { PandocManagedTool } from "./PandocManagedTool.ts";
 import {
@@ -94,6 +95,8 @@ const WORD_WRITE_LIMITS: PandocLimits = {
   maxStdoutBytes: 512 * 1024 * 1024,
 };
 const MAX_PANDOC_WARNINGS = 20;
+/** Keep the first Pandoc read bounded before allocating a UTF-8 input buffer. */
+export const MAX_WORD_SOURCE_BYTES = 8 * 1024 * 1024;
 
 export const WordConversionFailureReason = Schema.Literals([
   "unavailable",
@@ -125,6 +128,8 @@ export interface WordConversionInput {
   } | null;
   /** A CSL style for the bibliography; Pandoc's built-in Chicago author-date otherwise. */
   readonly cslStyle?: string | null;
+  /** Saved, project-allowlisted BibTeX bytes; Pandoc reads them from stdin. */
+  readonly bibliographySources?: ReadonlyArray<{ readonly format: "bibtex"; readonly contents: string }>;
   /** Overrides for tests of the limits. */
   readonly limits?: { readonly read?: PandocLimits; readonly write?: PandocLimits };
 }
@@ -242,6 +247,13 @@ const make = Effect.gen(function* () {
   const convert: PandocWordConverter["Service"]["convert"] = Effect.fn(
     "scient.pandoc.convertToWord",
   )(function* (input) {
+    const source = input.latex?.source ?? input.bundle.markdown;
+    if (Buffer.byteLength(source, "utf8") > MAX_WORD_SOURCE_BYTES) {
+      return yield* new WordConversionError({
+        reason: "too-large",
+        message: "The Word source exceeds 8 MB. Export a shorter range or leave out the work log.",
+      });
+    }
     const pandoc = yield* tool.command;
     if (pandoc === null) {
       const current = yield* availability;
@@ -278,7 +290,7 @@ const make = Effect.gen(function* () {
         // 1. Read.
         const read = yield* run(
           ["--sandbox", "-f", input.latex ? "latex" : SCIENT_PANDOC_READER, "-t", "json"],
-          new TextEncoder().encode(input.latex?.source ?? input.bundle.markdown),
+          new TextEncoder().encode(source),
           readLimits,
         );
         const decoded = yield* decodePandocDocument(new TextDecoder().decode(read.stdout)).pipe(
@@ -299,7 +311,28 @@ const make = Effect.gen(function* () {
           profile: input.bundle.profile,
           assets: input.bundle.assets,
         });
-        const bibliography = bibliographyFromCitations(input.bundle.citations);
+        const bibliography = new Map(bibliographyFromCitations(input.bundle.citations));
+        const bibliographyWarnings: Array<DocumentWarning> = [];
+        for (const [index, source] of (input.bibliographySources ?? []).entries()) {
+          const parsed = yield* run(
+            ["--sandbox", "-f", source.format, "-t", "csljson"],
+            new TextEncoder().encode(source.contents),
+            readLimits,
+          ).pipe(Effect.option);
+          const entries = parsed._tag === "Some"
+            ? citationsFromCslJson(new TextDecoder().decode(parsed.value.stdout))
+            : null;
+          if (entries === null) {
+            bibliographyWarnings.push({
+              code: "resource-unresolved",
+              message: `Bibliography ${index + 1} could not be parsed; its citation keys remain as written.`,
+            });
+            continue;
+          }
+          for (const [key, reference] of bibliographyFromCitations(entries)) {
+            if (!bibliography.has(key)) bibliography.set(key, reference);
+          }
+        }
         const citations = applyCitations(document.blocks, bibliography);
         const security = yield* securePandocDocument(document, {
           assets: input.bundle.assets,
@@ -327,6 +360,7 @@ const make = Effect.gen(function* () {
         const conversionWarnings = [
           ...(input.latex?.warnings ?? []),
           ...structure.warnings,
+          ...bibliographyWarnings,
           ...citations.warnings,
           ...security.warnings,
           ...direction.warnings,
