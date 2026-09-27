@@ -581,6 +581,8 @@ export const ScientConversationExportRequest = Schema.Struct({
   format: ConversationExportFormat,
   options: ConversationExportOptions,
   delivery: ScientConversationExportDelivery,
+  /** IANA time zone for human-readable times in the output; UTC when absent or unknown. */
+  timeZone: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(64))),
 });
 export type ScientConversationExportRequest = typeof ScientConversationExportRequest.Type;
 
