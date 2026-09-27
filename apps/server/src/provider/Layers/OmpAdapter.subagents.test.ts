@@ -96,9 +96,13 @@ describe("Oh My Pi adapter background subagents", () => {
       ]);
       expect(tasks(events, "task.completed")).toEqual([]);
 
-      // A later turn is open when the first turn's subagent reports and ends.
-      const second = yield* adapter.sendTurn({ threadId, input: "Something else." });
-      yield* until((event) => event.type === "turn.completed" && event.turnId === second.turnId);
+      // Native wake-ups carry no request id. A new user prompt while the
+      // detached run is pending could claim its output as the user's answer.
+      const rejected = yield* adapter
+        .sendTurn({ threadId, input: "Something else." })
+        .pipe(Effect.flip);
+      expect(rejected.message).toContain("background work");
+      expect(wire.written.filter((command) => command.type === "prompt")).toHaveLength(1);
       yield* wire.send(
         {
           type: "subagent_progress",
@@ -114,8 +118,17 @@ describe("Oh My Pi adapter background subagents", () => {
         { turnId: first.turnId, taskId: "bg-1", status: "completed" },
       ]);
 
-      // OMP settles the session: the second turn's subagent never reported an
-      // end, so nothing can still be running it.
+      // Once the native session settles, a fresh prompt can be admitted.
+      yield* wire.send({ type: "session_settled" });
+      yield* until(
+        (event) => event.type === "task.completed" && event.payload.taskType === "monitor",
+      );
+      expect(tasks(events, "task.completed")).toMatchObject([
+        { turnId: first.turnId, taskId: "bg-1", status: "completed" },
+      ]);
+      const second = yield* adapter.sendTurn({ threadId, input: "Something else." });
+      yield* until((event) => event.type === "turn.completed" && event.turnId === second.turnId);
+      // The second subagent never reports an end, so session_settled closes it.
       yield* wire.send({ type: "session_settled" });
       yield* until(
         (event) =>
@@ -274,4 +287,16 @@ describe("Oh My Pi background continuation and Stop", () => {
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
   }
+
+  it.live("captured Stop closes the monitored runtime between turns", () =>
+    Effect.gen(function* () {
+      const h = yield* continuationHarness(true);
+      const stop = yield* h.adapter.captureTurnStop!(h.threadId);
+      expect(yield* stop.stop()).toBe(true);
+      yield* h.until((event) => event.type === "session.exited");
+      expect(h.closed()).toBe(true);
+      expect(h.liveness()).toBe(null);
+      expect(yield* h.adapter.hasSession(h.threadId)).toBe(false);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 });
