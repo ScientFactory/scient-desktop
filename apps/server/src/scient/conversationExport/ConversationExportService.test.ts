@@ -573,11 +573,14 @@ describe("conversation export delivery", () => {
       yield* seedThread({ pairs: 2, firstUserText: `See ${config.stateDir}/logs/x.log` });
       const service = yield* ConversationExportService.ConversationExportService;
       const preparation = yield* service.prepare(THREAD);
-      assert.deepStrictEqual(preparation.formats[1], {
-        format: "docx",
-        available: true,
-        unavailableReason: null,
-      });
+      assert.deepStrictEqual(
+        preparation.formats.find((entry) => entry.format === "docx"),
+        {
+          format: "docx",
+          available: true,
+          unavailableReason: null,
+        },
+      );
       const produced = yield* service.produce(
         request({ format: "docx" }, { includeWorkLog: true }),
       );

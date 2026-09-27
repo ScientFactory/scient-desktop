@@ -32,6 +32,7 @@ import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityRes
 import * as ConversationExportFiles from "../conversationExport/ConversationExportFiles.ts";
 import * as ConversationExportService from "../conversationExport/ConversationExportService.ts";
 import * as ConversationSnapshotService from "../conversationExport/ConversationSnapshotService.ts";
+import { PandocWordConverter } from "../pandoc/PandocWordConverter.ts";
 import { readScicPackage } from "./ScicReader.ts";
 import { sha256Digest } from "./ScicWriter.ts";
 
@@ -61,6 +62,19 @@ const QueryLive = OrchestrationProjectionSnapshotQueryLive.pipe(
 );
 
 const TestLayer = ConversationExportService.layer.pipe(
+  Layer.provide(
+    Layer.succeed(
+      PandocWordConverter,
+      PandocWordConverter.of({
+        availability: Effect.succeed({
+          available: false,
+          reason: "Not installed",
+          installable: true,
+        }),
+        convert: () => Effect.die("Word conversion is not used by this archive test"),
+      }),
+    ),
+  ),
   Layer.provideMerge(ConversationSnapshotService.layer),
   Layer.provideMerge(ConversationExportFiles.layer),
   Layer.provideMerge(QueryLive),

@@ -28,6 +28,9 @@ describe("storage path redaction", () => {
     expect(
       redactStoragePaths("c:/users/BOB_SMITH/appdata/roaming/scient\\attachments", [WINDOWS_ROOT]),
     ).toBe(`${STORAGE_PATH_PLACEHOLDER}\\attachments`);
+    expect(redactStoragePaths("/users/ALICE_NAME/*SCIENT*/USERDATA/logs/a.log", [POSIX_ROOT])).toBe(
+      `${STORAGE_PATH_PLACEHOLDER}/logs/a.log`,
+    );
   });
 
   it("removes roots before Markdown escaping can change their spelling", () => {

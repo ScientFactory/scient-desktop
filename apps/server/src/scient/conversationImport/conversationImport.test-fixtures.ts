@@ -21,6 +21,7 @@ import * as Schema from "effect/Schema";
 
 import {
   ConversationImportStagingError,
+  conversationContentDigest,
   conversationImportOmissions,
   ValidatedConversationImport,
   type ConversationImportLease,
@@ -186,7 +187,7 @@ export function importFixture(options: ImportFixtureOptions = {}): ImportFixture
     resources.set("attachment-1", figure);
     resources.set("attachment-2", notes);
   }
-  const snapshot = decodeSnapshot({
+  const snapshotWithoutDigest = decodeSnapshot({
     format: "scient.conversation-snapshot",
     version: 1,
     thread: {
@@ -244,6 +245,10 @@ export function importFixture(options: ImportFixtureOptions = {}): ImportFixture
         ? [{ _tag: "attachment-unavailable", name: "missing.pdf", messageN: 1 }]
         : [],
     contentDigest: `sha256:${"a".repeat(64)}`,
+  });
+  const snapshot = decodeSnapshot({
+    ...snapshotWithoutDigest,
+    contentDigest: conversationContentDigest(snapshotWithoutDigest),
   });
   const staged = [...resources].map(([resourceId, bytes]) => ({
     resourceId,

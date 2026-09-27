@@ -30,6 +30,7 @@ import type * as Electron from "electron";
 
 import * as ElectronApp from "../../electron/ElectronApp.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
+import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import { makeIpcMethod } from "../../ipc/DesktopIpc.ts";
 import {
   CONVERSATION_FILES_OPENED_CHANNEL,
@@ -90,15 +91,28 @@ export async function registerOpenedConversationFile(path: string): Promise<bool
 export function takeOpenedConversationFileList(): ReadonlyArray<DesktopOpenedConversationFile> {
   const files = [...waiting.values()];
   waiting.clear();
-  for (const file of files) taken.set(file.token, file);
+  for (const file of files) {
+    while (taken.size >= MAX_PENDING_CONVERSATION_FILES) {
+      const oldest = taken.keys().next().value;
+      if (oldest === undefined) break;
+      taken.delete(oldest);
+    }
+    taken.set(file.token, file);
+  }
   return files.map(({ token, fileName, sizeBytes }) => ({ token, fileName, sizeBytes }));
 }
 
-function uploadTarget(rawUrl: string): URL | null {
+export function uploadTarget(rawUrl: string, allowedOrigins: ReadonlySet<string>): URL | null {
   try {
     const url = new URL(rawUrl);
+    // The renderer may display untrusted imported content. Only the exact
+    // origins of managed local backends may receive an OS-opened file; remote
+    // environments can import a user-picked browser File instead.
     return (url.protocol === "http:" || url.protocol === "https:") &&
+      allowedOrigins.has(url.origin) &&
       url.pathname.startsWith(`${SCIENT_CONVERSATION_IMPORT_UPLOAD_PATH}/`) &&
+      url.search === "" &&
+      url.hash === "" &&
       url.username === "" &&
       url.password === ""
       ? url
@@ -111,11 +125,12 @@ function uploadTarget(rawUrl: string): URL | null {
 /** Streams a taken file to its signed upload URL. The token is spent either way. */
 export async function uploadOpenedConversationFileTo(
   request: DesktopConversationFileUploadRequest,
+  allowedOrigins: ReadonlySet<string>,
   fetchImpl: typeof fetch = fetch,
 ): Promise<DesktopConversationFileUploadResult> {
   const file = taken.get(request.token);
   if (!file) return { _tag: "failed", reason: "file-unavailable" };
-  const target = uploadTarget(request.url);
+  const target = uploadTarget(request.url, allowedOrigins);
   if (target === null) return { _tag: "failed", reason: "invalid-url" };
   taken.delete(request.token);
   const stat = await NodeFS.promises.stat(file.path).catch(() => null);
@@ -182,5 +197,15 @@ export const uploadOpenedConversationFile = makeIpcMethod({
   channel: UPLOAD_OPENED_CONVERSATION_FILE_CHANNEL,
   payload: DesktopConversationFileUploadRequest,
   result: DesktopConversationFileUploadResult,
-  handler: (request) => Effect.promise(() => uploadOpenedConversationFileTo(request)),
+  handler: (request) =>
+    Effect.gen(function* () {
+      const pool = yield* DesktopBackendPool.DesktopBackendPool;
+      const instances = yield* pool.list;
+      const origins = new Set<string>();
+      for (const instance of instances) {
+        const config = yield* instance.currentConfig;
+        if (Option.isSome(config)) origins.add(config.value.httpBaseUrl.origin);
+      }
+      return yield* Effect.promise(() => uploadOpenedConversationFileTo(request, origins));
+    }),
 });

@@ -22,6 +22,7 @@ import { CommandPalette } from "../components/CommandPalette";
 import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
 // SCIENT-FORK: conversation export dialog.
 import { ConversationExportDialogHost } from "../scient/conversationExport/ConversationExportDialog";
+import { ConversationImportDialogHost } from "../scient/conversationImport/ConversationImportDialog";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
 import { FirstRunGate } from "../components/onboarding/FirstRunGate";
 import { ConnectOnboardingDialog } from "../components/cloud/ConnectOnboardingDialog";
@@ -183,6 +184,7 @@ function RootRouteView() {
           <CustomSnoozeDialogHost />
           {/* SCIENT-FORK: conversation export dialog. */}
           <ConversationExportDialogHost />
+          <ConversationImportDialogHost />
           <CommandPalette>
             <AppSidebarLayout>
               <Outlet />
@@ -234,6 +236,7 @@ function RootRouteView() {
           <CustomSnoozeDialogHost />
           {/* SCIENT-FORK: conversation export dialog. */}
           <ConversationExportDialogHost />
+          <ConversationImportDialogHost />
           <SlowRpcRequestToastCoordinator />
           <ProjectCloneToastCoordinator />
           <HostedStaticEnvironmentBootstrap />

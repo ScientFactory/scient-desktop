@@ -39,6 +39,7 @@ import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
 
 import packageJson from "../../../package.json" with { type: "json" };
 import * as ServerConfig from "../../config.ts";
@@ -260,12 +261,27 @@ const make = Effect.gen(function* () {
     for (const localId of snapshotAttachmentIds(snapshot)) {
       const path = attachmentFiles.get(localId);
       if (path === undefined) continue;
-      const bytes = yield* fileSystem.readFile(path).pipe(Effect.option);
+      const remaining = SCIENT_CONVERSATION_EXPORT_MAX_ASSET_BYTES - totalBytes;
+      const fileInfo = yield* fileSystem.stat(path).pipe(Effect.option);
+      if (fileInfo._tag === "None" || fileInfo.value.type !== "File") {
+        resolved.set(localId, { _tag: "unavailable", reason: "unreadable" });
+        continue;
+      }
+      if (fileInfo.value.size > remaining) {
+        resolved.set(localId, { _tag: "unavailable", reason: "too-large" });
+        continue;
+      }
+      // Bound the actual read too: the file could grow between stat and read.
+      const bytes = yield* fileSystem.stream(path, { bytesToRead: remaining + 1 }).pipe(
+        Stream.runCollect,
+        Effect.map((chunks) => Buffer.concat(chunks)),
+        Effect.option,
+      );
       if (bytes._tag === "None") {
         resolved.set(localId, { _tag: "unavailable", reason: "unreadable" });
         continue;
       }
-      if (totalBytes + bytes.value.byteLength > SCIENT_CONVERSATION_EXPORT_MAX_ASSET_BYTES) {
+      if (bytes.value.byteLength > remaining) {
         resolved.set(localId, { _tag: "unavailable", reason: "too-large" });
         continue;
       }

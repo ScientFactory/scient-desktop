@@ -5,7 +5,6 @@
  * escaping can change how a path is spelled.
  */
 import type { ConversationSnapshotV1 } from "@t3tools/contracts";
-import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 
 export const STORAGE_PATH_PLACEHOLDER = "«scient-data»";
 
@@ -15,8 +14,10 @@ function escapeRegExp(text: string): string {
 
 /**
  * A matcher for each root that accepts either separator, so `C:\Users\a` and
- * `C:/Users/a` are both found. Windows roots match case-insensitively, as the
- * file system does. Longer roots are tried first.
+ * `C:/Users/a` are both found. Match without case on every platform: macOS
+ * volumes may be case-insensitive, and over-redaction is safer than leaking a
+ * storage path whose spelling differs from the configured root. Longer roots
+ * are tried first.
  */
 function rootPatterns(roots: ReadonlyArray<string>): ReadonlyArray<RegExp> {
   return [...new Set(roots)]
@@ -25,8 +26,7 @@ function rootPatterns(roots: ReadonlyArray<string>): ReadonlyArray<RegExp> {
     .toSorted((left, right) => right.length - left.length)
     .map((root) => {
       const segments = root.split(/[\\/]+/u).map(escapeRegExp);
-      const windows = isWindowsAbsolutePath(root);
-      return new RegExp(segments.join("[\\\\/]+"), windows ? "giu" : "gu");
+      return new RegExp(segments.join("[\\\\/]+"), "giu");
     });
 }
 

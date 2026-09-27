@@ -40,8 +40,6 @@ const RAW_CODE_REGION_PATTERN = /<(code|pre)(?:\s[^>]*)?>[\s\S]*?(?:<\/\1\s*>|$)
 // eligible — CommonMark treats inline-HTML content as ordinary prose.
 const RAW_HTML_TAG_PATTERN = /<\/?[a-zA-Z][^<>\n]*>/g;
 const RAW_HTML_COMMENT_PATTERN = /<!--[\s\S]*?(?:-->|$)/g;
-const TEX_DELIMITER_PAIR_PATTERN =
-  /(?<!\\)\\\[([\s\S]*?)(?<!\\)\\\]|(?<!\\)\\\(([\s\S]*?)(?<!\\)\\\)/g;
 
 /** Fenced blocks, line by line: ``` or ~~~ opens, an equal-or-longer run of the same marker closes, an unclosed fence protects to the end. */
 function collectFencedRanges(text: string, ranges: ProtectedRange[]): void {
@@ -100,8 +98,15 @@ function collectPatternRanges(text: string, pattern: RegExp, ranges: ProtectedRa
   }
 }
 
-function overlapsProtected(ranges: ProtectedRange[], start: number, end: number): boolean {
-  return ranges.some((range) => start < range.end && end > range.start);
+function firstAfter(positions: ReadonlyArray<number>, start: number): number | undefined {
+  let low = 0;
+  let high = positions.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (positions[middle]! <= start) low = middle + 1;
+    else high = middle;
+  }
+  return positions[low];
 }
 
 /**
@@ -122,20 +127,46 @@ export function findScientBackslashMathSpans(text: string): ReadonlyArray<Scient
   collectPatternRanges(text, RAW_CODE_REGION_PATTERN, protectedRanges);
   collectPatternRanges(text, RAW_HTML_TAG_PATTERN, protectedRanges);
   collectPatternRanges(text, RAW_HTML_COMMENT_PATTERN, protectedRanges);
+  protectedRanges.sort((left, right) => left.start - right.start);
+
+  // Index closers once. A lazy regex retries the entire remaining suffix for
+  // every unmatched opener, which becomes quadratic on long agent output.
+  const parenClosers: number[] = [];
+  const bracketClosers: number[] = [];
+  for (let index = 0; index < text.length - 1; index += 1) {
+    if (text[index] !== "\\" || text[index - 1] === "\\") continue;
+    if (text[index + 1] === ")") parenClosers.push(index);
+    else if (text[index + 1] === "]") bracketClosers.push(index);
+  }
 
   const spans: ScientBackslashMathSpan[] = [];
-  for (const match of text.matchAll(TEX_DELIMITER_PAIR_PATTERN)) {
-    const content = match[1] ?? match[2] ?? "";
+  let protectedIndex = 0;
+  for (let start = 0; start < text.length - 1; start += 1) {
+    if (text[start] !== "\\" || text[start - 1] === "\\") continue;
+    const opening = text[start + 1];
+    if (opening !== "(" && opening !== "[") continue;
+    const closer = firstAfter(opening === "(" ? parenClosers : bracketClosers, start + 1);
+    if (closer === undefined) continue;
+    const end = closer + 2;
+    const content = text.slice(start + 2, closer);
+    // A successful regex match consumes this whole range, even if empty or
+    // protected, so later openers inside it cannot start another pair.
+    const matchedStart = start;
+    start = end - 1;
     if (content.trim() === "") continue;
-    const start = match.index;
-    const end = start + match[0].length;
-    if (overlapsProtected(protectedRanges, start, end)) continue;
+    while (
+      protectedRanges[protectedIndex]?.end !== undefined &&
+      protectedRanges[protectedIndex]!.end <= matchedStart
+    ) {
+      protectedIndex += 1;
+    }
+    if (protectedRanges[protectedIndex] && protectedRanges[protectedIndex]!.start < end) continue;
 
     spans.push({
       content,
-      delimiter: match[1] === undefined ? "\\(" : "\\[",
+      delimiter: opening === "(" ? "\\(" : "\\[",
       end,
-      start,
+      start: matchedStart,
     });
   }
   return spans;
