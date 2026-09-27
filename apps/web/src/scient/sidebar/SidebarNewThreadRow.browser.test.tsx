@@ -3,6 +3,7 @@ import "../../index.css";
 import { createRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vitest/browser";
 
 import { SidebarThreadHeader } from "../../components/sidebar/SidebarThreadHeader";
 import { SidebarProvider } from "../../components/ui/sidebar";
@@ -21,8 +22,8 @@ afterEach(() => {
 const nextFrame = () =>
   new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 16)));
 
-it("replaces the header's New thread icon with a labelled row below search", async () => {
-  const onNewThread = vi.fn();
+/** The sidebar's top: T3's header (search, toggles) and Scient's New thread row. */
+async function mountSidebarTop(onNewThread: () => void) {
   host = document.createElement("div");
   host.style.width = "280px";
   document.body.append(host);
@@ -60,6 +61,12 @@ it("replaces the header's New thread icon with a labelled row below search", asy
     </SidebarProvider>,
   );
   await nextFrame();
+  return host;
+}
+
+it("replaces the header's New thread icon with a labelled row below search", async () => {
+  const onNewThread = vi.fn();
+  const host = await mountSidebarTop(onNewThread);
 
   // The header's icon stays in the DOM but takes no space and cannot be reached.
   const headerIcon = host.querySelector<HTMLElement>('button[aria-label="New thread"]')!;
@@ -80,4 +87,33 @@ it("replaces the header's New thread icon with a labelled row below search", asy
 
   row.click();
   expect(onNewThread).toHaveBeenCalledTimes(1);
+});
+
+it("keeps the search icon and placeholder at the icon color until hovered", async () => {
+  const host = await mountSidebarTop(() => {});
+  const input = host.querySelector<HTMLInputElement>('input[aria-label="Search threads"]')!;
+  const field = input.closest<HTMLElement>("div.rounded-md")!;
+  const icon = field.querySelector("svg")!;
+  const placeholderColor = () => getComputedStyle(input, "::placeholder").color;
+  const iconColor = () => getComputedStyle(icon).color;
+  const newThreadIconColor = getComputedStyle(
+    host.querySelector('[data-testid="sidebar-new-thread-row"] svg')!,
+  ).color;
+
+  // At rest, and while focused without the pointer over it, both match the
+  // sidebar's other icons.
+  expect(iconColor()).toBe(newThreadIconColor);
+  expect(placeholderColor()).toBe(newThreadIconColor);
+  input.focus();
+  expect(placeholderColor()).toBe(newThreadIconColor);
+
+  // Hovering strengthens both to the typed text's color.
+  await userEvent.hover(field);
+  const strong = getComputedStyle(input).color;
+  expect(strong).not.toBe(newThreadIconColor);
+  expect(iconColor()).toBe(strong);
+  expect(placeholderColor()).toBe(strong);
+
+  await userEvent.unhover(field);
+  expect(placeholderColor()).toBe(newThreadIconColor);
 });

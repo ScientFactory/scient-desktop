@@ -77,6 +77,15 @@ that belongs to the shared handler, not to the row. The header keeps T3's icon b
 unchanged and hides it with the `hidden` attribute (Tailwind's preflight makes
 `[hidden]` `display: none !important`).
 
+**Search reads as quietly as the icons beside it.** The search icon and
+"Search" placeholder rest at `--sidebar-icon-color`, like the header icons, and
+strengthen only while the pointer is over the field, like every other sidebar
+control. Focus alone does not strengthen them, and typed text keeps the normal
+foreground color. The colors are set on the search field wrapper in
+`SidebarThreadHeader.tsx`, because `SidebarInput` owns its own colors (the
+`no-restyle` lint rule) and changing its shared style would affect every sidebar
+input.
+
 **Row memoization is preserved.** T3's row handlers depend on the stable
 `sectionMenuFor` and `handleSectionMenuAction` callbacks, never on objects
 rebuilt per render, so streaming updates do not re-render every row.
@@ -100,7 +109,7 @@ Upstream-owned files touched, all additive unless noted. JavaScript mounts carry
 | `apps/server/src/persistence/Migrations.ts`                                                                                                               | migration 058                                                                                                                                                                                                                                                                            |
 | `apps/server/src/environment/ServerEnvironment.ts`                                                                                                        | advertises `threadSections`                                                                                                                                                                                                                                                              |
 | `apps/web/src/components/Sidebar.tsx`                                                                                                                     | `useSidebarSections`; section menu calls in both context-menu handlers; the Sections view branch and its row renderer; New thread row. Two lines change in place: T3's `orderedThreads` memo is renamed `statusOrderedThreads`, and the Status list's condition gains `&& !sectionsView` |
-| `apps/web/src/components/sidebar/SidebarThreadHeader.tsx`                                                                                                 | `groupingToggle` slot and `hideNewThreadButton` (the icon block itself is unchanged)                                                                                                                                                                                                     |
+| `apps/web/src/components/sidebar/SidebarThreadHeader.tsx`                                                                                                 | `groupingToggle` slot and `hideNewThreadButton` (the icon block itself is unchanged). In place: the search field's class list, so its icon and placeholder rest at the sidebar icon color and strengthen on hover                                                                        |
 | `apps/web/src/components/threadActionMenu.logic.ts`                                                                                                       | optional `sectionMenu` item before Copy                                                                                                                                                                                                                                                  |
 | `apps/web/src/hooks/useThreadActionMenu.ts`, `components/chat/ChatHeader.tsx`                                                                             | Section submenu in the chat-header menu and its New section dialog                                                                                                                                                                                                                       |
 | `apps/web/src/hooks/showThreadUndoNotice.ts`                                                                                                              | `"Moved"` undo action                                                                                                                                                                                                                                                                    |

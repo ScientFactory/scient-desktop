@@ -506,8 +506,9 @@ activity. Migration 058 adds `projection_threads.section_id`. The catalog, the
 built-in General group's position and the opt-in empty-section cleanup live in the
 primary environment's server settings. Scient code lives under
 `apps/web/src/scient/sections` and `apps/web/src/scient/sidebar`; upstream files
-carry `SCIENT-FORK`-marked mounts, and only two `Sidebar.tsx` lines change in place.
-The Sections view reuses T3's rows, shelves and order keys and never changes pin
+carry `SCIENT-FORK`-marked mounts. In place, only two `Sidebar.tsx` lines change,
+plus the search field's class list in `SidebarThreadHeader.tsx`: its icon and
+placeholder rest at the sidebar icon color and strengthen only on hover. The Sections view reuses T3's rows, shelves and order keys and never changes pin
 state. If T3 ships its own grouping or collapsible shelves, reconcile against these
 seams instead of layering a second grouping. Decisions, invariants and the full
 seam list are in [sidebar sections](docs/internals/scient-sidebar-sections.md).

@@ -86,10 +86,15 @@ export function SidebarThreadHeader({
 
   return (
     <div className="flex items-center gap-1">
+      {/* SCIENT-FORK:START — the search icon and placeholder rest at the
+          sidebar icon color and strengthen only on hover (T3's icon never
+          changes and its placeholder rests at the stronger muted color). Set
+          here because SidebarInput owns its own colors. */}
       <div
         ref={searchFieldRef}
-        className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+        className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground [&_input[data-slot=input]]:placeholder:text-(--sidebar-icon-color) hover:[&_input[data-slot=input]]:placeholder:text-sidebar-foreground hover:[&>svg]:text-sidebar-foreground"
       >
+        {/* SCIENT-FORK:END */}
         <SearchIcon className="size-4 shrink-0 text-(--sidebar-icon-color)" />
         <SidebarInput
           ref={searchInputRef}
