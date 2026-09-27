@@ -12,6 +12,7 @@ import {
   type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
@@ -704,7 +705,7 @@ describe("Oh My Pi fork context", () => {
             NodePath.relative(NodeFS.realpathSync(NodePath.join(root, "state")), contextPath),
           ).not.toMatch(/^\.\./u);
           expect(NodeFS.readFileSync(contextPath, "utf8")).toBe(prompt);
-          if (process.platform !== "win32")
+          if ((yield* HostProcessPlatform) !== "win32")
             expect(NodeFS.statSync(contextPath).mode & 0o777).toBe(0o600);
           expect(paths).toContain(
             NodeFS.realpathSync(NodePath.join(root, "attachments", "fork-image.png")),
