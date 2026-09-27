@@ -271,15 +271,17 @@ export function ScientForkWorkspaceModeDialog({
       }}
     >
       <DialogPopup className="max-w-[23rem] -translate-y-4">
-        <DialogHeader size="compact">
-          <div className="pe-10">
+        {/* Pulled toward the name field so the subtitle groups with the title. */}
+        <DialogHeader size="compact" className="-mb-1">
+          <div className="grid gap-1.5 pe-10">
             <DialogTitle size="large">
               <span className="inline-flex items-center gap-2">
                 <SplitIcon className="size-4 rotate-90" />
                 {copy.title}
               </span>
             </DialogTitle>
-            <DialogDescription>{copy.description}</DialogDescription>
+            {/* Aligned with the title text, not the icon (size-4 + gap-2). */}
+            <DialogDescription className="ms-6">{copy.description}</DialogDescription>
           </div>
         </DialogHeader>
         <DialogPanel padding="none">
