@@ -493,7 +493,9 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           pinOrderKey: "gm",
           activeOrderKey: "hq",
           autoSettleDisabledAt: null,
+          // SCIENT-FORK:START
           sectionId: null,
+          // SCIENT-FORK:END
           titleRegeneration: null,
           titleState: null,
           deletedAt: null,
@@ -628,7 +630,9 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           pinOrderKey: "gm",
           activeOrderKey: "hq",
           autoSettleDisabledAt: null,
+          // SCIENT-FORK:START
           sectionId: null,
+          // SCIENT-FORK:END
           titleRegeneration: null,
           titleState: null,
           session: {

@@ -887,10 +887,11 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ...(event.payload.worktreePath !== undefined
               ? { worktreePath: event.payload.worktreePath }
               : {}),
-            // SCIENT-FORK: thread sections
+            // SCIENT-FORK:START — thread sections
             ...(event.payload.sectionId !== undefined
               ? { sectionId: event.payload.sectionId }
               : {}),
+            // SCIENT-FORK:END
             // SCIENT-FORK:START — replay immutable historical project
             // reassignment events into the durable shell/detail projection.
             ...(event.payload.projectId !== undefined

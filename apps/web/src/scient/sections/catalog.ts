@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import { type ThreadSection, ThreadSectionId } from "@t3tools/contracts";
 import { useCallback, useMemo } from "react";
 
@@ -5,53 +6,43 @@ import { usePrimarySettings } from "../../hooks/useSettings";
 import { randomUUID } from "../../lib/utils";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { usePrimaryEnvironmentId } from "../../state/environments";
-import { primaryServerSettingsAtom, serverEnvironment } from "../../state/server";
+import {
+  environmentServerConfigsAtom,
+  primaryServerSettingsAtom,
+  serverEnvironment,
+} from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
   type CatalogRenameResult,
   type RemovedSection,
   type SectionLayout,
   catalogWithCreatedSection,
+  catalogWithEnvironments,
   catalogWithRenamedSection,
   catalogWithRestoredSection,
   catalogWithoutSection,
   layoutFromGroupOrder,
   readThreadSections,
+  type SectionOccupancy,
   sweepEmptySections,
 } from "./logic";
-
-type LiveLayout = { readonly sections: readonly ThreadSection[]; readonly generalIndex: number };
+import { type CatalogEdit, type LiveLayout, writeCatalog } from "./catalogWrite";
 
 function readLiveLayout(): LiveLayout {
   const settings = appAtomRegistry.get(primaryServerSettingsAtom);
   return { sections: settings.threadSections, generalIndex: settings.threadSectionsGeneralIndex };
 }
 
-// Layout writes replace the whole catalog, so they run one at a time and each
-// builds on the previous write even before the settings stream echoes it.
+// Writes run one at a time so this client's edits never race each other.
+// Edits from other clients are caught by the server-side precondition below.
 let writeQueue: Promise<unknown> = Promise.resolve();
-let pendingWrite: {
-  readonly base: readonly ThreadSection[];
-  readonly next: SectionLayout;
-} | null = null;
-
-function currentLayout(): LiveLayout {
-  const live = readLiveLayout();
-  // A new live catalog means the stream caught up (or another window wrote).
-  if (pendingWrite !== null && pendingWrite.base === live.sections) {
-    return { sections: pendingWrite.next.catalog, generalIndex: pendingWrite.next.generalIndex };
-  }
-  pendingWrite = null;
-  // Normalized, so any write also saves older names capitalized.
-  return { sections: readThreadSections(live.sections), generalIndex: live.generalIndex };
-}
 
 export interface ThreadSectionCatalog {
   /** Sections in display order, General excluded. */
   readonly sections: readonly ThreadSection[];
   /** How many sections precede General. */
   readonly generalIndex: number;
-  /** False until the primary environment is connected. */
+  /** Whether the primary environment is connected and can store sections. */
   readonly available: boolean;
   /** Creates a section, or returns the existing one with that name. */
   readonly create: (name: string) => Promise<ThreadSection | null>;
@@ -61,53 +52,61 @@ export interface ThreadSectionCatalog {
   readonly restore: (removed: RemovedSection) => Promise<boolean>;
   /** Restores sections removed together, each at its old position. */
   readonly restoreAll: (removed: readonly RemovedSection[]) => Promise<boolean>;
-  /** Runs one empty-section cleanup pass; resolves the sections it removed. */
-  readonly sweepEmpty: (
-    occupied: ReadonlySet<string>,
-    afterDays: number,
-  ) => Promise<readonly RemovedSection[]>;
+  /** Runs one cleanup pass (see `sweepEmptySections`); resolves the sections it removed. */
+  readonly sweepEmpty: (input: {
+    readonly occupancy: SectionOccupancy;
+    readonly visibleEnvironmentIds: ReadonlySet<string> | null;
+    readonly afterDays: number;
+  }) => Promise<readonly RemovedSection[]>;
+  /** Records that these environments hold threads in the section. */
+  readonly recordEnvironments: (
+    sectionId: string,
+    environmentIds: readonly string[],
+  ) => Promise<boolean>;
   /** Applies a group order that may include General. */
   readonly reorder: (orderedGroupIds: readonly string[]) => Promise<boolean>;
 }
 
 export function useThreadSectionCatalog(): ThreadSectionCatalog {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const serverConfigs = useAtomValue(environmentServerConfigsAtom);
   const rawSections = usePrimarySettings((settings) => settings.threadSections);
   const generalIndex = usePrimarySettings((settings) => settings.threadSectionsGeneralIndex);
   const sections = useMemo(() => readThreadSections(rawSections), [rawSections]);
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
     reportFailure: false,
   });
+  const available =
+    primaryEnvironmentId !== null &&
+    serverConfigs.get(primaryEnvironmentId)?.environment.capabilities.threadSections === true;
 
-  /** Applies `edit` to the freshest layout; `edit` returns a null layout to skip the write. */
+  /** Applies `edit` to the stored catalog (see `writeCatalog`), one write at a time. */
   const write = useCallback(
-    <R>(edit: (layout: LiveLayout) => { layout: SectionLayout | null; result: R }) => {
+    <R>(edit: CatalogEdit<R>) => {
       const run = async (): Promise<{ ok: boolean; result: R | null }> => {
-        if (primaryEnvironmentId === null) return { ok: false, result: null };
-        const base = readLiveLayout().sections;
-        const { layout, result } = edit(currentLayout());
-        if (layout === null) return { ok: true, result };
-        pendingWrite = { base, next: layout };
-        const outcome = await updateSettings({
-          environmentId: primaryEnvironmentId,
-          input: {
-            patch: {
-              threadSections: layout.catalog,
-              threadSectionsGeneralIndex: layout.generalIndex,
-            },
+        // A primary that predates sections can't store the catalog.
+        if (primaryEnvironmentId === null || !available) return { ok: false, result: null };
+        return writeCatalog({
+          stored: readLiveLayout(),
+          edit,
+          send: async (patch) => {
+            const outcome = await updateSettings({
+              environmentId: primaryEnvironmentId,
+              input: { patch },
+            });
+            if (outcome._tag !== "Success") return null;
+            return {
+              sections: outcome.value.threadSections,
+              generalIndex: outcome.value.threadSectionsGeneralIndex,
+            };
           },
         });
-        if (outcome._tag !== "Success") {
-          pendingWrite = null;
-          return { ok: false, result: null };
-        }
-        return { ok: true, result };
       };
       const next = writeQueue.then(run, run);
       writeQueue = next;
       return next;
     },
-    [primaryEnvironmentId, updateSettings],
+    [available, primaryEnvironmentId, updateSettings],
   );
 
   const create = useCallback(
@@ -188,19 +187,36 @@ export function useThreadSectionCatalog(): ThreadSectionCatalog {
   );
 
   const sweepEmpty = useCallback(
-    async (occupied: ReadonlySet<string>, afterDays: number) => {
+    async (input: {
+      readonly occupancy: SectionOccupancy;
+      readonly visibleEnvironmentIds: ReadonlySet<string> | null;
+      readonly afterDays: number;
+    }) => {
       const { ok, result } = await write((layout) => {
         const swept = sweepEmptySections({
           sections: layout.sections,
           generalIndex: layout.generalIndex,
-          occupied,
           now: new Date(),
-          afterDays,
+          ...input,
         });
         return { layout: swept, result: swept?.removed ?? [] };
       });
       return ok ? (result ?? []) : [];
     },
+    [write],
+  );
+
+  const recordEnvironments = useCallback(
+    async (sectionId: string, environmentIds: readonly string[]) =>
+      (
+        await write((layout) => {
+          const catalog = catalogWithEnvironments(layout.sections, sectionId, environmentIds);
+          return {
+            layout: catalog === null ? null : { catalog, generalIndex: layout.generalIndex },
+            result: true,
+          };
+        })
+      ).ok,
     [write],
   );
 
@@ -215,7 +231,6 @@ export function useThreadSectionCatalog(): ThreadSectionCatalog {
     [write],
   );
 
-  const available = primaryEnvironmentId !== null;
   return useMemo(
     () => ({
       sections,
@@ -227,12 +242,14 @@ export function useThreadSectionCatalog(): ThreadSectionCatalog {
       restore,
       restoreAll,
       sweepEmpty,
+      recordEnvironments,
       reorder,
     }),
     [
       available,
       create,
       generalIndex,
+      recordEnvironments,
       remove,
       rename,
       reorder,

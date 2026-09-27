@@ -25,8 +25,6 @@ const SHARED_SERVER_SETTING_KEYS = [
   "continueThreadsAfterServerUpdate",
   "sidebarAutoSettleAfterDays",
   "sidebarAutoSettleOnMerge",
-  // SCIENT-FORK: optional empty-section cleanup.
-  "threadSectionsDeleteEmptyAfterDays",
   "newWorktreesStartFromOrigin",
   "sourceControlWritingStyle",
   "textGenerationModelSelection",

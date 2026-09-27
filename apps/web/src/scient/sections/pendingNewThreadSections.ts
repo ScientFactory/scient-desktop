@@ -48,40 +48,80 @@ export function rememberSectionForNewThread(threadId: string, sectionId: ThreadS
   write({ ...read(), [threadId]: { sectionId, rememberedAt: Date.now() } });
 }
 
-/** Files each newly created thread whose draft was opened from a section. */
+/**
+ * Forgets any section remembered for a draft. New-thread requests reuse an
+ * empty draft (and its thread id); one made from anywhere but a section must
+ * not inherit a section chosen earlier.
+ */
+export function forgetSectionForNewThread(threadId: string): void {
+  const entries = read();
+  if (!(threadId in entries)) return;
+  const { [threadId]: _forgotten, ...rest } = entries;
+  write(rest);
+}
+
+// Threads whose filing is in flight, so shell updates don't file them twice.
+const filing = new Set<string>();
+
+type PendingThread = {
+  readonly id: ThreadId;
+  readonly environmentId: EnvironmentId;
+  readonly sectionId?: string | null | undefined;
+};
+type ApplyPendingSection = (
+  target: ScopedThreadRef,
+  sectionId: ThreadSectionId,
+) => Promise<boolean>;
+
+/**
+ * Files each newly created thread whose draft was opened from a section. An
+ * entry is dropped only once its write succeeds; a failed write is retried on
+ * a later update until the entry expires.
+ */
+export function applyPendingNewThreadSections(
+  threads: ReadonlyArray<PendingThread>,
+  apply: ApplyPendingSection,
+  now = Date.now(),
+): void {
+  const entries = read();
+  const ids = Object.keys(entries);
+  if (ids.length === 0) return;
+  const expired: string[] = [];
+  for (const id of ids) {
+    const entry = entries[id]!;
+    const thread = threads.find((candidate) => candidate.id === id);
+    if (thread === undefined) {
+      if (now - entry.rememberedAt > MAX_AGE_MS) expired.push(id);
+      continue;
+    }
+    // Already filed (here or by another window): nothing left to do.
+    if (thread.sectionId != null) {
+      forgetSectionForNewThread(id);
+      continue;
+    }
+    if (filing.has(id)) continue;
+    filing.add(id);
+    void apply(
+      scopeThreadRef(thread.environmentId, thread.id),
+      ThreadSectionId.make(entry.sectionId),
+    )
+      .then((filed) => {
+        if (filed) forgetSectionForNewThread(id);
+      })
+      .finally(() => filing.delete(id));
+  }
+  if (expired.length > 0) {
+    const next = { ...read() };
+    for (const id of expired) delete next[id];
+    write(next);
+  }
+}
+
+/** Runs `applyPendingNewThreadSections` whenever the thread list changes. */
 export function useApplyPendingNewThreadSections(input: {
-  readonly threads: ReadonlyArray<{
-    readonly id: ThreadId;
-    readonly environmentId: EnvironmentId;
-    readonly sectionId?: string | null | undefined;
-  }>;
-  readonly apply: (target: ScopedThreadRef, sectionId: ThreadSectionId) => void;
+  readonly threads: ReadonlyArray<PendingThread>;
+  readonly apply: ApplyPendingSection;
 }): void {
   const { apply, threads } = input;
-  useEffect(() => {
-    const entries = read();
-    const ids = Object.keys(entries);
-    if (ids.length === 0) return;
-    const now = Date.now();
-    const next: Record<string, PendingEntries[string]> = { ...entries };
-    let changed = false;
-    for (const id of ids) {
-      const entry = entries[id]!;
-      const thread = threads.find((candidate) => candidate.id === id);
-      if (thread !== undefined) {
-        delete next[id];
-        changed = true;
-        if (thread.sectionId == null) {
-          apply(
-            scopeThreadRef(thread.environmentId, thread.id),
-            ThreadSectionId.make(entry.sectionId),
-          );
-        }
-      } else if (now - entry.rememberedAt > MAX_AGE_MS) {
-        delete next[id];
-        changed = true;
-      }
-    }
-    if (changed) write(next);
-  }, [apply, threads]);
+  useEffect(() => applyPendingNewThreadSections(threads, apply), [apply, threads]);
 }

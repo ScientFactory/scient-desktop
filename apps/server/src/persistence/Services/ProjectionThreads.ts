@@ -15,7 +15,9 @@ import {
   ProviderInteractionMode,
   RuntimeMode,
   ThreadLinkedPullRequest,
+  // SCIENT-FORK:START
   ThreadSectionId,
+  // SCIENT-FORK:END
   ThreadTitleState,
   ThreadId,
   TurnId,
@@ -53,7 +55,9 @@ export const ProjectionThread = Schema.Struct({
   pinOrderKey: Schema.optional(Schema.NullOr(Schema.String)),
   activeOrderKey: Schema.optional(Schema.NullOr(Schema.String)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(IsoDateTime)),
-  sectionId: Schema.optional(Schema.NullOr(ThreadSectionId)), // SCIENT-FORK: thread sections
+  // SCIENT-FORK:START — thread sections
+  sectionId: Schema.optional(Schema.NullOr(ThreadSectionId)),
+  // SCIENT-FORK:END
   titleRegenerationRequestId: Schema.optional(Schema.NullOr(CommandId)),
   titleRegenerationStartedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   latestUserMessageAt: Schema.NullOr(IsoDateTime),

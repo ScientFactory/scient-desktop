@@ -145,15 +145,18 @@ Sections view:
   offers **Rename**, **Move up**, **Move down**, and **Delete section**.
 - Empty sections stay visible so you can drag threads into them. **New section**, after the last
   section, adds one at the end.
-- Section names start with a capital letter: the first letter is capitalized as you type. To start
-  a name in lowercase, such as _mRNA_ or _iOS_, change that letter back by hand; it stays as typed.
+- Section names start with a capital letter, capitalized as you type. A first word that mixes case
+  on purpose, such as _mRNA_ or _iOS_, is kept as written: paste it, or type it and then change the
+  first letter back.
 
 To remove sections you no longer use, turn on **Settings → General → Delete empty sections** and
 choose how many days a section may stay empty (7 by default). It is off unless you turn it on. A
 section counts as empty when no active, pinned, snoozed, or settled thread belongs to it; archived
 threads do not keep a section. Adding a thread restarts the count, and **General** is never
-removed. Cleanup runs only while Scient is open and every environment is connected, and shows
-**Undo** when it removes a section.
+removed. Cleanup runs only while Scient is open and every environment is connected, and a device
+only removes a section when it is connected to every environment whose threads have been in it.
+It shows **Undo** when it removes a section. The setting is stored with the section list on your
+primary environment.
 
 Deleting a section never deletes conversations: its threads move to **General**, and **Undo** on the
 confirmation brings the section and its threads back. The section list is stored on the server of

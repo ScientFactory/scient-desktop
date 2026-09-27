@@ -1,4 +1,3 @@
-import { useAtomValue } from "@effect/atom-react";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
@@ -11,8 +10,7 @@ import type { useHandleNewThread } from "../../hooks/useHandleNewThread";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { resolveThreadActionProjectRef } from "../../lib/chatThreadActions";
 import { readLocalApi } from "../../localApi";
-import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
-import { environmentServerConfigsAtom } from "../../state/server";
+import { useEnvironments } from "../../state/environments";
 import { useThreadSectionActions } from "./actions";
 import { useThreadSectionCatalog } from "./catalog";
 import { groupThreadsBySection, sectionLayoutOrder, SidebarViewMode } from "./logic";
@@ -72,8 +70,6 @@ export function useSidebarSections(input: {
   const catalog = useThreadSectionCatalog();
   const { moveThreadsToSection, setThreadSection } = useThreadSectionActions();
   const newSectionDialog = useNewSectionForThreads();
-  const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const serverConfigs = useAtomValue(environmentServerConfigsAtom);
   const { environments } = useEnvironments();
 
   const [viewMode, setViewMode] = useLocalStorage(
@@ -93,10 +89,7 @@ export function useSidebarSections(input: {
   const [renamingSectionId, setRenamingSectionId] = useState<string | null>(null);
 
   // The primary server stores the catalog; without it the sidebar stays in Status.
-  const supported =
-    catalog.available &&
-    primaryEnvironmentId !== null &&
-    serverConfigs.get(primaryEnvironmentId)?.environment.capabilities.threadSections === true;
+  const supported = catalog.available;
   const sectionsView = viewMode === "sections" && supported;
 
   const groups = useMemo(
@@ -135,18 +128,25 @@ export function useSidebarSections(input: {
   const { menuFor, handleMenuAction } = useThreadSectionMenu(requestNewSection);
 
   const applyPendingSection = useCallback(
-    (threadRef: ScopedThreadRef, sectionId: ThreadSectionId) => {
-      void setThreadSection(threadRef, sectionId);
-    },
+    async (threadRef: ScopedThreadRef, sectionId: ThreadSectionId) =>
+      (await setThreadSection(threadRef, sectionId))._tag === "Success",
     [setThreadSection],
   );
   useApplyPendingNewThreadSections({ threads: input.threads, apply: applyPendingSection });
-  useEmptySectionCleanup({
-    threads: input.threads,
-    allEnvironmentsConnected:
-      environments.length > 0 &&
-      environments.every((environment) => environment.connection.phase === "connected"),
-  });
+  // Stable while the same environments stay connected, so cleanup timers hold.
+  const connectedKey =
+    environments.length > 0 &&
+    environments.every((environment) => environment.connection.phase === "connected")
+      ? environments
+          .map((environment) => environment.environmentId)
+          .toSorted()
+          .join("\n")
+      : null;
+  const connectedEnvironmentIds = useMemo(
+    () => (connectedKey === null ? null : new Set(connectedKey.split("\n"))),
+    [connectedKey],
+  );
+  useEmptySectionCleanup({ threads: input.threads, connectedEnvironmentIds });
 
   // General (null) starts an ordinary thread; a section files the new thread.
   const startNewThreadInSection = useCallback(

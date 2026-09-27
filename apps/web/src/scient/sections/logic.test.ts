@@ -4,12 +4,13 @@ import { describe, expect, it } from "vitest";
 import {
   GENERAL_SECTION_GROUP_ID,
   catalogWithCreatedSection,
+  catalogWithEnvironments,
   catalogWithRenamedSection,
   catalogWithRestoredSection,
   catalogWithoutSection,
   groupThreadsBySection,
   layoutFromGroupOrder,
-  capitalizeTypedSectionName,
+  capitalizeSectionName,
   normalizeSectionName,
   readThreadSections,
   sweepEmptySections,
@@ -52,17 +53,21 @@ describe("catalog edits", () => {
     expect(normalizeSectionName("מחקר")).toBe("מחקר");
   });
 
-  it("capitalizes the first letter as it is typed, unless flipped to lowercase by hand", () => {
-    expect(capitalizeTypedSectionName("", "r")).toBe("R");
-    // Select-all and type over an existing name.
-    expect(capitalizeTypedSectionName("Perma", "r")).toBe("R");
-    expect(capitalizeTypedSectionName("R", "Re")).toBe("Re");
-    expect(capitalizeTypedSectionName("ello", "hello")).toBe("Hello");
-    // Flipping "M" to "m" for "mRNA" is deliberate, and so is typing on after it.
-    expect(capitalizeTypedSectionName("MRNA", "mRNA")).toBe("mRNA");
-    expect(capitalizeTypedSectionName("mRNA", "mRNAs")).toBe("mRNAs");
-    expect(capitalizeTypedSectionName("", "2")).toBe("2");
-    expect(capitalizeTypedSectionName("", "מ")).toBe("מ");
+  it("capitalizes as typed by the same rule a saved name follows", () => {
+    expect(capitalizeSectionName("r")).toBe("R");
+    expect(capitalizeSectionName("research notes")).toBe("Research notes");
+    // Typing over or pasting keeps a first word that mixes case on purpose.
+    expect(capitalizeSectionName("iOS")).toBe("iOS");
+    expect(capitalizeSectionName("mRNA assays")).toBe("mRNA assays");
+    // An all-lowercase first word is capitalized, as it will be on save.
+    expect(capitalizeSectionName("npm tasks")).toBe("Npm tasks");
+    // Mid-typing whitespace is kept, unlike on save.
+    expect(capitalizeSectionName("to  ")).toBe("To  ");
+    expect(capitalizeSectionName("2")).toBe("2");
+    expect(capitalizeSectionName("מ")).toBe("מ");
+    for (const name of ["iOS", "npm tasks", "mRNA assays", "  hello  world "]) {
+      expect(normalizeSectionName(capitalizeSectionName(name))).toBe(normalizeSectionName(name));
+    }
   });
 
   it("reads older lowercase names capitalized, and edits save them that way", () => {
@@ -230,11 +235,55 @@ describe("Sections view drops", () => {
     expect(key > "g" && key < "m").toBe(true);
   });
 
-  it("files a thread under Other and reorders within a section", () => {
+  it("lands a row dropped above the first header at the top of the first section", () => {
+    expect(resolveSectionsDropTarget(items, "o1", sectionHeaderItemId("research"))).toEqual({
+      kind: "section",
+      groupId: "research",
+      order: ["o1", "r-pin", "r1", "r2"],
+    });
+  });
+
+  it("lands a row dragged up onto a header where the list shows it: above that header", () => {
+    // Moving up over Perma's header slides the header down, so the gap (and
+    // the drop) is at the end of Research, not inside Perma.
+    expect(resolveSectionsDropTarget(items, "o1", sectionHeaderItemId("perma"))).toEqual({
+      kind: "section",
+      groupId: "research",
+      order: ["r-pin", "r1", "r2", "o1"],
+    });
+    // Moving down over it lands at the top of Perma.
+    expect(resolveSectionsDropTarget(items, "r2", sectionHeaderItemId("perma"))).toEqual({
+      kind: "section",
+      groupId: "perma",
+      order: ["r2", "p1"],
+    });
+  });
+
+  it("files a thread in General and reorders within a section", () => {
     expect(plan("p1", "o1")).toMatchObject({ kind: "move", sectionId: null });
     const reorder = plan("r2", "r1");
     expect(reorder).toMatchObject({ kind: "move", group: "active" });
     expect(reorder).not.toHaveProperty("sectionId");
+  });
+
+  it("keeps a thread's order key when it lands alone in an empty or collapsed section", () => {
+    const moved = planSectionsThreadDrop({
+      source: { key: "r1", lifecycle: "active", groupId: "research", pinned: false },
+      target: { kind: "section", groupId: "empty", order: ["r1"] },
+      targetOrderBefore: [],
+      lifecycleByKey,
+      pinnedKeysById: new Map(),
+      activeKeysById: keys,
+      toSectionId: (groupId) => sid(groupId),
+    });
+    expect(moved).toEqual({
+      kind: "move",
+      sectionId: "empty",
+      unsettle: false,
+      unsnooze: false,
+      group: "active",
+      assignments: [],
+    });
   });
 
   it("ignores a drop back where the row started", () => {
@@ -306,8 +355,24 @@ describe("Sections view drops", () => {
 describe("sweepEmptySections", () => {
   const now = new Date("2026-09-27T12:00:00.000Z");
   const daysAgo = (days: number) => new Date(now.getTime() - days * 86_400_000).toISOString();
-  const sweep = (sections: ThreadSection[], occupied: string[], generalIndex = 0) =>
-    sweepEmptySections({ sections, generalIndex, occupied: new Set(occupied), now, afterDays: 7 });
+  /** `occupied`: section id → environments seen holding its threads (default "a"). */
+  const sweep = (
+    sections: ThreadSection[],
+    occupied: string[] | Record<string, string[]>,
+    options: { generalIndex?: number; visible?: string[] | null } = {},
+  ) =>
+    sweepEmptySections({
+      sections,
+      generalIndex: options.generalIndex ?? 0,
+      occupancy: new Map(
+        Array.isArray(occupied)
+          ? occupied.map((id) => [id, new Set(["a"])])
+          : Object.entries(occupied).map(([id, environments]) => [id, new Set(environments)]),
+      ),
+      visibleEnvironmentIds: options.visible === null ? null : new Set(options.visible ?? ["a"]),
+      now,
+      afterDays: 7,
+    });
 
   it("stamps a newly empty section and clears the stamp once a thread joins", () => {
     const stamped = sweep([RESEARCH, PERMA], ["perma"]);
@@ -320,23 +385,70 @@ describe("sweepEmptySections", () => {
     expect(sweep(cleared!.catalog, ["research", "perma"])).toBeNull();
   });
 
+  it("records the environments holding a section's threads", () => {
+    const swept = sweep([RESEARCH], { research: ["b", "a"] });
+    expect(swept?.catalog[0]?.environmentIds).toEqual(["b", "a"]);
+    // Already recorded: nothing to write.
+    expect(sweep(swept!.catalog, { research: ["a"] })).toBeNull();
+  });
+
+  it("never judges a section from a client that can't see all its environments", () => {
+    // Filed from environment b; this client only sees a, so it can't call it empty.
+    const fromB = { ...RESEARCH, environmentIds: ["b"], emptySince: daysAgo(30) };
+    expect(sweep([fromB], [], { visible: ["a"] })).toBeNull();
+    // A client that sees b as well judges it.
+    expect(sweep([fromB], [], { visible: ["a", "b"] })?.removed).toHaveLength(1);
+  });
+
+  it("only records when it can't judge, so a brief visit still resets the clock", () => {
+    const stale = { ...RESEARCH, emptySince: daysAgo(30) };
+    // A thread joins: the record-only pass clears the stamp at once.
+    const joined = sweep([stale], ["research"], { visible: null });
+    expect(joined?.catalog[0]?.emptySince).toBeUndefined();
+    // The thread leaves again: a record-only pass neither stamps nor removes.
+    expect(sweep(joined!.catalog, [], { visible: null })).toBeNull();
+    // The next judging pass starts a fresh count instead of removing.
+    const judged = sweep(joined!.catalog, []);
+    expect(judged?.removed).toEqual([]);
+    expect(judged?.catalog[0]?.emptySince).toBe(now.toISOString());
+  });
+
   it("removes only sections empty for the whole period, keeping General beside its neighbors", () => {
     const later = section("later", "Later", 2);
     // Layout: Research, Perma, General, Later.
     const swept = sweep(
       [{ ...RESEARCH, emptySince: daysAgo(8) }, { ...PERMA, emptySince: daysAgo(3) }, later],
       ["later"],
-      2,
+      { generalIndex: 2 },
     );
     expect(swept?.removed.map((entry) => entry.section.id)).toEqual(["research"]);
     expect(swept?.catalog.map((entry) => entry.id)).toEqual(["perma", "later"]);
     expect(swept?.generalIndex).toBe(1);
   });
 
-  it("restores a removed section with a fresh clock", () => {
-    const swept = sweep([{ ...RESEARCH, emptySince: daysAgo(9) }, PERMA], ["perma"]);
+  it("restarts the count for a stamp that doesn't parse", () => {
+    const swept = sweep([{ ...RESEARCH, emptySince: "not a date" }], []);
+    expect(swept?.removed).toEqual([]);
+    expect(swept?.catalog[0]?.emptySince).toBe(now.toISOString());
+  });
+
+  it("restores a removed section with a fresh clock and its environments", () => {
+    const swept = sweep(
+      [{ ...RESEARCH, emptySince: daysAgo(9), environmentIds: ["a"] }, PERMA],
+      ["perma"],
+    );
     const restored = catalogWithRestoredSection(swept!.catalog, swept!.removed[0]!);
     expect(restored.catalog.map((entry) => entry.id)).toEqual(["research", "perma"]);
     expect(restored.catalog[0]?.emptySince).toBeUndefined();
+    expect(restored.catalog[0]?.environmentIds).toEqual(["a"]);
+  });
+});
+
+describe("catalogWithEnvironments", () => {
+  it("adds only environments not yet recorded", () => {
+    const recorded = catalogWithEnvironments([RESEARCH, PERMA], "perma", ["a"]);
+    expect(recorded?.[1]?.environmentIds).toEqual(["a"]);
+    expect(catalogWithEnvironments(recorded!, "perma", ["a"])).toBeNull();
+    expect(catalogWithEnvironments(recorded!, "gone", ["a"])).toBeNull();
   });
 });

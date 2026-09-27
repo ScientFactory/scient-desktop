@@ -8,7 +8,9 @@ import {
   MessageId,
   ProjectId,
   ThreadId,
+  // SCIENT-FORK:START
   ThreadSectionId,
+  // SCIENT-FORK:END
   type ThreadPullRequestSnapshot,
   ThreadLinkedPullRequest,
   TurnId,

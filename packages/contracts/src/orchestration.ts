@@ -21,7 +21,9 @@ import {
   ProjectId,
   ProviderItemId,
   ThreadId,
+  // SCIENT-FORK:START
   ThreadSectionId,
+  // SCIENT-FORK:END
   TrimmedNonEmptyString,
   TrimmedString,
   TurnId,
@@ -2067,8 +2069,8 @@ export const ThreadMetaUpdatedPayload = Schema.Struct({
   // Order updates use this existing event so older clients can ignore the
   // new field while continuing to decode the event stream.
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
-  // SCIENT-FORK:START — user-defined section. Independent of lifecycle state;
-  // optional so snapshots from servers without sections still decode.
+  // SCIENT-FORK:START — user-defined section. Absent means unchanged: other
+  // meta updates omit it, and null files the thread back into General.
   sectionId: Schema.optional(Schema.NullOr(ThreadSectionId)),
   // SCIENT-FORK:END
   title: Schema.optional(TrimmedNonEmptyString),

@@ -75,10 +75,10 @@ export function useThreadActionMenu(input: {
   readonly onRequestNewSection: (threadRefs: readonly ScopedThreadRef[]) => void;
   // SCIENT-FORK:END
 }) {
-  const { threadRef, projectCwd, onStartRename, onRequestNewSection } = input;
+  const { threadRef, projectCwd, onStartRename } = input;
   // SCIENT-FORK:START
   const { menuFor: sectionMenuFor, handleMenuAction: handleSectionMenuAction } =
-    useThreadSectionMenu(onRequestNewSection);
+    useThreadSectionMenu(input.onRequestNewSection);
   // SCIENT-FORK:END
   const router = useRouter();
   const projects = useProjects();
@@ -356,14 +356,18 @@ export function useThreadActionMenu(input: {
       handleNewThread,
       logicalProjectKeyByPhysicalKey,
       markThreadUnread,
+      // SCIENT-FORK:START
       handleSectionMenuAction,
+      // SCIENT-FORK:END
       onStartRename,
       pinThread,
       projectCwd,
       projectGroupingSettings,
       projects,
       router,
+      // SCIENT-FORK:START
       sectionMenuFor,
+      // SCIENT-FORK:END
       setThreadAutoSettle,
       settleThread,
       snoozeThread,

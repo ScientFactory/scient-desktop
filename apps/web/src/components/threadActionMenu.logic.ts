@@ -10,6 +10,9 @@ import type { SectionMenuId } from "../scient/sections/menu";
  * remains data-driven.
  */
 export type ThreadActionMenuId =
+  // SCIENT-FORK:START
+  | SectionMenuId
+  // SCIENT-FORK:END
   | "new-thread-on-branch"
   | "filter-by-project"
   | "project-settings"
@@ -31,10 +34,7 @@ export type ThreadActionMenuId =
   | "copy-branch"
   | "copy-thread-id"
   | "archive"
-  | "delete"
-  // SCIENT-FORK:START
-  | SectionMenuId;
-// SCIENT-FORK:END
+  | "delete";
 
 export interface ThreadActionMenuState {
   readonly branch: string | null;

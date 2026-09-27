@@ -4056,10 +4056,14 @@ export default function Sidebar() {
       confirmThreadDelete,
       deleteThread,
       markThreadUnread,
+      // SCIENT-FORK:START
       handleSectionMenuAction,
+      // SCIENT-FORK:END
       performSnooze,
       removeFromSelection,
+      // SCIENT-FORK:START
       sectionMenuFor,
+      // SCIENT-FORK:END
       serverConfigs,
       updateThreadMetadata,
       timestampFormat,
@@ -4355,8 +4359,10 @@ export default function Sidebar() {
       openProjectSettings,
       projectScopeKey,
       projectByKey,
+      // SCIENT-FORK:START
       handleSectionMenuAction,
       sectionMenuFor,
+      // SCIENT-FORK:END
       serverConfigs,
       setProjectScopeKey,
       setThreadAutoSettle,

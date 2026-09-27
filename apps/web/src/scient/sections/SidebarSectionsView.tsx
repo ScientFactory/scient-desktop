@@ -41,7 +41,7 @@ import { stackedThreadToast, toastManager } from "../../components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { useThreadActions } from "../../hooks/useThreadActions";
 import { cn } from "../../lib/utils";
-import { readEnvironmentSupportsSections, useThreadSectionActions } from "./actions";
+import { useThreadSectionActions } from "./actions";
 import { FadeTruncate } from "./FadeTruncate";
 import {
   GENERAL_SECTION_GROUP_ID,
@@ -246,7 +246,8 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
     snoozedThreads,
   ]);
 
-  // A held layout expires on its own; writes finishing release it sooner.
+  // A held layout expires on its own, and stops applying (below) as soon as the
+  // live order catches up with it.
   useEffect(() => {
     if (held === null) return;
     const timer = setTimeout(
@@ -263,6 +264,8 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
     if (held.ids.length !== byId.size || held.ids.some((id) => !byId.has(id))) {
       return canonicalItems;
     }
+    // Caught up: the live order already matches, so drags are allowed again.
+    if (held.ids.every((id, index) => canonicalItems[index]!.id === id)) return canonicalItems;
     return held.ids.map((id) => byId.get(id)!);
   }, [canonicalItems, held]);
   const holding = items !== canonicalItems;
@@ -671,7 +674,7 @@ function SectionHeaderRow(props: {
 }) {
   const { group } = props;
   const isUserSection = group.section !== null;
-  const { attributes, listeners, setNodeRef, transform, transition } = useSortable({
+  const { listeners, setNodeRef, transform, transition } = useSortable({
     id: props.itemId,
     disabled: { draggable: props.renaming },
   });
@@ -730,7 +733,6 @@ function SectionHeaderRow(props: {
             // Wraps so the rule can drop to a clipped second line: it shows
             // only while at least 24px are left beside the name, never as a stub.
             className="flex h-full min-w-0 flex-1 cursor-pointer flex-wrap content-start gap-x-2 overflow-hidden text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
-            {...attributes}
             {...listeners}
           >
             {/* One unit that shrinks as a whole: long names fade out while the
@@ -857,7 +859,7 @@ function SectionNameInput(props: {
       value={name}
       maxLength={80}
       placeholder={props.placeholder}
-      onChange={(event) => setName(readTypedSectionName(event, name))}
+      onChange={(event) => setName(readTypedSectionName(event))}
       onKeyDown={onKeyDown}
       onBlur={() => finish(true)}
       className="h-6 min-w-0 flex-1 rounded border border-ring bg-background px-1.5 text-xs font-medium text-foreground outline-none"
@@ -895,9 +897,4 @@ function NewSectionRow(props: { onSubmit: (name: string) => void; onCancel: () =
       </div>
     </li>
   );
-}
-
-/** Whether every thread's server accepts section writes. */
-export function threadsSupportSections(threads: readonly Shell[]): boolean {
-  return threads.every((thread) => readEnvironmentSupportsSections(thread.environmentId));
 }

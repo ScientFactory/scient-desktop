@@ -58,8 +58,10 @@ export function SidebarThreadHeader({
   searchFieldRef,
   hasProjects,
   projectScope,
+  // SCIENT-FORK:START
   groupingToggle,
   hideNewThreadButton,
+  // SCIENT-FORK:END
   onNewProject,
   onNewThread,
   newThreadDisabled,

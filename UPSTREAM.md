@@ -504,14 +504,18 @@ replaces the header's New thread icon. Section membership is an optional
 `thread.meta-updated` with an unchanged `updatedAt`, so organizing never reads as
 activity. Migration 058 adds `projection_threads.section_id`. The catalog, the
 built-in General group's position and the opt-in empty-section cleanup live in the
-primary environment's server settings. Scient code lives under
-`apps/web/src/scient/sections` and `apps/web/src/scient/sidebar`; upstream files
-carry `SCIENT-FORK`-marked mounts. In place, only two `Sidebar.tsx` lines change,
-plus the search field's class list in `SidebarThreadHeader.tsx`: its icon and
-placeholder rest at the sidebar icon color and strengthen only on hover. The Sections view reuses T3's rows, shelves and order keys and never changes pin
-state. If T3 ships its own grouping or collapsible shelves, reconcile against these
-seams instead of layering a second grouping. Decisions, invariants and the full
-seam list are in [sidebar sections](docs/internals/scient-sidebar-sections.md).
+primary environment's server settings; catalog writes carry the catalog they were
+based on, and `updateSettings` applies them only while it still matches, so
+concurrent clients never overwrite each other. Scient code lives under
+`apps/web/src/scient/sections`, `apps/web/src/scient/sidebar` and
+`apps/server/src/scient/threadSections`; upstream files carry `SCIENT-FORK`-marked
+mounts. A few lines change in place: two in `Sidebar.tsx`, the search field's class
+list and the New thread icon's `hidden` attribute in `SidebarThreadHeader.tsx`, and
+the undo-action union in `showThreadUndoNotice.ts`. The Sections view reuses T3's
+rows, shelves and order keys and never changes pin state. If T3 ships its own
+grouping or collapsible shelves, reconcile against these seams instead of layering a
+second grouping. Decisions, invariants and the full seam list are in
+[sidebar sections](docs/internals/scient-sidebar-sections.md).
 
 Antigravity reasoning presentation is a narrow client-side divergence. The shared
 `packages/client-runtime/src/antigravityModelPresentation.ts` groups recognized

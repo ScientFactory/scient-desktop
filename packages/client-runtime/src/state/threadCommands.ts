@@ -30,7 +30,9 @@ import {
   type PinThreadInput,
   type ReorderPinnedThreadInput,
   type ReorderActiveThreadInput,
+  // SCIENT-FORK:START
   type SetThreadSectionInput,
+  // SCIENT-FORK:END
   type SetThreadAutoSettleInput,
   type SettleThreadInput,
   type SnoozeThreadInput,
@@ -60,7 +62,9 @@ import {
   pinThread,
   reorderPinnedThread,
   reorderActiveThread,
+  // SCIENT-FORK:START
   setThreadSection,
+  // SCIENT-FORK:END
   setThreadAutoSettle,
   settleThread,
   snoozeThread,
@@ -90,7 +94,9 @@ export type {
   PinThreadInput,
   ReorderPinnedThreadInput,
   ReorderActiveThreadInput,
+  // SCIENT-FORK:START
   SetThreadSectionInput,
+  // SCIENT-FORK:END
   SetThreadAutoSettleInput,
   SettleThreadInput,
   SnoozeThreadInput,

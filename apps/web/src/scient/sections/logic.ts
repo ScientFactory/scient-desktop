@@ -32,27 +32,22 @@ export function readThreadSections(sections: ThreadSections): ThreadSection[] {
 }
 
 /**
- * Collapses whitespace and capitalizes the first letter. A first word that
- * already mixes case on purpose ("iOS", "macOS", "eBay") is kept as typed.
+ * Capitalizes the first letter, unless the first word already mixes case on
+ * purpose ("iOS", "mRNA", "macOS"), which is kept as written. The same rule
+ * runs as a name is typed and when it is saved, so the field never shows a
+ * name that saves differently.
  */
-export function normalizeSectionName(name: string): string {
-  const collapsed = name.trim().replace(/\s+/g, " ");
-  const firstWord = collapsed.split(" ", 1)[0] ?? "";
+export function capitalizeSectionName(name: string): string {
+  const firstWord = name.trimStart().split(/\s/, 1)[0] ?? "";
   const rest = firstWord.slice(1);
-  if (rest !== rest.toLocaleLowerCase()) return collapsed;
-  return collapsed.charAt(0).toLocaleUpperCase() + collapsed.slice(1);
+  if (rest !== rest.toLocaleLowerCase()) return name;
+  const start = name.length - name.trimStart().length;
+  return name.slice(0, start) + name.charAt(start).toLocaleUpperCase() + name.slice(start + 1);
 }
 
-/**
- * Capitalizes a name's first letter as it is typed. Turning the first letter
- * lowercase by hand (for "mRNA") only flips its case, and is kept.
- */
-export function capitalizeTypedSectionName(previous: string, next: string): string {
-  const first = next.charAt(0);
-  const upper = first.toLocaleUpperCase();
-  if (first === upper) return next;
-  if (previous.length > 0 && previous.charAt(0).toLocaleLowerCase() === first) return next;
-  return upper + next.slice(1);
+/** The saved form of a name: whitespace collapsed, then capitalized. */
+export function normalizeSectionName(name: string): string {
+  return capitalizeSectionName(name.trim().replace(/\s+/g, " "));
 }
 
 /** Case- and accent-insensitive: "Research" and "research" are one section. */
@@ -186,42 +181,98 @@ export function catalogWithRestoredSection(
 }
 
 /**
- * One pass of the optional empty-section cleanup. `occupied` holds every
- * section id a sidebar thread (active, pinned, snoozed or settled) points to.
- * Empty sections get stamped, occupied ones lose their stamp, and sections
- * stamped at least `afterDays` ago are removed. Null when nothing changes.
+ * Which environments hold threads in each section, as one client sees them:
+ * section id → environment ids.
+ */
+export type SectionOccupancy = ReadonlyMap<string, ReadonlySet<string>>;
+
+/**
+ * Records that `environmentIds` hold threads in `sectionId`. Null when they
+ * are all recorded already (or the section is gone).
+ */
+export function catalogWithEnvironments(
+  sections: ThreadSections,
+  sectionId: string,
+  environmentIds: readonly string[],
+): ThreadSection[] | null {
+  const ordered = readThreadSections(sections);
+  const index = ordered.findIndex((section) => section.id === sectionId);
+  if (index < 0) return null;
+  const section = ordered[index]!;
+  const merged = mergeEnvironmentIds(section.environmentIds, environmentIds);
+  if (merged === null) return null;
+  ordered[index] = { ...section, environmentIds: merged };
+  return ordered;
+}
+
+/** `recorded` plus any new ids, or null when nothing is new. */
+function mergeEnvironmentIds(
+  recorded: readonly string[] | undefined,
+  seen: Iterable<string>,
+): string[] | null {
+  const merged = [...(recorded ?? [])];
+  for (const id of seen) if (!merged.includes(id)) merged.push(id);
+  return merged.length === (recorded ?? []).length ? null : merged;
+}
+
+/**
+ * One pass of the optional empty-section cleanup. `occupancy` is what this
+ * client sees: which environments hold sidebar threads (active, pinned,
+ * snoozed or settled) in each section.
+ *
+ * Seeing a section occupied is always trustworthy: it records those
+ * environments on the section and clears its empty stamp. Seeing it empty is
+ * not, because no client sees every environment. So a section is judged only
+ * when `visibleEnvironmentIds` is given and includes every environment that
+ * has held its threads: then it is stamped empty, or removed once stamped at
+ * least `afterDays` ago. Pass null to only record occupancy. Null when nothing
+ * changes.
  */
 export function sweepEmptySections(input: {
   readonly sections: readonly ThreadSection[];
   readonly generalIndex: number;
-  readonly occupied: ReadonlySet<string>;
+  readonly occupancy: SectionOccupancy;
+  /** Environments whose threads this client fully sees; null records only. */
+  readonly visibleEnvironmentIds: ReadonlySet<string> | null;
   readonly now: Date;
   readonly afterDays: number;
 }): (SectionLayout & { readonly removed: RemovedSection[] }) | null {
   const ordered = readThreadSections(input.sections);
   const general = clampGeneralIndex(input.generalIndex, ordered.length);
   const cutoff = input.now.getTime() - input.afterDays * 24 * 60 * 60 * 1000;
+  const stamp = input.now.toISOString();
   const kept: ThreadSection[] = [];
   const removed: RemovedSection[] = [];
   let changed = false;
-  ordered.forEach((section, index) => {
-    if (input.occupied.has(section.id)) {
-      if (section.emptySince === undefined) {
-        kept.push(section);
-      } else {
+  ordered.forEach((original, index) => {
+    const seen = input.occupancy.get(original.id);
+    const environmentIds = seen ? mergeEnvironmentIds(original.environmentIds, seen) : null;
+    let section = environmentIds === null ? original : { ...original, environmentIds };
+    if (environmentIds !== null) changed = true;
+    if (seen !== undefined && seen.size > 0) {
+      if (section.emptySince !== undefined) {
         const { emptySince: _emptySince, ...rest } = section;
-        kept.push(rest);
+        section = rest;
         changed = true;
       }
+      kept.push(section);
       return;
     }
-    if (section.emptySince === undefined) {
-      kept.push({ ...section, emptySince: input.now.toISOString() });
+    const visible = input.visibleEnvironmentIds;
+    const judged =
+      visible !== null && (section.environmentIds ?? []).every((id) => visible.has(id));
+    if (!judged) {
+      kept.push(section);
+      return;
+    }
+    // Unstamped, or a stamp that doesn't parse (hand-edited settings): start the count.
+    if (section.emptySince === undefined || Number.isNaN(Date.parse(section.emptySince))) {
+      kept.push({ ...section, emptySince: stamp });
       changed = true;
       return;
     }
     if (Date.parse(section.emptySince) <= cutoff) {
-      removed.push({ section, index, generalIndex: general });
+      removed.push({ section: original, index, generalIndex: general });
       changed = true;
       return;
     }
@@ -265,7 +316,7 @@ export interface SectionGroup<T> {
   readonly threads: readonly T[];
 }
 
-/** The group a thread renders in. Unknown ids (a removed section) read as Other. */
+/** The group a thread renders in. Unknown ids (a removed section) read as General. */
 export function sectionGroupIdOf(
   thread: { readonly sectionId?: string | null | undefined },
   knownSectionIds: ReadonlySet<string>,
@@ -361,10 +412,11 @@ export function resolveSectionsDropTarget(
     }
   }
   // Above the first header: the top of the first section.
+  const aboveFirstHeader = owner === null;
   if (owner === null) owner = moved.find((item) => item.kind !== "thread") ?? null;
   if (owner === null) return null;
   if (owner.kind === "shelf") return owner.shelf === "settled" ? { kind: "settled" } : null;
-  const order: string[] = [];
+  const order: string[] = aboveFirstHeader ? [active.id] : [];
   const start = moved.indexOf(owner);
   for (let index = start + 1; index < moved.length; index += 1) {
     const item = moved[index]!;
@@ -387,7 +439,7 @@ export type SectionsThreadDropPlan =
   | { readonly kind: "settle" }
   | {
       readonly kind: "move";
-      /** Present when the thread changes section; null files it under Other. */
+      /** Present when the thread changes section; null files it in General. */
       readonly sectionId?: ThreadSectionId | null;
       readonly unsettle: boolean;
       readonly unsnooze: boolean;
@@ -433,13 +485,17 @@ export function planSectionsThreadDrop(input: {
     orderedIds.length !== previousIds.length ||
     orderedIds.some((key, index) => key !== previousIds[index]);
   if (!sectionChanged && !lifecycleChanged && !orderChanged) return { kind: "none" };
-  const assignments = orderChanged
-    ? planPinnedReorder({
-        orderedIds,
-        keysById: group === "pinned" ? input.pinnedKeysById : input.activeKeysById,
-        movedId: source.key,
-      })
-    : [];
+  // A thread landing alone (an empty or collapsed section) keeps its key:
+  // with no neighbours to sit between, a new key would only move it in the
+  // Status view.
+  const assignments =
+    orderChanged && orderedIds.length > 1
+      ? planPinnedReorder({
+          orderedIds,
+          keysById: group === "pinned" ? input.pinnedKeysById : input.activeKeysById,
+          movedId: source.key,
+        })
+      : [];
   return {
     kind: "move",
     ...(sectionChanged ? { sectionId: input.toSectionId(target.groupId) } : {}),

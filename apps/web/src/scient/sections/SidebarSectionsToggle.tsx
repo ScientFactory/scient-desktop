@@ -12,7 +12,8 @@ export function SidebarSectionsToggle(props: {
   readonly active: boolean;
   readonly onActiveChange: (active: boolean) => void;
 }) {
-  const label = props.active ? "Stop grouping by section" : "Group by section";
+  // One fixed label; aria-pressed carries the state.
+  const label = "Group by section";
   return (
     <Tooltip>
       <TooltipTrigger

@@ -154,6 +154,9 @@ import {
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { ScopedSwitch } from "./ScopedSwitch";
+// SCIENT-FORK:START
+import { EmptySectionCleanupSettings } from "../../scient/sections/EmptySectionCleanupSettings";
+// SCIENT-FORK:END
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ThemeLibrary } from "./ThemeSettings";
@@ -2160,9 +2163,6 @@ function FontFamilySettingsRow({
 }
 
 const AUTO_SETTLE_DEFAULT_DAYS = DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays ?? 3;
-// SCIENT-FORK:START
-const DELETE_EMPTY_SECTIONS_DEFAULT_DAYS = 7;
-// SCIENT-FORK:END
 
 const isInterfaceFontWeight = Schema.is(InterfaceFontWeight);
 const INTERFACE_FONT_WEIGHT_LABELS: Record<InterfaceFontWeight, string> = {
@@ -2514,55 +2514,8 @@ export function GeneralSettingsPanel() {
             ) : null}
           </>
         ) : null}
-        {/* SCIENT-FORK:START — optional empty-section cleanup, shaped like auto-settle. */}
-        <SettingsRow
-          serverScoped
-          settingKeys={["threadSectionsDeleteEmptyAfterDays"]}
-          {...searchableSetting("delete-empty-sections")}
-          description="Remove sidebar sections that have held no threads for this long. General is never removed."
-          resetAction={
-            settings.threadSectionsDeleteEmptyAfterDays !==
-            DEFAULT_UNIFIED_SETTINGS.threadSectionsDeleteEmptyAfterDays ? (
-              <SettingResetButton
-                label="empty-section cleanup"
-                onClick={() =>
-                  updateSettings({
-                    threadSectionsDeleteEmptyAfterDays:
-                      DEFAULT_UNIFIED_SETTINGS.threadSectionsDeleteEmptyAfterDays,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <ScopedSwitch
-              settingKeys={["threadSectionsDeleteEmptyAfterDays"]}
-              checked={settings.threadSectionsDeleteEmptyAfterDays !== null}
-              onCheckedChange={(checked) =>
-                updateSettings({
-                  threadSectionsDeleteEmptyAfterDays: checked
-                    ? DELETE_EMPTY_SECTIONS_DEFAULT_DAYS
-                    : null,
-                })
-              }
-              aria-label="Delete empty sections"
-            />
-          }
-        />
-        {settings.threadSectionsDeleteEmptyAfterDays !== null ? (
-          <SettingsRow
-            serverScoped
-            settingKeys={["threadSectionsDeleteEmptyAfterDays"]}
-            title={searchableSetting("days-before-deleting-empty-sections").title}
-            description="Adding a thread to a section restarts its count."
-            control={
-              <AutoSettleDaysInput
-                value={settings.threadSectionsDeleteEmptyAfterDays}
-                onCommit={(days) => updateSettings({ threadSectionsDeleteEmptyAfterDays: days })}
-              />
-            }
-          />
-        ) : null}
+        {/* SCIENT-FORK:START — optional empty-section cleanup (primary-only). */}
+        <EmptySectionCleanupSettings />
         {/* SCIENT-FORK:END */}
       </SettingsSection>
 

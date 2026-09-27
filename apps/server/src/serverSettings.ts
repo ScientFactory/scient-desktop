@@ -61,6 +61,9 @@ import {
   isModelSelectionProviderEnabled,
 } from "@t3tools/shared/serverSettings";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
+// SCIENT-FORK:START
+import { applyThreadSectionsPrecondition } from "./scient/threadSections/settingsPrecondition.ts";
+// SCIENT-FORK:END
 import { makeCustomModelReasoning } from "./customModelReasoning.ts";
 import {
   saveCustomModel,
@@ -1066,7 +1069,12 @@ const make = Effect.gen(function* () {
     writeSemaphore.withPermits(1)(
       Effect.gen(function* () {
         const current = yield* getSettingsFromCache;
-        const updated = applyServerSettingsPatch(current, patch);
+        // SCIENT-FORK:START — thread-section edits apply only to the catalog they were based on.
+        const updated = applyServerSettingsPatch(
+          current,
+          applyThreadSectionsPrecondition(current, patch),
+        );
+        // SCIENT-FORK:END
         const persisted = yield* persistProviderEnvironmentSecrets(current, updated);
         const next = yield* normalizeServerSettings(persisted.settings);
         const materialized = yield* Effect.uninterruptibleMask(() =>

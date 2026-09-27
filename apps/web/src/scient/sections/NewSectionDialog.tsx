@@ -85,7 +85,7 @@ function NewSectionForm(props: {
             maxLength={80}
             placeholder="Section name"
             onChange={(event) => {
-              setName(readTypedSectionName(event, name));
+              setName(readTypedSectionName(event));
               setError(null);
             }}
           />
