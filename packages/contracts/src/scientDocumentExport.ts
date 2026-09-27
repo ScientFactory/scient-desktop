@@ -81,12 +81,12 @@ export const ScientDocumentPageDiagnostic = Schema.Union([
   Schema.Struct({
     severity: Schema.Literal("warning"),
     code: ScientDocumentPageWarningCode,
-    detail: BoundedText(512),
+    detail: BoundedText(2_048),
   }),
   Schema.Struct({
     severity: Schema.Literal("fatal"),
     code: ScientDocumentPageFatalCode,
-    detail: BoundedText(512),
+    detail: BoundedText(2_048),
   }),
 ]);
 export type ScientDocumentPageDiagnostic = typeof ScientDocumentPageDiagnostic.Type;

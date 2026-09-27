@@ -11,7 +11,7 @@ import {
 /** How long the page waits for diagrams and images before reporting them unfinished. */
 export const DOCUMENT_PAGE_SETTLE_TIMEOUT_MS = 45_000;
 const MAX_DIAGNOSTICS = 256;
-const MAX_DETAIL_LENGTH = 512;
+const MAX_DETAIL_LENGTH = 2_048;
 
 const nextFrame = () =>
   new Promise<void>((resolve) =>

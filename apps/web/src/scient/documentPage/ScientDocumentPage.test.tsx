@@ -8,12 +8,24 @@ import * as katex from "../math/katexRuntime";
 import { countDocumentBlocks, DocumentPageTracker } from "./documentPageReadiness";
 import { ScientDocumentPage, SHORT_CODE_BLOCK_LINES } from "./ScientDocumentPage";
 
-vi.mock("../diagrams/mermaidRuntime", () => ({
-  renderMermaidDiagram: vi.fn(async (source: string) => {
-    if (source.includes("broken")) throw new Error("Parse error on line 2");
-    return { svg: '<svg data-test-diagram="yes"><text>Rendered diagram</text></svg>' };
-  }),
-}));
+const PARSE_ERROR =
+  "Parse error on line 2:\nflowchart LR broken\n-------------^\nExpecting 'SEMI', 'NEWLINE', got 'NODE_STRING'";
+
+vi.mock("../diagrams/mermaidRuntime", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../diagrams/mermaidRuntime")>();
+  return {
+    ...actual,
+    renderMermaidDiagram: vi.fn(async (source: string) => {
+      if (source.includes("broken")) throw new actual.MermaidRenderError(new Error(PARSE_ERROR));
+      if (source.includes("chunk")) {
+        throw new actual.MermaidRenderError(
+          new TypeError("Failed to fetch dynamically imported module: /assets/mermaid.js"),
+        );
+      }
+      return { svg: '<svg data-test-diagram="yes"><text>Rendered diagram</text></svg>' };
+    }),
+  };
+});
 
 const roots: ReturnType<typeof createRoot>[] = [];
 
@@ -182,6 +194,28 @@ describe("ScientDocumentPage", () => {
       "unsupported-diagram-language",
     ]);
     expect(tracker.diagnostics.every((diagnostic) => diagnostic.severity === "warning")).toBe(true);
+  });
+
+  it("treats a Mermaid runtime failure as fatal, not as a labelled placeholder", async () => {
+    const { article, tracker } = await renderPage(input("```mermaid\nchunk\n```\n"));
+    expect(article.querySelector("[data-scient-diagram='error']")).not.toBeNull();
+    expect(tracker.diagnostics).toEqual([
+      expect.objectContaining({ severity: "fatal", code: "diagram-incomplete" }),
+    ]);
+  });
+
+  it("prints the full Mermaid parse error in the export notes", async () => {
+    const { tracker } = await renderPage(input("```mermaid\nbroken\n```\n"));
+    const detail = tracker.diagnostics[0]?.detail ?? "";
+    expect(detail).toBe(`A Mermaid diagram could not be rendered: ${PARSE_ERROR}`);
+    const { article } = await renderPage(input("```mermaid\nbroken\n```\n"), [detail]);
+    const note = article.querySelectorAll(".scient-document-notes li")[1];
+    expect(note?.firstChild?.textContent).toBe(
+      "A Mermaid diagram could not be rendered: Parse error on line 2:",
+    );
+    expect(note?.querySelector(".scient-document-note-detail")?.textContent).toBe(
+      PARSE_ERROR.slice(PARSE_ERROR.indexOf("\n") + 1),
+    );
   });
 
   it("prints failed diagrams and unparseable math as labelled source", async () => {

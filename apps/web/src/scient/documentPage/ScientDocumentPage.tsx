@@ -23,7 +23,8 @@ import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 
 import { resolveMarkdownDirection } from "../bidi/contentDirection";
 import { rehypeScientBidi } from "../bidi/rehypeScientBidi";
-import { renderMermaidDiagram } from "../diagrams/mermaidRuntime";
+import { isMermaidSyntaxError } from "../diagrams/mermaidRecovery";
+import { MermaidRenderError, renderMermaidDiagram } from "../diagrams/mermaidRuntime";
 import { isScientMathCodeClassName } from "../math/remarkScientMath";
 import { renderCachedScientMath } from "../math/ScientMath";
 import { useScientMathMarkdownText, useScientMathRemarkPlugins } from "../math/scientMathText";
@@ -173,7 +174,33 @@ function PrintMath({ tex, display }: { readonly tex: string; readonly display: b
 type DiagramState =
   | { readonly status: "pending" }
   | { readonly status: "rendered"; readonly svg: string }
-  | { readonly status: "failed"; readonly message: string };
+  /** The source is not a diagram Mermaid can draw: a content limitation. */
+  | { readonly status: "failed" }
+  /** Mermaid itself failed (for example, its code could not load): an execution failure. */
+  | { readonly status: "error" };
+
+/**
+ * Whether Mermaid refused the diagram's content (syntax, unknown diagram
+ * type, size limits). Anything else, such as a runtime that failed to load,
+ * means the page did not finish and must not be printed.
+ */
+export function isMermaidContentError(cause: unknown): boolean {
+  if (cause instanceof MermaidRenderError) {
+    return (
+      isMermaidSyntaxError(cause.cause) ||
+      /\b(?:edge limit|maximum text size)\b/iu.test(cause.details)
+    );
+  }
+  return (
+    cause instanceof Error &&
+    /^The diagram (?:source is empty|is too large to render)/u.test(cause.message)
+  );
+}
+
+function mermaidErrorDetail(cause: unknown): string {
+  if (cause instanceof MermaidRenderError) return cause.details;
+  return cause instanceof Error && cause.message ? cause.message : "Mermaid could not render it.";
+}
 
 function PrintMermaid({ source }: { readonly source: string }) {
   const { tracker } = useDocumentPage();
@@ -186,9 +213,17 @@ function PrintMermaid({ source }: { readonly source: string }) {
         if (active) setState({ status: "rendered", svg: rendered.svg });
       },
       (cause: unknown) => {
-        const message = cause instanceof Error ? cause.message : "Mermaid could not render it.";
-        tracker.warn("diagram-failed", `A Mermaid diagram could not be rendered: ${message}`);
-        if (active) setState({ status: "failed", message });
+        const detail = mermaidErrorDetail(cause);
+        if (isMermaidContentError(cause)) {
+          tracker.warn("diagram-failed", `A Mermaid diagram could not be rendered: ${detail}`);
+          if (active) setState({ status: "failed" });
+        } else {
+          tracker.fatal(
+            "diagram-incomplete",
+            `Mermaid failed while rendering a diagram: ${detail}`,
+          );
+          if (active) setState({ status: "error" });
+        }
       },
     );
     return () => {
@@ -444,9 +479,18 @@ export function ScientDocumentPage(props: ScientDocumentPageProps) {
           <section className="scient-document-notes" aria-label="Export notes">
             <h2>Export notes</h2>
             <ul>
-              {[...new Set(notes)].map((note) => (
-                <li key={note}>{note}</li>
-              ))}
+              {[...new Set(notes)].map((note) => {
+                // Multi-line notes, such as a Mermaid parse error with its caret, keep their layout.
+                const lineBreak = note.indexOf("\n");
+                return lineBreak < 0 ? (
+                  <li key={note}>{note}</li>
+                ) : (
+                  <li key={note}>
+                    {note.slice(0, lineBreak)}
+                    <pre className="scient-document-note-detail">{note.slice(lineBreak + 1)}</pre>
+                  </li>
+                );
+              })}
             </ul>
           </section>
         ) : null}

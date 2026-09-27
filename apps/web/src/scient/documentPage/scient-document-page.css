@@ -315,6 +315,14 @@ body {
   break-inside: avoid-page;
 }
 
+.scient-document-notes .scient-document-note-detail {
+  margin: 0.3em 0 0;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 8pt;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .scient-document-notes h2 {
   font-size: 11pt;
 }
