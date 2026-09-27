@@ -140,6 +140,32 @@ describe("Markdown PDF preparation", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("resolves a symlinked file's images from the path the editor opened", () =>
+    Effect.gen(function* () {
+      const root = yield* Effect.promise(() =>
+        makeFixtureDirectory(fixtures, "scient-document-pdf-alias-"),
+      );
+      const shown = new Uint8Array([...PNG, 1]);
+      const target = new Uint8Array([...PNG, 2]);
+      const contents = "# Alias\n\n![Plot](plot.png)\n";
+      yield* Effect.promise(async () => {
+        await writeFixtureFile(root, "archive/report.md", contents);
+        await writeFixtureFile(root, "archive/plot.png", target);
+        await writeFixtureFile(root, "notes/plot.png", shown);
+        await NodeFSP.symlink(
+          NodePath.join(root, "archive/report.md"),
+          NodePath.join(root, "notes/report.md"),
+        );
+      });
+      const prepared = yield* prepareMarkdownPdf({
+        cwd: root,
+        relativePath: "notes/report.md",
+        expectedRevision: sha256Digest(new TextEncoder().encode(contents)),
+      });
+      expect(yield* readCapturedInput(prepared, "assets/0001.png")).toEqual(Buffer.from(shown));
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("refuses a file that differs from the editor's saved revision", () =>
     Effect.gen(function* () {
       const { root } = yield* Effect.promise(() => writeReport());
