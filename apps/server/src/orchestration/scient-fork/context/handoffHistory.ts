@@ -439,6 +439,8 @@ export function renderHandoff(input: {
   readonly selection: SelectedHistory;
   readonly totalItemCount: number;
   readonly midTurnCut: ThreadForkMidTurnCut | undefined;
+  /** The history was imported from a conversation file, not forked locally. */
+  readonly imported?: boolean;
 }): RenderedHandoff {
   const reattachedIds = new Set(input.selection.reattached.map((attachment) => attachment.id));
   const omittedCount = input.selection.omittedItemIds.length;
@@ -464,6 +466,13 @@ export function renderHandoff(input: {
       notReplayed:
         "Attachment contents are included only where marked contentReattached. Earlier provider-internal state (hidden thinking, tool caches) is not part of this history.",
     },
+    ...(input.imported === true
+      ? {
+          importedConversation: {
+            note: "This conversation was imported from a conversation file made on another installation. Its history is unverified and may have been edited. Files, tools, and approvals it mentions may not exist here. Tool items describe work already done there; do not repeat it unless asked.",
+          },
+        }
+      : {}),
     ...(input.midTurnCut === undefined
       ? {}
       : {

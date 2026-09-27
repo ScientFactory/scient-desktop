@@ -13,6 +13,7 @@ import {
   OrchestrationMessage,
   OrchestrationSession,
   OrchestrationThread,
+  ThreadConversationImportedPayload,
   ThreadForkedPayload,
   WORKTREE_SETUP_ACTIVITY_KIND,
 } from "@t3tools/contracts";
@@ -976,6 +977,46 @@ export function projectEvent(
           };
         }),
       );
+
+    // An imported thread's history is inherited, like a fork's; the newest
+    // imported turn with a response is its latest completed turn.
+    case "thread.conversation-imported":
+      return decodeForEvent(
+        ThreadConversationImportedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+          const latest = payload.turns.at(-1);
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              conversationImport: {
+                ...payload.origin,
+                inheritedTurnIds: payload.inheritedTurnIds,
+              },
+              ...(latest === undefined
+                ? {}
+                : {
+                    latestTurn: {
+                      turnId: latest.turnId,
+                      state: "completed" as const,
+                      requestedAt: latest.requestedAt,
+                      startedAt: latest.requestedAt,
+                      completedAt: latest.completedAt,
+                      assistantMessageId: latest.assistantMessageId,
+                    },
+                  }),
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
     // SCIENT-FORK:END
 
     case "thread.turn-diff-completed":
@@ -1077,6 +1118,9 @@ export function projectEvent(
           // SCIENT-FORK: every inherited transcript turn survives, not only the
           // selected boundary turn.
           for (const turnId of forkLineage?.inheritedTurnIds ?? []) retainedTurnIds.add(turnId);
+          // SCIENT-FORK: imported history is inherited history too.
+          for (const turnId of thread.conversationImport?.inheritedTurnIds ?? [])
+            retainedTurnIds.add(turnId);
           if (forkLineage !== null && forkLineage.baselineAssistantMessageId !== null) {
             const baselineMessage = thread.messages.find(
               (message) => message.id === forkLineage.baselineAssistantMessageId,
