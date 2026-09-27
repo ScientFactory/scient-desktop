@@ -8,6 +8,11 @@ import {
   resolveDevProtocolClient,
   resolveElectronLaunchCommand,
 } from "./electron-launcher.mjs";
+// SCIENT-DEV-APP: runner-only settings must not reach the app or its shells.
+import {
+  SCIENT_DEV_APP_BACKGROUND_SERVICE_ENV,
+  SCIENT_DEV_APP_FAILURE_FILE_ENV,
+} from "./dev-app-bundle.mjs";
 import {
   createCoalescedRestartScheduler,
   developmentLauncherIsActive,
@@ -81,6 +86,14 @@ await waitForResources({
 
 const childEnv = { ...process.env };
 delete childEnv.ELECTRON_RUN_AS_NODE;
+// A build started from a terminal inside the app must neither refuse to sign
+// nor report its failure as this runner's. `open` hands its own environment to
+// the app, so the managed launch gets the same filtered copy.
+delete childEnv[SCIENT_DEV_APP_BACKGROUND_SERVICE_ENV];
+delete childEnv[SCIENT_DEV_APP_FAILURE_FILE_ENV];
+const macOpenEnv = { ...process.env };
+delete macOpenEnv[SCIENT_DEV_APP_BACKGROUND_SERVICE_ENV];
+delete macOpenEnv[SCIENT_DEV_APP_FAILURE_FILE_ENV];
 childEnv.SCIENT_NEXT_SAFETY_ENVELOPE = "true";
 childEnv.SCIENT_NEXT_DEV_RUNNER_ACTIVE = "1";
 const devProtocolClient = resolveDevProtocolClient();
@@ -248,7 +261,7 @@ function startApp() {
     electronCommand.args,
     {
       cwd: desktopDir,
-      env: managedMacLaunch ? process.env : childEnv,
+      env: managedMacLaunch ? macOpenEnv : childEnv,
       stdio: "inherit",
     },
   );
