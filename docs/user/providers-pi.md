@@ -72,8 +72,20 @@ Scient's provider model list lets you favorite, hide, and order available models
 Scient custom connections apply to new sessions and before the next ordinary turn of an existing
 session; they do not change an already-running request.
 
-If a response stops at its token limit, Scient keeps the partial answer and shows a quiet notice.
-You can send a follow-up to continue; queued messages proceed normally without an automatic retry.
+Scient checks Pi's final outgoing request against the selected model's context budget,
+including instructions, tools, images, and room for the answer. Near the limit, it can
+reduce the requested answer allowance. If the input itself needs more room, Pi compacts
+its context and continues the current task automatically, once per user input. The saved
+transcript and completed tool results remain intact.
+
+If compaction cannot make enough room or the endpoint still rejects the request, Scient
+shows a context-limit explanation. Use **Compact** (or `/compact`) and then continue,
+or choose a model with a larger context window. Compaction summarizes provider context;
+it does not delete your saved conversation. Estimates are conservative, and custom
+endpoints or extensions can use different token accounting.
+
+An answer reaching its output limit is separate from a full conversation context.
+Scient keeps that partial answer and shows a quiet notice; send a follow-up to continue.
 
 Scient runs the Pi agent, not the model server: importing model weights and starting/managing a
 local inference server are not built into this integration. Model discovery does not establish
