@@ -104,18 +104,15 @@ function ConversationImportDialog({ initialSource }: { readonly initialSource: S
   const configs = useServerConfigs();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const [source, setSource] = useState<Source>(initialSource);
-  const [environmentId, setEnvironmentId] = useState<EnvironmentId | null>(primaryEnvironmentId);
+  const [selectedEnvironmentId, setEnvironmentId] = useState<EnvironmentId | null>(null);
+  const environmentId = selectedEnvironmentId ?? primaryEnvironmentId;
   const [preview, setPreview] = useState<ScientConversationImportPreview | null>(null);
   const [stagedId, setStagedId] = useState<ConversationImportId | null>(null);
   const [projectId, setProjectId] = useState<string>("");
   const [modelKey, setModelKey] = useState("");
   const [busy, setBusy] = useState<"preview" | "import" | null>(null);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    if (environmentId === null && primaryEnvironmentId !== null) {
-      setEnvironmentId(primaryEnvironmentId);
-    }
-  }, [environmentId, primaryEnvironmentId]);
+  const [acknowledgeMarkdownIssues, setAcknowledgeMarkdownIssues] = useState(false);
   const availableProjects = projects.filter((project) => project.environmentId === environmentId);
   const modelChoices = useMemo(() => {
     const config = environmentId === null ? null : configs.get(environmentId);
@@ -141,23 +138,38 @@ function ConversationImportDialog({ initialSource }: { readonly initialSource: S
     dismissRequest();
   };
 
-  const runPreview = async () => {
+  const runPreview = async (markdownMode?: "messages" | "document") => {
     if (environmentId === null || source._tag === "choose") return;
     const fileName = source._tag === "browser-file" ? source.file.name : source.file.fileName;
     const sizeBytes = source._tag === "browser-file" ? source.file.size : source.file.sizeBytes;
-    if (!fileName.toLowerCase().endsWith(".scic")) {
-      setError("Choose a Scient conversation file (.scic).");
+    const markdown = fileName.toLowerCase().endsWith(".md");
+    if (!markdown && !fileName.toLowerCase().endsWith(".scic")) {
+      setError("Choose a Scient conversation file (.scic) or Markdown file (.md).");
       return;
     }
-    if (sizeBytes <= 0 || sizeBytes > SCIENT_CONVERSATION_IMPORT_MAX_PACKAGE_BYTES) {
+    if (
+      sizeBytes <= 0 ||
+      sizeBytes > (markdown ? 16 * 1024 * 1024 : SCIENT_CONVERSATION_IMPORT_MAX_PACKAGE_BYTES)
+    ) {
       setError("The conversation file is empty or exceeds Scient's import limit.");
       return;
     }
     setBusy("preview");
     setError(null);
+    setAcknowledgeMarkdownIssues(false);
     let createdId: ConversationImportId | null = null;
     try {
-      const upload = await createConversationImportUpload(environmentId, fileName, sizeBytes);
+      if (stagedId !== null) {
+        await cancelConversationImport(environmentId, stagedId);
+        setStagedId(null);
+        setPreview(null);
+      }
+      const upload = await createConversationImportUpload(
+        environmentId,
+        fileName,
+        sizeBytes,
+        markdownMode,
+      );
       createdId = upload.importId;
       setStagedId(upload.importId);
       if (source._tag === "browser-file") {
@@ -209,6 +221,9 @@ function ConversationImportDialog({ initialSource }: { readonly initialSource: S
       const result = await confirmConversationImport(environmentId, {
         importId: preview.importId,
         packageSha256: preview.package.packageSha256,
+        ...(preview.kind === "markdown" && preview.markdownIssues.length > 0
+          ? { acknowledgeMarkdownIssues }
+          : {}),
         destination: {
           projectId: selectedProject.id,
           modelSelection: selectedModel.selection,
@@ -220,7 +235,10 @@ function ConversationImportDialog({ initialSource }: { readonly initialSource: S
       dismissRequest();
       toastManager.add({
         type: "success",
-        title: "Conversation imported",
+        title:
+          preview.kind === "document"
+            ? "Document added to a new conversation"
+            : "Conversation imported",
         description: "The next message starts a fresh provider session.",
       });
       await navigate({
@@ -257,7 +275,7 @@ function ConversationImportDialog({ initialSource }: { readonly initialSource: S
               ) : (
                 <input
                   type="file"
-                  accept=".scic"
+                  accept=".scic,.md"
                   disabled={busy !== null || preview !== null}
                   onChange={(event) => {
                     const file = event.currentTarget.files?.[0];
@@ -288,6 +306,13 @@ function ConversationImportDialog({ initialSource }: { readonly initialSource: S
               <div className="space-y-3 text-sm">
                 <p className="font-medium">{preview.conversation.title}</p>
                 <p>
+                  {preview.kind === "scic"
+                    ? "Scient conversation file: structured conversation and included attachments."
+                    : preview.kind === "markdown"
+                      ? "Scient Markdown transcript: message text only; referenced files do not transfer."
+                      : "Ordinary Markdown: starts a conversation with the document attached, not a reconstructed transcript."}
+                </p>
+                <p>
                   {preview.counts.messages} messages · {preview.counts.attachments} attachments ·
                   from {preview.conversation.provider}
                 </p>
@@ -303,6 +328,46 @@ function ConversationImportDialog({ initialSource }: { readonly initialSource: S
                 ) : null}
                 {preview.warnings.length > 0 ? (
                   <p role="alert">This file has {preview.warnings.length} warning(s).</p>
+                ) : null}
+                {preview.markdownIssues.length > 0 ? (
+                  <div className="space-y-2 rounded-md border p-3" role="alert">
+                    <p className="font-medium">Damaged transcript markers</p>
+                    <p>
+                      Only clean messages will import. Review these line ranges before choosing:
+                    </p>
+                    <ul className="list-inside list-disc">
+                      {preview.markdownIssues.slice(0, 10).map((issue) => (
+                        <li
+                          key={`${issue.kind}-${issue.startLine}-${issue.endLine}-${issue.detail}`}
+                        >
+                          Lines {issue.startLine}–{issue.endLine}: {issue.detail}
+                        </li>
+                      ))}
+                    </ul>
+                    {preview.markdownIssues.length > 10 ? (
+                      <p>And {preview.markdownIssues.length - 10} more marker issue(s).</p>
+                    ) : null}
+                    {preview.kind === "markdown" ? (
+                      <label className="flex items-start gap-2">
+                        <input
+                          type="checkbox"
+                          checked={acknowledgeMarkdownIssues}
+                          onChange={(event) => setAcknowledgeMarkdownIssues(event.target.checked)}
+                        />
+                        <span>Import only the clean messages despite these issues</span>
+                      </label>
+                    ) : null}
+                    {source._tag === "browser-file" ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={busy !== null}
+                        onClick={() => void runPreview("document")}
+                      >
+                        Start with the whole document instead
+                      </Button>
+                    ) : null}
+                  </div>
                 ) : null}
                 <label className="block">
                   <span className="mb-1 block font-medium">Project</span>
@@ -374,7 +439,14 @@ function ConversationImportDialog({ initialSource }: { readonly initialSource: S
           ) : (
             <Button
               type="button"
-              disabled={busy !== null || selectedProject === null || selectedModel === null}
+              disabled={
+                busy !== null ||
+                selectedProject === null ||
+                selectedModel === null ||
+                (preview.kind === "markdown" &&
+                  preview.markdownIssues.length > 0 &&
+                  !acknowledgeMarkdownIssues)
+              }
               onClick={() => void runImport()}
             >
               {busy === "import" ? "Importing…" : "Import and continue"}

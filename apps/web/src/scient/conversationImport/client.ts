@@ -25,12 +25,13 @@ export async function createConversationImportUpload(
   environmentId: EnvironmentId,
   fileName: string,
   sizeBytes: number,
+  markdownMode?: "messages" | "document",
 ) {
   const connection = prepared(environmentId);
   const upload = await runtime.runPromise(
     createEnvironmentConversationImportUpload({
       prepared: connection,
-      upload: { fileName, sizeBytes },
+      upload: { fileName, sizeBytes, ...(markdownMode ? { markdownMode } : {}) },
     }),
   );
   const url = resolveAssetUrl(connection.httpBaseUrl, upload.relativeUrl);
@@ -53,7 +54,11 @@ export async function createConversationImportUpload(
 export async function uploadConversationFile(url: string, file: File): Promise<void> {
   const response = await fetch(url, {
     method: "POST",
-    headers: { "content-type": SCIC_MEDIA_TYPE },
+    headers: {
+      "content-type": file.name.toLowerCase().endsWith(".md")
+        ? "text/markdown; charset=utf-8"
+        : SCIC_MEDIA_TYPE,
+    },
     body: file,
   });
   if (!response.ok) throw new Error(`The import upload was refused (${response.status}).`);
