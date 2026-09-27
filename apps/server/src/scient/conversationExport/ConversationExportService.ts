@@ -12,6 +12,7 @@ import {
   ScientConversationExportError,
   type ConversationExportFormat,
   type ConversationExportFormatCapability,
+  type ConversationSnapshotV1,
   type DocumentWarning,
   type ScientConversationExportPreparation,
   type ScientConversationExportRequest,
@@ -97,6 +98,20 @@ function excerpt(text: string): string {
   return plain.length <= SCIENT_CONVERSATION_EXPORT_EXCERPT_MAX_CHARS
     ? plain
     : `${plain.slice(0, SCIENT_CONVERSATION_EXPORT_EXCERPT_MAX_CHARS - 1)}…`;
+}
+
+/** Attachment ids the snapshot references, in conversation order, without repeats. */
+function snapshotAttachmentIds(snapshot: ConversationSnapshotV1): ReadonlyArray<string> {
+  return [
+    ...new Set([
+      ...snapshot.messages.flatMap((message) =>
+        message.attachments.map((attachment) => attachment.localId),
+      ),
+      ...snapshot.questionAnswers.flatMap((answer) =>
+        answer.items.flatMap((item) => item.attachments.map((attachment) => attachment.localId)),
+      ),
+    ]),
+  ];
 }
 
 const reject = (reason: ScientConversationExportError["reason"], message: string) =>
@@ -197,10 +212,14 @@ const make = Effect.gen(function* () {
     // Redact structured text before any writer escapes it.
     const snapshot = redactSnapshotStoragePaths(captured.snapshot, storageRoots);
 
-    // Read attachment bytes once, bounded in total; the document is pure.
+    // Read attachment bytes once, bounded in total; the document is pure. Only
+    // attachments the selected snapshot holds are read and charged, in the
+    // order they appear, so an excluded tail cannot use up the budget.
     const resolved = new Map<string, ResolvedAttachmentContent>();
     let totalBytes = 0;
-    for (const [localId, path] of attachmentFiles) {
+    for (const localId of snapshotAttachmentIds(snapshot)) {
+      const path = attachmentFiles.get(localId);
+      if (path === undefined) continue;
       const bytes = yield* fileSystem.readFile(path).pipe(Effect.option);
       if (bytes._tag === "None") {
         resolved.set(localId, { _tag: "unavailable", reason: "unreadable" });
