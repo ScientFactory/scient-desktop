@@ -2,10 +2,12 @@ import type {
   ConversationExportFormat,
   ConversationExportOptions,
   DocumentWarning,
+  EnvironmentId,
   ScientConversationExportPreparation,
   ScientConversationExportRequest,
   ScopedThreadRef,
 } from "@t3tools/contracts";
+import type { ComponentType } from "react";
 
 /**
  * Export formats the dialog offers. A format appears once it registers here
@@ -44,6 +46,11 @@ export interface ConversationExportFormatRegistration {
     readonly threadRef: ScopedThreadRef;
     readonly request: ScientConversationExportRequest;
   }) => Promise<ConversationExportProduced>;
+  /** Shown when the user can install a missing converter, such as Pandoc. */
+  readonly UnavailableAction?: ComponentType<{
+    readonly environmentId: EnvironmentId;
+    readonly onAvailable: () => void;
+  }>;
 }
 
 export type ConversationExportClientAvailability =

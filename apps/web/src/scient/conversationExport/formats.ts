@@ -2,9 +2,10 @@ import {
   conversationPdfAvailability,
   exportConversationPdf,
 } from "../documentExport/conversationPdfExport";
+import { PandocInstallAction } from "../wordExport/PandocInstallControl";
 import { registerConversationExportFormat } from "./formatRegistry";
 
-/** Formats this build offers, in display order. Word registers here when it lands. */
+/** Formats this build offers, in display order. */
 registerConversationExportFormat({
   format: "markdown",
   label: "Markdown",
@@ -45,4 +46,13 @@ registerConversationExportFormat({
   supportsCopy: false,
   note: () =>
     "Another Scient can import this file and continue the conversation in a fresh session.",
+});
+
+registerConversationExportFormat({
+  format: "docx",
+  label: "Word",
+  supportsCopy: false,
+  note: () =>
+    "Equations stay editable in Word. Images, tables, and footnotes are kept; the work log and reasoning get their own Word styles.",
+  UnavailableAction: PandocInstallAction,
 });

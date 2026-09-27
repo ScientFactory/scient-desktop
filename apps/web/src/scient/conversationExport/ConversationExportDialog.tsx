@@ -1,4 +1,6 @@
 import type {
+  ConversationExportFormat,
+  EnvironmentId,
   ScientConversationExportDelivery,
   ScientConversationExportPreparation,
   ScopedThreadRef,
@@ -115,6 +117,29 @@ function ConversationExportDialog({ threadRef }: { readonly threadRef: ScopedThr
     };
   }, [registrations, threadRef.environmentId, threadRef.threadId]);
 
+  // A format that became available here (Word, once Pandoc is installed) is
+  // read again from the server and selected, keeping every other choice.
+  const formatAvailable = (format: ConversationExportFormat) => {
+    prepareConversationExport(threadRef.environmentId, threadRef.threadId).then(
+      (preparation) => {
+        setLoading({ _tag: "ready", preparation });
+        const option = exportFormatOptions(preparation, registrations).find(
+          (candidate) => candidate.registration.format === format && candidate.available,
+        );
+        setState((current) =>
+          current === null || option === undefined
+            ? current
+            : {
+                ...current,
+                format,
+                variant: option.registration.variant?.defaultValue ?? null,
+              },
+        );
+      },
+      (cause: unknown) => setError(errorMessage(cause)),
+    );
+  };
+
   const run = async (delivery: ScientConversationExportDelivery) => {
     if (loading._tag !== "ready" || state === null) return;
     const request = buildExportRequest({
@@ -207,6 +232,8 @@ function ConversationExportDialog({ threadRef }: { readonly threadRef: ScopedThr
           ) : null}
           {loading._tag === "ready" && state !== null ? (
             <ConversationExportForm
+              environmentId={threadRef.environmentId}
+              onFormatAvailable={formatAvailable}
               preparation={loading.preparation}
               registrations={registrations}
               state={state}
@@ -256,6 +283,9 @@ function ConversationExportDialog({ threadRef }: { readonly threadRef: ScopedThr
 
 /** The export choices. Stateless: the dialog owns the state and resets it on every opening. */
 export function ConversationExportForm(props: {
+  /** Lets an unavailable format offer to make itself available here. */
+  readonly environmentId?: EnvironmentId;
+  readonly onFormatAvailable?: (format: ConversationExportFormat) => void;
   readonly preparation: ScientConversationExportPreparation;
   readonly registrations: ReadonlyArray<ConversationExportFormatRegistration>;
   readonly state: ExportDialogState;
@@ -304,11 +334,20 @@ export function ConversationExportForm(props: {
             </Toggle>
           ))}
         </ToggleGroup>
-        {unavailable.map((option) => (
-          <p key={option.registration.format} className="text-muted-foreground text-xs">
-            {option.registration.label}: {option.unavailableReason}
-          </p>
-        ))}
+        {unavailable.map((option) => {
+          const { format, UnavailableAction } = option.registration;
+          return UnavailableAction !== undefined && props.environmentId !== undefined ? (
+            <UnavailableAction
+              key={format}
+              environmentId={props.environmentId}
+              onAvailable={() => props.onFormatAvailable?.(format)}
+            />
+          ) : (
+            <p key={format} className="text-muted-foreground text-xs">
+              {option.registration.label}: {option.unavailableReason}
+            </p>
+          );
+        })}
         {variant ? (
           <RadioGroup
             aria-label={variant.label}

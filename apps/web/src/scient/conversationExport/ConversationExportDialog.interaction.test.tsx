@@ -13,6 +13,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 const prepareConversationExport = vi.fn();
 const exportConversation = vi.fn();
 vi.mock("./client", () => ({ prepareConversationExport, exportConversation }));
+const readPandocTool = vi.fn();
+const installPandocTool = vi.fn();
+vi.mock("../wordExport/client", () => ({ readPandocTool, installPandocTool }));
 
 const { ConversationExportDialogHost, requestConversationExport } =
   await import("./ConversationExportDialog");
@@ -48,6 +51,23 @@ const preparation: ScientConversationExportPreparation = {
   ],
 };
 
+function pandocStatus(installed: boolean) {
+  return {
+    version: "3.11",
+    installed,
+    canInstall: true,
+    unavailableReason: null,
+    downloadBytes: 41_832_712,
+    install: {
+      state: installed ? "ready" : "idle",
+      bytesReceived: null,
+      totalBytes: null,
+      failureReason: null,
+      updatedAtEpochMs: 1,
+    },
+  };
+}
+
 let root: Root;
 let container: HTMLDivElement;
 
@@ -55,6 +75,9 @@ beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   prepareConversationExport.mockReset();
   exportConversation.mockReset();
+  readPandocTool.mockReset();
+  readPandocTool.mockResolvedValue(pandocStatus(false));
+  installPandocTool.mockReset();
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -138,5 +161,36 @@ describe("ConversationExportDialog", () => {
     });
     expect(document.querySelector('[role="alert"]')).toBeNull();
     expect(switches()).toHaveLength(2);
+  });
+
+  it("offers the Pandoc install for Word and selects Word once it is installed", async () => {
+    prepareConversationExport.mockResolvedValueOnce(preparation);
+    prepareConversationExport.mockResolvedValueOnce({
+      ...preparation,
+      formats: [
+        ...preparation.formats,
+        { format: "docx", available: true, unavailableReason: null },
+      ],
+    });
+    installPandocTool.mockResolvedValue(pandocStatus(true));
+    await act(async () => root.render(<ConversationExportDialogHost />));
+    await open();
+
+    expect(document.body.textContent).toContain("Word export needs Pandoc (40 MB).");
+    const install = [...document.querySelectorAll("button")].find(
+      (button) => button.textContent === "Install Pandoc (40 MB)",
+    )!;
+    await act(async () => install.click());
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(installPandocTool).toHaveBeenCalledWith(threadRef.environmentId);
+    expect(prepareConversationExport).toHaveBeenCalledTimes(2);
+    const pressed = [...document.querySelectorAll('[aria-pressed="true"]')].map(
+      (element) => element.textContent,
+    );
+    expect(pressed).toEqual(["Word"]);
+    expect(document.body.textContent).not.toContain("Install Pandoc");
   });
 });

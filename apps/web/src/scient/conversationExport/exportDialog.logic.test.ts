@@ -47,8 +47,8 @@ const preparation: ScientConversationExportPreparation = {
 const registrations = registeredConversationExportFormats();
 
 describe("export dialog", () => {
-  it("registers Markdown, PDF and Scient conversation file through the format registry", () => {
-    expect(registrations.map((entry) => entry.format)).toEqual(["markdown", "pdf", "scic"]);
+  it("registers Markdown, PDF, Scient conversation file, and Word", () => {
+    expect(registrations.map((entry) => entry.format)).toEqual(["markdown", "pdf", "scic", "docx"]);
     // This fixture advertises only Markdown, so other formats are unavailable.
     expect(exportFormatOptions(preparation, registrations)).toEqual([
       { registration: registrations[0], available: true, unavailableReason: null },
@@ -62,7 +62,15 @@ describe("export dialog", () => {
         available: false,
         unavailableReason: "Not available on this Scient.",
       },
+      {
+        registration: registrations[3],
+        available: false,
+        unavailableReason: "Not available on this Scient.",
+      },
     ]);
+    // Word offers its install where it is unavailable, and is never copied.
+    expect(registrations[3]?.UnavailableAction).toBeDefined();
+    expect(registrations[3]?.supportsCopy).toBe(false);
   });
 
   it("adds a format's client requirement to the server's capability", () => {
@@ -149,7 +157,7 @@ describe("export dialog", () => {
       },
       [...registrations, pdf],
     );
-    expect(options.at(-1)).toMatchObject({
+    expect(options.find((option) => option.registration.format === "pdf")).toMatchObject({
       available: false,
       unavailableReason: "A connected Scient desktop is required.",
     });
@@ -224,7 +232,7 @@ describe("export dialog", () => {
     ).toBe("text");
   });
 
-  it("lets a later format register without changing the dialog", () => {
+  it("lets a format re-register without changing display order", () => {
     registerConversationExportFormat({
       format: "scic",
       label: "Scient (.scic)",
@@ -234,6 +242,7 @@ describe("export dialog", () => {
       "markdown",
       "pdf",
       "scic",
+      "docx",
     ]);
   });
 });
