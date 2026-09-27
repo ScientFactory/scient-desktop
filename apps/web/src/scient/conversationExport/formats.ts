@@ -4,7 +4,7 @@ import {
 } from "../documentExport/conversationPdfExport";
 import { registerConversationExportFormat } from "./formatRegistry";
 
-/** Formats this build offers. Later formats (Word, `.scic`) register here. */
+/** Formats this build offers, in display order. Word registers here when it lands. */
 registerConversationExportFormat({
   format: "markdown",
   label: "Markdown",
@@ -37,4 +37,12 @@ registerConversationExportFormat({
   produce: exportConversationPdf,
   note: () =>
     "Opens in Scient's PDF reader, where Save Copy keeps a copy. Images stay inside the PDF.",
+});
+
+registerConversationExportFormat({
+  format: "scic",
+  label: "Scient (.scic)",
+  supportsCopy: false,
+  note: () =>
+    "Another Scient can import this file and continue the conversation in a fresh session.",
 });

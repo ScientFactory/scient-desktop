@@ -221,6 +221,7 @@ describe("ConversationExportService", () => {
       assert.deepStrictEqual(preparation.formats, [
         { format: "markdown", available: true, unavailableReason: null },
         { format: "pdf", available: true, unavailableReason: null },
+        { format: "scic", available: true, unavailableReason: null },
       ]);
 
       const { produced, text } = yield* produceText(request({}, { includeWorkLog: true }));

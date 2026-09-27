@@ -215,6 +215,12 @@ import { scientConversationExportHttpApiLayer } from "./scient/conversationExpor
 import * as ConversationExportFiles from "./scient/conversationExport/ConversationExportFiles.ts";
 import * as ConversationExportService from "./scient/conversationExport/ConversationExportService.ts";
 import * as ConversationSnapshotService from "./scient/conversationExport/ConversationSnapshotService.ts";
+import {
+  conversationImportUploadRouteLayer,
+  scientConversationImportHttpApiLayer,
+} from "./scient/conversationImport/http.ts";
+import * as ConversationImportStaging from "./scient/conversationImport/ConversationImportStaging.ts";
+import { ConversationImporter } from "./scient/conversationImport/ConversationImporter.ts";
 import { scientAnalyticsHttpApiLayer } from "./telemetry/http.ts";
 
 // MCP handoff thread IDs include escaped provenance and can exceed find-my-way's
@@ -730,6 +736,11 @@ const ConversationExportServiceLive = ConversationExportService.layer.pipe(
   Layer.provide(ConversationSnapshotService.layer.pipe(Layer.provide(PersistenceLayerLive))),
   Layer.provide(ConversationExportFiles.layer),
 );
+// Import staging: uploads, validation, and preview. The importer that commits a
+// thread replaces the unavailable placeholder when the import command lands.
+const ConversationImportStagingLive = ConversationImportStaging.layer().pipe(
+  Layer.provide(ConversationImporter.layerUnavailable),
+);
 const ScientificRuntimePreferencesLive = ScientificRuntimePreferences.layer.pipe(
   Layer.provide(ServerSettingsLayerLive),
   Layer.provide(LocalAnalysisStore.layer),
@@ -777,12 +788,14 @@ export const makeRoutesLayer = Layer.mergeAll(
       Layer.provide(scientMarkdownHttpApiLayer),
       Layer.provide(scientThreadQueueHttpApiLayer.pipe(Layer.provide(PersistenceLayerLive))),
       Layer.provide(scientConversationExportHttpApiLayer),
+      Layer.provide(scientConversationImportHttpApiLayer),
       Layer.provide(serverEnvironmentHttpApiLayer),
       Layer.provide(environmentAuthenticatedAuthLayer),
     ),
     otlpTracesProxyRouteLayer,
     assetRouteLayer,
     attachmentUploadRouteLayer,
+    conversationImportUploadRouteLayer,
     deviceHubProxyRouteLayer,
     staticAndDevRouteLayer,
     websocketRpcRouteLayer,
@@ -806,6 +819,7 @@ export const makeRoutesLayer = Layer.mergeAll(
   Layer.provide(PullRequestServiceLive),
   Layer.provide(AnalysisServiceLive),
   Layer.provide(ConversationExportServiceLive),
+  Layer.provide(ConversationImportStagingLive),
   Layer.provide(ComputeMcpGatewayLive),
   Layer.provide(ComputeSessionServiceLive),
   Layer.provide(ScientificRuntimePreferencesLive),

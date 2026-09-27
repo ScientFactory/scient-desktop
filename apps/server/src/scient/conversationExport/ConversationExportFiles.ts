@@ -35,6 +35,8 @@ export interface PackageEntry {
   /** Relative POSIX path inside the archive. */
   readonly path: string;
   readonly bytes: Uint8Array;
+  /** Deflated unless false; entries are written in the order given. */
+  readonly compress?: boolean;
 }
 
 export type ExportFileContent =
@@ -81,7 +83,11 @@ function writeZip(
     zip.outputStream.on("error", reject);
     zip.outputStream.pipe(output);
     for (const entry of entries) {
-      zip.addBuffer(Buffer.from(entry.bytes), entry.path, { mtime: modifiedAt, mode: 0o100644 });
+      zip.addBuffer(Buffer.from(entry.bytes), entry.path, {
+        mtime: modifiedAt,
+        mode: 0o100644,
+        compress: entry.compress ?? true,
+      });
     }
     zip.end();
   });

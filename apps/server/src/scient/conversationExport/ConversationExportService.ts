@@ -6,6 +6,8 @@
  */
 import {
   CONVERSATION_REFERENCE_URL_PREFIX,
+  SCIC_FILE_EXTENSION,
+  SCIC_MEDIA_TYPE,
   SCIENT_CONVERSATION_EXPORT_CLIPBOARD_MAX_CHARS,
   SCIENT_CONVERSATION_EXPORT_EXCERPT_MAX_CHARS,
   SCIENT_CONVERSATION_EXPORT_MAX_ASSET_BYTES,
@@ -36,7 +38,9 @@ import * as Encoding from "effect/Encoding";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 
+import packageJson from "../../../package.json" with { type: "json" };
 import * as ServerConfig from "../../config.ts";
+import { prepareScicPackage } from "../conversationFile/ScicWriter.ts";
 import {
   ConversationExportFiles,
   type ConversationExportFileError,
@@ -50,17 +54,18 @@ const MARKDOWN_MEDIA_TYPE = "text/markdown; charset=utf-8";
 const ZIP_MEDIA_TYPE = "application/zip";
 
 /**
- * Formats this server produces. Word and `.scic` register here when they land.
+ * Formats this server produces. Word registers here when it lands.
  * PDF is captured here and printed by a connected Scient desktop; clients add
  * that requirement to the server's capability.
  */
 const FORMAT_CAPABILITIES: ReadonlyArray<ConversationExportFormatCapability> = [
   { format: "markdown", available: true, unavailableReason: null },
   { format: "pdf", available: true, unavailableReason: null },
+  { format: "scic", available: true, unavailableReason: null },
 ];
 
 /** Formats `produce` writes on the server; the rest are produced from `document`. */
-const SERVER_WRITTEN_FORMATS: ReadonlySet<ConversationExportFormat> = new Set(["markdown"]);
+const SERVER_WRITTEN_FORMATS: ReadonlySet<ConversationExportFormat> = new Set(["markdown", "scic"]);
 
 export type ProducedExportOutput =
   | {
@@ -250,7 +255,7 @@ const make = Effect.gen(function* () {
     if (document.messageCount === 0) {
       return yield* reject("nothing-to-export", "This conversation has no completed messages yet.");
     }
-    return { snapshot, document: { ...document, exportValue } };
+    return { snapshot, resolved, document: { ...document, exportValue } };
   });
 
   const produce: ConversationExportService["Service"]["produce"] = Effect.fn(
@@ -270,13 +275,53 @@ const make = Effect.gen(function* () {
       );
     }
     const packaging = request.options.markdownPackaging ?? "text";
-    if (request.delivery === "clipboard" && packaging !== "text") {
+    if (request.delivery === "clipboard" && (request.format !== "markdown" || packaging !== "text")) {
       return yield* reject("delivery-unsupported", "Only text-only Markdown can be copied.");
     }
-    const { snapshot, document } = yield* buildDocument(request);
+    const { snapshot, resolved, document } = yield* buildDocument(request);
     const exportValue = document.exportValue;
     const exportId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
     const exported = DateTime.formatIso(yield* DateTime.now);
+    if (request.format === "scic") {
+      const prepared = prepareScicPackage({
+        snapshot,
+        attachments: resolved,
+        exportValue,
+        exportedAt: exported,
+        exporter: { name: "Scient", version: packageJson.version },
+        timeZone: request.timeZone ?? "UTC",
+        redact: (text) => redactStoragePaths(text, storageRoots),
+      });
+      if (prepared._tag === "nothing-to-export") {
+        return yield* reject("nothing-to-export", "This conversation has no completed messages yet.");
+      }
+      if (prepared._tag === "too-large") {
+        return yield* reject(
+          "too-large",
+          "This conversation is too large for a Scient conversation file. Export a shorter range or leave out the work log.",
+        );
+      }
+      const fileName = exportFileName(snapshot.thread.title, SCIC_FILE_EXTENSION);
+      const written = yield* files.write({
+        exportId,
+        fileName,
+        content: { _tag: "zip", modifiedAt: exported, entries: prepared.value.files },
+      });
+      return {
+        exportId,
+        format: request.format,
+        contentDigest: prepared.value.contentDigest,
+        messageCount: prepared.value.messageCount,
+        warnings: prepared.value.warnings,
+        output: {
+          _tag: "file",
+          path: written.path,
+          fileName,
+          mediaType: SCIC_MEDIA_TYPE,
+          byteLength: written.byteLength,
+        },
+      };
+    }
     const markdown = redactStoragePaths(
       writeConversationMarkdown({ bundle: document.bundle, exportValue, exported, packaging }),
       storageRoots,
