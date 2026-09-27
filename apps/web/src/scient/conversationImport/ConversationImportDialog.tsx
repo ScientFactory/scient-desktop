@@ -1,6 +1,5 @@
 import type {
   ConversationImportId,
-  DesktopOpenedConversationFile,
   EnvironmentId,
   ModelSelection,
   ScientConversationImportPreview,
@@ -8,7 +7,6 @@ import type {
 import { SCIENT_CONVERSATION_IMPORT_MAX_PACKAGE_BYTES } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
-import { create } from "zustand";
 
 import { Button } from "../../components/ui/button";
 import {
@@ -35,21 +33,14 @@ import {
   previewConversationImport,
   uploadConversationFile,
 } from "./client";
-
-type Source =
-  | { readonly _tag: "choose" }
-  | { readonly _tag: "browser-file"; readonly file: File }
-  | { readonly _tag: "desktop-file"; readonly file: DesktopOpenedConversationFile };
-
-const useRequests = create<{ readonly queue: ReadonlyArray<Source> }>(() => ({ queue: [] }));
-
-function requestConversationImport(source: Source = { _tag: "choose" }): void {
-  useRequests.setState((state) => ({ queue: [...state.queue, source] }));
-}
-
-function dismissRequest(): void {
-  useRequests.setState((state) => ({ queue: state.queue.slice(1) }));
-}
+import { ConversationImportPreviewDetails } from "./ConversationImportPreviewDetails";
+import { installConversationImportDropTarget } from "./drop";
+import {
+  dismissConversationImportRequest,
+  requestConversationImport,
+  useConversationImportRequests,
+  type ConversationImportSource,
+} from "./requests";
 
 function errorMessage(cause: unknown): string {
   return cause instanceof Error && cause.message.length > 0
@@ -59,7 +50,8 @@ function errorMessage(cause: unknown): string {
 
 /** The File menu and OS file-open events enter the same preview-and-confirm flow. */
 export function ConversationImportDialogHost() {
-  const queue = useRequests((state) => state.queue);
+  const queue = useConversationImportRequests((state) => state.queue);
+  useEffect(() => installConversationImportDropTarget(window), []);
   useEffect(() => {
     const bridge = window.desktopBridge;
     const collect = () => {
@@ -85,25 +77,20 @@ export function ConversationImportDialogHost() {
     };
   }, []);
   return queue[0] ? (
-    <ConversationImportDialog
-      key={
-        queue[0]._tag === "desktop-file"
-          ? queue[0].file.token
-          : queue[0]._tag === "browser-file"
-            ? queue[0].file.name
-            : "choose"
-      }
-      initialSource={queue[0]}
-    />
+    <ConversationImportDialog key={queue[0].id} initialSource={queue[0].source} />
   ) : null;
 }
 
-function ConversationImportDialog({ initialSource }: { readonly initialSource: Source }) {
+function ConversationImportDialog({
+  initialSource,
+}: {
+  readonly initialSource: ConversationImportSource;
+}) {
   const navigate = useNavigate();
   const projects = useProjects();
   const configs = useServerConfigs();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const [source, setSource] = useState<Source>(initialSource);
+  const [source, setSource] = useState<ConversationImportSource>(initialSource);
   const [selectedEnvironmentId, setEnvironmentId] = useState<EnvironmentId | null>(null);
   const environmentId = selectedEnvironmentId ?? primaryEnvironmentId;
   const [preview, setPreview] = useState<ScientConversationImportPreview | null>(null);
@@ -135,7 +122,7 @@ function ConversationImportDialog({ initialSource }: { readonly initialSource: S
     if (stagedId !== null && environmentId !== null) {
       void cancelConversationImport(environmentId, stagedId).catch(() => undefined);
     }
-    dismissRequest();
+    dismissConversationImportRequest();
   };
 
   const runPreview = async (markdownMode?: "messages" | "document") => {
@@ -232,7 +219,7 @@ function ConversationImportDialog({ initialSource }: { readonly initialSource: S
         },
       });
       setStagedId(null);
-      dismissRequest();
+      dismissConversationImportRequest();
       toastManager.add({
         type: "success",
         title:
@@ -304,31 +291,7 @@ function ConversationImportDialog({ initialSource }: { readonly initialSource: S
             </label>
             {preview !== null ? (
               <div className="space-y-3 text-sm">
-                <p className="font-medium">{preview.conversation.title}</p>
-                <p>
-                  {preview.kind === "scic"
-                    ? "Scient conversation file: structured conversation and included attachments."
-                    : preview.kind === "markdown"
-                      ? "Scient Markdown transcript: message text only; referenced files do not transfer."
-                      : "Ordinary Markdown: starts a conversation with the document attached, not a reconstructed transcript."}
-                </p>
-                <p>
-                  {preview.counts.messages} messages · {preview.counts.attachments} attachments ·
-                  from {preview.conversation.provider}
-                </p>
-                <p className="text-muted-foreground">
-                  The sender's identity is not verified. Pending actions, provider sessions and
-                  workspace files do not transfer.
-                </p>
-                {preview.omissions.length > 0 ? (
-                  <p>
-                    Some content was omitted ({preview.omissions.length} notices). Review the
-                    imported thread before continuing.
-                  </p>
-                ) : null}
-                {preview.warnings.length > 0 ? (
-                  <p role="alert">This file has {preview.warnings.length} warning(s).</p>
-                ) : null}
+                <ConversationImportPreviewDetails preview={preview} />
                 {preview.markdownIssues.length > 0 ? (
                   <div className="space-y-2 rounded-md border p-3" role="alert">
                     <p className="font-medium">Damaged transcript markers</p>
