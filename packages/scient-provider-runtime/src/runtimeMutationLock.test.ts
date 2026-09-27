@@ -87,6 +87,21 @@ function livePidLock(extra: Record<string, unknown> = {}): string {
 }
 
 describe("managed runtime mutation lock heartbeat", () => {
+  it("recovers a lock whose live PID belongs to a different process start", async () => {
+    const path = await lockPath();
+    // First acquire a real start identity, then forge a previous owner of
+    // the parent's PID. A live PID alone must not wedge this runtime.
+    const first = await tryAcquireManagedRuntimeMutationLock(path);
+    expect(first).toBeDefined();
+    const own = JSON.parse(await NodeFSP.readFile(path, "utf8")) as { ownerStartedAt?: string };
+    expect(own.ownerStartedAt).toBeDefined();
+    await first?.release();
+    await NodeFSP.writeFile(path, livePidLock({ ownerStartedAt: "previous-process-start" }));
+    const replacement = await tryAcquireManagedRuntimeMutationLock(path);
+    expect(replacement).toBeDefined();
+    await replacement?.release();
+  });
+
   it("does not reclaim a foreign live owner whose heartbeat is overdue", async () => {
     const path = await lockPath();
     await NodeFSP.writeFile(path, livePidLock({ heartbeatIntervalMs: 15_000 }));
