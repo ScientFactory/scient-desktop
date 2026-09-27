@@ -8,8 +8,8 @@ small set of T3-owned seams that an upstream merge may touch.
 
 From the Fork action beside either a sent user message or a completed assistant
 response, a user can create a new conversation at that exact point. The origin
-conversation is never modified. `/fork` continues to select the latest
-completed assistant response.
+conversation continues independently. `/fork` captures the running turn when
+one is active, otherwise it selects the latest completed assistant response.
 
 - Forking an assistant response retains the transcript through that response.
   The destination waits for the user's next message.
@@ -23,16 +23,18 @@ Every path opens one confirmation form. It proposes the server's next automatic
 fork title, which the user may replace. Leaving the proposal untouched keeps
 title allocation on the server, so concurrent forks still receive a
 collision-safe number. **New worktree** is off by default. Turning it on creates
-a dedicated Git worktree at the selected historical checkpoint, and is
-available only when that checkpoint can be resolved safely. Leaving it off
+a dedicated Git worktree at the selected historical checkpoint, or a frozen
+current-file snapshot for a running-turn fork. It is available only when that
+baseline can be captured safely. Leaving it off
 keeps the conversation branch independent while using the origin project's
 current workspace; it does not rewind local files.
 
 The new conversation shows the retained transcript prefix. Its first provider
-turn starts a fresh provider session and receives that retained transcript once
-as bounded context. This provider-neutral design is intentional: a provider's
-native fork API commonly forks the session tip, which is incorrect when the user
-chooses an older boundary.
+turn uses a native Codex fork only when Scient can prove that the source session
+contains the entire retained history and can fork at the selected boundary.
+Otherwise, it starts a fresh provider session and receives bounded context from
+the saved transcript. The provider session tip alone does not establish a safe
+historical fork boundary.
 
 The client navigates to the new conversation only after durable provisioning
 has completed. A failed fork is returned as an error instead of exposing a
@@ -526,8 +528,12 @@ rows have no native-session proof, so they now require a fresh session and
 portable delivery; they never adopt an arbitrary replacement. Migration 15
 adds native-turn evidence, frozen snapshot identities, and handoff audit
 artifacts. The four latest delivery preambles per fork are retained; older
-receipts keep their status and counts without retaining repeated full text. Missing historical evidence
-selects portable delivery rather than inventing continuity.
+receipts keep their status and counts without retaining repeated full text.
+Missing historical evidence selects portable delivery rather than inventing
+continuity. Recovery is automatic, without an upgrade confirmation dialog or
+extra user step. The saved Scient transcript and workspace stay intact;
+provider-only details absent from that transcript may be lost when an
+unverifiable session is replaced.
 
 ## Provider context delivery
 
