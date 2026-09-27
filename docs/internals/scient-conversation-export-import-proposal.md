@@ -51,12 +51,12 @@ Four related capabilities:
 
 ## Product vocabulary
 
-| Term | Meaning |
-|---|---|
-| **Export** | Produce a human-readable file: Markdown, PDF, Word. Not re-importable as a conversation. |
-| **Convert** | Turn one document format into another: Markdown→PDF, Markdown→Word, LaTeX→Word. |
-| **Transfer** | Produce a `.scic` file another Scient can import and continue. |
-| **Share** | Deliver a produced file: Save, Copy, system share sheet. Cloud links are a separate product. |
+| Term                    | Meaning                                                                                                            |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| **Export**              | Produce a human-readable file: Markdown, PDF, Word. Not re-importable as a conversation.                           |
+| **Convert**             | Turn one document format into another: Markdown→PDF, Markdown→Word, LaTeX→Word.                                    |
+| **Transfer**            | Produce a `.scic` file another Scient can import and continue.                                                     |
+| **Share**               | Deliver a produced file: Save, Copy, system share sheet. Cloud links are a separate product.                       |
 | **Import and continue** | Validate a transfer file, create a new independent thread, and start a fresh provider session on the next message. |
 
 ## First principles
@@ -81,29 +81,29 @@ Four related capabilities:
 
 ## Current Scient foundations
 
-| Foundation | Where | Use here |
-|---|---|---|
-| Transactional per-thread snapshot with sequence watermark | [`ProjectionSnapshotQuery.ts`](../../apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts) | Basis of the conversation snapshot |
-| All events of one command commit in one SQL transaction | [`OrchestrationEngine.ts`](../../apps/server/src/orchestration/Layers/OrchestrationEngine.ts) | Import writes a whole thread atomically |
-| Pending attachment uploads, swept when stale | [`attachmentStore.ts`](../../apps/server/src/attachmentStore.ts) | Import stages attachment files without a new recovery table |
-| Controlled hidden-window renderer | [`ControlledHtmlPdfRenderer.ts`](../../apps/desktop/src/scient/documentExport/ControlledHtmlPdfRenderer.ts) | Prints the dedicated document page |
-| `printToPDF` with tagged PDF and document outline | [`BrowserPdfRenderer.ts`](../../apps/desktop/src/scient/documentExport/BrowserPdfRenderer.ts) | PDF output |
-| Immutable generated PDF revisions and reader | [`GeneratedDocumentStore.ts`](../../apps/server/src/scient/documentArtifacts/GeneratedDocumentStore.ts) | PDFs open in Scient's reader |
-| Format-neutral native Save Copy from a signed asset | [`AssetCopy.ts`](../../apps/desktop/src/scient/documentArtifacts/AssetCopy.ts) | Saving any exported file |
-| Chat Markdown rendering (react-markdown / remark / KaTeX / Mermaid) | [`ChatMarkdown.tsx`](../../apps/web/src/components/ChatMarkdown.tsx) | Shared rendering for the document page |
-| LaTeX build (latexmk / tectonic / managed TinyTeX) | [`LatexBuildService.ts`](../../apps/server/src/scient/latex/LatexBuildService.ts) | LaTeX→PDF already exists; source for LaTeX conversions |
-| Managed toolchain install: pinned download, digest check, app-owned location (TinyTeX) | [`LatexManagedToolchain.ts`](../../apps/server/src/scient/latex/LatexManagedToolchain.ts) | Delivery pattern for Pandoc |
-| Narrow text-only history import for provider-session scanning | [`AgentSessionImporter.ts`](../../apps/server/src/project/AgentSessionImporter.ts) | Stays as is; not the portable importer |
+| Foundation                                                                             | Where                                                                                                       | Use here                                                    |
+| -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Transactional per-thread snapshot with sequence watermark                              | [`ProjectionSnapshotQuery.ts`](../../apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts)       | Basis of the conversation snapshot                          |
+| All events of one command commit in one SQL transaction                                | [`OrchestrationEngine.ts`](../../apps/server/src/orchestration/Layers/OrchestrationEngine.ts)               | Import writes a whole thread atomically                     |
+| Pending attachment uploads, swept when stale                                           | [`attachmentStore.ts`](../../apps/server/src/attachmentStore.ts)                                            | Import stages attachment files without a new recovery table |
+| Controlled hidden-window renderer                                                      | [`ControlledHtmlPdfRenderer.ts`](../../apps/desktop/src/scient/documentExport/ControlledHtmlPdfRenderer.ts) | Prints the dedicated document page                          |
+| `printToPDF` with tagged PDF and document outline                                      | [`BrowserPdfRenderer.ts`](../../apps/desktop/src/scient/documentExport/BrowserPdfRenderer.ts)               | PDF output                                                  |
+| Immutable generated PDF revisions and reader                                           | [`GeneratedDocumentStore.ts`](../../apps/server/src/scient/documentArtifacts/GeneratedDocumentStore.ts)     | PDFs open in Scient's reader                                |
+| Format-neutral native Save Copy from a signed asset                                    | [`AssetCopy.ts`](../../apps/desktop/src/scient/documentArtifacts/AssetCopy.ts)                              | Saving any exported file                                    |
+| Chat Markdown rendering (react-markdown / remark / KaTeX / Mermaid)                    | [`ChatMarkdown.tsx`](../../apps/web/src/components/ChatMarkdown.tsx)                                        | Shared rendering for the document page                      |
+| LaTeX build (latexmk / tectonic / managed TinyTeX)                                     | [`LatexBuildService.ts`](../../apps/server/src/scient/latex/LatexBuildService.ts)                           | LaTeX→PDF already exists; source for LaTeX conversions      |
+| Managed toolchain install: pinned download, digest check, app-owned location (TinyTeX) | [`LatexManagedToolchain.ts`](../../apps/server/src/scient/latex/LatexManagedToolchain.ts)                   | Delivery pattern for Pandoc                                 |
+| Narrow text-only history import for provider-session scanning                          | [`AgentSessionImporter.ts`](../../apps/server/src/project/AgentSessionImporter.ts)                          | Stays as is; not the portable importer                      |
 
 From the fork redesign (#376, merged on `main`):
 
-| Foundation | Use here |
-|---|---|
-| `scient_context_transfers` / `scient_context_handoffs` with a `type` column (default `'fork'`) and `ForkContextDelivery` | Import continuation: an imported thread gets a transfer row with `type = 'import'` |
-| Handoff history built from the **thread's own local** messages, activities, and plans | Works for imported history once imports are modelled (PR 4) |
-| Budgeted handoff, retry-safe delivery, evidence-based confirmation | No new bootstrap logic for import |
-| `t3_thread_read` MCP tool | The agent can read imported history the handoff had to omit |
-| `forkActivityCopy.ts`: which activity kinds a fork copies, and size bounding | Reference only. It bounds size but does not sanitize content, and it is not on `main`; exports use their own projection (see [Conversation snapshot](#conversation-snapshot)) |
+| Foundation                                                                                                               | Use here                                                                                                                                                                      |
+| ------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `scient_context_transfers` / `scient_context_handoffs` with a `type` column (default `'fork'`) and `ForkContextDelivery` | Import continuation: an imported thread gets a transfer row with `type = 'import'`                                                                                            |
+| Handoff history built from the **thread's own local** messages, activities, and plans                                    | Works for imported history once imports are modelled (PR 4)                                                                                                                   |
+| Budgeted handoff, retry-safe delivery, evidence-based confirmation                                                       | No new bootstrap logic for import                                                                                                                                             |
+| `t3_thread_read` MCP tool                                                                                                | The agent can read imported history the handoff had to omit                                                                                                                   |
+| `forkActivityCopy.ts`: which activity kinds a fork copies, and size bounding                                             | Reference only. It bounds size but does not sanitize content, and it is not on `main`; exports use their own projection (see [Conversation snapshot](#conversation-snapshot)) |
 
 What does **not** exist today: any conversation export, any Markdown→PDF path, any Word output, any
 LaTeX↔Markdown conversion, Pandoc, or a portable conversation importer. PR #353's LaTeX Write view
@@ -185,17 +185,17 @@ framework:
 
 ```ts
 type DocumentBundle = {
-  markdown: string;                 // Scient-dialect Markdown
+  markdown: string; // Scient-dialect Markdown
   metadata: {
     title: string;
     language?: string;
     direction?: "ltr" | "rtl" | "auto";
     createdAt?: string;
-    source: DocumentSourceRef;      // conversation snapshot digest, or file path + revision
+    source: DocumentSourceRef; // conversation snapshot digest, or file path + revision
   };
-  assets: DocumentAsset[];          // resolved bytes: images, attachments, rendered diagrams
-  citations: DocumentCitation[];    // see below
-  warnings: DocumentWarning[];      // missing, unavailable, unsupported
+  assets: DocumentAsset[]; // resolved bytes: images, attachments, rendered diagrams
+  citations: DocumentCitation[]; // see below
+  warnings: DocumentWarning[]; // missing, unavailable, unsupported
 };
 ```
 
@@ -281,11 +281,11 @@ attached (`apps/server/src/mcp/toolkits/documents/handlers.ts`). Scient's server
 a browser client or a remote machine with no desktop connected. The export service therefore
 advertises which conversions are available on the current host:
 
-| Output | Runs in | Available without a connected desktop |
-|---|---|---|
-| Markdown, Scient conversation file | Server | Yes |
-| Word (Pandoc) | Server worker | Yes |
-| PDF | Desktop renderer | No — shown as unavailable with the reason |
+| Output                             | Runs in          | Available without a connected desktop     |
+| ---------------------------------- | ---------------- | ----------------------------------------- |
+| Markdown, Scient conversation file | Server           | Yes                                       |
+| Word (Pandoc)                      | Server worker    | Yes                                       |
+| PDF                                | Desktop renderer | No — shown as unavailable with the reason |
 
 A headless Chromium worker on the server could lift this later if browser-only or unattended use
 needs PDF. It is not needed now and would mean shipping a second Chromium.
@@ -341,12 +341,12 @@ This arrangement is well trodden, but the precedents inform the review; they do 
 
 The work divides into four problems. Open-source building blocks exist for some of them, not all:
 
-| Problem | Best open-source base | Licence | State | What remains for Scient |
-|---|---|---|---|---|
-| Writing `.docx` files (text, headings, lists, tables, images, styles) | `docx` (dolanmiu) | MIT | Mature, active | Moderate: map Scient's Markdown tree to Word structures. Achievable at high quality. |
-| **Editable Word equations** (TeX → Word's OMML) | KaTeX or Temml give TeX → MathML (MIT). MathML → OMML: `mathml2omml` (JavaScript) | LGPL-3.0 | Small projects; the MIT Python alternative is unmaintained since 2019. The `docx` library's matrix and aligned-equation support is still an unmerged pull request (#3553). | **Hard.** A permissively licensed, high-coverage TeX → OMML converter would have to be written by Scient. This is the core of scientific Word quality. |
-| **Bibliographies** (citation styles) | `citeproc-js` via `citation-js` | CPAL-1.0 or AGPL | Mature | Licence is stronger copyleft than Pandoc's; otherwise a full CSL processor to write. |
-| **Reading LaTeX** | `unified-latex` (LaTeX parser) | MIT | Active | **Very hard.** Parsing is available; interpreting LaTeX (macros, packages, `\input`, environments, cross-references) is a long tail that Pandoc has spent years on. |
+| Problem                                                               | Best open-source base                                                             | Licence          | State                                                                                                                                                                      | What remains for Scient                                                                                                                                             |
+| --------------------------------------------------------------------- | --------------------------------------------------------------------------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Writing `.docx` files (text, headings, lists, tables, images, styles) | `docx` (dolanmiu)                                                                 | MIT              | Mature, active                                                                                                                                                             | Moderate: map Scient's Markdown tree to Word structures. Achievable at high quality.                                                                                |
+| **Editable Word equations** (TeX → Word's OMML)                       | KaTeX or Temml give TeX → MathML (MIT). MathML → OMML: `mathml2omml` (JavaScript) | LGPL-3.0         | Small projects; the MIT Python alternative is unmaintained since 2019. The `docx` library's matrix and aligned-equation support is still an unmerged pull request (#3553). | **Hard.** A permissively licensed, high-coverage TeX → OMML converter would have to be written by Scient. This is the core of scientific Word quality.              |
+| **Bibliographies** (citation styles)                                  | `citeproc-js` via `citation-js`                                                   | CPAL-1.0 or AGPL | Mature                                                                                                                                                                     | Licence is stronger copyleft than Pandoc's; otherwise a full CSL processor to write.                                                                                |
+| **Reading LaTeX**                                                     | `unified-latex` (LaTeX parser)                                                    | MIT              | Active                                                                                                                                                                     | **Very hard.** Parsing is available; interpreting LaTeX (macros, packages, `\input`, environments, cross-references) is a long tail that Pandoc has spent years on. |
 
 Other existing converters considered:
 
@@ -368,13 +368,13 @@ multi-month project with a long tail, and LaTeX→Word would still lag Pandoc fo
 
 #### Options compared
 
-| Option | Quality | Open source | Effort | Size | Notes |
-|---|---|---|---|---|---|
-| **Pandoc, managed tool (recommended)** | Highest available | Yes (GPL) | Low | None in installer; download on first use | Separate program; same pattern as TinyTeX. |
-| Pandoc, bundled native executable | Highest available | Yes (GPL) | Low | Tens of MB per platform | Works offline from first launch; per-platform signing. |
-| Pandoc WASM in Scient's server | Highest available | Yes (GPL) | Low | About 58.6 MB | In-process module: the arrangement with the stronger GPL implications. |
-| Own writer on `docx` + own equation converter | High for text; equations only as good as what we build | Yes (MIT) | High | Small | No LaTeX input and no bibliographies without further large work. |
-| Own writer + `mathml2omml` | High for text; equation coverage limited by a small LGPL project | Yes (MIT + LGPL) | Medium | Small | Same gaps for LaTeX and bibliographies. |
+| Option                                        | Quality                                                          | Open source      | Effort | Size                                     | Notes                                                                  |
+| --------------------------------------------- | ---------------------------------------------------------------- | ---------------- | ------ | ---------------------------------------- | ---------------------------------------------------------------------- |
+| **Pandoc, managed tool (recommended)**        | Highest available                                                | Yes (GPL)        | Low    | None in installer; download on first use | Separate program; same pattern as TinyTeX.                             |
+| Pandoc, bundled native executable             | Highest available                                                | Yes (GPL)        | Low    | Tens of MB per platform                  | Works offline from first launch; per-platform signing.                 |
+| Pandoc WASM in Scient's server                | Highest available                                                | Yes (GPL)        | Low    | About 58.6 MB                            | In-process module: the arrangement with the stronger GPL implications. |
+| Own writer on `docx` + own equation converter | High for text; equations only as good as what we build           | Yes (MIT)        | High   | Small                                    | No LaTeX input and no bibliographies without further large work.       |
+| Own writer + `mathml2omml`                    | High for text; equation coverage limited by a small LGPL project | Yes (MIT + LGPL) | Medium | Small                                    | Same gaps for LaTeX and bibliographies.                                |
 
 A managed download needs a network connection the first time Word export is used; an offline machine
 gets a clear message. If first-use-offline matters, the bundled executable is the alternative with
@@ -436,10 +436,10 @@ and Pandoc never reads the file system.
 
 **LaTeX `\input` and `\include` need a decision in qualification.** Two candidate strategies:
 
-| Strategy | How | Risk |
-|---|---|---|
-| **Structural include resolution** | Parse the project with a real LaTeX parser (`unified-latex`, MIT) and splice only `\input`, `\include`, and `\subfile` targets that resolve inside the project root, respecting comments and verbatim environments. No macro expansion. | Must not grow into a second LaTeX interpreter; unusual include patterns stay unresolved and are reported. |
-| **Pandoc WASM with an explicit file tree** | The WASM build receives exactly the project's files and cannot see anything else; Pandoc's manual lists WASM as a safe way to run untrusted input. | About 15 MB download; runs inside Scient's process, which has stronger GPL implications than a separate program (acceptable for MIT-licensed, public Scient, but it constrains any future closed-source distribution). |
+| Strategy                                   | How                                                                                                                                                                                                                                     | Risk                                                                                                                                                                                                                   |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Structural include resolution**          | Parse the project with a real LaTeX parser (`unified-latex`, MIT) and splice only `\input`, `\include`, and `\subfile` targets that resolve inside the project root, respecting comments and verbatim environments. No macro expansion. | Must not grow into a second LaTeX interpreter; unusual include patterns stay unresolved and are reported.                                                                                                              |
+| **Pandoc WASM with an explicit file tree** | The WASM build receives exactly the project's files and cannot see anything else; Pandoc's manual lists WASM as a safe way to run untrusted input.                                                                                      | About 15 MB download; runs inside Scient's process, which has stronger GPL implications than a separate program (acceptable for MIT-licensed, public Scient, but it constrains any future closed-source distribution). |
 
 An operating-system-level sandbox around the native process is a third option, but it is a separate
 cross-platform engineering commitment, not a small fallback.
@@ -481,9 +481,9 @@ files and no hidden JSON.
 A single `.md` file cannot carry images. When a conversation or document has images or attachments,
 the export offers two Markdown choices:
 
-| Choice | Contents | When to use |
-|---|---|---|
-| **Markdown (`.md`)** | Text only; attachments listed by name | Pasting, quoting, editing text |
+| Choice                                 | Contents                                                    | When to use                                |
+| -------------------------------------- | ----------------------------------------------------------- | ------------------------------------------ |
+| **Markdown (`.md`)**                   | Text only; attachments listed by name                       | Pasting, quoting, editing text             |
 | **Markdown with attachments (`.zip`)** | `name.md` plus `attachments/`, referenced by relative paths | Keeping images in a portable Markdown form |
 
 A `.zip` is one file to send, unlike a loose `.md` plus folder that people separate. The dialog also
@@ -493,11 +493,11 @@ points out that PDF and Word keep images inside a single file.
 
 Three kinds of input, one import pipeline:
 
-| Input | What the user gets | Fidelity |
-|---|---|---|
+| Input                                  | What the user gets                                                                                                                      | Fidelity                                                             |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
 | **Scient conversation file (`.scic`)** | The supported history as recorded: speakers, turns, timestamps, included attachments, plans, and the work log if the sender included it | **Faithful copy of supported records**; continued in a fresh session |
-| **Markdown exported by Scient** | The conversation's text: speakers, turns, timestamps; attachments listed by name | **Text only, unverified** — labelled as such |
-| **Any other Markdown file** | A new conversation that starts **with the document attached as context**, not a guessed transcript | Not a conversation import |
+| **Markdown exported by Scient**        | The conversation's text: speakers, turns, timestamps; attachments listed by name                                                        | **Text only, unverified** — labelled as such                         |
+| **Any other Markdown file**            | A new conversation that starts **with the document attached as context**, not a guessed transcript                                      | Not a conversation import                                            |
 
 **What a `.scic` does not carry:** the sender's provider session, pending approvals or questions, a
 turn that was still running, attachments that were unavailable at export, the sender's workspace
@@ -513,7 +513,7 @@ writing one reader.
 ### Why not guess conversations from arbitrary Markdown
 
 A normal Markdown file has no reliable speakers, turns, or timestamps. Guessing from headings would
-misread ordinary documents and invent a history that never happened. Starting a conversation *about*
+misread ordinary documents and invent a history that never happened. Starting a conversation _about_
 the document is the honest version of that import: the agent gets the full text, and nothing is
 fabricated.
 
@@ -532,11 +532,13 @@ exported: 2026-09-28T09:12:00Z
 ---
 
 <!-- scient:message export=7f3c9a2e41b8 n=1 role=user time=2026-09-27T14:05:00Z -->
+
 ## You · 27 Sep 2026, 14:05
 
 Please investigate …
 
 <!-- scient:message export=7f3c9a2e41b8 n=2 role=assistant time=2026-09-27T14:06:10Z -->
+
 ## Assistant · 27 Sep 2026, 14:06
 
 Here is what I found …
@@ -586,11 +588,11 @@ version Scient's own format explicitly and to treat third-party formats as optio
 
 ### Name and type
 
-| Property | Value |
-|---|---|
-| Extension | **`.scic`** (Scient conversation) |
-| Media type | `application/vnd.scient.conversation+zip` |
-| Container | ZIP |
+| Property    | Value                                                      |
+| ----------- | ---------------------------------------------------------- |
+| Extension   | **`.scic`** (Scient conversation)                          |
+| Media type  | `application/vnd.scient.conversation+zip`                  |
+| Container   | ZIP                                                        |
 | First entry | `mimetype`, stored uncompressed, containing the media type |
 
 Why `.scic`: short, and not in use by a known tool. `.sci` was rejected because Scilab — a scientific
@@ -603,13 +605,13 @@ reading further.
 
 ### Why ZIP
 
-| Container | Verdict | Reason |
-|---|---|---|
-| **ZIP** | **Adopt** | One file; attachments stored as real files at full size; read entry by entry without loading everything into memory; openable by any operating system; the same approach as `.docx`, `.xlsx`, and `.epub`. |
-| Single JSON file | Reject | Attachments must be Base64-encoded (about a third larger) and the whole file loaded into memory to read it. |
-| SQLite database | Reject | Heavy for a message-and-files bundle, not inspectable without tools, and a larger parsing surface for untrusted input. |
-| Tar | Reject | Must be read sequentially; not natively openable on Windows. |
-| Folder | Reject | Not one file; people separate the parts. |
+| Container        | Verdict   | Reason                                                                                                                                                                                                     |
+| ---------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **ZIP**          | **Adopt** | One file; attachments stored as real files at full size; read entry by entry without loading everything into memory; openable by any operating system; the same approach as `.docx`, `.xlsx`, and `.epub`. |
+| Single JSON file | Reject    | Attachments must be Base64-encoded (about a third larger) and the whole file loaded into memory to read it.                                                                                                |
+| SQLite database  | Reject    | Heavy for a message-and-files bundle, not inspectable without tools, and a larger parsing surface for untrusted input.                                                                                     |
+| Tar              | Reject    | Must be read sequentially; not natively openable on Windows.                                                                                                                                               |
+| Folder           | Reject    | Not one file; people separate the parts.                                                                                                                                                                   |
 
 ### Contents
 
@@ -805,12 +807,12 @@ complicated, in which case only the formats where it is easy offer them. All for
 the same snapshot and document bundle, so the options are expected to cost the same everywhere. What
 differs is only how each format shows them:
 
-| Format | How the work log and reasoning appear |
-|---|---|
-| Markdown | Collapsible `<details>` blocks under the message ("Work log · 12 steps", "Reasoning") |
-| PDF | Compact, indented, smaller grey blocks under the message, fully expanded (paper cannot collapse) |
-| Word | The same as PDF, using dedicated Word styles so they can be restyled or removed in Word |
-| Scient conversation | Structured data. Both **off** by default, as for every format |
+| Format              | How the work log and reasoning appear                                                            |
+| ------------------- | ------------------------------------------------------------------------------------------------ |
+| Markdown            | Collapsible `<details>` blocks under the message ("Work log · 12 steps", "Reasoning")            |
+| PDF                 | Compact, indented, smaller grey blocks under the message, fully expanded (paper cannot collapse) |
+| Word                | The same as PDF, using dedicated Word styles so they can be restyled or removed in Word          |
+| Scient conversation | Structured data. Both **off** by default, as for every format                                    |
 
 **Reasoning** means exactly the provider's reasoning text that chat displays in its collapsed reasoning
 blocks — not a new explanation and not anything hidden from the user. Providers differ in what they
@@ -865,21 +867,21 @@ temporary file with a signed read is sufficient unless re-download history becom
 
 The whole program is **seven PRs**: four core PRs, then three follow-ons, each labelled.
 
-| Track | PRs |
-|---|---|
-| Core | 1 Conversation Markdown · 2 Markdown→PDF · 3 `.scic` export and preview · 4 Import and continue |
-| Follow-on: Word | 5 Managed Pandoc and Markdown/conversation → Word |
-| Follow-on: LaTeX | 6 LaTeX project → Word (and → Markdown if it qualifies) |
-| Follow-on: Markdown import | 7 Markdown import |
+| Track                      | PRs                                                                                             |
+| -------------------------- | ----------------------------------------------------------------------------------------------- |
+| Core                       | 1 Conversation Markdown · 2 Markdown→PDF · 3 `.scic` export and preview · 4 Import and continue |
+| Follow-on: Word            | 5 Managed Pandoc and Markdown/conversation → Word                                               |
+| Follow-on: LaTeX           | 6 LaTeX project → Word (and → Markdown if it qualifies)                                         |
+| Follow-on: Markdown import | 7 Markdown import                                                                               |
 
 ### Core: four PRs
 
-| # | PR | Depends on | Result |
-|---|---|---|---|
-| 1 | **Conversation → Markdown, snapshot, and document bundle** | — | Thread menu → Export ▸ Markdown with Save and Copy |
-| 2 | **Global Markdown → PDF** | 1 (for the conversation half) | Any `.md` file, and any thread, → PDF in Scient's reader |
-| 3 | **Portable conversation file and import preview** | 1 | Export `.scic`; opening one previews it without changing anything |
-| 4 | **Import and continue** | 3 (#376 is on `main`) | A new independent thread that continues in a fresh provider session |
+| #   | PR                                                         | Depends on                    | Result                                                              |
+| --- | ---------------------------------------------------------- | ----------------------------- | ------------------------------------------------------------------- |
+| 1   | **Conversation → Markdown, snapshot, and document bundle** | —                             | Thread menu → Export ▸ Markdown with Save and Copy                  |
+| 2   | **Global Markdown → PDF**                                  | 1 (for the conversation half) | Any `.md` file, and any thread, → PDF in Scient's reader            |
+| 3   | **Portable conversation file and import preview**          | 1                             | Export `.scic`; opening one previews it without changing anything   |
+| 4   | **Import and continue**                                    | 3 (#376 is on `main`)         | A new independent thread that continues in a fresh provider session |
 
 Follow-on after the core: **PR 7 — Markdown import** (depends on 1 and 4).
 
@@ -932,11 +934,11 @@ fixtures, and ordinary documents never turned into fake transcripts.
 
 ### Conversion track, alongside the core
 
-| Step | Depends on | Result |
-|---|---|---|
-| **Pandoc qualification** (not a PR; starts alongside PR 1) | — | Decision record: quality results on the fixture set, the resource strategy (including the LaTeX include decision), delivery form confirmed, licensing notes |
-| 5. **Managed Pandoc and Markdown/conversation → Word** | 1, qualification, licensing gate | Pandoc installed on first use and run under the sandbox design; Export ▸ Word for files and threads, with the Scient default style |
-| 6. **LaTeX project → Word** (and → Markdown if it qualifies) | 5, LaTeX qualification | Export ▸ Word from the LaTeX workspace |
+| Step                                                         | Depends on                       | Result                                                                                                                                                      |
+| ------------------------------------------------------------ | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Pandoc qualification** (not a PR; starts alongside PR 1)   | —                                | Decision record: quality results on the fixture set, the resource strategy (including the LaTeX include decision), delivery form confirmed, licensing notes |
+| 5. **Managed Pandoc and Markdown/conversation → Word**       | 1, qualification, licensing gate | Pandoc installed on first use and run under the sandbox design; Export ▸ Word for files and threads, with the Scient default style                          |
+| 6. **LaTeX project → Word** (and → Markdown if it qualifies) | 5, LaTeX qualification           | Export ▸ Word from the LaTeX workspace                                                                                                                      |
 
 PRs 5 and 6 do not depend on the import work (PRs 3–4); they proceed as soon as their qualification
 gates pass.
@@ -980,22 +982,22 @@ No hour estimates are made here. The PR count is a review and dependency recomme
 Status: **Owner** = decided by the owner in discussion (recorded here, still part of an unapproved
 proposal); **Recommended** = awaiting the owner's decision.
 
-| # | Decision | Status | Outcome |
-|---|---|---|---|
-| 1 | Word and LaTeX conversion engine | Owner | Pandoc as a managed tool (pinned, downloaded on first use, separate process), behind a replaceable adapter. See [engine decision](#word-and-latex-conversion-engine-decision). |
-| 2 | Work log in exports | Owner | Off by default; can be turned on. |
-| 3 | Reasoning in exports | Owner (definition recommended) | Off by default; can be turned on. Means exactly the provider reasoning text chat shows in its collapsed blocks. An independent review recommended removing the option; kept because it exports only what the user already sees, with a warning. |
-| 4 | Which formats offer options 2 and 3 | Owner | Every format, unless one proves too complicated; then only the formats where it is easy. Off by default everywhere, including `.scic` (recommended after review: tool output can contain secrets). |
-| 5 | Markdown with images | Owner (zip form recommended) | Both choices: text-only `.md`, and Markdown with attachments as one `.zip`. |
-| 6 | LaTeX conversion scope | Owner | LaTeX→Word first. With Pandoc, LaTeX→Markdown is cheap and is added in the same step if it passes qualification; Markdown→LaTeX later, on request. |
-| 7 | Conversation PDF and Word look | Owner | Document style. Detailed styling rules discussed later. |
-| 8 | Relationship to fork redesign #376 | Owner | Build on top of #376, which is now merged on `main`. |
-| 9 | Word styles | Owner | Scient default first; a few presets later; user templates possible later. |
-| 10 | What can be imported | Owner (shape recommended) | `.scic` as a faithful copy of supported records; Scient-exported Markdown as text-only conversations; any other Markdown as a new conversation with the document attached; other tools' exports later. |
-| 11 | Pandoc delivery | Owner | Download on first use (as TinyTeX), with an "Install now" button in Settings. |
-| 12 | Transfer file name | Owner direction, extension recommended | A short Scient extension: **`.scic`** (`.sci` is Scilab's). |
-| 13 | Transfer file container | Recommended | ZIP with an uncompressed `mimetype` first entry, as EPUB and OpenDocument do. |
-| 14 | Signing transfer files | Recommended | Deferred until Scient has identities; hashes cover corruption and tampering now. |
+| #   | Decision                            | Status                                 | Outcome                                                                                                                                                                                                                                         |
+| --- | ----------------------------------- | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Word and LaTeX conversion engine    | Owner                                  | Pandoc as a managed tool (pinned, downloaded on first use, separate process), behind a replaceable adapter. See [engine decision](#word-and-latex-conversion-engine-decision).                                                                  |
+| 2   | Work log in exports                 | Owner                                  | Off by default; can be turned on.                                                                                                                                                                                                               |
+| 3   | Reasoning in exports                | Owner (definition recommended)         | Off by default; can be turned on. Means exactly the provider reasoning text chat shows in its collapsed blocks. An independent review recommended removing the option; kept because it exports only what the user already sees, with a warning. |
+| 4   | Which formats offer options 2 and 3 | Owner                                  | Every format, unless one proves too complicated; then only the formats where it is easy. Off by default everywhere, including `.scic` (recommended after review: tool output can contain secrets).                                              |
+| 5   | Markdown with images                | Owner (zip form recommended)           | Both choices: text-only `.md`, and Markdown with attachments as one `.zip`.                                                                                                                                                                     |
+| 6   | LaTeX conversion scope              | Owner                                  | LaTeX→Word first. With Pandoc, LaTeX→Markdown is cheap and is added in the same step if it passes qualification; Markdown→LaTeX later, on request.                                                                                              |
+| 7   | Conversation PDF and Word look      | Owner                                  | Document style. Detailed styling rules discussed later.                                                                                                                                                                                         |
+| 8   | Relationship to fork redesign #376  | Owner                                  | Build on top of #376, which is now merged on `main`.                                                                                                                                                                                            |
+| 9   | Word styles                         | Owner                                  | Scient default first; a few presets later; user templates possible later.                                                                                                                                                                       |
+| 10  | What can be imported                | Owner (shape recommended)              | `.scic` as a faithful copy of supported records; Scient-exported Markdown as text-only conversations; any other Markdown as a new conversation with the document attached; other tools' exports later.                                          |
+| 11  | Pandoc delivery                     | Owner                                  | Download on first use (as TinyTeX), with an "Install now" button in Settings.                                                                                                                                                                   |
+| 12  | Transfer file name                  | Owner direction, extension recommended | A short Scient extension: **`.scic`** (`.sci` is Scilab's).                                                                                                                                                                                     |
+| 13  | Transfer file container             | Recommended                            | ZIP with an uncompressed `mimetype` first entry, as EPUB and OpenDocument do.                                                                                                                                                                   |
+| 14  | Signing transfer files              | Recommended                            | Deferred until Scient has identities; hashes cover corruption and tampering now.                                                                                                                                                                |
 
 ## Non-goals
 
