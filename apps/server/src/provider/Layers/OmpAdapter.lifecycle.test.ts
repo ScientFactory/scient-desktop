@@ -1339,6 +1339,57 @@ describe("Oh My Pi session ownership", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("background monitoring obeys the session event budget and still closes cleanly", () =>
+    Effect.gen(function* () {
+      const root = makeRoot("monitoring-overflow");
+      const events = yield* Queue.unbounded<OmpRpcNotification, Cause.Done>();
+      let shutdowns = 0;
+      const adapter = yield* makeAdapter({
+        root,
+        label: "monitoring-overflow",
+        eventQueueByteLimit: 1,
+        makeProcess: (options) =>
+          Effect.succeed(
+            makeClient({
+              events,
+              sessionDir: options.sessionDir ?? root,
+              shutdown: Effect.sync(() => {
+                shutdowns += 1;
+                return cleanExit;
+              }),
+            }),
+          ),
+      });
+      const seen: Array<ProviderRuntimeEvent> = [];
+      const runtimeEvents = yield* collect(adapter, seen);
+      const threadId = ThreadId.make("omp-monitoring-overflow");
+      yield* adapter.startSession({ threadId, cwd: root, runtimeMode: "full-access" });
+      yield* adapter.sendTurn({ threadId, input: "start background work" });
+      expect(yield* adapter.hasSession(threadId)).toBe(true);
+      yield* Queue.offer(events, {
+        _tag: "Event",
+        event: {
+          type: "prompt_result",
+          id: "lifecycle-request",
+          agentInvoked: true,
+          status: "completed",
+          sessionSettled: false,
+        },
+      });
+      const exited = yield* takeMatching(runtimeEvents, (event) => event.type === "session.exited");
+      expect(exited.payload).toMatchObject({ exitKind: "error" });
+      expect(shutdowns).toBe(1);
+      expect(lockFiles(root)).toHaveLength(0);
+      expect(seen.some((event) => event.type === "task.started")).toBe(false);
+      expect(seen.find((event) => event.type === "task.completed")?.payload).toMatchObject({
+        taskType: "monitor",
+        status: "stopped",
+      });
+      yield* adapter.stopAll();
+      NodeFS.rmSync(root, { recursive: true, force: true });
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("a globally stalled consumer sheds only the largest backlog", () =>
     Effect.gen(function* () {
       const root = makeRoot("global-stall");
