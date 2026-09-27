@@ -79,6 +79,7 @@ const makeFakeOmp = (input: {
     thinkingLevel: input.initial.level ?? "off",
     log: [] as Array<string>,
     prompts: [] as Array<{ readonly frame: Frame; readonly bytes: number }>,
+    pendingAsyncWork: false,
   };
   const find = (provider: string, id: string) =>
     state.models.find((model) => model.provider === provider && model.id === id);
@@ -133,6 +134,8 @@ const makeFakeOmp = (input: {
               sessionFile,
               sessionId: "models-session",
               isStreaming: false,
+              hasPendingAsyncWork: state.pendingAsyncWork,
+              isSettled: !state.pendingAsyncWork,
             });
           }
           case "get_available_models":
@@ -601,6 +604,29 @@ describe("Oh My Pi selection restore", () => {
 });
 
 describe("Oh My Pi fork context", () => {
+  it.effect(
+    "refuses a prompt when native state has pending async work before Scient sees its event",
+    () => {
+      const fake = makeFakeOmp({
+        models: [{ provider: "vendor", id: "a" }],
+        initial: { provider: "vendor", id: "a" },
+      });
+      return withAdapter("pending-native-work", fake, ({ adapter, threadId }) =>
+        Effect.gen(function* () {
+          fake.state.pendingAsyncWork = true;
+          const rejected = yield* adapter
+            .sendTurn({ threadId, input: "New request" })
+            .pipe(Effect.flip);
+          expect(rejected.message).toContain("background work");
+          expect(fake.state.prompts).toHaveLength(0);
+          fake.state.pendingAsyncWork = false;
+          yield* adapter.sendTurn({ threadId, input: "Now safe" });
+          expect(fake.state.prompts).toHaveLength(1);
+        }),
+      );
+    },
+  );
+
   it.effect("reports the selected model's window only for its own instance", () => {
     const fake = makeFakeOmp({
       models: [{ provider: "vendor", id: "a/b", contextWindow: 1_000_000 }],
@@ -663,6 +689,16 @@ describe("Oh My Pi fork context", () => {
           input: "augmented instructions\n/help",
         });
         expect(fake.state.prompts[0]?.frame.message).toBe("/help");
+        const blocked = yield* adapter
+          .sendTurn({
+            threadId,
+            originalInput: "/model",
+            input: "history\n/model",
+            hasContextPreamble: true,
+          })
+          .pipe(Effect.flip);
+        markTurnDispatchAttempted(blocked);
+        expect(classifyTurnDispatchFailure(Cause.fail(blocked))).toBe("notSent");
       }),
     );
   });
@@ -716,6 +752,16 @@ describe("Oh My Pi fork context", () => {
           expect(sent.frame.message).toContain("Read the entire file");
           yield* adapter.stopAll();
           expect(NodeFS.existsSync(contextPath)).toBe(false);
+          const abandoned = NodePath.join(
+            NodePath.dirname(contextPath),
+            "scient-context-11111111-1111-4111-8111-111111111111.txt",
+          );
+          const unrelated = NodePath.join(NodePath.dirname(contextPath), "user-notes.txt");
+          NodeFS.writeFileSync(abandoned, "orphaned fork history");
+          NodeFS.writeFileSync(unrelated, "keep");
+          yield* adapter.startSession({ threadId, cwd: root, runtimeMode: "full-access" });
+          expect(NodeFS.existsSync(abandoned)).toBe(false);
+          expect(NodeFS.readFileSync(unrelated, "utf8")).toBe("keep");
         }),
       );
     },

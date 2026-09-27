@@ -205,6 +205,11 @@ describe.runIf(ompQualifyBinary)("real OMP background continuation", () => {
             ).toBe(true);
             const jobPid = Number(NodeFS.readFileSync(pidFile, "utf8").trim());
             expect(Number.isSafeInteger(jobPid) && jobPid > 1).toBe(true);
+            if (!reportsSettlement) {
+              yield* Effect.sleep("100 millis").pipe(TestClock.withLive);
+              expect((yield* adapter.listSessions())[0]?.activeTurnId).toBe(first.turnId);
+              expect(events.some((event) => event.type === "turn.completed")).toBe(false);
+            }
             if (stop) {
               yield* adapter.interruptTurn(threadId, undefined);
               yield* until((event) => event.type === "session.exited");

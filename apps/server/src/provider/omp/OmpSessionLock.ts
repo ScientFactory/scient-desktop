@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Effect FileSystem cannot create a file with O_EXCL or hard-link without replacing.
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off -- Synchronous lock reclamation uses filesystem wall-clock mtime and atomic Node operations.
 import * as NodeFS from "node:fs";
 import * as NodeCrypto from "node:crypto";
 import * as NodePath from "node:path";
@@ -28,6 +28,7 @@ export interface OmpLockFs {
   /** Create `file` with `contents`, failing with EEXIST if it exists. */
   readonly writeExclusive: (file: string, contents: string) => void;
   readonly read: (file: string) => string;
+  readonly identity: (file: string) => { readonly ino: number; readonly mtimeMs: number };
   readonly rename: (from: string, to: string) => void;
   /** Hard-link `from` to `to`, failing with EEXIST instead of replacing `to`. */
   readonly link: (from: string, to: string) => void;
@@ -37,6 +38,10 @@ export interface OmpLockFs {
 export const nodeOmpLockFs: OmpLockFs = {
   writeExclusive: (file, contents) => NodeFS.writeFileSync(file, contents, { flag: "wx" }),
   read: (file) => NodeFS.readFileSync(file, "utf8"),
+  identity: (file) => {
+    const { ino, mtimeMs } = NodeFS.statSync(file);
+    return { ino, mtimeMs };
+  },
   rename: (from, to) => NodeFS.renameSync(from, to),
   link: (from, to) => NodeFS.linkSync(from, to),
   remove: (file) => NodeFS.rmSync(file, { force: true }),
@@ -109,9 +114,12 @@ const removeStaleRecord = (
   registry: OmpSessionLockRegistry,
   fs: OmpLockFs,
   depth = 0,
+  observedIdentity?: { readonly ino: number; readonly mtimeMs: number },
 ): void => {
   if (depth >= 8) return;
-  const digest = NodeCrypto.createHash("sha256").update(`${lockPath}\0${observed}`).digest("hex");
+  const digest = NodeCrypto.createHash("sha256")
+    .update(`${lockPath}\0${observed}${observedIdentity ? `\0${observedIdentity.ino}` : ""}`)
+    .digest("hex");
   const claimPath = NodePath.join(NodePath.dirname(lockPath), `.omp-reclaim-${digest}`);
   const token = `${registry.owner}:${NodeCrypto.randomUUID()}`;
   try {
@@ -132,7 +140,14 @@ const removeStaleRecord = (
     // All reclaimers of `observed` hold this claim, so none can remove a
     // replacement published after it. A live replacement is never moved aside.
     const current = fs.read(lockPath).trim();
-    if (current === observed && !holderLive(current, lockPath, registry)) fs.remove(lockPath);
+    const identity = observedIdentity ? fs.identity(lockPath) : undefined;
+    const sameIdentity =
+      !observedIdentity ||
+      (identity?.ino === observedIdentity.ino &&
+        identity.mtimeMs === observedIdentity.mtimeMs &&
+        Date.now() - identity.mtimeMs >= 10_000);
+    if (current === observed && sameIdentity && !holderLive(current, lockPath, registry))
+      fs.remove(lockPath);
   } catch (error) {
     if (errorCode(error) !== "ENOENT") throw error;
   } finally {
@@ -168,8 +183,15 @@ export const tryAcquireOmpSessionLockSync = (
     }
     if (holderLive(observed, lockPath, registry)) return "busy";
     // Unknown legacy records may still be being written by an older server.
-    if (!/^\d+:[^:]+:[^:]+$/u.test(observed)) return "busy";
-    removeStaleRecord(lockPath, observed, registry, fs);
+    if (!/^\d+:[^:]+:[^:]+$/u.test(observed)) {
+      // Older writers could briefly expose an empty lock. Give them time,
+      // then reclaim only this exact abandoned inode under a claim.
+      const identity = fs.identity(lockPath);
+      if (Date.now() - identity.mtimeMs < 10_000) return "busy";
+      removeStaleRecord(lockPath, observed, registry, fs, 0, identity);
+    } else {
+      removeStaleRecord(lockPath, observed, registry, fs);
+    }
   }
   return "busy";
 };

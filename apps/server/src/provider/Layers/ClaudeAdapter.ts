@@ -5368,6 +5368,25 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     context.interruptedTurnSettled = undefined;
   });
 
+  const captureTurnStop: NonNullable<ClaudeAdapterShape["captureTurnStop"]> = Effect.fn(
+    "captureTurnStop",
+  )(function* (threadId) {
+    const context = yield* requireSession(threadId);
+    const owns = () => sessions.get(threadId) === context && !context.stopped;
+    return {
+      interrupt: Effect.suspend(() => (owns() ? stopSessionInternal(context) : Effect.void)),
+      confirm: Effect.succeed("active" as const),
+      stop: (onStopped = Effect.void) =>
+        Effect.gen(function* () {
+          if (owns()) yield* stopSessionInternal(context);
+          if (!context.stopped || (sessions.get(threadId) !== context && sessions.has(threadId)))
+            return false;
+          yield* onStopped;
+          return true;
+        }),
+    };
+  });
+
   const readThread: ClaudeAdapterShape["readThread"] = Effect.fn("readThread")(
     function* (threadId) {
       const context = yield* requireSession(threadId);
@@ -5646,6 +5665,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     startSession,
     sendTurn,
     interruptTurn,
+    captureTurnStop,
     readThread,
     rollbackThread,
     respondToRequest,

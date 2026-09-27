@@ -84,13 +84,12 @@ enable them or provide compatible evidence.
   does not open it automatically. The thread history keeps only the URL's address and path, not its
   query, so sign-in parameters such as an OAuth `state` are not stored. When Oh My Pi offers a local
   launch link that redirects to the full URL, the action opens that link.
-- Steer a running turn, and stop it. Stop first asks Oh My Pi to abort and keeps the conversation
-  process alive when OMP confirms the turn reached an idle terminal state. If OMP does not settle
-  within the cancellation deadline, Scient closes that conversation's process. On macOS and Linux
-  the process runs in its own process group and forced stop signals that group. On Windows, stop
-  uses `taskkill /T /F`; Scient has not verified that against a live Oh My Pi child-process tree.
-  If the turn is still open when the process ends, Scient records the outcome as uncertain and
-  names the Oh My Pi request id. A stop Oh My Pi acknowledges stays a cancellation.
+- Steer a running turn, and stop a turn or background work from the thread banner. Stop closes
+  that conversation's Oh My Pi process so detached jobs cannot keep running. The next message
+  starts a new process and resumes the conversation. On macOS and Linux, the process runs in its
+  own process group and forced stop signals that group. On Windows, stop uses `taskkill /T /F`;
+  Scient has not verified that against a live Oh My Pi child-process tree. A turn still open when
+  the process closes is recorded as aborted.
 - See model failures as failed turns. Oh My Pi reports a model error, an unexpected abort, or a
   retry that gave up inside the turn rather than as a protocol error; Scient marks the turn failed
   with Oh My Pi's message (up to 512 characters). A reply cut off at the output limit completes and
@@ -101,7 +100,10 @@ enable them or provide compatible evidence.
   can outlive their turn, and stopping a turn does not stop them, so a subagent stays shown as
   running under the turn that started it until it reports its own end, Oh My Pi reports the session
   settled, or the conversation closes. When a background subagent finishes after its turn ended,
-  Oh My Pi may run the agent again on its own to read the result; Scient does not show that run.
+  Oh My Pi may run the agent again on its own to read the result; Scient shows that as a
+  continuation in the same thread. A new message waits until detached background work settles
+  because Oh My Pi does not identify which run produced an agent event. You can use Stop to end
+  that work and then send your message.
 - Send `/compact` when this conversation's command list includes it. Scient does not show a compact
   button for Oh My Pi, because native compaction has not been confirmed against a live `omp`.
 - See only explicitly qualified Oh My Pi command names in the provider snapshot. Session,

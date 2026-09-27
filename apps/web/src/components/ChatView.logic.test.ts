@@ -1171,9 +1171,10 @@ describe("buildThreadTurnInterruptInput", () => {
     ).toEqual({ threadId, turnId: activeTurnId });
   });
 
-  it("omits a turn id when the session is not running", () => {
+  it("captures the ready session when stopping background work", () => {
     expect(buildThreadTurnInterruptInput(makeThread({ session: readySession }))).toEqual({
       threadId,
+      sessionUpdatedAt: readySession.updatedAt,
     });
   });
 

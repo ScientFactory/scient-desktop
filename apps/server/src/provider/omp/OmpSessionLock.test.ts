@@ -139,6 +139,7 @@ describe("Oh My Pi session lock", () => {
           writeExclusive: (file, contents) =>
             interleave(() => nodeOmpLockFs.writeExclusive(file, contents)),
           read: (file) => interleave(() => nodeOmpLockFs.read(file)),
+          identity: (file) => interleave(() => nodeOmpLockFs.identity(file)),
           rename: (from, to) => interleave(() => nodeOmpLockFs.rename(from, to)),
           link: (from, to) => interleave(() => nodeOmpLockFs.link(from, to)),
           remove: (file) => interleave(() => nodeOmpLockFs.remove(file)),
@@ -186,6 +187,7 @@ describe("Oh My Pi session lock", () => {
           writeExclusive: (file, contents) =>
             interleave(() => nodeOmpLockFs.writeExclusive(file, contents)),
           read: (file) => interleave(() => nodeOmpLockFs.read(file)),
+          identity: (file) => interleave(() => nodeOmpLockFs.identity(file)),
           rename: (from, to) => interleave(() => nodeOmpLockFs.rename(from, to)),
           link: (from, to) => interleave(() => nodeOmpLockFs.link(from, to)),
           remove: (file) => interleave(() => nodeOmpLockFs.remove(file)),
@@ -229,4 +231,25 @@ describe("Oh My Pi session lock", () => {
       cleanup(lockPath);
     }
   });
+
+  it.effect("reclaims an abandoned empty or corrupt lock after the publication grace", () =>
+    Effect.gen(function* () {
+      for (const contents of ["", "corrupt\n"]) {
+        const lockPath = makeRoot("abandoned-incomplete");
+        NodeFS.writeFileSync(lockPath, contents);
+        NodeFS.utimesSync(lockPath, 1, 1);
+        try {
+          const registry = makeOmpSessionLockRegistry();
+          const acquired = tryAcquireOmpSessionLockSync(lockPath, registry);
+          expect(acquired).not.toBe("busy");
+          if (acquired !== "busy") {
+            expect(NodeFS.readFileSync(lockPath, "utf8").trim()).toBe(acquired.token);
+            yield* releaseOmpSessionLock(acquired, registry);
+          }
+        } finally {
+          cleanup(lockPath);
+        }
+      }
+    }),
+  );
 });

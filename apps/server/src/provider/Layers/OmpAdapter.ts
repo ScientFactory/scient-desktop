@@ -1542,6 +1542,30 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
               ),
               (lock) => releaseOmpSessionLock(lock, lockRegistry),
             );
+            // The lock excludes every other session writer. A crashed server
+            // cannot run the scope finalizer for an oversized fork prompt.
+            const abandonedContexts = yield* fs
+              .readDirectory(rootReal)
+              .pipe(
+                Effect.mapError((cause) =>
+                  request("startSession", "Could not inspect Oh My Pi's session files.", cause),
+                ),
+              );
+            for (const name of abandonedContexts) {
+              if (
+                !/^scient-context-[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}\.txt$/iu.test(
+                  name,
+                )
+              )
+                continue;
+              yield* fs
+                .remove(path.join(rootReal, name), { force: true })
+                .pipe(
+                  Effect.mapError((cause) =>
+                    request("startSession", "Could not remove an abandoned fork history.", cause),
+                  ),
+                );
+            }
             const cursor = input.resumeCursor
               ? yield* parseOmpSessionCursor(input.resumeCursor, {
                   identity: resumeIdentity,
@@ -1910,13 +1934,20 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           }
           const decision = ompCommandDecision(nativeText, ctx.handles.runtime.catalog());
           if (decision === "mutator") {
-            return yield* validation("sendTurn", "Scient does not forward that Oh My Pi command.");
+            const failure = validation(
+              "sendTurn",
+              "Scient does not forward that Oh My Pi command.",
+            );
+            if (input.hasContextPreamble) markTurnDispatchNotSent(failure);
+            return yield* failure;
           }
           if (decision === "unavailable") {
-            return yield* validation(
+            const failure = validation(
               "sendTurn",
               "That command is not available in this Oh My Pi conversation.",
             );
+            if (input.hasContextPreamble) markTurnDispatchNotSent(failure);
+            return yield* failure;
           }
           if (decision === "allowed" && input.hasContextPreamble) {
             const failure = validation(
@@ -1930,6 +1961,15 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           if (!steering && ctx.session.status === "running") {
             return yield* validation("sendTurn", "Wait for the current Oh My Pi turn to finish.");
           }
+          const rejectPendingBackground = () => {
+            const failure = validation(
+              "sendTurn",
+              "Oh My Pi still has background work that can resume at any moment. Stop that work or wait for it to finish before sending a new message; nothing was sent.",
+            );
+            markTurnDispatchNotSent(failure);
+            return failure;
+          };
+          if (!steering && ctx.backgroundPending) return yield* rejectPendingBackground();
           if (decision === "allowed" && input.attachments && input.attachments.length > 0) {
             return yield* validation(
               "sendTurn",
@@ -2153,6 +2193,17 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
               `This message is ${formatOmpBytes(plan.messageBytes)}; Oh My Pi accepts at most ${formatOmpBytes(maxFrameBytes)} per message. Send long text as a file attachment.`,
             );
           }
+          // A native wake-up and a new prompt both emit agent_start without
+          // an owner id. Do not open a user turn while a detached job may run.
+          if (!steering) {
+            const state = yield* readState(ctx);
+            if (
+              ctx.backgroundPending ||
+              state.hasPendingAsyncWork === true ||
+              state.isSettled === false
+            )
+              return yield* rejectPendingBackground();
+          }
           const message = plan.message;
           const images: Array<OmpRpcImage> = [];
           for (const image of plan.inline) {
@@ -2179,6 +2230,10 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
             yield* applyModelSelection(ctx, { model: modelChange, level: levelChange }).pipe(
               Effect.tapError(() => restoreSelection),
             );
+          }
+          if (!steering && ctx.backgroundPending) {
+            yield* restoreSelection;
+            return yield* rejectPendingBackground();
           }
           // Admission shares the native event queue: a background wake-up
           // during preparation must be steered, never overwritten by begin.
@@ -2237,6 +2292,32 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         cancelPendingStarts(threadId);
         const ctx = sessions.get(threadId);
         return ctx ? closeSession(ctx, "user-stop") : Effect.void;
+      }),
+    );
+  const captureTurnStop: NonNullable<
+    ProviderAdapterShape<ProviderAdapterError>["captureTurnStop"]
+  > = (threadId) =>
+    locally(
+      Effect.gen(function* () {
+        const ctx = yield* requireSession(threadId);
+        const owns = () => sessions.get(threadId) === ctx && !ctx.closing;
+        return {
+          interrupt: Effect.suspend(() => (owns() ? beginClose(ctx, "user-stop") : Effect.void)),
+          confirm: Effect.succeed("active" as const),
+          stop: (onStopped = Effect.void) =>
+            Effect.gen(function* () {
+              if (owns()) yield* beginClose(ctx, "user-stop");
+              if (
+                ctx.closeReason !== "user-stop" ||
+                (sessions.get(threadId) !== ctx && sessions.has(threadId))
+              )
+                return false;
+              yield* Deferred.await(ctx.closeDone);
+              if (sessions.has(threadId)) return false;
+              yield* onStopped;
+              return true;
+            }),
+        };
       }),
     );
   const closeAll = (reason: OmpCloseReason) =>
@@ -2325,6 +2406,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         ProviderAdapterError
       >,
     stopSession,
+    captureTurnStop,
     listSessions: () =>
       Effect.sync(() => [...sessions.values()].filter(isOpen).map((ctx) => ({ ...ctx.session }))),
     // A start still waiting to register its session counts: a stop routed on
