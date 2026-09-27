@@ -31,7 +31,12 @@ export const captureProjectMarkdownFile = Effect.fn("MarkdownPdfPreparation.capt
     const written = yield* writeDocumentCapture({
       bundle,
       logicalDocumentKey: documentLogicalKey("markdown-pdf", file.canonicalPath),
-      source: { _tag: "workspace-file", canonicalPath: file.canonicalPath },
+      source: {
+        _tag: "workspace-file",
+        workspaceRoot: input.workspaceRoot,
+        relativePath: input.relativePath,
+        canonicalPath: file.canonicalPath,
+      },
     });
     return { ...written, file };
   },

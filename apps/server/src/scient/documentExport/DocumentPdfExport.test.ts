@@ -281,6 +281,61 @@ describe("document PDF publication", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("detects a retargeted symlink even when the new target has identical contents", () =>
+    Effect.gen(function* () {
+      const root = yield* Effect.promise(() =>
+        makeFixtureDirectory(fixtures, "scient-document-pdf-symlink-"),
+      );
+      const contents = "# Same text\n";
+      yield* Effect.promise(async () => {
+        await writeFixtureFile(root, "versions/a/report.md", contents);
+        await writeFixtureFile(root, "versions/b/report.md", contents);
+        await NodeFSP.symlink(NodePath.join(root, "versions/a"), NodePath.join(root, "current"));
+        await NodeFSP.symlink(
+          NodePath.join(root, "versions/a/report.md"),
+          NodePath.join(root, "linked.md"),
+        );
+      });
+      const revision = sha256Digest(new TextEncoder().encode(contents));
+      for (const [relativePath, retarget] of [
+        [
+          "linked.md",
+          async () => {
+            await NodeFSP.rm(NodePath.join(root, "linked.md"));
+            await NodeFSP.symlink(
+              NodePath.join(root, "versions/b/report.md"),
+              NodePath.join(root, "linked.md"),
+            );
+          },
+        ],
+        [
+          "current/report.md",
+          async () => {
+            await NodeFSP.rm(NodePath.join(root, "current"));
+            await NodeFSP.symlink(
+              NodePath.join(root, "versions/b"),
+              NodePath.join(root, "current"),
+            );
+          },
+        ],
+      ] as const) {
+        const prepared = yield* prepareMarkdownPdf({
+          cwd: root,
+          relativePath,
+          expectedRevision: revision,
+        });
+        yield* Effect.promise(retarget);
+        const store = makeGeneratedDocumentStore();
+        const error = yield* publishCapturedDocumentPdf({
+          captureId: prepared.expected.captureId,
+          render: renderResultFor(prepared.expected),
+        }).pipe(Effect.provideService(GeneratedDocumentStore, store.store), Effect.flip);
+        expect(error.reason, relativePath).toBe("source-changed");
+        expect(store.publishPdf).not.toHaveBeenCalled();
+      }
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("fails over-limit output with a clear message", () =>
     Effect.gen(function* () {
       const { prepared } = yield* prepare;

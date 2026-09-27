@@ -52,8 +52,15 @@ export const documentLogicalKey = (kind: "markdown-pdf" | "conversation-pdf", id
 
 /** What publication re-checks before accepting a render of this capture. */
 export const CapturedDocumentSource = Schema.Union([
-  /** A project file; publication re-reads it and requires the captured digest. */
-  Schema.TaggedStruct("workspace-file", { canonicalPath: Schema.String }),
+  /**
+   * A project file. Publication resolves the requested path again and requires
+   * the same canonical file with the captured digest.
+   */
+  Schema.TaggedStruct("workspace-file", {
+    workspaceRoot: Schema.String,
+    relativePath: Schema.String,
+    canonicalPath: Schema.String,
+  }),
   /** A conversation snapshot is immutable; its digest already identifies it. */
   Schema.TaggedStruct("conversation", {}),
 ]);

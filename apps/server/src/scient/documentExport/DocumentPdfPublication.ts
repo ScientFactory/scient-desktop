@@ -14,16 +14,15 @@ import {
 import * as NodeCrypto from "node:crypto";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
-import * as FileSystem from "effect/FileSystem";
 import * as Result from "effect/Result";
 
 import * as GeneratedDocumentStore from "../documentArtifacts/GeneratedDocumentStore.ts";
 import {
   readDocumentCapture,
   removeDocumentCapture,
-  sha256Digest,
   type DocumentCaptureRecord,
 } from "./DocumentCapture.ts";
+import { readProjectMarkdownFile } from "./MarkdownFileBundle.ts";
 
 /**
  * Accepting a rendered document page. Execution failures (wrong or unfinished
@@ -100,20 +99,30 @@ export const validateDocumentRender = Effect.fn("DocumentPdfPublication.validate
   return bytes;
 });
 
-/** A project file must still hold exactly the captured revision. */
+/**
+ * A project file must still be the same file, reached the same way, with
+ * exactly the captured revision. The requested path is resolved again, so a
+ * symlinked file or directory retargeted during the render is detected even
+ * when the new target has identical contents.
+ */
 export const confirmCapturedSourceCurrent = Effect.fn(
   "DocumentPdfPublication.confirmSourceCurrent",
 )(function* (record: DocumentCaptureRecord) {
   if (record.source._tag !== "workspace-file") return;
-  const fileSystem = yield* FileSystem.FileSystem;
+  const { workspaceRoot, relativePath, canonicalPath } = record.source;
   const changed = new ScientDocumentPdfExportError({
     reason: "source-changed",
     detail: "The document changed while the PDF was being made. Export it again.",
   });
-  const bytes = yield* fileSystem
-    .readFile(record.source.canonicalPath)
-    .pipe(Effect.mapError(() => changed));
-  if (sha256Digest(bytes) !== record.expected.sourceDigest) return yield* changed;
+  const current = yield* readProjectMarkdownFile(workspaceRoot, relativePath).pipe(
+    Effect.mapError(() => changed),
+  );
+  if (
+    current.canonicalPath !== canonicalPath ||
+    current.revision !== record.expected.sourceDigest
+  ) {
+    return yield* changed;
+  }
 });
 
 export const storeErrorToExportError = (
