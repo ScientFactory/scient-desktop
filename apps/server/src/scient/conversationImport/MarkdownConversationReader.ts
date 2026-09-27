@@ -154,7 +154,16 @@ export function readMarkdownConversation(input: MarkdownReadInput): MarkdownRead
   const issues: Array<ScientConversationImportPreview["markdownIssues"][number]> =
     parsed.kind === "conversation"
       ? parsed.issues.map((issue) => {
-          const next = parsed.messages.find((message) => message.line > issue.line);
+          // Issues are not necessarily sorted by line, but message markers are.
+          // A binary search avoids rescanning a long transcript for each issue.
+          let low = 0;
+          let high = parsed.messages.length;
+          while (low < high) {
+            const middle = low + Math.floor((high - low) / 2);
+            if (parsed.messages[middle]!.line <= issue.line) low = middle + 1;
+            else high = middle;
+          }
+          const next = parsed.messages[low];
           return {
             kind: issue.kind,
             startLine: issue.line,
