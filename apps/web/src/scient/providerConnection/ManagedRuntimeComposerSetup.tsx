@@ -209,7 +209,7 @@ export function ManagedRuntimeComposerSetup(props: {
             failed ? (
               <TriangleAlertIcon className="size-5 text-warning" />
             ) : (
-              <ModelIcon className="size-5 text-primary" />
+              <ModelIcon className="size-5" />
             )
           }
           role={failed ? "alert" : undefined}

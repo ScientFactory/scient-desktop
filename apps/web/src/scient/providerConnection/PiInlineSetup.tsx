@@ -49,7 +49,7 @@ export function PiInlineSetup(props: {
       {showModelSetup ? (
         <AssistedSetupFrame>
           <AssistedSetupStatus
-            icon={<PiIcon className="size-5 text-primary" />}
+            icon={<PiIcon className="size-5" />}
             title={
               props.provider.status === "error"
                 ? "Could not load Pi models"
