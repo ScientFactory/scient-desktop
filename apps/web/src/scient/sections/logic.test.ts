@@ -10,6 +10,7 @@ import {
   groupThreadsBySection,
   layoutFromGroupOrder,
   normalizeSectionName,
+  readThreadSections,
   sweepEmptySections,
   planSectionsThreadDrop,
   resolveSectionDragOrder,
@@ -48,6 +49,18 @@ describe("catalog edits", () => {
     expect(normalizeSectionName("macOS")).toBe("macOS");
     expect(normalizeSectionName("2026 plans")).toBe("2026 plans");
     expect(normalizeSectionName("מחקר")).toBe("מחקר");
+  });
+
+  it("reads older lowercase names capitalized, and edits save them that way", () => {
+    const hello = section("hello", "hello", 0);
+    expect(readThreadSections([PERMA, hello]).map((entry) => entry.name)).toEqual([
+      "Hello",
+      "Perma",
+    ]);
+    // Already-normal entries keep their identity.
+    expect(readThreadSections([RESEARCH])[0]).toBe(RESEARCH);
+    const created = catalogWithCreatedSection([hello], "notes", sid("notes"));
+    expect(created.catalog.map((entry) => entry.name)).toEqual(["Hello", "Notes"]);
   });
 
   it("renames, rejecting a name another section already uses", () => {

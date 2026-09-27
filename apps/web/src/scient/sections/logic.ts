@@ -17,11 +17,18 @@ export const GENERAL_SECTION_GROUP_ID = "__general__";
 
 // ── Catalog ────────────────────────────────────────────────────────────
 
-/** Sections in display order; names break ties for hand-edited settings. */
-export function sortThreadSections(sections: ThreadSections): ThreadSection[] {
-  return [...sections].toSorted(
-    (left, right) => left.order - right.order || left.name.localeCompare(right.name),
-  );
+/**
+ * Sections in display order (names break ties for hand-edited settings), with
+ * names normalized. Names saved before capitalization existed, or edited by
+ * hand, read capitalized, and every catalog write saves them that way.
+ */
+export function readThreadSections(sections: ThreadSections): ThreadSection[] {
+  return sections
+    .map((section) => {
+      const name = normalizeSectionName(section.name);
+      return name === section.name ? section : { ...section, name };
+    })
+    .toSorted((left, right) => left.order - right.order || left.name.localeCompare(right.name));
 }
 
 /**
@@ -63,7 +70,7 @@ export function catalogWithCreatedSection(
   readonly section: ThreadSection;
   readonly created: boolean;
 } {
-  const ordered = sortThreadSections(sections);
+  const ordered = readThreadSections(sections);
   const existing = findSectionByName(ordered, name);
   if (existing) return { catalog: ordered, section: existing, created: false };
   const section: ThreadSection = {
@@ -85,7 +92,7 @@ export function catalogWithRenamedSection(
   sectionId: string,
   name: string,
 ): CatalogRenameResult {
-  const ordered = sortThreadSections(sections);
+  const ordered = readThreadSections(sections);
   const index = ordered.findIndex((section) => section.id === sectionId);
   if (index < 0) return { kind: "missing" };
   const normalized = normalizeSectionName(name);
@@ -138,7 +145,7 @@ export function catalogWithoutSection(
   generalIndex: number,
   sectionId: string,
 ): SectionLayout & { readonly removed: RemovedSection | null } {
-  const ordered = sortThreadSections(sections);
+  const ordered = readThreadSections(sections);
   const general = clampGeneralIndex(generalIndex, ordered.length);
   const index = ordered.findIndex((section) => section.id === sectionId);
   if (index < 0) return { catalog: ordered, generalIndex: general, removed: null };
@@ -154,7 +161,7 @@ export function catalogWithRestoredSection(
   sections: ThreadSections,
   removed: RemovedSection,
 ): SectionLayout {
-  const ordered = sortThreadSections(sections).filter(
+  const ordered = readThreadSections(sections).filter(
     (section) => section.id !== removed.section.id,
   );
   // A restored section starts a fresh empty-section clock.
@@ -179,7 +186,7 @@ export function sweepEmptySections(input: {
   readonly now: Date;
   readonly afterDays: number;
 }): (SectionLayout & { readonly removed: RemovedSection[] }) | null {
-  const ordered = sortThreadSections(input.sections);
+  const ordered = readThreadSections(input.sections);
   const general = clampGeneralIndex(input.generalIndex, ordered.length);
   const cutoff = input.now.getTime() - input.afterDays * 24 * 60 * 60 * 1000;
   const kept: ThreadSection[] = [];
@@ -233,7 +240,7 @@ export function layoutFromGroupOrder(
       : orderedGroupIds.slice(0, generalAt).filter((id) => byId.has(id)).length;
   // Sections created concurrently elsewhere keep their place at the end.
   const listed = new Set(orderedGroupIds);
-  const rest = sortThreadSections(sections).filter((section) => !listed.has(section.id));
+  const rest = readThreadSections(sections).filter((section) => !listed.has(section.id));
   return { catalog: renumber([...ordered, ...rest]), generalIndex };
 }
 

@@ -16,7 +16,7 @@ import {
   catalogWithRestoredSection,
   catalogWithoutSection,
   layoutFromGroupOrder,
-  sortThreadSections,
+  readThreadSections,
   sweepEmptySections,
 } from "./logic";
 
@@ -42,7 +42,8 @@ function currentLayout(): LiveLayout {
     return { sections: pendingWrite.next.catalog, generalIndex: pendingWrite.next.generalIndex };
   }
   pendingWrite = null;
-  return live;
+  // Normalized, so any write also saves older names capitalized.
+  return { sections: readThreadSections(live.sections), generalIndex: live.generalIndex };
 }
 
 export interface ThreadSectionCatalog {
@@ -73,7 +74,7 @@ export function useThreadSectionCatalog(): ThreadSectionCatalog {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const rawSections = usePrimarySettings((settings) => settings.threadSections);
   const generalIndex = usePrimarySettings((settings) => settings.threadSectionsGeneralIndex);
-  const sections = useMemo(() => sortThreadSections(rawSections), [rawSections]);
+  const sections = useMemo(() => readThreadSections(rawSections), [rawSections]);
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
     reportFailure: false,
   });
