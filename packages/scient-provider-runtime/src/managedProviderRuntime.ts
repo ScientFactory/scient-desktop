@@ -17,6 +17,11 @@ import {
 } from "./runtimeFiles.ts";
 import { managedRuntimeTargetKey } from "./target.ts";
 import { runtimeFilesystem } from "./runtimeFilesystem.ts";
+import {
+  ManagedRuntimeMutationLockLostError,
+  tryAcquireManagedRuntimeMutationLock,
+  type ManagedRuntimeMutationLock,
+} from "./runtimeMutationLock.ts";
 
 export type ManagedProviderRuntimeStage =
   | "preparing"
@@ -84,6 +89,15 @@ export interface ManagedProviderRuntimeQualificationInput {
   readonly signal: AbortSignal;
 }
 
+export interface ManagedProviderRuntimeInstallInput {
+  readonly artifact: ManagedRuntimeArtifact;
+  readonly signal: AbortSignal;
+  readonly onProgress?: (progress: ManagedProviderRuntimeProgress) => void;
+  readonly qualify?: (input: ManagedProviderRuntimeQualificationInput) => Promise<void>;
+  /** Runs after staging and smoke testing, immediately before the live runtime changes. */
+  readonly beforeActivate?: (signal: AbortSignal) => Promise<void>;
+}
+
 interface ManagedProviderRuntimeActivation {
   readonly schemaVersion: 1;
   readonly activationId: string;
@@ -95,6 +109,27 @@ export class ManagedProviderRuntimeError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
     this.name = "ManagedProviderRuntimeError";
+  }
+}
+
+/**
+ * Another process took over the runtime's mutation lock while this change was
+ * running (it judged the heartbeat overdue), so the change stopped.
+ */
+class ManagedProviderRuntimeOwnershipLostError extends ManagedProviderRuntimeError {
+  constructor(displayName: string) {
+    super(
+      `Another Scient process took over the private ${displayName} runtime, so this change stopped.`,
+    );
+    this.name = "ManagedProviderRuntimeOwnershipLostError";
+  }
+}
+
+/** Another install or removal of the same private runtime is still in progress. */
+export class ManagedProviderRuntimeBusyError extends ManagedProviderRuntimeError {
+  constructor(displayName: string) {
+    super(`Another change to the private ${displayName} runtime is already in progress.`);
+    this.name = "ManagedProviderRuntimeBusyError";
   }
 }
 
@@ -234,6 +269,9 @@ export interface ManagedProviderRuntimeDependencies {
   ) => Promise<void>;
   readonly now: () => number;
   readonly activationId: () => string;
+  readonly acquireMutationLock: (
+    lockPath: string,
+  ) => Promise<ManagedRuntimeMutationLock | undefined>;
 }
 
 export interface ManagedProviderRuntimeIdentity {
@@ -264,6 +302,7 @@ const DEFAULT_DEPENDENCIES: ManagedProviderRuntimeDependencies = {
   commitState: commitManagedRuntimeState,
   now: Date.now,
   activationId: NodeCrypto.randomUUID,
+  acquireMutationLock: tryAcquireManagedRuntimeMutationLock,
 };
 
 const MANAGED_RUNTIME_PROVIDERS = new Set([
@@ -399,6 +438,7 @@ export class ManagedProviderRuntime {
   readonly #root: string;
   readonly #statePath: string;
   readonly #activationPath: string;
+  readonly #mutationLockPath: string;
   readonly #versionsDir: string;
   readonly #stagingDir: string;
   readonly #dependencies: ManagedProviderRuntimeDependencies;
@@ -412,6 +452,7 @@ export class ManagedProviderRuntime {
     this.#root = NodePath.join(baseDir, "provider-runtimes", identity.providerDirectory);
     this.#statePath = NodePath.join(this.#root, "state.json");
     this.#activationPath = NodePath.join(this.#root, "activation.json");
+    this.#mutationLockPath = NodePath.join(this.#root, "mutation.lock");
     this.#versionsDir = NodePath.join(this.#root, "versions");
     this.#stagingDir = NodePath.join(this.#root, "staging");
     this.#dependencies = { ...DEFAULT_DEPENDENCIES, ...dependencies };
@@ -462,8 +503,43 @@ export class ManagedProviderRuntime {
     };
   }
 
+  /**
+   * Recover an install or activation that was interrupted by a crash. Every
+   * driver instance calls this when it is created, possibly while another
+   * runtime object for the same root is mid-activation. An activation journal
+   * is a crash only when no live mutation owns the root, so this does nothing
+   * while one does: the owner commits or rolls back its own activation.
+   */
   async reconcile(artifact?: ManagedRuntimeArtifact): Promise<void> {
     await NodeFSP.mkdir(this.#stagingDir, { recursive: true, mode: 0o700 });
+    const lock = await this.#tryAcquireMutation();
+    if (!lock) return;
+    try {
+      await this.#reconcileOwned(lock.signal, artifact);
+    } finally {
+      await lock.release();
+    }
+  }
+
+  async #tryAcquireMutation(): Promise<ManagedRuntimeMutationLock | undefined> {
+    await NodeFSP.mkdir(this.#root, { recursive: true, mode: 0o700 });
+    return this.#dependencies.acquireMutationLock(this.#mutationLockPath);
+  }
+
+  /** Stop before the next step once another process has taken the lock over. */
+  #throwIfOwnershipLost(signal: AbortSignal): void {
+    if (signal.reason instanceof ManagedRuntimeMutationLockLostError) {
+      throw new ManagedProviderRuntimeOwnershipLostError(this.#displayName);
+    }
+  }
+
+  async #acquireMutation(): Promise<ManagedRuntimeMutationLock> {
+    const lock = await this.#tryAcquireMutation();
+    if (!lock) throw new ManagedProviderRuntimeBusyError(this.#displayName);
+    return lock;
+  }
+
+  async #reconcileOwned(signal: AbortSignal, artifact?: ManagedRuntimeArtifact): Promise<void> {
     const rootEntries = await NodeFSP.readdir(this.#root).catch(() => []);
     await Promise.all(
       rootEntries
@@ -474,23 +550,36 @@ export class ManagedProviderRuntime {
         )
         .map((entry) => NodeFSP.rm(NodePath.join(this.#root, entry), { force: true })),
     );
+    this.#throwIfOwnershipLost(signal);
     await this.#reconcileActivation();
+    this.#throwIfOwnershipLost(signal);
     if (artifact) await this.#reconcileReplacement(artifact);
   }
 
-  async install(input: {
-    readonly artifact: ManagedRuntimeArtifact;
-    readonly signal: AbortSignal;
-    readonly onProgress?: (progress: ManagedProviderRuntimeProgress) => void;
-    readonly qualify?: (input: ManagedProviderRuntimeQualificationInput) => Promise<void>;
-    /** Runs after staging and smoke testing, immediately before the live runtime changes. */
-    readonly beforeActivate?: (signal: AbortSignal) => Promise<void>;
-  }): Promise<ManagedProviderRuntimeStatus> {
-    const { artifact, signal, onProgress, qualify, beforeActivate } = input;
-    if (artifact.supportTier !== "fully_assisted") {
-      throw new ManagedProviderRuntimeError(artifact.supportMessage);
+  async install(input: ManagedProviderRuntimeInstallInput): Promise<ManagedProviderRuntimeStatus> {
+    if (input.artifact.supportTier !== "fully_assisted") {
+      throw new ManagedProviderRuntimeError(input.artifact.supportMessage);
     }
-    await this.reconcile(artifact);
+    // Held from before reconciliation until the activation is committed or
+    // rolled back, so no other runtime object treats it as a crash.
+    const lock = await this.#acquireMutation();
+    try {
+      return await this.#installOwned({
+        ...input,
+        // Losing the lock stops the installation like a cancellation does.
+        signal: AbortSignal.any([input.signal, lock.signal]),
+      });
+    } finally {
+      await lock.release();
+    }
+  }
+
+  async #installOwned(
+    input: ManagedProviderRuntimeInstallInput,
+  ): Promise<ManagedProviderRuntimeStatus> {
+    const { artifact, signal, onProgress, qualify, beforeActivate } = input;
+    await NodeFSP.mkdir(this.#stagingDir, { recursive: true, mode: 0o700 });
+    await this.#reconcileOwned(signal, artifact);
     await this.#cleanStaging();
     onProgress?.({ stage: "preparing" });
     const stage = await NodeFSP.mkdtemp(NodePath.join(this.#stagingDir, "install-"));
@@ -638,6 +727,8 @@ export class ManagedProviderRuntime {
       }
       return await this.status(artifact);
     } catch (cause) {
+      // Whatever step the lost lock interrupted, say why the change stopped.
+      this.#throwIfOwnershipLost(signal);
       throw cause instanceof Error
         ? cause
         : new ManagedProviderRuntimeError(`Managed ${this.#displayName} installation failed.`, {
@@ -649,6 +740,22 @@ export class ManagedProviderRuntime {
   }
 
   async remove(): Promise<void> {
+    const exists = await NodeFSP.access(this.#root).then(
+      () => true,
+      () => false,
+    );
+    if (!exists) return;
+    const lock = await this.#acquireMutation();
+    try {
+      await this.#removeOwned(lock.signal);
+    } finally {
+      // The lock left with the root; this is a no-op unless removal rolled back.
+      await lock.release();
+    }
+  }
+
+  async #removeOwned(signal: AbortSignal): Promise<void> {
+    this.#throwIfOwnershipLost(signal);
     const parent = NodePath.dirname(this.#root);
     const tombstone = NodePath.join(
       parent,
