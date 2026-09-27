@@ -20,6 +20,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { makeOmpRpcClient } from "effect-omp-rpc/client";
 
+import { classifyTurnDispatchFailure, markTurnDispatchAttempted } from "../turnDispatchPhase.ts";
 import { OMP_PENDING_CONNECTION_DETAIL } from "../omp/OmpModel.ts";
 import type { OmpProcessExit, OmpRpcProcessOptions } from "../omp/OmpRpcProcess.ts";
 import { makeOmpAdapter } from "./OmpAdapter.ts";
@@ -652,6 +653,8 @@ describe("Oh My Pi fork context", () => {
           })
           .pipe(Effect.flip);
         expect(failure.message).toContain("Start this fork with a normal message");
+        markTurnDispatchAttempted(failure);
+        expect(classifyTurnDispatchFailure(Cause.fail(failure))).toBe("notSent");
         expect(fake.state.log).toEqual([]);
         expect(fake.state.prompts).toHaveLength(0);
         yield* adapter.sendTurn({
