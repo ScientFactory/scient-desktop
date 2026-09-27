@@ -2,7 +2,8 @@
  * Conversation export on the server: capture a snapshot, build its document
  * bundle, write the requested format, and hand back either a temporary file
  * (read through a signed asset by the HTTP layer) or text for the clipboard.
- * Formats this host cannot produce are reported, not attempted.
+ * Formats this host cannot produce are reported, not attempted: Word is
+ * available whenever the managed Pandoc is installed on this server.
  */
 import {
   CONVERSATION_REFERENCE_URL_PREFIX,
@@ -42,6 +43,11 @@ import packageJson from "../../../package.json" with { type: "json" };
 import * as ServerConfig from "../../config.ts";
 import { prepareScicPackage } from "../conversationFile/ScicWriter.ts";
 import {
+  DOCX_MEDIA_TYPE,
+  PandocWordConverter,
+  type WordConversionFailureReason,
+} from "../pandoc/PandocWordConverter.ts";
+import {
   ConversationExportFiles,
   type ConversationExportFileError,
 } from "./ConversationExportFiles.ts";
@@ -53,19 +59,18 @@ import {
 const MARKDOWN_MEDIA_TYPE = "text/markdown; charset=utf-8";
 const ZIP_MEDIA_TYPE = "application/zip";
 
-/**
- * Formats this server produces. Word registers here when it lands.
- * PDF is captured here and printed by a connected Scient desktop; clients add
- * that requirement to the server's capability.
- */
-const FORMAT_CAPABILITIES: ReadonlyArray<ConversationExportFormatCapability> = [
-  { format: "markdown", available: true, unavailableReason: null },
-  { format: "pdf", available: true, unavailableReason: null },
-  { format: "scic", available: true, unavailableReason: null },
-];
+const WORD_FAILURE_REASON: Record<
+  WordConversionFailureReason,
+  ScientConversationExportError["reason"]
+> = {
+  unavailable: "format-unavailable",
+  "too-large": "too-large",
+  timeout: "too-large",
+  failed: "conversion-failed",
+};
 
 /** Formats `produce` writes on the server; the rest are produced from `document`. */
-const SERVER_WRITTEN_FORMATS: ReadonlySet<ConversationExportFormat> = new Set(["markdown", "scic"]);
+const SERVER_WRITTEN_FORMATS: ReadonlySet<ConversationExportFormat> = new Set(["markdown", "scic", "docx"]);
 
 export type ProducedExportOutput =
   | {
@@ -133,6 +138,7 @@ const reject = (reason: ScientConversationExportError["reason"], message: string
 const make = Effect.gen(function* () {
   const snapshots = yield* ConversationSnapshotService;
   const files = yield* ConversationExportFiles;
+  const words = yield* PandocWordConverter;
   const fileSystem = yield* FileSystem.FileSystem;
   const crypto = yield* Crypto.Crypto;
   const config = yield* ServerConfig.ServerConfig;
@@ -142,6 +148,16 @@ const make = Effect.gen(function* () {
     const resolved = yield* fileSystem.realPath(root).pipe(Effect.option);
     if (resolved._tag === "Some") storageRoots.push(resolved.value);
   }
+
+  /** PDF is printed by the desktop; Word requires the managed Pandoc tool. */
+  const formatCapabilities = words.availability.pipe(
+    Effect.map((word): ReadonlyArray<ConversationExportFormatCapability> => [
+      { format: "markdown", available: true, unavailableReason: null },
+      { format: "pdf", available: true, unavailableReason: null },
+      { format: "scic", available: true, unavailableReason: null },
+      { format: "docx", available: word.available, unavailableReason: word.reason },
+    ]),
+  );
 
   const capture = (input: Parameters<ConversationSnapshotService["Service"]["capture"]>[0]) =>
     snapshots.capture(input).pipe(
@@ -174,7 +190,7 @@ const make = Effect.gen(function* () {
     return {
       threadId,
       title: snapshot.thread.title,
-      formats: FORMAT_CAPABILITIES,
+      formats: yield* formatCapabilities,
       messageCount: messages.length,
       attachmentCount:
         snapshot.messages.reduce((total, message) => total + message.attachments.length, 0) +
@@ -261,7 +277,7 @@ const make = Effect.gen(function* () {
   const produce: ConversationExportService["Service"]["produce"] = Effect.fn(
     "ConversationExportService.produce",
   )(function* (request) {
-    const capability = FORMAT_CAPABILITIES.find((entry) => entry.format === request.format);
+    const capability = (yield* formatCapabilities).find((entry) => entry.format === request.format);
     if (!capability?.available) {
       return yield* reject(
         "format-unavailable",
@@ -337,6 +353,38 @@ const make = Effect.gen(function* () {
       messageCount: document.messageCount,
       warnings,
     };
+
+    if (request.format === "docx") {
+      const fileName = exportFileName(snapshot.thread.title, ".docx");
+      const target = yield* files.reserve({ exportId, fileName });
+      const converted = yield* words
+        .convert({
+          bundle: {
+            ...document.bundle,
+            markdown: redactStoragePaths(document.bundle.markdown, storageRoots),
+          },
+          outputPath: target.path,
+        })
+        .pipe(
+          Effect.catchTag("WordConversionError", (error) =>
+            reject(WORD_FAILURE_REASON[error.reason], error.message),
+          ),
+        );
+      return {
+        ...base,
+        warnings: converted.warnings.map((warning) => ({
+          ...warning,
+          message: redactStoragePaths(warning.message, storageRoots),
+        })),
+        output: {
+          _tag: "file",
+          path: target.path,
+          fileName,
+          mediaType: DOCX_MEDIA_TYPE,
+          byteLength: converted.byteLength,
+        },
+      };
+    }
 
     if (request.delivery === "clipboard") {
       if (markdown.length > SCIENT_CONVERSATION_EXPORT_CLIPBOARD_MAX_CHARS) {

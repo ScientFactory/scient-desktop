@@ -756,6 +756,8 @@ export const ScientConversationExportErrorReason = Schema.Literals([
   "nothing-to-export",
   "too-large",
   "delivery-unsupported",
+  /** A converter (Pandoc, for Word) failed after the export was prepared. */
+  "conversion-failed",
 ]);
 export type ScientConversationExportErrorReason = typeof ScientConversationExportErrorReason.Type;
 

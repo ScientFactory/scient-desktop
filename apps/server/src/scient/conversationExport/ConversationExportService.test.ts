@@ -7,6 +7,7 @@ import {
   MessageId,
   ScientDocumentPageInput,
   ThreadId,
+  type DocumentBundle,
   type ScientConversationExportRequest,
 } from "@t3tools/contracts";
 import { parseConversationMarkdown } from "@scientfactory/conversation";
@@ -38,6 +39,11 @@ import * as ConversationExportFiles from "./ConversationExportFiles.ts";
 import * as ConversationExportService from "./ConversationExportService.ts";
 import * as ConversationSnapshotService from "./ConversationSnapshotService.ts";
 import { prepareConversationPdf } from "../documentExport/ConversationPdfPreparation.ts";
+import {
+  PandocWordConverter,
+  WordConversionError,
+  type WordConversionFailureReason,
+} from "../pandoc/PandocWordConverter.ts";
 
 const THREAD = ThreadId.make("thread-1");
 const encodeAttachments = Schema.encodeSync(Schema.fromJsonString(Schema.Array(ChatAttachment)));
@@ -67,8 +73,66 @@ const QueryLive = OrchestrationProjectionSnapshotQueryLive.pipe(
   ),
 );
 
-const exportLayer = (prefix: string) =>
+/**
+ * A stand-in for the Word converter: unavailable (Pandoc not installed), or
+ * writing the bundle Markdown it was given as the "Word file", or failing.
+ */
+type WordMode =
+  | { readonly _tag: "unavailable" }
+  | { readonly _tag: "converts"; readonly seen: Array<DocumentBundle> }
+  | { readonly _tag: "fails"; readonly reason: WordConversionFailureReason };
+
+const wordLayer = (mode: WordMode) =>
+  Layer.effect(
+    PandocWordConverter,
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      return PandocWordConverter.of({
+        availability: Effect.succeed(
+          mode._tag === "unavailable"
+            ? {
+                available: false,
+                reason: "Word export needs Pandoc (40 MB download).",
+                installable: true,
+              }
+            : { available: true, reason: null, installable: false },
+        ),
+        convert: (input) =>
+          Effect.gen(function* () {
+            if (mode._tag === "fails") {
+              return yield* new WordConversionError({
+                reason: mode.reason,
+                message: `Word conversion ${mode.reason}.`,
+              });
+            }
+            if (mode._tag === "converts") mode.seen.push(input.bundle);
+            yield* fileSystem
+              .writeFileString(input.outputPath, input.bundle.markdown)
+              .pipe(Effect.orDie);
+            return {
+              byteLength: input.bundle.markdown.length,
+              warnings: [
+                ...input.bundle.warnings,
+                { code: "converter-reported" as const, message: "Pandoc reported: a note" },
+              ],
+              summary: {
+                embeddedImages: 0,
+                placeholders: 0,
+                workLogBlocks: 0,
+                reasoningBlocks: 0,
+                citedReferences: 0,
+                rtlDocument: false,
+                landscapeTables: 0,
+              },
+            };
+          }),
+      });
+    }),
+  );
+
+const exportLayer = (prefix: string, word: WordMode = { _tag: "unavailable" }) =>
   ConversationExportService.layer.pipe(
+    Layer.provideMerge(wordLayer(word)),
     Layer.provideMerge(ConversationSnapshotService.layer),
     Layer.provideMerge(ConversationExportFiles.layer),
     Layer.provideMerge(QueryLive),
@@ -222,6 +286,11 @@ describe("ConversationExportService", () => {
         { format: "markdown", available: true, unavailableReason: null },
         { format: "pdf", available: true, unavailableReason: null },
         { format: "scic", available: true, unavailableReason: null },
+        {
+          format: "docx",
+          available: false,
+          unavailableReason: "Word export needs Pandoc (40 MB download).",
+        },
       ]);
 
       const { produced, text } = yield* produceText(request({}, { includeWorkLog: true }));
@@ -496,6 +565,81 @@ describe("conversation export delivery", () => {
       );
     }).pipe(Effect.provide(AssetTestLayer)),
   );
+
+  const wordConversions: Array<DocumentBundle> = [];
+  it.effect("converts the conversation bundle to Word when Pandoc is installed", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      yield* seedThread({ pairs: 2, firstUserText: `See ${config.stateDir}/logs/x.log` });
+      const service = yield* ConversationExportService.ConversationExportService;
+      const preparation = yield* service.prepare(THREAD);
+      assert.deepStrictEqual(preparation.formats[1], {
+        format: "docx",
+        available: true,
+        unavailableReason: null,
+      });
+      const produced = yield* service.produce(
+        request({ format: "docx" }, { includeWorkLog: true }),
+      );
+      assert(produced.output._tag === "file");
+      assert.strictEqual(produced.output.fileName, "Long study results.docx");
+      assert.strictEqual(
+        produced.output.mediaType,
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      );
+      const fileSystem = yield* FileSystem.FileSystem;
+      assert.isTrue(yield* fileSystem.exists(produced.output.path));
+      // The converter receives the bundle, with Scient's storage paths redacted.
+      const bundle = wordConversions.at(-1)!;
+      assert.strictEqual(bundle.profile, "chat");
+      assert.include(bundle.markdown, "«scient-data»/logs/x.log");
+      assert.notInclude(bundle.markdown, config.stateDir);
+      assert.include(
+        produced.warnings.map((warning) => warning.code),
+        "converter-reported",
+      );
+    }).pipe(
+      Effect.provide(
+        exportLayer("scient-convexport-word-", { _tag: "converts", seen: wordConversions }),
+      ),
+    ),
+  );
+
+  it.effect("refuses to copy a Word file", () =>
+    Effect.gen(function* () {
+      yield* seedThread({ pairs: 1 });
+      const service = yield* ConversationExportService.ConversationExportService;
+      const error = yield* service
+        .produce(request({ format: "docx", delivery: "clipboard" }))
+        .pipe(Effect.flip);
+      assert(error._tag === "ScientConversationExportError");
+      assert.strictEqual(error.reason, "delivery-unsupported");
+    }).pipe(Effect.provide(exportLayer("scient-convexport-word-", { _tag: "converts", seen: [] }))),
+  );
+
+  for (const [failure, expected] of [
+    ["too-large", "too-large"],
+    ["timeout", "too-large"],
+    ["failed", "conversion-failed"],
+    ["unavailable", "format-unavailable"],
+  ] as const) {
+    it.effect(
+      `reports a Word conversion that ${failure === "failed" ? "fails" : `is ${failure}`}`,
+      () =>
+        Effect.gen(function* () {
+          yield* seedThread({ pairs: 1 });
+          const service = yield* ConversationExportService.ConversationExportService;
+          const error = yield* service.produce(request({ format: "docx" })).pipe(Effect.flip);
+          assert(error._tag === "ScientConversationExportError");
+          assert.strictEqual(error.reason, expected);
+          assert.strictEqual(error.message, `Word conversion ${failure}.`);
+        }).pipe(
+          Effect.provide(
+            exportLayer("scient-convexport-word-", { _tag: "fails", reason: failure }),
+          ),
+        ),
+    );
+  }
 });
 
 const PdfTestLayer = Layer.mergeAll(

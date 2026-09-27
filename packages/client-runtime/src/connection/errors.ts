@@ -134,6 +134,7 @@ export function mapRemoteEnvironmentError(
     case "ScientThreadQueueOperationError":
     case "ScientConversationExportError":
     case "ScientConversationImportError":
+    case "ScientWordExportError":
       return new ConnectionBlockedError({ reason: "configuration", detail: error.message });
     case "EnvironmentRequestInvalidError":
       return new ConnectionBlockedError({

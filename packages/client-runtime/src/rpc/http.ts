@@ -3,6 +3,7 @@ import {
   ScientConversationExportError,
   ScientConversationImportError,
   ScientThreadQueueOperationError,
+  ScientWordExportError,
   EnvironmentHttpCommonError,
   type EnvironmentAuthInvalidError,
   type EnvironmentInternalError,
@@ -25,6 +26,7 @@ const isEnvironmentHttpCommonError = Schema.is(EnvironmentHttpCommonError);
 const isScientThreadQueueOperationError = Schema.is(ScientThreadQueueOperationError);
 const isScientConversationExportError = Schema.is(ScientConversationExportError);
 const isScientConversationImportError = Schema.is(ScientConversationImportError);
+const isScientWordExportError = Schema.is(ScientWordExportError);
 
 export class RemoteEnvironmentAuthFetchError extends Data.TaggedError(
   "RemoteEnvironmentAuthFetchError",
@@ -76,6 +78,7 @@ export type RemoteEnvironmentRequestError =
   | ScientThreadQueueOperationError
   | ScientConversationExportError
   | ScientConversationImportError
+  | ScientWordExportError
   | EnvironmentRequestInvalidError
   | EnvironmentAuthInvalidError
   | EnvironmentScopeRequiredError
@@ -139,7 +142,8 @@ const failRemoteRequest = (
     isEnvironmentHttpCommonError(cause) ||
     isScientThreadQueueOperationError(cause) ||
     isScientConversationExportError(cause) ||
-    isScientConversationImportError(cause)
+    isScientConversationImportError(cause) ||
+    isScientWordExportError(cause)
   ) {
     return Effect.fail(cause);
   }

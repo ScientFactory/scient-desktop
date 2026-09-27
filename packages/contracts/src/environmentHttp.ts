@@ -137,6 +137,14 @@ import {
   ScientThreadQueueUpdateRequest,
 } from "./scientThreadQueue.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient Word export (managed Pandoc) contracts.
+import {
+  ScientPandocToolStatus,
+  ScientWordExportError,
+  ScientWordFileExportRequest,
+  ScientWordFileExportResult,
+} from "./scientPandoc.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — Scient conversation export contracts.
 import {
   ScientConversationExportError,
@@ -215,6 +223,7 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "scient_thread_queue_operation_failed",
   "scient_conversation_export_failed",
   "scient_conversation_import_failed",
+  "scient_word_export_failed",
   // SCIENT-FORK:END
   "internal_error",
 ]);
@@ -1172,6 +1181,35 @@ export class EnvironmentScientConversationImportHttpApi extends HttpApiGroup.mak
   ) {}
 // SCIENT-FORK:END
 
+// SCIENT-FORK:START — Scient Word export group: the managed Pandoc tool and
+// project-file export, appended like the other Scient groups.
+export class EnvironmentScientWordExportHttpApi extends HttpApiGroup.make("scientWordExport")
+  .add(
+    HttpApiEndpoint.post("tool", "/api/scient/word-export/v1/tool", {
+      headers: OptionalBearerHeaders,
+      success: ScientPandocToolStatus,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    // Begins the managed install and answers with the state it left; clients
+    // poll `tool` to watch it finish.
+    HttpApiEndpoint.post("installTool", "/api/scient/word-export/v1/tool/install", {
+      headers: OptionalBearerHeaders,
+      success: ScientPandocToolStatus,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("exportFile", "/api/scient/word-export/v1/file", {
+      headers: OptionalBearerHeaders,
+      payload: ScientWordFileExportRequest,
+      success: ScientWordFileExportResult,
+      error: [EnvironmentHttpCommonError, ScientWordExportError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+// SCIENT-FORK:END
+
 export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMetadataHttpApi)
   .add(EnvironmentAuthHttpApi)
@@ -1186,5 +1224,6 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentScientThreadQueueHttpApi)
   .add(EnvironmentScientConversationExportHttpApi)
   .add(EnvironmentScientConversationImportHttpApi)
+  .add(EnvironmentScientWordExportHttpApi)
   // SCIENT-FORK:END
   .add(EnvironmentConnectHttpApi) {}
