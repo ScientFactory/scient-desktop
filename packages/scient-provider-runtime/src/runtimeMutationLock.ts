@@ -2,8 +2,9 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { promisify } from "node:util";
+import * as NodeUtil from "node:util";
 
 /**
  * This process instance. A lock carrying this process's pid but another id
@@ -110,11 +111,12 @@ export function isProcessAlive(pid: number): boolean {
   }
 }
 
-const execFile = promisify(NodeChildProcess.execFile);
+const execFile = NodeUtil.promisify(NodeChildProcess.execFile);
 /** Unknown identities fail closed: a live PID is never reclaimed on a failed probe. */
 async function processStartIdentity(pid: number): Promise<string | undefined> {
   try {
-    if (process.platform === "win32") {
+    // oxlint-disable-next-line t3code/no-global-process-runtime -- This Promise-based OS lock boundary has no Effect runtime.
+    if (NodeOS.platform() === "win32") {
       const { stdout } = await execFile(
         "powershell.exe",
         [
