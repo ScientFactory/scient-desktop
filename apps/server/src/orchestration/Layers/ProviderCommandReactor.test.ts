@@ -1052,6 +1052,24 @@ describe("ProviderCommandReactor", () => {
     expect(callOrder).toEqual(["prepare", "begin", "send", "settle:accepted"]);
   });
 
+  it("settles an interruption immediately after recording the pending handoff", async () => {
+    const settleDelivery = vi.fn<ScientForkContextDeliveryShape["settleDelivery"]>(
+      () => Effect.void,
+    );
+    const harness = await createHarness({
+      forkLineage: true,
+      forkContextDelivery: {
+        prepareTurn: () => Effect.succeed(deliverContext()),
+        beginDelivery: () => Effect.interrupt,
+        settleDelivery,
+      },
+    });
+    await startForkTurn(harness, "fork-interrupted-after-record");
+    await waitFor(() => settleDelivery.mock.calls.length === 1);
+    expect(settleDelivery.mock.calls[0]?.[0].outcome).toEqual({ type: "maybeDelivered" });
+    expect(harness.sendTurn).not.toHaveBeenCalled();
+  });
+
   it("settles a rejection that sent nothing as notSent, so the next message can retry", async () => {
     const settleDelivery = vi.fn<ScientForkContextDeliveryShape["settleDelivery"]>(
       () => Effect.void,

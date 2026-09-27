@@ -5070,12 +5070,14 @@ validation.layer("ProviderServiceLive validation", (it) => {
       });
       validation.codex.sendTurn.mockClear();
       const failure = yield* Effect.flip(
-        provider.sendTurn({
-          threadId,
-          input: "new question",
-          contextPreamble: "history ".repeat(4000),
-          contextRequestTokenBudget: 1000,
-        }),
+        provider.sendTurn(
+          {
+            threadId,
+            input: "new question",
+            contextPreamble: "history ".repeat(4000),
+          },
+          1000,
+        ),
       );
       assert.instanceOf(failure, ProviderValidationError);
       assert.include(failure.issue, "available context");

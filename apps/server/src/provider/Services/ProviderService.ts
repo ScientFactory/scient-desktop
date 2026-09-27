@@ -51,14 +51,10 @@ export interface ProviderServiceShape {
   /**
    * Send a provider turn.
    */
-  /** Known capacity of the selected model on this exact provider instance. */
-  readonly getModelContextWindow?: (input: {
-    readonly threadId: ThreadId;
-    readonly modelSelection: ModelSelection;
-  }) => Effect.Effect<number | undefined>;
-
   readonly sendTurn: (
     input: ProviderSendTurnInput,
+    /** Internal allowance checked after all prompt additions; never sent to an adapter. */
+    contextRequestTokenBudget?: number,
   ) => Effect.Effect<ProviderTurnStartResult, ProviderServiceError>;
 
   readonly compactThread: (

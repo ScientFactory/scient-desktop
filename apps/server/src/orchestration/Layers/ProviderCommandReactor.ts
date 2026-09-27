@@ -1,3 +1,4 @@
+import { withForkSendDeadline } from "../scient-fork/deliveryDeadline.ts";
 import { withWorkspaceLease } from "../../workspace/workspaceLease.ts";
 import {
   type ChatAttachment,
@@ -719,16 +720,10 @@ const make = Effect.gen(function* () {
     const liveSession = (yield* providerService.listSessions()).find(
       (session) => session.threadId === input.thread.id,
     );
-    const modelContextWindow = yield* (
-      providerService.getModelContextWindow?.({
-        threadId: input.thread.id,
-        modelSelection: input.modelSelection ?? detail.modelSelection,
-      }) ?? Effect.succeed(undefined)
-    );
     const context = yield* scientForkContextDelivery
       .prepareTurn({
         thread: detail,
-        modelContextWindow,
+        modelSelection: input.modelSelection,
         message: input.message,
         userText: input.providerMessageText,
         attachments: input.message.attachments ?? [],
@@ -760,29 +755,6 @@ const make = Effect.gen(function* () {
         pendingTurnStart: true,
       });
     }
-    const targetSession = (yield* providerService.listSessions()).find(
-      (session) => session.threadId === input.thread.id,
-    );
-    yield* scientForkContextDelivery
-      .beginDelivery({
-        threadId: input.thread.id,
-        handoffId: context.handoffId,
-        messageId: input.message.id,
-        nativeThreadKey:
-          targetSession === undefined
-            ? null
-            : nativeThreadKey(
-                targetSession.provider,
-                targetSession.resumeCursor,
-                targetSession.providerInstanceId,
-              ),
-        includedItemCount: context.includedItemCount,
-        omittedItemCount: context.omittedItemCount,
-        budgetTokens: context.budgetTokens,
-        contextPreamble: context.contextPreamble,
-        attachmentIds: context.attachments.map((attachment) => attachment.id),
-      })
-      .pipe(Effect.mapError((error) => toTurnStartError(error.detail, error)));
     return context;
   });
   // SCIENT-FORK:END
@@ -1824,10 +1796,10 @@ const make = Effect.gen(function* () {
         ? {
             ...sendTurnRequest.value,
             contextPreamble: forkContext.contextPreamble,
-            contextRequestTokenBudget: forkContext.requestTokenBudget,
             ...(forkContext.attachments.length > 0 ? { attachments: forkContext.attachments } : {}),
           }
         : sendTurnRequest.value;
+    let forkContextSettled = false;
     const settleForkContext = (outcome: ForkDeliveryOutcome) =>
       forkContext.kind !== "deliver"
         ? Effect.void
@@ -1838,6 +1810,11 @@ const make = Effect.gen(function* () {
               outcome,
             })
             .pipe(
+              Effect.ensuring(
+                Effect.sync(() => {
+                  forkContextSettled = true;
+                }),
+              ),
               Effect.retry({ times: 2 }),
               Effect.catchCause((cause) =>
                 Effect.logWarning("provider command reactor could not settle fork context", {
@@ -1849,7 +1826,42 @@ const make = Effect.gen(function* () {
             );
     // SCIENT-FORK:END
 
-    const send = providerService.sendTurn(request).pipe(
+    const providerSend = () =>
+      forkContext.kind === "deliver"
+        ? providerService.sendTurn(request, forkContext.requestTokenBudget)
+        : providerService.sendTurn(request);
+    // The send fiber owns the pending handoff from its first durable write
+    // through settlement. No interruption gap can strand an in-flight waiter.
+    const sendStarted = yield* Deferred.make<void>();
+    const dispatch = Effect.gen(function* () {
+      if (forkContext.kind === "deliver") {
+        const targetSession = (yield* providerService.listSessions()).find(
+          (session) => session.threadId === event.payload.threadId,
+        );
+        yield* scientForkContextDelivery.beginDelivery({
+          threadId: event.payload.threadId,
+          handoffId: forkContext.handoffId,
+          messageId: message.id,
+          nativeThreadKey:
+            targetSession === undefined
+              ? null
+              : nativeThreadKey(
+                  targetSession.provider,
+                  targetSession.resumeCursor,
+                  targetSession.providerInstanceId,
+                ),
+          includedItemCount: forkContext.includedItemCount,
+          omittedItemCount: forkContext.omittedItemCount,
+          budgetTokens: forkContext.budgetTokens,
+          contextPreamble: forkContext.contextPreamble,
+          attachmentIds: forkContext.attachments.map((attachment) => attachment.id),
+        });
+
+        yield* Deferred.succeed(sendStarted, undefined);
+      }
+      return yield* providerSend();
+    });
+    const send = (forkContext.kind === "deliver" ? withForkSendDeadline(dispatch) : dispatch).pipe(
       Effect.tap((turn) =>
         forkContext.kind !== "deliver"
           ? Effect.void
@@ -1902,9 +1914,16 @@ const make = Effect.gen(function* () {
     // The forked send settles `sent` from here on, so drop the entry the post-processing hook uses.
     if (resumed && event.commandId !== null) resumedTurnStarts.delete(event.commandId);
     yield* send.pipe(
+      Effect.ensuring(
+        Effect.suspend(() =>
+          forkContextSettled ? Effect.void : settleForkContext({ type: "maybeDelivered" }),
+        ),
+      ),
+      Effect.ensuring(Deferred.succeed(sendStarted, undefined)),
       Effect.ensuring(resumed ? Deferred.succeed(resumed.sent, undefined) : Effect.void),
       Effect.forkScoped,
     );
+    if (forkContext.kind === "deliver") yield* Deferred.await(sendStarted);
   });
 
   const stopTiming = STOP_TIMING;

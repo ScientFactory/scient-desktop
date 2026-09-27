@@ -524,8 +524,9 @@ Superseded by Scient migration 14 and
 read. Migration 14 carries prior state into handoff rows. Legacy completed
 rows have no native-session proof, so they now require a fresh session and
 portable delivery; they never adopt an arbitrary replacement. Migration 15
-adds native-turn evidence, frozen snapshot identities, and the exact handoff
-preamble and attachment identifiers for audit. Missing historical evidence
+adds native-turn evidence, frozen snapshot identities, and handoff audit
+artifacts. The four latest delivery preambles per fork are retained; older
+receipts keep their status and counts without retaining repeated full text. Missing historical evidence
 selects portable delivery rather than inventing continuity.
 
 ## Provider context delivery
@@ -564,8 +565,11 @@ meaning is the same.
 - Native session identity includes its configured provider instance, so an
   equal provider session ID in a different runtime cannot establish continuity.
 - A later message waits for an in-flight handoff to settle, then rechecks the
-  current binding. It cannot bypass history merely because an earlier send
-  was still awaiting its outcome.
+  current binding. The send fiber owns the pending record and releases waiters
+  on every exit, including interruption. Provider acknowledgement has a
+  60-second deadline, with timeout classified as uncertain delivery; a waiter
+  has its own 65-second bound. It cannot bypass history merely because an
+  earlier send was still awaiting its outcome.
 - **Separate channel.** The handoff travels as `ProviderSendTurnInput.contextPreamble`,
   concatenated immediately before adapter dispatch. The 120,000-character input
   limit keeps measuring only what the user sent; optional skill discovery is
@@ -574,15 +578,19 @@ meaning is the same.
 - **Budget** (`context/handoffBudget.ts`, V2's `ContextHandoffBudget`
   formula): `min(cap, window − native usage − current input − max(16k, window/4))`,
   using the selected instance/model's adapter metadata and custom-model
-  limits, with a 128k fallback when capacity is unknown. Historical source
-  telemetry is never used as the destination's capacity. Tokens are estimated as
+  limits, with a 128k fallback when capacity is unknown. Codex reports are
+  associated with their turn's model on that adapter instance; resolved
+  capacities are retained for that exact model selection across restarts.
+  A source's usage for a different destination model is never reused. Tokens are estimated as
   `ceil(bytes / 3)` (V2 uses one byte per token). The cap is the Settings preset
   `scientFork.contextHandoffSize` (Compact 16k, Standard 64k, Large 128k,
   Maximum = window-bounded); `T3CODE_CONTEXT_HANDOFF_TOKEN_CAP` overrides.
   The header and reattached content must fit too. ProviderService checks the
   composed preamble, user input, skills and attachments again immediately
   before dispatch, dropping optional discovery before a typed rejection.
-  These are explicit estimates and allowances, not a tokenizer guarantee.
+  Lookup policy lives in the Scient fork module. The final provider-service
+  seam receives only an internal numeric allowance, outside the shared wire
+  contract. These are explicit estimates and allowances, not a tokenizer guarantee.
 - **Selection** (`context/handoffHistory.ts`, V2's `selectHistory`): whole
   items in V2's priority order (latest user, latest assistant, first user, then
   newest to oldest). Scient extensions: reasoning and tool work are items; the
@@ -601,6 +609,9 @@ buffered assistant/reasoning text, proposed plans and materialized generated
 images through ingestion's ordered queue (`liveTurnFlush.ts`). A missing
 worker, persistence failure or five-second timeout fails the request explicitly;
 it never reports successful latest-state capture. Streaming segments stay open.
+Materialized images are captured in Scient-owned fork snapshot data and added
+only to the fork's hydrated history; capture creates no new origin-chat message
+and normal origin completion keeps its existing image placement.
 Then the decider copies every completed turn plus the
 live tail (`forkLiveTail.ts`): streaming text is copied as it stood and
 labelled partial, unfinished tool calls are copied and labelled in flight,

@@ -42,6 +42,7 @@ import {
   type OrchestrationProjectorDecodeError,
 } from "../Errors.ts";
 import { decideOrchestrationCommand } from "../decider.ts";
+import { withForkLiveImages } from "../scient-fork/liveImages.ts";
 import { withForkOriginDetail } from "../scient-fork/forkDecisionReadModel.ts";
 import { forkNotReadyDetail, getForkStatus } from "../scient-fork/forkRepository.ts";
 import { FORK_HYDRATION_ACTIVITY_KINDS } from "../scient-fork/forkActivityCopy.ts";
@@ -236,7 +237,19 @@ const makeOrchestrationEngine = Effect.gen(function* () {
               detail: `Origin thread '${envelope.command.originThreadId}' is not available for authoritative fork resolution.`,
             });
           }
-          const origin = originOption.value;
+          const origin = yield* withForkLiveImages(
+            sql,
+            originOption.value,
+            envelope.command.sourceRunningTurnId,
+          ).pipe(
+            Effect.mapError(
+              () =>
+                new OrchestrationCommandInvariantError({
+                  commandType: "thread.fork",
+                  detail: "The captured fork images could not be read.",
+                }),
+            ),
+          );
           decisionReadModel = withForkOriginDetail(commandReadModel, origin);
           resolvedForkBoundaries = yield* forkBoundaryResolver
             .resolve({

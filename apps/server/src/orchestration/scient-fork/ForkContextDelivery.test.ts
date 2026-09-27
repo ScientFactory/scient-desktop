@@ -13,6 +13,7 @@ import {
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
@@ -146,6 +147,7 @@ it.layer(layer)("ScientForkContextDelivery", (it) => {
         includedItemCount: context.includedItemCount,
         omittedItemCount: context.omittedItemCount,
         budgetTokens: context.budgetTokens,
+        contextPreamble: context.contextPreamble,
       });
       return context;
     });
@@ -571,6 +573,48 @@ it.layer(layer)("ScientForkContextDelivery", (it) => {
         const result = yield* plan();
         assert.isNull(result);
       }),
+  );
+
+  it.effect("bounds retained audit text while preserving older delivery receipts", () =>
+    Effect.gen(function* () {
+      const sql = yield* reset;
+      const delivery = yield* ScientForkContextDelivery;
+      for (let index = 0; index < 6; index += 1) {
+        const handoffId = `audit-${index}`;
+        yield* delivery.beginDelivery({
+          threadId: FORK,
+          handoffId,
+          messageId: current.id,
+          nativeThreadKey: null,
+          includedItemCount: 1,
+          omittedItemCount: 0,
+          budgetTokens: 1000,
+          contextPreamble: `history-${index}`,
+        });
+        yield* settle(handoffId, { type: "maybeDelivered" });
+      }
+      const rows = yield* sql<{
+        readonly context_preamble: string | null;
+      }>`SELECT context_preamble FROM scient_context_handoffs ORDER BY rowid`;
+      assert.lengthOf(rows, 6);
+      assert.deepEqual(
+        rows.map((row) => row.context_preamble),
+        [null, null, "history-2", "history-3", "history-4", "history-5"],
+      );
+    }),
+  );
+
+  it.effect("bounds a wait for a handoff whose owner has not settled", () =>
+    Effect.gen(function* () {
+      yield* reset;
+      yield* deliver(yield* prepare({ nativeThreadKey: "codex:thread-a" }));
+      const waiting = yield* prepare({ nativeThreadKey: "codex:thread-a" }).pipe(
+        Effect.result,
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust("65 seconds");
+      assert.strictEqual((yield* Fiber.join(waiting))._tag, "Failure");
+    }),
   );
 
   it.effect("rejects a header that cannot fit the destination model", () =>

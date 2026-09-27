@@ -31,6 +31,7 @@ import {
   ThreadId,
   TurnId,
   type ChatAttachment,
+  type ModelSelection,
   type OrchestrationMessage,
   type OrchestrationThread,
 } from "@t3tools/contracts";
@@ -46,6 +47,8 @@ import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
+import { ProviderAdapterRegistry } from "../../provider/Services/ProviderAdapterRegistry.ts";
+import { resolveForkModelWindow } from "./context/modelContextWindow.ts";
 import { nativeThreadKey } from "./context/nativeThreadKey.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import {
@@ -103,6 +106,7 @@ export interface ScientForkContextDeliveryShape {
     /** A turn of this thread is starting or running in the current session. */
     readonly sessionRunning: boolean;
     readonly modelContextWindow?: number | undefined;
+    readonly modelSelection?: ModelSelection | undefined;
   }) => Effect.Effect<ForkTurnContext, ScientForkContextError>;
   /** Records the delivery as pending immediately before dispatch. */
   readonly beginDelivery: (input: {
@@ -201,6 +205,7 @@ function usageFromPayload(payload: unknown): ModelContextUsage | undefined {
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const settings = yield* ServerSettingsService;
+  const registry = yield* Effect.serviceOption(ProviderAdapterRegistry);
   const crypto = yield* Crypto.Crypto;
   const tokenCapOverride = yield* handoffTokenCapOverride.pipe(
     Effect.orElseSucceed(() => undefined),
@@ -346,7 +351,15 @@ const make = Effect.gen(function* () {
     for (const handoff of yield* readActiveHandoffs(input.threadId)) {
       const pending = inFlight.get(handoff.handoff_id);
       if (pending !== undefined) {
-        yield* Deferred.await(pending);
+        yield* Deferred.await(pending).pipe(
+          Effect.timeout("65 seconds"),
+          Effect.mapError(
+            fail(
+              input.threadId,
+              "The preceding history send has not settled. Retry after its provider session has stopped.",
+            ),
+          ),
+        );
         const binding = (yield* sql<{
           readonly provider_name: string;
           readonly provider_instance_id: string | null;
@@ -463,8 +476,18 @@ const make = Effect.gen(function* () {
     const ownUsage = yield* latestUsage(input.thread.id);
     // Usage windows belong to a model and session; a source thread's window
     // cannot size a destination, especially after a model switch.
-    const usage =
-      input.modelContextWindow === undefined ? undefined : { maxTokens: input.modelContextWindow };
+    const modelWindow =
+      input.modelContextWindow ??
+      (yield* resolveForkModelWindow({
+        threadId: input.thread.id,
+        modelSelection: input.modelSelection ?? input.thread.modelSelection,
+        settings: serverSettings,
+        registry: Option.getOrUndefined(registry),
+        sql,
+      }).pipe(
+        Effect.mapError(fail(input.thread.id, "Unable to resolve the destination model capacity.")),
+      ));
+    const usage = modelWindow === undefined ? undefined : { maxTokens: modelWindow };
     const holdsTurns =
       !existing.requireFreshSession &&
       (yield* currentThreadHoldsTurns(input.thread.id, input.nativeThreadKey));
@@ -585,6 +608,12 @@ const make = Effect.gen(function* () {
         ${createdAt}
       )
       `;
+          // Keep the current preamble and three preceding artifacts. Older
+          // receipts retain their status/counts without repeated megabyte text.
+          yield* sql`UPDATE scient_context_handoffs SET context_preamble = NULL, attachment_ids_json = NULL
+            WHERE thread_id = ${input.threadId} AND delivery_status = 'superseded'
+              AND handoff_id NOT IN (SELECT handoff_id FROM scient_context_handoffs
+                WHERE thread_id = ${input.threadId} ORDER BY rowid DESC LIMIT 4)`;
         }),
       )
       .pipe(Effect.mapError(fail(input.threadId, "Unable to record the context delivery.")));

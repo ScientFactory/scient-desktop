@@ -13,6 +13,14 @@ export default Effect.gen(function* () {
     provider_instance_id TEXT NOT NULL, native_thread_key TEXT NOT NULL,
     PRIMARY KEY (thread_id, turn_id)
   )`;
+  yield* sql`CREATE TABLE IF NOT EXISTS scient_model_context_windows (
+    provider_instance_id TEXT NOT NULL, model_selection_json TEXT NOT NULL, max_tokens INTEGER NOT NULL,
+    PRIMARY KEY (provider_instance_id, model_selection_json)
+  )`;
+  yield* sql`CREATE TABLE IF NOT EXISTS scient_fork_live_images (
+    thread_id TEXT NOT NULL, turn_id TEXT NOT NULL, attachments_json TEXT NOT NULL, captured_at TEXT NOT NULL,
+    PRIMARY KEY (thread_id, turn_id)
+  )`;
   const lineage = new Set(
     (yield* sql<{ readonly name: string }>`PRAGMA table_info(scient_thread_lineage)`).map(
       (row) => row.name,

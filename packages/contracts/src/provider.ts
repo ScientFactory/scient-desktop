@@ -91,8 +91,6 @@ export const ProviderSendTurnInput = Schema.Struct({
   contextPreamble: Schema.optional(
     TrimmedNonEmptyString.check(Schema.isMaxLength(PROVIDER_CONTEXT_PREAMBLE_MAX_CHARS)),
   ),
-  /** Server-computed total input allowance after native context and reserve. */
-  contextRequestTokenBudget: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   attachments: Schema.optional(
     Schema.Array(ChatAttachment).check(
       Schema.makeFilter((attachments) => getProviderAttachmentLimitError(attachments) ?? true),

@@ -1,3 +1,4 @@
+import { writeForkLiveImages } from "../scient-fork/liveImages.ts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { finalizeQueueTurn } from "../../scient/threadQueue/Ledger.ts";
 import {
@@ -3431,6 +3432,7 @@ const make = Effect.gen(function* () {
           createdAt,
         });
       }
+      yield* queueSql`DELETE FROM scient_fork_live_images WHERE thread_id = ${threadId}`;
       for (const key of Array.from(yield* Cache.keys(pendingGeneratedImagesByTurnKey)).filter(
         (id) => id.startsWith(prefix),
       )) {
@@ -3439,18 +3441,12 @@ const make = Effect.gen(function* () {
         );
         if (!pending || pending.attachments.length === 0) continue;
         const turnId = TurnId.make(key.slice(prefix.length));
-        const messageId = MessageId.make(`assistant:fork-images:${turnId}`);
-        const current = yield* getThreadMessageById(threadId, messageId);
-        yield* orchestrationEngine.dispatch({
-          type: "thread.message.assistant.complete",
-          commandId: CommandId.make(`server:scient-fork-images:${yield* crypto.randomUUIDv4}`),
+        yield* writeForkLiveImages(queueSql, {
           threadId,
-          messageId,
           turnId,
-          attachments: mergeGeneratedImageAttachments(current?.attachments, pending.attachments),
+          attachments: pending.attachments,
           createdAt,
         });
-        yield* Cache.set(pendingGeneratedImagesByTurnKey, key, { ...pending, attachments: [] });
       }
     });
   // SCIENT-FORK:END

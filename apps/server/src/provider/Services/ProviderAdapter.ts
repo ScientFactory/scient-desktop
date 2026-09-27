@@ -115,15 +115,13 @@ export interface ProviderAdapterShape<TError> {
     input: ProviderSessionStartInput,
   ) => Effect.Effect<ProviderSession, TError>;
 
-  /**
-   * Send a turn to an active provider session.
-   */
   /** Known capacity of the selected model on this exact provider instance. */
   readonly getModelContextWindow?: (input: {
     readonly threadId: ThreadId;
     readonly modelSelection: ModelSelection;
   }) => Effect.Effect<number | undefined>;
 
+  /** Send a turn to an active provider session. */
   readonly sendTurn: (
     input: ProviderAdapterSendTurnInput,
   ) => Effect.Effect<ProviderTurnStartResult, TError>;

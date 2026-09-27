@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import { withForkLiveImages } from "../scient-fork/liveImages.ts";
 import * as NodeFS from "node:fs";
 import { MODEL_TOKEN_LIMIT_MESSAGE } from "@t3tools/shared/model";
 import * as NodeOS from "node:os";
@@ -496,6 +497,17 @@ describe("ProviderRuntimeIngestion", () => {
           Effect.flatMap(ScientLiveTurnFlush, (liveTurnFlush) => liveTurnFlush.flush(threadId)),
         ),
       readModel: () => testRuntime.runPromise(snapshotQuery.getSnapshot()),
+      readForkImageSnapshot: (threadId: ThreadId, turnId: TurnId) =>
+        testRuntime.runPromise(
+          Effect.gen(function* () {
+            const sql = yield* SqlClient.SqlClient;
+            const origin = (yield* snapshotQuery.getSnapshot()).threads.find(
+              (thread) => thread.id === threadId,
+            );
+            if (!origin) return yield* Effect.die("missing test thread");
+            return yield* withForkLiveImages(sql, origin, turnId);
+          }),
+        ),
       readTurn: (turnId: TurnId) =>
         testRuntime.runPromise(
           Effect.flatMap(ProjectionTurnRepository, (turns) =>
@@ -4385,9 +4397,7 @@ describe("ProviderRuntimeIngestion", () => {
       });
       const now = "2026-08-15T00:00:00.000Z";
       const turnId = asTurnId("turn-generated-image");
-      const expectedMessageId = forkFlush
-        ? `assistant:fork-images:${turnId}`
-        : "assistant:terminal-image-message";
+      const expectedMessageId = "assistant:terminal-image-message";
 
       harness.emit({
         type: "turn.started",
@@ -4426,9 +4436,17 @@ describe("ProviderRuntimeIngestion", () => {
           (entry) => entry.id === "thread-1",
         );
         expect(captured?.session?.status).toBe("running");
+        const forkSnapshot = await harness.readForkImageSnapshot(asThreadId("thread-1"), turnId);
         expect(
-          captured?.messages.find((entry) => entry.id === expectedMessageId)?.attachments,
+          forkSnapshot.messages.find((entry) => entry.id === `assistant:fork-images:${turnId}`)
+            ?.attachments,
         ).toHaveLength(1);
+        expect(
+          captured?.messages.some(
+            (entry) =>
+              entry.id === expectedMessageId || entry.id === `assistant:fork-images:${turnId}`,
+          ),
+        ).toBe(false);
       }
       harness.emit({
         type: "item.completed",
