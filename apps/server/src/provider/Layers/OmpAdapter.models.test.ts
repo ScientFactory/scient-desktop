@@ -30,6 +30,7 @@ interface FakeModel {
   readonly provider: string;
   readonly id: string;
   readonly reasoning?: boolean;
+  readonly contextWindow?: number;
   readonly input?: ReadonlyArray<string>;
   readonly thinking?: {
     readonly mode?: string;
@@ -137,7 +138,7 @@ const makeFakeOmp = (input: {
               models: state.models,
             });
           case "get_available_commands":
-            return respond(frame, { commands: [] });
+            return respond(frame, { commands: [{ name: "help", source: "builtin" }] });
           case "set_model": {
             const provider = frame.provider ?? "";
             const modelId = frame.modelId ?? "";
@@ -595,6 +596,126 @@ describe("Oh My Pi selection restore", () => {
       }),
     );
   });
+});
+
+describe("Oh My Pi fork context", () => {
+  it.effect("reports the selected model's window only for its own instance", () => {
+    const fake = makeFakeOmp({
+      models: [{ provider: "vendor", id: "a/b", contextWindow: 1_000_000 }],
+      initial: { provider: "vendor", id: "a/b" },
+    });
+    return withAdapter("context-window", fake, ({ adapter, threadId }) =>
+      Effect.gen(function* () {
+        expect(
+          yield* adapter.getModelContextWindow({
+            threadId,
+            modelSelection: selection("vendor/a%2Fb"),
+          }),
+        ).toBe(1_000_000);
+        expect(
+          yield* adapter.getModelContextWindow({
+            threadId,
+            modelSelection: selection("vendor/missing"),
+          }),
+        ).toBeUndefined();
+        expect(
+          yield* adapter.getModelContextWindow({
+            threadId,
+            modelSelection: createModelSelection(ProviderInstanceId.make("other"), "vendor/a%2Fb"),
+          }),
+        ).toBeUndefined();
+        yield* adapter.stopAll();
+        expect(
+          yield* adapter.getModelContextWindow({
+            threadId,
+            modelSelection: selection("vendor/a%2Fb"),
+          }),
+        ).toBeUndefined();
+      }),
+    );
+  });
+
+  it.effect("refuses a fork slash command before changing a model or sending a prompt", () => {
+    const fake = makeFakeOmp({
+      models: [{ provider: "vendor", id: "a" }],
+      initial: { provider: "vendor", id: "a" },
+    });
+    return withAdapter("fork-command", fake, ({ adapter, threadId }) =>
+      Effect.gen(function* () {
+        const failure = yield* adapter
+          .sendTurn({
+            threadId,
+            originalInput: "/help",
+            input: "history\n\n/help",
+            hasContextPreamble: true,
+          })
+          .pipe(Effect.flip);
+        expect(failure.message).toContain("Start this fork with a normal message");
+        expect(fake.state.log).toEqual([]);
+        expect(fake.state.prompts).toHaveLength(0);
+        yield* adapter.sendTurn({
+          threadId,
+          originalInput: "/help",
+          input: "augmented instructions\n/help",
+        });
+        expect(fake.state.prompts[0]?.frame.message).toBe("/help");
+      }),
+    );
+  });
+
+  it.effect(
+    "preserves a large Unicode fork prompt in a private scoped file alongside images",
+    () => {
+      const fake = makeFakeOmp({
+        models: [reasoning("vendor", "vision", ["low"], "low")],
+        initial: { provider: "vendor", id: "vision" },
+        maxFrameBytes: 8192,
+      });
+      return withAdapter("fork-file", fake, ({ root, adapter, threadId }) =>
+        Effect.gen(function* () {
+          const prompt =
+            "SCIENT_FORK_CONTEXT_JSON\n" + "שלום ".repeat(2000) + "\nCURRENT REQUEST: continue";
+          const image = Buffer.alloc(9000, 1);
+          NodeFS.writeFileSync(NodePath.join(root, "attachments", "fork-image.png"), image);
+          yield* adapter.sendTurn({
+            threadId,
+            input: prompt,
+            originalInput: "continue",
+            hasContextPreamble: true,
+            attachments: [
+              {
+                type: "image",
+                id: "fork-image",
+                name: "fork-image.png",
+                mimeType: "image/png",
+                sizeBytes: image.length,
+              },
+            ],
+          });
+          const sent = fake.state.prompts[0]!;
+          expect(sent.bytes).toBeLessThanOrEqual(8192);
+          expect(sent.frame.images ?? []).toHaveLength(0);
+          const paths = sent.frame
+            .message!.split("\n")
+            .filter((line) => line.startsWith('"'))
+            .map((line) => JSON.parse(line) as string);
+          const contextPath = paths.find((path) => path.endsWith(".txt"))!;
+          expect(
+            NodePath.relative(NodeFS.realpathSync(NodePath.join(root, "state")), contextPath),
+          ).not.toMatch(/^\.\./u);
+          expect(NodeFS.readFileSync(contextPath, "utf8")).toBe(prompt);
+          if (process.platform !== "win32")
+            expect(NodeFS.statSync(contextPath).mode & 0o777).toBe(0o600);
+          expect(paths).toContain(
+            NodeFS.realpathSync(NodePath.join(root, "attachments", "fork-image.png")),
+          );
+          expect(sent.frame.message).toContain("Read the entire file");
+          yield* adapter.stopAll();
+          expect(NodeFS.existsSync(contextPath)).toBe(false);
+        }),
+      );
+    },
+  );
 });
 
 describe("Oh My Pi image attachments", () => {

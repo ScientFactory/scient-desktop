@@ -68,6 +68,7 @@ export type OmpRpcModelThinking = typeof OmpRpcModelThinking.Type;
 export const OmpRpcModel = Schema.Struct({
   provider: Schema.String,
   id: Schema.String,
+  contextWindow: Schema.optional(Schema.Number),
   name: Schema.optional(Schema.String),
   reasoning: Schema.optional(Schema.Boolean),
   // Input kinds stay open ("text", "image", and any later kind such as audio).

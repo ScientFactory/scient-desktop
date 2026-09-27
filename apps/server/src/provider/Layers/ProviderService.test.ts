@@ -5095,6 +5095,7 @@ validation.layer("ProviderServiceLive validation", (it) => {
       assert.isTrue(sent?.input?.startsWith(`${contextPreamble}\n\n${input}`));
       assert.equal(sent?.originalInput, input);
       assert.notProperty(sent ?? {}, "contextPreamble");
+      assert.isTrue(sent?.hasContextPreamble);
     }),
   );
 

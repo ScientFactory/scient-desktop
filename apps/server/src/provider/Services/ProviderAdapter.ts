@@ -56,6 +56,9 @@ export type ProviderAdapterSendTurnInput = ProviderSendTurnInput & {
   /** Server-owned user text before model-directed attachment/skill augmentation.
    * Native commands may need their exact arguments; never decoded from client input. */
   readonly originalInput?: string;
+  /** Retained conversation context is already included in input. Adapters must
+   * preserve it when transporting text or dispatching native commands. */
+  readonly hasContextPreamble?: boolean;
 };
 
 /**
