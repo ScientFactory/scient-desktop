@@ -19,8 +19,9 @@
  *   environment variable. `T3CODE_CONTEXT_HANDOFF_TOKEN_CAP` still overrides.
  *   V2 also clamps every handoff to 64,000 bytes (`HANDOFF_BYTE_CAP`); Scient
  *   does not, so the larger presets can take effect.
- * - V2 also bounds the window by the selected model's known window. Scient
- *   has no per-model window table and uses the provider-reported maximum.
+ * - Capacity is resolved on the selected provider instance/model by adapter
+ *   metadata and configured custom-model limits. Unknown windows use 128k;
+ *   source-session telemetry never supplies a destination model's window.
  */
 import type { ChatAttachment, ForkContextHandoffSize } from "@t3tools/contracts";
 import { FORK_CONTEXT_HANDOFF_TOKEN_CAPS } from "@t3tools/contracts";

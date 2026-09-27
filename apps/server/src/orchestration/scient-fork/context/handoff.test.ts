@@ -306,6 +306,9 @@ describe("nativeThreadKey", () => {
     );
     expect(nativeThreadKey("pi", { sessionFile: "/tmp/s.jsonl" })).toBe("pi:/tmp/s.jsonl");
     expect(nativeThreadKey("codex", null)).toBeNull();
+    expect(nativeThreadKey("codex", { threadId: "same-id" }, "instance-a")).not.toBe(
+      nativeThreadKey("codex", { threadId: "same-id" }, "instance-b"),
+    );
   });
 });
 

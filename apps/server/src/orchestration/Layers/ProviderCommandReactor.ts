@@ -661,10 +661,15 @@ const make = Effect.gen(function* () {
       (candidate) => candidate.threadId === input.thread.id,
     );
     const key =
-      session === undefined ? null : nativeThreadKey(session.provider, session.resumeCursor);
+      session === undefined
+        ? null
+        : nativeThreadKey(session.provider, session.resumeCursor, session.providerInstanceId);
     // The new provider thread must differ from the source's: otherwise the
     // adapter resumed instead of forking and the portable handoff is needed.
-    if (key === null || key === nativeThreadKey(session!.provider, plan.resumeCursor)) {
+    if (
+      key === null ||
+      key === nativeThreadKey(session!.provider, plan.resumeCursor, session!.providerInstanceId)
+    ) {
       // Never continue the fork inside the source's own provider thread.
       const reason = "the provider did not return a new thread for the fork";
       yield* discardForkSession(input.thread.id);
@@ -708,29 +713,45 @@ const make = Effect.gen(function* () {
         ...(cause === undefined ? {} : { cause }),
       });
     const detail = yield* projectionSnapshotQuery
-      .getThreadDetailById(input.thread.id)
+      .getThreadDetailById(input.thread.id, { fullHistory: true })
       .pipe(Effect.map(Option.getOrUndefined));
     if (!detail) return yield* toTurnStartError("The forked conversation is unavailable.");
     const liveSession = (yield* providerService.listSessions()).find(
       (session) => session.threadId === input.thread.id,
     );
+    const modelContextWindow = yield* (
+      providerService.getModelContextWindow?.({
+        threadId: input.thread.id,
+        modelSelection: input.modelSelection ?? detail.modelSelection,
+      }) ?? Effect.succeed(undefined)
+    );
     const context = yield* scientForkContextDelivery
       .prepareTurn({
         thread: detail,
+        modelContextWindow,
         message: input.message,
         userText: input.providerMessageText,
         attachments: input.message.attachments ?? [],
         nativeThreadKey:
           liveSession === undefined
             ? null
-            : nativeThreadKey(liveSession.provider, liveSession.resumeCursor),
+            : nativeThreadKey(
+                liveSession.provider,
+                liveSession.resumeCursor,
+                liveSession.providerInstanceId,
+              ),
         // An accepted turn is "starting" until the provider reports it.
         sessionRunning:
           input.thread.session?.status === "running" || input.thread.session?.status === "starting",
       })
       .pipe(Effect.mapError((error) => toTurnStartError(error.detail, error)));
     if (context.kind !== "deliver") return context;
-    if (context.requireFreshSession && providerService.discardSessionContinuity !== undefined) {
+    if (context.requireFreshSession) {
+      if (providerService.discardSessionContinuity === undefined) {
+        return yield* toTurnStartError(
+          "The provider cannot reset uncertain conversation context. No message was sent.",
+        );
+      }
       // The previous delivery may have reached this provider-native thread:
       // deliver on a new one so the provider never holds the context twice.
       yield* providerService.discardSessionContinuity({ threadId: input.thread.id });
@@ -750,10 +771,16 @@ const make = Effect.gen(function* () {
         nativeThreadKey:
           targetSession === undefined
             ? null
-            : nativeThreadKey(targetSession.provider, targetSession.resumeCursor),
+            : nativeThreadKey(
+                targetSession.provider,
+                targetSession.resumeCursor,
+                targetSession.providerInstanceId,
+              ),
         includedItemCount: context.includedItemCount,
         omittedItemCount: context.omittedItemCount,
         budgetTokens: context.budgetTokens,
+        contextPreamble: context.contextPreamble,
+        attachmentIds: context.attachments.map((attachment) => attachment.id),
       })
       .pipe(Effect.mapError((error) => toTurnStartError(error.detail, error)));
     return context;
@@ -1797,6 +1824,7 @@ const make = Effect.gen(function* () {
         ? {
             ...sendTurnRequest.value,
             contextPreamble: forkContext.contextPreamble,
+            contextRequestTokenBudget: forkContext.requestTokenBudget,
             ...(forkContext.attachments.length > 0 ? { attachments: forkContext.attachments } : {}),
           }
         : sendTurnRequest.value;
@@ -1838,6 +1866,7 @@ const make = Effect.gen(function* () {
                       : nativeThreadKey(
                           session.provider,
                           turn.resumeCursor ?? session.resumeCursor,
+                          session.providerInstanceId,
                         ),
                 }).pipe(
                   Effect.andThen(

@@ -166,4 +166,26 @@ it.layer(layer)("ScientForkCheckpointBaseline", (it) => {
       }),
     ),
   );
+  it.effect("keeps the same frozen commit when the source advances before a retry", () =>
+    withRepository((cwd) =>
+      Effect.gen(function* () {
+        const baseline = yield* ScientForkCheckpointBaseline;
+        const process = yield* VcsProcess;
+        const from = CheckpointRef.make("HEAD");
+        const to = CheckpointRef.make("refs/t3/checkpoints/frozen/turn/0");
+        assert.isTrue(yield* baseline.copy({ cwd, fromCheckpointRef: from, toCheckpointRef: to }));
+        const frozen = yield* baseline.resolveCheckpoint(cwd, to);
+        NodeFS.writeFileSync(NodePath.join(cwd, "evidence.txt"), "later revision\n");
+        yield* process.run({
+          operation: "test.advance",
+          command: "git",
+          args: ["commit", "-am", "advance"],
+          cwd,
+        });
+        assert.notStrictEqual(yield* baseline.resolveCheckpoint(cwd, from), frozen);
+        assert.isTrue(yield* baseline.copy({ cwd, fromCheckpointRef: from, toCheckpointRef: to }));
+        assert.strictEqual(yield* baseline.resolveCheckpoint(cwd, to), frozen);
+      }),
+    ),
+  );
 });

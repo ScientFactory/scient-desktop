@@ -334,6 +334,14 @@ describe("ScientForkReactor", () => {
         expect(options.localAvailable).toBe(false);
         expect(options.newWorktree).toBe(true);
         expect(options.reason).toContain("original worktree");
+        yield* reactor.prepareFork!({
+          type: "thread.fork",
+          commandId: CommandId.make("restore-worktree"),
+          originThreadId: ORIGIN,
+          newThreadId: NEW,
+          sourceAssistantMessageId: SOURCE_ASSISTANT_MESSAGE_ID,
+          workspaceMode: "new-worktree",
+        });
         yield* dispatchFork("new-worktree", "restore-worktree");
         yield* reactor.awaitCompletion(NEW);
         yield* reactor.drain;
@@ -617,6 +625,33 @@ describe("ScientForkReactor", () => {
     }).pipe(Effect.provide(makeHarnessLayer([], []))),
   );
 
+  it.live("uses the snapshot frozen before dispatch even if the source is then replaced", () => {
+    const copies: Array<Parameters<ScientForkCheckpointBaselineShape["copy"]>[0]> = [];
+    const worktrees: Array<VcsCreateWorktreeInput> = [];
+    return Effect.gen(function* () {
+      const reactor = yield* ScientForkReactor;
+      const sql = yield* SqlClient.SqlClient;
+      yield* seedOrigin();
+      yield* reactor.prepareFork!({
+        type: "thread.fork",
+        commandId: CommandId.make("frozen-before-dispatch"),
+        originThreadId: ORIGIN,
+        newThreadId: NEW,
+        sourceAssistantMessageId: SOURCE_ASSISTANT_MESSAGE_ID,
+        workspaceMode: "new-worktree",
+      });
+      yield* dispatchFork("new-worktree", "frozen-before-dispatch");
+      yield* sql`UPDATE projection_turns SET turn_id = 'later-source' WHERE thread_id = ${ORIGIN} AND checkpoint_turn_count = ${FORK_AT_TURN}`;
+      yield* reactor.awaitCompletion(NEW);
+      expect(copies).toHaveLength(1);
+      expect(worktrees[0]?.refName).toBe(checkpointRefForThreadTurn(NEW, 0));
+      const row = (yield* sql<{
+        readonly source_checkpoint_oid: string;
+      }>`SELECT source_checkpoint_oid FROM scient_thread_lineage WHERE thread_id = ${NEW}`)[0];
+      expect(row?.source_checkpoint_oid).toBe("a".repeat(40));
+    }).pipe(Effect.provide(makeHarnessLayer(copies, worktrees)));
+  });
+
   it.live("keeps a local fork whose origin turn was replaced before setup", () =>
     Effect.gen(function* () {
       const reactor = yield* ScientForkReactor;
@@ -812,7 +847,7 @@ describe("ScientForkReactor", () => {
       expect(createWorktreeCalls).toHaveLength(1);
       expect(createWorktreeCalls[0]).toEqual({
         cwd: ORIGIN_WORKTREE,
-        refName: checkpointRefForThreadTurn(ORIGIN, FORK_AT_TURN),
+        refName: checkpointRefForThreadTurn(NEW, 0),
         newRefName: `scient/fork/${NEW}`,
         path: null,
       });

@@ -219,10 +219,28 @@ const make = Effect.gen(function* () {
       });
     }
 
+    const capture = (yield* sql<{
+      readonly checkpoint_oid: string;
+      readonly captured_at: string;
+      readonly source_turn_id: string | null;
+      readonly source_running_turn_id: string | null;
+    }>`
+      SELECT checkpoint_oid, captured_at, source_turn_id, source_running_turn_id FROM scient_fork_snapshot_captures
+      WHERE thread_id = ${payload.newThreadId} AND origin_thread_id = ${payload.originThreadId}`)[0];
+    if (
+      capture &&
+      (capture.source_turn_id !== payload.forkAtTurnId ||
+        capture.source_running_turn_id !== (payload.midTurnCut?.sourceTurnId ?? null))
+    ) {
+      return yield* new ScientForkTerminalProvisioningError({
+        detail: "The source changed during snapshot capture. Fork its current history again.",
+      });
+    }
     const origin = context.value;
     // The baseline is copied by checkpoint count. A revert and rerun of the
     // origin can reuse that count for different work: refuse rather than copy it.
     if (
+      capture === undefined &&
       payload.workspaceMode === "new-worktree" &&
       payload.midTurnCut === undefined &&
       payload.sourceCheckpointTurnCount !== null &&
@@ -233,7 +251,7 @@ const make = Effect.gen(function* () {
         originThreadId: payload.originThreadId,
         checkpointTurnCount: payload.sourceCheckpointTurnCount,
       });
-      if (currentTurnId !== null && currentTurnId !== payload.forkAtTurnId) {
+      if (currentTurnId !== payload.forkAtTurnId) {
         return yield* new ScientForkTerminalProvisioningError({
           detail:
             "The original conversation changed before this fork was set up: the forked turn was reverted or replaced. Fork it again from its current history.",
@@ -248,10 +266,6 @@ const make = Effect.gen(function* () {
           "The original workspace no longer exists. Restore it or choose New worktree when a saved checkpoint is available.",
       });
     }
-    yield* attachmentCopier.copyAll({
-      threadId: payload.newThreadId,
-      copies: payload.attachmentCopies,
-    });
     const originCwd = localAvailable ? originWorkspace : origin.workspaceRoot;
     provisioned.set(payload.newThreadId, { cwd: originCwd, worktreePath: null, branch: null });
     const toRef = checkpointRefForThreadTurn(payload.newThreadId, 0);
@@ -263,30 +277,51 @@ const make = Effect.gen(function* () {
     // A shared workspace has moved on since the forked turn: its first fork turn
     // captures a fresh baseline instead of diffing against historical files.
     const copiesBaseline = payload.workspaceMode === "new-worktree";
-    // A fork of a running turn snapshots the origin's workspace as it stands
-    // at the cut; other forks copy the forked turn's saved checkpoint.
+    // A running turn uses its separately captured workspace snapshot;
+    // completed turns copy the selected turn's saved checkpoint.
     const snapshotsLiveWorkspace = copiesBaseline && payload.midTurnCut !== undefined;
     const isGitRepository =
       !copiesBaseline || (fromRef === null && !snapshotsLiveWorkspace)
         ? false
         : yield* checkpointBaseline.isGitRepository(originCwd);
-    const baselined = !isGitRepository
-      ? false
-      : snapshotsLiveWorkspace
-        ? localAvailable &&
-          // A retry keeps the snapshot taken at the cut (its worktree may
-          // already exist); only the first attempt captures the workspace.
-          ((yield* checkpointBaseline
-            .hasCheckpoint(originCwd, toRef)
-            .pipe(Effect.orElseSucceed(() => false))) ||
-            (yield* checkpointBaseline.capture({ cwd: originWorkspace, toCheckpointRef: toRef })))
-        : fromRef !== null
-          ? yield* checkpointBaseline.copy({
-              cwd: originCwd,
-              fromCheckpointRef: fromRef,
-              toCheckpointRef: toRef,
-            })
-          : false;
+    const baselined =
+      capture !== undefined
+        ? true
+        : !isGitRepository
+          ? false
+          : snapshotsLiveWorkspace
+            ? localAvailable &&
+              // A retry keeps the first snapshot (its worktree may
+              // already exist); only the first attempt captures the workspace.
+              ((yield* checkpointBaseline
+                .hasCheckpoint(originCwd, toRef)
+                .pipe(Effect.orElseSucceed(() => false))) ||
+                (yield* checkpointBaseline.capture({
+                  cwd: originWorkspace,
+                  toCheckpointRef: toRef,
+                })))
+            : fromRef !== null
+              ? yield* checkpointBaseline.copy({
+                  cwd: originCwd,
+                  fromCheckpointRef: fromRef,
+                  toCheckpointRef: toRef,
+                })
+              : false;
+    if (baselined) {
+      const oid = yield* checkpointBaseline.resolveCheckpoint(originCwd, toRef);
+      if (oid === null || (capture !== undefined && capture.checkpoint_oid !== oid)) {
+        return yield* new ScientForkTerminalProvisioningError({
+          detail: "The frozen fork checkpoint is unavailable or changed. Fork again.",
+        });
+      }
+      yield* sql`UPDATE scient_thread_lineage SET source_checkpoint_oid = ${oid},
+        snapshot_captured_at = COALESCE(snapshot_captured_at, ${capture?.captured_at ?? (yield* nowIso)})
+        WHERE thread_id = ${payload.newThreadId}`;
+    }
+    yield* attachmentCopier.copyAll({
+      threadId: payload.newThreadId,
+      copies: payload.attachmentCopies,
+    });
     const checkpointStatus: ScientForkCheckpointStatus = baselined ? "ready" : "unavailable";
 
     if (yield* isForkThreadDeleted(sql, payload.newThreadId)) {
@@ -296,7 +331,7 @@ const make = Effect.gen(function* () {
     }
     let workspaceStatus: ScientForkWorkspaceStatus;
     if (payload.workspaceMode === "new-worktree") {
-      const worktreeBase = snapshotsLiveWorkspace ? toRef : fromRef;
+      const worktreeBase = toRef;
       if (!baselined || worktreeBase === null) {
         return yield* new ScientForkTerminalProvisioningError({
           detail: snapshotsLiveWorkspace
@@ -790,16 +825,135 @@ const make = Effect.gen(function* () {
   );
 
   const liveTurnFlush = yield* Effect.serviceOption(ScientLiveTurnFlush);
-  const prepareFork: NonNullable<ScientForkReactorShape["prepareFork"]> = (command) =>
-    command.sourceRunningTurnId === undefined || Option.isNone(liveTurnFlush)
-      ? Effect.void
-      : liveTurnFlush.value.flush(command.originThreadId);
+  const prepareFork: NonNullable<ScientForkReactorShape["prepareFork"]> = Effect.fn(
+    "prepareScientFork",
+  )(
+    function* (command) {
+      if (command.sourceRunningTurnId !== undefined) {
+        if (Option.isNone(liveTurnFlush))
+          return yield* new ScientForkCompletionError({
+            threadId: command.newThreadId,
+            detail: "Running-turn capture is unavailable. Retry after reconnecting.",
+          });
+        yield* liveTurnFlush.value.flush(command.originThreadId);
+      }
+      if (command.workspaceMode !== "new-worktree") return;
+      // An existing destination belongs to the decider's idempotency/conflict
+      // path. Never prepare or clean up refs owned by a pre-existing thread.
+      if (
+        Option.isSome(
+          yield* projectionSnapshotQuery.getThreadDetailById(command.newThreadId, {
+            activityKinds: [],
+          }),
+        )
+      )
+        return;
+      const previous =
+        yield* sql`SELECT thread_id FROM scient_fork_snapshot_captures WHERE thread_id = ${command.newThreadId}`;
+      if (previous.length > 0) return;
+      const origin = Option.getOrUndefined(
+        yield* projectionSnapshotQuery.getThreadDetailById(command.originThreadId, {
+          activityKinds: [],
+        }),
+      );
+      const workspace = Option.getOrUndefined(
+        yield* projectionSnapshotQuery.getThreadCheckpointContext(command.originThreadId),
+      );
+      if (!origin || !workspace)
+        return yield* new ScientForkCompletionError({
+          threadId: command.newThreadId,
+          detail: "The origin workspace is unavailable.",
+        });
+      const resolved = yield* boundaryResolver.resolve({
+        originThreadId: command.originThreadId,
+        threadCreatedAt: origin.createdAt,
+        ...(command.sourceAssistantMessageId === undefined
+          ? {}
+          : { sourceAssistantMessageId: command.sourceAssistantMessageId }),
+        ...(command.sourceUserMessageId === undefined
+          ? {}
+          : { sourceUserMessageId: command.sourceUserMessageId }),
+        ...(command.sourceRunningTurnId === undefined
+          ? {}
+          : { sourceRunningTurnId: command.sourceRunningTurnId }),
+      });
+      const originCwd = workspace.worktreePath ?? workspace.workspaceRoot;
+      const originAvailable = yield* checkpointBaseline.workspaceExists(originCwd);
+      if (command.sourceRunningTurnId !== undefined && !originAvailable)
+        return yield* new ScientForkCompletionError({
+          threadId: command.newThreadId,
+          detail: "The running conversation workspace is no longer available.",
+        });
+      const cwd = originAvailable ? originCwd : workspace.workspaceRoot;
+      const toRef = checkpointRefForThreadTurn(command.newThreadId, 0);
+      const count =
+        origin.checkpoints.find(
+          (checkpoint) =>
+            checkpoint.turnId === resolved.selectedBoundary.turnId && checkpoint.status === "ready",
+        )?.checkpointTurnCount ?? null;
+      const copied =
+        command.sourceRunningTurnId !== undefined
+          ? (yield* checkpointBaseline.hasCheckpoint(cwd, toRef)) ||
+            (yield* checkpointBaseline.capture({ cwd, toCheckpointRef: toRef }))
+          : count !== null &&
+            (yield* checkpointBaseline.copy({
+              cwd,
+              fromCheckpointRef: checkpointRefForThreadTurn(command.originThreadId, count),
+              toCheckpointRef: toRef,
+            }));
+      const oid = copied ? yield* checkpointBaseline.resolveCheckpoint(cwd, toRef) : null;
+      if (oid === null)
+        return yield* new ScientForkCompletionError({
+          threadId: command.newThreadId,
+          detail: "The selected workspace checkpoint could not be frozen. Nothing was forked.",
+        });
+      yield* sql`INSERT INTO scient_fork_snapshot_captures
+        (thread_id, origin_thread_id, source_turn_id, source_running_turn_id, checkpoint_oid, captured_at, cwd)
+        VALUES (${command.newThreadId}, ${command.originThreadId}, ${resolved.selectedBoundary.turnId},
+          ${command.sourceRunningTurnId ?? null}, ${oid}, ${yield* nowIso}, ${cwd})`;
+    },
+    (effect, command) =>
+      effect.pipe(
+        Effect.mapError(
+          (error) =>
+            new ScientForkCompletionError({
+              threadId: command.newThreadId,
+              detail: isScientForkCompletionError(error)
+                ? error.detail
+                : `Fork capture failed: ${error.message}`,
+            }),
+        ),
+      ),
+  );
+
+  const discardPreparation: NonNullable<ScientForkReactorShape["discardPreparation"]> = (
+    threadId,
+  ) =>
+    Effect.gen(function* () {
+      if ((yield* getForkStatus(sql, threadId)) !== null) return;
+      const capture = (yield* sql<{
+        readonly cwd: string;
+      }>`SELECT cwd FROM scient_fork_snapshot_captures WHERE thread_id = ${threadId}`)[0];
+      if (!capture) return;
+      yield* checkpointBaseline.discard({
+        cwd: capture.cwd,
+        checkpointRef: checkpointRefForThreadTurn(threadId, 0),
+        worktreePath: null,
+        branch: null,
+      });
+      yield* sql`DELETE FROM scient_fork_snapshot_captures WHERE thread_id = ${threadId}`;
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Could not discard rejected fork snapshot", { threadId, cause }),
+      ),
+    );
 
   return {
     start,
     drain: worker.drain,
     awaitCompletion,
     prepareFork,
+    discardPreparation,
     getDisposition,
     getOptions,
   } satisfies ScientForkReactorShape;

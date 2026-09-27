@@ -1136,6 +1136,8 @@ const buildAppUnderTest = (options?: {
         Layer.provide(GeneratedDocumentStore.layer),
         Layer.provide(
           Layer.mock(ScientForkReactor.ScientForkReactor)({
+            prepareFork: () => Effect.void,
+            discardPreparation: () => Effect.void,
             start: () => Effect.void,
             drain: Effect.void,
             awaitCompletion: () => Effect.void,
@@ -8448,6 +8450,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               }),
           },
           scientForkReactor: {
+            prepareFork: () =>
+              Effect.sync(() => {
+                effects.push("prepare");
+              }),
             awaitCompletion: (threadId) =>
               Effect.gen(function* () {
                 effects.push(`await:${threadId}`);
@@ -8485,6 +8491,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       assert.equal(response.sequence, 41);
       assert.deepEqual(effects, [
+        "prepare",
         "dispatch:thread.fork",
         `await:${forkThreadId}`,
         `ready:${forkThreadId}`,
@@ -8532,6 +8539,49 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assertTrue(result.failure._tag === "OrchestrationDispatchCommandError");
       assert.include(result.failure.message, "Fork workspace provisioning failed.");
       assert.equal(result.failure.forkDisposition, "failed");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("rejects a failed fork capture before dispatch", () =>
+    Effect.gen(function* () {
+      const forkThreadId = ThreadId.make("thread-fork-capture-failure");
+      let dispatched = false;
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            dispatch: () =>
+              Effect.sync(() => {
+                dispatched = true;
+                return { sequence: 42 };
+              }),
+          },
+          scientForkReactor: {
+            prepareFork: () =>
+              Effect.fail(
+                new ScientForkReactor.ScientForkCompletionError({
+                  threadId: forkThreadId,
+                  detail: "The running turn could not be persisted.",
+                }),
+              ),
+          },
+        },
+      });
+      const result = yield* Effect.scoped(
+        withWsRpcClient(yield* getWsServerUrl("/ws"), (client) =>
+          client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+            type: "thread.fork",
+            commandId: CommandId.make("cmd-thread-fork-capture-failure"),
+            originThreadId: ThreadId.make("thread-fork-capture-origin"),
+            newThreadId: forkThreadId,
+            sourceRunningTurnId: TurnId.make("running-capture"),
+            workspaceMode: "local",
+          }),
+        ).pipe(Effect.result),
+      );
+      assertTrue(result._tag === "Failure");
+      assertTrue(result.failure._tag === "OrchestrationDispatchCommandError");
+      assert.include(result.failure.message, "could not be persisted");
+      assert.isFalse(dispatched);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

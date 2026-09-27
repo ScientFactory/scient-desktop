@@ -26,7 +26,6 @@ import {
   buildThreadTimeline,
   readScientThreadForInvocation,
   renderActivityText,
-  THREAD_READ_ACTIVITY_PAYLOAD_MAX_CHARS,
 } from "./handlers.ts";
 import { ScientThreadReadToolError } from "./tools.ts";
 
@@ -301,12 +300,10 @@ describe("thread timeline", () => {
     );
   });
 
-  it("caps large activity payloads and reports the omitted length", () => {
-    const text = renderActivityText(
-      activity("activity-big", 1, { output: "x".repeat(THREAD_READ_ACTIVITY_PAYLOAD_MAX_CHARS) }),
-    );
+  it("keeps activity payloads available for complete text-window retrieval", () => {
+    const text = renderActivityText(activity("activity-big", 1, { output: "x".repeat(6000) }));
     expect(text.startsWith("tool.completed: Ran a command\n")).toBe(true);
-    expect(text).toContain("[payload truncated; 13 more characters]");
+    expect(text).toContain("x".repeat(6000));
     expect(renderActivityText(activity("activity-empty", 1, null))).toBe(
       "tool.completed: Ran a command",
     );
@@ -365,6 +362,16 @@ function makeSnapshots(
     Effect.succeed(Option.fromNullishOr(byId.get(threadId))),
   );
   const service = {
+    getThreadHistoryPage: (
+      input: Parameters<ProjectionSnapshotQueryShape["getThreadHistoryPage"]>[0],
+    ) => {
+      const result = buildThreadReadResult(byId.get(input.threadId)!, input);
+      return Effect.succeed({
+        items: result.items,
+        itemCount: result.thread.itemCount,
+        hasMore: result.hasMore,
+      });
+    },
     getThreadShellById,
     getThreadDetailById,
   } as Partial<ProjectionSnapshotQueryShape> as ProjectionSnapshotQueryShape;
@@ -462,4 +469,16 @@ describe("t3_thread_read authorization", () => {
       expect(snapshots.getThreadDetailById).toHaveBeenCalledWith(CALLER_ID, { activityKinds: [] });
     }),
   );
+});
+
+it("retrieves a stored tool payload past the old 4,000-character cap", () => {
+  const marker = "important-result-at-end";
+  const thread = makeThread({ activities: [activity("long-tool", 3, "x".repeat(6000) + marker)] });
+  const result = buildThreadReadResult(thread, {
+    threadId: CALLER_ID,
+    itemId: "long-tool",
+    textOffset: 5000,
+    maxCharsPerItem: 2000,
+  });
+  expect(result.items[0]?.text).toContain(marker);
 });

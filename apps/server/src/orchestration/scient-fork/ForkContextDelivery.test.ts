@@ -12,6 +12,7 @@ import {
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
@@ -141,7 +142,7 @@ it.layer(layer)("ScientForkContextDelivery", (it) => {
         threadId: FORK,
         handoffId: context.handoffId,
         messageId: current.id,
-        nativeThreadKey: null,
+        nativeThreadKey: "codex:thread-a",
         includedItemCount: context.includedItemCount,
         omittedItemCount: context.omittedItemCount,
         budgetTokens: context.budgetTokens,
@@ -257,17 +258,20 @@ it.layer(layer)("ScientForkContextDelivery", (it) => {
       const rows = yield* sql<{ readonly delivery_status: string }>`
         SELECT delivery_status FROM scient_context_handoffs WHERE handoff_id = ${first.handoffId}
       `;
-      assert.strictEqual(rows[0]?.delivery_status, "superseded");
+      assert.strictEqual(rows[0]?.delivery_status, "pending");
     }),
   );
 
-  it.effect("a message during the in-flight delivery follows it without new context", () =>
-    Effect.gen(function* () {
-      yield* reset;
-      yield* deliver(yield* prepare({ nativeThreadKey: "codex:thread-a" }));
-      const steer = yield* prepare({ nativeThreadKey: "codex:thread-a", sessionRunning: true });
-      assert.strictEqual(steer.kind, "none");
-    }),
+  it.effect(
+    "a queued message waits for delivery certainty and carries context after a not-sent failure",
+    () =>
+      Effect.gen(function* () {
+        yield* reset;
+        const first = yield* deliver(yield* prepare());
+        const waiting = yield* prepare().pipe(Effect.forkChild);
+        yield* settle(first.handoffId, { type: "notSent" });
+        assert.strictEqual((yield* Fiber.join(waiting)).kind, "deliver");
+      }),
   );
 
   it.effect("the same provider session keeps its delivered context", () =>
@@ -291,7 +295,7 @@ it.layer(layer)("ScientForkContextDelivery", (it) => {
       const next = yield* prepare({ nativeThreadKey: "codex:thread-b" });
       assert.strictEqual(next.kind, "deliver");
       if (next.kind !== "deliver") return;
-      assert.isFalse(next.requireFreshSession);
+      assert.isTrue(next.requireFreshSession);
     }),
   );
 
@@ -324,7 +328,7 @@ it.layer(layer)("ScientForkContextDelivery", (it) => {
     }),
   );
 
-  it.effect("a revert that kept the carrying turn adopts the rolled-back session", () =>
+  it.effect("a changed rollback session requires a fresh delivery without continuity proof", () =>
     Effect.gen(function* () {
       yield* reset;
       const first = yield* deliver(yield* prepare({ nativeThreadKey: "claudeAgent:s1" }));
@@ -333,13 +337,13 @@ it.layer(layer)("ScientForkContextDelivery", (it) => {
       assert.strictEqual((yield* prepare({ nativeThreadKey: "claudeAgent:s1" })).kind, "none");
       const delivery = yield* ScientForkContextDelivery;
       yield* delivery.onThreadReverted({ threadId: FORK, turnCount: 1 });
-      // Claude rollback forks its session; the history travels with it.
       const next = yield* prepare({ nativeThreadKey: "claudeAgent:s2" });
-      assert.strictEqual(next.kind, "none");
+      assert.strictEqual(next.kind, "deliver");
+      if (next.kind === "deliver") assert.isTrue(next.requireFreshSession);
     }),
   );
 
-  it.effect("migrated completed deliveries are trusted and adopt the current session", () =>
+  it.effect("migrated deliveries without session evidence require a fresh session", () =>
     Effect.gen(function* () {
       const sql = yield* reset;
       yield* sql`
@@ -348,11 +352,12 @@ it.layer(layer)("ScientForkContextDelivery", (it) => {
         ) VALUES ('legacy:fork', ${FORK}, 1, 'inline', NULL, ${NOW}, ${NOW})
       `;
       const next = yield* prepare({ nativeThreadKey: "codex:thread-a" });
-      assert.strictEqual(next.kind, "none");
+      assert.strictEqual(next.kind, "deliver");
+      if (next.kind === "deliver") assert.isTrue(next.requireFreshSession);
       const rows = yield* sql<{ readonly native_thread_key: string | null }>`
         SELECT native_thread_key FROM scient_context_handoffs WHERE handoff_id = 'legacy:fork'
       `;
-      assert.strictEqual(rows[0]?.native_thread_key, "codex:thread-a");
+      assert.isNull(rows[0]?.native_thread_key);
     }),
   );
 
@@ -380,6 +385,7 @@ it.layer(layer)("ScientForkContextDelivery", (it) => {
       const delivery = yield* ScientForkContextDelivery;
       const context = yield* delivery.prepareTurn({
         thread: thread(long),
+        modelContextWindow: 24000,
         message: current,
         userText: current.text,
         attachments: [],
@@ -472,7 +478,9 @@ it.layer(layer)("ScientForkContextDelivery", (it) => {
 
   it.effect("plans a native fork from the source's own provider thread", () =>
     Effect.gen(function* () {
-      yield* seedNativeFork();
+      yield* seedNativeFork({ inheritedTurnIds: "[]" });
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT OR REPLACE INTO scient_native_turn_sources VALUES ('origin-thread', 'source-turn-2', 'codex', 'codex@codex:source-native-thread')`;
       const result = yield* plan();
       assert.deepEqual(result, {
         resumeCursor: { threadId: "source-native-thread" },
@@ -505,6 +513,113 @@ it.layer(layer)("ScientForkContextDelivery", (it) => {
       assert.strictEqual((yield* prepare({ nativeThreadKey: "codex:forked" })).kind, "none");
       assert.strictEqual((yield* prepare({ nativeThreadKey: "codex:replaced" })).kind, "deliver");
       // Once delivered or resolved, the fork is no longer eligible for a native fork.
+      assert.isNull(yield* plan());
+    }),
+  );
+  it.effect("retained delivery must not bind to an unrelated fresh session", () =>
+    Effect.gen(function* () {
+      yield* reset;
+      const first = yield* deliver(yield* prepare({ nativeThreadKey: "claudeAgent:s1" }));
+      yield* settle(first.handoffId, { type: "accepted", nativeThreadKey: "claudeAgent:s1" });
+      yield* recordProviderTurn("provider-turn-1", 1);
+      assert.strictEqual((yield* prepare({ nativeThreadKey: "claudeAgent:s1" })).kind, "none");
+      const delivery = yield* ScientForkContextDelivery;
+      yield* delivery.onThreadReverted({ threadId: FORK, turnCount: 1 });
+      // Before next send, the retained rollback session is lost and a fresh
+      // session is started. Its identity does not establish retained history.
+      const next = yield* prepare({ nativeThreadKey: "claudeAgent:fresh-without-history" });
+      assert.strictEqual(next.kind, "deliver");
+    }),
+  );
+  it.effect("a missed revert wakeup must reconcile from durable projection", () =>
+    Effect.gen(function* () {
+      const sql = yield* reset;
+      const first = yield* deliver(yield* prepare({ nativeThreadKey: "codex:thread-a" }));
+      yield* settle(first.handoffId, { type: "accepted", nativeThreadKey: "codex:thread-a" });
+      yield* recordProviderTurn("provider-turn-1", 1);
+      assert.strictEqual((yield* prepare({ nativeThreadKey: "codex:thread-a" })).kind, "none");
+      // Provider rollback and durable revert projection have completed, but
+      // process exit prevents ScientForkReactor's non-durable callback.
+      yield* sql`DELETE FROM projection_turns WHERE turn_id = 'provider-turn-1'`;
+      const next = yield* prepare({ nativeThreadKey: "codex:thread-a" });
+      assert.strictEqual(next.kind, "deliver");
+    }),
+  );
+  it.effect("interrupted recovery must retain the fresh-session requirement", () =>
+    Effect.gen(function* () {
+      yield* reset;
+      const first = yield* deliver(yield* prepare({ nativeThreadKey: "codex:thread-a" }));
+      yield* settle(first.handoffId, { type: "maybeDelivered" });
+      const retry = yield* prepare({ nativeThreadKey: "codex:thread-a" });
+      if (retry.kind !== "deliver") return assert.fail("expected delivery");
+      assert.isTrue(retry.requireFreshSession);
+      // Crash/failure before the caller discards the uncertain session.
+      const retryAgain = yield* prepare({ nativeThreadKey: "codex:thread-a" });
+      if (retryAgain.kind !== "deliver") return assert.fail("expected delivery");
+      assert.isTrue(retryAgain.requireFreshSession);
+    }),
+  );
+
+  it.effect(
+    "native fork requires proof that all retained history belongs to its source session",
+    () =>
+      Effect.gen(function* () {
+        yield* seedNativeFork();
+        // The fixture's origin inherited history from grand-origin. No native
+        // or portable delivery record establishes that source-native-thread
+        // contains it. The latest native turn alone cannot establish coverage.
+        const result = yield* plan();
+        assert.isNull(result);
+      }),
+  );
+
+  it.effect("rejects a header that cannot fit the destination model", () =>
+    Effect.gen(function* () {
+      yield* reset;
+      const delivery = yield* ScientForkContextDelivery;
+      const error = yield* Effect.flip(
+        delivery.prepareTurn({
+          thread: thread(),
+          message: current,
+          userText: current.text,
+          attachments: [],
+          nativeThreadKey: null,
+          sessionRunning: false,
+          modelContextWindow: 16000,
+        }),
+      );
+      assert.include(error.detail, "insufficient room");
+    }),
+  );
+
+  it.effect("budgets for the selected smaller model instead of the source usage", () =>
+    Effect.gen(function* () {
+      const sql = yield* reset;
+      yield* sql`INSERT INTO projection_thread_activities (activity_id,thread_id,turn_id,tone,kind,summary,payload_json,created_at)
+      VALUES ('large-source', 'origin-thread', NULL, 'info', 'context-window.updated', 'usage', '{"maxTokens":1000000}', ${NOW})`;
+      const delivery = yield* ScientForkContextDelivery;
+      const context = yield* delivery.prepareTurn({
+        thread: thread(),
+        message: current,
+        userText: current.text,
+        attachments: [],
+        nativeThreadKey: null,
+        sessionRunning: false,
+        modelContextWindow: 24000,
+      });
+      assert.strictEqual(context.kind, "deliver");
+      if (context.kind === "deliver") {
+        assert.strictEqual(context.requestTokenBudget, 8000);
+        assert.isBelow(context.budgetTokens, 8000);
+      }
+    }),
+  );
+
+  it.effect("native fork refuses a retained turn from another native session", () =>
+    Effect.gen(function* () {
+      yield* seedNativeFork({ inheritedTurnIds: "[]" });
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT OR REPLACE INTO scient_native_turn_sources VALUES ('origin-thread', 'source-turn-2', 'codex', 'codex:old-thread')`;
       assert.isNull(yield* plan());
     }),
   );

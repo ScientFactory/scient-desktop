@@ -12,6 +12,7 @@
  * @module ProviderService
  */
 import type {
+  ModelSelection,
   ProviderInterruptTurnInput,
   ProviderInstanceId,
   ProviderRespondToRequestInput,
@@ -50,6 +51,12 @@ export interface ProviderServiceShape {
   /**
    * Send a provider turn.
    */
+  /** Known capacity of the selected model on this exact provider instance. */
+  readonly getModelContextWindow?: (input: {
+    readonly threadId: ThreadId;
+    readonly modelSelection: ModelSelection;
+  }) => Effect.Effect<number | undefined>;
+
   readonly sendTurn: (
     input: ProviderSendTurnInput,
   ) => Effect.Effect<ProviderTurnStartResult, ProviderServiceError>;

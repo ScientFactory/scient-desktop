@@ -228,7 +228,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           }
           const originOption = yield* projectionSnapshotQuery.getThreadDetailById(
             envelope.command.originThreadId,
-            { activityKinds: [...FORK_HYDRATION_ACTIVITY_KINDS] },
+            { activityKinds: [...FORK_HYDRATION_ACTIVITY_KINDS], fullHistory: true },
           );
           if (Option.isNone(originOption)) {
             return yield* new OrchestrationCommandInvariantError({

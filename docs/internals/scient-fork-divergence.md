@@ -521,10 +521,12 @@ Terminal lifecycle guards are enforced in repository SQL predicates:
 Superseded by Scient migration 14 and
 [Provider context delivery](#provider-context-delivery). The old
 `provider_bootstrap_*` columns remain for downgrade safety but are no longer
-read. Migration 14 carries existing forks over without re-sending delivered
-context: `completed` becomes an `inline` handoff that adopts the next provider
-session it sees; `sending`/`ambiguous` become `pending` handoffs settled from
-provider evidence or re-delivered on a fresh session.
+read. Migration 14 carries prior state into handoff rows. Legacy completed
+rows have no native-session proof, so they now require a fresh session and
+portable delivery; they never adopt an arbitrary replacement. Migration 15
+adds native-turn evidence, frozen snapshot identities, and the exact handoff
+preamble and attachment identifiers for audit. Missing historical evidence
+selects portable delivery rather than inventing continuity.
 
 ## Provider context delivery
 
@@ -554,9 +556,16 @@ meaning is the same.
   reported the turn it started (`projection_turns.pending_message_id`), or
   while that turn still runs. An adapter that only enqueued the turn in memory
   (Claude) and then died is re-delivered.
-- **Revert** supersedes a handoff whose carrying turn the revert removed; a
-  revert that kept it rebinds to the rolled-back provider thread (Claude and
-  OpenCode fork their session on rollback).
+- **Revert** invalidates a handoff whose carrying turn was removed. Every
+  preparation rechecks durable turn evidence, including previously confirmed
+  rows, so a missed live notification cannot retain stale trust. A changed or
+  unknown native identity requires reset and portable delivery. The old row
+  stays active until reset succeeds and the replacement handoff is committed.
+- Native session identity includes its configured provider instance, so an
+  equal provider session ID in a different runtime cannot establish continuity.
+- A later message waits for an in-flight handoff to settle, then rechecks the
+  current binding. It cannot bypass history merely because an earlier send
+  was still awaiting its outcome.
 - **Separate channel.** The handoff travels as `ProviderSendTurnInput.contextPreamble`,
   concatenated immediately before adapter dispatch. The 120,000-character input
   limit keeps measuring only what the user sent; optional skill discovery is
@@ -564,11 +573,16 @@ meaning is the same.
   `PROVIDER_CONTEXT_PREAMBLE_MAX_CHARS` and, before that, by the budget below.
 - **Budget** (`context/handoffBudget.ts`, V2's `ContextHandoffBudget`
   formula): `min(cap, window − native usage − current input − max(16k, window/4))`,
-  where the window is the smallest of the provider-reported maximum, the
-  auto-compaction threshold and V2's 128k default. Tokens are estimated as
+  using the selected instance/model's adapter metadata and custom-model
+  limits, with a 128k fallback when capacity is unknown. Historical source
+  telemetry is never used as the destination's capacity. Tokens are estimated as
   `ceil(bytes / 3)` (V2 uses one byte per token). The cap is the Settings preset
   `scientFork.contextHandoffSize` (Compact 16k, Standard 64k, Large 128k,
   Maximum = window-bounded); `T3CODE_CONTEXT_HANDOFF_TOKEN_CAP` overrides.
+  The header and reattached content must fit too. ProviderService checks the
+  composed preamble, user input, skills and attachments again immediately
+  before dispatch, dropping optional discovery before a typed rejection.
+  These are explicit estimates and allowances, not a tokenizer guarantee.
 - **Selection** (`context/handoffHistory.ts`, V2's `selectHistory`): whole
   items in V2's priority order (latest user, latest assistant, first user, then
   newest to oldest). Scient extensions: reasoning and tool work are items; the
@@ -583,22 +597,33 @@ meaning is the same.
 
 `sourceRunningTurnId` forks the running turn itself (`/fork` or the fork
 button while the agent works). The fork request first flushes the turn's
-buffered assistant/reasoning text through ingestion's ordered queue
-(`liveTurnFlush.ts`), then the decider copies every completed turn plus the
+buffered assistant/reasoning text, proposed plans and materialized generated
+images through ingestion's ordered queue (`liveTurnFlush.ts`). A missing
+worker, persistence failure or five-second timeout fails the request explicitly;
+it never reports successful latest-state capture. Streaming segments stay open.
+Then the decider copies every completed turn plus the
 live tail (`forkLiveTail.ts`): streaming text is copied as it stood and
 labelled partial, unfinished tool calls are copied and labelled in flight,
 pending approvals/questions are history only. The handoff names the files the
 origin touched and whether the fork shares its folder. A new-worktree fork
-snapshots the current files into its turn-zero ref (temporary index; the
-user's index is untouched; gitignored files are not copied). Upstream V2
+freezes the current files into its turn-zero ref before dispatch (temporary
+index; the user's index is untouched; gitignored files are not copied).
+Snapshot OID and capture time are durable, and retries and worktree creation
+reuse that frozen reference. Completed-turn forks freeze their selected
+checkpoint the same way. Workspace capture and the transcript cut are separate
+operations while the source keeps running; the handoff states that limitation.
+Older already-accepted provisioning jobs freeze their snapshot on recovery.
+Upstream V2
 rejects forks from running work; this is the isolated Scient extension.
 
 ### Native fork
 
 A fork's first session is started as a native provider fork when it can
 reproduce the fork exactly: same provider instance as the source, the forked
-turn is a completed turn the source's own provider thread produced, no
-running-turn cut, nothing delivered yet. Adapters opt in with
+turn is completed, every retained source turn has durable evidence for that
+same instance and native thread, no running-turn cut, nothing delivered yet.
+Imported prefixes and older turns without native-ownership evidence take the
+portable path. Native-to-portable recovery updates the recorded fidelity. Adapters opt in with
 `capabilities.nativeFork`; `ProviderSessionStartInput.forkFrom` carries the
 source cursor and the inclusive turn. Codex implements it with
 `thread/fork { threadId, lastTurnId }` and surfaces failure instead of opening
@@ -637,9 +662,8 @@ snapshot:
 - Estimator: `ceil(bytes / 3)` instead of one byte per token.
 - Cap: Settings preset instead of V2's 16k default, with no 64,000-byte
   `HANDOFF_BYTE_CAP` clamp.
-- Window: no known-model-window bound (V2's `modelContextWindow`), and no
-  `contextUsageForHandoff` model-switch rule; usage from a replaced native
-  thread is ignored instead.
+- Window: adapter/custom-model capacity is resolved by instance, with a final
+  composed-request check. Source-session window telemetry is not reused.
 - Selection: priority classes (cut, anchors, latest turn, conversation,
   detail) and truncated anchors instead of whole-or-omitted.
 - Rendering: one JSON preamble with reasoning and tool items instead of V2's
@@ -714,12 +738,16 @@ toolkit lands.**
   `nextTextOffset`, and timestamps. The page also returns `nextPosition` and
   `hasMore`. There is no `recentRuns` field.
 - Timeline: messages of every role, proposed plans, and thread activities
-  come from `ProjectionSnapshotQuery.getThreadDetailById`. They are merged by
-  creation time, with each source kept in projection order. `position`
+  are paged directly from durable projection tables by `historyRead.ts`.
+  Direct item lookup and paging do not inherit the UI's 500-activity limit.
+  Internal fork hydration explicitly requests full retained activity history;
+  ordinary UI reads remain bounded. Items are ordered by creation time,
+  source kind, source sequence, and identifier. `position`
   indexes this full timeline in both views. The `messages` view returns user
   messages, assistant messages, and proposed plans. The `activity` view also
   returns reasoning, system messages, and activities. An activity is rendered
-  as its kind and summary, followed by JSON payload capped at 4,000 characters.
+  as its kind and summary followed by its payload. `maxCharsPerItem` bounds
+  the returned text window; `textOffset` can reach the full stored payload.
 - Paging follows V2: `nextPosition` is the last returned position and is null
   only when the page is empty, and `hasMore` tells whether to continue. The
   `itemId` option ignores `view` and `afterPosition`. `textOffset` applies only

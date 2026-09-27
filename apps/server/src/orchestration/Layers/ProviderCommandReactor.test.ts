@@ -989,6 +989,7 @@ describe("ProviderCommandReactor", () => {
     includedItemCount: 3,
     omittedItemCount: 0,
     budgetTokens: 1000,
+    requestTokenBudget: 96000,
     ...overrides,
   });
 
@@ -1145,7 +1146,7 @@ describe("ProviderCommandReactor", () => {
     expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({ forkFrom: nativePlan });
     expect(recordNativeFork).toHaveBeenCalledWith({
       threadId: ThreadId.make("thread-1"),
-      nativeThreadKey: "codex:forked-native",
+      nativeThreadKey: "codex@codex:forked-native",
     });
   });
 

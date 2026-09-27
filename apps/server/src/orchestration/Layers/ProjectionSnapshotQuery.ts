@@ -1,3 +1,4 @@
+import { readHistoryPage } from "../scient-fork/historyRead.ts";
 import { ScientCompletedAnswer } from "@t3tools/contracts";
 import { completedAnswerSql } from "../../scient/answerAttention/completedAnswerSql.ts";
 import {
@@ -254,6 +255,7 @@ const TurnStartMessageLookupInput = Schema.Struct({
 const ThreadActivityKindsLookupInput = Schema.Struct({
   threadId: ThreadId,
   activityKinds: Schema.Array(Schema.String),
+  fullHistory: Schema.optional(Schema.Boolean),
 });
 const ThreadActivityIdsLookupInput = Schema.Struct({
   activityIds: Schema.Array(ProjectionThreadActivity.fields.activityId),
@@ -1753,7 +1755,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   const listThreadActivityRowsByThreadAndKinds = SqlSchema.findAll({
     Request: ThreadActivityKindsLookupInput,
     Result: ProjectionThreadActivityDbRowSchema,
-    execute: ({ threadId, activityKinds }) =>
+    execute: ({ threadId, activityKinds, fullHistory }) =>
       sql`
         SELECT
           activity_id AS "activityId",
@@ -1783,7 +1785,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             sequence DESC,
             created_at DESC,
             activity_id DESC
-          LIMIT ${THREAD_DETAIL_ACTIVITY_LIMIT}
+          LIMIT ${fullHistory ? -1 : THREAD_DETAIL_ACTIVITY_LIMIT}
         ) AS recent_activities
         ORDER BY
           sequence ASC,
@@ -3768,14 +3770,25 @@ pending_approval_requests AS (
           ? listProjectedThreadActivities(threadId, bounds)
           : Effect.all([
               (activityRead.query?.activityKinds === undefined
-                ? bounds === undefined
-                  ? listThreadActivityRowsByThread({ threadId })
-                  : listThreadActivityRowsByThreadWindow({ threadId, ...bounds })
+                ? activityRead.query?.fullHistory
+                  ? sql`SELECT activity_id AS "activityId", thread_id AS "threadId", turn_id AS "turnId", tone, kind, summary,
+                      payload_json AS payload, sequence, created_at AS "createdAt" FROM projection_thread_activities
+                      WHERE thread_id = ${threadId} ORDER BY sequence, created_at, activity_id`.pipe(
+                      Effect.flatMap(
+                        Schema.decodeUnknownEffect(
+                          Schema.Array(ProjectionThreadActivityDbRowSchema),
+                        ),
+                      ),
+                    )
+                  : bounds === undefined
+                    ? listThreadActivityRowsByThread({ threadId })
+                    : listThreadActivityRowsByThreadWindow({ threadId, ...bounds })
                 : activityRead.query.activityKinds.length === 0
                   ? Effect.succeed([])
                   : listThreadActivityRowsByThreadAndKinds({
                       threadId,
                       activityKinds: activityRead.query.activityKinds,
+                      fullHistory: activityRead.query.fullHistory,
                     })
               ).pipe(
                 Effect.mapError(
@@ -4182,6 +4195,15 @@ pending_approval_requests AS (
     getThreadShellById,
     getThreadRuntimeContext,
     getTurnStartMessage,
+    getThreadHistoryPage: (input) =>
+      readHistoryPage(sql, input).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProjectionSnapshotQuery.history:query",
+            "ProjectionSnapshotQuery.history:decode",
+          ),
+        ),
+      ),
     getThreadDetailById,
     getThreadDetailSnapshot,
   } satisfies ProjectionSnapshotQueryShape;

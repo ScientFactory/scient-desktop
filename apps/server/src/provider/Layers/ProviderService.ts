@@ -1,3 +1,10 @@
+import { customModelProviderId } from "../../customModels.ts";
+import { droidCustomModelId } from "../droid/DroidCustomModels.ts";
+import {
+  estimateTokens,
+  attachmentTokenAllowance,
+  handoffBudget,
+} from "../../orchestration/scient-fork/context/handoffBudget.ts";
 /**
  * ProviderServiceLive - Cross-provider orchestration layer.
  *
@@ -1694,6 +1701,39 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     },
   );
 
+  const getModelContextWindow: NonNullable<
+    ProviderService.ProviderService["Service"]["getModelContextWindow"]
+  > = (input) =>
+    Effect.gen(function* () {
+      const adapter = yield* registry.getByInstance(input.modelSelection.instanceId);
+      const discovered = yield* (
+        adapter.getModelContextWindow?.(input) ?? Effect.succeed(undefined)
+      ).pipe(Effect.orElseSucceed(() => undefined));
+      const settings = yield* serverSettings.getSettings;
+      const configured = settings.customModels.connections.flatMap((connection) =>
+        connection.models.flatMap((model) => {
+          if (!model.instanceIds.includes(input.modelSelection.instanceId)) return [];
+          if (
+            ![
+              model.modelId,
+              `${customModelProviderId(connection.id)}/${model.modelId}`,
+              droidCustomModelId(connection.id, model.id),
+            ].includes(input.modelSelection.model)
+          )
+            return [];
+          const window =
+            model.configurationMode === "automatic"
+              ? model.reasoningMetadata?.contextWindow
+              : model.contextWindow;
+          return window === undefined ? [] : [window];
+        }),
+      );
+      const windows = [...configured, ...(discovered === undefined ? [] : [discovered])].filter(
+        (value) => Number.isFinite(value) && value > 0,
+      );
+      return windows.length === 0 ? undefined : Math.min(...windows);
+    }).pipe(Effect.orElseSucceed(() => undefined));
+
   const sendTurn: ProviderServiceMethod<"sendTurn"> = Effect.fn("sendTurn")(function* (rawInput) {
     const parsed = yield* decodeInputOrValidationError({
       operation: "ProviderService.sendTurn",
@@ -1913,10 +1953,43 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       // SCIENT-FORK: retained conversation context goes first. Its producer
       // budgets it against the model window; the user-input limit above keeps
       // measuring only what the user sent.
-      const dispatchInput =
+      let dispatchInput =
         parsed.contextPreamble === undefined
           ? skillTurn.input
           : [parsed.contextPreamble, skillTurn.input].filter(Boolean).join("\n\n");
+      if (parsed.contextPreamble !== undefined) {
+        const modelWindow =
+          parsed.modelSelection === undefined
+            ? undefined
+            : yield* getModelContextWindow({
+                threadId: input.threadId,
+                modelSelection: parsed.modelSelection,
+              });
+        const allowed =
+          modelWindow === undefined && parsed.contextRequestTokenBudget !== undefined
+            ? parsed.contextRequestTokenBudget
+            : Math.min(
+                parsed.contextRequestTokenBudget ?? Number.POSITIVE_INFINITY,
+                handoffBudget({
+                  tokenCap: null,
+                  userText: "",
+                  attachments: [],
+                  nativeUsedTokens: 0,
+                  usage: modelWindow === undefined ? undefined : { maxTokens: modelWindow },
+                }),
+              );
+        const cost = () =>
+          estimateTokens(dispatchInput ?? "") + attachmentTokenAllowance(parsed.attachments ?? []);
+        if (cost() > allowed && skillProjection.includeCatalogMarker) {
+          skillTurn = prepareSkillTurn({ ...skillProjection, includeCatalogMarker: false });
+          dispatchInput = [parsed.contextPreamble, skillTurn.input].filter(Boolean).join("\n\n");
+        }
+        if (cost() > allowed)
+          return yield* toValidationError(
+            "ProviderService.sendTurn",
+            "Conversation history, message, attachments and selected instructions exceed this model's available context. Choose a smaller fork history size or shorten the message; nothing was sent.",
+          );
+      }
       if (
         routed.adapter.capabilities.mcpSessionInjection === true &&
         ScientSkillSession.scientSkillDeliveryForProvider(routed.adapter.provider) === "mcp"
@@ -1940,7 +2013,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         }),
         (turnMetadata) =>
           Effect.gen(function* () {
-            const { contextPreamble: _contextPreamble, ...adapterInput } = input;
+            const {
+              contextPreamble: _contextPreamble,
+              contextRequestTokenBudget: _contextRequestTokenBudget,
+              ...adapterInput
+            } = input;
             dispatchAttempted = true;
             const turn = yield* routed.adapter.sendTurn({
               ...adapterInput,
@@ -2730,6 +2807,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     stopSession,
     captureTurnStop,
     discardSessionContinuity,
+    getModelContextWindow,
     listSessions,
     getCapabilities,
     getInstanceInfo,

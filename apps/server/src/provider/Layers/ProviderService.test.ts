@@ -5049,12 +5049,37 @@ validation.layer("ProviderServiceLive validation", (it) => {
       });
       validation.codex.sendTurn.mockClear();
       const input = "x".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS);
-      const contextPreamble = `SCIENT_CONTEXT_HANDOFF_JSON\n${"h".repeat(200_000)}`;
+      const contextPreamble = `SCIENT_CONTEXT_HANDOFF_JSON\n${"h".repeat(150_000)}`;
       yield* provider.sendTurn({ threadId, input, contextPreamble });
       const sent = validation.codex.sendTurn.mock.calls[0]?.[0];
       assert.isTrue(sent?.input?.startsWith(`${contextPreamble}\n\n${input}`));
       assert.equal(sent?.originalInput, input);
       assert.notProperty(sent ?? {}, "contextPreamble");
+    }),
+  );
+
+  it.effect("rejects a composed fork request over its available budget before dispatch", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("fork-budget-overflow");
+      yield* provider.startSession(threadId, {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      validation.codex.sendTurn.mockClear();
+      const failure = yield* Effect.flip(
+        provider.sendTurn({
+          threadId,
+          input: "new question",
+          contextPreamble: "history ".repeat(4000),
+          contextRequestTokenBudget: 1000,
+        }),
+      );
+      assert.instanceOf(failure, ProviderValidationError);
+      assert.include(failure.issue, "available context");
+      assert.strictEqual(validation.codex.sendTurn.mock.calls.length, 0);
     }),
   );
 
@@ -5444,6 +5469,7 @@ describe("agent browser access", () => {
               }),
             );
           }).pipe(Effect.orDie),
+        getThreadHistoryPage: () => Effect.die("unused history page"),
         getThreadDetailById: () => Effect.die("unused"),
         getThreadDetailSnapshot: () => Effect.die("unused"),
         searchThreads: () => Effect.die("unused"),

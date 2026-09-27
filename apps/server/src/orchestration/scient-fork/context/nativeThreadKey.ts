@@ -18,7 +18,11 @@ import * as Predicate from "effect/Predicate";
 const nonEmptyString = (value: unknown): string | undefined =>
   typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 
-export function nativeThreadKey(provider: string, resumeCursor: unknown): string | null {
+export function nativeThreadKey(
+  provider: string,
+  resumeCursor: unknown,
+  providerInstanceId?: string | null,
+): string | null {
   if (!Predicate.isObject(resumeCursor) || Array.isArray(resumeCursor)) return null;
   const cursor = resumeCursor as Record<string, unknown>;
   const identity =
@@ -27,5 +31,7 @@ export function nativeThreadKey(provider: string, resumeCursor: unknown): string
       : provider === "claudeAgent"
         ? nonEmptyString(cursor.resume)
         : (nonEmptyString(cursor.sessionId) ?? nonEmptyString(cursor.sessionFile));
-  return identity === undefined ? null : `${provider}:${identity}`;
+  const scope =
+    providerInstanceId == null ? provider : `${provider}@${encodeURIComponent(providerInstanceId)}`;
+  return identity === undefined ? null : `${scope}:${identity}`;
 }

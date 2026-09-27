@@ -23,9 +23,6 @@ import {
   ScientThreadsToolkit,
 } from "./tools.ts";
 
-/** Activity payloads are diagnostic detail; the summary line carries the meaning. */
-export const THREAD_READ_ACTIVITY_PAYLOAD_MAX_CHARS = 4_000;
-
 /** V2 parity: the messages view is the conversation, not its machinery. */
 const MESSAGES_VIEW_TYPES: ReadonlySet<ScientThreadReadItemType> = new Set([
   "user_message",
@@ -95,14 +92,11 @@ const payloadText = (payload: unknown): string | null => {
   }
 };
 
-/** Kind and summary, then the payload capped so one tool result cannot dominate a page. */
+/** Rendering stays complete; the requested text window bounds each response. */
 export function renderActivityText(activity: OrchestrationThreadActivity): string {
   const header = `${activity.kind}: ${activity.summary}`;
   const payload = payloadText(activity.payload);
-  if (payload === null || payload.length === 0) return header;
-  if (payload.length <= THREAD_READ_ACTIVITY_PAYLOAD_MAX_CHARS) return `${header}\n${payload}`;
-  const omitted = payload.length - THREAD_READ_ACTIVITY_PAYLOAD_MAX_CHARS;
-  return `${header}\n${payload.slice(0, THREAD_READ_ACTIVITY_PAYLOAD_MAX_CHARS)}… [payload truncated; ${omitted} more characters]`;
+  return payload === null || payload.length === 0 ? header : `${header}\n${payload}`;
 }
 
 const activityEntry = (activity: OrchestrationThreadActivity): TimelineEntry => ({
@@ -275,10 +269,10 @@ export const readScientThreadForInvocation = Effect.fn("ScientThreadsToolkit.rea
       );
     }
   }
-  // Both views hydrate activities: positions index the full timeline, so the
-  // messages view needs them to number its items consistently.
+  // Load thread metadata without its UI activity window. Paging and item
+  // positions come from the complete durable history below.
   const thread = yield* snapshots
-    .getThreadDetailById(input.threadId)
+    .getThreadDetailById(input.threadId, { activityKinds: [] })
     .pipe(Effect.mapError(readFailed(input.threadId)));
   if (Option.isNone(thread)) {
     return yield* toolError(
@@ -286,7 +280,22 @@ export const readScientThreadForInvocation = Effect.fn("ScientThreadsToolkit.rea
       `Thread ${input.threadId} does not exist or is no longer available.`,
     );
   }
-  return buildThreadReadResult(thread.value, input);
+  const page = yield* snapshots
+    .getThreadHistoryPage(input)
+    .pipe(Effect.mapError(readFailed(input.threadId)));
+  const offset = input.itemId === undefined ? 0 : (input.textOffset ?? 0);
+  const end = offset + (input.maxCharsPerItem ?? THREAD_READ_DEFAULT_MAX_CHARS_PER_ITEM);
+  return {
+    thread: threadSummary(thread.value, page.itemCount),
+    items: page.items.map((entry) => ({
+      ...entry,
+      text: entry.text.slice(offset, end),
+      textTruncated: entry.text.length > end,
+      nextTextOffset: entry.text.length > end ? end : null,
+    })),
+    nextPosition: page.items.at(-1)?.position ?? null,
+    hasMore: page.hasMore,
+  };
 });
 
 const handlers = {

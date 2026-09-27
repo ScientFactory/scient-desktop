@@ -15,13 +15,19 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 
-type FlushThread = (threadId: ThreadId) => Effect.Effect<void>;
+export class ScientLiveTurnFlushError extends Schema.TaggedError<ScientLiveTurnFlushError>()(
+  "ScientLiveTurnFlushError",
+  { detail: Schema.String },
+) {}
+
+type FlushThread = (threadId: ThreadId) => Effect.Effect<void, ScientLiveTurnFlushError>;
 
 export interface ScientLiveTurnFlushShape {
   readonly register: (flush: FlushThread) => Effect.Effect<void>;
-  /** Writes buffered text for the thread; a no-op when ingestion is absent. */
-  readonly flush: (threadId: ThreadId) => Effect.Effect<void>;
+  /** Writes buffered state or fails explicitly when capture cannot complete. */
+  readonly flush: FlushThread;
 }
 
 export class ScientLiveTurnFlush extends Context.Service<
@@ -29,7 +35,7 @@ export class ScientLiveTurnFlush extends Context.Service<
   ScientLiveTurnFlushShape
 >()("t3/orchestration/scient-fork/liveTurnFlush/ScientLiveTurnFlush") {}
 
-/** A fork should not wait long on a busy ingestion queue; it copies what is persisted. */
+/** Bound the wait without mistaking a timeout for completed capture. */
 const FLUSH_TIMEOUT = Duration.seconds(5);
 
 export const ScientLiveTurnFlushLive = Layer.effect(
@@ -42,8 +48,23 @@ export const ScientLiveTurnFlushLive = Layer.effect(
         Ref.get(registered).pipe(
           Effect.flatMap((flush) =>
             flush === null
-              ? Effect.void
-              : flush(threadId).pipe(Effect.timeoutOption(FLUSH_TIMEOUT), Effect.asVoid),
+              ? Effect.fail(
+                  new ScientLiveTurnFlushError({
+                    detail:
+                      "The running turn cannot be captured because ingestion is unavailable. Retry after reconnecting.",
+                  }),
+                )
+              : flush(threadId).pipe(
+                  Effect.timeout(FLUSH_TIMEOUT),
+                  Effect.catchTag("TimeoutError", () =>
+                    Effect.fail(
+                      new ScientLiveTurnFlushError({
+                        detail:
+                          "Capturing the running turn timed out. Retry the fork; no conversation was created.",
+                      }),
+                    ),
+                  ),
+                ),
           ),
         ),
     } satisfies ScientLiveTurnFlushShape;

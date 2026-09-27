@@ -39,14 +39,17 @@ import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
+import { nativeThreadKey } from "./context/nativeThreadKey.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import {
+  attachmentTokenAllowance,
   estimateTokens,
   handoffBudget,
   handoffTokenCap,
@@ -75,6 +78,7 @@ export type ForkTurnContext =
       readonly includedItemCount: number;
       readonly omittedItemCount: number;
       readonly budgetTokens: number;
+      readonly requestTokenBudget: number;
     };
 
 /** Where a native fork clones from: the source's provider thread, through a turn. */
@@ -98,6 +102,7 @@ export interface ScientForkContextDeliveryShape {
     readonly nativeThreadKey: string | null;
     /** A turn of this thread is starting or running in the current session. */
     readonly sessionRunning: boolean;
+    readonly modelContextWindow?: number | undefined;
   }) => Effect.Effect<ForkTurnContext, ScientForkContextError>;
   /** Records the delivery as pending immediately before dispatch. */
   readonly beginDelivery: (input: {
@@ -109,6 +114,8 @@ export interface ScientForkContextDeliveryShape {
     readonly includedItemCount: number;
     readonly omittedItemCount: number;
     readonly budgetTokens: number;
+    readonly contextPreamble?: string;
+    readonly attachmentIds?: ReadonlyArray<string>;
   }) => Effect.Effect<void, ScientForkContextError>;
   readonly settleDelivery: (input: {
     readonly threadId: ThreadId;
@@ -199,7 +206,7 @@ const make = Effect.gen(function* () {
     Effect.orElseSucceed(() => undefined),
   );
   /** Handoffs whose send is in flight in this process. */
-  const inFlight = new Set<string>();
+  const inFlight = new Map<string, Deferred.Deferred<void>>();
 
   const fail = (threadId: ThreadId, detail: string) => (cause: unknown) =>
     new ScientForkContextError({ threadId, detail, cause });
@@ -317,10 +324,10 @@ const make = Effect.gen(function* () {
         SET
           status = ${status},
           resolution_json = ${resolution},
-          fidelity = COALESCE(fidelity, ${fidelity}),
+          fidelity = ${fidelity},
           updated_at = ${updatedAt}
         WHERE thread_id = ${threadId}
-          AND (status IN ('pending', 'resolved_portable') OR ${status} = 'consumed')
+          AND (status IN ('pending', 'resolved_portable', 'resolved_native') OR ${status} = 'consumed')
       `;
     }).pipe(Effect.mapError(fail(threadId, "Unable to update the conversation context transfer.")));
 
@@ -332,80 +339,71 @@ const make = Effect.gen(function* () {
     readonly threadId: ThreadId;
     readonly nativeThreadKey: string | null;
     readonly sessionRunning: boolean;
-  }) {
-    let requireFreshSession = false;
+  }): Effect.fn.Return<
+    { delivered: boolean; requireFreshSession: boolean },
+    ScientForkContextError
+  > {
     for (const handoff of yield* readActiveHandoffs(input.threadId)) {
-      if (handoff.delivery_status === "pending") {
-        // Its send is still running here; this message follows it into the
-        // same provider session.
-        if (inFlight.has(handoff.handoff_id)) return { delivered: true, requireFreshSession };
-        const turnId = yield* providerTurnFor(input.threadId, handoff.message_id);
-        const sameThread =
-          handoff.native_thread_key === null ||
-          input.nativeThreadKey === null ||
-          handoff.native_thread_key === input.nativeThreadKey;
-        if (turnId !== undefined && !sameThread) {
-          // It reached a provider thread that has since been replaced.
-          yield* updateHandoff(input.threadId, handoff.handoff_id, {
-            deliveryStatus: "superseded",
-          });
-          continue;
-        }
-        if (turnId !== undefined) {
-          // It reached the provider after all (the acknowledgement was lost or
-          // the process restarted); the current session carries it.
-          yield* updateHandoff(input.threadId, handoff.handoff_id, {
-            deliveryStatus: "inline",
-            nativeThreadKey: input.nativeThreadKey,
-            rebindPending: input.nativeThreadKey === null,
-            turnId,
-          });
-          yield* setTransferStatus(input.threadId, "consumed", handoff.handoff_id, "portable");
-          return { delivered: true, requireFreshSession };
-        }
+      const pending = inFlight.get(handoff.handoff_id);
+      if (pending !== undefined) {
+        yield* Deferred.await(pending);
+        const binding = (yield* sql<{
+          readonly provider_name: string;
+          readonly provider_instance_id: string | null;
+          readonly resume_cursor_json: string | null;
+        }>`
+          SELECT provider_name, provider_instance_id, resume_cursor_json FROM provider_session_runtime WHERE thread_id = ${input.threadId}
+        `.pipe(
+          Effect.mapError(fail(input.threadId, "Unable to refresh the receiving session.")),
+        ))[0];
+        const cursor =
+          binding?.resume_cursor_json == null
+            ? undefined
+            : Option.getOrUndefined(decodeUnknownJson(binding.resume_cursor_json));
+        return yield* resolveExistingDelivery({
+          ...input,
+          nativeThreadKey:
+            binding === undefined
+              ? input.nativeThreadKey
+              : nativeThreadKey(binding.provider_name, cursor, binding.provider_instance_id),
+        });
+      }
+      const sameThread =
+        input.nativeThreadKey !== null && handoff.native_thread_key === input.nativeThreadKey;
+      const native = handoff.strategy === NATIVE_FORK_STRATEGY;
+      const turnId = yield* providerTurnFor(input.threadId, handoff.message_id);
+
+      // Reconcile even cached evidence against durable history. A revert can
+      // commit before its live notification reaches this service.
+      if (!native && handoff.turn_id !== null && turnId !== handoff.turn_id) {
         yield* updateHandoff(input.threadId, handoff.handoff_id, { deliveryStatus: "superseded" });
-        requireFreshSession = true;
         continue;
       }
-
-      // Rebinding deliveries (migrated from the old flag, or kept by a revert
-      // that may have moved the provider to a new native thread) are trusted.
-      const rebinding = handoff.rebind_pending === 1;
-      // A native fork holds the conversation in the provider thread itself.
-      const native = handoff.strategy === NATIVE_FORK_STRATEGY;
-      if (!rebinding && !native && handoff.turn_id === null) {
-        const turnId = yield* providerTurnFor(input.threadId, handoff.message_id);
-        if (turnId !== undefined) {
-          yield* updateHandoff(input.threadId, handoff.handoff_id, { turnId });
+      if (
+        sameThread &&
+        (native ||
+          turnId !== undefined ||
+          (handoff.delivery_status === "inline" &&
+            input.sessionRunning &&
+            handoff.rebind_pending === 0))
+      ) {
+        yield* updateHandoff(input.threadId, handoff.handoff_id, {
+          deliveryStatus: "inline",
+          rebindPending: false,
+          ...(turnId === undefined ? {} : { turnId }),
+        });
+        if (!native && turnId !== undefined) {
           yield* setTransferStatus(input.threadId, "consumed", handoff.handoff_id, "portable");
-        } else if (!input.sessionRunning) {
-          // Accepted but never started (for example an adapter that only
-          // enqueued it before its process ended).
-          yield* updateHandoff(input.threadId, handoff.handoff_id, {
-            deliveryStatus: "superseded",
-          });
-          requireFreshSession = true;
-          continue;
         }
+        return { delivered: true, requireFreshSession: false };
       }
-      // An unknown identity (recorded before the provider reported one, or a
-      // rebinding delivery) adopts the current provider session.
-      if (rebinding || handoff.native_thread_key === null) {
-        if (input.nativeThreadKey !== null) {
-          yield* updateHandoff(input.threadId, handoff.handoff_id, {
-            nativeThreadKey: input.nativeThreadKey,
-            rebindPending: false,
-          });
-        }
-        return { delivered: true, requireFreshSession };
-      }
-      if (input.nativeThreadKey === null || input.nativeThreadKey === handoff.native_thread_key) {
-        return { delivered: true, requireFreshSession };
-      }
-      // The provider replaced the native thread: it never received the context.
-      yield* updateHandoff(input.threadId, handoff.handoff_id, { deliveryStatus: "superseded" });
+      // A replacement may be either fresh or a rollback retaining history.
+      // Without concrete continuity proof, reset it before sending. Keep the
+      // old row active until beginDelivery, after reset has actually succeeded;
+      // a crash or failed reset must preserve this requirement on the next try.
+      return { delivered: false, requireFreshSession: true };
     }
-    return { delivered: false, requireFreshSession };
+    return { delivered: false, requireFreshSession: false };
   });
 
   /**
@@ -463,10 +461,20 @@ const make = Effect.gen(function* () {
       Effect.mapError(fail(input.thread.id, "Unable to read the fork settings.")),
     );
     const ownUsage = yield* latestUsage(input.thread.id);
-    const usage = ownUsage ?? (yield* latestUsage(transfer.source_thread_id));
+    // Usage windows belong to a model and session; a source thread's window
+    // cannot size a destination, especially after a model switch.
+    const usage =
+      input.modelContextWindow === undefined ? undefined : { maxTokens: input.modelContextWindow };
     const holdsTurns =
       !existing.requireFreshSession &&
       (yield* currentThreadHoldsTurns(input.thread.id, input.nativeThreadKey));
+    const requestTokenBudget = handoffBudget({
+      tokenCap: null,
+      userText: "",
+      attachments: [],
+      usage,
+      nativeUsedTokens: holdsTurns ? (ownUsage?.usedTokens ?? 0) : 0,
+    });
     const budget = Math.min(
       MAX_BUDGET_TOKENS,
       handoffBudget({
@@ -507,6 +515,14 @@ const make = Effect.gen(function* () {
       totalItemCount: items.length,
       midTurnCut,
     });
+    const renderedTokens =
+      estimateTokens(rendered.preamble) + attachmentTokenAllowance(selection.reattached);
+    if (renderedTokens > budget)
+      return yield* new ScientForkContextError({
+        threadId: input.thread.id,
+        detail:
+          "This model has insufficient room for the fork history header and current message. Shorten the message or choose a larger-context model; nothing was sent.",
+      });
     const handoffId = `handoff:${yield* crypto.randomUUIDv4.pipe(
       Effect.mapError(fail(input.thread.id, "Unable to identify the context delivery.")),
     )}`;
@@ -519,6 +535,7 @@ const make = Effect.gen(function* () {
       includedItemCount: rendered.includedItemCount,
       omittedItemCount: rendered.omittedItemCount,
       budgetTokens: budget,
+      requestTokenBudget,
     } as const;
   });
 
@@ -526,7 +543,18 @@ const make = Effect.gen(function* () {
     "beginScientForkContextDelivery",
   )(function* (input) {
     const createdAt = yield* now;
-    yield* sql`
+    const attachmentIdsJson =
+      input.attachmentIds === undefined
+        ? null
+        : yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Array(Schema.String)))(
+            input.attachmentIds,
+          ).pipe(Effect.mapError(fail(input.threadId, "Unable to encode delivery attachments.")));
+    yield* sql
+      .withTransaction(
+        Effect.gen(function* () {
+          yield* sql`UPDATE scient_context_handoffs SET delivery_status = 'superseded', updated_at = ${createdAt}
+        WHERE thread_id = ${input.threadId} AND delivery_status IN ('pending', 'inline')`;
+          yield* sql`
       INSERT INTO scient_context_handoffs (
         handoff_id,
         thread_id,
@@ -537,6 +565,8 @@ const make = Effect.gen(function* () {
         included_item_count,
         omitted_item_count,
         budget_tokens,
+        context_preamble,
+        attachment_ids_json,
         created_at,
         updated_at
       ) VALUES (
@@ -549,11 +579,16 @@ const make = Effect.gen(function* () {
         ${input.includedItemCount},
         ${input.omittedItemCount},
         ${input.budgetTokens},
+        ${input.contextPreamble ?? null},
+        ${attachmentIdsJson},
         ${createdAt},
         ${createdAt}
       )
-    `.pipe(Effect.mapError(fail(input.threadId, "Unable to record the context delivery.")));
-    inFlight.add(input.handoffId);
+      `;
+        }),
+      )
+      .pipe(Effect.mapError(fail(input.threadId, "Unable to record the context delivery.")));
+    inFlight.set(input.handoffId, yield* Deferred.make<void>());
   });
 
   const settleOutcome: ScientForkContextDeliveryShape["settleDelivery"] = Effect.fn(
@@ -594,7 +629,15 @@ const make = Effect.gen(function* () {
   // Clear the in-flight mark only once the outcome is durable, so a concurrent
   // turn never sees a pending row that is neither in flight nor settled.
   const settleDelivery: ScientForkContextDeliveryShape["settleDelivery"] = (input) =>
-    settleOutcome(input).pipe(Effect.ensuring(Effect.sync(() => inFlight.delete(input.handoffId))));
+    settleOutcome(input).pipe(
+      Effect.ensuring(
+        Effect.gen(function* () {
+          const pending = inFlight.get(input.handoffId);
+          inFlight.delete(input.handoffId);
+          if (pending !== undefined) yield* Deferred.succeed(pending, undefined);
+        }),
+      ),
+    );
 
   const planNativeFork: ScientForkContextDeliveryShape["planNativeFork"] = Effect.fn(
     "planScientNativeFork",
@@ -630,7 +673,9 @@ const make = Effect.gen(function* () {
       return null;
     }
     // A turn the source itself inherited was never a turn of its provider thread.
-    if (fork.inherited_turn_ids_json.includes(`"${fork.fork_point_turn_id}"`)) return null;
+    // Imported history has no strong native source ref. Keep portable until
+    // that complete prefix has explicit native coverage of its own.
+    if (fork.inherited_turn_ids_json !== "[]") return null;
     if ((yield* readActiveHandoffs(input.threadId)).length > 0) return null;
     // A native fork creates the fork's first provider thread; there must be none.
     const forkBinding = yield* sql<{ readonly resume_cursor_json: string | null }>`
@@ -646,8 +691,9 @@ const make = Effect.gen(function* () {
     const bindings = yield* sql<{
       readonly provider_instance_id: string | null;
       readonly resume_cursor_json: string | null;
+      readonly provider_name: string;
     }>`
-      SELECT provider_instance_id, resume_cursor_json FROM provider_session_runtime
+      SELECT provider_instance_id, resume_cursor_json, provider_name FROM provider_session_runtime
       WHERE thread_id = ${fork.source_thread_id}
       LIMIT 1
     `.pipe(Effect.mapError(fail(input.threadId, "Unable to read the source provider thread.")));
@@ -661,6 +707,19 @@ const make = Effect.gen(function* () {
     }
     const resumeCursor = Option.getOrUndefined(decodeUnknownJson(binding.resume_cursor_json));
     if (resumeCursor === undefined || resumeCursor === null) return null;
+    const key = nativeThreadKey(binding.provider_name, resumeCursor, binding.provider_instance_id);
+    if (key === null) return null;
+    const missing = yield* sql<{ readonly count: number }>`
+      SELECT COUNT(*) AS count FROM projection_turns AS turn
+      LEFT JOIN scient_native_turn_sources AS evidence
+        ON evidence.thread_id = turn.thread_id AND evidence.turn_id = turn.turn_id
+      WHERE turn.thread_id = ${fork.source_thread_id} AND turn.turn_id IS NOT NULL
+        AND turn.requested_at <= (SELECT requested_at FROM projection_turns
+          WHERE thread_id = ${fork.source_thread_id} AND turn_id = ${fork.fork_point_turn_id})
+        AND (evidence.native_thread_key IS NULL OR evidence.native_thread_key <> ${key}
+          OR evidence.provider_instance_id <> ${input.providerInstanceId})
+    `.pipe(Effect.mapError(fail(input.threadId, "Unable to verify native history coverage.")));
+    if (missing[0]?.count !== 0) return null;
     return { resumeCursor, throughTurnId: TurnId.make(fork.fork_point_turn_id) };
   });
 
@@ -718,8 +777,8 @@ const make = Effect.gen(function* () {
         (turn.checkpoint_turn_count !== null && turn.checkpoint_turn_count > input.turnCount);
       yield* removed
         ? updateHandoff(input.threadId, handoff.handoff_id, { deliveryStatus: "superseded" })
-        : // Rollback may move the provider to a new native thread that keeps
-          // the history (Claude and OpenCode fork their session): adopt it.
+        : // Rollback can replace the provider thread. Recheck its identity
+          // before trusting retained history on the next turn.
           updateHandoff(input.threadId, handoff.handoff_id, { rebindPending: true });
     }
   });

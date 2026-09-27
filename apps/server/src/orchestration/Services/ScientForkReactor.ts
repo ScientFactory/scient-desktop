@@ -59,7 +59,10 @@ export interface ScientForkReactorShape {
    * Runs before a fork command is dispatched. A fork of a running turn first
    * persists the turn's buffered text so the fork copies its latest state.
    */
-  readonly prepareFork?: (command: ThreadForkCommand) => Effect.Effect<void>;
+  readonly prepareFork?: (
+    command: ThreadForkCommand,
+  ) => Effect.Effect<void, ScientForkCompletionError>;
+  readonly discardPreparation?: (threadId: ThreadId) => Effect.Effect<void>;
   readonly getDisposition: (
     threadId: ThreadId,
   ) => Effect.Effect<ForkDisposition, ScientForkCompletionError>;

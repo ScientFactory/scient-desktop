@@ -2168,14 +2168,17 @@ const makeWsRpcLayer = (
                   )
                 : false;
               // SCIENT-FORK: a fork of a running turn copies its latest state.
-              if (
-                normalizedCommand.type === "thread.fork" &&
-                normalizedCommand.sourceRunningTurnId !== undefined
-              ) {
+              if (normalizedCommand.type === "thread.fork") {
                 yield* scientForkReactor.prepareFork?.(normalizedCommand) ?? Effect.void;
               }
               const result = yield* dispatchNormalizedCommand(normalizedCommand).pipe(
                 Effect.tapError(() => cleanupFailedUploadedAttachments(command, normalizedCommand)),
+                Effect.tapError(() =>
+                  normalizedCommand.type === "thread.fork"
+                    ? (scientForkReactor.discardPreparation?.(normalizedCommand.newThreadId) ??
+                      Effect.void)
+                    : Effect.void,
+                ),
               );
               yield* recordClientCommandAnalytics(normalizedCommand);
               // SCIENT-FORK:START — command persistence and workspace setup form

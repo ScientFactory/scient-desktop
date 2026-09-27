@@ -476,7 +476,7 @@ export function renderHandoff(input: {
                 }
               : {
                   workspace:
-                    "This fork has its own copy of the workspace, taken at the fork moment. Gitignored files were not copied.",
+                    "This fork has its own workspace snapshot, captured separately from the conversation cut. The source could keep changing while it was captured. Gitignored files were not copied.",
                 }),
             ...(input.midTurnCut.touchedFiles.length > 0
               ? { filesTouchedBeforeFork: input.midTurnCut.touchedFiles }

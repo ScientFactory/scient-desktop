@@ -51,6 +51,7 @@ import Migration011 from "./migrations/011_ThreadQueue.ts";
 import Migration012 from "./migrations/012_WorkspaceBindings.ts";
 import Migration013 from "./migrations/013_WorkspaceBindingRootFileSystemIdentity.ts";
 import Migration014 from "./migrations/014_ContextTransfers.ts";
+import Migration015 from "./migrations/015_ForkEvidence.ts";
 // ---------------------------------------------------------------------------
 // Error types
 // ---------------------------------------------------------------------------
@@ -105,6 +106,7 @@ export const SCIENT_MIGRATIONS: ReadonlyArray<ScientMigration> = [
   { id: 12, name: "workspace-bindings", effect: Migration012 },
   { id: 13, name: "workspace-binding-root-filesystem-identity", effect: Migration013 },
   { id: 14, name: "context-transfers", effect: Migration014 },
+  { id: 15, name: "fork-evidence", effect: Migration015 },
 ] as const;
 
 const loader = Migrator.fromRecord(

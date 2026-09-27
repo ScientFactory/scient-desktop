@@ -1,3 +1,6 @@
+import { EnvironmentId } from "@t3tools/contracts";
+import { AgentInvocationContext } from "../../scient/operations/AgentInvocationContext.ts";
+import { readScientThreadForInvocation } from "../../mcp/toolkits/threads/handlers.ts";
 /**
  * SCIENT-FORK cross-area integration tests for PR 14.
  *
@@ -2009,3 +2012,42 @@ it.layer(Layer.fresh(makeCrossAreaTestLayer("scient-fork-multi-turn-revert-")))(
     );
   },
 );
+
+it.layer(makeCrossAreaTestLayer("fork-review-bounded-reader"))("full history retrieval", (it) => {
+  it.effect("an older activity remains retrievable by item id", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const pipeline = yield* OrchestrationProjectionPipeline;
+      const eventStore = yield* OrchestrationEventStore;
+      const query = yield* ProjectionSnapshotQuery;
+      const appendAndProject = (event: Parameters<typeof eventStore.append>[0]) =>
+        eventStore.append(event).pipe(Effect.flatMap((saved) => pipeline.projectEvent(saved)));
+      yield* appendAndProject(projectCreatedEvent());
+      yield* appendAndProject(threadCreatedEvent(ORIGIN, "Long thread", "review-origin"));
+      for (let index = 0; index < 501; index++) {
+        yield* sql`INSERT INTO projection_thread_activities
+        (activity_id,thread_id,turn_id,tone,kind,summary,payload_json,sequence,created_at)
+        VALUES (${"review-tool-" + index},${ORIGIN},NULL,'tool','tool.completed',
+          ${"Result " + index},'{}',${index + 10},${NOW})`;
+      }
+      const detail = yield* query.getThreadDetailById(ORIGIN);
+      if (Option.isNone(detail)) return assert.fail("thread missing");
+      const result = yield* readScientThreadForInvocation({
+        threadId: ORIGIN,
+        view: "activity",
+        itemId: "review-tool-0",
+      }).pipe(
+        Effect.provideService(AgentInvocationContext, {
+          environmentId: EnvironmentId.make("review-environment"),
+          threadId: ORIGIN,
+          providerSessionId: "review-session",
+          providerInstanceId: PROVIDER,
+          capabilities: new Set(["threads:read"] as const),
+          issuedAt: 1,
+        }),
+      );
+      assert.strictEqual(result.items.length, 1);
+      assert.strictEqual(result.items[0]?.itemId, "review-tool-0");
+    }),
+  );
+});

@@ -18,6 +18,10 @@ export interface ScientForkCheckpointBaselineShape {
   readonly workspaceExists: (cwd: string) => Effect.Effect<boolean>;
   readonly isGitRepository: (cwd: string) => Effect.Effect<boolean, VcsError>;
   readonly hasCheckpoint: (cwd: string, ref: CheckpointRef) => Effect.Effect<boolean, VcsError>;
+  readonly resolveCheckpoint: (
+    cwd: string,
+    ref: CheckpointRef,
+  ) => Effect.Effect<string | null, VcsError>;
   readonly copy: (input: {
     readonly cwd: string;
     readonly fromCheckpointRef: CheckpointRef;
@@ -26,7 +30,7 @@ export interface ScientForkCheckpointBaselineShape {
   /**
    * Snapshot the current working tree (untracked, non-ignored files included)
    * into a checkpoint ref without touching the user's index. A fork of a
-   * running turn starts from the workspace as it stands at the cut.
+   * running turn starts from this separately captured workspace snapshot.
    */
   readonly capture: (input: {
     readonly cwd: string;
@@ -74,9 +78,28 @@ const make = Effect.gen(function* () {
         ),
       );
 
+  const resolveCheckpoint: ScientForkCheckpointBaselineShape["resolveCheckpoint"] = (cwd, ref) =>
+    process
+      .run({
+        operation: "ScientForkCheckpointBaseline.resolve",
+        command: "git",
+        args: ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`],
+        cwd,
+        allowNonZeroExit: true,
+      })
+      .pipe(
+        Effect.map((result) =>
+          result.exitCode === 0 && /^[0-9a-f]{40,64}$/i.test(result.stdout.trim())
+            ? result.stdout.trim()
+            : null,
+        ),
+      );
+
   const copy: ScientForkCheckpointBaselineShape["copy"] = Effect.fn(
     "copyScientForkCheckpointBaseline",
   )(function* (input) {
+    // Once frozen, retries never replace this fork's snapshot with a newer ref.
+    if ((yield* resolveCheckpoint(input.cwd, input.toCheckpointRef)) !== null) return true;
     const resolved = yield* process.run({
       operation: "ScientForkCheckpointBaseline.resolve",
       command: "git",
@@ -91,7 +114,7 @@ const make = Effect.gen(function* () {
     yield* process.run({
       operation: "ScientForkCheckpointBaseline.copy",
       command: "git",
-      args: ["update-ref", input.toCheckpointRef, commitOid],
+      args: ["update-ref", input.toCheckpointRef, commitOid, ""],
       cwd: input.cwd,
     });
     return true;
@@ -150,6 +173,7 @@ const make = Effect.gen(function* () {
     isGitRepository,
     hasCheckpoint,
     workspaceExists,
+    resolveCheckpoint,
     copy,
     capture,
     discard,
@@ -165,6 +189,7 @@ export const testLayer = (
     isGitRepository: () => Effect.succeed(true),
     hasCheckpoint: () => Effect.succeed(true),
     workspaceExists: () => Effect.succeed(true),
+    resolveCheckpoint: () => Effect.succeed("a".repeat(40)),
     copy: () => Effect.succeed(true),
     capture: () => Effect.succeed(true),
     discard: () => Effect.void,
