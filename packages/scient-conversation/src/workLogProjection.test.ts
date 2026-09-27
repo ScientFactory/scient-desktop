@@ -1,0 +1,213 @@
+import { describe, expect, it } from "@effect/vitest";
+import { beforeEach } from "vite-plus/test";
+
+import { projectQuestionAnswers, projectWorkLog } from "./workLogProjection.ts";
+import { activity, resetClock } from "./thread.test-fixtures.ts";
+
+beforeEach(resetClock);
+
+const SECRET = "sk-live-0123456789";
+
+describe("work-log export projection", () => {
+  it("keeps allowlisted display fields and never provider payloads", () => {
+    const { entries } = projectWorkLog([
+      activity({
+        id: "a1",
+        kind: "tool.updated",
+        turnId: "t1",
+        payload: {
+          itemType: "command_execution",
+          toolCallId: "call-1",
+          status: "inProgress",
+          title: "Ran command",
+          data: { item: { command: ["bash", "-lc", "npm test"] }, env: { TOKEN: SECRET } },
+        },
+      }),
+      activity({
+        id: "a2",
+        kind: "tool.completed",
+        turnId: "t1",
+        payload: {
+          itemType: "command_execution",
+          toolCallId: "call-1",
+          status: "completed",
+          title: "Ran command",
+          data: {
+            item: { aggregatedOutput: "ok" },
+            headers: { authorization: `Bearer ${SECRET}` },
+          },
+          providerSessionId: "native-session-1",
+        },
+      }),
+    ]);
+    expect(entries).toEqual([
+      {
+        _tag: "tool",
+        id: "a1",
+        turnId: "t1",
+        createdAt: "2026-09-27T14:00:01.000Z",
+        title: "Ran command",
+        itemType: "command_execution",
+        toolName: null,
+        status: "completed",
+        command: { text: 'bash -lc "npm test"', omittedLines: 0, omittedChars: 0 },
+        detail: null,
+        output: { text: "ok", omittedLines: 0, omittedChars: 0 },
+        changedFiles: [],
+        omittedChangedFiles: 0,
+      },
+    ]);
+    const serialized = JSON.stringify(entries);
+    expect(serialized).not.toContain(SECRET);
+    expect(serialized).not.toContain("native-session-1");
+  });
+
+  it("includes nothing executable and nothing chat hides", () => {
+    const { entries } = projectWorkLog([
+      activity({
+        id: "a1",
+        kind: "approval.requested",
+        payload: { requestId: "r1", command: "rm -rf /" },
+      }),
+      activity({
+        id: "a2",
+        kind: "user-input.requested",
+        payload: { requestId: "q1", questions: [] },
+      }),
+      activity({ id: "a3", kind: "tool.started", payload: { title: "Started" } }),
+      activity({ id: "a4", kind: "context-window.updated", payload: { usedTokens: 1 } }),
+      activity({
+        id: "a5",
+        kind: "tool.updated",
+        payload: { title: "Subagent", agentId: "agent-1" },
+      }),
+      activity({
+        id: "a6",
+        kind: "tool.completed",
+        payload: { title: "Plan", detail: "ExitPlanMode: go" },
+      }),
+      activity({
+        id: "a7",
+        kind: "runtime.warning",
+        summary: "Notice (no displayable text content)",
+      }),
+      activity({ id: "a8", kind: "provider.unknown", payload: { secret: SECRET } }),
+    ]);
+    expect(entries).toEqual([]);
+  });
+
+  it("bounds long output to a head and tail with an omission line", () => {
+    const output = Array.from({ length: 200 }, (_, index) => `line ${index + 1}`).join("\n");
+    const { entries } = projectWorkLog([
+      activity({
+        id: "a1",
+        kind: "tool.completed",
+        payload: { title: "Build", data: { rawOutput: { stdout: output } } },
+      }),
+    ]);
+    const entry = entries[0];
+    if (entry?._tag !== "tool" || entry.output === null) throw new Error("Expected output.");
+    expect(entry.output.omittedLines).toBe(155);
+    expect(entry.output.text).toContain("line 30\n[… 155 lines omitted …]\nline 186");
+  });
+
+  it("projects tasks, notices, compactions, failures, and the latest plan per turn", () => {
+    const { entries } = projectWorkLog([
+      activity({
+        id: "t1",
+        kind: "task.started",
+        payload: { taskId: "k1", title: "Review", role: "reviewer" },
+      }),
+      activity({
+        id: "t2",
+        kind: "task.completed",
+        payload: { taskId: "k1", status: "completed", summary: "Reviewed" },
+      }),
+      activity({
+        id: "w1",
+        kind: "runtime.warning",
+        summary: "Slow",
+        payload: { message: "Rate limited" },
+      }),
+      activity({ id: "c1", kind: "context-compaction", summary: "Context compacted" }),
+      activity({ id: "f1", kind: "provider.turn.start.failed", summary: "Could not start" }),
+      activity({
+        id: "p1",
+        kind: "turn.plan.updated",
+        turnId: "x",
+        payload: { plan: [{ step: "A", status: "pending" }] },
+      }),
+      activity({
+        id: "p2",
+        kind: "turn.plan.updated",
+        turnId: "x",
+        payload: {
+          plan: [
+            { step: "A", status: "completed" },
+            { step: "B", status: "inProgress" },
+          ],
+        },
+      }),
+    ]);
+    expect(entries.map((entry) => entry._tag)).toEqual([
+      "task",
+      "notice",
+      "compaction",
+      "notice",
+      "plan-steps",
+    ]);
+    expect(entries[0]).toMatchObject({
+      id: "t1",
+      title: "Reviewed",
+      status: "completed",
+      agentRole: "reviewer",
+    });
+    expect(entries[1]).toMatchObject({ level: "warning", detail: { text: "Rate limited" } });
+    expect(entries[3]).toMatchObject({ level: "error", title: "Could not start" });
+    expect(entries[4]).toMatchObject({
+      id: "p1",
+      steps: [
+        { step: "A", status: "completed" },
+        { step: "B", status: "in-progress" },
+      ],
+    });
+  });
+
+  it("keeps answered questions only, with option labels", () => {
+    const { questionAnswers } = projectQuestionAnswers(
+      [
+        activity({
+          id: "q1",
+          kind: "user-input.requested",
+          turnId: "t1",
+          payload: {
+            requestId: "answered",
+            questions: [
+              { id: "pick", question: "Pick one", options: [{ value: "a", label: "Option A" }] },
+            ],
+          },
+        }),
+        activity({
+          id: "q2",
+          kind: "user-input.answer-submitted",
+          turnId: "t1",
+          payload: { requestId: "answered", answers: { pick: ["a"] }, attachmentsByQuestionId: {} },
+        }),
+        activity({
+          id: "q3",
+          kind: "user-input.requested",
+          payload: { requestId: "pending", questions: [{ id: "x", question: "Unanswered?" }] },
+        }),
+      ],
+      () => null,
+    );
+    expect(questionAnswers).toEqual([
+      {
+        id: "answered",
+        turnId: "t1",
+        createdAt: "2026-09-27T14:00:01.000Z",
+        items: [{ question: "Pick one", answer: "Option A", attachments: [] }],
+      },
+    ]);
+  });
+});
