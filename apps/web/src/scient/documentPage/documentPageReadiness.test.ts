@@ -6,6 +6,7 @@ import {
   collectDocumentPageReadiness,
   DocumentPageTracker,
   failedDocumentPageReadiness,
+  renderWithCompleteNotes,
   resolveInternalLinks,
 } from "./documentPageReadiness";
 import {
@@ -179,6 +180,50 @@ describe("document page readiness", () => {
     const [first, second] = element.querySelectorAll("a");
     expect(first?.getAttribute("href")).toBe("#user-content-fn-1");
     expect(second?.getAttribute("href")).toBe("#missing");
+  });
+});
+
+describe("printed export notes", () => {
+  const readinessWith = (notes: ReadonlyArray<string>) =>
+    ({
+      ...failedDocumentPageReadiness(new DocumentPageTracker(), page),
+      status: "ready",
+      diagnostics: notes.map((detail) => ({
+        severity: "warning" as const,
+        code: "missing-image" as const,
+        detail,
+      })),
+    }) as const;
+
+  it("re-renders until the notes list what the final inspection found", async () => {
+    const rendered: Array<ReadonlyArray<string>> = [];
+    const inspections = [["Found while rendering."], ["Found while rendering.", "Found last."]];
+    let pass = 0;
+    const readiness = await renderWithCompleteNotes({
+      render: (notes) => rendered.push(notes),
+      tracker: new DocumentPageTracker(),
+      inspect: async () => readinessWith(inspections[Math.min(pass++, 1)]!),
+    });
+    expect(rendered).toEqual([
+      [],
+      ["Found while rendering."],
+      ["Found while rendering.", "Found last."],
+    ]);
+    expect(readiness.status).toBe("ready");
+  });
+
+  it("refuses a page whose notes never settle", async () => {
+    let pass = 0;
+    const tracker = new DocumentPageTracker();
+    const readiness = await renderWithCompleteNotes({
+      render: () => undefined,
+      tracker,
+      inspect: async () => readinessWith([`Note ${pass++}`]),
+    });
+    expect(readiness.status).toBe("failed");
+    expect(readiness.diagnostics).toEqual([
+      expect.objectContaining({ severity: "fatal", code: "render-crashed" }),
+    ]);
   });
 });
 

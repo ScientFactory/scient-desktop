@@ -148,6 +148,8 @@ function fixtures(png) {
     "",
     "![Remote figure](https://example.com/remote.png)",
     "",
+    "![Corrupt figure](data:image/png;base64,AAAA)",
+    "",
     "IMAGE_END_MARKER",
   ].join("\n");
 
@@ -284,8 +286,10 @@ function fixtures(png) {
           "Figure 1. A captured workspace image",
           "Image unavailable: missing.png",
           "Remote image not included",
+          "Image could not be displayed: Corrupt figure",
           "IMAGE_END_MARKER",
           "Export notes",
+          'Image "Corrupt figure" could not be displayed',
         ],
         blocks: { images: 1 },
         warnings: ["remote-image-omitted"],

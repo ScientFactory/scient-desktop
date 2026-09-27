@@ -204,6 +204,49 @@ export async function collectDocumentPageReadiness(input: {
   };
 }
 
+/** The limitations a readiness report found, as they are printed in the export notes. */
+export function readinessWarningNotes(
+  readiness: ScientDocumentPageReadiness,
+): ReadonlyArray<string> {
+  return readiness.diagnostics.flatMap((diagnostic) =>
+    diagnostic.severity === "warning" ? [diagnostic.detail] : [],
+  );
+}
+
+/**
+ * Renders until the printed export notes list every limitation the page
+ * found, including ones only its final inspection sees, so the PDF never
+ * omits a warning the export reports. Each pass renders, settles, and
+ * inspects; it stops once the notes match or after `maxPasses`.
+ */
+export async function renderWithCompleteNotes(input: {
+  readonly render: (notes: ReadonlyArray<string>) => void;
+  readonly tracker: DocumentPageTracker;
+  readonly inspect: (settled: boolean) => Promise<ScientDocumentPageReadiness>;
+  readonly maxPasses?: number;
+}): Promise<ScientDocumentPageReadiness> {
+  let printed: ReadonlyArray<string> = [];
+  let settled = true;
+  const maxPasses = input.maxPasses ?? 3;
+  for (let pass = 1; ; pass += 1) {
+    input.render(printed);
+    settled = (await input.tracker.settle()) && settled;
+    const readiness = await input.inspect(settled);
+    const notes = readinessWarningNotes(readiness);
+    const complete =
+      notes.length === printed.length && notes.every((note, index) => note === printed[index]);
+    if (complete) return readiness;
+    if (pass >= maxPasses) {
+      input.tracker.fatal(
+        "render-crashed",
+        "The document page kept finding new limitations and could not list them all.",
+      );
+      return { ...readiness, status: "failed", diagnostics: input.tracker.diagnostics };
+    }
+    printed = notes;
+  }
+}
+
 /** The report for a page that could not render its input at all. */
 export function failedDocumentPageReadiness(
   tracker: DocumentPageTracker,

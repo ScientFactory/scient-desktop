@@ -196,6 +196,33 @@ describe("ScientDocumentPage", () => {
     expect(tracker.diagnostics.every((diagnostic) => diagnostic.severity === "warning")).toBe(true);
   });
 
+  it("replaces an image that fails to decode with a labelled placeholder and a warning", async () => {
+    const { article, tracker } = await renderPage(
+      input("![Broken](data:image/png;base64,AAAA) ![Plot](scient-asset:image-0001)\n"),
+    );
+    const [broken, captured] = article.querySelectorAll("img");
+    await act(async () => {
+      broken!.dispatchEvent(new Event("error"));
+      captured!.dispatchEvent(new Event("error"));
+    });
+    expect(article.textContent).toContain("Image could not be displayed: Broken");
+    expect(article.textContent).toContain("Image could not be displayed: plot.png");
+    expect(article.querySelectorAll("img")).toHaveLength(0);
+    expect(tracker.diagnostics).toEqual([
+      {
+        severity: "warning",
+        code: "missing-image",
+        detail: 'Image "Broken" could not be displayed and was left out.',
+      },
+      {
+        severity: "fatal",
+        code: "resource-unresolved",
+        detail: 'The captured image "plot.png" could not be loaded.',
+      },
+    ]);
+    expect([...tracker.unresolvedAssets]).toEqual(["image-0001"]);
+  });
+
   it("treats a Mermaid runtime failure as fatal, not as a labelled placeholder", async () => {
     const { article, tracker } = await renderPage(input("```mermaid\nchunk\n```\n"));
     expect(article.querySelector("[data-scient-diagram='error']")).not.toBeNull();

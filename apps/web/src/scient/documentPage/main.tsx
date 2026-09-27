@@ -11,6 +11,7 @@ import {
   collectDocumentPageReadiness,
   DocumentPageTracker,
   failedDocumentPageReadiness,
+  renderWithCompleteNotes,
 } from "./documentPageReadiness";
 import {
   DocumentPageInputError,
@@ -48,19 +49,15 @@ async function renderDocumentPage(): Promise<ScientDocumentPageReadiness> {
           />,
         ),
       );
-    renderPage([]);
-    let settled = await tracker.settle();
-    const renderWarnings = tracker.diagnostics.flatMap((diagnostic) =>
-      diagnostic.severity === "warning" ? [diagnostic.detail] : [],
-    );
-    if (renderWarnings.length > 0) {
-      // Limitations found while rendering are printed with the bundle's own.
-      renderPage(renderWarnings);
-      settled = (await tracker.settle()) && settled;
-    }
-    const article = container.querySelector<HTMLElement>("article.scient-document");
-    if (article === null) throw new Error("The document page did not render its article.");
-    return await collectDocumentPageReadiness({ page, article, tracker, settled });
+    return await renderWithCompleteNotes({
+      render: renderPage,
+      tracker,
+      inspect: (settled) => {
+        const article = container.querySelector<HTMLElement>("article.scient-document");
+        if (article === null) throw new Error("The document page did not render its article.");
+        return collectDocumentPageReadiness({ page: page!, article, tracker, settled });
+      },
+    });
   } catch (cause) {
     if (cause instanceof DocumentPageInputError) {
       tracker.fatal(cause.code, cause.message);

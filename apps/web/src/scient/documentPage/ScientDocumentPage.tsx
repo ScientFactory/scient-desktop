@@ -302,6 +302,7 @@ function PrintImage({
 }) {
   const { assets, assetBaseUrl, tracker } = useDocumentPage();
   const [finish] = useState(() => tracker.track());
+  const [failed, setFailed] = useState(false);
   const asset = src.startsWith(DOCUMENT_ASSET_URL_PREFIX)
     ? assets.get(src.slice(DOCUMENT_ASSET_URL_PREFIX.length))
     : undefined;
@@ -334,6 +335,23 @@ function PrintImage({
     tracker.warn("missing-image", `Image "${src}" was not available to the export.`);
     return <Placeholder label={`Image unavailable: ${name}`} />;
   }
+  if (failed) {
+    return (
+      <Placeholder label={`Image could not be displayed: ${asset?.fileName ?? (alt || "image")}`} />
+    );
+  }
+  const onError = () => {
+    const name = asset?.fileName ?? (alt || "untitled");
+    if (asset) {
+      // A captured image that does not load means the capture was not served as recorded.
+      tracker.unresolvedAssets.add(asset.id);
+      tracker.fatal("resource-unresolved", `The captured image "${name}" could not be loaded.`);
+    } else {
+      tracker.warn("missing-image", `Image "${name}" could not be displayed and was left out.`);
+    }
+    setFailed(true);
+    finish();
+  };
   return (
     <span className="scient-document-image">
       <img
@@ -341,7 +359,7 @@ function PrintImage({
         alt={alt}
         data-scient-asset={asset?.id}
         onLoad={finish}
-        onError={finish}
+        onError={onError}
       />
       {title ? <span className="scient-document-image-caption">{title}</span> : null}
     </span>
