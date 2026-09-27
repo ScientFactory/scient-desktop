@@ -63,7 +63,10 @@ const isInside = (path: Path.Path, root: string, candidate: string) => {
 export interface ResolvedMarkdownFile {
   readonly canonicalRoot: string;
   readonly canonicalPath: string;
-  /** Workspace-relative, `/`-separated. */
+  /**
+   * The workspace-relative path as requested, `/`-separated. For a symlinked
+   * file this is the link, as the editor opened it, not its target.
+   */
   readonly relativePath: string;
   readonly bytes: Uint8Array;
   readonly revision: Sha256Digest;
@@ -134,7 +137,12 @@ export const readProjectMarkdownFile = Effect.fn("MarkdownFileBundle.readProject
     return {
       canonicalRoot,
       canonicalPath,
-      relativePath: path.relative(canonicalRoot, canonicalPath).split(path.sep).join("/"),
+      // The path as opened, not the symlink target: relative images resolve from
+      // here, as the editor resolves them. Containment uses the canonical path.
+      relativePath: portable
+        .split("/")
+        .filter((segment) => segment.length > 0 && segment !== ".")
+        .join("/"),
       bytes,
       revision: sha256Digest(bytes),
     } satisfies ResolvedMarkdownFile;
