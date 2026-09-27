@@ -30,13 +30,21 @@ const page = {
   warnings: [],
 } satisfies ScientDocumentPageInput;
 
-const fonts = (status: string) => ({ ready: Promise.resolve(), status });
+/** A FontFaceSet stand-in: `ready` resolves and `status` is "loaded" even when a face failed. */
+const fonts = (...faces: ReadonlyArray<{ family: string; status: string }>) =>
+  Object.assign(faces, { ready: Promise.resolve(), status: "loaded" });
 
 beforeEach(() => {
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) =>
     setTimeout(() => callback(0), 0),
   );
-  Object.defineProperty(document, "fonts", { configurable: true, value: fonts("loaded") });
+  Object.defineProperty(document, "fonts", {
+    configurable: true,
+    value: fonts(
+      { family: "KaTeX_Main", status: "loaded" },
+      { family: "Unused", status: "unloaded" },
+    ),
+  });
 });
 
 afterEach(() => {
@@ -99,7 +107,10 @@ describe("document page readiness", () => {
   });
 
   it("fails for unfinished diagrams, unloaded captured images, fonts, and timeouts", async () => {
-    Object.defineProperty(document, "fonts", { configurable: true, value: fonts("loading") });
+    Object.defineProperty(document, "fonts", {
+      configurable: true,
+      value: fonts({ family: "KaTeX_Main", status: "loading" }),
+    });
     const element = article(
       "<div data-scient-diagram='pending'></div><img data-scient-asset='image-0001' alt='plot'>",
     );
@@ -120,6 +131,31 @@ describe("document page readiness", () => {
       "fonts-unsettled",
       "render-crashed",
       "resource-unresolved",
+    ]);
+  });
+
+  it("fails when a font the page used could not load, although fonts.ready resolved", async () => {
+    Object.defineProperty(document, "fonts", {
+      configurable: true,
+      value: fonts(
+        { family: "KaTeX_Math", status: "error" },
+        { family: "Inter", status: "loaded" },
+      ),
+    });
+    const readiness = await collectDocumentPageReadiness({
+      page,
+      article: article("<p>$x$</p>"),
+      tracker: new DocumentPageTracker(),
+      settled: true,
+    });
+    expect(readiness.status).toBe("failed");
+    expect(readiness.settled.fonts).toBe(false);
+    expect(readiness.diagnostics).toEqual([
+      {
+        severity: "fatal",
+        code: "fonts-unsettled",
+        detail: 'The font "KaTeX_Math" failed to load.',
+      },
     ]);
   });
 

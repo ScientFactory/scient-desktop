@@ -110,6 +110,35 @@ export function resolveInternalLinks(article: ParentNode): void {
   }
 }
 
+/**
+ * Waits for the fonts the page used and checks each one. `fonts.ready`
+ * resolves even when a face failed to load (the page then silently prints a
+ * fallback), so every face the page requested must itself report `loaded`.
+ * Faces the page never used stay `unloaded` and do not matter.
+ */
+export async function settleDocumentFonts(
+  fonts: FontFaceSet,
+  tracker: DocumentPageTracker,
+): Promise<boolean> {
+  try {
+    await fonts.ready;
+  } catch {
+    tracker.fatal("fonts-unsettled", "The document's fonts did not finish loading.");
+    return false;
+  }
+  let settled = true;
+  for (const face of fonts) {
+    if (face.status === "error") {
+      settled = false;
+      tracker.fatal("fonts-unsettled", `The font "${face.family}" failed to load.`);
+    } else if (face.status === "loading") {
+      settled = false;
+      tracker.fatal("fonts-unsettled", `The font "${face.family}" did not finish loading.`);
+    }
+  }
+  return settled;
+}
+
 /** Inspects the committed page and builds the report the desktop checks before printing. */
 export async function collectDocumentPageReadiness(input: {
   readonly page: ScientDocumentPageInput;
@@ -118,15 +147,7 @@ export async function collectDocumentPageReadiness(input: {
   readonly settled: boolean;
 }): Promise<ScientDocumentPageReadiness> {
   const { article, tracker, page } = input;
-  let fontsSettled = false;
-  try {
-    await document.fonts.ready;
-    fontsSettled = document.fonts.status === "loaded";
-  } catch {
-    fontsSettled = false;
-  }
-  if (!fontsSettled)
-    tracker.fatal("fonts-unsettled", "The document's fonts did not finish loading.");
+  const fontsSettled = await settleDocumentFonts(document.fonts, tracker);
   if (!input.settled) {
     tracker.fatal(
       "render-crashed",
