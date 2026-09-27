@@ -11,16 +11,15 @@
  * A process boundary is not a sandbox; `--sandbox` and the tree pass in
  * `pandocResources.ts` are what keep Pandoc from reading or fetching anything.
  */
+// @effect-diagnostics nodeBuiltinImport:off -- Native child streams need an error listener before stdin writes.
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
-import * as Stream from "effect/Stream";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 /** How to start Pandoc: the managed executable, with no leading arguments in production. */
 export interface PandocCommand {
@@ -209,8 +208,6 @@ function concatChunks(chunks: ReadonlyArray<Uint8Array>, total: number): Uint8Ar
  * fiber that started it.
  */
 export const runPandoc = Effect.fn("scient.pandoc.runPandoc")(function* (input: PandocRunInput) {
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const fileSystem = yield* FileSystem.FileSystem;
   const args = [
     ...input.pandoc.leadingArgs,
     ...input.args,
@@ -220,105 +217,164 @@ export const runPandoc = Effect.fn("scient.pandoc.runPandoc")(function* (input: 
   ];
   const fail = (reason: PandocRunFailureReason, detail: string, exitCode: number | null = null) =>
     new PandocRunError({ reason, detail, exitCode });
-
-  const run = Effect.gen(function* () {
-    const child = yield* spawner
-      .spawn(
-        ChildProcess.make(input.pandoc.command, args, {
+  const isRunError = Schema.is(PandocRunError);
+  let stopAndWait: (() => Promise<void>) | undefined;
+  const run = Effect.tryPromise({
+    try: (signal) =>
+      new Promise<PandocRunOutput>((resolve, reject) => {
+        // Effect's generic writable sink can lose its error listener when the
+        // child exits while a large stdin write is pending. Own the Node stream
+        // here so EPIPE is always observed, including on timeout/cancellation.
+        const child = NodeChildProcess.spawn(input.pandoc.command, args, {
           cwd: input.scratch.work,
           env: pandocEnvironment(input),
-          extendEnv: false,
-          killSignal: "SIGKILL",
-          stdin: "pipe",
-          stdout: "pipe",
-          stderr: "pipe",
-        }),
-      )
-      .pipe(Effect.mapError((cause) => fail("spawn-failed", String(cause.message))));
-
-    const stdoutBytes = yield* Ref.make(0);
-    const capped = child.stdout.pipe(
-      Stream.mapError((cause) =>
-        fail("failed", `Reading Pandoc's output failed: ${cause.message}`),
-      ),
-      Stream.tap((chunk) =>
-        Ref.updateAndGet(stdoutBytes, (total) => total + chunk.byteLength).pipe(
-          Effect.flatMap((total) =>
-            total > input.limits.maxStdoutBytes
-              ? Effect.fail(
-                  fail(
-                    "output-limit",
-                    `Pandoc produced more than ${String(input.limits.maxStdoutBytes)} bytes.`,
-                  ),
-                )
-              : Effect.void,
-          ),
-        ),
-      ),
-    );
-    const collectStdout =
-      input.stdoutPath === undefined
-        ? capped.pipe(
-            Stream.runCollect,
-            Effect.flatMap((chunks) =>
-              Ref.get(stdoutBytes).pipe(Effect.map((total) => concatChunks(chunks, total))),
-            ),
-          )
-        : capped.pipe(
-            Stream.run(fileSystem.sink(input.stdoutPath, { flag: "w" })),
-            Effect.mapError((cause) =>
-              cause._tag === "PandocRunError"
-                ? cause
-                : fail("failed", `Writing Pandoc's output failed: ${cause.message}`),
-            ),
-            Effect.as(new Uint8Array(0)),
-          );
-    const collectStderr = child.stderr.pipe(
-      Stream.runFold(
-        () => ({ chunks: [] as Array<Uint8Array>, bytes: 0 }),
-        (state, chunk: Uint8Array) => {
-          if (state.bytes < STDERR_MAX_BYTES) {
-            state.chunks.push(chunk);
-            state.bytes += chunk.byteLength;
+          stdio: ["pipe", "pipe", "pipe"],
+          detached: input.platform !== "win32",
+          windowsHide: true,
+        });
+        const stdoutChunks: Uint8Array[] = [];
+        const stderrChunks: Uint8Array[] = [];
+        const outputFile =
+          input.stdoutPath === undefined ? null : NodeFS.createWriteStream(input.stdoutPath);
+        let stdoutBytes = 0;
+        let stderrBytes = 0;
+        let stopError: PandocRunError | null = null;
+        let spawnError: Error | null = null;
+        let stdinError: Error | null = null;
+        let settled = false;
+        let closed = false;
+        let finished = false;
+        let resolveClosed: () => void = () => {};
+        const closedPromise = new Promise<void>((resolveClosedPromise) => {
+          resolveClosed = resolveClosedPromise;
+        });
+        const outputClosedPromise =
+          outputFile === null
+            ? Promise.resolve()
+            : new Promise<void>((resolveOutputClosed) => {
+                outputFile.once("close", resolveOutputClosed);
+              });
+        const kill = () => {
+          if (child.pid !== undefined && input.platform !== "win32") {
+            try {
+              process.kill(-child.pid, "SIGKILL");
+            } catch {
+              child.kill("SIGKILL");
+            }
+          } else if (child.pid !== undefined) {
+            NodeChildProcess.spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
+              windowsHide: true,
+            });
+            child.kill("SIGKILL");
           }
-          return state;
-        },
-      ),
-      Effect.map((state) => new TextDecoder().decode(concatChunks(state.chunks, state.bytes))),
-      Effect.orElseSucceed(() => ""),
-    );
-    // Pandoc may stop reading early when it fails; the exit code says why.
-    const writeStdin = Stream.run(Stream.make(input.stdin), child.stdin).pipe(Effect.exit);
+        };
+        const stop = (error: PandocRunError) => {
+          if (stopError !== null) return;
+          stopError = error;
+          kill();
+        };
+        stopAndWait = async () => {
+          outputFile?.destroy();
+          if (!closed) {
+            kill();
+          }
+          await Promise.all([closedPromise, outputClosedPromise]);
+        };
+        const aborted = () => kill();
+        signal.addEventListener("abort", aborted, { once: true });
+        if (signal.aborted) aborted();
 
-    const [stdout, stderr, stdinExit] = yield* Effect.all(
-      [collectStdout, collectStderr, writeStdin],
-      { concurrency: "unbounded" },
-    );
-    const code = yield* child.exitCode.pipe(
-      Effect.mapError(() => fail("failed", stderr.trim() || "Pandoc was stopped by a signal.")),
-    );
-    if (code !== 0) return yield* fail(classifyExit(code, stderr), stderr.trim(), code);
-    if (Exit.isFailure(stdinExit)) {
-      return yield* fail("failed", "Pandoc exited before it read its whole input.");
-    }
-    return {
-      stdout,
-      stdoutBytes: yield* Ref.get(stdoutBytes),
-      stderr,
-      warnings: parsePandocWarnings(stderr),
-    } satisfies PandocRunOutput;
+        child.stdin.on("error", (error: Error) => {
+          stdinError = error;
+        });
+        child.stdout.on("data", (chunk: Buffer) => {
+          stdoutBytes += chunk.byteLength;
+          if (stdoutBytes > input.limits.maxStdoutBytes) {
+            stop(
+              fail(
+                "output-limit",
+                `Pandoc produced more than ${String(input.limits.maxStdoutBytes)} bytes.`,
+              ),
+            );
+          } else if (outputFile !== null) {
+            if (!outputFile.write(chunk)) {
+              child.stdout.pause();
+              outputFile.once("drain", () => child.stdout.resume());
+            }
+          } else {
+            stdoutChunks.push(Uint8Array.from(chunk));
+          }
+        });
+        child.stdout.on("error", (error: Error) =>
+          stop(fail("failed", `Reading Pandoc's output failed: ${error.message}`)),
+        );
+        child.stderr.on("data", (chunk: Buffer) => {
+          if (stderrBytes < STDERR_MAX_BYTES) {
+            const kept = chunk.subarray(0, STDERR_MAX_BYTES - stderrBytes);
+            stderrChunks.push(Uint8Array.from(kept));
+            stderrBytes += kept.byteLength;
+          }
+        });
+        child.stderr.on("error", () => {});
+        const finish = (code: number | null) => {
+          if (finished) return;
+          finished = true;
+          const stderr = new TextDecoder().decode(concatChunks(stderrChunks, stderrBytes));
+          if (stopError !== null) return reject(stopError);
+          if (spawnError !== null) return reject(fail("spawn-failed", spawnError.message));
+          if (code === null) return reject(fail("failed", stderr.trim() || "Pandoc was stopped."));
+          if (code !== 0) return reject(fail(classifyExit(code, stderr), stderr.trim(), code));
+          if (stdinError !== null)
+            return reject(fail("failed", "Pandoc exited before it read its whole input."));
+          resolve({
+            stdout:
+              outputFile === null ? concatChunks(stdoutChunks, stdoutBytes) : new Uint8Array(0),
+            stdoutBytes,
+            stderr,
+            warnings: parsePandocWarnings(stderr),
+          });
+        };
+        let closeCode: number | null = null;
+        outputFile?.on("error", (error: Error) => {
+          stop(fail("failed", `Writing Pandoc's output failed: ${error.message}`));
+          if (closed) finish(closeCode);
+        });
+        child.on("error", (error: Error) => {
+          spawnError = error;
+        });
+        child.on("close", (code) => {
+          if (settled) return;
+          settled = true;
+          closed = true;
+          closeCode = code;
+          resolveClosed();
+          signal.removeEventListener("abort", aborted);
+          if (outputFile === null || outputFile.destroyed) finish(code);
+          else outputFile.end(() => finish(code));
+        });
+        child.stdin.end(Buffer.from(input.stdin));
+      }),
+    catch: (cause) =>
+      isRunError(cause)
+        ? cause
+        : fail("spawn-failed", cause instanceof Error ? cause.message : String(cause)),
   });
 
   const timeout = Duration.fromInputUnsafe(input.limits.timeout);
-  return yield* Effect.scoped(run).pipe(
-    Effect.timeoutOption(timeout),
-    Effect.flatMap((result) =>
-      Effect.fromOption(result, () =>
-        fail(
-          "timeout",
-          `Pandoc did not finish within ${Duration.format(timeout)} and was stopped.`,
+  return yield* Effect.acquireUseRelease(
+    Effect.void,
+    () =>
+      run.pipe(
+        Effect.timeoutOption(timeout),
+        Effect.flatMap((result) =>
+          Effect.fromOption(result, () =>
+            fail(
+              "timeout",
+              `Pandoc did not finish within ${Duration.format(timeout)} and was stopped.`,
+            ),
+          ),
         ),
       ),
-    ),
+    () => Effect.promise(() => stopAndWait?.() ?? Promise.resolve()),
   );
 });

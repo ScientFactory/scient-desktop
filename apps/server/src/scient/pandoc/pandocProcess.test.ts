@@ -239,4 +239,23 @@ describe("runPandoc", () => {
       expect(NodeFS.readFileSync(target, "utf8")).toBe("streamed");
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
+
+  it.live("reports a failed output file write without leaving Pandoc running", () =>
+    Effect.gen(function* () {
+      const { directory, scratchRoot, fake, pidFile } = yield* harness;
+      const error = yield* runOnce({
+        scratchRoot,
+        pandoc: fake("echo"),
+        stdin: "test output",
+        stdoutPath: directory,
+        limits: { ...LIMITS, timeout: "3 seconds" },
+      }).pipe(Effect.flip);
+      expect(error.reason).toBe("failed");
+      expect(error.detail).toContain("Writing Pandoc's output failed");
+      const pid = readPid(pidFile);
+      // The output error can arrive before the child has executed its first line.
+      if (pid !== null) expect(processExists(pid)).toBe(false);
+      expect(scratchEntries(scratchRoot)).toEqual([]);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
 });
