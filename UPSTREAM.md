@@ -46,25 +46,32 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current T3 alignment is recorded in
-[`docs/internals/2026-09-26-upstream-sync-95030dc6.md`](docs/internals/2026-09-26-upstream-sync-95030dc6.md)
+[`docs/internals/2026-09-27-upstream-sync-a727d1d9.md`](docs/internals/2026-09-27-upstream-sync-a727d1d9.md)
 and in `upstream-state.json`. It extends the integration through
-`95030dc674883f0f2a7fd034b32ce742c8cf55d0`: 21 official commits after
-`dd8332da57355bccd7e666289267f2c94597debd`, merged onto owned base
-`01cc063c77edcad0e5110e843ebf08162bcc7013` as `f164dde1ff` (first parent owned
+`a727d1d97690c9bb12cee5760e91cfd1aa7c017d`: 14 official commits after
+`95030dc674883f0f2a7fd034b32ce742c8cf55d0`, merged onto owned base
+`1ad094bbc3ffc58ad4e171f1e1ea5ce1d859ed5c` as `0c33fa4233` (first parent owned
 base, second parent the exact official target). The alignment is prepared in
-[PR #372](https://github.com/ScientFactory/scient-desktop/pull/372). No
+[PR #378](https://github.com/ScientFactory/scient-desktop/pull/378). No
 owned-main catch-up was needed because the frozen base was already the current
 owned `main` tip. The
-preceding alignment ([PR #370](docs/internals/2026-09-26-upstream-sync-dd8332da.md))
+preceding alignment ([PR #372](docs/internals/2026-09-26-upstream-sync-95030dc6.md))
 remains literal ancestry.
 
-This was a routine maintenance range that activates no protected boundary. The
-deliberate queued-messages revert is preserved whole, `node-pty` stays on `^1.1.0`
-because Scient builds its Linux arm64 artifact on arm64 hardware and does not
-consume upstream's new prebuild, and the Usage page keeps its Spend metric
-alongside upstream's new usage keybindings. Review also fixed an upstream change
-that aliased `projection_threads` in a new query and so silently broke Scient's
-`completedAnswerSql` correlation, which Git had merged without a conflict.
+This was a routine maintenance range that activates no protected boundary. It
+adds per-signal `OTEL_*_EXPORTER=none` without changing unset telemetry
+behaviour, sidebar and control accessibility announcements, a Cursor Keychain
+prompt timeout, client-version mismatch reporting on the Usage page, and the
+removal of a banner that described an offline server as finishing an update.
+`node-pty` stays on `^1.1.0`; the Usage page keeps its Spend metric; the
+usage contract decodes unknown bucket and source elements instead of losing the
+whole payload, which keeps version-skew reporting reachable. Two upstream
+strings naming the inherited product were relabelled to `Scient`, and the
+relaxed `simctl`/`adb` guidance was applied to Scient's relocated copy of the
+device instructions so the always-on awareness and the `device_open`
+quick-start agree. The receipt records the resolved conflicts, the verified
+contract behavior, and the pre-existing local gate failures that are not
+attributable to this range.
 
 ## Receiving T3 updates
 
