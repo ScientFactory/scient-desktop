@@ -27,6 +27,20 @@ the project, and opens the compiled document in Split view. A successful build
 proves that the PDF compiled; ask the agent to inspect the rendered pages when
 visual quality matters.
 
+## Export to Word
+
+Save the source, choose the document root in the LaTeX toolbar if Scient has not
+found one, then select **Export ▸ Word**. Scient converts the selected LaTeX
+document to a `.docx` file; the first export offers to install Pandoc if it is
+not yet available. The export uses the root file and literal `\input`,
+`\include`, and `\subfile` references inside the root document's directory.
+Local bibliography files and common image formats are included when available.
+
+Missing, computed, or out-of-project includes and figures become visible
+placeholders with conversion notes. PDF and EPS figures are not rasterized for
+Word. Equation numbering, references, layout commands, and some custom macros
+may change during conversion; review the saved Word document before sharing it.
+
 ## Move between source and PDF
 
 In Split, double-click a line of source to jump to the matching place in the

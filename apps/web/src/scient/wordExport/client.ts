@@ -1,9 +1,14 @@
 import {
   exportEnvironmentWordFile,
+  exportEnvironmentWordLatex,
   getEnvironmentWordExportTool,
   installEnvironmentWordExportTool,
 } from "@t3tools/client-runtime/state/scient-word-export";
-import type { EnvironmentId, ScientWordFileExportRequest } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ScientWordFileExportRequest,
+  ScientWordLatexExportRequest,
+} from "@t3tools/contracts";
 
 import { runtime } from "../../lib/runtime";
 import { readPreparedConnection } from "../../state/session";
@@ -32,5 +37,14 @@ export async function exportWordFile(
 ) {
   return runtime.runPromise(
     exportEnvironmentWordFile({ prepared: prepared(environmentId), request }),
+  );
+}
+
+export async function exportWordLatex(
+  environmentId: EnvironmentId,
+  request: ScientWordLatexExportRequest,
+) {
+  return runtime.runPromise(
+    exportEnvironmentWordLatex({ prepared: prepared(environmentId), request }),
   );
 }

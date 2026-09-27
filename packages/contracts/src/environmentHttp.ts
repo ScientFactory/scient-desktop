@@ -142,6 +142,7 @@ import {
   ScientPandocToolStatus,
   ScientWordExportError,
   ScientWordFileExportRequest,
+  ScientWordLatexExportRequest,
   ScientWordFileExportResult,
 } from "./scientPandoc.ts";
 // SCIENT-FORK:END
@@ -1204,6 +1205,14 @@ export class EnvironmentScientWordExportHttpApi extends HttpApiGroup.make("scien
     HttpApiEndpoint.post("exportFile", "/api/scient/word-export/v1/file", {
       headers: OptionalBearerHeaders,
       payload: ScientWordFileExportRequest,
+      success: ScientWordFileExportResult,
+      error: [EnvironmentHttpCommonError, ScientWordExportError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("exportLatex", "/api/scient/word-export/v1/latex", {
+      headers: OptionalBearerHeaders,
+      payload: ScientWordLatexExportRequest,
       success: ScientWordFileExportResult,
       error: [EnvironmentHttpCommonError, ScientWordExportError],
     }).middleware(EnvironmentAuthenticatedAuth),

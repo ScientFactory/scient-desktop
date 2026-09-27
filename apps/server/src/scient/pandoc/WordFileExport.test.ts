@@ -105,6 +105,53 @@ const run = <A, E>(
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
 describe("WordFileExport", () => {
+  it.live("exports the selected LaTeX root and validates the editor revision", () => {
+    const seen: Array<WordConversionInput> = [];
+    return run(
+      ({ service, project, revisionOf }) =>
+        Effect.gen(function* () {
+          NodeFS.writeFileSync(
+            NodePath.join(project, "notes", "main.tex"),
+            "\\begin{document}\\input{section}\\end{document}",
+          );
+          NodeFS.writeFileSync(NodePath.join(project, "notes", "section.tex"), "A nested section.");
+          NodeFS.writeFileSync(NodePath.join(project, "notes", "unrelated.tex"), "Unrelated.");
+          const revision = yield* revisionOf("notes/main.tex");
+          const produced = yield* service.exportLatex({
+            cwd: project,
+            relativePath: "notes/main.tex",
+            rootRelativePath: "notes/main.tex",
+            revision,
+          });
+          expect(produced.fileName).toBe("main.docx");
+          expect(seen[0]?.latex?.source).toContain("A nested section.");
+          expect(NodeFS.realpathSync(seen[0]!.files!.allowRoots[0]!)).toBe(
+            NodeFS.realpathSync(NodePath.join(project, "notes")),
+          );
+          const changed = yield* service
+            .exportLatex({
+              cwd: project,
+              relativePath: "notes/main.tex",
+              rootRelativePath: "notes/main.tex",
+              revision: "stale",
+            })
+            .pipe(Effect.flip);
+          expect(changed._tag === "ScientWordExportError" && changed.reason).toBe("file-changed");
+          const unrelated = yield* service
+            .exportLatex({
+              cwd: project,
+              relativePath: "notes/unrelated.tex",
+              rootRelativePath: "notes/main.tex",
+              revision: yield* revisionOf("notes/unrelated.tex"),
+            })
+            .pipe(Effect.flip);
+          expect(unrelated._tag === "ScientWordExportError" && unrelated.reason).toBe(
+            "file-unreadable",
+          );
+        }),
+      { seen },
+    );
+  });
   it.live("converts the saved file with images resolved only inside the project", () => {
     const seen: Array<WordConversionInput> = [];
     return run(

@@ -75,6 +75,13 @@ export const ScientWordFileExportRequest = Schema.Struct({
 });
 export type ScientWordFileExportRequest = typeof ScientWordFileExportRequest.Type;
 
+/** Export the saved LaTeX document selected by the workspace root resolver. */
+export const ScientWordLatexExportRequest = Schema.Struct({
+  ...ScientWordFileExportRequest.fields,
+  rootRelativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(4_096)),
+});
+export type ScientWordLatexExportRequest = typeof ScientWordLatexExportRequest.Type;
+
 export const ScientWordFileExportResult = Schema.Struct({
   file: ScientConversationExportFile,
   warnings: Schema.Array(DocumentWarning),

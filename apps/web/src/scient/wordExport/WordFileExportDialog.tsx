@@ -13,7 +13,7 @@ import {
 } from "../../components/ui/dialog";
 import { toastManager } from "../../components/ui/toast";
 import { saveConversationExport, saveFailureMessage } from "../conversationExport/exportActions";
-import { exportWordFile } from "./client";
+import { exportWordFile, exportWordLatex } from "./client";
 import { PandocInstallStatus } from "./PandocInstallControl";
 import { usePandocTool } from "./usePandocTool";
 
@@ -32,11 +32,12 @@ export function WordFileExportDialog(props: {
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
   readonly relativePath: string;
+  readonly rootRelativePath?: string;
   /** The saved revision the editor shows, or null when it has unsaved edits. */
   readonly savedRevision: () => Promise<string | null>;
   readonly onClose: () => void;
 }) {
-  const { environmentId, cwd, relativePath, savedRevision, onClose } = props;
+  const { environmentId, cwd, relativePath, rootRelativePath, savedRevision, onClose } = props;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const startedRef = useRef(false);
@@ -50,7 +51,10 @@ export function WordFileExportDialog(props: {
         setError("Save the file before exporting it to Word.");
         return;
       }
-      const result = await exportWordFile(environmentId, { cwd, relativePath, revision });
+      const result =
+        rootRelativePath === undefined
+          ? await exportWordFile(environmentId, { cwd, relativePath, revision })
+          : await exportWordLatex(environmentId, { cwd, relativePath, rootRelativePath, revision });
       const saved = await saveConversationExport(environmentId, result.file);
       if (saved._tag === "cancelled") return;
       if (saved._tag === "failed") {
@@ -75,7 +79,7 @@ export function WordFileExportDialog(props: {
     } finally {
       setBusy(false);
     }
-  }, [cwd, environmentId, onClose, relativePath, savedRevision]);
+  }, [cwd, environmentId, onClose, relativePath, rootRelativePath, savedRevision]);
 
   const tool = usePandocTool(environmentId, () => void run());
   const installed = tool.status?.installed === true;
@@ -95,7 +99,7 @@ export function WordFileExportDialog(props: {
       <DialogPopup className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Export to Word</DialogTitle>
-          <DialogDescription>{relativePath}</DialogDescription>
+          <DialogDescription>{rootRelativePath ?? relativePath}</DialogDescription>
         </DialogHeader>
         <DialogPanel>
           {installed ? (
