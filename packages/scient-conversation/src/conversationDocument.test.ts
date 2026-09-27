@@ -376,4 +376,32 @@ describe("conversation document", () => {
     ]);
     expect(markdown).toContain("**Export notes**");
   });
+
+  it("never writes hard breaks inside backslash-delimited math", () => {
+    const display = "Energy:\n\\[\nE = mc^2\n\\]\nand inline \\(a +\nb\\) done\nnext line";
+    const { markdown } = exportMarkdown(
+      snapshotOf(
+        thread({
+          messages: [
+            message({ id: "m1", role: "user", text: display }),
+            message({ id: "r1", role: "reasoning", text: display, turnId: "t1" }),
+            message({
+              id: "m2",
+              role: "assistant",
+              text: `★ Insight ─────\n${display}`,
+              turnId: "t1",
+            }),
+          ],
+        }),
+        { workLog: false, reasoning: true, throughMessageId: null },
+      ),
+    );
+    // As in chat, display math on its own lines is a separate block, so only
+    // prose line breaks become hard breaks; math keeps its own lines.
+    const expected = "Energy:\n\\[\nE = mc^2\n\\]\nand inline \\(a +\nb\\) done\\\nnext line";
+    const [user, assistant] = bodies(markdown);
+    expect(user).toBe(expected);
+    expect(assistant).toBe(`★ Insight ─────\\\n${expected}`);
+    expect(markdown).toContain(`<summary>Reasoning</summary>\n\n${expected}`);
+  });
 });

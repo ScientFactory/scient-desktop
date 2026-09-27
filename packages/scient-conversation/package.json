@@ -8,6 +8,10 @@
       "types": "./src/index.ts",
       "import": "./src/index.ts"
     },
+    "./chat-math-delimiters": {
+      "types": "./src/chatMathDelimiters.ts",
+      "import": "./src/chatMathDelimiters.ts"
+    },
     "./work-log-grouping": {
       "types": "./src/workLogGrouping.ts",
       "import": "./src/workLogGrouping.ts"

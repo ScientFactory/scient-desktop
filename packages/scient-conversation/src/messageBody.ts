@@ -15,6 +15,7 @@
  */
 import type { Definition, Html, ImageReference, Link, LinkReference, Root } from "mdast";
 
+import { normalizeScientMathDelimiters } from "./chatMathDelimiters.ts";
 import {
   applyEdits,
   fencedBlock,
@@ -350,9 +351,18 @@ function closingSuffix(source: string, root: Root): string | null {
 
 const PROBE = "<!-- scient:probe -->";
 
+/**
+ * Parses a body as chat reads it: `\(…\)` and `\[…\]` are math (chat's
+ * length-preserving delimiter normalization), so no edit ever lands inside
+ * them. Offsets address the original text, which keeps its delimiters.
+ */
+function parseChatMarkdown(source: string): Root {
+  return parseMarkdown(normalizeScientMathDelimiters(source));
+}
+
 /** Whether a structure marker written after `body` still parses as its own top-level block. */
 export function bodyIsContained(body: string): boolean {
-  const root = parseMarkdown(`${body}\n\n${PROBE}\n`);
+  const root = parseChatMarkdown(`${body}\n\n${PROBE}\n`);
   const last = root.children.at(-1);
   return last?.type === "html" && (last as Html).value === PROBE;
 }
@@ -364,7 +374,7 @@ export function bodyIsContained(body: string): boolean {
 export function writeMessageBody(body: string, options: BodyWriteOptions): WrittenBody {
   const source = body.replace(/\r\n?/gu, "\n").replace(/\s+$/u, "");
   if (source.length === 0) return { markdown: "", containedAsLiteral: false };
-  const root = parseMarkdown(source);
+  const root = parseChatMarkdown(source);
   const htmlEdits = options.rawHtml === "literal" ? literalHtmlEdits(source, root) : [];
   const edits = [
     ...(options.preserveLineBreaks ? lineBreakEdits(source, root) : []),
@@ -379,7 +389,7 @@ export function writeMessageBody(body: string, options: BodyWriteOptions): Writt
     ),
   ];
   let markdown = applyEdits(source, edits);
-  const suffix = closingSuffix(markdown, parseMarkdown(markdown));
+  const suffix = closingSuffix(markdown, parseChatMarkdown(markdown));
   if (suffix !== null) markdown = `${markdown}\n${suffix}`;
   if (bodyIsContained(markdown)) return { markdown, containedAsLiteral: false };
   return { markdown: fencedBlock(source, "markdown"), containedAsLiteral: true };
@@ -387,6 +397,6 @@ export function writeMessageBody(body: string, options: BodyWriteOptions): Writt
 
 /** Removes the namespace a writer added; the reader's inverse of `writeMessageBody`. */
 export function readMessageBody(body: string, namespace: string): string {
-  const root = parseMarkdown(body);
+  const root = parseChatMarkdown(body);
   return applyEdits(body, namespaceEdits(body, root, namespace, { kind: "remove" }, true));
 }
