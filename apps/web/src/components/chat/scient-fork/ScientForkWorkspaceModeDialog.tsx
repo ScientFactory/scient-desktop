@@ -20,6 +20,7 @@ import { useEnvironmentThreadShells } from "../../../state/entities";
 import { Button } from "../../ui/button";
 import {
   Dialog,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogPanel,
@@ -38,19 +39,23 @@ export type ScientForkSource =
   // SCIENT-FORK: the running turn, with the work it has done so far.
   | "running-turn";
 
-/** A complete title per fork source; the dialog has no subtitle. */
-export function scientForkDialogTitle(source: ScientForkSource): string {
+/** One title for every fork; a one-line subtitle says where it starts. */
+export function scientForkDialogCopy(source: ScientForkSource): {
+  readonly title: string;
+  readonly description: string;
+} {
+  const title = "Fork this chat";
   switch (source) {
     case "latest-response":
-      return "Fork this chat";
+      return { title, description: "Fork from the latest response" };
     case "this-response":
-      return "Fork from this response";
+      return { title, description: "Fork from this response" };
     case "this-message":
-      return "Fork and edit this message";
+      return { title, description: "Fork and edit this message" };
     case "switch-provider":
-      return "Fork to switch provider";
+      return { title, description: "Fork and continue with another provider" };
     case "running-turn":
-      return "Fork with work in progress";
+      return { title, description: "Fork with work in progress" };
   }
 }
 
@@ -177,7 +182,7 @@ export function ScientForkWorkspaceModeDialog({
 }: ScientForkDialogProps & {
   readonly proposedTitle: string;
 }) {
-  const title = scientForkDialogTitle(source);
+  const copy = scientForkDialogCopy(source);
   const formId = useId();
   const titleInputRef = useRef<HTMLInputElement>(null);
   const [titleDraft, setTitleDraft] = useState(proposedTitle);
@@ -271,9 +276,10 @@ export function ScientForkWorkspaceModeDialog({
             <DialogTitle size="large">
               <span className="inline-flex items-center gap-2">
                 <SplitIcon className="size-4 rotate-90" />
-                {title}
+                {copy.title}
               </span>
             </DialogTitle>
+            <DialogDescription>{copy.description}</DialogDescription>
           </div>
         </DialogHeader>
         <DialogPanel padding="none">
