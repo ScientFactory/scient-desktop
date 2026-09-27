@@ -10,7 +10,7 @@ import type {
   EnvironmentId,
   ScientConversationImportConfirmRequest,
 } from "@t3tools/contracts";
-import { SCIC_MEDIA_TYPE } from "@t3tools/contracts";
+import { SCIC_MEDIA_TYPE, SCIENT_CONVERSATION_IMPORT_UPLOAD_PATH } from "@t3tools/contracts";
 
 import { runtime } from "../../lib/runtime";
 import { readPreparedConnection } from "../../state/session";
@@ -35,6 +35,18 @@ export async function createConversationImportUpload(
   );
   const url = resolveAssetUrl(connection.httpBaseUrl, upload.relativeUrl);
   if (url === null) throw new Error("The import upload URL is invalid.");
+  const target = new URL(url);
+  const environment = new URL(connection.httpBaseUrl);
+  if (
+    target.origin !== environment.origin ||
+    !target.pathname.startsWith(`${SCIENT_CONVERSATION_IMPORT_UPLOAD_PATH}/`) ||
+    target.username !== "" ||
+    target.password !== "" ||
+    target.search !== "" ||
+    target.hash !== ""
+  ) {
+    throw new Error("The environment returned an unsafe import upload URL.");
+  }
   return { ...upload, url };
 }
 

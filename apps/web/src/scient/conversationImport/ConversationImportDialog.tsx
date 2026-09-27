@@ -111,6 +111,11 @@ function ConversationImportDialog({ initialSource }: { readonly initialSource: S
   const [modelKey, setModelKey] = useState("");
   const [busy, setBusy] = useState<"preview" | "import" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (environmentId === null && primaryEnvironmentId !== null) {
+      setEnvironmentId(primaryEnvironmentId);
+    }
+  }, [environmentId, primaryEnvironmentId]);
   const availableProjects = projects.filter((project) => project.environmentId === environmentId);
   const modelChoices = useMemo(() => {
     const config = environmentId === null ? null : configs.get(environmentId);
