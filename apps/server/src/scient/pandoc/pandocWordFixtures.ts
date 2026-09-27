@@ -23,7 +23,7 @@ import {
   makeBundle,
 } from "./pandocTestSupport.ts";
 
-export const MATH_MARKDOWN = String.raw`# Math-heavy fixture
+const MATH_MARKDOWN = String.raw`# Math-heavy fixture
 
 Inline math: the energy $E = mc^2$, a fraction $\frac{a+b}{c-d}$, a sum $\sum_{i=1}^{n} x_i^2$,
 an integral $\int_0^\infty e^{-x^2}\,dx = \frac{\sqrt{\pi}}{2}$, and sets $\mathbb{R}^n \subset \mathbb{C}^n$.
@@ -60,7 +60,7 @@ const WIDE_HEADER = Array.from({ length: 12 }, (_, index) => `Measurement ${inde
 const wideRow = (row: number) =>
   `| ${Array.from({ length: 12 }, (_, column) => `${(row * 12 + column) * 1.5}`).join(" | ")} |`;
 
-export const TABLES_MARKDOWN = [
+const TABLES_MARKDOWN = [
   "# Tables",
   "",
   "A formatted table:",
@@ -85,7 +85,7 @@ export const TABLES_MARKDOWN = [
   "",
 ].join("\n");
 
-export const HEBREW_MARKDOWN = `# Mixed Hebrew and English
+const HEBREW_MARKDOWN = `# Mixed Hebrew and English
 
 This paragraph is English with an embedded Hebrew phrase: שלום עולם, and continues in English.
 
@@ -102,7 +102,7 @@ This paragraph is English with an embedded Hebrew phrase: שלום עולם, and
 | ערך | value |
 `;
 
-export const HEBREW_DOCUMENT_MARKDOWN = `# מסמך בעברית
+const HEBREW_DOCUMENT_MARKDOWN = `# מסמך בעברית
 
 זוהי פסקה ראשונה במסמך שכולו מימין לשמאל.
 
@@ -115,7 +115,7 @@ This English paragraph sits inside a right-to-left document.
 | א | 1 |
 `;
 
-export const CODE_MARKDOWN = `# Code
+const CODE_MARKDOWN = `# Code
 
 \`\`\`python
 import math
@@ -150,9 +150,9 @@ graph LR; X-->Y
 \`\`\`
 `;
 
-export const MERMAID_RENDERED_SOURCE = "graph TD; A-->B";
+const MERMAID_RENDERED_SOURCE = "graph TD; A-->B";
 
-export const IMAGES_MARKDOWN = `# Images
+const IMAGES_MARKDOWN = `# Images
 
 A PNG: ![Photo](scient-asset:photo)
 
@@ -165,7 +165,7 @@ A missing asset: ![Missing](scient-asset:missing)
 A remote image: ![Remote](http://127.0.0.1:9/remote.png)
 `;
 
-export const FOOTNOTES_MARKDOWN = `# Footnotes
+const FOOTNOTES_MARKDOWN = `# Footnotes
 
 First claim.[^a] Second claim.[^b] Third claim.[^c]
 
@@ -228,7 +228,7 @@ export const CITATIONS: ReadonlyArray<DocumentCitation> = [
 const at = (minute: number) => `2026-09-27T14:${String(minute).padStart(2, "0")}:00.000Z`;
 
 /** A conversation built with the real conversation → bundle adapter, work log and reasoning on. */
-export function conversationBundle(): DocumentBundle {
+function conversationBundle(): DocumentBundle {
   const turn = TurnId.make("turn-1");
   const snapshot: ConversationSnapshotV1 = {
     format: "scient.conversation-snapshot",

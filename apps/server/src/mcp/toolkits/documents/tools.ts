@@ -173,7 +173,7 @@ export const ScientLatexBuildTool = Tool.make("scient_latex_build", {
   .annotate(Tool.OpenWorld, true)
   .annotate(ScientOperation, documentOperation("documents.latex.build"));
 
-export const ScientDocumentExportTool = Tool.make("scient_document_export", {
+const ScientDocumentExportTool = Tool.make("scient_document_export", {
   description:
     "Export an existing project-relative Markdown document to an explicit project-relative output path. The output extension selects the format; PDF is available. Scient captures the saved file and its workspace images, renders it as one complete document page in its isolated Chromium renderer, refuses a wrong or unfinished page, structurally validates and publishes the PDF as an immutable generated document, writes it to the project, and opens it in Scient. Missing images become labelled placeholders listed in warnings. Requires a connected Scient desktop. This does not visually review the pages.",
   parameters: ScientDocumentExportInput,

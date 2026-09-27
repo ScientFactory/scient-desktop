@@ -47,7 +47,7 @@ export interface ManagedPandocPaths {
   readonly scratchRoot: string;
 }
 
-export const MANAGED_PANDOC_STATE_FILE = "managed-state.json";
+const MANAGED_PANDOC_STATE_FILE = "managed-state.json";
 /** Matches {@link managedPandocInstallRoot}, so cleanup only touches install directories. */
 export const MANAGED_PANDOC_INSTALL_DIR_PREFIX = "pandoc-";
 
@@ -88,7 +88,7 @@ export function managedPandocInstallRoot(input: {
  * A root outside the managed directory is rejected rather than run, so a
  * tampered state file cannot point Word export at an arbitrary executable.
  */
-export function isManagedPandocRootContained(input: {
+function isManagedPandocRootContained(input: {
   readonly root: string;
   readonly managedRoot: string;
   readonly resolve: (path: string) => string;

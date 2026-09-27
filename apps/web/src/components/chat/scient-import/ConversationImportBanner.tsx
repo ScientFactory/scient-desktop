@@ -34,7 +34,7 @@ function listLabels(labels: ReadonlyArray<string>): string {
 }
 
 /** What the import banner says about an imported thread. */
-export function conversationImportNotice(conversationImport: OrchestrationConversationImport): {
+function conversationImportNotice(conversationImport: OrchestrationConversationImport): {
   readonly title: string;
   readonly description: string;
 } {

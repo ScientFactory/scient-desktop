@@ -43,7 +43,7 @@ import {
 } from "./pandocAst.ts";
 
 /** Metadata keys that make citeproc or the writer open files or URLs. */
-export const FILE_READING_METADATA_KEYS = [
+const FILE_READING_METADATA_KEYS = [
   "bibliography",
   "csl",
   "citation-abbreviations",
@@ -55,8 +55,8 @@ export const FILE_READING_METADATA_KEYS = [
 const KEPT_METADATA_KEYS = new Set(["title", "subtitle", "author", "date", "abstract"]);
 
 export const PLACEHOLDER_STYLE = "Scient Placeholder";
-export const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
-export const MAX_TOTAL_IMAGE_BYTES = 200 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
+const MAX_TOTAL_IMAGE_BYTES = 200 * 1024 * 1024;
 /** Per-image warnings beyond this collapse into one summary line. */
 const MAX_IMAGE_WARNINGS = 20;
 

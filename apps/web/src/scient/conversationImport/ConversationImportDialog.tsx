@@ -43,7 +43,7 @@ type Source =
 
 const useRequests = create<{ readonly queue: ReadonlyArray<Source> }>(() => ({ queue: [] }));
 
-export function requestConversationImport(source: Source = { _tag: "choose" }): void {
+function requestConversationImport(source: Source = { _tag: "choose" }): void {
   useRequests.setState((state) => ({ queue: [...state.queue, source] }));
 }
 

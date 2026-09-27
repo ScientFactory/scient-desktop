@@ -448,7 +448,7 @@ function checkAttachments(input: {
  * imply, and the staged attachments back exactly the available snapshot
  * attachments.
  */
-export function checkValidatedConversationImport(input: {
+function checkValidatedConversationImport(input: {
   readonly package: ConversationImportPackageSummary;
   readonly snapshot: ConversationSnapshotV1;
   readonly attachments: ReadonlyArray<StagedConversationImportAttachment>;
