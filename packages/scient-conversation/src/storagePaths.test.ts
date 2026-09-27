@@ -1,0 +1,65 @@
+import { describe, expect, it } from "@effect/vitest";
+import { beforeEach } from "vite-plus/test";
+
+import {
+  STORAGE_PATH_PLACEHOLDER,
+  redactSnapshotStoragePaths,
+  redactStoragePaths,
+} from "./storagePaths.ts";
+import {
+  activity,
+  exportMarkdown,
+  message,
+  resetClock,
+  snapshotOf,
+  thread,
+} from "./thread.test-fixtures.ts";
+
+beforeEach(resetClock);
+
+const POSIX_ROOT = "/Users/alice_name/*scient*/userdata";
+const WINDOWS_ROOT = "C:\\Users\\bob_smith\\AppData\\Roaming\\Scient";
+
+describe("storage path redaction", () => {
+  it("finds a root with either separator and Windows case", () => {
+    expect(redactStoragePaths(`${POSIX_ROOT}/logs/a.log`, [POSIX_ROOT])).toBe(
+      `${STORAGE_PATH_PLACEHOLDER}/logs/a.log`,
+    );
+    expect(
+      redactStoragePaths("c:/users/BOB_SMITH/appdata/roaming/scient\\attachments", [WINDOWS_ROOT]),
+    ).toBe(`${STORAGE_PATH_PLACEHOLDER}\\attachments`);
+  });
+
+  it("removes roots before Markdown escaping can change their spelling", () => {
+    const source = thread({
+      title: `Notes on ${POSIX_ROOT}`,
+      messages: [
+        message({
+          id: "m1",
+          role: "user",
+          text: `See ${POSIX_ROOT}/state.sqlite and ${WINDOWS_ROOT}\\logs`,
+        }),
+        message({ id: "m2", role: "assistant", text: "Done", turnId: "t1" }),
+      ],
+      activities: [
+        activity({
+          id: "a1",
+          kind: "runtime.warning",
+          turnId: "t1",
+          summary: `Could not read ${WINDOWS_ROOT}\\cache`,
+          payload: { message: `Missing ${POSIX_ROOT}/cache/x_y` },
+        }),
+      ],
+    });
+    const snapshot = redactSnapshotStoragePaths(
+      snapshotOf(source, { workLog: true, reasoning: false, throughMessageId: null }),
+      [POSIX_ROOT, WINDOWS_ROOT],
+    );
+    const { markdown } = exportMarkdown(snapshot);
+    for (const leaked of ["alice", "bob", "AppData", "userdata"]) {
+      expect(markdown).not.toContain(leaked);
+    }
+    expect(markdown).toContain(`${STORAGE_PATH_PLACEHOLDER}/state.sqlite`);
+    expect(snapshot.captured.threadId).toBe("thread-1");
+  });
+});

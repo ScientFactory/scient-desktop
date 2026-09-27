@@ -8,3 +8,4 @@ export type { BodyWriteOptions, RawHtmlMode, WrittenBody } from "./messageBody.t
 export * from "./snapshot.ts";
 export * from "./workLogGrouping.ts";
 export * from "./workLogProjection.ts";
+export * from "./storagePaths.ts";

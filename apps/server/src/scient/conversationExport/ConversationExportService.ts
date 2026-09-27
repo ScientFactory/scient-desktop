@@ -21,6 +21,8 @@ import {
 import {
   buildConversationDocument,
   packagedAssets,
+  redactSnapshotStoragePaths,
+  redactStoragePaths,
   writeConversationMarkdown,
   type ResolvedAttachmentContent,
 } from "@scientfactory/conversation";
@@ -86,24 +88,6 @@ export class ConversationExportService extends Context.Service<
   }
 >()("t3/scient/conversationExport/ConversationExportService") {}
 
-const STORAGE_PLACEHOLDER = "«scient-data»";
-
-/**
- * Replaces Scient's own storage locations with a placeholder. User and agent
- * text is exported as written, but Scient never publishes where it keeps data.
- */
-function redactStoragePaths(text: string, roots: ReadonlyArray<string>): string {
-  let result = text;
-  const variants = roots
-    .flatMap((root) => {
-      const trimmed = root.replace(/[\\/]+$/u, "");
-      return trimmed.length > 1 ? [trimmed, trimmed.replace(/\\/gu, "/")] : [];
-    })
-    .toSorted((left, right) => right.length - left.length);
-  for (const root of new Set(variants)) result = result.split(root).join(STORAGE_PLACEHOLDER);
-  return result;
-}
-
 /** A file name every desktop file system accepts, derived from the conversation title. */
 function exportBaseName(title: string): string {
   const cleaned = title
@@ -136,7 +120,12 @@ const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const crypto = yield* Crypto.Crypto;
   const config = yield* ServerConfig.ServerConfig;
+  // Both the configured and the resolved spelling (e.g. /var vs /private/var).
   const storageRoots = [config.stateDir, config.baseDir];
+  for (const root of [config.stateDir, config.baseDir]) {
+    const resolved = yield* fileSystem.realPath(root).pipe(Effect.option);
+    if (resolved._tag === "Some") storageRoots.push(resolved.value);
+  }
 
   const capture = (input: Parameters<ConversationSnapshotService["Service"]["capture"]>[0]) =>
     snapshots.capture(input).pipe(
@@ -155,10 +144,11 @@ const make = Effect.gen(function* () {
     "ConversationExportService.prepare",
   )(function* (threadId) {
     // Counts only: the selected content never leaves this function.
-    const { snapshot } = yield* capture({
+    const captured = yield* capture({
       threadId,
       selection: { workLog: true, reasoning: true, throughMessageId: null },
     });
+    const snapshot = redactSnapshotStoragePaths(captured.snapshot, storageRoots);
     const answered = new Set(snapshot.questionAnswers.map((answer) => answer.id));
     const messages = snapshot.messages.filter(
       (message) =>
@@ -205,7 +195,7 @@ const make = Effect.gen(function* () {
       return yield* reject("delivery-unsupported", "Only text-only Markdown can be copied.");
     }
 
-    const { snapshot, attachmentFiles } = yield* capture({
+    const captured = yield* capture({
       threadId: request.threadId,
       selection: {
         workLog: request.options.includeWorkLog,
@@ -214,6 +204,10 @@ const make = Effect.gen(function* () {
           request.options.range._tag === "through-message" ? request.options.range.messageId : null,
       },
     });
+
+    const attachmentFiles = captured.attachmentFiles;
+    // Redact structured text before any writer escapes it.
+    const snapshot = redactSnapshotStoragePaths(captured.snapshot, storageRoots);
 
     // Read attachment bytes once, bounded in total; the document is pure.
     const resolved = new Map<string, ResolvedAttachmentContent>();
