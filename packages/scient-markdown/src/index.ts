@@ -33,3 +33,9 @@ export {
   type PrepareMarkdownExternalUpdate,
 } from "./persistenceCoordinator.ts";
 export { reconcileMarkdown, type MarkdownReconciliation } from "./reconciliation.ts";
+export {
+  inspectMarkdownDocument,
+  rewriteMarkdownImageDestinations,
+  resolveMarkdownDocumentRelativePath,
+  type MarkdownDocumentInspection,
+} from "./documentResources.ts";

@@ -152,14 +152,19 @@ exported content. `POST /api/scient/conversation-export/v1/export` produces the 
 - The client saves a file with the shared Save Copy path: the native save dialog in desktop
   (`apps/desktop/src/scient/documentArtifacts/AssetCopy.ts`) and a download in a browser.
 
-Formats this server cannot produce are advertised with `available: false` and a reason. Today the
-server advertises Markdown only.
+Formats this server cannot produce are advertised with `available: false` and a reason. The server
+advertises Markdown and PDF. PDF is not written by `export`: the `documents.prepareConversationPdf`
+RPC builds the same bundle with the dialog's options (`ConversationExportService.document`),
+captures it for Scient's document page, and the client prints and publishes it as described in
+[document PDF export](./scient-document-pdf-export.md).
 
 ## Dialog
 
 Thread menu → **Export…** (sidebar and chat header) opens the dialog. Formats come from
 `formatRegistry.ts`; `formats.ts` registers Markdown, and a later format registers there without
-changing the dialog. Work log and reasoning start off on every opening, the range is the whole
+changing the dialog. A registration may add a client requirement (`clientAvailability`: PDF needs a
+current Scient desktop, and says so otherwise) and produce the export itself (`produce`: PDF opens
+in Scient's PDF reader instead of a save dialog). Work log and reasoning start off on every opening, the range is the whole
 conversation or up to a chosen message, and the text-only or `.zip` choice appears only when the
 conversation has attachments. The dialog warns when work log or reasoning is included and when a
 turn is running; the file's own warnings are shown after export and written into the file.

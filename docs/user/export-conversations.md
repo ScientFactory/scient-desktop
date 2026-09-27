@@ -1,6 +1,6 @@
 # Export a conversation
 
-Save a conversation as a Markdown file to keep it, edit it, or send it to someone.
+Save a conversation as a Markdown file or a PDF to keep it, edit it, or send it to someone.
 
 1. Open the thread's menu: right-click the thread in the sidebar, or use the menu in the chat
    header.
@@ -9,6 +9,11 @@ Save a conversation as a Markdown file to keep it, edit it, or send it to someon
    clipboard.
 
 On the desktop app, Export opens a save dialog. In a browser, the file downloads.
+
+Choose **PDF** to get a readable document with a heading for each speaker and the images inside the
+file. The PDF opens in Scient's PDF reader; use **Save Copy** there to keep a copy. The options
+below apply to PDF too: the work log and reasoning appear as indented blocks under each answer.
+PDF needs the Scient desktop app; in a browser the option is unavailable and says why.
 
 ## What the file contains
 

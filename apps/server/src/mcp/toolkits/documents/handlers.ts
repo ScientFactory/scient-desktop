@@ -23,6 +23,7 @@ import { issueAssetUrl } from "../../../assets/AssetAccess.ts";
 import { observeAnalyticsEffect } from "../../../telemetry/OperationAnalytics.ts";
 import * as GeneratedDocumentStore from "../../../scient/documentArtifacts/GeneratedDocumentStore.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
+import { exportScientDocumentForInvocation } from "./documentExportHandler.ts";
 import { buildScientLatexForInvocation } from "./latexHandler.ts";
 import {
   assertCurrentDocumentBuildProject,
@@ -418,6 +419,11 @@ const handlers = {
       trigger: "agent",
     }),
   scient_latex_build: (input) => buildScientLatexForInvocation(input),
+  scient_document_export: (input) =>
+    observeAnalyticsEffect(exportScientDocumentForInvocation(input), {
+      kind: "pdf-export",
+      trigger: "agent",
+    }),
 } satisfies Parameters<typeof ScientDocumentsToolkit.toLayer>[0];
 
 export const ScientDocumentsToolkitHandlersLive = ScientDocumentsToolkit.toLayer(handlers);

@@ -16,8 +16,8 @@ const ScientSourcesListTool = ScientSourcesToolkit.tools.scient_sources_list;
 import { ScientSkillLoadTool } from "./toolkits/skills/tools.ts";
 import { PreviewSnapshotTool } from "./toolkits/preview/tools.ts";
 
-it("describes all 30 existing tools without replacing their schemas", () => {
-  expect(scientOperationCatalog.list()).toHaveLength(30);
+it("describes all 31 existing tools without replacing their schemas", () => {
+  expect(scientOperationCatalog.list()).toHaveLength(31);
   for (const tool of [
     ScientPdfBuildTool,
     ScientComputeToolkit.tools.scient_compute_inventory,
@@ -50,7 +50,7 @@ it("preserves automatic Sources writes independently of the Browser grant", () =
   const available = scientOperationCatalog
     .list()
     .filter((operation) => hasOperationCapabilities(operation, baseline));
-  expect(available).toHaveLength(11);
+  expect(available).toHaveLength(12);
   expect(available.filter((operation) => operation.family === "sources")).toHaveLength(9);
   expect(available.some((operation) => operation.family === "browser")).toBe(false);
   for (const operation of scientOperationCatalog.list().filter((op) => op.family === "sources")) {

@@ -42,6 +42,7 @@
     "@scientfactory/pdf-validation": "workspace:*",
     "@scientfactory/project-init": "workspace:*",
     "@scientfactory/provider-runtime": "workspace:*",
+    "@scientfactory/scient-markdown": "workspace:*",
     "@scientfactory/scient-skills": "workspace:*",
     "@scientfactory/scient-sources": "workspace:*",
     "diff": "8.0.3",

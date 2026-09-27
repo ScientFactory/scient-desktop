@@ -179,6 +179,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.invoke(IpcChannels.PICK_PROJECT_FAVICON_CHANNEL, initialPath),
   saveAssetCopy: (request) => ipcRenderer.invoke(IpcChannels.SAVE_ASSET_COPY_CHANNEL, request),
   revealSavedAsset: (path) => ipcRenderer.invoke(IpcChannels.REVEAL_SAVED_ASSET_CHANNEL, path),
+  renderDocumentPagePdf: (input) =>
+    ipcRenderer.invoke(IpcChannels.RENDER_DOCUMENT_PAGE_PDF_CHANNEL, input),
   pickThemeFiles: () => ipcRenderer.invoke(IpcChannels.PICK_THEME_FILES_CHANNEL, undefined),
   getPathForFile: (file: File) => {
     try {

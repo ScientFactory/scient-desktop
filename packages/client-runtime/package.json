@@ -131,6 +131,10 @@
       "types": "./src/state/browserPdfExport.ts",
       "default": "./src/state/browserPdfExport.ts"
     },
+    "./state/scientDocumentPdf": {
+      "types": "./src/state/scientDocumentPdf.ts",
+      "default": "./src/state/scientDocumentPdf.ts"
+    },
     "./state/attachments": {
       "types": "./src/state/attachments.ts",
       "default": "./src/state/attachments.ts"

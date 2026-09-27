@@ -646,6 +646,18 @@ coordination, validation, publication, Save Copy, and receipt behavior must
 remain outside inherited T3 components. See
 [Scient browser HTML to PDF export](docs/internals/scient-browser-pdf-export.md).
 
+Document PDF export (project Markdown now, conversations with conversation
+export) keeps capture and publication under `apps/server/src/scient/documentExport`,
+the printable document page under `apps/web/src/scient/documentPage` with its own
+`scient-document.html` entry, and the hidden renderer under
+`apps/desktop/src/scient/documentExport`. Inherited-host seams are limited to the
+second Vite build input, two RPC and authorization registrations and their
+`ws.ts` delegations, one internal document-host operation and its host branch, one
+optional desktop-bridge method with its IPC channel, handler, and preload entry,
+and contract export points. Rendering, readiness, request policy, capture,
+validation, and publication must stay outside inherited T3 files. See
+[Scient document PDF export](docs/internals/scient-document-pdf-export.md).
+
 The rich Markdown editor is isolated under `packages/scient-markdown`,
 `apps/web/src/scient/markdownEditor`, `apps/web/src/scient/presentation`, and
 `apps/server/src/scient/markdown`, with `packages/contracts/src/scientMarkdown.ts`

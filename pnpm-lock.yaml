@@ -575,6 +575,9 @@ importers:
       '@scientfactory/provider-runtime':
         specifier: workspace:*
         version: link:../../packages/scient-provider-runtime
+      '@scientfactory/scient-markdown':
+        specifier: workspace:*
+        version: link:../../packages/scient-markdown
       '@scientfactory/scient-skills':
         specifier: workspace:*
         version: link:../../packages/scient-skills

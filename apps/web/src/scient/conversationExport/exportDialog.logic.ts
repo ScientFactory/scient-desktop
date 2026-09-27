@@ -38,12 +38,17 @@ export function exportFormatOptions(
 ): ReadonlyArray<ExportFormatOption> {
   return registrations.map((registration) => {
     const capability = preparation.formats.find((entry) => entry.format === registration.format);
-    const available = capability?.available === true;
-    return {
-      registration,
-      available,
-      unavailableReason: available ? null : (capability?.unavailableReason ?? UNAVAILABLE_REASON),
-    };
+    if (capability?.available !== true) {
+      return {
+        registration,
+        available: false,
+        unavailableReason: capability?.unavailableReason ?? UNAVAILABLE_REASON,
+      };
+    }
+    const client = registration.clientAvailability?.() ?? { available: true };
+    return client.available
+      ? { registration, available: true, unavailableReason: null }
+      : { registration, available: false, unavailableReason: client.reason };
   });
 }
 

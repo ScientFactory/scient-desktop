@@ -5,6 +5,7 @@ import {
   ChatAttachment,
   EnvironmentFilePath,
   MessageId,
+  ScientDocumentPageInput,
   ThreadId,
   type ScientConversationExportRequest,
 } from "@t3tools/contracts";
@@ -36,6 +37,7 @@ import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityRes
 import * as ConversationExportFiles from "./ConversationExportFiles.ts";
 import * as ConversationExportService from "./ConversationExportService.ts";
 import * as ConversationSnapshotService from "./ConversationSnapshotService.ts";
+import { prepareConversationPdf } from "../documentExport/ConversationPdfPreparation.ts";
 
 const THREAD = ThreadId.make("thread-1");
 const encodeAttachments = Schema.encodeSync(Schema.fromJsonString(Schema.Array(ChatAttachment)));
@@ -218,6 +220,7 @@ describe("ConversationExportService", () => {
       assert.strictEqual(preparation.workLogEntryCount, 1_050);
       assert.deepStrictEqual(preparation.formats, [
         { format: "markdown", available: true, unavailableReason: null },
+        { format: "pdf", available: true, unavailableReason: null },
       ]);
 
       const { produced, text } = yield* produceText(request({}, { includeWorkLog: true }));
@@ -370,7 +373,9 @@ describe("ConversationExportService", () => {
             error._tag === "ScientConversationExportError" ? error.reason : error._tag,
           ),
         );
+      // PDF is printed by the desktop from `document`, never written by `produce`.
       assert.strictEqual(yield* reasonOf(request({ format: "pdf" })), "format-unavailable");
+      assert.strictEqual(yield* reasonOf(request({ format: "docx" })), "format-unavailable");
       assert.strictEqual(
         yield* reasonOf(
           request({}, { range: { _tag: "through-message", messageId: MessageId.make("nope") } }),
@@ -489,5 +494,106 @@ describe("conversation export delivery", () => {
         yield* fileSystem.realPath(written.path),
       );
     }).pipe(Effect.provide(AssetTestLayer)),
+  );
+});
+
+const PdfTestLayer = Layer.mergeAll(
+  WorkspacePaths.layer,
+  ProjectFaviconResolver.layer.pipe(
+    Layer.provide(WorkspacePaths.layer),
+    Layer.provide(T3ProjectFileLoader.layer),
+  ),
+  NativeAppIconResolver.layer,
+  ServerSecretStore.layer,
+).pipe(Layer.provideMerge(TestLayer));
+
+const decodePageInput = Schema.decodeUnknownEffect(Schema.fromJsonString(ScientDocumentPageInput));
+
+const readCapturedPageInput = (inputRelativeUrl: string) =>
+  Effect.gen(function* () {
+    const asset = yield* resolveAsset(inputRelativeUrl.split("/")[3]!, "document.json");
+    assert(asset !== null && asset.kind === "file");
+    const fileSystem = yield* FileSystem.FileSystem;
+    return yield* decodePageInput(yield* fileSystem.readFileString(asset.path));
+  });
+
+describe("conversation PDF preparation", () => {
+  it.effect("captures a 2,100-message conversation with the dialog's options for PDF", () =>
+    Effect.gen(function* () {
+      yield* seedThread({ pairs: 1_050, activitiesPerTurn: 1 });
+      const prepared = yield* prepareConversationPdf(
+        request({ format: "pdf" }, { includeWorkLog: true }),
+      );
+      assert.strictEqual(prepared.expected.documentKind, "conversation");
+      assert.match(prepared.expected.sourceDigest, /^sha256:[0-9a-f]{64}$/u);
+      const page = yield* readCapturedPageInput(prepared.inputRelativeUrl);
+      assert.strictEqual(page.profile, "chat");
+      assert.include(page.markdown, "Answer 1050");
+      assert.include(page.markdown, "<details>");
+      assert.include(page.markdown, "echo 1050");
+      assert.notInclude(page.markdown, "sk-hidden");
+      assert.notInclude(page.markdown, "provider-session-secret");
+
+      const withoutWorkLog = yield* readCapturedPageInput(
+        (yield* prepareConversationPdf(request({ format: "pdf" }))).inputRelativeUrl,
+      );
+      assert.notInclude(withoutWorkLog.markdown, "echo 1050");
+
+      const ranged = yield* readCapturedPageInput(
+        (yield* prepareConversationPdf(
+          request(
+            { format: "pdf" },
+            { range: { _tag: "through-message", messageId: MessageId.make("assistant-2") } },
+          ),
+        )).inputRelativeUrl,
+      );
+      assert.include(ranged.markdown, "Answer 2");
+      assert.notInclude(ranged.markdown, "Question 3");
+    }).pipe(Effect.provide(PdfTestLayer)),
+  );
+
+  it.effect("redacts storage paths from the PDF title, text, and warnings end to end", () =>
+    Effect.gen(function* () {
+      yield* seedThread({ pairs: 1, activitiesPerTurn: 1 });
+      const config = yield* ServerConfig.ServerConfig;
+      const sql = yield* SqlClient.SqlClient;
+      const secretTitle = `Report from ${config.stateDir}/attachments`;
+      yield* sql`UPDATE projection_threads SET title = ${secretTitle} WHERE thread_id = ${THREAD}`;
+      const prepared = yield* prepareConversationPdf(
+        request({ format: "pdf" }, { includeWorkLog: true }),
+      );
+      const page = yield* readCapturedPageInput(prepared.inputRelativeUrl);
+      for (const text of [
+        prepared.title,
+        page.title,
+        page.markdown,
+        ...page.warnings.map((warning) => warning.message),
+      ]) {
+        assert.notInclude(text, config.stateDir);
+        assert.notInclude(text, config.baseDir);
+      }
+      assert.include(page.title, "«scient-data»");
+      // The page title is the document title and the running header of every page.
+      assert.strictEqual(prepared.title, page.title);
+      assert.include(
+        page.warnings.map((warning) => warning.code),
+        "sensitive-content-included",
+      );
+    }).pipe(Effect.provide(PdfTestLayer)),
+  );
+
+  it.effect("refuses non-PDF requests and missing threads", () =>
+    Effect.gen(function* () {
+      yield* seedThread({ pairs: 1 });
+      const notPdf = yield* prepareConversationPdf(request()).pipe(Effect.flip);
+      assert.strictEqual(notPdf._tag, "ScientDocumentPdfExportError");
+      const missingThread = yield* prepareConversationPdf(
+        request({ format: "pdf", threadId: ThreadId.make("missing") }),
+      ).pipe(Effect.flip);
+      assert.strictEqual(
+        missingThread._tag === "ScientConversationExportError" ? missingThread.reason : null,
+        "thread-not-found",
+      );
+    }).pipe(Effect.provide(PdfTestLayer)),
   );
 });
