@@ -208,16 +208,17 @@ describe("ScientDocumentPage", () => {
     expect(article.textContent).toContain("Image could not be displayed: Broken");
     expect(article.textContent).toContain("Image could not be displayed: plot.png");
     expect(article.querySelectorAll("img")).toHaveLength(0);
+    // Fatal diagnostics are listed first.
     expect(tracker.diagnostics).toEqual([
-      {
-        severity: "warning",
-        code: "missing-image",
-        detail: 'Image "Broken" could not be displayed and was left out.',
-      },
       {
         severity: "fatal",
         code: "resource-unresolved",
         detail: 'The captured image "plot.png" could not be loaded.',
+      },
+      {
+        severity: "warning",
+        code: "missing-image",
+        detail: 'Image "Broken" could not be displayed and was left out.',
       },
     ]);
     expect([...tracker.unresolvedAssets]).toEqual(["image-0001"]);

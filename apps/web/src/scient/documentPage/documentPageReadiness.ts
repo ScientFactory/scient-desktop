@@ -10,7 +10,10 @@ import {
 
 /** How long the page waits for diagrams and images before reporting them unfinished. */
 export const DOCUMENT_PAGE_SETTLE_TIMEOUT_MS = 45_000;
+/** The readiness contract carries at most this many diagnostics. */
 const MAX_DIAGNOSTICS = 256;
+/** Distinct fatal diagnostics kept; one is enough to refuse the page. */
+const MAX_FATAL_DIAGNOSTICS = 32;
 const MAX_DETAIL_LENGTH = 2_048;
 
 const nextFrame = () =>
@@ -27,8 +30,39 @@ const nextFrame = () =>
 export class DocumentPageTracker {
   private readonly jobs = new Set<Promise<unknown>>();
   private readonly diagnosticKeys = new Set<string>();
-  readonly diagnostics: ScientDocumentPageDiagnostic[] = [];
+  private readonly fatals: ScientDocumentPageDiagnostic[] = [];
+  private readonly warnings: Array<
+    Extract<ScientDocumentPageDiagnostic, { readonly severity: "warning" }>
+  > = [];
+  private omittedFatals = 0;
   readonly unresolvedAssets = new Set<string>();
+
+  /**
+   * Every fatal diagnostic first, so no number of warnings can hide one, then
+   * warnings up to the contract's limit; warnings that do not fit are counted
+   * in one closing note.
+   */
+  get diagnostics(): ReadonlyArray<ScientDocumentPageDiagnostic> {
+    const fatals = this.fatals;
+    const room = MAX_DIAGNOSTICS - fatals.length;
+    if (this.warnings.length <= room) return [...fatals, ...this.warnings];
+    const shown = this.warnings.slice(0, room - 1);
+    const omitted = this.warnings.length - shown.length;
+    return [
+      ...fatals,
+      ...shown,
+      {
+        severity: "warning",
+        code: this.warnings[0]!.code,
+        detail: `${omitted} more limitations were found and are not listed.`,
+      },
+    ];
+  }
+
+  /** Whether any fatal diagnostic was recorded, including ones beyond the kept list. */
+  get failed(): boolean {
+    return this.fatals.length > 0 || this.omittedFatals > 0;
+  }
 
   /** Registers work that must finish before readiness; returns its completion callback. */
   track(): () => void {
@@ -51,9 +85,15 @@ export class DocumentPageTracker {
 
   private record(diagnostic: ScientDocumentPageDiagnostic): void {
     const key = `${diagnostic.severity}:${diagnostic.code}:${diagnostic.detail}`;
-    if (this.diagnosticKeys.has(key) || this.diagnostics.length >= MAX_DIAGNOSTICS) return;
+    if (this.diagnosticKeys.has(key)) return;
     this.diagnosticKeys.add(key);
-    this.diagnostics.push(diagnostic);
+    if (diagnostic.severity === "warning") {
+      this.warnings.push(diagnostic);
+    } else if (this.fatals.length < MAX_FATAL_DIAGNOSTICS) {
+      this.fatals.push(diagnostic);
+    } else {
+      this.omittedFatals += 1;
+    }
   }
 
   /** Resolves true once no tracked work remains, or false at the deadline. */
@@ -182,9 +222,7 @@ export async function collectDocumentPageReadiness(input: {
     }
   }
   resolveInternalLinks(article);
-  const status = tracker.diagnostics.some((diagnostic) => diagnostic.severity === "fatal")
-    ? "failed"
-    : "ready";
+  const status = tracker.failed ? "failed" : "ready";
   return {
     protocol: SCIENT_DOCUMENT_PAGE_PROTOCOL,
     status,
@@ -252,7 +290,7 @@ export function failedDocumentPageReadiness(
   tracker: DocumentPageTracker,
   page: ScientDocumentPageInput | null,
 ): ScientDocumentPageReadiness {
-  if (!tracker.diagnostics.some((diagnostic) => diagnostic.severity === "fatal")) {
+  if (!tracker.failed) {
     tracker.fatal("render-crashed", "The document page stopped before it finished rendering.");
   }
   return {

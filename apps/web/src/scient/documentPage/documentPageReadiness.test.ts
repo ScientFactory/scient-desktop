@@ -1,5 +1,10 @@
 // @vitest-environment happy-dom
-import type { ScientDocumentPageInput } from "@t3tools/contracts";
+import {
+  scientDocumentReadinessRejection,
+  ScientDocumentPageReadiness,
+  type ScientDocumentPageInput,
+} from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -32,6 +37,8 @@ const page = {
 } satisfies ScientDocumentPageInput;
 
 /** A FontFaceSet stand-in: `ready` resolves and `status` is "loaded" even when a face failed. */
+const isReadiness = Schema.is(ScientDocumentPageReadiness);
+
 const fonts = (...faces: ReadonlyArray<{ family: string; status: string }>) =>
   Object.assign(faces, { ready: Promise.resolve(), status: "loaded" });
 
@@ -85,6 +92,41 @@ describe("document page tracker", () => {
     tracker.warn("missing-image", "Same");
     tracker.warn("missing-image", "Same");
     expect(tracker.diagnostics).toHaveLength(1);
+  });
+});
+
+describe("document page diagnostics limit", () => {
+  it("never loses a fatal diagnostic behind many warnings", async () => {
+    const tracker = new DocumentPageTracker();
+    for (let index = 0; index < 300; index += 1) {
+      tracker.warn("missing-image", `Image ${index} is missing.`);
+    }
+    tracker.fatal("diagram-incomplete", "Mermaid failed while rendering a diagram.");
+    const diagnostics = tracker.diagnostics;
+    expect(diagnostics).toHaveLength(256);
+    expect(diagnostics[0]).toEqual({
+      severity: "fatal",
+      code: "diagram-incomplete",
+      detail: "Mermaid failed while rendering a diagram.",
+    });
+    expect(diagnostics.at(-1)?.detail).toBe("46 more limitations were found and are not listed.");
+    const readiness = await collectDocumentPageReadiness({
+      page,
+      article: article("<p>Body</p>"),
+      tracker,
+      settled: true,
+    });
+    expect(readiness.status).toBe("failed");
+    expect(readiness.diagnostics).toHaveLength(256);
+    // The report still fits the contract the desktop decodes.
+    expect(isReadiness(readiness)).toBe(true);
+    expect(
+      scientDocumentReadinessRejection(readiness, {
+        captureId: page.captureId,
+        documentKind: page.documentKind,
+        sourceDigest: page.sourceDigest,
+      }),
+    ).toBe("Mermaid failed while rendering a diagram.");
   });
 });
 
