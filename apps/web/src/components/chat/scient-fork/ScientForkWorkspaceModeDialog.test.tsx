@@ -41,6 +41,10 @@ describe("scientForkDialogCopy", () => {
       title: "Fork to switch provider",
       description: "Continue this conversation with another provider.",
     });
+    expect(scientForkDialogCopy("running-turn")).toEqual({
+      title: "Fork with work in progress",
+      description: "Create a new conversation that includes the agent's work so far.",
+    });
   });
 });
 
