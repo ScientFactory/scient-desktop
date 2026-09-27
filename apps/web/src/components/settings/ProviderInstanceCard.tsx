@@ -1022,14 +1022,14 @@ export function ProviderInstanceCard({
           aria-disabled={readOnly || undefined}
           className={readOnly ? "opacity-50 select-none" : undefined}
         >
+          {/* Scient: the managed runtime is a row of this section, not a framed card inside it. */}
           {usesScientManagedRuntime && liveProvider ? (
-            <div className="px-3 py-3 sm:px-4">
-              <ProviderRuntimeSection
-                displayName={displayName}
-                environmentId={environmentId}
-                provider={liveProvider}
-              />
-            </div>
+            <ProviderRuntimeSection
+              displayName={displayName}
+              environmentId={environmentId}
+              provider={liveProvider}
+              presentation="row"
+            />
           ) : null}
           {driverOption ? (
             <ProviderSettingsForm
