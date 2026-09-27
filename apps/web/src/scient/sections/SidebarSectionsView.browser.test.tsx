@@ -220,7 +220,7 @@ it("sets section names 4px low, nearer their own threads, without growing the he
   }
 });
 
-it("points the chevron where the section is and shows open sections' controls on hover", async () => {
+it("points the chevron where the section is, showing it on hover while open", async () => {
   renderView(() => {}, { collapsed: ["b"] });
   await nextFrame();
   const chevronOf = (groupId: string) =>
@@ -231,19 +231,20 @@ it("points the chevron where the section is and shows open sections' controls on
   const opacity = (element: Element) => getComputedStyle(element).opacity;
   const rotated = (element: Element) => getComputedStyle(element).rotate === "90deg";
 
-  // Collapsed: points right, with the chevron and actions always shown.
-  expect(rotated(chevronOf("b"))).toBe(false);
-  expect(opacity(chevronOf("b"))).toBe("1");
+  // Section actions are always shown, open or collapsed.
+  expect(opacity(actionsOf("a"))).toBe("1");
   expect(opacity(actionsOf("b"))).toBe("1");
 
-  // Open: points down, with the chevron and actions shown only on hover.
+  // Collapsed: points right, always shown.
+  expect(rotated(chevronOf("b"))).toBe(false);
+  expect(opacity(chevronOf("b"))).toBe("1");
+
+  // Open: points down, shown only on hover.
   expect(rotated(chevronOf("a"))).toBe(true);
   expect(opacity(chevronOf("a"))).toBe("0");
-  expect(opacity(actionsOf("a"))).toBe("0");
   await userEvent.hover(headerOf("a"));
   await new Promise((resolve) => setTimeout(resolve, 250));
   expect(opacity(chevronOf("a"))).toBe("1");
-  expect(opacity(actionsOf("a"))).toBe("1");
 });
 
 it("drops the rule entirely when less than 24px would be left beside the name", async () => {

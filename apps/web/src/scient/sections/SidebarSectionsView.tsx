@@ -768,14 +768,8 @@ function SectionHeaderRow(props: {
           </button>
         )}
         {props.renaming ? null : (
-          // Shown on hover while open, always while collapsed.
-          <span
-            className={cn(
-              "flex shrink-0 items-center gap-1.5",
-              !props.collapsed &&
-                "pointer-events-none opacity-0 group-focus-within/section-header:pointer-events-auto group-focus-within/section-header:opacity-100 group-hover/section-header:pointer-events-auto group-hover/section-header:opacity-100",
-            )}
-          >
+          // Always shown, so a section's actions are visible without hovering.
+          <span className="flex shrink-0 items-center gap-1.5">
             {/* General can't be renamed or deleted, so it has no section menu. */}
             {isUserSection ? (
               <HeaderIconButton

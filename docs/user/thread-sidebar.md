@@ -138,11 +138,11 @@ Sections view:
 - Drag a thread to a spot in any section to file it there at that position. Drag a section header
   to reorder sections, or drag a thread onto the **Settled** header to settle it. Dragging never
   unpins a thread.
-- Click a header to collapse it. A collapsed section's arrow points right and its **New thread in
-  section** and section-menu buttons stay visible; it shows a dot while one of its threads is
-  working, and still shows the thread you have open. An open section's arrow points down and, with
-  its buttons, appears when you hover the header. Double-click a header to rename it. The section
-  menu also offers **Move up**, **Move down**, and **Delete section**.
+- Click a header to collapse it. A collapsed section's arrow points right; it shows a dot while
+  one of its threads is working, and still shows the thread you have open. An open section's
+  arrow points down and appears when you hover the header. Double-click a header to rename it.
+- Each header's buttons start a **New thread in section** and open the section menu, which also
+  offers **Rename**, **Move up**, **Move down**, and **Delete section**.
 - Empty sections stay visible so you can drag threads into them. **New section**, after the last
   section, adds one at the end.
 - Section names start with a capital letter: the first letter is capitalized as you type. To start
