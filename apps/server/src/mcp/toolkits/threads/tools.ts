@@ -23,6 +23,10 @@ import * as ProjectionSnapshotQuery from "../../../orchestration/Services/Projec
  * defaults mirror V2's `t3_thread_read` (`OrchestratorMcpThreadReadInput`) so
  * prompts that name it keep working when V2's orchestrator toolkit replaces
  * this one. Delete this toolkit then; see docs/internals/scient-fork-divergence.md.
+ *
+ * Upstream reference: pingdotgg/t3code PR #2829 at a3fbbe45315e (2026-09-27),
+ * `packages/contracts/src/orchestratorMcp.ts` (`OrchestratorMcpThreadReadInput`)
+ * and `apps/server/src/mcp/OrchestratorMcpService.ts` (defaults 50 / 20,000).
  */
 export const THREAD_READ_DEFAULT_LIMIT = 50;
 export const THREAD_READ_DEFAULT_MAX_CHARS_PER_ITEM = 20_000;

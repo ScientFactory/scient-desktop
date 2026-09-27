@@ -626,6 +626,25 @@ Scient-only concepts (running-turn cut, reasoning items, workspace mode,
 retain-before for user-message forks) become isolated extensions rather than
 fields in V2's persisted event log.
 
+Mirrored snapshot: pingdotgg/t3code PR #2829 at `a3fbbe45315e` (2026-09-27).
+Each mirroring module names the upstream file it follows. Only
+`attachmentTokenAllowance` is copied verbatim. V2's `historicalMessage`,
+`selectHistory` and `handoffCoverage` read V2 turn items and render plain text
+measured in bytes, so a verbatim copy would change Scient's behaviour; they
+are mirrored in behaviour instead. Known differences to reconcile against that
+snapshot:
+
+- Estimator: `ceil(bytes / 3)` instead of one byte per token.
+- Cap: Settings preset instead of V2's 16k default, with no 64,000-byte
+  `HANDOFF_BYTE_CAP` clamp.
+- Window: no known-model-window bound (V2's `modelContextWindow`), and no
+  `contextUsageForHandoff` model-switch rule; usage from a replaced native
+  thread is ignored instead.
+- Selection: priority classes (cut, anchors, latest turn, conversation,
+  detail) and truncated anchors instead of whole-or-omitted.
+- Rendering: one JSON preamble with reasoning and tool items instead of V2's
+  `[Historical …]` text blocks.
+
 ## Narrow T3-owned seams
 
 ### Submitted question-answer continuity

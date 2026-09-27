@@ -7,6 +7,12 @@
  * first user message, then newest to oldest. Omitted items stay reachable
  * through the `t3_thread_read` tool named in the coverage header.
  *
+ * Upstream reference: pingdotgg/t3code PR #2829 at a3fbbe45315e (2026-09-27),
+ * `apps/server/src/orchestration-v2/ContextHandoffBudget.ts`. V2's versions
+ * read V2 turn items and render plain text in bytes, so they are mirrored in
+ * behaviour, not copied: this module reads main's projection (messages,
+ * activities, plans) and renders JSON sized in estimated tokens.
+ *
  * Scient extends V2 in two ways, each isolated here:
  * - Reasoning and tool work are history items (V2 portable handoffs drop
  *   them). The latest turn's reasoning and tools rank right after the anchors;
@@ -26,7 +32,11 @@ import { projectComposerContextForProvider } from "@t3tools/shared/composerConte
 import * as Predicate from "effect/Predicate";
 
 import { retainQuestionAnswers } from "../retainedQuestionAnswers.ts";
-import { attachmentAllowance, estimateTokens, MIN_USEFUL_HANDOFF_TOKENS } from "./handoffBudget.ts";
+import {
+  attachmentTokenAllowance,
+  estimateTokens,
+  MIN_USEFUL_HANDOFF_TOKENS,
+} from "./handoffBudget.ts";
 
 export type HandoffItemKind =
   | "user_message"
@@ -369,7 +379,7 @@ export function selectHistory(input: {
       // Captured-window images add their accessibility text to the user's own
       // input limit on dispatch; they are named in the history instead.
       if ("source" in attachment && attachment.source !== undefined) continue;
-      const cost = attachmentAllowance(attachment);
+      const cost = attachmentTokenAllowance([attachment]);
       if (cost > remaining) continue;
       if (getProviderAttachmentLimitError([...reattached.values(), attachment])) continue;
       reattached.set(attachment.id, attachment);

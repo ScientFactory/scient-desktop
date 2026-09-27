@@ -6,12 +6,21 @@
  * window default). On the day V2 lands, this becomes one Scient override of
  * V2's cap instead of a second budgeting system.
  *
- * Two deliberate differences from V2:
+ * Upstream reference: pingdotgg/t3code PR #2829 at a3fbbe45315e (2026-09-27),
+ * `apps/server/src/orchestration-v2/ContextHandoffBudget.ts`.
+ * `attachmentTokenAllowance` is copied verbatim; diff the rest against that
+ * file when V2 lands.
+ *
+ * Deliberate differences from V2:
  * - V2 counts one UTF-8 byte as one token. Scient estimates `ceil(bytes / 3)`,
  *   still conservative for English (~4 characters per token) and code (~3),
  *   so a preset means what its name says.
  * - The cap is a user preset (`scientFork.contextHandoffSize`), not only an
  *   environment variable. `T3CODE_CONTEXT_HANDOFF_TOKEN_CAP` still overrides.
+ *   V2 also clamps every handoff to 64,000 bytes (`HANDOFF_BYTE_CAP`); Scient
+ *   does not, so the larger presets can take effect.
+ * - V2 also bounds the window by the selected model's known window. Scient
+ *   has no per-model window table and uses the provider-reported maximum.
  */
 import type { ChatAttachment, ForkContextHandoffSize } from "@t3tools/contracts";
 import { FORK_CONTEXT_HANDOFF_TOKEN_CAPS } from "@t3tools/contracts";
@@ -23,23 +32,23 @@ export const DEFAULT_MODEL_CONTEXT_WINDOW = 128_000;
 const MIN_HANDOFF_RESERVE = 16_000;
 /** Below this, a handoff carries only its coverage header. */
 export const MIN_USEFUL_HANDOFF_TOKENS = 512;
-const IMAGE_ALLOWANCE = 8_192;
-const FILE_ALLOWANCE = 4_096;
 
 export function estimateTokens(text: string): number {
   return Math.ceil(NodeBuffer.Buffer.byteLength(text, "utf8") / 3);
 }
 
-/** V2: images cost 8,192 and other attachments 4,096 estimated tokens. */
-function attachmentTokenAllowance(attachments: ReadonlyArray<ChatAttachment>): number {
+// Verbatim from V2 (see header).
+export function attachmentTokenAllowance(attachments: ReadonlyArray<ChatAttachment>): number {
+  // Encoded image bytes are not model tokens. Without dimensions/detail metadata,
+  // reserve 8k tokens per image, above typical resized Codex/Claude image costs.
+  // This is a fallback estimate, not a bound for original-resolution/custom models.
+  // https://developers.openai.com/api/docs/guides/image-cost-calculator
+  // https://platform.claude.com/docs/en/build-with-claude/vision
+  // Other attachments are path references; reserve space for their descriptors.
   return attachments.reduce(
-    (total, attachment) => total + (attachment.type === "image" ? IMAGE_ALLOWANCE : FILE_ALLOWANCE),
+    (sum, attachment) => sum + (attachment.type === "image" ? 8_192 : 4_096),
     0,
   );
-}
-
-export function attachmentAllowance(attachment: ChatAttachment): number {
-  return attachment.type === "image" ? IMAGE_ALLOWANCE : FILE_ALLOWANCE;
 }
 
 export function handoffTokenCap(
