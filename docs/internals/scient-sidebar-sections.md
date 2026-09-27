@@ -74,8 +74,9 @@ counts as deliberate and is kept (`capitalizeTypedSectionName`). On save,
 `readThreadSections` normalizes names saved before capitalization existed.
 
 **The toggle's on state is quieter than hover.** While grouping is on, a gray
-(`sidebar-control-surface`) mark sits inset inside the toggle; on hover it gives
-way to the header's usual full-size white fill, so the two never show together.
+(a 6% tint of `sidebar-foreground`, so it adapts to every palette) mark sits
+inset inside the toggle; on hover it gives way to the header's usual full-size
+white fill, so the two never show together.
 
 **Section drags never reflow the list.** Dragging a header freezes every
 section's measured block at drag start and slides whole blocks (header plus

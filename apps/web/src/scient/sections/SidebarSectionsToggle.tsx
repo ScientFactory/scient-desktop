@@ -35,7 +35,7 @@ export function SidebarSectionsToggle(props: {
         {props.active ? (
           <span
             aria-hidden
-            className="pointer-events-none absolute inset-[3px] rounded-md bg-sidebar-control-surface [:hover>&]:hidden"
+            className="pointer-events-none absolute inset-[3px] rounded-md bg-sidebar-foreground/6 [:hover>&]:hidden"
           />
         ) : null}
         <ListFilterIcon className="relative size-3.5" />
