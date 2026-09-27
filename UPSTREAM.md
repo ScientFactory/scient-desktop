@@ -480,6 +480,21 @@ Compute/Analysis runtime, UI or history ownership. Future consumers must
 deliberately reconcile workspace authority and tool ownership against their
 current implementation. No unmerged Orchestration V2 code is imported.
 
+Oh My Pi's external provider is a Scient-owned seam. `packages/effect-omp-rpc` is the wire client.
+`apps/server/src/provider/omp`, `Drivers/OmpDriver.ts`, `Layers/OmpAdapter.ts`,
+`Layers/OmpProvider.ts`, and `textGeneration/OmpTextGeneration.ts` own process, cursor, and turn
+mapping; `OmpManagedRuntimeActions.ts`, `managedOmpRuntime.ts` and `ompManifest.ts` own its managed
+runtime and version cap. Everything else is a mount: upstream files (driver registration, settings
+and model contracts, server and ws wiring, the MCP transport export, the shared provider environment
+predicate and update-command formatting, the model manifest, icons, the provider picker and
+open-url activity) as `upstreamMounts`, and shared Scient files (awareness and skill delivery, the
+Pi extension generator, the managed-runtime catalog, policy and workflows, custom models) as
+anchored `scientMounts`, so none of them is claimed as OMP-owned. Analytics sends OMP as the
+gateway's existing `other` provider and is not a mount. `scient-omp-seams.json` is the inventory;
+`scripts/scient-seam-check.mjs --base --head` checks it with the onboarding, skills, analysis, and
+LaTeX seams in the upstream-provenance workflow. Do not fold this provider into Pi's RPC client,
+and do not add an Orchestration V2 adapter until that upstream work is in the official range.
+
 Review previews preserve the source Git index timestamp when preparing a temporary
 index for untracked files. A freshly timestamped copy can bypass Git's racy-clean
 content checks and omit rapid same-size tracked edits. Keep the source index read-only,

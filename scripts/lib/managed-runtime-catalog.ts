@@ -18,6 +18,9 @@ import {
   resolveReviewedCursorArtifact,
   resolveReviewedDroidArtifact,
   resolveReviewedGrokArtifact,
+  isSupportedOmpMajor,
+  OMP_SUPPORTED_MAJOR,
+  resolveReviewedOmpArtifact,
   resolveReviewedPiArtifact,
   type ManagedRuntimeArtifact,
   type ManagedRuntimeProvider,
@@ -91,6 +94,7 @@ const policyResolvers: Readonly<Record<ManagedRuntimeProvider, PolicyResolver>> 
   droid: resolveReviewedDroidArtifact,
   grok: resolveReviewedGrokArtifact,
   pi: resolveReviewedPiArtifact,
+  omp: resolveReviewedOmpArtifact,
 };
 
 export function isManagedRuntimeProvider(value: string): value is ManagedRuntimeCatalogProvider {
@@ -829,6 +833,60 @@ async function discoverPi(fetch_: Fetch): Promise<ManagedRuntimeCatalogProviderD
   return candidateProvider({ provider: "pi", version, artifacts: Object.fromEntries(entries) });
 }
 
+/**
+ * A release outside the supported major is refused, not published: every
+ * client refuses it, and because publication only accepts newer versions a
+ * published next major would block every later patch of the supported one.
+ */
+function supportedOmpVersion(release: Record<string, unknown>): string {
+  const version = strictVersion(
+    stringField(release, "tag_name", "Oh My Pi release").replace(/^v/u, ""),
+    "Oh My Pi release",
+  );
+  if (!isSupportedOmpMajor(version)) {
+    throw new Error(
+      `Oh My Pi ${version} is outside the supported major ${OMP_SUPPORTED_MAJOR}; qualify the new major before publishing it.`,
+    );
+  }
+  return version;
+}
+
+async function discoverOmp(fetch_: Fetch): Promise<ManagedRuntimeCatalogProviderData> {
+  const release = record(
+    await metadataJson(fetch_, "https://api.github.com/repos/can1357/oh-my-pi/releases/latest"),
+    "Oh My Pi stable release",
+  );
+  if (release.prerelease !== false || release.draft !== false) {
+    throw new Error("Oh My Pi release is not stable.");
+  }
+  const version = supportedOmpVersion(release);
+  if (!Array.isArray(release.assets)) throw new Error("Oh My Pi release assets are missing.");
+  const assets = release.assets.map((value) => record(value, "Oh My Pi release asset"));
+  const entries = await mapConcurrent(policyEntries("omp"), 2, async ({ key, policy }) => {
+    const asset = assets.find((value) => value.name === policy.artifactName);
+    if (!asset) throw new Error(`Oh My Pi release is missing ${policy.artifactName}.`);
+    const url = `https://github.com/can1357/oh-my-pi/releases/download/v${version}/${policy.artifactName}`;
+    if (stringField(asset, "browser_download_url", "Oh My Pi release asset") !== url) {
+      throw new Error("Oh My Pi release asset URL differs from its policy.");
+    }
+    const digest = strictDigest(
+      stringField(asset, "digest", "Oh My Pi release asset").replace(/^sha256:/u, ""),
+      "sha256",
+      "Oh My Pi release asset",
+    );
+    return [
+      key,
+      {
+        artifactName: policy.artifactName,
+        url,
+        checksum: { algorithm: "sha256" as const, digest },
+        size: await artifactSize(fetch_, url),
+      },
+    ] as const;
+  });
+  return candidateProvider({ provider: "omp", version, artifacts: Object.fromEntries(entries) });
+}
+
 const discoverers: Readonly<
   Record<
     ManagedRuntimeCatalogProvider,
@@ -843,6 +901,7 @@ const discoverers: Readonly<
   droid: discoverDroid,
   grok: discoverGrok,
   pi: discoverPi,
+  omp: discoverOmp,
 };
 
 export async function refreshManagedRuntimeCatalog(
@@ -1036,6 +1095,13 @@ async function discoverLatestVersion(
         stringField(release, "tag_name", "Pi release").replace(/^v/u, ""),
         "Pi release",
       );
+    }
+    case "omp": {
+      const release = record(
+        await metadataJson(fetch_, "https://api.github.com/repos/can1357/oh-my-pi/releases/latest"),
+        "Oh My Pi stable release",
+      );
+      return supportedOmpVersion(release);
     }
   }
 }

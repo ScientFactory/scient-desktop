@@ -61,6 +61,7 @@ describe("AssistedProviderSetup", () => {
 describe("ProviderSetupIcon", () => {
   it.each([
     ["pi", "Pi", "#F09082"],
+    ["omp", "Oh My Pi", "#9b4dff"],
     ["codex", "Codex", "<svg"],
   ])("shows %s's own logo in the composer picker and a shield elsewhere", (driver, name, mark) => {
     const markup = renderToStaticMarkup(

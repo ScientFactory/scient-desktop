@@ -702,7 +702,8 @@ const McpToolListLive = makeScientToolListLayer(
   [...Object.values(PullRequestsToolkit.tools), ...deviceTools],
   deviceTools,
 );
-const McpTransportLive = McpServer.layerHttp({
+/** The authenticated `/mcp` transport; exported so tests can serve a subset of toolkits. */
+export const McpTransportLive = McpServer.layerHttp({
   name: "Scient",
   version: packageJson.version,
   path: "/mcp",
