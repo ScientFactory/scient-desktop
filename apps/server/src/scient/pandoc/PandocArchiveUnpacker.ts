@@ -52,11 +52,11 @@ export class PandocArchiveUnpacker extends Context.Service<
 const UNPACK_TIMEOUT = "5 minutes";
 const UNPACK_MAX_OUTPUT_BYTES = 64 * 1024;
 
-export function pandocUnpackArguments(input: PandocArchiveUnpackInput): ReadonlyArray<string> {
+function pandocUnpackArguments(input: PandocArchiveUnpackInput): ReadonlyArray<string> {
   return ["-x", "-f", input.archivePath, "-C", input.destination];
 }
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const fileSystem = yield* FileSystem.FileSystem;
   const platform = yield* HostProcessPlatform;

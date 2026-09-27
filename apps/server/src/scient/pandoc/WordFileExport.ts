@@ -68,7 +68,7 @@ const WORD_FAILURE_REASON: Record<WordConversionFailureReason, ScientWordExportE
 const reject = (reason: ScientWordExportError["reason"], message: string) =>
   Effect.fail(new ScientWordExportError({ reason, message }));
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const workspaceFiles = yield* WorkspaceFileSystem.WorkspaceFileSystem;
   const files = yield* ConversationExportFiles;

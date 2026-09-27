@@ -111,7 +111,7 @@ const captureDirectory = Effect.fn("DocumentCapture.directory")(function* (
 });
 
 /** Removes captures whose render never returned. Runs before each new capture. */
-export const sweepExpiredDocumentCaptures = Effect.fn("DocumentCapture.sweepExpired")(function* () {
+const sweepExpiredDocumentCaptures = Effect.fn("DocumentCapture.sweepExpired")(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const root = yield* capturesRoot;

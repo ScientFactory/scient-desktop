@@ -184,7 +184,7 @@ type DiagramState =
  * type, size limits). Anything else, such as a runtime that failed to load,
  * means the page did not finish and must not be printed.
  */
-export function isMermaidContentError(cause: unknown): boolean {
+function isMermaidContentError(cause: unknown): boolean {
   if (cause instanceof MermaidRenderError) {
     return (
       isMermaidSyntaxError(cause.cause) ||

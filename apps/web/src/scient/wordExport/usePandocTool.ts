@@ -5,7 +5,7 @@ import { installPandocTool, readPandocTool } from "./client";
 import { isActivePandocInstall, pandocToolView, type PandocToolView } from "./pandocToolModel";
 
 /** A poll every 1.5 s is as fine as the server republishes download progress. */
-export const PANDOC_INSTALL_POLL_MS = 1_500;
+const PANDOC_INSTALL_POLL_MS = 1_500;
 
 function errorMessage(cause: unknown, fallback: string): string {
   return cause instanceof Error && cause.message.length > 0 ? cause.message : fallback;

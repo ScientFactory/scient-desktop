@@ -82,13 +82,13 @@ export const SCIENT_PANDOC_READER = [
 export const DOCX_MEDIA_TYPE =
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
-export const WORD_READ_LIMITS: PandocLimits = {
+const WORD_READ_LIMITS: PandocLimits = {
   timeout: "2 minutes",
   maxHeapMb: 1024,
   // The JSON tree runs 5–20× the size of the finished Word file.
   maxStdoutBytes: 256 * 1024 * 1024,
 };
-export const WORD_WRITE_LIMITS: PandocLimits = {
+const WORD_WRITE_LIMITS: PandocLimits = {
   timeout: "3 minutes",
   maxHeapMb: 1024,
   maxStdoutBytes: 512 * 1024 * 1024,
@@ -209,7 +209,7 @@ function runFailure(error: PandocRunError): WordConversionError {
   }
 }
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const tool = yield* PandocManagedTool;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;

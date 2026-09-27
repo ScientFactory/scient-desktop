@@ -39,7 +39,7 @@ import {
 } from "../../ipc/channels.ts";
 
 /** Files waiting for the renderer at once; the oldest is dropped beyond this. */
-export const MAX_PENDING_CONVERSATION_FILES = 8;
+const MAX_PENDING_CONVERSATION_FILES = 8;
 
 interface OpenedFile extends DesktopOpenedConversationFile {
   readonly path: string;
@@ -51,7 +51,7 @@ const waiting = new Map<string, OpenedFile>();
 const taken = new Map<string, OpenedFile>();
 
 /** The `.scic` paths among process arguments, resolved against the working directory. */
-export function conversationFilePathsFromArgv(
+function conversationFilePathsFromArgv(
   argv: ReadonlyArray<string>,
   cwd: string,
 ): ReadonlyArray<string> {
@@ -65,7 +65,7 @@ export function conversationFilePathsFromArgv(
 }
 
 /** Queues a regular `.scic` file for the renderer; false when it is not one. */
-export async function registerOpenedConversationFile(path: string): Promise<boolean> {
+async function registerOpenedConversationFile(path: string): Promise<boolean> {
   if (!path.toLowerCase().endsWith(SCIC_FILE_EXTENSION)) return false;
   const stat = await NodeFS.promises.stat(path).catch(() => null);
   if (stat === null || !stat.isFile()) return false;
@@ -88,7 +88,7 @@ export async function registerOpenedConversationFile(path: string): Promise<bool
 }
 
 /** Hands every waiting file to the renderer, by token. */
-export function takeOpenedConversationFileList(): ReadonlyArray<DesktopOpenedConversationFile> {
+function takeOpenedConversationFileList(): ReadonlyArray<DesktopOpenedConversationFile> {
   const files = [...waiting.values()];
   waiting.clear();
   for (const file of files) {
@@ -123,7 +123,7 @@ export function uploadTarget(rawUrl: string, allowedOrigins: ReadonlySet<string>
 }
 
 /** Streams a taken file to its signed upload URL. The token is spent either way. */
-export async function uploadOpenedConversationFileTo(
+async function uploadOpenedConversationFileTo(
   request: DesktopConversationFileUploadRequest,
   allowedOrigins: ReadonlySet<string>,
   fetchImpl: typeof fetch = fetch,

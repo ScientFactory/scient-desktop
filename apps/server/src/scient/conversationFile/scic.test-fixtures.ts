@@ -94,7 +94,7 @@ export const capturedSnapshot = decodeSnapshot({
   contentDigest: `sha256:${"0".repeat(64)}`,
 });
 
-export const redact = (text: string) => text.split(STATE_ROOT).join("«scient-data»");
+const redact = (text: string) => text.split(STATE_ROOT).join("«scient-data»");
 
 export function makePackage(
   snapshot = capturedSnapshot,

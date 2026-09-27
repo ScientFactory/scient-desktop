@@ -9,7 +9,7 @@ import {
 } from "@t3tools/contracts";
 
 /** How long the page waits for diagrams and images before reporting them unfinished. */
-export const DOCUMENT_PAGE_SETTLE_TIMEOUT_MS = 45_000;
+const DOCUMENT_PAGE_SETTLE_TIMEOUT_MS = 45_000;
 /** The readiness contract carries at most this many diagnostics. */
 const MAX_DIAGNOSTICS = 256;
 /** Distinct fatal diagnostics kept; one is enough to refuse the page. */
@@ -156,7 +156,7 @@ export function resolveInternalLinks(article: ParentNode): void {
  * fallback), so every face the page requested must itself report `loaded`.
  * Faces the page never used stay `unloaded` and do not matter.
  */
-export async function settleDocumentFonts(
+async function settleDocumentFonts(
   fonts: FontFaceSet,
   tracker: DocumentPageTracker,
 ): Promise<boolean> {
@@ -243,9 +243,7 @@ export async function collectDocumentPageReadiness(input: {
 }
 
 /** The limitations a readiness report found, as they are printed in the export notes. */
-export function readinessWarningNotes(
-  readiness: ScientDocumentPageReadiness,
-): ReadonlyArray<string> {
+function readinessWarningNotes(readiness: ScientDocumentPageReadiness): ReadonlyArray<string> {
   return readiness.diagnostics.flatMap((diagnostic) =>
     diagnostic.severity === "warning" ? [diagnostic.detail] : [],
   );

@@ -100,7 +100,7 @@ export const publishedSource = {
   pageCount: 3,
 } as PdfSourceDescriptor;
 
-export function readyReadiness(
+function readyReadiness(
   expected: ScientDocumentPageExpectation,
   overrides: Partial<ScientDocumentPageReadiness> = {},
 ): ScientDocumentPageReadiness {

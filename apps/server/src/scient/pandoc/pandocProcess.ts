@@ -68,10 +68,10 @@ export class PandocRunError extends Schema.TaggedError<PandocRunError>()("Pandoc
 }
 
 /** Pandoc's documented exit codes that Scient reports distinctly. */
-export const PANDOC_EXIT_PARSE_ERROR = 64;
-export const PANDOC_EXIT_HTTP_ERROR = 61;
+const PANDOC_EXIT_PARSE_ERROR = 64;
+const PANDOC_EXIT_HTTP_ERROR = 61;
 /** GHC's exit code when the heap limit given with `+RTS -M` is exhausted. */
-export const GHC_EXIT_HEAP_EXHAUSTED = 251;
+const GHC_EXIT_HEAP_EXHAUSTED = 251;
 
 const STDERR_MAX_BYTES = 256 * 1024;
 /** Discard port: a fetch Pandoc attempts in spite of everything fails at once. */

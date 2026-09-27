@@ -225,7 +225,7 @@ export interface MarkdownImageBudget {
   readonly maxImages: number;
 }
 
-export const MARKDOWN_IMAGE_BUDGET: MarkdownImageBudget = {
+const MARKDOWN_IMAGE_BUDGET: MarkdownImageBudget = {
   maxImageBytes: MAX_IMAGE_BYTES,
   maxTotalBytes: DOCUMENT_CAPTURE_MAX_ASSET_BYTES,
   maxImages: MAX_IMAGES,

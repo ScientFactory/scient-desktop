@@ -333,7 +333,7 @@ export const SCIENT_REFERENCE_STYLES: ReadonlyArray<StyleSpec> = [
   },
 ];
 
-export function scientReferenceStylesXml(): string {
+function scientReferenceStylesXml(): string {
   return [
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`,
     `<w:styles xmlns:w="${W}">`,
@@ -345,7 +345,7 @@ export function scientReferenceStylesXml(): string {
 }
 
 /** A4 with 2.5 cm margins, in twentieths of a point. */
-export const SCIENT_PAGE = {
+const SCIENT_PAGE = {
   width: 11_906,
   height: 16_838,
   margin: 1_418,

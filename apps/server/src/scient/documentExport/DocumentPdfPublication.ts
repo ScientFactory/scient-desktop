@@ -30,7 +30,7 @@ import { readProjectMarkdownFile } from "./MarkdownFileBundle.ts";
  * content limitations the page reported travel with the result as warnings.
  */
 
-export const DOCUMENT_PDF_PRODUCER_ID = ArtifactProducerId.make("scient.document-pdf");
+const DOCUMENT_PDF_PRODUCER_ID = ArtifactProducerId.make("scient.document-pdf");
 
 export const DOCUMENT_PDF_TOO_LARGE_DETAIL =
   "The PDF is larger than Scient's 64 MiB export limit. Export a shorter document or range, or leave out the work log.";
@@ -125,7 +125,7 @@ export const confirmCapturedSourceCurrent = Effect.fn(
   }
 });
 
-export const storeErrorToExportError = (
+const storeErrorToExportError = (
   cause: GeneratedDocumentStore.GeneratedDocumentStoreError,
 ): ScientDocumentPdfExportError =>
   new ScientDocumentPdfExportError({

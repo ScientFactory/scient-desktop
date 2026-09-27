@@ -15,7 +15,7 @@ import {
 let renderer: ReturnType<typeof createDocumentPagePdfRenderer> | undefined;
 
 /** The page is served the same way as the app window: the built client, or Vite in development. */
-export function documentPageSourceFor(
+function documentPageSourceFor(
   environment: Pick<
     DesktopEnvironment.DesktopEnvironment["Service"],
     "isDevelopment" | "devServerUrl" | "clientAssetsDir"

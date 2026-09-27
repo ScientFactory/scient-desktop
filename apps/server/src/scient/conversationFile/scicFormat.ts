@@ -55,7 +55,7 @@ export const SCIC_MAX_SNAPSHOT_BYTES = 128 * 1024 * 1024;
 export const SCIC_MAX_MARKDOWN_BYTES = 64 * 1024 * 1024;
 /** One attachment: the largest chat attachment. */
 export const SCIC_MAX_ATTACHMENT_BYTES = PROVIDER_SEND_TURN_MAX_FILE_BYTES;
-export const SCIC_MAX_ATTACHMENT_TOTAL_BYTES = SCIENT_CONVERSATION_EXPORT_MAX_ASSET_BYTES;
+const SCIC_MAX_ATTACHMENT_TOTAL_BYTES = SCIENT_CONVERSATION_EXPORT_MAX_ASSET_BYTES;
 /** Everything a package may expand to. */
 export const SCIC_MAX_UNCOMPRESSED_BYTES =
   SCIC_MAX_ATTACHMENT_TOTAL_BYTES +
@@ -78,7 +78,7 @@ export const SCIC_COMPRESSION_RATIO_FLOOR_BYTES = 1024 * 1024;
 const SAFE_NAME_MAX_CHARS = 100;
 
 /** A file name segment every file system accepts: letters, digits, `.`, `_`, `-`. */
-export function scicSafeFileName(name: string): string {
+function scicSafeFileName(name: string): string {
   const cleaned = name
     .normalize("NFC")
     .replace(/[^\p{L}\p{N}._-]+/gu, "-")
@@ -180,7 +180,7 @@ const startsWith = (head: Uint8Array, signature: ReadonlyArray<number>, offset =
   signature.every((byte, index) => head[offset + index] === byte);
 
 /** The media type a file's first bytes prove, for the types Scient checks. */
-export function sniffMediaType(head: Uint8Array): string | null {
+function sniffMediaType(head: Uint8Array): string | null {
   if (startsWith(head, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return "image/png";
   if (startsWith(head, [0xff, 0xd8, 0xff])) return "image/jpeg";
   if (startsWith(head, [0x47, 0x49, 0x46, 0x38])) return "image/gif";
