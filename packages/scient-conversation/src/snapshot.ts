@@ -123,9 +123,9 @@ export function buildConversationSnapshot(input: {
   ) =>
     running === null || (item.turnId !== running && (cutoff === null || item.createdAt < cutoff));
 
-  const completedMessages = thread.messages.filter(
-    (message) => !message.streaming && settled(message),
-  );
+  // As in chat, a message of a settled turn is complete even when a crashed
+  // provider left its streaming flag set; only the running turn is left out.
+  const completedMessages = thread.messages.filter(settled);
 
   // Range: everything through the selected message, and the rest of its turn
   // up to the next message of that turn.
