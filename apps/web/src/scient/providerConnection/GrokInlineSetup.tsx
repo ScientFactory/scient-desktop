@@ -25,6 +25,11 @@ import {
 } from "./AssistedProviderSetup";
 import { startGrokSignIn, startReviewedGrokRuntimeAction } from "./grokLifecycleActions";
 import { ProviderAuthorizationCodeDisclosure } from "./ProviderAuthorizationCodeForm";
+import {
+  hasExternalProviderUpdate,
+  hasManagedProviderUpdate,
+  updateManagedOrExternalProviderRuntime,
+} from "./providerLifecycleActions";
 import { resolveProviderRuntimeForPresentation } from "./ProviderRuntimeSection";
 import {
   isActiveProviderConnectionOperation,
@@ -122,6 +127,11 @@ export function GrokInlineSetup(props: {
     props.provider.auth.status === "authenticated" && props.provider.auth.type === "api_key";
   const needsRepair =
     !props.managedRuntimePresentedExternally && needsManagedRuntimeRecovery(props.provider);
+  const updateAvailable =
+    (!props.managedRuntimePresentedExternally && hasManagedProviderUpdate(props.provider)) ||
+    hasExternalProviderUpdate(props.provider);
+  const updateState = props.provider.updateState;
+  const updateRunning = updateState?.status === "queued" || updateState?.status === "running";
 
   const run = async (action: Exclude<PendingAction, null>, operation: () => Promise<unknown>) => {
     setLocalError(null);
@@ -135,7 +145,7 @@ export function GrokInlineSetup(props: {
     }
   };
 
-  const runtimeAction = async (action: "install" | "repair" | "update") => {
+  const runtimeAction = async (action: "install" | "repair") => {
     const provider = await startReviewedGrokRuntimeAction(props.controller, action);
     setLocalRuntime(provider.connection?.runtime ?? null);
     if (
@@ -145,6 +155,15 @@ export function GrokInlineSetup(props: {
     ) {
       props.onRepairSucceeded?.();
     }
+  };
+
+  const update = async () => {
+    const provider = await updateManagedOrExternalProviderRuntime(
+      props.controller,
+      props.provider,
+      "No Grok update is currently available.",
+    );
+    setLocalRuntime(provider.connection?.runtime ?? null);
   };
 
   const cancelConnection = () =>
@@ -337,6 +356,53 @@ export function GrokInlineSetup(props: {
             ) : null}
           </AssistedSetupActions>
         ) : null}
+      </SetupFrame>
+    );
+  }
+
+  if ((accountConnected || apiKeyReady) && updateRunning) {
+    return (
+      <SetupFrame>
+        <AssistedSetupStatus
+          body={updateState?.message ?? "Updating and verifying Grok…"}
+          icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
+          title="Updating Grok"
+          trailing={props.accountAction}
+        />
+      </SetupFrame>
+    );
+  }
+
+  if ((accountConnected || apiKeyReady) && updateAvailable) {
+    const error = localError ?? (updateState?.status === "failed" ? updateState.message : null);
+    return (
+      <SetupFrame>
+        <AssistedSetupStatus
+          body={
+            error ??
+            "Install the reviewed update when you’re ready. Your current version remains available until the update is verified."
+          }
+          icon={
+            error ? (
+              <TriangleAlertIcon className="size-5 text-destructive" />
+            ) : (
+              <RefreshCwIcon className="size-5 text-primary" />
+            )
+          }
+          role={error ? "alert" : undefined}
+          title={error ? "Grok couldn’t be updated" : "Grok update available"}
+        />
+        <AssistedSetupActions>
+          {props.accountAction}
+          <Button
+            onClick={() => void run("update", update)}
+            size="sm"
+            type="button"
+            variant="ghost-primary"
+          >
+            <RefreshCwIcon aria-hidden /> {error ? "Try again" : "Update"}
+          </Button>
+        </AssistedSetupActions>
       </SetupFrame>
     );
   }

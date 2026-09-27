@@ -318,6 +318,14 @@ describe.each(DRIVERS)("$name composer setup", (entry) => {
     expect(strayIcons(element)).toBe(0);
     expect(buttonLabels(element)).toEqual(["Cancel"]);
   });
+
+  it("offers a reviewed managed update as its primary action", () => {
+    const element = view(managedUpdate(entry));
+
+    expect(element.textContent).toContain(`${entry.name} update available`);
+    // Droid and Pi add a quiet Connect models under it.
+    expect(buttonLabels(element).filter((label) => label !== "Connect models")).toHaveLength(1);
+  });
 });
 
 describe.each(ACCOUNT_DRIVERS)("$name composer sign-in", (entry) => {
@@ -350,5 +358,131 @@ describe.each(ACCOUNT_DRIVERS)("$name composer sign-in", (entry) => {
     expect(statusIcons(element)).toEqual(["spinner"]);
     expect(element.querySelectorAll(".animate-spin")).toHaveLength(1);
     expect(strayIcons(element)).toBe(0);
+  });
+});
+
+const UPDATING_DRIVERS = DRIVERS.filter(
+  (entry) => entry.driver === "droid" || entry.driver === "grok",
+);
+
+describe.each(UPDATING_DRIVERS)("$name composer update", (entry) => {
+  const externalUpdate = (): ServerProvider => ({
+    ...withRuntime(ready(entry), { source: "system", actions: ["install"], managedVersion: null }),
+    versionAdvisory: {
+      status: "behind_latest",
+      currentVersion: "1.2.3",
+      latestVersion: "1.3.0",
+      updateCommand: `${entry.driver} update`,
+      canUpdate: true,
+      canInstallVersion: false,
+      checkedAt: T0,
+      message: `${entry.name} 1.3.0 is available.`,
+    },
+  });
+
+  it("offers a managed and an external update with an Update action", () => {
+    for (const provider of [managedUpdate(entry), externalUpdate()]) {
+      const element = view(provider);
+      expect(element.textContent).toContain(`${entry.name} update available`);
+      expect(statusIcons(element)).toEqual(["other"]);
+      expect(buttonLabels(element)[0]).toBe("Update");
+    }
+  });
+
+  it("shows a running and a failed update", () => {
+    const running = view({
+      ...managedUpdate(entry),
+      updateState: {
+        status: "running",
+        startedAt: T0,
+        finishedAt: null,
+        message: `Updating ${entry.name} to 1.3.0…`,
+        output: null,
+      },
+    });
+    const failed = view({
+      ...managedUpdate(entry),
+      updateState: {
+        status: "failed",
+        startedAt: T0,
+        finishedAt: T0,
+        message: "The updater exited with code 2.",
+        output: null,
+      },
+    });
+
+    expect(running.textContent).toContain(`Updating ${entry.name}`);
+    expect(statusIcons(running)).toEqual(["spinner"]);
+    expect(buttonLabels(running)).toEqual([]);
+    expect(failed.textContent).toContain(`${entry.name} couldn’t be updated`);
+    expect(failed.textContent).toContain("The updater exited with code 2.");
+    expect(statusIcons(failed)).toEqual(["warning"]);
+    expect(buttonLabels(failed)[0]).toBe("Try again");
+  });
+
+  describe("actions", () => {
+    let root: Root;
+    let host: HTMLDivElement;
+
+    beforeEach(() => {
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      host = document.createElement("div");
+      document.body.append(host);
+      root = createRoot(host);
+    });
+    afterEach(async () => {
+      await act(() => root.unmount());
+      host.remove();
+      vi.unstubAllGlobals();
+    });
+
+    const clickUpdate = async (provider: ServerProvider) => {
+      await act(() =>
+        root.render(
+          <AssistedProviderSetupHost
+            displayName={entry.name}
+            environmentId={EnvironmentId.make("local")}
+            provider={provider}
+            surface="composer"
+          />,
+        ),
+      );
+      const button = [...host.querySelectorAll("button")].find(
+        (element) => element.textContent?.trim() === "Update",
+      );
+      await act(async () => button!.click());
+    };
+
+    it("plans and starts the reviewed managed update", async () => {
+      const provider = managedUpdate(entry);
+      const plan = {
+        instanceId: provider.instanceId,
+        action: "update" as const,
+        target: "darwin-arm64",
+        version: "1.3.0",
+        downloadBytes: null,
+        sourceLabel: "Official release",
+        catalogRevision: "revision",
+        message: `Update ${entry.name}.`,
+      };
+      vi.mocked(controller.planRuntime).mockResolvedValueOnce(plan);
+      vi.mocked(controller.startRuntime).mockResolvedValueOnce(provider);
+
+      await clickUpdate(provider);
+
+      expect(controller.planRuntime).toHaveBeenCalledWith("update");
+      expect(controller.startRuntime).toHaveBeenCalledWith(plan);
+      expect(controller.updateExternalRuntime).not.toHaveBeenCalled();
+    });
+
+    it("runs the external installation's own updater", async () => {
+      const provider = externalUpdate();
+      vi.mocked(controller.updateExternalRuntime).mockResolvedValueOnce(provider);
+
+      await clickUpdate(provider);
+
+      expect(controller.updateExternalRuntime).toHaveBeenCalledOnce();
+      expect(controller.planRuntime).not.toHaveBeenCalled();
+    });
   });
 });

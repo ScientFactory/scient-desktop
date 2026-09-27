@@ -25,11 +25,23 @@ import {
   providerAccountIdentity,
   providerLifecycleFailureMessage,
 } from "./providerConnectionPresentation";
-import { startReviewedProviderRuntimeAction } from "./providerLifecycleActions";
+import {
+  hasExternalProviderUpdate,
+  hasManagedProviderUpdate,
+  startReviewedProviderRuntimeAction,
+  updateManagedOrExternalProviderRuntime,
+} from "./providerLifecycleActions";
 import { resolveProviderRuntimeForPresentation } from "./ProviderRuntimeSection";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
 
-type PendingAction = "install" | "repair" | "sign-in" | "cancel-runtime" | "cancel-sign-in" | null;
+type PendingAction =
+  | "install"
+  | "repair"
+  | "update"
+  | "sign-in"
+  | "cancel-runtime"
+  | "cancel-sign-in"
+  | null;
 
 export function DroidInlineSetup(props: {
   readonly accountAction?: ReactNode;
@@ -71,6 +83,11 @@ export function DroidInlineSetup(props: {
     props.provider.status === "ready" && isAuthenticated && props.provider.models.length > 0;
   const needsRepair =
     !props.managedRuntimePresentedExternally && needsManagedRuntimeRecovery(props.provider);
+  const updateAvailable =
+    (!props.managedRuntimePresentedExternally && hasManagedProviderUpdate(props.provider)) ||
+    hasExternalProviderUpdate(props.provider);
+  const updateState = props.provider.updateState;
+  const updateRunning = updateState?.status === "queued" || updateState?.status === "running";
   // Custom models need Droid itself, not a Factory account.
   const modelsActions =
     props.provider.installed && !props.provider.probePending ? props.modelsActions : undefined;
@@ -102,6 +119,23 @@ export function DroidInlineSetup(props: {
       }
     } catch (error) {
       setLocalError(providerLifecycleFailureMessage(error, `Scient could not ${action} Droid.`));
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
+  const update = async () => {
+    setLocalError(null);
+    setPendingAction("update");
+    try {
+      const provider = await updateManagedOrExternalProviderRuntime(
+        props.controller,
+        props.provider,
+        "No Droid update is currently available.",
+      );
+      setLocalRuntime(provider.connection?.runtime ?? null);
+    } catch (error) {
+      setLocalError(providerLifecycleFailureMessage(error, "Scient could not update Droid."));
     } finally {
       setPendingAction(null);
     }
@@ -150,14 +184,25 @@ export function DroidInlineSetup(props: {
     }
   };
 
-  if (activeRuntimeOperation || pendingAction === "install" || pendingAction === "repair") {
-    const repairing = pendingAction === "repair" || activeRuntimeOperation?.action === "repair";
+  if (
+    activeRuntimeOperation ||
+    pendingAction === "install" ||
+    pendingAction === "repair" ||
+    pendingAction === "update"
+  ) {
+    const action = activeRuntimeOperation?.action ?? pendingAction;
     return (
       <SetupFrame>
         <AssistedSetupStatus
           body={activeRuntimeOperation?.message ?? "Preparing the private Droid runtime…"}
           icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
-          title={repairing ? "Repairing Droid" : "Installing Droid"}
+          title={
+            action === "update"
+              ? "Updating Droid"
+              : action === "repair"
+                ? "Repairing Droid"
+                : "Installing Droid"
+          }
         />
         {activeRuntimeOperation ? (
           <AssistedSetupActions>
@@ -280,6 +325,49 @@ export function DroidInlineSetup(props: {
             </Button>
           </AssistedSetupActions>
         ) : null}
+      </SetupFrame>
+    );
+  }
+
+  if (isAuthenticated && isReady && updateRunning) {
+    return (
+      <SetupFrame>
+        <AssistedSetupStatus
+          body={updateState?.message ?? "Updating and verifying Droid…"}
+          icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
+          title="Updating Droid"
+          trailing={props.accountAction}
+        />
+      </SetupFrame>
+    );
+  }
+
+  if (isAuthenticated && isReady && updateAvailable) {
+    const error = localError ?? (updateState?.status === "failed" ? updateState.message : null);
+    return (
+      <SetupFrame>
+        <AssistedSetupStatus
+          body={
+            error ??
+            "Install the reviewed update when you’re ready. Your current version remains available until the update is verified."
+          }
+          icon={
+            error ? (
+              <TriangleAlertIcon className="size-5 text-destructive" />
+            ) : (
+              <RefreshCwIcon className="size-5 text-primary" />
+            )
+          }
+          role={error ? "alert" : undefined}
+          title={error ? "Droid couldn’t be updated" : "Droid update available"}
+        />
+        <AssistedSetupActions>
+          {props.accountAction}
+          <Button onClick={() => void update()} size="sm" type="button" variant="ghost-primary">
+            <RefreshCwIcon aria-hidden /> {error ? "Try again" : "Update"}
+          </Button>
+        </AssistedSetupActions>
+        {secondaryActions}
       </SetupFrame>
     );
   }
