@@ -241,9 +241,21 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi fork history", () => {
           expect(terminal.type).toBe("turn.completed");
           expect(delivered).toBe(chunks.length);
           expect(sawImage).toBe(true);
+          const resumeCursor = (yield* adapter.listSessions()).find(
+            (session) => session.threadId === threadId,
+          )?.resumeCursor;
+          expect(resumeCursor).toBeDefined();
           yield* adapter.stopAll();
           expect(contextPath).toBeDefined();
           expect(NodeFS.existsSync(contextPath!)).toBe(false);
+          const resumed = yield* adapter.startSession({
+            threadId,
+            cwd: root,
+            runtimeMode: "full-access",
+            resumeCursor,
+          });
+          expect(resumed.status).toBe("ready");
+          yield* adapter.stopAll();
         }),
       ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer))),
     180_000,
