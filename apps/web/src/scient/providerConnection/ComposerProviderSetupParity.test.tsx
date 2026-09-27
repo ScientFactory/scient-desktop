@@ -262,8 +262,20 @@ function view(provider: ServerProvider): HTMLElement {
   return element;
 }
 
+/** The frame's actions. */
+function frameButtons(element: HTMLElement): HTMLButtonElement[] {
+  return [...element.querySelectorAll("button")];
+}
+
 function buttonLabels(element: HTMLElement): string[] {
-  return [...element.querySelectorAll("button")].map((button) => button.textContent!.trim());
+  return frameButtons(element).map((button) => button.textContent!.trim());
+}
+
+/** What assistive technology announces for each of the frame's actions. */
+function accessibleNames(element: HTMLElement): string[] {
+  return frameButtons(element).map(
+    (button) => button.getAttribute("aria-label") ?? button.textContent!.trim(),
+  );
 }
 
 /** Icons outside the status icon, actions and links: extra logos or title spinners. */
@@ -332,6 +344,7 @@ describe.each(DRIVERS)("$name composer setup", (entry) => {
     expect(element.querySelectorAll(".animate-spin")).toHaveLength(1);
     expect(strayIcons(element)).toBe(0);
     expect(buttonLabels(element)).toEqual(["Cancel"]);
+    expect(accessibleNames(element)).toEqual([`Cancel ${entry.name} installation`]);
   });
 
   it("offers a reviewed managed update as its primary action", () => {
@@ -350,6 +363,7 @@ describe.each(DRIVERS)("$name composer setup", (entry) => {
     expect(element.querySelector('[role="alert"]')).not.toBeNull();
     expect(statusIcons(element)).toEqual(["warning"]);
     expect(buttonLabels(element)).toEqual(["Retry installation"]);
+    expect(accessibleNames(element)).toEqual([`Retry ${entry.name} installation`]);
   });
 
   it("asks for repair with the server's error", () => {
@@ -402,6 +416,13 @@ describe.each(DRIVERS)("$name composer setup", (entry) => {
     );
 
     expect(element.textContent).toContain("The repaired runtime failed its smoke test.");
+  });
+
+  it("labels its install and update actions with short verbs and names the provider", () => {
+    expect(buttonLabels(view(notInstalled(entry)))).toEqual(["Install"]);
+    expect(accessibleNames(view(notInstalled(entry)))).toEqual([`Install ${entry.name}`]);
+    expect(buttonLabels(view(managedUpdate(entry)))[0]).toBe("Update");
+    expect(accessibleNames(view(managedUpdate(entry)))[0]).toBe(`Update ${entry.name}`);
   });
 });
 

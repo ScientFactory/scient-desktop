@@ -23,6 +23,7 @@ import {
 } from "./AssistedProviderSetup";
 import { ConnectModelsButton } from "./ConnectModelsButton";
 import {
+  cancelRuntimeActionLabel,
   failedRuntimeOperationMessage,
   isActiveProviderRuntimeOperation,
   isProviderRuntimePresentedAsInstalled,
@@ -103,9 +104,20 @@ export function ManagedRuntimeComposerSetup(props: {
         />
       </AssistedSetupActions>
     );
-  const primaryAction = (action: Exclude<Pending, "cancel">, label: string, icon: ReactNode) => (
+  const primaryAction = (
+    action: Exclude<Pending, "cancel">,
+    label: string,
+    accessibleName: string,
+    icon: ReactNode,
+  ) => (
     <AssistedSetupActions>
-      <Button onClick={() => void run(action)} size="sm" type="button" variant="ghost-primary">
+      <Button
+        aria-label={accessibleName}
+        onClick={() => void run(action)}
+        size="sm"
+        type="button"
+        variant="ghost-primary"
+      >
         {icon}
         {label}
       </Button>
@@ -126,6 +138,7 @@ export function ManagedRuntimeComposerSetup(props: {
         {active ? (
           <AssistedSetupActions>
             <Button
+              aria-label={cancelRuntimeActionLabel(name, action)}
               disabled={pending === "cancel"}
               onClick={() => void run("cancel")}
               size="sm"
@@ -155,7 +168,12 @@ export function ManagedRuntimeComposerSetup(props: {
           title={`${name} needs repair`}
         />
         {runtime?.actions.includes("repair")
-          ? primaryAction("repair", `Repair ${name}`, <RefreshCwIcon aria-hidden />)
+          ? primaryAction(
+              "repair",
+              `Repair ${name}`,
+              `Repair ${name}`,
+              <RefreshCwIcon aria-hidden />,
+            )
           : null}
       </AssistedSetupFrame>
     );
@@ -188,6 +206,7 @@ export function ManagedRuntimeComposerSetup(props: {
           ? primaryAction(
               "install",
               error ? "Retry installation" : "Install",
+              error ? `Retry ${name} installation` : `Install ${name}`,
               error ? <RefreshCwIcon aria-hidden /> : <DownloadIcon aria-hidden />,
             )
           : null}
@@ -238,7 +257,8 @@ export function ManagedRuntimeComposerSetup(props: {
         />
         {primaryAction(
           "update",
-          error ? "Try again" : `Update ${name}`,
+          error ? "Try again" : "Update",
+          error ? `Retry ${name} update` : `Update ${name}`,
           <RefreshCwIcon aria-hidden />,
         )}
         {connectModels("setup-secondary")}

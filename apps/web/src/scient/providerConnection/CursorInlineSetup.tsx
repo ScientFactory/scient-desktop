@@ -31,6 +31,7 @@ import {
   type OptimisticProviderValue,
 } from "./optimisticProviderValue";
 import {
+  cancelRuntimeActionLabel,
   failedRuntimeOperationMessage,
   isActiveProviderConnectionOperation,
   isActiveProviderRuntimeOperation,
@@ -222,7 +223,9 @@ export function CursorInlineSetup(props: {
     pendingAction === "repair" ||
     pendingAction === "update"
   ) {
-    const action = activeRuntimeOperation?.action ?? pendingAction;
+    const action =
+      activeRuntimeOperation?.action ??
+      (pendingAction === "repair" || pendingAction === "update" ? pendingAction : "install");
     return (
       <SetupFrame>
         <AssistedSetupStatus
@@ -238,6 +241,7 @@ export function CursorInlineSetup(props: {
         />
         <AssistedSetupActions>
           <Button
+            aria-label={cancelRuntimeActionLabel("Cursor", action)}
             disabled={!activeRuntimeOperation || pendingAction === "cancel-runtime"}
             onClick={() => void cancelRuntime()}
             size="sm"
@@ -300,9 +304,15 @@ export function CursorInlineSetup(props: {
         />
         {canInstall ? (
           <AssistedSetupActions>
-            <Button onClick={() => void install()} size="sm" type="button" variant="ghost-primary">
+            <Button
+              aria-label={error ? "Retry Cursor installation" : "Install Cursor"}
+              onClick={() => void install()}
+              size="sm"
+              type="button"
+              variant="ghost-primary"
+            >
               {error ? <RefreshCwIcon aria-hidden /> : <DownloadIcon aria-hidden />}
-              {error ? "Retry installation" : "Install Cursor"}
+              {error ? "Retry installation" : "Install"}
             </Button>
           </AssistedSetupActions>
         ) : null}
@@ -338,6 +348,7 @@ export function CursorInlineSetup(props: {
           ) : null}
           {activeConnectionOperation ? (
             <Button
+              aria-label="Cancel Cursor sign-in"
               disabled={pendingAction === "cancel-sign-in"}
               onClick={() => void cancelSignIn()}
               size="sm"
@@ -399,8 +410,14 @@ export function CursorInlineSetup(props: {
           />
           <AssistedSetupActions>
             {props.accountAction}
-            <Button onClick={() => void update()} size="sm" type="button" variant="ghost-primary">
-              <RefreshCwIcon aria-hidden /> {error ? "Try again" : "Update Cursor"}
+            <Button
+              aria-label={error ? "Retry Cursor update" : "Update Cursor"}
+              onClick={() => void update()}
+              size="sm"
+              type="button"
+              variant="ghost-primary"
+            >
+              <RefreshCwIcon aria-hidden /> {error ? "Try again" : "Update"}
             </Button>
           </AssistedSetupActions>
         </SetupFrame>
@@ -476,7 +493,13 @@ export function CursorInlineSetup(props: {
         title={signInError ? "Cursor sign-in didn’t finish" : "Sign in required"}
       />
       <AssistedSetupActions>
-        <Button onClick={() => void signIn()} size="sm" type="button" variant="ghost-primary">
+        <Button
+          aria-label={signInError ? "Retry Cursor sign-in" : undefined}
+          onClick={() => void signIn()}
+          size="sm"
+          type="button"
+          variant="ghost-primary"
+        >
           {signInError ? <RefreshCwIcon aria-hidden /> : <ExternalLinkIcon aria-hidden />}
           {signInError ? "Try again" : "Sign in to Cursor"}
         </Button>

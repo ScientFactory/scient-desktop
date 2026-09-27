@@ -28,6 +28,7 @@ import {
   updateAntigravityRuntime,
 } from "./antigravityLifecycleActions";
 import {
+  cancelRuntimeActionLabel,
   failedRuntimeOperationMessage,
   isActiveProviderConnectionOperation,
   isActiveProviderRuntimeOperation,
@@ -218,6 +219,7 @@ export function AntigravityInlineSetup(props: {
         {activeRuntimeOperation ? (
           <AssistedSetupActions>
             <Button
+              aria-label={cancelRuntimeActionLabel("Antigravity", activeRuntimeOperation.action)}
               disabled={pendingAction === "cancel-runtime"}
               onClick={() => void cancelRuntime()}
               size="sm"
@@ -275,12 +277,13 @@ export function AntigravityInlineSetup(props: {
         {runtime?.actions.includes("install") ? (
           <AssistedSetupActions>
             <Button
+              aria-label="Install Antigravity"
               onClick={() => void run("install", () => runtimeAction("install"))}
               size="sm"
               type="button"
               variant="ghost-primary"
             >
-              <DownloadIcon aria-hidden /> Install again
+              <DownloadIcon aria-hidden /> Install
             </Button>
           </AssistedSetupActions>
         ) : null}
@@ -342,13 +345,16 @@ export function AntigravityInlineSetup(props: {
         {canInstall ? (
           <AssistedSetupActions>
             <Button
+              aria-label={
+                installationError ? "Retry Antigravity installation" : "Install Antigravity"
+              }
               onClick={() => void run("install", () => runtimeAction("install"))}
               size="sm"
               type="button"
               variant="ghost-primary"
             >
               {installationError ? <RefreshCwIcon aria-hidden /> : <DownloadIcon aria-hidden />}
-              {installationError ? "Retry installation" : "Install Antigravity"}
+              {installationError ? "Retry installation" : "Install"}
             </Button>
           </AssistedSetupActions>
         ) : (
@@ -446,6 +452,7 @@ export function AntigravityInlineSetup(props: {
             ) : null}
             {activeConnectionOperation ? (
               <Button
+                aria-label="Cancel Antigravity sign-in"
                 disabled={pendingAction === "submit-code" || pendingAction === "cancel-sign-in"}
                 onClick={() => void cancelSignIn()}
                 size="sm"
@@ -511,6 +518,7 @@ export function AntigravityInlineSetup(props: {
         />
         <AssistedSetupActions>
           <Button
+            aria-label={signInError ? "Retry Antigravity sign-in" : undefined}
             onClick={() =>
               void run("sign-in", () =>
                 startAntigravitySignInAndOpenAuthorizationPage(props.controller, props.provider),
@@ -564,6 +572,7 @@ export function AntigravityInlineSetup(props: {
         <AssistedSetupActions>
           {props.accountAction}
           <Button
+            aria-label="Update Antigravity"
             onClick={() =>
               void run("update", () => updateAntigravityRuntime(props.controller, props.provider))
             }
@@ -571,7 +580,7 @@ export function AntigravityInlineSetup(props: {
             type="button"
             variant="ghost-primary"
           >
-            <RefreshCwIcon aria-hidden /> Update Antigravity
+            <RefreshCwIcon aria-hidden /> Update
           </Button>
         </AssistedSetupActions>
       </SetupFrame>

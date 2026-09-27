@@ -25,6 +25,7 @@ import {
   updateClaudeRuntime,
 } from "./claudeLifecycleActions";
 import {
+  cancelRuntimeActionLabel,
   failedRuntimeOperationMessage,
   isActiveProviderConnectionOperation,
   isActiveProviderRuntimeOperation,
@@ -284,6 +285,7 @@ export function ClaudeInlineSetup(props: {
         {activeRuntimeOperation ? (
           <AssistedSetupActions>
             <Button
+              aria-label={cancelRuntimeActionLabel("Claude", activeRuntimeOperation.action)}
               disabled={pendingAction === "cancel-runtime"}
               onClick={() => void cancelRuntime()}
               size="sm"
@@ -346,9 +348,15 @@ export function ClaudeInlineSetup(props: {
         />
         {canInstall ? (
           <AssistedSetupActions>
-            <Button onClick={() => void install()} size="sm" type="button" variant="ghost-primary">
+            <Button
+              aria-label={error ? "Retry Claude installation" : "Install Claude"}
+              onClick={() => void install()}
+              size="sm"
+              type="button"
+              variant="ghost-primary"
+            >
               {error ? <RefreshCwIcon aria-hidden /> : <DownloadIcon aria-hidden />}
-              {error ? "Retry installation" : "Install Claude"}
+              {error ? "Retry installation" : "Install"}
             </Button>
           </AssistedSetupActions>
         ) : null}
@@ -399,6 +407,7 @@ export function ClaudeInlineSetup(props: {
           ) : null}
           {activeConnectionOperation ? (
             <Button
+              aria-label="Cancel Claude sign-in"
               disabled={pendingAction === "cancel-sign-in" || pendingAction === "submit-code"}
               onClick={() => void cancelSignIn()}
               size="sm"
@@ -464,8 +473,14 @@ export function ClaudeInlineSetup(props: {
           />
           <AssistedSetupActions>
             {props.accountAction}
-            <Button onClick={() => void update()} size="sm" type="button" variant="ghost-primary">
-              <RefreshCwIcon aria-hidden /> {error ? "Try again" : "Update Claude"}
+            <Button
+              aria-label={error ? "Retry Claude update" : "Update Claude"}
+              onClick={() => void update()}
+              size="sm"
+              type="button"
+              variant="ghost-primary"
+            >
+              <RefreshCwIcon aria-hidden /> {error ? "Try again" : "Update"}
             </Button>
           </AssistedSetupActions>
         </SetupFrame>
@@ -553,7 +568,13 @@ export function ClaudeInlineSetup(props: {
               : "Use Claude subscription"}
           </Button>
         ) : null}
-        <Button onClick={() => void signIn()} size="sm" type="button" variant="ghost-primary">
+        <Button
+          aria-label={signInError ? "Retry Claude sign-in" : undefined}
+          onClick={() => void signIn()}
+          size="sm"
+          type="button"
+          variant="ghost-primary"
+        >
           {signInError ? <RefreshCwIcon aria-hidden /> : <ExternalLinkIcon aria-hidden />}
           {signInError
             ? "Try sign in again"

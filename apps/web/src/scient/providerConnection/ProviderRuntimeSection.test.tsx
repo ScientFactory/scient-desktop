@@ -1518,3 +1518,56 @@ describe("ProviderRuntimeSection", () => {
     expect(markup).not.toContain("private provider runtime was removed");
   });
 });
+
+describe("ProviderRuntimeSection accessible names", () => {
+  const managed = (actions: ProviderManagedRuntimeAction[]): ServerProvider => ({
+    ...provider,
+    installed: true,
+    status: "ready",
+    connection: {
+      ...provider.connection!,
+      runtime: {
+        ...provider.connection!.runtime!,
+        source: "scient_managed",
+        managedVersion: "1.1.17",
+        actions,
+      },
+    },
+  });
+  const render = (snapshot: ServerProvider) => {
+    hooks.beginRender();
+    return renderToStaticMarkup(
+      ProviderRuntimeSection({ environmentId, provider: snapshot, displayName: "Antigravity" }),
+    );
+  };
+
+  it("names the provider on its short-verb runtime actions", () => {
+    expect(render(provider)).toContain('aria-label="Install Antigravity"');
+    const markup = render(managed(["update", "repair", "remove"]));
+    expect(markup).toContain('aria-label="Update Antigravity"');
+    expect(markup).toContain('aria-label="Repair Antigravity"');
+    expect(markup).toContain('aria-label="Remove Antigravity"');
+  });
+
+  it("names the provider and the operation on Cancel", () => {
+    const snapshot = managed(["repair", "remove"]);
+    const markup = render({
+      ...snapshot,
+      connection: {
+        ...snapshot.connection!,
+        runtime: {
+          ...snapshot.connection!.runtime!,
+          operation: {
+            operationId: "repair-active",
+            action: "repair",
+            status: "downloading",
+            startedAt: "2026-08-22T12:00:00.000Z",
+            finishedAt: null,
+            message: "Downloading Antigravity.",
+          },
+        },
+      },
+    });
+    expect(markup).toContain('aria-label="Cancel Antigravity repair"');
+  });
+});

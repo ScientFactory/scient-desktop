@@ -140,7 +140,7 @@ describe("Pi composer setup", () => {
     const markup = render(withRuntime(base, { actions: ["update", "repair", "remove"] }));
     expect(markup).toContain(`${name} update available`);
     expect(buttons(markup)).toEqual([
-      { variant: "ghost-primary", label: `Update ${name}` },
+      { variant: "ghost-primary", label: "Update" },
       { variant: "ghost-muted", label: "Connect models" },
     ]);
   });
@@ -266,7 +266,7 @@ describe("managed runtime composer actions", () => {
       ),
     );
     const button = [...host.querySelectorAll("button")].find(
-      (element) => element.textContent?.trim() === `Update ${name}`,
+      (element) => element.textContent?.trim() === "Update",
     );
     await act(async () => button!.click());
     expect(controller.planRuntime).toHaveBeenCalledWith("update");

@@ -32,6 +32,7 @@ import {
 } from "./providerLifecycleActions";
 import { resolveProviderRuntimeForPresentation } from "./ProviderRuntimeSection";
 import {
+  cancelRuntimeActionLabel,
   failedRuntimeOperationMessage,
   isActiveProviderConnectionOperation,
   isActiveProviderRuntimeOperation,
@@ -202,6 +203,7 @@ export function GrokInlineSetup(props: {
         {activeRuntimeOperation ? (
           <AssistedSetupActions>
             <Button
+              aria-label={cancelRuntimeActionLabel("Grok", activeRuntimeOperation.action)}
               disabled={pendingAction === "cancel-runtime"}
               onClick={() =>
                 void run("cancel-runtime", () =>
@@ -268,6 +270,7 @@ export function GrokInlineSetup(props: {
         {canInstall ? (
           <AssistedSetupActions>
             <Button
+              aria-label={installationError ? "Retry Grok installation" : "Install Grok"}
               onClick={() => void run("install", () => runtimeAction("install"))}
               size="sm"
               variant="ghost-primary"
@@ -349,6 +352,7 @@ export function GrokInlineSetup(props: {
             ) : null}
             {activeConnectionOperation ? (
               <Button
+                aria-label="Cancel Grok sign-in"
                 onClick={() => void run("cancel-sign-in", cancelConnection)}
                 size="sm"
                 variant="ghost-destructive-action"
@@ -397,6 +401,7 @@ export function GrokInlineSetup(props: {
         <AssistedSetupActions>
           {props.accountAction}
           <Button
+            aria-label={error ? "Retry Grok update" : "Update Grok"}
             onClick={() => void run("update", update)}
             size="sm"
             type="button"
@@ -487,6 +492,7 @@ export function GrokInlineSetup(props: {
           Use device code
         </Button>
         <Button
+          aria-label={signInError ? "Retry Grok sign-in" : undefined}
           onClick={() => void run("sign-in", () => startGrokSignIn(props.controller))}
           size="sm"
           variant="ghost-primary"

@@ -18,6 +18,7 @@ import {
   ProviderSetupIcon,
 } from "./AssistedProviderSetup";
 import {
+  cancelRuntimeActionLabel,
   failedRuntimeOperationMessage,
   isActiveProviderConnectionOperation,
   isActiveProviderRuntimeOperation,
@@ -209,6 +210,7 @@ export function DroidInlineSetup(props: {
         {activeRuntimeOperation ? (
           <AssistedSetupActions>
             <Button
+              aria-label={cancelRuntimeActionLabel("Droid", activeRuntimeOperation.action)}
               disabled={pendingAction === "cancel-runtime"}
               onClick={() => void cancelRuntime()}
               size="sm"
@@ -279,6 +281,7 @@ export function DroidInlineSetup(props: {
         {canInstall ? (
           <AssistedSetupActions>
             <Button
+              aria-label={installationError ? "Retry Droid installation" : "Install Droid"}
               onClick={() => void runRuntime("install")}
               size="sm"
               type="button"
@@ -312,6 +315,7 @@ export function DroidInlineSetup(props: {
         {activeConnectionOperation ? (
           <AssistedSetupActions>
             <Button
+              aria-label="Cancel Droid sign-in"
               disabled={pendingAction === "cancel-sign-in"}
               onClick={() => void cancelSignIn()}
               size="sm"
@@ -365,7 +369,13 @@ export function DroidInlineSetup(props: {
         />
         <AssistedSetupActions>
           {props.accountAction}
-          <Button onClick={() => void update()} size="sm" type="button" variant="ghost-primary">
+          <Button
+            aria-label={error ? "Retry Droid update" : "Update Droid"}
+            onClick={() => void update()}
+            size="sm"
+            type="button"
+            variant="ghost-primary"
+          >
             <RefreshCwIcon aria-hidden /> {error ? "Try again" : "Update"}
           </Button>
         </AssistedSetupActions>
@@ -434,7 +444,13 @@ export function DroidInlineSetup(props: {
         title={signInError ? "Droid sign-in didn’t finish" : "Sign in required"}
       />
       <AssistedSetupActions>
-        <Button onClick={() => void signIn()} size="sm" type="button" variant="ghost-primary">
+        <Button
+          aria-label={signInError ? "Retry Droid sign-in" : undefined}
+          onClick={() => void signIn()}
+          size="sm"
+          type="button"
+          variant="ghost-primary"
+        >
           {signInError ? <RefreshCwIcon aria-hidden /> : <ExternalLinkIcon aria-hidden />}
           {signInError ? "Try sign in again" : "Sign in with Factory"}
         </Button>

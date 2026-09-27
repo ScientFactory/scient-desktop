@@ -71,6 +71,21 @@ export function providerLifecycleFailureMessage(value: unknown, fallback: string
   return fallback;
 }
 
+const RUNTIME_ACTION_NOUNS = {
+  install: "installation",
+  update: "update",
+  repair: "repair",
+  remove: "removal",
+} satisfies Record<ProviderManagedRuntimeAction, string>;
+
+/** The accessible name of a short "Cancel" button that stops a runtime operation. */
+export function cancelRuntimeActionLabel(
+  displayName: string,
+  action: ProviderManagedRuntimeAction,
+): string {
+  return `Cancel ${displayName} ${RUNTIME_ACTION_NOUNS[action]}`;
+}
+
 /** The message of a runtime operation that failed while doing `action`. */
 export function failedRuntimeOperationMessage(
   operation: ProviderRuntimeOperation | null | undefined,

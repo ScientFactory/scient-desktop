@@ -35,12 +35,20 @@ import {
 } from "./optimisticProviderValue";
 import { ProviderRuntimeDiagnosticsDetails } from "./ProviderRuntimeDiagnostics";
 import {
+  cancelRuntimeActionLabel,
   isActiveProviderRuntimeOperation,
   needsManagedRuntimeRecovery,
   providerLifecycleFailureMessage,
 } from "./providerConnectionPresentation";
 
 type PendingAction = "plan" | "start" | "cancel" | null;
+
+const RUNTIME_ACTION_VERBS = {
+  install: "Install",
+  update: "Update",
+  repair: "Repair",
+  remove: "Remove",
+} satisfies Record<ProviderManagedRuntimeAction, string>;
 type StartedRuntimeOperation = {
   readonly action: ProviderManagedRuntimeAction;
   readonly operationId: ProviderRuntimeOperation["operationId"];
@@ -453,6 +461,7 @@ export function ProviderRuntimeSection(props: {
             </span>
           ) : null}
           <Button
+            aria-label={cancelRuntimeActionLabel(props.displayName, activeOperation.action)}
             type="button"
             size="sm"
             variant={props.compact ? "ghost-destructive-action" : "destructive-outline"}
@@ -601,7 +610,9 @@ export function ProviderRuntimeSection(props: {
               const actionButton = (
                 <Button
                   aria-label={
-                    isSystemManagedSwitch ? `Use Scient-managed ${props.displayName}` : undefined
+                    isSystemManagedSwitch
+                      ? `Use Scient-managed ${props.displayName}`
+                      : `${RUNTIME_ACTION_VERBS[action]} ${props.displayName}`
                   }
                   key={action}
                   type="button"
