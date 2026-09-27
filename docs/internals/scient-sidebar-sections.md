@@ -49,6 +49,13 @@ entry) brings its threads back; until then they read as General.
 T3's `planPinnedReorder` over the same `pinOrderKey`/`activeOrderKey` values, so
 Status and Sections always agree on order within a lifecycle group.
 
+**Headers sit with the threads they head.** In the Sections view every header
+(sections, General, and the Settled and Snoozed shelves) sets its label 4px low
+in its 32px row (`SECTION_HEADER_OFFSET_CLASS`), so a name reads as closer to its
+own threads than to the group above. The row height is unchanged, so nothing
+reflows. The shelves take the class from the Sections branch in `Sidebar.tsx`;
+T3's shelf header component and the Status view are unchanged.
+
 **Section drags never reflow the list.** Dragging a header freezes every
 section's measured block at drag start and slides whole blocks (header plus
 rows) by transform. Targets are judged against the frozen geometry, and

@@ -192,3 +192,17 @@ it("still files a dragged thread into the section it is dropped in", async () =>
     "b",
   );
 });
+
+it("sets section names 4px low, nearer their own threads, without growing the header", async () => {
+  renderView(() => {});
+  await nextFrame();
+
+  for (const groupId of [GENERAL_SECTION_GROUP_ID, "a"]) {
+    const header = headerOf(groupId).getBoundingClientRect();
+    const name = headerOf(groupId)
+      .querySelector<HTMLElement>("button[aria-expanded]")!
+      .getBoundingClientRect();
+    expect(header.height).toBe(32);
+    expect(name.top + name.height / 2 - (header.top + header.height / 2)).toBe(4);
+  }
+});

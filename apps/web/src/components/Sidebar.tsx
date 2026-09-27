@@ -241,7 +241,10 @@ import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrom
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
 // SCIENT-FORK:START
 import type { SectionsLifecycle } from "../scient/sections/logic";
-import { SidebarSectionsView } from "../scient/sections/SidebarSectionsView";
+import {
+  SECTION_HEADER_OFFSET_CLASS,
+  SidebarSectionsView,
+} from "../scient/sections/SidebarSectionsView";
 import { useSidebarSections } from "../scient/sections/useSidebarSections";
 import { SidebarNewThreadRow } from "../scient/sidebar/SidebarNewThreadRow";
 // SCIENT-FORK:END
@@ -4817,7 +4820,7 @@ export default function Sidebar() {
                   shelf === "snoozed" ? (
                     <SidebarSectionHeader
                       marker="snoozed-header"
-                      className="mt-auto"
+                      className={cn("mt-auto", SECTION_HEADER_OFFSET_CLASS)}
                       label={
                         snoozedShelfExpanded ? "Snoozed" : `Snoozed (${snoozedThreads.length})`
                       }
@@ -4826,7 +4829,10 @@ export default function Sidebar() {
                   ) : (
                     <SidebarSectionHeader
                       marker="settled-header"
-                      className={cn(snoozedThreads.length === 0 && "mt-auto")}
+                      className={cn(
+                        snoozedThreads.length === 0 && "mt-auto",
+                        SECTION_HEADER_OFFSET_CLASS,
+                      )}
                       label={
                         settledShelfExpanded ? "Settled" : `Settled (${settledThreads.length})`
                       }

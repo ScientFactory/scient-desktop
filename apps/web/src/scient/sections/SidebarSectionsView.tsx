@@ -136,6 +136,13 @@ type SectionDragGeometry = {
 
 const SECTION_SLIDE = "transform 160ms ease";
 
+/**
+ * Every header in the Sections view (sections, General and the Settled and
+ * Snoozed shelves) sits 4px low in its 32px row: closer to the threads it
+ * heads than to the group above, at the same height, so nothing reflows.
+ */
+export const SECTION_HEADER_OFFSET_CLASS = "pt-2";
+
 function scrollParentOf(element: HTMLElement | null): HTMLElement | null {
   for (let node = element?.parentElement ?? null; node; node = node.parentElement) {
     const overflowY = getComputedStyle(node).overflowY;
@@ -682,7 +689,7 @@ function SectionHeaderRow(props: {
       data-thread-selection-safe
       data-testid={`sidebar-thread-section-${group.id}`}
       data-section-header={group.id}
-      className="mx-0.5 h-8 list-none"
+      className={cn("mx-0.5 h-8 list-none", SECTION_HEADER_OFFSET_CLASS)}
       style={
         props.shiftY === null
           ? { transform: CSS.Translate.toString(transform), transition }
