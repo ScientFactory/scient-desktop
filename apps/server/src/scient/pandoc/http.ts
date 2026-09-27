@@ -75,6 +75,33 @@ export const scientWordExportHttpApiLayer = HttpApiBuilder.group(
             warnings: produced.warnings,
           } satisfies ScientWordFileExportResult;
         }),
+      )
+      .handle("exportLatex", ({ endpoint, payload }) =>
+        Effect.gen(function* () {
+          yield* annotateEnvironmentRequest(endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          const produced = yield* fileExport
+            .exportLatex(payload)
+            .pipe(Effect.catchTag("ConversationExportFileError", internal));
+          const asset = yield* issueAssetUrl({
+            resource: {
+              _tag: "environment-file",
+              path: EnvironmentFilePath.make(produced.path),
+              access: "exact",
+            },
+            expiresInMs: Duration.toMillis(CONVERSATION_EXPORT_RETENTION),
+          }).pipe(Effect.catch(internal));
+          return {
+            file: {
+              fileName: produced.fileName,
+              mediaType: DOCX_MEDIA_TYPE,
+              byteLength: produced.byteLength,
+              relativeUrl: asset.relativeUrl,
+              expiresAt: asset.expiresAt,
+            },
+            warnings: produced.warnings,
+          } satisfies ScientWordFileExportResult;
+        }),
       );
   }),
 );

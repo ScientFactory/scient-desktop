@@ -39,6 +39,7 @@ import {
   pandocBinaryForTests,
   readDocx,
 } from "./pandocTestSupport.ts";
+import { prepareLatexProject } from "./latexProjectPreparation.ts";
 
 const binary = pandocBinaryForTests();
 const artifactDirectory = process.env.SCIENT_PANDOC_FIXTURE_OUT?.trim() || null;
@@ -96,6 +97,87 @@ const largeBundle = () =>
   });
 
 describe.skipIf(binary === null)("Word export with the real Pandoc (local integration)", () => {
+  it.live("converts a nested LaTeX project with an embedded figure and local bibliography", () =>
+    withConverter(({ converter, directory }) =>
+      Effect.gen(function* () {
+        const paper = NodePath.join(directory, "paper");
+        NodeFS.mkdirSync(NodePath.join(paper, "chapters"), { recursive: true });
+        NodeFS.mkdirSync(NodePath.join(paper, "figures"));
+        NodeFS.writeFileSync(
+          NodePath.join(paper, "main.tex"),
+          [
+            "\\documentclass{article}",
+            "\\usepackage{graphicx}",
+            "\\graphicspath{{figures/}}",
+            "\\begin{document}",
+            "\\input{chapters/intro}",
+            "\\includegraphics{plot}",
+            "\\bibliography{refs}",
+            "\\end{document}",
+          ].join("\n"),
+        );
+        NodeFS.writeFileSync(
+          NodePath.join(paper, "chapters", "intro.tex"),
+          "\\section{Findings} Project-level content with $x^2$. \\cite{local2026}",
+        );
+        NodeFS.writeFileSync(
+          NodePath.join(paper, "refs.bib"),
+          "@article{local2026, author={Ada Example}, title={Local reference}, journal={Journal}, year={2026}}\n",
+        );
+        NodeFS.writeFileSync(NodePath.join(paper, "figures", "plot.png"), PNG_BYTES);
+        const latex = yield* prepareLatexProject(NodePath.join(paper, "main.tex"), directory);
+        const output = yield* convertTo(converter, directory, "latex-project", {
+          bundle: makeBundle({ markdown: "" }),
+          latex,
+          files: { baseDirectory: paper, allowRoots: [paper] },
+        });
+        const xml = output.docx.text("word/document.xml");
+        expect(xml).toContain("Project-level content");
+        expect(xml).toContain("Local Reference");
+        expect(xml).toContain("<m:oMath>");
+        expect(
+          [...output.docx.entries.keys()].filter((name) => name.startsWith("word/media/")),
+        ).toHaveLength(1);
+        expect(output.result.summary.embeddedImages).toBe(1);
+      }),
+    ),
+  );
+  it.live(
+    "does not disclose files named by LaTeX includes or bibliography outside the project",
+    () =>
+      withConverter(({ converter, directory }) =>
+        Effect.gen(function* () {
+          const paper = NodePath.join(directory, "paper");
+          NodeFS.mkdirSync(paper);
+          NodeFS.writeFileSync(NodePath.join(directory, "secret.tex"), "FAKE-SECRET-TEX");
+          NodeFS.writeFileSync(
+            NodePath.join(directory, "secret.bib"),
+            "@article{secret, title={FAKE-SECRET-BIB}, year={2026}}",
+          );
+          NodeFS.writeFileSync(
+            NodePath.join(paper, "main.tex"),
+            [
+              "\\documentclass{article}\\begin{document}",
+              "\\input{../secret}",
+              "\\bibliography{../secret}",
+              "\\nocite{*}",
+              "Safe text.\\end{document}",
+            ].join("\n"),
+          );
+          const latex = yield* prepareLatexProject(NodePath.join(paper, "main.tex"), directory);
+          const output = yield* convertTo(converter, directory, "latex-secure", {
+            bundle: makeBundle({ markdown: "" }),
+            latex,
+            files: { baseDirectory: paper, allowRoots: [paper] },
+          });
+          const xml = output.docx.text("word/document.xml");
+          expect(xml).toContain("Safe text");
+          expect(xml).toContain("Unresolved include");
+          expect(xml).not.toContain("FAKE-SECRET-TEX");
+          expect(xml).not.toContain("FAKE-SECRET-BIB");
+        }),
+      ),
+  );
   it.live("converts the fixture set with editable equations, tables, notes, and styles", () =>
     withConverter(({ converter, directory }) =>
       Effect.gen(function* () {

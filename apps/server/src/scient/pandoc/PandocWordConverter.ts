@@ -51,6 +51,7 @@ import {
 } from "./pandocProcess.ts";
 import { securePandocDocument } from "./pandocResources.ts";
 import { scientReferenceDocument } from "./scientReferenceDocument.ts";
+import type { PreparedLatexProject } from "./latexProjectPreparation.ts";
 
 /**
  * Scient's document and chat profiles, read with CommonMark plus exactly the
@@ -113,6 +114,8 @@ export class WordConversionError extends Schema.TaggedError<WordConversionError>
 
 export interface WordConversionInput {
   readonly bundle: DocumentBundle;
+  /** Prepared, bounded project source. Never pass a workspace path to Pandoc. */
+  readonly latex?: PreparedLatexProject;
   /** Where the Word file lands; written as `<outputPath>.partial` and renamed. */
   readonly outputPath: string;
   /** For bundles that name workspace images by relative path. */
@@ -274,8 +277,8 @@ export const make = Effect.gen(function* () {
 
         // 1. Read.
         const read = yield* run(
-          ["--sandbox", "-f", SCIENT_PANDOC_READER, "-t", "json"],
-          new TextEncoder().encode(input.bundle.markdown),
+          ["--sandbox", "-f", input.latex ? "latex" : SCIENT_PANDOC_READER, "-t", "json"],
+          new TextEncoder().encode(input.latex?.source ?? input.bundle.markdown),
           readLimits,
         );
         const decoded = yield* decodePandocDocument(new TextDecoder().decode(read.stdout)).pipe(
@@ -322,6 +325,7 @@ export const make = Effect.gen(function* () {
             : listed;
         };
         const conversionWarnings = [
+          ...(input.latex?.warnings ?? []),
           ...structure.warnings,
           ...citations.warnings,
           ...security.warnings,
@@ -353,6 +357,14 @@ export const make = Effect.gen(function* () {
           if (input.cslStyle != null && input.cslStyle.trim().length > 0) {
             yield* fileSystem.writeFileString(path.join(scratch.work, "style.csl"), input.cslStyle);
             args.push("--csl=style.csl");
+          }
+        }
+        if (input.latex && input.latex.bibliography.length > 0) {
+          args.push("--citeproc");
+          for (const [index, item] of input.latex.bibliography.entries()) {
+            const name = `latex-bibliography-${index}.bib`;
+            yield* fileSystem.writeFileString(path.join(scratch.work, name), item.contents);
+            args.push(`--bibliography=${name}`);
           }
         }
         const written = yield* run(

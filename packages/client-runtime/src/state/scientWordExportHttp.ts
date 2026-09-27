@@ -1,6 +1,6 @@
 import * as Effect from "effect/Effect";
 
-import type { ScientWordFileExportRequest } from "@t3tools/contracts";
+import type { ScientWordFileExportRequest, ScientWordLatexExportRequest } from "@t3tools/contracts";
 
 import type { PreparedConnection } from "../connection/model.ts";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
@@ -74,3 +74,23 @@ export const exportEnvironmentWordFile = Effect.fn("clientRuntime.state.exportEn
     });
   },
 );
+
+export const exportEnvironmentWordLatex = Effect.fn(
+  "clientRuntime.state.exportEnvironmentWordLatex",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly request: ScientWordLatexExportRequest;
+}) {
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared: input.prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/word-export/v1/latex"),
+    timeoutMs: EXPORT_TIMEOUT_MS,
+    group: "scientWordExport",
+    request: ({ client, headers }) => client.exportLatex({ headers, payload: input.request }),
+  });
+});

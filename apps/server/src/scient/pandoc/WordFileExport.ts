@@ -16,13 +16,16 @@ import {
   type DocumentBundle,
   type DocumentWarning,
   type ScientWordFileExportRequest,
+  type ScientWordLatexExportRequest,
 } from "@t3tools/contracts";
 import { exportFileName } from "@scientfactory/conversation";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 
 import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
@@ -31,8 +34,10 @@ import {
   type ConversationExportFileError,
 } from "../conversationExport/ConversationExportFiles.ts";
 import { PandocWordConverter, type WordConversionFailureReason } from "./PandocWordConverter.ts";
+import { LatexPreparationError, prepareLatexProject } from "./latexProjectPreparation.ts";
 
 const MARKDOWN_FILE = /\.(?:md|markdown|mdown|mkd)$/iu;
+const isLatexPreparationError = Schema.is(LatexPreparationError);
 
 export interface ProducedWordFile {
   readonly path: string;
@@ -46,6 +51,9 @@ export class WordFileExport extends Context.Service<
   {
     readonly export: (
       request: ScientWordFileExportRequest,
+    ) => Effect.Effect<ProducedWordFile, ScientWordExportError | ConversationExportFileError>;
+    readonly exportLatex: (
+      request: ScientWordLatexExportRequest,
     ) => Effect.Effect<ProducedWordFile, ScientWordExportError | ConversationExportFileError>;
   }
 >()("t3/scient/pandoc/WordFileExport") {}
@@ -67,6 +75,7 @@ export const make = Effect.gen(function* () {
   const words = yield* PandocWordConverter;
   const crypto = yield* Crypto.Crypto;
   const path = yield* Path.Path;
+  const fileSystem = yield* FileSystem.FileSystem;
 
   const exportFile: WordFileExport["Service"]["export"] = Effect.fn("WordFileExport.export")(
     function* (request) {
@@ -143,7 +152,114 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  return WordFileExport.of({ export: exportFile });
+  const exportLatex: WordFileExport["Service"]["exportLatex"] = Effect.fn(
+    "WordFileExport.exportLatex",
+  )(function* (request) {
+    const unreadable = () =>
+      new ScientWordExportError({
+        reason: "file-unreadable",
+        message: "Scient could not read this LaTeX project.",
+      });
+    if (
+      path.isAbsolute(request.relativePath) ||
+      path.isAbsolute(request.rootRelativePath) ||
+      !/\.tex$/iu.test(request.relativePath) ||
+      !/\.tex$/iu.test(request.rootRelativePath)
+    ) {
+      return yield* reject("file-unreadable", "Choose a LaTeX document inside the project.");
+    }
+    const root = yield* workspacePaths
+      .normalizeWorkspaceRoot(request.cwd)
+      .pipe(Effect.mapError(unreadable));
+    const source = yield* workspacePaths
+      .resolveRelativePathWithinRoot({
+        workspaceRoot: root,
+        relativePath: request.relativePath,
+      })
+      .pipe(Effect.mapError(unreadable));
+    const document = yield* workspacePaths
+      .resolveRelativePathWithinRoot({
+        workspaceRoot: root,
+        relativePath: request.rootRelativePath,
+      })
+      .pipe(Effect.mapError(unreadable));
+    const shown = yield* workspaceFiles
+      .readFile({ cwd: root, relativePath: source.relativePath })
+      .pipe(Effect.mapError(unreadable));
+    if (shown.truncated)
+      return yield* reject("too-large", "This source file is too large to export.");
+    if (shown.revision !== request.revision) {
+      return yield* reject(
+        "file-changed",
+        "The file changed on disk. Save and reopen it before exporting.",
+      );
+    }
+    const prepared = yield* prepareLatexProject(document.absolutePath, root).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+      Effect.mapError(
+        (error) =>
+          new ScientWordExportError({
+            reason: "file-unreadable",
+            message: isLatexPreparationError(error)
+              ? error.message
+              : "Scient could not prepare the LaTeX project.",
+          }),
+      ),
+    );
+    const sourceReal = yield* fileSystem
+      .realPath(source.absolutePath)
+      .pipe(Effect.mapError(unreadable));
+    if (!prepared.files.includes(sourceReal)) {
+      return yield* reject(
+        "file-unreadable",
+        "This source file is not part of the selected LaTeX document.",
+      );
+    }
+    const title = path.basename(document.relativePath).replace(/\.tex$/iu, "") || "Document";
+    const bundle: DocumentBundle = {
+      markdown: "",
+      profile: "document",
+      metadata: {
+        title,
+        language: null,
+        direction: "auto",
+        createdAt: null,
+        source: {
+          _tag: "workspace-file",
+          cwd: root,
+          relativePath: document.relativePath,
+          revision: shown.revision,
+        },
+      },
+      assets: [],
+      citations: [],
+      warnings: [],
+    };
+    const exportId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+    const fileName = exportFileName(title, ".docx");
+    const reserved = yield* files.reserve({ exportId, fileName });
+    const converted = yield* words
+      .convert({
+        bundle,
+        latex: prepared,
+        outputPath: reserved.path,
+        files: { baseDirectory: prepared.baseDirectory, allowRoots: [prepared.baseDirectory] },
+      })
+      .pipe(
+        Effect.catchTag("WordConversionError", (error) =>
+          reject(WORD_FAILURE_REASON[error.reason], error.message),
+        ),
+      );
+    return {
+      path: reserved.path,
+      fileName,
+      byteLength: converted.byteLength,
+      warnings: converted.warnings,
+    };
+  });
+
+  return WordFileExport.of({ export: exportFile, exportLatex });
 });
 
 export const layer = Layer.effect(WordFileExport, make);
