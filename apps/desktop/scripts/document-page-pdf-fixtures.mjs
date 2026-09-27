@@ -204,6 +204,9 @@ function fixtures(png) {
         `A second line kept as a hard break.`,
         "",
         n % 10 === 0 ? "```sh\npnpm test\n```\n" : "",
+        n % 20 === 0
+          ? `<!-- scient:part export=fixture n=${n} -->\n<details>\n<summary>Work log · 2 steps</summary>\n\nWORKLOG_${pad(n)} ran the tests.\n\n</details>\n`
+          : "",
       ].join("\n"),
     ),
   ].join("\n");
@@ -317,7 +320,8 @@ function fixtures(png) {
       documentKind: "conversation",
       expect: {
         minPages: 10,
-        order: ["MESSAGE_001", "MESSAGE_002", "MESSAGE_060", "MESSAGE_120"],
+        order: ["MESSAGE_001", "MESSAGE_002", "MESSAGE_060", "WORKLOG_060", "MESSAGE_120"],
+        absent: ["scient:part"],
         all: Array.from({ length: 120 }, (_, i) => `MESSAGE_${pad(i + 1)}`),
         outlineCount: 121,
       },
