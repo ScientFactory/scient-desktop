@@ -239,7 +239,18 @@ export function buildConversationSnapshot(input: {
     },
     provenance: thread.forkLineage
       ? { _tag: "fork", originThreadId: thread.forkLineage.originThreadId }
-      : { _tag: "original" },
+      : thread.conversationImport
+        ? {
+            _tag: "import",
+            source: thread.conversationImport.source,
+            exportId: thread.conversationImport.exportId,
+            sourceThreadId: thread.conversationImport.sourceThreadId,
+            packageDigest: thread.conversationImport.packageDigest,
+            sourceFormat: thread.conversationImport.sourceFormat,
+            sourceFormatVersion: thread.conversationImport.sourceFormatVersion,
+            importedAt: thread.conversationImport.importedAt,
+          }
+        : { _tag: "original" },
     captured: {
       threadId: thread.id,
       snapshotSequence: input.snapshotSequence,

@@ -632,6 +632,27 @@ function assetListItem(asset: DocumentAsset): string {
 }
 
 /**
+ * A snapshot message's text as an imported thread stores it. A transfer file
+ * carries inline references as typed display fields, not as the composer
+ * context chips they came from, so they become the same readable Markdown the
+ * document export writes: quotes as block quotations with their source,
+ * attachments by name (the files stay attached to the message), and other
+ * context by label, with its details listed after the text.
+ */
+export function importedMessageMarkdown(message: ConversationMessage): string {
+  if (!message.text.includes(CONVERSATION_REFERENCE_URL_PREFIX)) return message.text;
+  const contextDetails: string[] = [];
+  const text = renderReferences(message, {
+    assetIdByLocalId: new Map(),
+    citations: [],
+    contextDetails,
+  });
+  return contextDetails.length === 0
+    ? text
+    : `${text}\n\n**Context**\n\n${contextDetails.join("\n")}`;
+}
+
+/**
  * Replaces `scient-ref:` links with readable Markdown. Quotes become block
  * quotations with their source; attachments point at bundle assets; other
  * context shows its label inline and its details in the message's context part.

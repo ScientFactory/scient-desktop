@@ -220,7 +220,7 @@ import {
   scientConversationImportHttpApiLayer,
 } from "./scient/conversationImport/http.ts";
 import * as ConversationImportStaging from "./scient/conversationImport/ConversationImportStaging.ts";
-import { ConversationImporter } from "./scient/conversationImport/ConversationImporter.ts";
+import * as ConversationImporterLive from "./scient/conversationImport/ConversationImporterLive.ts";
 import { scientWordExportHttpApiLayer } from "./scient/pandoc/http.ts";
 import * as PandocManagedTool from "./scient/pandoc/PandocManagedTool.ts";
 import * as PandocWordConverter from "./scient/pandoc/PandocWordConverter.ts";
@@ -750,10 +750,9 @@ const WordFileExportLive = WordFileExport.layer.pipe(
   Layer.provide(ConversationExportFiles.layer),
   Layer.provideMerge(PandocWordConverterLive),
 );
-// Import staging: uploads, validation, and preview. The importer that commits a
-// thread replaces the unavailable placeholder when the import command lands.
+// Import staging: uploads, validation, preview, and durable import commit.
 const ConversationImportStagingLive = ConversationImportStaging.layer().pipe(
-  Layer.provide(ConversationImporter.layerUnavailable),
+  Layer.provide(ConversationImporterLive.layer),
 );
 const ScientificRuntimePreferencesLive = ScientificRuntimePreferences.layer.pipe(
   Layer.provide(ServerSettingsLayerLive),
