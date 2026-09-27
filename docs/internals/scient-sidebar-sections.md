@@ -73,10 +73,10 @@ counts as deliberate and is kept (`capitalizeTypedSectionName`). On save,
 `normalizeSectionName` collapses whitespace and applies the same rule, and
 `readThreadSections` normalizes names saved before capitalization existed.
 
-**The toggle's on state is quieter than hover.** While grouping is on, a gray
+**The toggle's on state sits inside the hover.** While grouping is on, a gray
 (a 6% tint of `sidebar-foreground`, so it adapts to every palette) mark sits
-inset inside the toggle; on hover it gives way to the header's usual full-size
-white fill, so the two never show together.
+inset inside the toggle; on hover the header's usual full-size white fill
+appears around it, and the mark stays on top.
 
 **Section drags never reflow the list.** Dragging a header freezes every
 section's measured block at drag start and slides whole blocks (header plus

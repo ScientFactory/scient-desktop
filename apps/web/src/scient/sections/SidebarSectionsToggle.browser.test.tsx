@@ -30,7 +30,7 @@ function tokenColor(className: string): string {
   return color;
 }
 
-it("marks the on state with a small gray inset that gives way to the white hover", async () => {
+it("marks the on state with a small gray inset that the white hover surrounds", async () => {
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -51,8 +51,9 @@ it("marks the on state with a small gray inset that gives way to the white hover
   expect(mark.getBoundingClientRect().width).toBe(button.getBoundingClientRect().width - 6);
   expect(getComputedStyle(button).backgroundColor).toBe("rgba(0, 0, 0, 0)");
 
-  // On hover: only the full-size white hover fill.
+  // On hover: the full-size white fill around the gray mark, which stays.
   await userEvent.hover(button);
-  expect(getComputedStyle(mark).display).toBe("none");
+  expect(getComputedStyle(mark).display).not.toBe("none");
+  expect(getComputedStyle(mark).backgroundColor).toBe(gray);
   expect(getComputedStyle(button).backgroundColor).toBe(tokenColor("bg-sidebar-row-hover"));
 });
