@@ -146,6 +146,19 @@ import {
   ScientConversationExportResult,
 } from "./scientConversationExport.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient conversation import contracts.
+import {
+  ScientConversationImportCancelRequest,
+  ScientConversationImportCancelResult,
+  ScientConversationImportConfirmRequest,
+  ScientConversationImportCreateUploadRequest,
+  ScientConversationImportError,
+  ScientConversationImportPreview,
+  ScientConversationImportPreviewRequest,
+  ScientConversationImportResult,
+  ScientConversationImportUpload,
+} from "./scientConversationImport.ts";
+// SCIENT-FORK:END
 
 const OptionalBearerHeaders = Schema.Struct({
   authorization: Schema.optionalKey(Schema.String),
@@ -201,6 +214,7 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   // SCIENT-FORK:START
   "scient_thread_queue_operation_failed",
   "scient_conversation_export_failed",
+  "scient_conversation_import_failed",
   // SCIENT-FORK:END
   "internal_error",
 ]);
@@ -1114,6 +1128,45 @@ export class EnvironmentScientConversationExportHttpApi extends HttpApiGroup.mak
       payload: ScientConversationExportRequest,
       success: ScientConversationExportResult,
       error: [EnvironmentHttpCommonError, ScientConversationExportError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+// SCIENT-FORK:END
+
+// SCIENT-FORK:START — Scient conversation import group. The file itself is
+// uploaded through the signed URL `createUpload` returns, not through this group.
+export class EnvironmentScientConversationImportHttpApi extends HttpApiGroup.make(
+  "scientConversationImport",
+)
+  .add(
+    HttpApiEndpoint.post("createUpload", "/api/scient/conversation-import/v1/create-upload", {
+      headers: OptionalBearerHeaders,
+      payload: ScientConversationImportCreateUploadRequest,
+      success: ScientConversationImportUpload,
+      error: [EnvironmentHttpCommonError, ScientConversationImportError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("preview", "/api/scient/conversation-import/v1/preview", {
+      headers: OptionalBearerHeaders,
+      payload: ScientConversationImportPreviewRequest,
+      success: ScientConversationImportPreview,
+      error: [EnvironmentHttpCommonError, ScientConversationImportError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("import", "/api/scient/conversation-import/v1/import", {
+      headers: OptionalBearerHeaders,
+      payload: ScientConversationImportConfirmRequest,
+      success: ScientConversationImportResult,
+      error: [EnvironmentHttpCommonError, ScientConversationImportError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("cancel", "/api/scient/conversation-import/v1/cancel", {
+      headers: OptionalBearerHeaders,
+      payload: ScientConversationImportCancelRequest,
+      success: ScientConversationImportCancelResult,
+      error: [EnvironmentHttpCommonError, ScientConversationImportError],
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 // SCIENT-FORK:END
