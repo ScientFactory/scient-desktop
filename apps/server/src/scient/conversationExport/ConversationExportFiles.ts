@@ -59,6 +59,14 @@ export class ConversationExportFiles extends Context.Service<
       readonly fileName: string;
       readonly content: ExportFileContent;
     }) => Effect.Effect<WrittenExportFile, ConversationExportFileError>;
+    /**
+     * Creates an export's directory and answers where a producer that writes
+     * its own file (the Word converter) puts `fileName`.
+     */
+    readonly reserve: (input: {
+      readonly exportId: string;
+      readonly fileName: string;
+    }) => Effect.Effect<{ readonly path: string }, ConversationExportFileError>;
     /** Removes exports older than the retention period. */
     readonly sweep: Effect.Effect<void>;
   }
@@ -128,6 +136,16 @@ export const make = (options?: { readonly retention?: Duration.Duration }) =>
       return { path: target, byteLength: Number(info.size) };
     });
 
+    const reserve: ConversationExportFiles["Service"]["reserve"] = Effect.fn(
+      "ConversationExportFiles.reserve",
+    )(function* (input) {
+      const directory = path.join(root, input.exportId);
+      yield* fileSystem
+        .makeDirectory(directory, { recursive: true })
+        .pipe(Effect.mapError((cause) => new ConversationExportFileError({ cause })));
+      return { path: path.join(directory, input.fileName) };
+    });
+
     const sweep = Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
       const names = yield* fileSystem.readDirectory(root);
@@ -151,7 +169,7 @@ export const make = (options?: { readonly retention?: Duration.Duration }) =>
     );
 
     yield* Effect.forkScoped(Effect.repeat(sweep, Schedule.spaced(SWEEP_INTERVAL)));
-    return ConversationExportFiles.of({ write, sweep });
+    return ConversationExportFiles.of({ write, reserve, sweep });
   });
 
 export const layer = Layer.effect(ConversationExportFiles, make());

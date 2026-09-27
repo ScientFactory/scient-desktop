@@ -78,6 +78,9 @@ export const SCIENT_PANDOC_READER = [
   "+wikilinks_title_after_pipe",
 ].join("");
 
+export const DOCX_MEDIA_TYPE =
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+
 export const WORD_READ_LIMITS: PandocLimits = {
   timeout: "2 minutes",
   maxHeapMb: 1024,

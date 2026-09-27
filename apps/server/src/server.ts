@@ -215,6 +215,10 @@ import { scientConversationExportHttpApiLayer } from "./scient/conversationExpor
 import * as ConversationExportFiles from "./scient/conversationExport/ConversationExportFiles.ts";
 import * as ConversationExportService from "./scient/conversationExport/ConversationExportService.ts";
 import * as ConversationSnapshotService from "./scient/conversationExport/ConversationSnapshotService.ts";
+import { scientWordExportHttpApiLayer } from "./scient/pandoc/http.ts";
+import * as PandocManagedTool from "./scient/pandoc/PandocManagedTool.ts";
+import * as PandocWordConverter from "./scient/pandoc/PandocWordConverter.ts";
+import * as WordFileExport from "./scient/pandoc/WordFileExport.ts";
 import { scientAnalyticsHttpApiLayer } from "./telemetry/http.ts";
 
 // MCP handoff thread IDs include escaped provenance and can exceed find-my-way's
@@ -725,10 +729,20 @@ const commandReadinessLayer = HttpRouter.middleware(
 );
 
 const AnalysisRunIndexLive = AnalysisRunIndex.layer.pipe(Layer.provide(PersistenceLayerLive));
+// Word export runs the managed Pandoc. One tool serves the converter, the
+// install endpoint, and both exports, so an install is single-flight.
+const PandocWordConverterLive = PandocWordConverter.layer.pipe(
+  Layer.provideMerge(PandocManagedTool.layer),
+);
 // Conversation export reads one transactional snapshot and writes temporary files.
 const ConversationExportServiceLive = ConversationExportService.layer.pipe(
   Layer.provide(ConversationSnapshotService.layer.pipe(Layer.provide(PersistenceLayerLive))),
   Layer.provide(ConversationExportFiles.layer),
+  Layer.provide(PandocWordConverterLive),
+);
+const WordFileExportLive = WordFileExport.layer.pipe(
+  Layer.provide(ConversationExportFiles.layer),
+  Layer.provideMerge(PandocWordConverterLive),
 );
 const ScientificRuntimePreferencesLive = ScientificRuntimePreferences.layer.pipe(
   Layer.provide(ServerSettingsLayerLive),
@@ -777,6 +791,7 @@ export const makeRoutesLayer = Layer.mergeAll(
       Layer.provide(scientMarkdownHttpApiLayer),
       Layer.provide(scientThreadQueueHttpApiLayer.pipe(Layer.provide(PersistenceLayerLive))),
       Layer.provide(scientConversationExportHttpApiLayer),
+      Layer.provide(scientWordExportHttpApiLayer),
       Layer.provide(serverEnvironmentHttpApiLayer),
       Layer.provide(environmentAuthenticatedAuthLayer),
     ),
@@ -806,6 +821,7 @@ export const makeRoutesLayer = Layer.mergeAll(
   Layer.provide(PullRequestServiceLive),
   Layer.provide(AnalysisServiceLive),
   Layer.provide(ConversationExportServiceLive),
+  Layer.provide(WordFileExportLive),
   Layer.provide(ComputeMcpGatewayLive),
   Layer.provide(ComputeSessionServiceLive),
   Layer.provide(ScientificRuntimePreferencesLive),
