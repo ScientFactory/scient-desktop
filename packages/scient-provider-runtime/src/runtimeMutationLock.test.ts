@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalDate:off globalRandom:off -- Tests exercise the package's private filesystem boundary.
 import * as NodeAsyncHooks from "node:async_hooks";
+import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -193,6 +194,33 @@ function deadOwnerLock(token: string): string {
 }
 
 describe("managed runtime mutation lock ownership", () => {
+  it.each([true, false])(
+    "honors a live stale-recovery claim and recovers a dead one (live=%s)",
+    async (live) => {
+      const path = await lockPath();
+      const raw = deadOwnerLock("abandoned");
+      await NodeFSP.writeFile(path, raw);
+      const inode = (await NodeFSP.stat(path)).ino;
+      const digest = NodeCrypto.createHash("sha256")
+        .update(`${path}\0${raw}\0${inode}`)
+        .digest("hex");
+      const claim = NodePath.join(NodePath.dirname(path), `.mutation-claim-${digest}`);
+      const claimant = live ? livePidLock() : deadOwnerLock("reclaimer");
+      await NodeFSP.writeFile(claim, claimant);
+      await backdate(claim, 3_600_000);
+      const owner = await tryAcquireManagedRuntimeMutationLock(path);
+      if (live) {
+        expect(owner).toBeUndefined();
+        expect(await NodeFSP.readFile(path, "utf8")).toBe(raw);
+        expect(await NodeFSP.readFile(claim, "utf8")).toBe(claimant);
+      } else {
+        expect(owner).toBeDefined();
+        await owner?.release();
+        expect(await NodeFSP.readdir(NodePath.dirname(path))).toEqual([]);
+      }
+    },
+  );
+
   it("never reclaims a lock this process still holds, however old its heartbeat looks", async () => {
     const path = await lockPath();
     const owner = await tryAcquireManagedRuntimeMutationLock(path, { heartbeatIntervalMs: 60_000 });
