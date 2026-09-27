@@ -452,6 +452,7 @@ export function useScientThreadFork({
               dispatch: async (current) => {
                 const result = await forkThread({ environmentId, input: current.command });
                 if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+                return result.value.forkAttachmentIdMap;
               },
             });
             // Completing in the background must not steal navigation or a composer
@@ -475,6 +476,7 @@ export function useScientThreadFork({
                   originRef: scopeThreadRef(environmentId, originId),
                   destinationThreadId: attempt.command.newThreadId,
                   originWorkspaceRoot,
+                  attachmentIdMap: attempt.attachmentIdMap,
                 });
               } catch {
                 /* Panel continuity is optional; it cannot undo a ready fork. */

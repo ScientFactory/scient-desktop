@@ -45,10 +45,17 @@ pull requests, Agents, Sources, source PDFs, and portable Scient artifacts.
 Live terminal sessions are intentionally dropped. Live browser tab identities
 are replaced by one fresh browser surface rather than reusing another thread's
 session. Workspace-backed or attachment-backed transient artifact surfaces are
-dropped. A file PDF keeps its reader position automatically in a shared
-workspace; for a separate worktree, Scient remaps the saved reader session to
-the destination path after that workspace becomes available. This continuity
-is best-effort and can never make an otherwise successful fork fail.
+dropped. Open attachment previews use the server's durable copy receipt to
+switch to fork-owned attachment IDs; attachments outside the retained prefix,
+or without a verifiable mapping from an older server, are omitted. This receipt
+survives client reloads with the pending fork attempt.
+
+PDF reading state belongs to the thread as well as the document. The fork copies
+the origin's current reading state once, then the two conversations navigate
+independently even in a shared workspace. For a separate worktree, the client
+freezes file-PDF viewports at handoff and seeds the destination paths before
+mounting their viewers. Repeated restoration never overwrites a destination's
+newer position. Continuity is best-effort and cannot make a provisioned fork fail.
 
 The fork lifecycle has three separate readiness milestones:
 

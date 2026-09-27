@@ -8460,6 +8460,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 yield* Deferred.succeed(provisioningStarted, undefined);
                 yield* Deferred.await(allowProvisioningToComplete);
                 effects.push(`ready:${threadId}`);
+                return { "origin-file": "fork-file" };
               }),
           },
         },
@@ -8490,6 +8491,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
 
       assert.equal(response.sequence, 41);
+      assert.deepEqual(response.forkAttachmentIdMap, { "origin-file": "fork-file" });
       assert.deepEqual(effects, [
         "prepare",
         "dispatch:thread.fork",

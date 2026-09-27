@@ -2589,6 +2589,8 @@ export type ProjectionPendingApprovalDecision = typeof ProjectionPendingApproval
 
 export const DispatchResult = Schema.Struct({
   sequence: NonNegativeInt,
+  /** Scient fork receipt: exact retained attachment ownership, absent on older servers. */
+  forkAttachmentIdMap: Schema.optional(Schema.Record(ChatAttachmentId, ChatAttachmentId)),
 });
 export type DispatchResult = typeof DispatchResult.Type;
 

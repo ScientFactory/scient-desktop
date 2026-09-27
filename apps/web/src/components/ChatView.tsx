@@ -4180,14 +4180,17 @@ function ChatViewContent(props: ChatViewProps) {
     activeWorkspaceRoot,
     runAfterPendingFileSave,
   );
-  useEffect(() => {
+  const forkViewKey = JSON.stringify([activeThreadRef, activeWorkspaceRoot]);
+  const [restoredForkViewKey, setRestoredForkViewKey] = useState<string | null>(null);
+  useLayoutEffect(() => {
     if (!activeThreadRef) return;
     restoreForkPdfContinuity({
       environmentId: activeThreadRef.environmentId,
       threadId: activeThreadRef.threadId,
       destinationWorkspaceRoot: activeWorkspaceRoot,
     });
-  }, [activeThreadRef, activeWorkspaceRoot]);
+    setRestoredForkViewKey(forkViewKey);
+  }, [activeThreadRef, activeWorkspaceRoot, forkViewKey]);
   const activeTerminalTarget = useMemo(
     () =>
       hasProjectWorkspace
@@ -10639,6 +10642,7 @@ function ChatViewContent(props: ChatViewProps) {
       activeWorkspaceRoot ? (
       <Suspense fallback={null}>
         <SourcePdfPreview
+          readerScope={activeThreadRef.threadId}
           attachmentId={renderedRightPanelSurface.attachmentId}
           environmentId={activeThread.environmentId}
           fileName={renderedRightPanelSurface.fileName}
@@ -11413,7 +11417,7 @@ function ChatViewContent(props: ChatViewProps) {
           deviceAvailable={activeThreadRef !== null}
           liveAgentCount={agentPanelModel.liveCount}
         >
-          {rightPanelContent}
+          {restoredForkViewKey === forkViewKey ? rightPanelContent : null}
         </RightPanelTabs>
       ) : null}
       {rightPanelPresent && shouldUseRightPanelSheet && activeThreadRef ? (
@@ -11476,7 +11480,7 @@ function ChatViewContent(props: ChatViewProps) {
             deviceAvailable={activeThreadRef !== null}
             liveAgentCount={agentPanelModel.liveCount}
           >
-            {rightPanelContent}
+            {restoredForkViewKey === forkViewKey ? rightPanelContent : null}
           </RightPanelTabs>
         </RightPanelSheet>
       ) : null}

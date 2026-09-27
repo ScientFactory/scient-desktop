@@ -419,3 +419,19 @@ export function forkNotReadyDetail(status: {
       return "This fork is still being set up. Send your message again once it is ready.";
   }
 }
+
+/** Read the immutable copy manifest only after provisioning has succeeded. */
+export const getReadyForkAttachmentIdMap = Effect.fn("getReadyForkAttachmentIdMap")(function* (
+  sql: SqlClient.SqlClient,
+  threadId: ThreadId,
+) {
+  const rows = yield* sql<{ readonly attachment_copies_json: string }>`
+    SELECT attachment_copies_json FROM scient_thread_lineage
+    WHERE thread_id = ${threadId} AND status = 'ready' LIMIT 1
+  `;
+  if (!rows[0]) return {};
+  const copies = yield* Schema.decodeUnknownEffect(AttachmentCopiesJson)(
+    rows[0].attachment_copies_json,
+  );
+  return Object.fromEntries(copies.map(({ source, target }) => [source.id, target.id]));
+});

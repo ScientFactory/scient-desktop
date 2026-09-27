@@ -2181,10 +2181,13 @@ const makeWsRpcLayer = (
                 ),
               );
               yield* recordClientCommandAnalytics(normalizedCommand);
+              let forkAttachmentIdMap: Readonly<Record<string, string>> | void = undefined;
               // SCIENT-FORK:START — command persistence and workspace setup form
               // a durable saga. Only expose success after its typed receipt.
               if (normalizedCommand.type === "thread.fork") {
-                yield* scientForkReactor.awaitCompletion(normalizedCommand.newThreadId);
+                forkAttachmentIdMap = yield* scientForkReactor.awaitCompletion(
+                  normalizedCommand.newThreadId,
+                );
               }
               // SCIENT-FORK:END
               yield* ProjectCloneTracker.discardCloneForDeletedProject(
@@ -2225,7 +2228,10 @@ const makeWsRpcLayer = (
                   ),
                 );
               }
-              return result;
+              return {
+                ...result,
+                ...(forkAttachmentIdMap === undefined ? {} : { forkAttachmentIdMap }),
+              };
             }).pipe(
               Effect.catch((cause) => {
                 // Preserve upstream's typed non-fork failures verbatim. Forks

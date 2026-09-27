@@ -26,6 +26,7 @@ import { forkParked } from "../../serverActivation.ts";
 import {
   claimForkAttempt,
   getRecoverableFork,
+  getReadyForkAttachmentIdMap,
   isForkThreadDeleted,
   originTurnAtCheckpoint,
   getForkStatus,
@@ -618,40 +619,51 @@ const make = Effect.gen(function* () {
 
   const awaitCompletion: ScientForkReactorShape["awaitCompletion"] = Effect.fn(
     "awaitScientForkCompletion",
-  )(function* (threadId) {
-    if (yield* resolveFinishedStatus(threadId)) return;
-    const completion = yield* completionFor(threadId);
-    // Close the race where provisioning finishes between the first durable
-    // status read and registration of this in-memory waiter.
-    if (yield* resolveFinishedStatus(threadId)) {
-      yield* releaseCompletion(threadId, completion);
-      return;
-    }
-    // The durable row is authoritative. Self-enqueueing here closes the live
-    // subscription handoff race for every user-facing fork request; duplicate
-    // delivery is harmless because claimFork is idempotent.
-    const recoverable = yield* getRecoverableFork(sql, threadId).pipe(
-      Effect.mapError(
-        (cause) =>
-          new ScientForkCompletionError({
-            threadId,
-            detail: `Unable to recover fork provisioning: ${Cause.pretty(Cause.fail(cause)).slice(
-              0,
-              4_000,
-            )}`,
-          }),
-      ),
-    );
-    if (recoverable !== null) {
-      yield* enqueue(recoverable);
-    } else {
+  )(
+    function* (threadId) {
+      if (yield* resolveFinishedStatus(threadId)) return;
+      const completion = yield* completionFor(threadId);
+      // Close the race where provisioning finishes between the first durable
+      // status read and registration of this in-memory waiter.
       if (yield* resolveFinishedStatus(threadId)) {
         yield* releaseCompletion(threadId, completion);
         return;
       }
-    }
-    return yield* Deferred.await(completion);
-  });
+      // The durable row is authoritative. Self-enqueueing here closes the live
+      // subscription handoff race for every user-facing fork request; duplicate
+      // delivery is harmless because claimFork is idempotent.
+      const recoverable = yield* getRecoverableFork(sql, threadId).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ScientForkCompletionError({
+              threadId,
+              detail: `Unable to recover fork provisioning: ${Cause.pretty(Cause.fail(cause)).slice(
+                0,
+                4_000,
+              )}`,
+            }),
+        ),
+      );
+      if (recoverable !== null) {
+        yield* enqueue(recoverable);
+      } else {
+        if (yield* resolveFinishedStatus(threadId)) {
+          yield* releaseCompletion(threadId, completion);
+          return;
+        }
+      }
+      return yield* Deferred.await(completion);
+    },
+    (effect, threadId) =>
+      effect.pipe(
+        Effect.andThen(getReadyForkAttachmentIdMap(sql, threadId)),
+        // View continuity must not turn a provisioned fork into a failed command.
+        Effect.catchTags({
+          SqlError: () => Effect.succeed({}),
+          SchemaError: () => Effect.succeed({}),
+        }),
+      ),
+  );
 
   const getDisposition: ScientForkReactorShape["getDisposition"] = (threadId) =>
     readForkStatus(threadId).pipe(Effect.map((status) => status?.status ?? "unknown"));

@@ -1,7 +1,19 @@
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import type { ThreadRightPanelState } from "~/rightPanelStore";
-import { forkRightPanelState } from "./forkViewContinuity";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { createMemoryStorage } from "~/lib/storage";
+import { type ThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
+import { workspacePdfSource } from "~/scient/pdf/pdfSource";
+import {
+  pdfReaderSessionDocumentKey,
+  pdfReaderSessionStore,
+} from "~/scient/pdf/pdfReaderSessionStore";
+import {
+  forkRightPanelState,
+  stageForkViewContinuity,
+  restoreForkPdfContinuity,
+} from "./forkViewContinuity";
 
 describe("forkRightPanelState", () => {
   it("preserves durable surfaces while replacing live browser state and dropping terminals", () => {
@@ -93,3 +105,91 @@ describe("forkRightPanelState", () => {
     });
   });
 });
+
+afterEach(() => vi.unstubAllGlobals());
+
+it("remaps only retained attachments, including the active preview", () => {
+  const file = (id: string) => ({
+    id: `attachment:${id}` as const,
+    kind: "file" as const,
+    relativePath: "same-name.pdf",
+    revealLine: null,
+    revealRequestId: 1,
+    attachment: {
+      type: "file" as const,
+      id,
+      name: "same-name.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 20,
+    },
+  });
+  const source: ThreadRightPanelState = {
+    isOpen: true,
+    activeSurfaceId: "attachment:origin-retained",
+    surfaces: [file("origin-retained"), file("origin-excluded")],
+  };
+  const fork = forkRightPanelState(source, { "origin-retained": "fork-owned" });
+  expect(fork.activeSurfaceId).toBe("attachment:fork-owned");
+  expect(fork.surfaces).toHaveLength(1);
+  expect(fork.surfaces[0]).toMatchObject({ attachment: { id: "fork-owned" } });
+  expect(source.surfaces[0]).toMatchObject({ attachment: { id: "origin-retained" } });
+  expect(forkRightPanelState(source).surfaces).toEqual([]);
+  expect(forkRightPanelState(source, { "origin-retained": "origin-retained" }).surfaces).toEqual(
+    [],
+  );
+});
+
+it.each(["/origin", "/new-worktree"])(
+  "freezes and independently restores a fork PDF in %s",
+  (destinationRoot) => {
+    const environmentId = EnvironmentId.make(`continuity-${destinationRoot.slice(1)}`);
+    const originRef = scopeThreadRef(environmentId, ThreadId.make("origin"));
+    const forkId = ThreadId.make("fork");
+    const source = (root: string) =>
+      workspacePdfSource({
+        environmentId,
+        workspaceRoot: root,
+        relativePath: "paper.pdf",
+        fileName: "paper.pdf",
+      });
+    const originKey = pdfReaderSessionDocumentKey(source("/origin"), originRef.threadId);
+    const forkKey = pdfReaderSessionDocumentKey(source(destinationRoot), forkId);
+    const viewport = { page: 3, left: 12, top: 45, scaleValue: "1.25", rotation: 90 as const };
+    vi.stubGlobal("window", { localStorage: createMemoryStorage() });
+    useRightPanelStore.getState().restoreThreadState(originRef, {
+      isOpen: true,
+      activeSurfaceId: "file:paper.pdf",
+      surfaces: [
+        {
+          id: "file:paper.pdf",
+          kind: "file",
+          relativePath: "paper.pdf",
+          revealLine: null,
+          revealRequestId: 1,
+        },
+      ],
+    });
+    pdfReaderSessionStore.updateViewport(originKey, viewport);
+    pdfReaderSessionStore.updateSidebar(originKey, "outline");
+    stageForkViewContinuity({
+      originRef,
+      destinationThreadId: forkId,
+      originWorkspaceRoot: "/origin",
+    });
+    pdfReaderSessionStore.updateViewport(originKey, { ...viewport, page: 9 });
+    restoreForkPdfContinuity({
+      environmentId,
+      threadId: forkId,
+      destinationWorkspaceRoot: destinationRoot,
+    });
+    expect(pdfReaderSessionStore.get(forkKey)).toMatchObject({ viewport, sidebar: "outline" });
+    pdfReaderSessionStore.updateViewport(forkKey, { ...viewport, page: 20 });
+    expect(pdfReaderSessionStore.get(originKey).viewport?.page).toBe(9);
+    restoreForkPdfContinuity({
+      environmentId,
+      threadId: forkId,
+      destinationWorkspaceRoot: destinationRoot,
+    });
+    expect(pdfReaderSessionStore.get(forkKey).viewport?.page).toBe(20);
+  },
+);

@@ -54,7 +54,9 @@ export interface ScientForkReactorShape {
   readonly drain: Effect.Effect<void>;
 
   /** Typed completion receipt used by the RPC acknowledgement gate and tests. */
-  readonly awaitCompletion: (threadId: ThreadId) => Effect.Effect<void, ScientForkCompletionError>;
+  readonly awaitCompletion: (
+    threadId: ThreadId,
+  ) => Effect.Effect<Readonly<Record<string, string>> | void, ScientForkCompletionError>;
   /**
    * Runs before a fork command is dispatched. A fork of a running turn first
    * persists the turn's buffered text so the fork copies its latest state.

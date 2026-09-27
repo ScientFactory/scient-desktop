@@ -100,7 +100,7 @@ describe("PDF reader session persistence", () => {
     store.updateViewport("origin-paper", VIEWPORT);
     store.updateSidebar("origin-paper", "thumbnails");
 
-    store.copy("origin-paper", "fork-paper");
+    store.seed("fork-paper", store.get("origin-paper"));
 
     expect(store.get("fork-paper")).toMatchObject({
       viewport: VIEWPORT,
@@ -455,4 +455,26 @@ describe("PDF.js viewport translation", () => {
       }),
     );
   });
+});
+
+it("adopts a legacy position once and persists independent thread views across reload", () => {
+  const persisted = createMockStorage();
+  const store = createPdfReaderSessionStore({ storage: persisted.storage, writeDelayMs: 0 });
+  const document = { authority: "environment", logicalDocumentKey: "paper" };
+  const legacy = pdfReaderSessionDocumentKey(document);
+  const origin = pdfReaderSessionDocumentKey(document, "origin");
+  const fork = pdfReaderSessionDocumentKey(document, "fork");
+  store.updateViewport(legacy, VIEWPORT);
+  store.seed(origin, store.get(legacy));
+  store.forkScope("environment", "origin", "fork");
+  store.updateViewport(fork, { ...VIEWPORT, page: 20 });
+  store.seed(fork, store.get(legacy));
+  store.flush();
+  const reloaded = createPdfReaderSessionStore({ storage: persisted.storage, writeDelayMs: 0 });
+  expect(reloaded.get(origin).viewport?.page).toBe(7);
+  expect(reloaded.get(fork).viewport?.page).toBe(20);
+  expect(reloaded.get(legacy).viewport?.page).toBe(7);
+  expect(
+    reloaded.get(pdfReaderSessionDocumentKey({ ...document, authority: "other" }, "fork")).viewport,
+  ).toBeNull();
 });
