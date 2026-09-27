@@ -9,7 +9,11 @@ import {
   getConnectionCatalog,
   setConnectionCatalog,
 } from "./methods/connectionCatalog.ts";
-import { revealSavedAsset, saveAssetCopy } from "./methods/documentArtifacts.ts";
+import {
+  renderDocumentPagePdf,
+  revealSavedAsset,
+  saveAssetCopy,
+} from "./methods/documentArtifacts.ts";
 import {
   getLocalEnvironmentEnabled,
   setLocalEnvironmentEnabled,
@@ -135,6 +139,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(pickProjectFavicon);
   yield* ipc.handle(saveAssetCopy);
   yield* ipc.handle(revealSavedAsset);
+  yield* ipc.handle(renderDocumentPagePdf);
   yield* ipc.handle(pickThemeFiles);
   yield* ipc.handle(setTheme);
   yield* ipc.handle(copyPngToClipboard);

@@ -38,6 +38,10 @@ import type { FilesystemBrowseInput, FilesystemBrowseResult } from "./filesystem
 import type { EnvironmentFilePrepareInput, EnvironmentFilePrepareResult } from "./fileOpening.ts";
 import type { AssetCreateUrlInput, AssetCreateUrlResult } from "./assets.ts";
 import type {
+  DesktopDocumentPageRenderInput,
+  DesktopDocumentPageRenderOutcome,
+} from "./scientDocumentExport.ts";
+import type {
   ProjectListDirectoryInput,
   ProjectListDirectoryResult,
   ProjectListEntriesInput,
@@ -1424,6 +1428,13 @@ export interface DesktopBridge {
   saveAssetCopy: (request: DesktopAssetCopyRequest) => Promise<DesktopAssetCopyResult>;
   /** Optional while older desktop shells can host a newer web client. */
   revealSavedAsset?: (path: string) => Promise<void>;
+  /**
+   * Print one captured Scient document page in a hidden, isolated window.
+   * Optional while older desktop shells can host a newer web client.
+   */
+  renderDocumentPagePdf?: (
+    input: DesktopDocumentPageRenderInput,
+  ) => Promise<DesktopDocumentPageRenderOutcome>;
   /**
    * Multi-select JSON file picker that opens in the VS Code extensions
    * directory when one exists. Optional: older desktop builds lack it, and

@@ -12,6 +12,7 @@
     "smoke-test": "node scripts/smoke-test.mjs",
     "test:pdf-pagination": "node scripts/pdf-pagination-smoke.mjs",
     "test:mermaid-render": "node scripts/mermaid-render-smoke.mjs",
+    "test:document-pdf": "node scripts/document-page-pdf-fixtures.mjs",
     "test:svg-export": "node scripts/svg-export-smoke.mjs"
   },
   "dependencies": {
