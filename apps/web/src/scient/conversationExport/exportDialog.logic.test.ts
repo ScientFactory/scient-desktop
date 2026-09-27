@@ -47,11 +47,19 @@ const preparation: ScientConversationExportPreparation = {
 const registrations = registeredConversationExportFormats();
 
 describe("export dialog", () => {
-  it("registers Markdown through the format registry", () => {
-    expect(registrations.map((entry) => entry.format)).toEqual(["markdown"]);
+  it("registers Markdown and Word through the format registry", () => {
+    expect(registrations.map((entry) => entry.format)).toEqual(["markdown", "docx"]);
     expect(exportFormatOptions(preparation, registrations)).toEqual([
       { registration: registrations[0], available: true, unavailableReason: null },
+      {
+        registration: registrations[1],
+        available: false,
+        unavailableReason: "Not available on this Scient.",
+      },
     ]);
+    // Word offers its install where it is unavailable, and is never copied.
+    expect(registrations[1]?.UnavailableAction).toBeDefined();
+    expect(registrations[1]?.supportsCopy).toBe(false);
   });
 
   it("starts with work log and reasoning off and the whole conversation", () => {
@@ -85,7 +93,7 @@ describe("export dialog", () => {
       },
       [...registrations, pdf],
     );
-    expect(options[1]).toMatchObject({
+    expect(options.find((option) => option.registration.format === "pdf")).toMatchObject({
       available: false,
       unavailableReason: "A connected Scient desktop is required.",
     });
@@ -168,6 +176,7 @@ describe("export dialog", () => {
     });
     expect(registeredConversationExportFormats().map((entry) => entry.format)).toEqual([
       "markdown",
+      "docx",
       "scic",
     ]);
   });

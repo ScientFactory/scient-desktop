@@ -1,8 +1,10 @@
 import type {
   ConversationExportFormat,
   ConversationExportOptions,
+  EnvironmentId,
   ScientConversationExportPreparation,
 } from "@t3tools/contracts";
+import type { ComponentType } from "react";
 
 /**
  * Export formats the dialog offers. A format appears once it registers here
@@ -28,6 +30,15 @@ export interface ConversationExportFormatRegistration {
   readonly variant?: ConversationExportVariant;
   /** A one-line note shown while the format is selected. */
   readonly note?: (preparation: ScientConversationExportPreparation) => string | null;
+  /**
+   * Shown in place of the unavailable reason when the user can make the format
+   * available from the dialog (for Word, by installing Pandoc). Calls
+   * `onAvailable` once the environment can produce the format.
+   */
+  readonly UnavailableAction?: ComponentType<{
+    readonly environmentId: EnvironmentId;
+    readonly onAvailable: () => void;
+  }>;
 }
 
 const registrations: ConversationExportFormatRegistration[] = [];
