@@ -326,6 +326,8 @@ export function parseConversationMarkdown(source: string): ParsedConversationMar
   const seen = new Set<number>();
   const closedTurns = new Set<number>();
   let currentTurn: number | null = null;
+  let markerCursor = 0;
+  let nodeCursor = 0;
   for (const [index, marker] of boundaries.entries()) {
     const nextBoundary = boundaries[index + 1]?.start ?? normalized.length;
     if (marker.type === "invalid") continue;
@@ -408,17 +410,19 @@ export function parseConversationMarkdown(source: string): ParsedConversationMar
       currentTurn = turn;
     }
 
-    const parts = markers.filter(
-      (candidate) =>
-        candidate.type === "part" && candidate.start > marker.end && candidate.start < nextBoundary,
-    );
-    for (const other of markers) {
-      if (
-        other.type !== "part" &&
-        other.type !== "message" &&
-        other.start > marker.end &&
-        other.start < nextBoundary
-      ) {
+    // Both lists follow source order. Walk each marker and Markdown node once,
+    // even for a long imported conversation with thousands of messages.
+    while (markerCursor < markers.length && markers[markerCursor]!.start <= marker.end) {
+      markerCursor += 1;
+    }
+    const withinMessage: Marker[] = [];
+    while (markerCursor < markers.length && markers[markerCursor]!.start < nextBoundary) {
+      withinMessage.push(markers[markerCursor]!);
+      markerCursor += 1;
+    }
+    const parts = withinMessage.filter((candidate) => candidate.type === "part");
+    for (const other of withinMessage) {
+      if (other.type !== "part" && other.type !== "message" && other.start > marker.end) {
         issues.push({
           kind: "malformed-marker",
           line: other.line,
@@ -427,7 +431,13 @@ export function parseConversationMarkdown(source: string): ParsedConversationMar
       }
     }
     let bodyStart = marker.end;
-    const firstNode = root.children.find((node) => (nodeRange(node)?.start ?? -1) >= marker.end);
+    while (
+      nodeCursor < root.children.length &&
+      (nodeRange(root.children[nodeCursor]!)?.start ?? -1) < marker.end
+    ) {
+      nodeCursor += 1;
+    }
+    const firstNode = root.children[nodeCursor];
     const firstRange = firstNode ? nodeRange(firstNode) : null;
     if (
       firstNode?.type === "heading" &&

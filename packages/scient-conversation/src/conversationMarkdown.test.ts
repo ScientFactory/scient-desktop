@@ -30,6 +30,28 @@ const OTHER_EXPORT_MARKER =
   "<!-- scient:message export=0123456789ab n=1 role=assistant time=2026-01-01T00:00:00.000Z -->";
 
 describe("Scient conversation Markdown v1", () => {
+  it("recovers a long transcript without losing message boundaries", () => {
+    const count = 2_000;
+    const markdown = [
+      "---",
+      "scient: conversation",
+      "scient-format: 1",
+      `scient-export: ${EXPORT_VALUE}`,
+      "title: Long transcript",
+      "---",
+      ...Array.from({ length: count }, (_, index) => [
+        `<!-- scient:message export=${EXPORT_VALUE} n=${index + 1} role=user time=2026-09-27T14:00:00.000Z -->`,
+        `message ${index + 1}`,
+        "",
+      ]).flat(),
+    ].join("\n");
+    const parsed = parseConversationMarkdown(markdown);
+    if (parsed.kind !== "conversation") throw new Error("Expected a conversation.");
+    expect(parsed.messages).toHaveLength(count);
+    expect(parsed.messages.at(-1)?.body).toBe(`message ${count}`);
+    expect(parsed.issues).toEqual([]);
+  });
+
   it("writes front matter, markers, and speaker headings", () => {
     const { markdown, parsed } = roundTrip([
       message({ id: "m1", role: "user", text: "Please investigate" }),
