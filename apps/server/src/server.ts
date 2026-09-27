@@ -215,6 +215,7 @@ import { scientConversationExportHttpApiLayer } from "./scient/conversationExpor
 import * as ConversationExportFiles from "./scient/conversationExport/ConversationExportFiles.ts";
 import * as ConversationExportService from "./scient/conversationExport/ConversationExportService.ts";
 import * as ConversationSnapshotService from "./scient/conversationExport/ConversationSnapshotService.ts";
+import * as ConversationImporterLive from "./scient/conversationImport/ConversationImporterLive.ts";
 import { scientAnalyticsHttpApiLayer } from "./telemetry/http.ts";
 
 // MCP handoff thread IDs include escaped provenance and can exceed find-my-way's
@@ -806,6 +807,8 @@ export const makeRoutesLayer = Layer.mergeAll(
   Layer.provide(PullRequestServiceLive),
   Layer.provide(AnalysisServiceLive),
   Layer.provide(ConversationExportServiceLive),
+  // Staging's confirm hands a validated import to the importer.
+  Layer.provide(ConversationImporterLive.layer),
   Layer.provide(ComputeMcpGatewayLive),
   Layer.provide(ComputeSessionServiceLive),
   Layer.provide(ScientificRuntimePreferencesLive),
