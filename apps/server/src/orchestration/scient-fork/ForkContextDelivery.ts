@@ -19,6 +19,8 @@
  * - "Accepted" is not proof: some adapters only enqueue in memory. A handoff
  *   counts as received once the provider reported the turn it carried
  *   (`projection_turns.pending_message_id`), or while that turn still runs.
+ *   Completed legacy deliveries are the explicit upgrade exception: migration
+ *   16 assumes continuity with their saved session, subject to durable undo checks.
  * - A revert that removes the turn which carried the handoff supersedes it
  *   (V2: rollback supersedes handoffs); the next turn delivers again.
  *
@@ -165,6 +167,8 @@ const HandoffRow = Schema.Struct({
   delivery_status: Schema.Literals(["pending", "inline", "superseded"]),
   message_id: Schema.NullOr(Schema.String),
   turn_id: Schema.NullOr(Schema.String),
+  continuity_basis: Schema.Literals(["delivery", "legacy_assumed"]),
+  legacy_revert_sequence: Schema.NullOr(Schema.Number),
 });
 type HandoffRow = typeof HandoffRow.Type;
 const decodeHandoffRows = Schema.decodeUnknownEffect(Schema.Array(HandoffRow));
@@ -237,7 +241,8 @@ const make = Effect.gen(function* () {
   const readActiveHandoffs = (threadId: ThreadId) =>
     sql<Record<string, unknown>>`
       SELECT
-        handoff_id, strategy, native_thread_key, rebind_pending, delivery_status, message_id, turn_id
+        handoff_id, strategy, native_thread_key, rebind_pending, delivery_status, message_id, turn_id,
+        continuity_basis, legacy_revert_sequence
       FROM scient_context_handoffs
       WHERE thread_id = ${threadId} AND delivery_status IN ('pending', 'inline')
       ORDER BY created_at DESC, handoff_id DESC
@@ -386,6 +391,20 @@ const make = Effect.gen(function* () {
       const native = handoff.strategy === NATIVE_FORK_STRATEGY;
       const turnId = yield* providerTurnFor(input.threadId, handoff.message_id);
 
+      const legacyAssumed = handoff.continuity_basis === "legacy_assumed";
+      if (legacyAssumed && handoff.turn_id === null) {
+        // Old deliveries may have no carrying-turn evidence. Any later undo
+        // invalidates their upgrade assumption, even if its live event was lost.
+        const [revert] = yield* sql<{ readonly sequence: number }>`
+          SELECT COALESCE(MAX(sequence), 0) AS sequence FROM orchestration_events
+          WHERE aggregate_kind = 'thread' AND stream_id = ${input.threadId}
+            AND event_type = 'thread.reverted'
+        `.pipe(Effect.mapError(fail(input.threadId, "Unable to verify legacy fork continuity.")));
+        if (handoff.legacy_revert_sequence !== revert?.sequence) {
+          return { delivered: false, requireFreshSession: true };
+        }
+      }
+
       // Reconcile even cached evidence against durable history. A revert can
       // commit before its live notification reaches this service.
       if (!native && handoff.turn_id !== null && turnId !== handoff.turn_id) {
@@ -394,7 +413,8 @@ const make = Effect.gen(function* () {
       }
       if (
         sameThread &&
-        (native ||
+        (legacyAssumed ||
+          native ||
           turnId !== undefined ||
           (handoff.delivery_status === "inline" &&
             input.sessionRunning &&

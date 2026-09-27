@@ -8,8 +8,8 @@
  * belongs to one provider session and must be repeated for a new one.
  *
  * Existing forks migrate without re-sending context they already received:
- * - completed deliveries become `inline` handoffs that adopt the current
- *   native thread on first use (`rebind_pending`);
+ * - completed deliveries become `inline` handoffs with `rebind_pending`;
+ *   migration 16 binds them to the saved identity before provider resume;
  * - sending/ambiguous deliveries become `pending` handoffs, which the next turn
  *   settles from provider evidence or re-delivers on a fresh provider session;
  * - pending deliveries keep a pending transfer with no handoff.

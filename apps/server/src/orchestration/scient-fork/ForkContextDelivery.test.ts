@@ -19,6 +19,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import Migration016 from "./migrations/016_PreserveLegacyForkSessions.ts";
 import {
   ScientForkContextDelivery,
   ScientForkContextDeliveryLive,
@@ -111,6 +112,8 @@ it.layer(layer)("ScientForkContextDelivery", (it) => {
     yield* sql`DELETE FROM scient_context_handoffs`;
     yield* sql`DELETE FROM projection_turns`;
     yield* sql`DELETE FROM projection_thread_activities`;
+    yield* sql`DELETE FROM provider_session_runtime WHERE thread_id = ${FORK}`;
+    yield* sql`DELETE FROM orchestration_events WHERE stream_id = ${FORK}`;
     yield* sql`
       INSERT INTO scient_context_transfers (
         thread_id, type, source_thread_id, status, created_at, updated_at
@@ -345,22 +348,160 @@ it.layer(layer)("ScientForkContextDelivery", (it) => {
     }),
   );
 
-  it.effect("migrated deliveries without session evidence require a fresh session", () =>
-    Effect.gen(function* () {
-      const sql = yield* reset;
-      yield* sql`
+  it.effect(
+    "legacy deliveries without a saved session identity still require a fresh session",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* reset;
+        yield* sql`
         INSERT INTO scient_context_handoffs (
           handoff_id, thread_id, rebind_pending, delivery_status, message_id, created_at, updated_at
-        ) VALUES ('legacy:fork', ${FORK}, 1, 'inline', NULL, ${NOW}, ${NOW})
+        ) VALUES (${"legacy:" + FORK}, ${FORK}, 1, 'inline', NULL, ${NOW}, ${NOW})
       `;
-      const next = yield* prepare({ nativeThreadKey: "codex:thread-a" });
-      assert.strictEqual(next.kind, "deliver");
-      if (next.kind === "deliver") assert.isTrue(next.requireFreshSession);
-      const rows = yield* sql<{ readonly native_thread_key: string | null }>`
-        SELECT native_thread_key FROM scient_context_handoffs WHERE handoff_id = 'legacy:fork'
+        yield* Migration016;
+        const next = yield* prepare({ nativeThreadKey: "codex:thread-a" });
+        assert.strictEqual(next.kind, "deliver");
+        if (next.kind === "deliver") assert.isTrue(next.requireFreshSession);
+        const rows = yield* sql<{ readonly native_thread_key: string | null }>`
+        SELECT native_thread_key FROM scient_context_handoffs WHERE thread_id = ${FORK}
       `;
-      assert.isNull(rows[0]?.native_thread_key);
+        assert.isNull(rows[0]?.native_thread_key);
+      }),
+  );
+
+  const preserveLegacy = (previousUndo = false, carryingTurn = false) =>
+    Effect.gen(function* () {
+      const sql = yield* reset;
+      yield* sql`DELETE FROM orchestration_events WHERE stream_id = ${FORK}`;
+      yield* sql`
+      INSERT INTO scient_context_handoffs (
+        handoff_id, thread_id, rebind_pending, delivery_status, message_id, created_at, updated_at
+      ) VALUES (${"legacy:" + FORK}, ${FORK}, 1, 'inline', NULL, ${NOW}, ${NOW})
+    `;
+      yield* sql`
+      INSERT OR REPLACE INTO provider_session_runtime (
+        thread_id, provider_name, provider_instance_id, adapter_key, runtime_mode, status,
+        last_seen_at, resume_cursor_json
+      ) VALUES (${FORK}, 'codex', 'codex-main', 'codex', 'full-access', 'ready', ${NOW},
+        '{"threadId":"saved-session"}')
+    `;
+      if (previousUndo)
+        yield* sql`
+      INSERT INTO orchestration_events (
+        event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at,
+        actor_kind, payload_json, metadata_json
+      ) VALUES ('pre-upgrade-undo', 'thread', ${FORK}, 1, 'thread.reverted', ${NOW}, 'user', '{}', '{}')
+    `;
+      if (carryingTurn) {
+        yield* sql`UPDATE scient_context_handoffs SET message_id = ${current.id} WHERE thread_id = ${FORK}`;
+        yield* recordProviderTurn("legacy-carrying-turn", 1);
+      }
+      yield* Migration016;
+      return sql;
+    });
+
+  it.effect(
+    "silently preserves the saved legacy session across starts and subsequent messages",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* preserveLegacy();
+        for (const sessionRunning of [false, true, false]) {
+          assert.strictEqual(
+            (yield* prepare({
+              nativeThreadKey: "codex@codex-main:saved-session",
+              sessionRunning,
+            })).kind,
+            "none",
+          );
+        }
+        const [handoff] = yield* sql`
+        SELECT continuity_basis, native_thread_key, turn_id FROM scient_context_handoffs
+        WHERE thread_id = ${FORK}
+      `;
+        assert.deepEqual(handoff, {
+          continuity_basis: "legacy_assumed",
+          native_thread_key: "codex@codex-main:saved-session",
+          turn_id: null,
+        });
+      }),
+  );
+
+  it.effect(
+    "does not adopt a replacement created by the first resume or a later instance switch",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* preserveLegacy();
+        yield* sql`UPDATE provider_session_runtime SET resume_cursor_json = '{"threadId":"replacement"}' WHERE thread_id = ${FORK}`;
+        for (const key of ["codex@codex-main:replacement", "codex@other:saved-session", null]) {
+          const next = yield* prepare({ nativeThreadKey: key });
+          assert.strictEqual(next.kind, "deliver");
+          if (next.kind === "deliver") assert.isTrue(next.requireFreshSession);
+        }
+        // Failure before reset/delivery cannot erase the old identity requirement.
+        const [handoff] =
+          yield* sql`SELECT native_thread_key FROM scient_context_handoffs WHERE thread_id = ${FORK}`;
+        assert.strictEqual(handoff?.native_thread_key, "codex@codex-main:saved-session");
+      }),
+  );
+
+  it.effect(
+    "invalidates assumed legacy history after a durable undo without a live notification",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* preserveLegacy();
+        assert.strictEqual(
+          (yield* prepare({ nativeThreadKey: "codex@codex-main:saved-session" })).kind,
+          "none",
+        );
+        yield* sql`
+        INSERT INTO orchestration_events (
+          event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at,
+          actor_kind, payload_json, metadata_json
+        ) VALUES ('legacy-undo', 'thread', ${FORK}, 1, 'thread.reverted', ${NOW}, 'user', '{}', '{}')
+      `;
+        const next = yield* prepare({ nativeThreadKey: "codex@codex-main:saved-session" });
+        assert.strictEqual(next.kind, "deliver");
+        if (next.kind === "deliver") assert.isTrue(next.requireFreshSession);
+      }),
+  );
+
+  it.effect("does not rebuild solely for an undo that predates the upgrade", () =>
+    Effect.gen(function* () {
+      yield* preserveLegacy(true);
+      assert.strictEqual(
+        (yield* prepare({ nativeThreadKey: "codex@codex-main:saved-session" })).kind,
+        "none",
+      );
     }),
+  );
+
+  it.effect(
+    "keeps a legacy session when undo retains its carrying turn, and re-delivers if removed",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* preserveLegacy(false, true);
+        const [handoff] =
+          yield* sql`SELECT turn_id FROM scient_context_handoffs WHERE thread_id = ${FORK}`;
+        assert.strictEqual(handoff?.turn_id, "legacy-carrying-turn");
+        yield* sql`
+        INSERT INTO orchestration_events (
+          event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at,
+          actor_kind, payload_json, metadata_json
+        ) VALUES ('retained-legacy-undo', 'thread', ${FORK}, 1, 'thread.reverted', ${NOW}, 'user', '{}', '{}')
+      `;
+        const delivery = yield* ScientForkContextDelivery;
+        yield* delivery.onThreadReverted({ threadId: FORK, turnCount: 1 });
+        assert.strictEqual(
+          (yield* prepare({ nativeThreadKey: "codex@codex-main:saved-session" })).kind,
+          "none",
+        );
+        // Simulate a later undo committing without its live notification.
+        yield* sql`DELETE FROM projection_turns WHERE thread_id = ${FORK}`;
+        assert.strictEqual(
+          (yield* prepare({ nativeThreadKey: "codex@codex-main:saved-session" })).kind,
+          "deliver",
+        );
+      }),
   );
 
   it.effect("keeps the latest answer and omits older history when the budget binds", () =>

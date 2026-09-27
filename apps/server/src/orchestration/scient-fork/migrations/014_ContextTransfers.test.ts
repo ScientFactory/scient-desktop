@@ -73,7 +73,7 @@ it.layer(SqlitePersistenceMemory)("Scient migration 14: context transfers", (it)
         [
           // Uncertain: settled from provider evidence or re-delivered fresh.
           ["fork-ambiguous", "pending", 0, "m-ambiguous"],
-          // Delivered: trusted and bound to the next provider session seen.
+          // Delivered: migration 16 binds the saved pre-resume identity.
           ["fork-completed", "inline", 1, "m-completed"],
         ],
       );

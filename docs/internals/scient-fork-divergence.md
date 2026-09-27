@@ -530,17 +530,17 @@ Terminal lifecycle guards are enforced in repository SQL predicates:
 Superseded by Scient migration 14 and
 [Provider context delivery](#provider-context-delivery). The old
 `provider_bootstrap_*` columns remain for downgrade safety but are no longer
-read. Migration 14 carries prior state into handoff rows. Legacy completed
-rows have no native-session proof, so they now require a fresh session and
-portable delivery; they never adopt an arbitrary replacement. Migration 15
-adds native-turn evidence, frozen snapshot identities, and handoff audit
-artifacts. The four latest delivery preambles per fork are retained; older
-receipts keep their status and counts without retaining repeated full text.
-Missing historical evidence selects portable delivery rather than inventing
-continuity. Recovery is automatic, without an upgrade confirmation dialog or
-extra user step. The saved Scient transcript and workspace stay intact;
-provider-only details absent from that transcript may be lost when an
-unverifiable session is replaced.
+read. Migration 14 carries prior state into handoff rows. Migration 15 adds
+native-turn evidence, frozen snapshot identities, and handoff audit artifacts.
+Migration 16 preserves completed legacy deliveries against the session identity
+saved before resume, explicitly marking that continuity as assumed. It does not
+reset a session solely because the old delivery lacked session-specific proof.
+See the legacy preservation rules below for replacement and undo handling.
+The four latest delivery preambles per fork are retained; older receipts keep
+their status and counts without retaining repeated full text. Recovery stays
+automatic, without an upgrade dialog or extra user step. The saved Scient
+transcript and workspace stay intact; provider-only details can still be lost
+when an actual discontinuity requires rebuilding the provider session.
 
 ## Provider context delivery
 
@@ -577,6 +577,21 @@ meaning is the same.
   stays active until reset succeeds and the replacement handoff is committed.
 - Native session identity includes its configured provider instance, so an
   equal provider session ID in a different runtime cannot establish continuity.
+- **Silent legacy preservation.** Migration 16 binds completed legacy deliveries
+  to the provider session identity already saved at database startup, before any
+  resume can replace it. That session continues without resetting, re-sending
+  history, or prompting the user. `continuity_basis = legacy_assumed` records
+  inherited trust rather than verified delivery; it does not create native-turn
+  coverage. Session replacement (including failed first resume) or provider-instance
+  change triggers normal fresh-session recovery. Known carrying turns retain the
+  normal undo rule: re-deliver only when that turn is removed. Where the old record
+  has no carrying turn, a saved revert-event sequence invalidates the assumption
+  on any later undo, even when its live notification is missed. Earlier undos do
+  not by themselves invalidate the upgrade assumption.
+  Missing or malformed saved identities and incomplete/ambiguous old deliveries
+  remain on the recovery path. Already-broken legacy sessions can remain broken
+  until a tracked discontinuity; preservation deliberately retains that pre-existing
+  uncertainty to avoid discarding healthy sessions' provider-only memory.
 - A later message waits for an in-flight handoff to settle, then rechecks the
   current binding. The send fiber owns the pending record and releases waiters
   on every exit, including interruption. A later-message waiter has a
