@@ -1,6 +1,7 @@
 import {
   EnvironmentHttpApi,
   ScientConversationExportError,
+  ScientConversationImportError,
   ScientThreadQueueOperationError,
   EnvironmentHttpCommonError,
   type EnvironmentAuthInvalidError,
@@ -23,6 +24,7 @@ import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
 const isEnvironmentHttpCommonError = Schema.is(EnvironmentHttpCommonError);
 const isScientThreadQueueOperationError = Schema.is(ScientThreadQueueOperationError);
 const isScientConversationExportError = Schema.is(ScientConversationExportError);
+const isScientConversationImportError = Schema.is(ScientConversationImportError);
 
 export class RemoteEnvironmentAuthFetchError extends Data.TaggedError(
   "RemoteEnvironmentAuthFetchError",
@@ -73,6 +75,7 @@ export class RemoteEnvironmentAuthTimeoutError extends Data.TaggedError(
 export type RemoteEnvironmentRequestError =
   | ScientThreadQueueOperationError
   | ScientConversationExportError
+  | ScientConversationImportError
   | EnvironmentRequestInvalidError
   | EnvironmentAuthInvalidError
   | EnvironmentScopeRequiredError
@@ -135,7 +138,8 @@ const failRemoteRequest = (
   if (
     isEnvironmentHttpCommonError(cause) ||
     isScientThreadQueueOperationError(cause) ||
-    isScientConversationExportError(cause)
+    isScientConversationExportError(cause) ||
+    isScientConversationImportError(cause)
   ) {
     return Effect.fail(cause);
   }

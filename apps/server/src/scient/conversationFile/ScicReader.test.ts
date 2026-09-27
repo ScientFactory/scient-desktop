@@ -5,20 +5,29 @@ import * as NodePath from "node:path";
 
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import {
-  ConversationSnapshotV1,
   SCIC_MEDIA_TYPE,
   type ConversationImportId,
   type ConversationImportRejectionReason,
 } from "@t3tools/contracts";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as Schema from "effect/Schema";
 import * as yazl from "yazl";
 
 import { conversationContentDigest } from "../conversationImport/ConversationImporter.ts";
 import { readScicPackage, stagedAttachmentFile } from "./ScicReader.ts";
-import { prepareScicPackage, sha256Digest, type ScicPackage } from "./ScicWriter.ts";
+import {
+  PDF,
+  PNG,
+  STATE_ROOT,
+  attachment,
+  capturedSnapshot,
+  decodeSnapshot,
+  encodeSnapshot,
+  makePackage,
+  zipBytesPromise,
+  type ZipFileSpec,
+} from "./scic.test-fixtures.ts";
+import { sha256Digest, type ScicPackage } from "./ScicWriter.ts";
 import {
   SCIC_MANIFEST_ENTRY,
   SCIC_MARKDOWN_ENTRY,
@@ -30,118 +39,6 @@ import {
 } from "./scicFormat.ts";
 
 const IMPORT_ID = "cimp_0f8e7d6c-5b4a-4938-8271-605f4e3d2c1b" as ConversationImportId;
-const STATE_ROOT = "/Users/someone/.scient-next/userdata";
-
-const PNG = new Uint8Array([
-  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
-  0x00, 0x00, 0x00, 0x01,
-]);
-const PDF = new TextEncoder().encode("%PDF-1.7\nfixture body that is long enough\n%%EOF\n");
-
-const decodeSnapshot = Schema.decodeUnknownSync(ConversationSnapshotV1);
-const encodeSnapshot = Schema.encodeSync(ConversationSnapshotV1);
-
-const attachment = (
-  localId: string,
-  kind: "image" | "file" | "other",
-  name: string,
-  mimeType: string,
-  sizeBytes: number,
-  available = true,
-) => ({ localId, kind, name, mimeType, sizeBytes, pastedText: false, available });
-
-const capturedSnapshot = decodeSnapshot({
-  format: "scient.conversation-snapshot",
-  version: 1,
-  thread: {
-    title: "Export design",
-    createdAt: "2026-09-27T14:00:00.000Z",
-    updatedAt: "2026-09-27T15:00:00.000Z",
-    provider: "codex",
-    model: "gpt-5",
-  },
-  provenance: { _tag: "original" },
-  captured: {
-    threadId: "thread-1",
-    snapshotSequence: 42,
-    threadSequence: 40,
-    capturedAt: "2026-09-27T15:00:01.000Z",
-  },
-  selection: { workLog: false, reasoning: false, throughMessageId: null },
-  messages: [
-    {
-      n: 1,
-      id: "message-1",
-      role: "user",
-      turnId: null,
-      createdAt: "2026-09-27T14:05:00.000Z",
-      updatedAt: "2026-09-27T14:05:00.000Z",
-      text: `Look at [figure.png](scient-ref:r1) and the log in ${STATE_ROOT}/logs/server.log`,
-      attachments: [
-        attachment("thread-1-aaaa", "image", "figure.png", "image/png", PNG.byteLength),
-        attachment("thread-1-bbbb", "file", "paper.pdf", "application/pdf", PDF.byteLength),
-        attachment("thread-1-cccc", "file", "gone.csv", "text/csv", 10, false),
-      ],
-      references: [
-        {
-          _tag: "attachment",
-          id: "r1",
-          label: "figure.png",
-          attachmentLocalId: "thread-1-aaaa",
-          image: true,
-        },
-      ],
-    },
-    {
-      n: 2,
-      id: "message-2",
-      role: "assistant",
-      turnId: "turn-1",
-      createdAt: "2026-09-27T14:06:00.000Z",
-      updatedAt: "2026-09-27T14:06:00.000Z",
-      text: "Here is what I found.",
-      attachments: [],
-      references: [],
-    },
-  ],
-  reasoning: [],
-  workLog: [],
-  proposedPlans: [],
-  questionAnswers: [],
-  omittedRunningTurn: null,
-  warnings: [{ _tag: "attachment-unavailable", name: "gone.csv", messageN: 1 }],
-  contentDigest: `sha256:${"0".repeat(64)}`,
-});
-
-const redact = (text: string) => text.split(STATE_ROOT).join("«scient-data»");
-
-function makePackage(
-  snapshot = capturedSnapshot,
-  attachments = new Map([
-    ["thread-1-aaaa", { _tag: "bytes" as const, bytes: PNG, sha256: sha256Digest(PNG) }],
-    ["thread-1-bbbb", { _tag: "bytes" as const, bytes: PDF, sha256: sha256Digest(PDF) }],
-  ]),
-): ScicPackage {
-  const prepared = prepareScicPackage({
-    snapshot,
-    attachments,
-    exportValue: "7f3c9a2e41b8",
-    exportedAt: "2026-09-28T09:12:00.000Z",
-    exporter: { name: "Scient", version: "0.7.0" },
-    timeZone: "UTC",
-    redact,
-  });
-  if (prepared._tag !== "ok") throw new Error(`Could not prepare the fixture: ${prepared._tag}`);
-  return prepared.value;
-}
-
-interface ZipFileSpec {
-  readonly path: string;
-  readonly bytes: Uint8Array;
-  readonly compress?: boolean;
-  readonly mode?: number;
-}
-
 const encoder = new TextEncoder();
 const json = (value: unknown) => encoder.encode(JSON.stringify(value));
 
@@ -203,24 +100,6 @@ afterEach(() => {
     NodeFS.rmSync(directory, { recursive: true, force: true });
   }
 });
-
-function zipBytesPromise(files: ReadonlyArray<ZipFileSpec>): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const zip = new yazl.ZipFile();
-    const chunks: Buffer[] = [];
-    zip.outputStream.on("data", (chunk: Buffer) => chunks.push(chunk));
-    zip.outputStream.on("end", () => resolve(Buffer.concat(chunks)));
-    zip.outputStream.on("error", reject);
-    for (const file of files) {
-      zip.addBuffer(Buffer.from(file.bytes), file.path, {
-        mtime: DateTime.toDateUtc(DateTime.makeUnsafe("2026-09-28T09:12:00.000Z")),
-        mode: file.mode ?? 0o100644,
-        compress: file.compress ?? true,
-      });
-    }
-    zip.end();
-  });
-}
 
 const SIGNATURE_CENTRAL = 0x02014b50;
 const SIGNATURE_LOCAL = 0x04034b50;

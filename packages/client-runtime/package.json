@@ -251,6 +251,10 @@
       "types": "./src/state/scientConversationExportHttp.ts",
       "default": "./src/state/scientConversationExportHttp.ts"
     },
+    "./state/scient-conversation-import": {
+      "types": "./src/state/scientConversationImportHttp.ts",
+      "default": "./src/state/scientConversationImportHttp.ts"
+    },
     "./state/shared-settings": {
       "types": "./src/state/sharedSettings.ts",
       "default": "./src/state/sharedSettings.ts"

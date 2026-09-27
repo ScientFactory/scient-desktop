@@ -25,7 +25,7 @@
  *
  * ## Staging areas
  *
- * One directory per import, `<stateDir>/conversation-imports/<importId>/`,
+ * One directory per import, `<stateDir>/scient/conversation-imports/<importId>/`,
  * created only by `createUpload` (under a fresh ID) and removed only by
  * staging. Its layout is private to staging except `attemptDirectory`, which
  * belongs to the importer (its attempt journal) and which staging only ever
@@ -113,7 +113,7 @@
  * order, for a commit reported by `importConversation` or by `settleAttempt`
  * (including at startup): (1) staging writes the completion record durably
  * (temporary file, flush, rename) under
- * `<stateDir>/conversation-imports/completions/`; (2) only then removes the
+ * `<stateDir>/scient/conversation-imports/completions/`; (2) only then removes the
  * area, journal included. If step 1 fails, the area and journal stay and the
  * next sweep settles again, so a crash anywhere between commit and cleanup
  * still ends with the completion recorded. Records are kept for
@@ -126,7 +126,8 @@ import * as NodeCrypto from "node:crypto";
 
 import { canonicalSnapshotContent } from "@scientfactory/conversation";
 import * as Context from "effect/Context";
-import type * as Effect from "effect/Effect";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import {
   ConversationImportDestination,
@@ -156,7 +157,7 @@ import { stableStringify } from "@t3tools/shared/relaySigning";
 // Staging policy
 // ---------------------------------------------------------------------------
 
-/** Under the server's state directory. */
+/** Under `<stateDir>/scient/`, beside the export files. */
 export const CONVERSATION_IMPORT_STAGING_DIRECTORY = "conversation-imports";
 export const CONVERSATION_IMPORT_STAGING_TTL_MS = 60 * 60_000;
 /** Bytes all staging areas may hold together: uploaded packages plus staged attachments. */
@@ -637,6 +638,8 @@ export class ConversationImporterError extends Schema.TaggedError<ConversationIm
       "import-rejected",
       /** A kept, uncommitted attempt is bound to another destination; nothing was changed. */
       "destination-changed",
+      /** This build has no importer. Never reachable in a release: the import command replaces it. */
+      "importer-unavailable",
     ]),
     detail: Schema.String,
   },
@@ -707,4 +710,26 @@ export class ConversationImporter extends Context.Service<
       attempt: AbandonedConversationImportAttempt,
     ) => Effect.Effect<SettledConversationImportAttempt, ConversationImportSettleError>;
   }
->()("t3/scient/conversationImport/ConversationImporter") {}
+>()("t3/scient/conversationImport/ConversationImporter") {
+  /**
+   * Stands in until the import command lands, so staging and preview build and
+   * run: every confirm fails `importer-unavailable`, honestly. It never
+   * publishes anything, so there is never an attempt to settle.
+   */
+  static readonly layerUnavailable = Layer.succeed(this, {
+    importConversation: () =>
+      Effect.fail(
+        new ConversationImporterError({
+          reason: "importer-unavailable",
+          detail: "This Scient cannot import conversations yet.",
+        }),
+      ),
+    settleAttempt: (attempt) =>
+      Effect.fail(
+        new ConversationImportSettleError({
+          detail: `Import ${attempt.importId} has an attempt this Scient cannot settle.`,
+          cause: null,
+        }),
+      ),
+  });
+}
