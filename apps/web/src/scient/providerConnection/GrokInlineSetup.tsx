@@ -22,13 +22,17 @@ import {
   AssistedSetupDiagnostics,
   AssistedSetupFrame,
   AssistedSetupStatus,
+  AssistedSetupUpdateButton,
+  AssistedSetupUpdateStatus,
   ProviderSetupIcon,
 } from "./AssistedProviderSetup";
 import { startGrokSignIn, startReviewedGrokRuntimeAction } from "./grokLifecycleActions";
 import { ProviderAuthorizationCodeDisclosure } from "./ProviderAuthorizationCodeForm";
 import {
-  hasExternalProviderUpdate,
-  hasManagedProviderUpdate,
+  externalProviderUpdate,
+  externalProviderUpdateProgress,
+  providerUpdateIssue,
+  providerUpdateOffer,
   updateManagedOrExternalProviderRuntime,
 } from "./providerLifecycleActions";
 import { resolveProviderRuntimeForPresentation } from "./ProviderRuntimeSection";
@@ -49,6 +53,7 @@ type PendingAction =
   | "install"
   | "repair"
   | "update"
+  | "external-update"
   | "sign-in"
   | "device-sign-in"
   | "submit-code"
@@ -131,11 +136,13 @@ export function GrokInlineSetup(props: {
     props.provider.auth.status === "authenticated" && props.provider.auth.type === "api_key";
   const needsRepair =
     !props.managedRuntimePresentedExternally && needsManagedRuntimeRecovery(props.provider);
-  const updateAvailable =
-    (!props.managedRuntimePresentedExternally && hasManagedProviderUpdate(props.provider)) ||
-    hasExternalProviderUpdate(props.provider);
-  const updateState = props.provider.updateState;
-  const updateRunning = updateState?.status === "queued" || updateState?.status === "running";
+  const updateOffer = providerUpdateOffer(props.provider, {
+    managed: !props.managedRuntimePresentedExternally,
+  });
+  const externalUpdateProgress = externalProviderUpdateProgress(
+    props.provider,
+    pendingAction === "external-update",
+  );
 
   const run = async (action: Exclude<PendingAction, null>, operation: () => Promise<unknown>) => {
     setLocalError(null);
@@ -143,7 +150,8 @@ export function GrokInlineSetup(props: {
     try {
       await operation();
     } catch (error) {
-      setLocalError(providerLifecycleFailureMessage(error, `Scient could not ${action} Grok.`));
+      const verb = action === "external-update" ? "update" : action;
+      setLocalError(providerLifecycleFailureMessage(error, `Scient could not ${verb} Grok.`));
     } finally {
       setPendingAction(null);
     }
@@ -226,6 +234,20 @@ export function GrokInlineSetup(props: {
             </Button>
           </AssistedSetupActions>
         ) : null}
+      </SetupFrame>
+    );
+  }
+
+  if (externalUpdateProgress) {
+    return (
+      <SetupFrame>
+        <AssistedSetupUpdateStatus
+          name="Grok"
+          provider={props.provider}
+          trailing={props.accountAction}
+          update={externalProviderUpdate(props.provider)}
+          working={externalUpdateProgress}
+        />
       </SetupFrame>
     );
   }
@@ -376,51 +398,27 @@ export function GrokInlineSetup(props: {
     );
   }
 
-  if ((accountConnected || apiKeyReady) && updateRunning) {
+  if ((accountConnected || apiKeyReady) && updateOffer) {
+    const issue = providerUpdateIssue(props.provider, updateOffer, localError);
     return (
       <SetupFrame>
-        <AssistedSetupStatus
-          body={updateState?.message ?? "Updating and verifying Grok…"}
-          icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
-          title="Updating Grok"
-          trailing={props.accountAction}
-        />
-      </SetupFrame>
-    );
-  }
-
-  if ((accountConnected || apiKeyReady) && updateAvailable) {
-    const error = localError ?? (updateState?.status === "failed" ? updateState.message : null);
-    return (
-      <SetupFrame>
-        <AssistedSetupStatus
-          body={
-            error ??
-            "Install the reviewed update when you’re ready. Your current version remains available until the update is verified."
-          }
-          icon={
-            error ? (
-              <TriangleAlertIcon className="size-5 text-destructive" />
-            ) : (
-              <RefreshCwIcon className="size-5 text-primary" />
-            )
-          }
-          role={error ? "alert" : undefined}
-          title={error ? "Grok couldn’t be updated" : "Grok update available"}
+        <AssistedSetupUpdateStatus
+          issue={issue}
+          name="Grok"
+          provider={props.provider}
+          update={updateOffer}
         />
         <AssistedSetupActions>
           {props.accountAction}
-          <Button
-            aria-label={error ? "Retry Grok update" : "Update Grok"}
-            onClick={() => void run("update", update)}
-            size="sm"
-            type="button"
-            variant="ghost-primary"
-          >
-            <RefreshCwIcon aria-hidden /> {error ? "Try again" : "Update"}
-          </Button>
+          <AssistedSetupUpdateButton
+            name="Grok"
+            onClick={() =>
+              void run(updateOffer.path === "external" ? "external-update" : "update", update)
+            }
+            retry={issue !== null}
+          />
         </AssistedSetupActions>
-        {error ? runtimeDiagnostics : null}
+        {issue ? runtimeDiagnostics : null}
       </SetupFrame>
     );
   }

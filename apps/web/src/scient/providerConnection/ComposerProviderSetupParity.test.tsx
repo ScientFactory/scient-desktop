@@ -94,6 +94,10 @@ const DRIVERS = [
   readonly auth: ServerProvider["auth"];
 }>;
 const ACCOUNT_DRIVERS = DRIVERS.filter((entry) => entry.methods.length > 0);
+/** Antigravity's composer offers only reviewed managed updates. */
+const EXTERNAL_UPDATE_DRIVERS = DRIVERS.filter((entry) => entry.driver !== "antigravity");
+const MANAGED_UPDATE_COPY =
+  "Install the reviewed update when you’re ready. Your current version remains available until the update is verified.";
 
 function ready(entry: Driver): ServerProvider {
   return {
@@ -201,6 +205,26 @@ function managedUpdate(entry: Driver): ServerProvider {
     actions: ["update", "repair", "remove"],
     availableManagedVersion: "1.3.0",
   });
+}
+
+function externalUpdate(
+  entry: Driver,
+  updateState?: ServerProvider["updateState"],
+): ServerProvider {
+  return {
+    ...withRuntime(ready(entry), { source: "system", actions: ["install"], managedVersion: null }),
+    versionAdvisory: {
+      status: "behind_latest",
+      currentVersion: "1.2.3",
+      latestVersion: "1.3.0",
+      updateCommand: `${entry.driver} update`,
+      canUpdate: true,
+      canInstallVersion: false,
+      checkedAt: T0,
+      message: `${entry.name} 1.3.0 is available.`,
+    },
+    ...(updateState ? { updateState } : {}),
+  };
 }
 
 function failedOperation(
@@ -351,8 +375,8 @@ describe.each(DRIVERS)("$name composer setup", (entry) => {
     const element = view(managedUpdate(entry));
 
     expect(element.textContent).toContain(`${entry.name} update available`);
-    // Droid and Pi add a quiet Connect models under it.
-    expect(buttonLabels(element).filter((label) => label !== "Connect models")).toHaveLength(1);
+    expect(element.textContent).toContain(MANAGED_UPDATE_COPY);
+    expect(accessibleNames(element)[0]).toBe(`Update ${entry.name}`);
   });
 
   it("shows a server-side installation failure with its error and a retry", () => {
@@ -416,6 +440,38 @@ describe.each(DRIVERS)("$name composer setup", (entry) => {
     );
 
     expect(element.textContent).toContain("The repaired runtime failed its smoke test.");
+  });
+
+  it("stops showing a failed update once a newer version is offered", () => {
+    const failed = withRuntime(managedUpdate(entry), {
+      operation: failedOperation(entry, "update", "The 1.3.0 update did not pass its smoke test."),
+    });
+    const newer = withRuntime(failed, { availableManagedVersion: "1.4.0" });
+
+    expect(view(failed).textContent).toContain("The 1.3.0 update did not pass its smoke test.");
+    const element = view(newer);
+    expect(element.textContent).not.toContain("did not pass its smoke test");
+    expect(element.textContent).toContain(`${entry.name} update available`);
+    expect(accessibleNames(element)[0]).toBe(`Update ${entry.name}`);
+  });
+
+  it("shows a failed managed update with its error and a retry", () => {
+    const element = view(
+      withRuntime(managedUpdate(entry), {
+        operation: failedOperation(
+          entry,
+          "update",
+          "The reviewed update did not pass its smoke test.",
+        ),
+      }),
+    );
+
+    expect(element.textContent).toContain(`${entry.name} couldn’t be updated`);
+    expect(element.textContent).toContain("The reviewed update did not pass its smoke test.");
+    expect(statusIcons(element)).toEqual(["warning"]);
+    expect(buttonLabels(element)[0]).toBe("Try again");
+    expect(accessibleNames(element)[0]).toBe(`Retry ${entry.name} update`);
+    expect(element.textContent).toContain("Runtime diagnostics");
   });
 
   it("labels its install and update actions with short verbs and names the provider", () => {
@@ -494,63 +550,92 @@ describe.each(ACCOUNT_DRIVERS)("$name composer sign-in", (entry) => {
   });
 });
 
-const UPDATING_DRIVERS = DRIVERS.filter(
-  (entry) => entry.driver === "droid" || entry.driver === "grok",
-);
+describe.each(EXTERNAL_UPDATE_DRIVERS)("$name composer external update", (entry) => {
+  it("says it will run the installation's own updater, not that it installs a reviewed update", () => {
+    const element = view(externalUpdate(entry));
 
-describe.each(UPDATING_DRIVERS)("$name composer update", (entry) => {
-  const externalUpdate = (): ServerProvider => ({
-    ...withRuntime(ready(entry), { source: "system", actions: ["install"], managedVersion: null }),
-    versionAdvisory: {
-      status: "behind_latest",
-      currentVersion: "1.2.3",
-      latestVersion: "1.3.0",
-      updateCommand: `${entry.driver} update`,
-      canUpdate: true,
-      canInstallVersion: false,
-      checkedAt: T0,
-      message: `${entry.name} 1.3.0 is available.`,
-    },
+    expect(element.textContent).toContain(`${entry.name} update available`);
+    expect(element.textContent).toContain(
+      `${entry.name} 1.3.0 is available. Scient will run ${entry.driver} update to update the ${entry.name} installed on this Mac.`,
+    );
+    expect(element.querySelector("code")?.textContent).toBe(`${entry.driver} update`);
+    expect(element.textContent).not.toContain("reviewed update");
+    expect(element.textContent).not.toContain("remains available");
+    expect(accessibleNames(element)[0]).toBe(`Update ${entry.name}`);
   });
 
-  it("offers a managed and an external update with an Update action", () => {
-    for (const provider of [managedUpdate(entry), externalUpdate()]) {
-      const element = view(provider);
-      expect(element.textContent).toContain(`${entry.name} update available`);
-      expect(statusIcons(element)).toEqual(["other"]);
-      expect(buttonLabels(element)[0]).toBe("Update");
+  it("keeps a truthful generic line when the updater command is unknown", () => {
+    const provider = externalUpdate(entry);
+    const element = view({
+      ...provider,
+      versionAdvisory: { ...provider.versionAdvisory!, updateCommand: null },
+    });
+
+    expect(element.textContent).toContain(
+      `${entry.name} 1.3.0 is available. Scient will update the ${entry.name} installed on this Mac with its own updater.`,
+    );
+    expect(element.textContent).not.toContain("remains available");
+  });
+
+  it("shows the running external updater, whatever the account state", () => {
+    const running = (provider: ServerProvider) =>
+      view({
+        ...provider,
+        updateState: {
+          status: "running",
+          startedAt: T0,
+          finishedAt: null,
+          message: "Updating provider.",
+          output: null,
+        },
+      });
+
+    for (const element of [
+      running(externalUpdate(entry)),
+      ...(entry.methods.length > 0
+        ? [running({ ...externalUpdate(entry), ...signIn(entry) })]
+        : []),
+    ]) {
+      expect(element.textContent).toContain(`Updating ${entry.name}`);
+      expect(element.textContent).toContain(`Running ${entry.driver} update on this Mac.`);
+      expect(element.querySelector('[role="status"]')).not.toBeNull();
+      expect(statusIcons(element)).toEqual(["spinner"]);
+      expect(buttonLabels(element)).toEqual([]);
     }
   });
 
-  it("shows a running and a failed update", () => {
-    const running = view({
-      ...managedUpdate(entry),
-      updateState: {
-        status: "running",
+  it("says a finished update left the old version in place", () => {
+    const element = view(
+      externalUpdate(entry, {
+        status: "unchanged",
         startedAt: T0,
-        finishedAt: null,
-        message: `Updating ${entry.name} to 1.3.0…`,
+        finishedAt: T0,
+        message: "Update command completed, but Scient still detects an outdated provider version.",
         output: null,
-      },
-    });
-    const failed = view({
-      ...managedUpdate(entry),
-      updateState: {
+      }),
+    );
+
+    expect(element.textContent).toContain(`${entry.name} update didn’t take effect`);
+    expect(element.textContent).toContain("still detects an outdated provider version");
+    expect(element.querySelector('[role="alert"]')).not.toBeNull();
+    expect(accessibleNames(element)[0]).toBe(`Retry ${entry.name} update`);
+  });
+
+  it("shows a failed external update with a retry", () => {
+    const element = view(
+      externalUpdate(entry, {
         status: "failed",
         startedAt: T0,
         finishedAt: T0,
         message: "The updater exited with code 2.",
         output: null,
-      },
-    });
+      }),
+    );
 
-    expect(running.textContent).toContain(`Updating ${entry.name}`);
-    expect(statusIcons(running)).toEqual(["spinner"]);
-    expect(buttonLabels(running)).toEqual([]);
-    expect(failed.textContent).toContain(`${entry.name} couldn’t be updated`);
-    expect(failed.textContent).toContain("The updater exited with code 2.");
-    expect(statusIcons(failed)).toEqual(["warning"]);
-    expect(buttonLabels(failed)[0]).toBe("Try again");
+    expect(element.textContent).toContain(`${entry.name} couldn’t be updated`);
+    expect(element.textContent).toContain("The updater exited with code 2.");
+    expect(statusIcons(element)).toEqual(["warning"]);
+    expect(buttonLabels(element)[0]).toBe("Try again");
   });
 
   describe("actions", () => {
@@ -580,8 +665,8 @@ describe.each(UPDATING_DRIVERS)("$name composer update", (entry) => {
           />,
         ),
       );
-      const button = [...host.querySelectorAll("button")].find(
-        (element) => element.textContent?.trim() === "Update",
+      const button = frameButtons(host).find(
+        (element) => element.getAttribute("aria-label") === `Update ${entry.name}`,
       );
       await act(async () => button!.click());
     };
@@ -608,14 +693,52 @@ describe.each(UPDATING_DRIVERS)("$name composer update", (entry) => {
       expect(controller.updateExternalRuntime).not.toHaveBeenCalled();
     });
 
-    it("runs the external installation's own updater", async () => {
-      const provider = externalUpdate();
-      vi.mocked(controller.updateExternalRuntime).mockResolvedValueOnce(provider);
+    it("runs the external installation's own updater and says so while it runs", async () => {
+      const provider = externalUpdate(entry);
+      vi.mocked(controller.updateExternalRuntime).mockReturnValueOnce(new Promise(() => undefined));
 
       await clickUpdate(provider);
 
       expect(controller.updateExternalRuntime).toHaveBeenCalledOnce();
       expect(controller.planRuntime).not.toHaveBeenCalled();
+      expect(host.textContent).toContain(`Updating ${entry.name}`);
+      expect(host.textContent).toContain(`Running ${entry.driver} update on this Mac.`);
+      expect(host.textContent).not.toContain("Preparing");
+      expect(host.textContent).not.toContain("private");
     });
+  });
+});
+
+describe("Droid and Pi Connect models", () => {
+  const droid = DRIVERS.find((entry) => entry.driver === "droid")!;
+  const pi = DRIVERS.find((entry) => entry.driver === "pi")!;
+  const connectModels = (element: HTMLElement) =>
+    frameButtons(element).filter((button) => button.textContent?.trim() === "Connect models");
+
+  it("keeps Connect models as the ready frame's one primary action", () => {
+    for (const entry of [droid, pi]) {
+      const element = view(ready(entry));
+      expect(connectModels(element)).toHaveLength(1);
+      expect(connectModels(element)[0]!.dataset.variant).toBe("ghost-primary");
+    }
+  });
+
+  it("offers Connect models as a quiet secondary action under another primary action", () => {
+    for (const provider of [managedUpdate(droid), managedUpdate(pi), signIn(droid)]) {
+      const element = view(provider);
+      const buttons = frameButtons(element);
+      expect(connectModels(element)).toHaveLength(1);
+      expect(buttons.at(-1)!.textContent?.trim()).toBe("Connect models");
+      expect(buttons.at(-1)!.dataset.variant).toBe("ghost-muted");
+      expect(buttons.filter((button) => button.dataset.variant === "ghost-primary")).toHaveLength(
+        1,
+      );
+    }
+  });
+
+  it("leaves Connect models out until Droid is installed and its probe has finished", () => {
+    expect(connectModels(view(notInstalled(droid)))).toHaveLength(0);
+    expect(connectModels(view({ ...ready(droid), probePending: true }))).toHaveLength(0);
+    expect(connectModels(view({ ...ready(pi), probePending: true }))).toHaveLength(0);
   });
 });

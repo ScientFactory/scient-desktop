@@ -16,6 +16,8 @@ import {
   AssistedSetupDiagnostics,
   AssistedSetupFrame,
   AssistedSetupStatus,
+  AssistedSetupUpdateButton,
+  AssistedSetupUpdateStatus,
   ProviderSetupIcon,
 } from "./AssistedProviderSetup";
 import {
@@ -30,8 +32,10 @@ import {
   providerLifecycleFailureMessage,
 } from "./providerConnectionPresentation";
 import {
-  hasExternalProviderUpdate,
-  hasManagedProviderUpdate,
+  externalProviderUpdate,
+  externalProviderUpdateProgress,
+  providerUpdateIssue,
+  providerUpdateOffer,
   startReviewedProviderRuntimeAction,
   updateManagedOrExternalProviderRuntime,
 } from "./providerLifecycleActions";
@@ -42,6 +46,7 @@ type PendingAction =
   | "install"
   | "repair"
   | "update"
+  | "external-update"
   | "sign-in"
   | "cancel-runtime"
   | "cancel-sign-in"
@@ -87,11 +92,13 @@ export function DroidInlineSetup(props: {
     props.provider.status === "ready" && isAuthenticated && props.provider.models.length > 0;
   const needsRepair =
     !props.managedRuntimePresentedExternally && needsManagedRuntimeRecovery(props.provider);
-  const updateAvailable =
-    (!props.managedRuntimePresentedExternally && hasManagedProviderUpdate(props.provider)) ||
-    hasExternalProviderUpdate(props.provider);
-  const updateState = props.provider.updateState;
-  const updateRunning = updateState?.status === "queued" || updateState?.status === "running";
+  const updateOffer = providerUpdateOffer(props.provider, {
+    managed: !props.managedRuntimePresentedExternally,
+  });
+  const externalUpdateProgress = externalProviderUpdateProgress(
+    props.provider,
+    pendingAction === "external-update",
+  );
   // Custom models need Droid itself, not a Factory account.
   const modelsActions =
     props.provider.installed && !props.provider.probePending ? props.modelsActions : undefined;
@@ -130,7 +137,7 @@ export function DroidInlineSetup(props: {
 
   const update = async () => {
     setLocalError(null);
-    setPendingAction("update");
+    setPendingAction(updateOffer?.path === "external" ? "external-update" : "update");
     try {
       const provider = await updateManagedOrExternalProviderRuntime(
         props.controller,
@@ -201,7 +208,7 @@ export function DroidInlineSetup(props: {
     pendingAction === "repair" ||
     pendingAction === "update"
   ) {
-    const action = activeRuntimeOperation?.action ?? pendingAction;
+    const action = activeRuntimeOperation?.action ?? pendingAction ?? "install";
     return (
       <SetupFrame>
         <AssistedSetupStatus
@@ -234,6 +241,20 @@ export function DroidInlineSetup(props: {
             </Button>
           </AssistedSetupActions>
         ) : null}
+      </SetupFrame>
+    );
+  }
+
+  if (externalUpdateProgress) {
+    return (
+      <SetupFrame>
+        <AssistedSetupUpdateStatus
+          name="Droid"
+          provider={props.provider}
+          trailing={props.accountAction}
+          update={externalProviderUpdate(props.provider)}
+          working={externalUpdateProgress}
+        />
       </SetupFrame>
     );
   }
@@ -345,52 +366,26 @@ export function DroidInlineSetup(props: {
     );
   }
 
-  if (isAuthenticated && isReady && updateRunning) {
+  if (isAuthenticated && isReady && updateOffer) {
+    const issue = providerUpdateIssue(props.provider, updateOffer, localError);
     return (
       <SetupFrame>
-        <AssistedSetupStatus
-          body={updateState?.message ?? "Updating and verifying Droid…"}
-          icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
-          title="Updating Droid"
-          trailing={props.accountAction}
-        />
-      </SetupFrame>
-    );
-  }
-
-  if (isAuthenticated && isReady && updateAvailable) {
-    const error = localError ?? (updateState?.status === "failed" ? updateState.message : null);
-    return (
-      <SetupFrame>
-        <AssistedSetupStatus
-          body={
-            error ??
-            "Install the reviewed update when you’re ready. Your current version remains available until the update is verified."
-          }
-          icon={
-            error ? (
-              <TriangleAlertIcon className="size-5 text-destructive" />
-            ) : (
-              <RefreshCwIcon className="size-5 text-primary" />
-            )
-          }
-          role={error ? "alert" : undefined}
-          title={error ? "Droid couldn’t be updated" : "Droid update available"}
+        <AssistedSetupUpdateStatus
+          issue={issue}
+          name="Droid"
+          provider={props.provider}
+          update={updateOffer}
         />
         <AssistedSetupActions>
           {props.accountAction}
-          <Button
-            aria-label={error ? "Retry Droid update" : "Update Droid"}
+          <AssistedSetupUpdateButton
+            name="Droid"
             onClick={() => void update()}
-            size="sm"
-            type="button"
-            variant="ghost-primary"
-          >
-            <RefreshCwIcon aria-hidden /> {error ? "Try again" : "Update"}
-          </Button>
+            retry={issue !== null}
+          />
         </AssistedSetupActions>
         {secondaryActions}
-        {error ? runtimeDiagnostics : null}
+        {issue ? runtimeDiagnostics : null}
       </SetupFrame>
     );
   }

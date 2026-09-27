@@ -140,7 +140,7 @@ describe("Pi composer setup", () => {
     const markup = render(withRuntime(base, { actions: ["update", "repair", "remove"] }));
     expect(markup).toContain(`${name} update available`);
     expect(buttons(markup)).toEqual([
-      { variant: "ghost-primary", label: "Update" },
+      { variant: "ghost-primary", label: " Update" },
       { variant: "ghost-muted", label: "Connect models" },
     ]);
   });

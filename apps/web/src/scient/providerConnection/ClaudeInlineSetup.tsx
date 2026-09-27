@@ -16,15 +16,21 @@ import {
   AssistedSetupDiagnostics,
   AssistedSetupFrame,
   AssistedSetupStatus,
+  AssistedSetupUpdateButton,
+  AssistedSetupUpdateStatus,
   ProviderSetupIcon,
 } from "./AssistedProviderSetup";
 import {
-  hasExternalClaudeUpdate,
-  hasManagedClaudeUpdate,
   startClaudeSignIn,
   startReviewedClaudeRuntimeAction,
   updateClaudeRuntime,
 } from "./claudeLifecycleActions";
+import {
+  externalProviderUpdate,
+  externalProviderUpdateProgress,
+  providerUpdateIssue,
+  providerUpdateOffer,
+} from "./providerLifecycleActions";
 import {
   cancelRuntimeActionLabel,
   failedRuntimeOperationMessage,
@@ -44,6 +50,7 @@ type PendingAction =
   | "install"
   | "repair"
   | "update"
+  | "external-update"
   | "sign-in"
   | "submit-code"
   | "cancel-runtime"
@@ -131,12 +138,13 @@ export function ClaudeInlineSetup(props: {
       : signInMethod === "claude_console" && supportsSubscriptionSignIn
         ? "claude_subscription"
         : null;
-  const managedUpdateAvailable =
-    !props.managedRuntimePresentedExternally && hasManagedClaudeUpdate(props.provider);
-  const externalUpdateAvailable = hasExternalClaudeUpdate(props.provider);
-  const updateAvailable = managedUpdateAvailable || externalUpdateAvailable;
-  const updateState = props.provider.updateState;
-  const updateRunning = updateState?.status === "queued" || updateState?.status === "running";
+  const updateOffer = providerUpdateOffer(props.provider, {
+    managed: !props.managedRuntimePresentedExternally,
+  });
+  const externalUpdateProgress = externalProviderUpdateProgress(
+    props.provider,
+    pendingAction === "external-update",
+  );
   const needsRuntimeRepair =
     !props.managedRuntimePresentedExternally && needsManagedRuntimeRecovery(props.provider);
 
@@ -154,7 +162,7 @@ export function ClaudeInlineSetup(props: {
 
   const update = async () => {
     setLocalError(null);
-    setPendingAction("update");
+    setPendingAction(updateOffer?.path === "external" ? "external-update" : "update");
     try {
       await updateClaudeRuntime(props.controller, props.provider);
     } catch (error) {
@@ -313,6 +321,20 @@ export function ClaudeInlineSetup(props: {
     );
   }
 
+  if (externalUpdateProgress) {
+    return (
+      <SetupFrame>
+        <AssistedSetupUpdateStatus
+          name="Claude"
+          provider={props.provider}
+          trailing={props.accountAction}
+          update={externalProviderUpdate(props.provider)}
+          working={externalUpdateProgress}
+        />
+      </SetupFrame>
+    );
+  }
+
   if (needsRuntimeRepair) {
     const error = localError ?? managedRuntimeRepairMessage(props.provider, "Claude");
     return (
@@ -449,52 +471,25 @@ export function ClaudeInlineSetup(props: {
         />
       );
     }
-    if (updateRunning) {
-      return (
-        <StatusFrame
-          accountAction={props.accountAction}
-          title="Updating Claude"
-          body={updateState?.message ?? "Updating and verifying Claude…"}
-          loading
-        />
-      );
-    }
-    if (updateAvailable) {
-      const error = localError ?? (updateState?.status === "failed" ? updateState.message : null);
+    if (updateOffer) {
+      const issue = providerUpdateIssue(props.provider, updateOffer, localError);
       return (
         <SetupFrame>
-          <AssistedSetupStatus
-            body={
-              error ?? (
-                <>
-                  Install the reviewed update when you’re ready. Your current version remains
-                  available until the update is verified.
-                </>
-              )
-            }
-            icon={
-              error ? (
-                <TriangleAlertIcon className="size-5 text-destructive" />
-              ) : (
-                <RefreshCwIcon className="size-5 text-primary" />
-              )
-            }
-            role={error ? "alert" : undefined}
-            title={error ? "Claude couldn’t be updated" : "Claude update available"}
+          <AssistedSetupUpdateStatus
+            issue={issue}
+            name="Claude"
+            provider={props.provider}
+            update={updateOffer}
           />
           <AssistedSetupActions>
             {props.accountAction}
-            <Button
-              aria-label={error ? "Retry Claude update" : "Update Claude"}
+            <AssistedSetupUpdateButton
+              name="Claude"
               onClick={() => void update()}
-              size="sm"
-              type="button"
-              variant="ghost-primary"
-            >
-              <RefreshCwIcon aria-hidden /> {error ? "Try again" : "Update"}
-            </Button>
+              retry={issue !== null}
+            />
           </AssistedSetupActions>
-          {error ? runtimeDiagnostics : null}
+          {issue ? runtimeDiagnostics : null}
         </SetupFrame>
       );
     }
@@ -617,7 +612,6 @@ function StatusFrame(props: {
   readonly diagnostics?: ReactNode;
   readonly title: string;
   readonly body: ReactNode;
-  readonly loading?: boolean;
   readonly warning?: boolean;
 }) {
   return (
@@ -625,9 +619,7 @@ function StatusFrame(props: {
       <AssistedSetupStatus
         body={props.body}
         icon={
-          props.loading ? (
-            <LoaderIcon className="size-5 animate-spin text-primary" />
-          ) : props.warning ? (
+          props.warning ? (
             <TriangleAlertIcon className="size-5 text-warning" />
           ) : (
             <CheckCircle2Icon className="size-5 text-success" />

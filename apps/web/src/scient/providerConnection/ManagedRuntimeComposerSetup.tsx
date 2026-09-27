@@ -20,6 +20,8 @@ import {
   AssistedSetupDiagnostics,
   AssistedSetupFrame,
   AssistedSetupStatus,
+  AssistedSetupUpdateButton,
+  AssistedSetupUpdateStatus,
   ProviderSetupIcon,
 } from "./AssistedProviderSetup";
 import { ConnectModelsButton } from "./ConnectModelsButton";
@@ -34,12 +36,15 @@ import {
   providerRuntimeComputerLabel,
 } from "./providerConnectionPresentation";
 import {
-  hasManagedProviderUpdate,
+  externalProviderUpdate,
+  externalProviderUpdateProgress,
+  providerUpdateIssue,
+  providerUpdateOffer,
   startReviewedProviderRuntimeAction,
 } from "./providerLifecycleActions";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
 
-type Pending = "install" | "repair" | "update" | "cancel";
+type Pending = "install" | "repair" | "update" | "external-update" | "cancel";
 
 const WORKING_VERBS = {
   install: "Installing",
@@ -69,7 +74,11 @@ export function ManagedRuntimeComposerSetup(props: {
   const runtime = props.provider.connection?.runtime;
   const operation = runtime?.operation ?? null;
   const active = isActiveProviderRuntimeOperation(operation) ? operation : null;
-  const failedOperationMessage = operation?.status === "failed" ? operation.message : null;
+  const updateOffer = providerUpdateOffer(props.provider);
+  const externalUpdateProgress = externalProviderUpdateProgress(
+    props.provider,
+    pending === "external-update",
+  );
 
   const run = async (next: Pending) => {
     setLocalError(null);
@@ -77,6 +86,8 @@ export function ManagedRuntimeComposerSetup(props: {
     try {
       if (next === "cancel") {
         if (active) await props.controller.cancelRuntime(active.operationId);
+      } else if (next === "external-update") {
+        await props.controller.updateExternalRuntime();
       } else {
         await startReviewedProviderRuntimeAction(props.controller, next);
       }
@@ -86,7 +97,7 @@ export function ManagedRuntimeComposerSetup(props: {
           cause,
           next === "cancel"
             ? `Scient could not cancel ${name} setup.`
-            : `Scient could not ${next} ${name}.`,
+            : `Scient could not ${next === "external-update" ? "update" : next} ${name}.`,
         ),
       );
     } finally {
@@ -106,7 +117,7 @@ export function ManagedRuntimeComposerSetup(props: {
       </AssistedSetupActions>
     );
   const primaryAction = (
-    action: Exclude<Pending, "cancel">,
+    action: "install" | "repair",
     label: string,
     accessibleName: string,
     icon: ReactNode,
@@ -125,7 +136,7 @@ export function ManagedRuntimeComposerSetup(props: {
     </AssistedSetupActions>
   );
 
-  if (active || (pending !== null && pending !== "cancel")) {
+  if (active || pending === "install" || pending === "repair" || pending === "update") {
     const action: ProviderManagedRuntimeAction =
       active?.action ?? (pending === "repair" || pending === "update" ? pending : "install");
     return (
@@ -155,6 +166,19 @@ export function ManagedRuntimeComposerSetup(props: {
             </Button>
           </AssistedSetupActions>
         ) : null}
+      </AssistedSetupFrame>
+    );
+  }
+
+  if (externalUpdateProgress) {
+    return (
+      <AssistedSetupFrame>
+        <AssistedSetupUpdateStatus
+          name={name}
+          provider={props.provider}
+          update={externalProviderUpdate(props.provider)}
+          working={externalUpdateProgress}
+        />
       </AssistedSetupFrame>
     );
   }
@@ -240,33 +264,25 @@ export function ManagedRuntimeComposerSetup(props: {
     );
   }
 
-  if (hasManagedProviderUpdate(props.provider)) {
-    const error = localError ?? (operation?.action === "update" ? failedOperationMessage : null);
+  if (updateOffer) {
+    const issue = providerUpdateIssue(props.provider, updateOffer, localError);
     return (
       <AssistedSetupFrame>
-        <AssistedSetupStatus
-          body={
-            error ??
-            "Install the reviewed update when you’re ready. Your current version remains available until the update is verified."
-          }
-          icon={
-            error ? (
-              <TriangleAlertIcon className="size-5 text-destructive" />
-            ) : (
-              <RefreshCwIcon className="size-5 text-primary" />
-            )
-          }
-          role={error ? "alert" : undefined}
-          title={error ? `${name} couldn’t be updated` : `${name} update available`}
+        <AssistedSetupUpdateStatus
+          issue={issue}
+          name={name}
+          provider={props.provider}
+          update={updateOffer}
         />
-        {primaryAction(
-          "update",
-          error ? "Try again" : "Update",
-          error ? `Retry ${name} update` : `Update ${name}`,
-          <RefreshCwIcon aria-hidden />,
-        )}
+        <AssistedSetupActions>
+          <AssistedSetupUpdateButton
+            name={name}
+            onClick={() => void run(updateOffer.path === "external" ? "external-update" : "update")}
+            retry={issue !== null}
+          />
+        </AssistedSetupActions>
         {connectModels("setup-secondary")}
-        {error ? <AssistedSetupDiagnostics displayName={name} provider={props.provider} /> : null}
+        {issue ? <AssistedSetupDiagnostics displayName={name} provider={props.provider} /> : null}
       </AssistedSetupFrame>
     );
   }

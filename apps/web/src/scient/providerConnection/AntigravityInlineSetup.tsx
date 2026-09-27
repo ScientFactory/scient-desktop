@@ -19,15 +19,22 @@ import {
   AssistedSetupDiagnostics,
   AssistedSetupFrame,
   AssistedSetupStatus,
+  AssistedSetupUpdateButton,
+  AssistedSetupUpdateStatus,
   ProviderSetupIcon,
 } from "./AssistedProviderSetup";
 import {
   cancelAntigravitySignIn,
-  hasManagedAntigravityUpdate,
   startAntigravitySignInAndOpenAuthorizationPage,
   startReviewedAntigravityRuntimeAction,
   updateAntigravityRuntime,
 } from "./antigravityLifecycleActions";
+import {
+  externalProviderUpdate,
+  externalProviderUpdateProgress,
+  providerUpdateIssue,
+  providerUpdateOffer,
+} from "./providerLifecycleActions";
 import {
   cancelRuntimeActionLabel,
   failedRuntimeOperationMessage,
@@ -126,12 +133,14 @@ export function AntigravityInlineSetup(props: {
   const isAuthenticated = props.provider.auth.status === "authenticated";
   const hasModels = props.provider.models.length > 0;
   const isReady = props.provider.status === "ready" && hasModels && isAuthenticated;
-  const managedUpdateAvailable =
-    !props.managedRuntimePresentedExternally && hasManagedAntigravityUpdate(props.provider);
+  // The composer offers Antigravity's reviewed managed updates only.
+  const updateOffer = providerUpdateOffer(props.provider, {
+    managed: !props.managedRuntimePresentedExternally,
+    external: false,
+  });
   const needsRuntimeRepair =
     !props.managedRuntimePresentedExternally && needsManagedRuntimeRecovery(props.provider);
-  const updateState = props.provider.updateState;
-  const updateRunning = updateState?.status === "queued" || updateState?.status === "running";
+  const externalUpdateProgress = externalProviderUpdateProgress(props.provider, false);
   const removedSuccessfully =
     runtimeOperation?.status === "succeeded" && runtimeOperation.action === "remove";
 
@@ -243,6 +252,20 @@ export function AntigravityInlineSetup(props: {
             </Button>
           </AssistedSetupActions>
         ) : null}
+      </SetupFrame>
+    );
+  }
+
+  if (externalUpdateProgress) {
+    return (
+      <SetupFrame>
+        <AssistedSetupUpdateStatus
+          name="Antigravity"
+          provider={props.provider}
+          trailing={props.accountAction}
+          update={externalProviderUpdate(props.provider)}
+          working={externalUpdateProgress}
+        />
       </SetupFrame>
     );
   }
@@ -576,39 +599,27 @@ export function AntigravityInlineSetup(props: {
     );
   }
 
-  if (updateRunning) {
-    return (
-      <StatusFrame
-        accountAction={props.accountAction}
-        body={updateState?.message ?? "Updating and verifying Antigravity…"}
-        loading
-        title="Updating Antigravity"
-      />
-    );
-  }
-
-  if (managedUpdateAvailable) {
+  if (updateOffer) {
+    const issue = providerUpdateIssue(props.provider, updateOffer, localError);
     return (
       <SetupFrame>
-        <AssistedSetupStatus
-          body="Install the reviewed update when you’re ready. The current version remains active until verification succeeds."
-          icon={<RefreshCwIcon className="size-5 text-primary" />}
-          title="Antigravity update available"
+        <AssistedSetupUpdateStatus
+          issue={issue}
+          name="Antigravity"
+          provider={props.provider}
+          update={updateOffer}
         />
         <AssistedSetupActions>
           {props.accountAction}
-          <Button
-            aria-label="Update Antigravity"
+          <AssistedSetupUpdateButton
+            name="Antigravity"
             onClick={() =>
               void run("update", () => updateAntigravityRuntime(props.controller, props.provider))
             }
-            size="sm"
-            type="button"
-            variant="ghost-primary"
-          >
-            <RefreshCwIcon aria-hidden /> Update
-          </Button>
+            retry={issue !== null}
+          />
         </AssistedSetupActions>
+        {issue ? runtimeDiagnostics : null}
       </SetupFrame>
     );
   }
@@ -642,7 +653,6 @@ function StatusFrame(props: {
   readonly diagnostics?: ReactNode;
   readonly title: string;
   readonly body: ReactNode;
-  readonly loading?: boolean;
   readonly warning?: boolean;
 }) {
   return (
@@ -650,9 +660,7 @@ function StatusFrame(props: {
       <AssistedSetupStatus
         body={props.body}
         icon={
-          props.loading ? (
-            <LoaderIcon className="size-5 animate-spin text-primary" />
-          ) : props.warning ? (
+          props.warning ? (
             <TriangleAlertIcon className="size-5 text-warning" />
           ) : (
             <CheckCircle2Icon className="size-5 text-success" />
