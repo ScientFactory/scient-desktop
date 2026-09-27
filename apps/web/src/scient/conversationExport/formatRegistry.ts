@@ -1,7 +1,10 @@
 import type {
   ConversationExportFormat,
   ConversationExportOptions,
+  DocumentWarning,
   ScientConversationExportPreparation,
+  ScientConversationExportRequest,
+  ScopedThreadRef,
 } from "@t3tools/contracts";
 
 /**
@@ -28,6 +31,28 @@ export interface ConversationExportFormatRegistration {
   readonly variant?: ConversationExportVariant;
   /** A one-line note shown while the format is selected. */
   readonly note?: (preparation: ScientConversationExportPreparation) => string | null;
+  /**
+   * Whether this client can produce the format, beyond the server's own
+   * capability. PDF, for example, needs a current Scient desktop.
+   */
+  readonly clientAvailability?: () => ConversationExportClientAvailability;
+  /**
+   * Produces the export on this client instead of through the server's export
+   * request, and presents the result itself.
+   */
+  readonly produce?: (input: {
+    readonly threadRef: ScopedThreadRef;
+    readonly request: ScientConversationExportRequest;
+  }) => Promise<ConversationExportProduced>;
+}
+
+export type ConversationExportClientAvailability =
+  | { readonly available: true }
+  | { readonly available: false; readonly reason: string };
+
+export interface ConversationExportProduced {
+  readonly title: string;
+  readonly warnings: ReadonlyArray<DocumentWarning>;
 }
 
 const registrations: ConversationExportFormatRegistration[] = [];

@@ -73,6 +73,11 @@ enabled; headings become bookmarks.
 - **Markdown editor → More actions → Export ▸ PDF.** Available only in the Scient desktop app.
   A browser client, or a desktop too old to have the document page, shows the item disabled with
   the reason.
+- **Thread menu → Export… → PDF.** The dialog's work-log, reasoning, and range options select the
+  snapshot; `documents.prepareConversationPdf` builds the conversation's bundle with the
+  conversation package and captures it; the desktop prints it and the PDF opens in the reader. The
+  format is registered in the export format registry and is unavailable, with the reason, without
+  a current Scient desktop.
 - **`scient_document_export`** (agent tool). Exports an existing project-relative `.md` or
   `.markdown` file to an explicit project-relative `.pdf` path. It uses the same workspace
   authority, output staging, and partial-publication receipt as `scient_pdf_build`, which is
@@ -83,8 +88,9 @@ enabled; headings become bookmarks.
 
 `pnpm --dir apps/desktop test:document-pdf` renders a fixture set through Vite and the real
 desktop renderer in Electron — long code and tables, inline and display math, Mermaid, captured,
-missing, and remote images, mixed Hebrew and English, headings near page ends, and a long
-conversation — and checks the PDFs with PDF.js: page counts, logical text order, bookmarks,
+missing, and remote images, mixed Hebrew and English, headings near page ends, a long
+conversation, and a conversation built through the real export path (the conversation package's
+snapshot and bundle, then the server's page-input builder) — and checks the PDFs with PDF.js: page counts, logical text order, bookmarks,
 tagging, repeated table headers, and refusal of a stale, wrong-kind, or invalid capture. It writes
 the PDFs to `build/document-pdf-fixtures/` for visual review. Like the pagination check, it needs
 the locked Electron runtime and a graphical session.

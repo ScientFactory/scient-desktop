@@ -65,13 +65,25 @@ export async function runMarkdownPdfExport(
     expectedRevision:
       snapshot.baselineRevision as ScientMarkdownPdfPrepareInput["expectedRevision"],
   });
+  return printAndPublishDocumentPdf(dependencies, prepared, MARKDOWN_PDF_TOO_LARGE_MESSAGE);
+}
+
+/**
+ * The steps every document PDF shares once the server has captured it: print
+ * the captured page on this desktop, then publish exactly that capture.
+ */
+export async function printAndPublishDocumentPdf(
+  dependencies: Pick<MarkdownPdfExportDependencies, "render" | "publish">,
+  prepared: ScientDocumentPdfPrepared,
+  tooLargeMessage: string,
+): Promise<ScientDocumentPdfPublished> {
   const outcome = await dependencies.render({
     inputRelativeUrl: prepared.inputRelativeUrl,
     expected: prepared.expected,
   });
   if (outcome._tag === "rejected") {
     throw new MarkdownPdfExportError(
-      outcome.reason === "too-large" ? MARKDOWN_PDF_TOO_LARGE_MESSAGE : outcome.detail,
+      outcome.reason === "too-large" ? tooLargeMessage : outcome.detail,
     );
   }
   return dependencies.publish({ captureId: prepared.expected.captureId, render: outcome.result });

@@ -23,6 +23,14 @@ export function createScientDocumentPdfEnvironmentAtoms<R, E>(
           JSON.stringify([environmentId, input.cwd, input.relativePath]),
       },
     }),
+    prepareConversation: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:scient-document-pdf:prepare-conversation",
+      tag: WS_METHODS.documentsPrepareConversationPdf,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.threadId]),
+      },
+    }),
     publish: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:scient-document-pdf:publish",
       tag: WS_METHODS.documentsPublishDocumentPdf,

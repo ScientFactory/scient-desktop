@@ -129,6 +129,21 @@ function ConversationExportDialog({ threadRef }: { readonly threadRef: ScopedThr
     setBusy(delivery);
     setError(null);
     try {
+      const registration = selectedRegistration(state, registrations);
+      if (registration?.produce && delivery === "file") {
+        const produced = await registration.produce({ threadRef, request });
+        toastManager.add(
+          produced.warnings.length > 0
+            ? {
+                type: "warning",
+                title: `${produced.title} with notes`,
+                description: produced.warnings.map((warning) => warning.message).join("\n"),
+              }
+            : { type: "success", title: produced.title },
+        );
+        closeRequest();
+        return;
+      }
       const result = await exportConversation(threadRef.environmentId, request);
       if (delivery === "clipboard") {
         await copyConversationExport(result.text ?? "");

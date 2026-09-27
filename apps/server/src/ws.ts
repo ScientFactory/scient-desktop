@@ -162,6 +162,8 @@ import * as GeneratedDocumentStore from "./scient/documentArtifacts/GeneratedDoc
 import { publishBrowserPdfExport } from "./scient/documentArtifacts/BrowserPdfExportPublication.ts";
 import { publishCapturedDocumentPdf } from "./scient/documentExport/DocumentPdfPublication.ts";
 import { prepareMarkdownPdf } from "./scient/documentExport/MarkdownPdfPreparation.ts";
+import { prepareConversationPdf } from "./scient/documentExport/ConversationPdfPreparation.ts";
+import { ConversationExportService } from "./scient/conversationExport/ConversationExportService.ts";
 import * as AnalysisService from "./scient/analysis/AnalysisService.ts";
 import { makeComputeRpcGateway } from "./scient/compute/ComputeRpcGateway.ts";
 import { WorkspaceBindingResolver } from "./scient/projectScope/WorkspaceBindingResolver.ts";
@@ -876,6 +878,7 @@ const makeWsRpcLayer = (
       const agentSessionScanner = yield* AgentSessionScanner.AgentSessionScanner;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const generatedDocuments = yield* GeneratedDocumentStore.GeneratedDocumentStore;
+      const conversationExports = yield* ConversationExportService;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
       const rpcClientIds = yield* Ref.make(new Set<RpcClientId>());
       yield* Effect.addFinalizer(() =>
@@ -3895,6 +3898,14 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.documentsPrepareMarkdownPdf, prepareMarkdownPdf(input), {
             "rpc.aggregate": "documents",
           }),
+        [WS_METHODS.documentsPrepareConversationPdf]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.documentsPrepareConversationPdf,
+            prepareConversationPdf(input).pipe(
+              Effect.provideService(ConversationExportService, conversationExports),
+            ),
+            { "rpc.aggregate": "documents" },
+          ),
         [WS_METHODS.documentsPublishDocumentPdf]: (input) =>
           observeRpcEffect(
             WS_METHODS.documentsPublishDocumentPdf,
@@ -4676,6 +4687,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
     const analysis = yield* AnalysisService.AnalysisService;
     const compute = yield* ComputeSessionService.ComputeSessionService;
     const runtimePreferences = yield* ScientificRuntimePreferences;
+    const conversationExports = yield* ConversationExportService;
     const sql = yield* SqlClient.SqlClient;
     return HttpRouter.add(
       "GET",
@@ -4748,6 +4760,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               Layer.provide(Layer.succeed(AnalysisService.AnalysisService, analysis)),
               Layer.provide(Layer.succeed(ComputeSessionService.ComputeSessionService, compute)),
               Layer.provide(Layer.succeed(ScientificRuntimePreferences, runtimePreferences)),
+              Layer.provide(Layer.succeed(ConversationExportService, conversationExports)),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
                   Layer.provide(

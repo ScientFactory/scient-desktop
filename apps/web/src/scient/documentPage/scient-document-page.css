@@ -231,6 +231,16 @@ body {
   object-fit: contain;
 }
 
+/* Attachment lists show images as thumbnails beside their details. */
+.scient-document li .scient-document-image {
+  vertical-align: top;
+  margin-inline-end: 0.5em;
+}
+
+.scient-document li .scient-document-image img {
+  max-height: 60mm;
+}
+
 .scient-document .scient-document-image-caption {
   display: block;
   color: var(--scient-document-muted);

@@ -47,11 +47,40 @@ const preparation: ScientConversationExportPreparation = {
 const registrations = registeredConversationExportFormats();
 
 describe("export dialog", () => {
-  it("registers Markdown through the format registry", () => {
-    expect(registrations.map((entry) => entry.format)).toEqual(["markdown"]);
+  it("registers Markdown and PDF through the format registry", () => {
+    expect(registrations.map((entry) => entry.format)).toEqual(["markdown", "pdf"]);
+    // This server advertises only Markdown, so PDF is listed as unavailable.
     expect(exportFormatOptions(preparation, registrations)).toEqual([
       { registration: registrations[0], available: true, unavailableReason: null },
+      {
+        registration: registrations[1],
+        available: false,
+        unavailableReason: "Not available on this Scient.",
+      },
     ]);
+  });
+
+  it("adds a format's client requirement to the server's capability", () => {
+    const withPdf = {
+      ...preparation,
+      formats: [
+        ...preparation.formats,
+        { format: "pdf" as const, available: true, unavailableReason: null },
+      ],
+    };
+    const pdf: ConversationExportFormatRegistration = {
+      format: "pdf",
+      label: "PDF",
+      supportsCopy: false,
+      clientAvailability: () => ({ available: false, reason: "Needs the desktop app." }),
+    };
+    expect(exportFormatOptions(withPdf, [pdf])).toEqual([
+      { registration: pdf, available: false, unavailableReason: "Needs the desktop app." },
+    ]);
+    expect(
+      exportFormatOptions(withPdf, [{ ...pdf, clientAvailability: () => ({ available: true }) }])[0]
+        ?.available,
+    ).toBe(true);
   });
 
   it("starts with work log and reasoning off and the whole conversation", () => {
@@ -168,6 +197,7 @@ describe("export dialog", () => {
     });
     expect(registeredConversationExportFormats().map((entry) => entry.format)).toEqual([
       "markdown",
+      "pdf",
       "scic",
     ]);
   });

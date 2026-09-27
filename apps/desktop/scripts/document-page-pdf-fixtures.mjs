@@ -326,7 +326,146 @@ function fixtures(png) {
         outlineCount: 121,
       },
     },
+    {
+      name: "conversation-export",
+      build: () => realConversationCapture(png),
+      expect: {
+        minPages: 8,
+        order: ["CONV_Q_001", "CONV_A_001", "CONV_Q_030", "CONV_TOOL_030", "CONV_A_060"],
+        all: Array.from({ length: 60 }, (_, i) => [
+          `CONV_Q_${pad(i + 1)}`,
+          `CONV_A_${pad(i + 1)}`,
+        ]).flat(),
+        absent: ["scient:", "sk-", "$$"],
+        blocks: { images: 1, diagrams: 5, displayMath: 4 },
+        outlineMin: 120,
+      },
+    },
   ];
+}
+
+/**
+ * A long conversation through the real conversation path: a thread becomes a
+ * snapshot and a document bundle with the conversation package (PR 1's
+ * adapter), and the bundle becomes the page input with the server's capture
+ * builder, exactly as a conversation PDF export does.
+ */
+async function realConversationCapture(png) {
+  const conversation = await import(
+    new URL("../../../packages/scient-conversation/src/index.ts", import.meta.url).href
+  );
+  const capture = await import(
+    new URL("../../server/src/scient/documentExport/documentPageInput.ts", import.meta.url).href
+  );
+  let clock = Date.parse("2026-09-27T09:00:00.000Z");
+  const at = () => new Date((clock += 37_000)).toISOString();
+  const image = {
+    type: "image",
+    id: "thread-fixture-11111111-1111-4111-8111-111111111111",
+    name: "figure.png",
+    mimeType: "image/png",
+    sizeBytes: png.byteLength,
+  };
+  const messages = [];
+  const activities = [];
+  for (let pair = 1; pair <= 60; pair += 1) {
+    const turnId = `turn-${pair}`;
+    const userAt = at();
+    messages.push({
+      id: `user-${pair}`,
+      role: "user",
+      text: `CONV_Q_${pad(pair)} Please check step ${pair}.\nKeep this second line.`,
+      turnId: null,
+      streaming: false,
+      createdAt: userAt,
+      updatedAt: userAt,
+      ...(pair === 1 ? { attachments: [image] } : {}),
+    });
+    if (pair % 10 === 0) {
+      activities.push({
+        id: `activity-${pair}`,
+        kind: "tool.completed",
+        tone: "tool",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          toolCallId: `call-${pair}`,
+          title: "Ran command",
+          data: { item: { command: `echo CONV_TOOL_${pad(pair)}` } },
+        },
+        turnId,
+        createdAt: at(),
+      });
+    }
+    const answerAt = at();
+    messages.push({
+      id: `assistant-${pair}`,
+      role: "assistant",
+      text: [
+        `CONV_A_${pad(pair)} Here is what I found for step ${pair}.`,
+        "",
+        pair % 15 === 0 ? `$$\\sum_{i=1}^{${pair}} i = ${(pair * (pair + 1)) / 2}$$` : "",
+        pair % 12 === 0 ? "```mermaid\nflowchart LR\n  Ask --> Answer\n```" : "",
+      ].join("\n"),
+      turnId,
+      streaming: false,
+      createdAt: answerAt,
+      updatedAt: answerAt,
+    });
+  }
+  const thread = {
+    id: "thread-fixture",
+    projectId: null,
+    workspaceRoot: "/Users/someone/project",
+    title: "Long conversation",
+    modelSelection: { instanceId: "codex", model: "gpt-5" },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    pullRequests: [],
+    latestTurn: null,
+    createdAt: "2026-09-27T09:00:00.000Z",
+    updatedAt: "2026-09-27T12:00:00.000Z",
+    archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
+    deletedAt: null,
+    messages,
+    proposedPlans: [],
+    activities,
+    checkpoints: [],
+    session: null,
+  };
+  const content = conversation.buildConversationSnapshot({
+    thread,
+    snapshotSequence: 10,
+    threadSequence: 9,
+    capturedAt: "2026-09-27T12:00:01.000Z",
+    selection: { workLog: true, reasoning: false, throughMessageId: null },
+    isAttachmentAvailable: () => true,
+  });
+  const snapshot = {
+    ...content,
+    contentDigest: sha256(conversation.canonicalSnapshotContent(content)),
+  };
+  const { bundle } = conversation.buildConversationDocument({
+    snapshot,
+    exportValue: "7f3c9a2e41b8",
+    timeZone: "UTC",
+    resolveAttachment: () => ({ _tag: "bytes", bytes: png, sha256: sha256(png) }),
+  });
+  const sourceDigest = capture.bundleSourceDigest(bundle);
+  NodeAssert.ok(sourceDigest, "the conversation bundle must carry its content digest");
+  const built = capture.buildDocumentPageCapture({
+    bundle,
+    captureId: NodeCrypto.randomUUID(),
+    sourceDigest,
+  });
+  return {
+    input: built.pageInput,
+    files: Object.fromEntries(built.files.map((file) => [file.path, file.bytes])),
+  };
 }
 
 function pageInput(fixture) {
@@ -479,8 +618,9 @@ async function run() {
 
     for (const fixture of fixtures(png)) {
       phase = `rendering ${fixture.name}`;
-      const input = pageInput(fixture);
-      const inputUrl = register(input, fixture.files ?? {});
+      const built = fixture.build ? await fixture.build() : null;
+      const input = built?.input ?? pageInput(fixture);
+      const inputUrl = register(input, built?.files ?? fixture.files ?? {});
       const outcome = await withTimeout(
         Effect.runPromise(
           render({
@@ -561,6 +701,9 @@ async function run() {
           outline.some((entry) => entry.title === title),
           `${fixture.name}: bookmark "${title}" missing from ${JSON.stringify(outline)}`,
         );
+      }
+      if (expectation.outlineMin) {
+        NodeAssert.ok(outline.length >= expectation.outlineMin, `${fixture.name}: bookmarks`);
       }
       if (expectation.outlineCount) {
         NodeAssert.equal(outline.length, expectation.outlineCount, `${fixture.name}: bookmarks`);

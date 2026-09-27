@@ -12,6 +12,7 @@ import {
   ScientConversationExportError,
   type ConversationExportFormat,
   type ConversationExportFormatCapability,
+  type DocumentBundle,
   type DocumentWarning,
   type ScientConversationExportPreparation,
   type ScientConversationExportRequest,
@@ -45,10 +46,18 @@ import {
 const MARKDOWN_MEDIA_TYPE = "text/markdown; charset=utf-8";
 const ZIP_MEDIA_TYPE = "application/zip";
 
-/** Formats this server produces. PDF, Word, and `.scic` register here when they land. */
+/**
+ * Formats this server produces. Word and `.scic` register here when they land.
+ * PDF is captured here and printed by a connected Scient desktop; clients add
+ * that requirement to the server's capability.
+ */
 const FORMAT_CAPABILITIES: ReadonlyArray<ConversationExportFormatCapability> = [
   { format: "markdown", available: true, unavailableReason: null },
+  { format: "pdf", available: true, unavailableReason: null },
 ];
+
+/** Formats `produce` writes on the server; the rest are produced from `document`. */
+const SERVER_WRITTEN_FORMATS: ReadonlySet<ConversationExportFormat> = new Set(["markdown"]);
 
 export type ProducedExportOutput =
   | {
@@ -59,6 +68,12 @@ export type ProducedExportOutput =
       readonly byteLength: number;
     }
   | { readonly _tag: "text"; readonly text: string };
+
+/** A conversation's document bundle for a writer outside this service, such as PDF. */
+export interface ConversationExportDocument {
+  readonly bundle: DocumentBundle;
+  readonly messageCount: number;
+}
 
 export interface ProducedExport {
   readonly exportId: string;
@@ -83,6 +98,14 @@ export class ConversationExportService extends Context.Service<
     readonly produce: (
       request: ScientConversationExportRequest,
     ) => Effect.Effect<ProducedExport, ConversationExportServiceError>;
+    /**
+     * The document bundle for the request's options (work log, reasoning,
+     * range), with Scient's storage locations redacted, for writers that run
+     * elsewhere.
+     */
+    readonly document: (
+      request: ScientConversationExportRequest,
+    ) => Effect.Effect<ConversationExportDocument, ConversationExportServiceError>;
   }
 >()("t3/scient/conversationExport/ConversationExportService") {}
 
@@ -190,21 +213,10 @@ const make = Effect.gen(function* () {
     };
   });
 
-  const produce: ConversationExportService["Service"]["produce"] = Effect.fn(
-    "ConversationExportService.produce",
-  )(function* (request) {
-    const capability = FORMAT_CAPABILITIES.find((entry) => entry.format === request.format);
-    if (!capability?.available) {
-      return yield* reject(
-        "format-unavailable",
-        capability?.unavailableReason ?? "This format is not available on this Scient.",
-      );
-    }
-    const packaging = request.options.markdownPackaging ?? "text";
-    if (request.delivery === "clipboard" && packaging !== "text") {
-      return yield* reject("delivery-unsupported", "Only text-only Markdown can be copied.");
-    }
-
+  /** Captures the snapshot for the request's options and builds its document. */
+  const buildDocument = Effect.fn("ConversationExportService.buildDocument")(function* (
+    request: ScientConversationExportRequest,
+  ) {
     const { snapshot, attachmentFiles } = yield* capture({
       threadId: request.threadId,
       selection: {
@@ -243,8 +255,6 @@ const make = Effect.gen(function* () {
     }
 
     const exportValue = Encoding.encodeHex(yield* crypto.randomBytes(6).pipe(Effect.orDie));
-    const exportId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
-    const exported = DateTime.formatIso(yield* DateTime.now);
     const document = buildConversationDocument({
       snapshot,
       exportValue,
@@ -255,6 +265,33 @@ const make = Effect.gen(function* () {
     if (document.messageCount === 0) {
       return yield* reject("nothing-to-export", "This conversation has no completed messages yet.");
     }
+    return { snapshot, document: { ...document, exportValue } };
+  });
+
+  const produce: ConversationExportService["Service"]["produce"] = Effect.fn(
+    "ConversationExportService.produce",
+  )(function* (request) {
+    const capability = FORMAT_CAPABILITIES.find((entry) => entry.format === request.format);
+    if (!capability?.available) {
+      return yield* reject(
+        "format-unavailable",
+        capability?.unavailableReason ?? "This format is not available on this Scient.",
+      );
+    }
+    if (!SERVER_WRITTEN_FORMATS.has(request.format)) {
+      return yield* reject(
+        "format-unavailable",
+        "This format is produced by the Scient desktop, not by a server export request.",
+      );
+    }
+    const packaging = request.options.markdownPackaging ?? "text";
+    if (request.delivery === "clipboard" && packaging !== "text") {
+      return yield* reject("delivery-unsupported", "Only text-only Markdown can be copied.");
+    }
+    const { snapshot, document } = yield* buildDocument(request);
+    const exportValue = document.exportValue;
+    const exportId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+    const exported = DateTime.formatIso(yield* DateTime.now);
     const markdown = redactStoragePaths(
       writeConversationMarkdown({ bundle: document.bundle, exportValue, exported, packaging }),
       storageRoots,
@@ -310,7 +347,25 @@ const make = Effect.gen(function* () {
     };
   });
 
-  return ConversationExportService.of({ prepare, produce });
+  const document: ConversationExportService["Service"]["document"] = Effect.fn(
+    "ConversationExportService.document",
+  )(function* (request) {
+    const built = yield* buildDocument(request);
+    const bundle = built.document.bundle;
+    return {
+      bundle: {
+        ...bundle,
+        markdown: redactStoragePaths(bundle.markdown, storageRoots),
+        warnings: bundle.warnings.map((warning) => ({
+          ...warning,
+          message: redactStoragePaths(warning.message, storageRoots),
+        })),
+      },
+      messageCount: built.document.messageCount,
+    };
+  });
+
+  return ConversationExportService.of({ prepare, produce, document });
 });
 
 export const layer = Layer.effect(ConversationExportService, make);
