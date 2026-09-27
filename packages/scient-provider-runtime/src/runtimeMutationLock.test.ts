@@ -78,30 +78,28 @@ async function waitFor(predicate: () => Promise<boolean>, timeoutMs = 2_000): Pr
 }
 
 /**
- * A lock left by another process whose pid now belongs to an unrelated live
- * process: the parent of this test runner is alive and is not us.
+ * A foreign live pid. A record alone cannot prove whether it was reused
+ * or its original owner is suspended; both must retain exclusion.
  */
-function reusedPidLock(extra: Record<string, unknown> = {}): string {
+function livePidLock(extra: Record<string, unknown> = {}): string {
   return `${JSON.stringify({ schemaVersion: 1, pid: process.ppid, processId: "earlier", token: "reused", ...extra })}\n`;
 }
 
 describe("managed runtime mutation lock heartbeat", () => {
-  it("reclaims a lock whose pid was reused by a live process once its heartbeat is overdue", async () => {
+  it("does not reclaim a foreign live owner whose heartbeat is overdue", async () => {
     const path = await lockPath();
-    await NodeFSP.writeFile(path, reusedPidLock({ heartbeatIntervalMs: 15_000 }));
+    await NodeFSP.writeFile(path, livePidLock({ heartbeatIntervalMs: 15_000 }));
     await backdate(path, 2 * 60_000);
 
     const lock = await tryAcquireManagedRuntimeMutationLock(path);
 
-    expect(lock).toBeDefined();
-    expect(JSON.parse(await NodeFSP.readFile(path, "utf8"))).toMatchObject({ pid: process.pid });
-    await lock?.release();
-    await expect(NodeFSP.access(path)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(lock).toBeUndefined();
+    expect(JSON.parse(await NodeFSP.readFile(path, "utf8"))).toMatchObject({ pid: process.ppid });
   });
 
   it("keeps a recently refreshed lock whose pid is live", async () => {
     const path = await lockPath();
-    const raw = reusedPidLock({ heartbeatIntervalMs: 15_000 });
+    const raw = livePidLock({ heartbeatIntervalMs: 15_000 });
     await NodeFSP.writeFile(path, raw);
     await backdate(path, 30_000);
 
@@ -109,9 +107,9 @@ describe("managed runtime mutation lock heartbeat", () => {
     expect(await NodeFSP.readFile(path, "utf8")).toBe(raw);
   });
 
-  it("falls back to the file age for a live-pid lock written before heartbeats existed", async () => {
+  it("honors a foreign live owner even when its legacy lock is old", async () => {
     const path = await lockPath();
-    const raw = reusedPidLock();
+    const raw = livePidLock();
     await NodeFSP.writeFile(path, raw);
 
     // A legacy owner never refreshes, so a young legacy lock is still honored.
@@ -119,9 +117,8 @@ describe("managed runtime mutation lock heartbeat", () => {
     expect(await NodeFSP.readFile(path, "utf8")).toBe(raw);
 
     await backdate(path, 2 * 60 * 60_000);
-    const lock = await tryAcquireManagedRuntimeMutationLock(path);
-    expect(lock).toBeDefined();
-    await lock?.release();
+    expect(await tryAcquireManagedRuntimeMutationLock(path)).toBeUndefined();
+    expect(await NodeFSP.readFile(path, "utf8")).toBe(raw);
   });
 
   it("never lets a live owner that keeps refreshing be reclaimed, even past the stale bound", async () => {
@@ -177,7 +174,7 @@ describe("managed runtime mutation lock heartbeat", () => {
     await backdate(path, 60_000);
     await waitFor(async () => (await mtimeAge(path)) < 5_000);
 
-    const replacement = reusedPidLock({ heartbeatIntervalMs: 60_000 });
+    const replacement = livePidLock({ heartbeatIntervalMs: 60_000 });
     await NodeFSP.rm(path);
     await NodeFSP.writeFile(path, replacement);
     await backdate(path, 30_000);
@@ -229,7 +226,7 @@ describe("managed runtime mutation lock ownership", () => {
     expect(owner?.signal.aborted).toBe(false);
 
     await NodeFSP.rm(path);
-    await NodeFSP.writeFile(path, reusedPidLock({ heartbeatIntervalMs: 60_000 }));
+    await NodeFSP.writeFile(path, livePidLock({ heartbeatIntervalMs: 60_000 }));
 
     await expect.poll(() => owner?.signal.aborted, { timeout: 2_000 }).toBe(true);
     expect(owner?.signal.reason).toBeInstanceOf(ManagedRuntimeMutationLockLostError);

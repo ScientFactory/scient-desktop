@@ -844,7 +844,7 @@ describe("ManagedProviderRuntime concurrent reconciliation", () => {
     expect(await NodeFSP.readFile(mutationLockPath(root), "utf8")).toBe(lock);
   });
 
-  it("takes over a lock whose pid was reused by a live process once its heartbeat is overdue", async () => {
+  it("does not mutate a runtime whose foreign live owner missed its heartbeat", async () => {
     const { root, runtime } = await makeRuntime();
     const recipe = release("2.1.0");
     await install(runtime, recipe);
@@ -855,8 +855,12 @@ describe("ManagedProviderRuntime concurrent reconciliation", () => {
     // Last refreshed long ago (2001, in seconds since the epoch).
     await NodeFSP.utimes(mutationLockPath(root), 1_000_000_000, 1_000_000_000);
 
-    expect((await install(runtime, release("2.2.0"))).activeVersion).toBe("2.2.0");
-    await expect(NodeFSP.access(mutationLockPath(root))).rejects.toMatchObject({ code: "ENOENT" });
+    const lock = await NodeFSP.readFile(mutationLockPath(root), "utf8");
+    await expect(install(runtime, release("2.2.0"))).rejects.toBeInstanceOf(
+      ManagedProviderRuntimeBusyError,
+    );
+    expect(await NodeFSP.readFile(mutationLockPath(root), "utf8")).toBe(lock);
+    expect((await runtime.status(recipe)).activeVersion).toBe("2.1.0");
   });
 });
 

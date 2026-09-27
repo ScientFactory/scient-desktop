@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalDate:off globalConsole:off -- This package is the reviewed Node process and filesystem boundary for app-private provider runtimes.
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
+import * as NodePath from "node:path";
 
 /**
  * This process instance. A lock carrying this process's pid but another id
@@ -18,29 +19,10 @@ const heldTokens = new Set<string>();
 
 /** An undecodable lock younger than this may still be being written. */
 const UNREADABLE_LOCK_GRACE_MS = 10_000;
-/**
- * A takeover claim is held only while one contender re-reads and removes a
- * lock, so one older than this belongs to a contender that was suspended.
- */
-const TAKEOVER_CLAIM_STALE_MS = 30_000;
 const MAX_ACQUIRE_ATTEMPTS = 4;
 
 /** How often an owner refreshes its lock file's mtime while it holds the lock. */
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 15_000;
-/**
- * A lock whose mtime is older than this many of its owner's heartbeat
- * intervals is stale even if its pid is live: the pid may have been reused
- * by an unrelated process. 4 x 15s = 60s, i.e. two missed beats plus margin.
- */
-const MISSED_HEARTBEATS_BEFORE_STALE = 4;
-/**
- * Locks written before heartbeats existed never refresh, so only their age
- * since publication bounds them. Longer than any plausible single mutation,
- * so a live older build is still honored, yet a crashed one whose pid was
- * reused no longer wedges the runtime forever. Also caps declared intervals.
- */
-const LEGACY_LOCK_STALE_AFTER_MS = 30 * 60_000;
-
 interface ManagedRuntimeMutationLockRecord {
   // Unchanged so older builds still decode (and honor) heartbeat locks.
   readonly schemaVersion: 1;
@@ -116,15 +98,6 @@ export function isProcessAlive(pid: number): boolean {
   } catch (cause) {
     return errorCode(cause) === "EPERM";
   }
-}
-
-function staleAfterMs(owner: ManagedRuntimeMutationLockRecord): number {
-  return owner.heartbeatIntervalMs === undefined
-    ? LEGACY_LOCK_STALE_AFTER_MS
-    : Math.min(
-        owner.heartbeatIntervalMs * MISSED_HEARTBEATS_BEFORE_STALE,
-        LEGACY_LOCK_STALE_AFTER_MS,
-      );
 }
 
 interface ObservedLock {
@@ -247,9 +220,8 @@ interface TakeoverClaimRecord {
   readonly processId: string;
 }
 
-/** A claim whose contender exited, or was suspended while holding it. */
-function isStaleTakeoverClaim({ raw, mtimeMs }: ObservedLock): boolean {
-  if (Date.now() - mtimeMs >= TAKEOVER_CLAIM_STALE_MS) return true;
+/** A claim is reclaimable only after its contender exits. */
+function isStaleTakeoverClaim({ raw }: ObservedLock): boolean {
   let claimant: TakeoverClaimRecord | undefined;
   try {
     claimant = JSON.parse(raw) as TakeoverClaimRecord;
@@ -274,17 +246,38 @@ async function withTakeoverClaim(
   lockPath: string,
   target: ObservedLock,
   remove: () => Promise<void>,
+  depth = 0,
 ): Promise<boolean> {
-  const digest = NodeCrypto.createHash("sha256").update(target.raw).digest("hex").slice(0, 32);
-  const claimPath = `${lockPath}.takeover-${digest}-${target.ino}`;
-  const claimant: TakeoverClaimRecord = { pid: process.pid, processId: PROCESS_INSTANCE_ID };
+  if (depth >= 8) return false;
+  const digest = NodeCrypto.createHash("sha256")
+    .update(`${lockPath}\0${target.raw}\0${target.ino}`)
+    .digest("hex");
+  const claimPath = NodePath.join(NodePath.dirname(lockPath), `.mutation-claim-${digest}`);
+  const claimant: ManagedRuntimeMutationLockRecord = {
+    schemaVersion: 1,
+    pid: process.pid,
+    processId: PROCESS_INSTANCE_ID,
+    token: NodeCrypto.randomUUID(),
+  };
   try {
-    await NodeFSP.writeFile(claimPath, JSON.stringify(claimant), { mode: 0o600, flag: "wx" });
+    await publishLock(claimPath, claimant);
   } catch (cause) {
     if (errorCode(cause) !== "EEXIST") throw cause;
     const claim = await readLock(claimPath);
     // A contender that died inside its claim; the next attempt claims afresh.
-    if (claim && isStaleTakeoverClaim(claim)) await NodeFSP.rm(claimPath, { force: true });
+    if (claim && isStaleTakeoverClaim(claim)) {
+      await withTakeoverClaim(
+        claimPath,
+        claim,
+        async () => {
+          const current = await readLock(claimPath);
+          if (current && isSameLock(current, claim) && isStaleTakeoverClaim(current)) {
+            await removeLockFile(claimPath);
+          }
+        },
+        depth + 1,
+      );
+    }
     return false;
   }
   try {
@@ -313,9 +306,9 @@ async function removeStaleLock(lockPath: string, observed: ObservedLock) {
 
 /**
  * A lock of this process is held exactly while its token is still held. A
- * lock of another process is held while that process is live and its
- * heartbeat is current; the heartbeat bound catches a pid reused by an
- * unrelated process, which liveness alone would honor forever.
+ * lock of another process is held while that process is live. An overdue
+ * heartbeat cannot distinguish a suspended owner from a reused pid. Favor
+ * exclusive ownership over automatic recovery when that identity is unknown.
  */
 function isHeldByLiveOwner({ raw, mtimeMs }: ObservedLock): boolean {
   const age = Date.now() - mtimeMs;
@@ -324,7 +317,7 @@ function isHeldByLiveOwner({ raw, mtimeMs }: ObservedLock): boolean {
   if (owner.processId === PROCESS_INSTANCE_ID) return heldTokens.has(owner.token);
   // An earlier process that happened to get this process's pid.
   if (owner.pid === process.pid) return false;
-  return isProcessAlive(owner.pid) && age < staleAfterMs(owner);
+  return isProcessAlive(owner.pid);
 }
 
 /**
@@ -333,9 +326,8 @@ function isHeldByLiveOwner({ raw, mtimeMs }: ObservedLock): boolean {
  * holds it. The lock is a file, so every runtime object for the root, in
  * this process or another, observes the same owner. The owner refreshes the
  * lock's mtime every heartbeat interval while it holds it. A lock whose
- * process has exited, or whose heartbeat is overdue (its pid may have been
- * reused), is stale and is taken over, so a crash never wedges the runtime.
- * This process's own locks are never judged by heartbeat age.
+ * process has exited is reclaimed. A live pid with unknown process identity
+ * is conservatively honored, including when its heartbeat is overdue.
  */
 export async function tryAcquireManagedRuntimeMutationLock(
   lockPath: string,
