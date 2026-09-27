@@ -32,9 +32,11 @@ import {
 } from "./providerLifecycleActions";
 import { resolveProviderRuntimeForPresentation } from "./ProviderRuntimeSection";
 import {
+  failedRuntimeOperationMessage,
   isActiveProviderConnectionOperation,
   isActiveProviderRuntimeOperation,
   isProviderRuntimePresentedAsInstalled,
+  managedRuntimeRepairMessage,
   needsManagedRuntimeRecovery,
   providerAccountIdentity,
   providerLifecycleFailureMessage,
@@ -222,9 +224,7 @@ export function GrokInlineSetup(props: {
     return (
       <SetupFrame>
         <AssistedSetupStatus
-          body={
-            localError ?? runtimeOperation?.message ?? "Grok’s private runtime could not start."
-          }
+          body={localError ?? managedRuntimeRepairMessage(props.provider, "Grok", runtimeOperation)}
           icon={<TriangleAlertIcon className="size-5 text-warning" />}
           role="alert"
           title="Grok needs repair"
@@ -244,24 +244,26 @@ export function GrokInlineSetup(props: {
 
   if (!isProviderRuntimePresentedAsInstalled(props.provider)) {
     const canInstall = runtime?.actions.includes("install") ?? false;
+    const installationError =
+      localError ?? failedRuntimeOperationMessage(runtimeOperation, "install");
     return (
       <SetupFrame>
         <AssistedSetupStatus
           body={
-            localError ??
+            installationError ??
             (canInstall
               ? "Scient can install a reviewed official Grok Build runtime privately."
               : "Assisted installation is not available on this computer.")
           }
           icon={
-            localError ? (
+            installationError ? (
               <TriangleAlertIcon className="size-5 text-destructive" />
             ) : (
               <ProviderSetupIcon displayName={props.displayName} driver={props.provider.driver} />
             )
           }
-          role={localError ? "alert" : undefined}
-          title={localError ? "Grok installation couldn’t finish" : "Install Grok"}
+          role={installationError ? "alert" : undefined}
+          title={installationError ? "Grok installation couldn’t finish" : "Install Grok"}
         />
         {canInstall ? (
           <AssistedSetupActions>
@@ -270,8 +272,8 @@ export function GrokInlineSetup(props: {
               size="sm"
               variant="ghost-primary"
             >
-              {localError ? <RefreshCwIcon aria-hidden /> : <DownloadIcon aria-hidden />}
-              {localError ? "Retry installation" : "Install"}
+              {installationError ? <RefreshCwIcon aria-hidden /> : <DownloadIcon aria-hidden />}
+              {installationError ? "Retry installation" : "Install"}
             </Button>
           </AssistedSetupActions>
         ) : null}

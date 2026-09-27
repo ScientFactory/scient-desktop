@@ -18,9 +18,11 @@ import {
   ProviderSetupIcon,
 } from "./AssistedProviderSetup";
 import {
+  failedRuntimeOperationMessage,
   isActiveProviderConnectionOperation,
   isActiveProviderRuntimeOperation,
   isProviderRuntimePresentedAsInstalled,
+  managedRuntimeRepairMessage,
   needsManagedRuntimeRecovery,
   providerAccountIdentity,
   providerLifecycleFailureMessage,
@@ -231,7 +233,7 @@ export function DroidInlineSetup(props: {
       <SetupFrame>
         <AssistedSetupStatus
           body={
-            localError ?? runtimeOperation?.message ?? "Droid’s private runtime could not start."
+            localError ?? managedRuntimeRepairMessage(props.provider, "Droid", runtimeOperation)
           }
           icon={<TriangleAlertIcon className="size-5 text-warning" />}
           role="alert"
@@ -254,7 +256,7 @@ export function DroidInlineSetup(props: {
   if (!isProviderRuntimePresentedAsInstalled(props.provider)) {
     const canInstall = runtime?.actions.includes("install") ?? false;
     const installationError =
-      localError ?? (runtimeOperation?.status === "failed" ? runtimeOperation.message : null);
+      localError ?? failedRuntimeOperationMessage(runtimeOperation, "install");
     return (
       <SetupFrame>
         <AssistedSetupStatus

@@ -28,9 +28,11 @@ import {
   updateAntigravityRuntime,
 } from "./antigravityLifecycleActions";
 import {
+  failedRuntimeOperationMessage,
   isActiveProviderConnectionOperation,
   isActiveProviderRuntimeOperation,
   isProviderRuntimePresentedAsInstalled,
+  managedRuntimeRepairMessage,
   needsManagedRuntimeRecovery,
   providerLifecycleFailureMessage,
   providerRuntimeComputerLabel,
@@ -239,12 +241,7 @@ export function AntigravityInlineSetup(props: {
     return (
       <SetupFrame>
         <AssistedSetupStatus
-          body={
-            localError ??
-            runtimeOperation?.message ??
-            props.provider.message ??
-            "Antigravity’s private runtime could not start."
-          }
+          body={localError ?? managedRuntimeRepairMessage(props.provider, "Antigravity")}
           icon={<TriangleAlertIcon className="size-5 text-warning" />}
           role="alert"
           title="Antigravity needs repair"
@@ -319,24 +316,28 @@ export function AntigravityInlineSetup(props: {
   if (!isProviderRuntimePresentedAsInstalled(props.provider)) {
     const canInstall = runtime?.actions.includes("install") ?? false;
     const command = manualInstallCommand(props.provider);
+    const installationError =
+      localError ?? failedRuntimeOperationMessage(runtimeOperation, "install");
     return (
       <SetupFrame>
         <AssistedSetupStatus
           body={
-            localError ??
+            installationError ??
             (canInstall
               ? "Scient can install a reviewed official Antigravity runtime privately."
               : `Assisted installation is not available on ${providerRuntimeComputerLabel(props.provider)}. Use Google’s official installer.`)
           }
           icon={
-            localError ? (
+            installationError ? (
               <TriangleAlertIcon className="size-5 text-destructive" />
             ) : (
               <ProviderSetupIcon displayName={props.displayName} driver={props.provider.driver} />
             )
           }
-          role={localError ? "alert" : undefined}
-          title={localError ? "Antigravity installation couldn’t finish" : "Install Antigravity"}
+          role={installationError ? "alert" : undefined}
+          title={
+            installationError ? "Antigravity installation couldn’t finish" : "Install Antigravity"
+          }
         />
         {canInstall ? (
           <AssistedSetupActions>
@@ -346,8 +347,8 @@ export function AntigravityInlineSetup(props: {
               type="button"
               variant="ghost-primary"
             >
-              {localError ? <RefreshCwIcon aria-hidden /> : <DownloadIcon aria-hidden />}
-              {localError ? "Retry installation" : "Install Antigravity"}
+              {installationError ? <RefreshCwIcon aria-hidden /> : <DownloadIcon aria-hidden />}
+              {installationError ? "Retry installation" : "Install Antigravity"}
             </Button>
           </AssistedSetupActions>
         ) : (

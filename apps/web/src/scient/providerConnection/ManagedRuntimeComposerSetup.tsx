@@ -23,8 +23,10 @@ import {
 } from "./AssistedProviderSetup";
 import { ConnectModelsButton } from "./ConnectModelsButton";
 import {
+  failedRuntimeOperationMessage,
   isActiveProviderRuntimeOperation,
   isProviderRuntimePresentedAsInstalled,
+  managedRuntimeRepairMessage,
   needsManagedRuntimeRecovery,
   providerLifecycleFailureMessage,
   providerRuntimeComputerLabel,
@@ -147,12 +149,7 @@ export function ManagedRuntimeComposerSetup(props: {
     return (
       <AssistedSetupFrame>
         <AssistedSetupStatus
-          body={
-            localError ??
-            failedOperationMessage ??
-            props.provider.message ??
-            `${name}’s private runtime could not start.`
-          }
+          body={localError ?? managedRuntimeRepairMessage(props.provider, name)}
           icon={<TriangleAlertIcon className="size-5 text-warning" />}
           role="alert"
           title={`${name} needs repair`}
@@ -165,7 +162,7 @@ export function ManagedRuntimeComposerSetup(props: {
   }
 
   if (!isProviderRuntimePresentedAsInstalled(props.provider)) {
-    const error = localError ?? failedOperationMessage;
+    const error = localError ?? failedRuntimeOperationMessage(operation, "install");
     const canInstall = runtime?.actions.includes("install") ?? false;
     const computer = providerRuntimeComputerLabel(props.provider);
     return (

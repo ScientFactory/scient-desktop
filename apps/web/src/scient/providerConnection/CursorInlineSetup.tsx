@@ -31,9 +31,11 @@ import {
   type OptimisticProviderValue,
 } from "./optimisticProviderValue";
 import {
+  failedRuntimeOperationMessage,
   isActiveProviderConnectionOperation,
   isActiveProviderRuntimeOperation,
   isProviderRuntimePresentedAsInstalled,
+  managedRuntimeRepairMessage,
   needsManagedRuntimeRecovery,
   providerLifecycleFailureMessage,
   providerRuntimeComputerLabel,
@@ -256,10 +258,7 @@ export function CursorInlineSetup(props: {
 
   if (needsRuntimeRepair) {
     const error =
-      localError ??
-      (runtimeOperation?.status === "failed"
-        ? runtimeOperation.message
-        : (props.provider.message ?? "Cursor's private runtime could not start."));
+      localError ?? managedRuntimeRepairMessage(props.provider, "Cursor", runtimeOperation);
     return (
       <SetupFrame>
         <AssistedSetupStatus
@@ -278,8 +277,7 @@ export function CursorInlineSetup(props: {
   }
 
   if (!isProviderRuntimePresentedAsInstalled(props.provider)) {
-    const error =
-      localError ?? (runtimeOperation?.status === "failed" ? runtimeOperation.message : null);
+    const error = localError ?? failedRuntimeOperationMessage(runtimeOperation, "install");
     const canInstall = runtime?.actions.includes("install") ?? false;
     return (
       <SetupFrame>

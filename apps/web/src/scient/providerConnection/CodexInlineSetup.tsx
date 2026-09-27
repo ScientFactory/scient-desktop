@@ -30,9 +30,11 @@ import {
 import { ProviderRuntimeDiagnosticsDetails } from "./ProviderRuntimeDiagnostics";
 import { ProviderAccountManagementLink } from "./ProviderAccountManagementLink";
 import {
+  failedRuntimeOperationMessage,
   isActiveProviderConnectionOperation,
   isActiveProviderRuntimeOperation,
   isProviderRuntimePresentedAsInstalled,
+  managedRuntimeRepairMessage,
   needsManagedRuntimeRecovery,
   providerLifecycleFailureMessage,
   providerRuntimeComputerLabel,
@@ -251,11 +253,7 @@ export function CodexInlineSetup(props: {
   }
 
   if (needsRuntimeRepair) {
-    const error =
-      localError ??
-      (runtimeOperation?.status === "failed"
-        ? runtimeOperation.message
-        : (props.provider.message ?? "Codex's private runtime could not start."));
+    const error = localError ?? managedRuntimeRepairMessage(props.provider, "Codex");
     return (
       <SetupFrame>
         <AssistedSetupStatus
@@ -274,8 +272,7 @@ export function CodexInlineSetup(props: {
   }
 
   if (!isProviderRuntimePresentedAsInstalled(props.provider)) {
-    const error =
-      localError ?? (runtimeOperation?.status === "failed" ? runtimeOperation.message : null);
+    const error = localError ?? failedRuntimeOperationMessage(runtimeOperation, "install");
     const canInstall = runtime?.actions.includes("install") ?? false;
     return (
       <SetupFrame>

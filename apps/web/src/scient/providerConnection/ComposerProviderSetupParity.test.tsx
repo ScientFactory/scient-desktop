@@ -203,6 +203,21 @@ function managedUpdate(entry: Driver): ServerProvider {
   });
 }
 
+function failedOperation(
+  entry: Driver,
+  action: "install" | "update" | "repair",
+  message: string,
+): NonNullable<Runtime["operation"]> {
+  return {
+    operationId: `${entry.driver}-${action}-failed`,
+    action,
+    status: "failed",
+    startedAt: T0,
+    finishedAt: T0,
+    message,
+  };
+}
+
 function signIn(entry: Driver): ServerProvider {
   return {
     ...ready(entry),
@@ -325,6 +340,68 @@ describe.each(DRIVERS)("$name composer setup", (entry) => {
     expect(element.textContent).toContain(`${entry.name} update available`);
     // Droid and Pi add a quiet Connect models under it.
     expect(buttonLabels(element).filter((label) => label !== "Connect models")).toHaveLength(1);
+  });
+
+  it("shows a server-side installation failure with its error and a retry", () => {
+    const element = view(installFailed(entry));
+
+    expect(element.textContent).toContain(`${entry.name} installation couldn’t finish`);
+    expect(element.textContent).toContain(INSTALL_ERROR);
+    expect(element.querySelector('[role="alert"]')).not.toBeNull();
+    expect(statusIcons(element)).toEqual(["warning"]);
+    expect(buttonLabels(element)).toEqual(["Retry installation"]);
+  });
+
+  it("asks for repair with the server's error", () => {
+    const element = view(needsRepair(entry));
+
+    expect(element.textContent).toContain(`${entry.name} needs repair`);
+    expect(element.textContent).toContain(SERVER_ERROR);
+    expect(statusIcons(element)).toEqual(["warning"]);
+    expect(strayIcons(element)).toBe(0);
+    expect(buttonLabels(element)).toEqual([`Repair ${entry.name}`]);
+  });
+
+  it("keeps the server's error when an earlier runtime operation succeeded", () => {
+    const element = view(
+      withRuntime(needsRepair(entry), {
+        operation: {
+          operationId: `${entry.driver}-install`,
+          action: "install",
+          status: "succeeded",
+          startedAt: T0,
+          finishedAt: T0,
+          message: `${entry.name} 1.2.3 was installed and verified.`,
+        },
+      }),
+    );
+
+    expect(element.textContent).toContain(SERVER_ERROR);
+    expect(element.textContent).not.toContain("was installed and verified");
+  });
+
+  it("asks for repair with the server's error, not an earlier failed update or install", () => {
+    for (const action of ["update", "install"] as const) {
+      const element = view(
+        withRuntime(needsRepair(entry), {
+          operation: failedOperation(entry, action, `The earlier ${action} failed.`),
+        }),
+      );
+
+      expect(element.textContent).toContain(`${entry.name} needs repair`);
+      expect(element.textContent).toContain(SERVER_ERROR);
+      expect(element.textContent).not.toContain(`The earlier ${action} failed.`);
+    }
+  });
+
+  it("explains a failed repair in the repair frame", () => {
+    const element = view(
+      withRuntime(needsRepair(entry), {
+        operation: failedOperation(entry, "repair", "The repaired runtime failed its smoke test."),
+      }),
+    );
+
+    expect(element.textContent).toContain("The repaired runtime failed its smoke test.");
   });
 });
 
