@@ -191,6 +191,8 @@ describe.skipIf(binary === null)("Word export with the real Pandoc (local integr
         expect(conversationXml).not.toContain("scient:message");
         expect(count(conversationXml, /<m:oMath>/gu)).toBeGreaterThanOrEqual(2);
         expect(conversationXml).toContain("<w:bidi />");
+        // The bundle's notes appear once: the Markdown already lists them.
+        expect(count(conversationXml, /This export includes the work log and reasoning/gu)).toBe(1);
         expect(conversation.result.summary.workLogBlocks).toBe(1);
         expect(conversation.result.summary.reasoningBlocks).toBe(1);
 
@@ -207,6 +209,31 @@ describe.skipIf(binary === null)("Word export with the real Pandoc (local integr
         ]) {
           expect(styles).toContain(`<w:name w:val="${name}" />`);
         }
+      }),
+    ),
+  );
+
+  it.live("carries document notes the Markdown does not show into the Word file", () =>
+    withConverter(({ converter, directory }) =>
+      Effect.gen(function* () {
+        const bundle = {
+          ...makeBundle({ markdown: "# Notes\n\nBody text.\n" }),
+          warnings: [
+            {
+              code: "sensitive-content-included" as const,
+              message: "This export includes the work log, which can contain secrets.",
+            },
+          ],
+        };
+        const { docx, result } = yield* convertTo(converter, directory, "11-document-notes", {
+          bundle,
+        });
+        const xml = docx.text("word/document.xml");
+        expect(xml).toContain("Conversion notes");
+        expect(xml).toContain("This export includes the work log, which can contain secrets.");
+        expect(result.warnings.map((warning) => warning.code)).toContain(
+          "sensitive-content-included",
+        );
       }),
     ),
   );

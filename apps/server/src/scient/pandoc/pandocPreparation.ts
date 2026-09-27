@@ -400,6 +400,21 @@ export function landscapeWideTables(blocks: Array<PandocNode>, rtl: boolean): nu
   return landscaped;
 }
 
+const normalizedText = (text: string) => text.replace(/\s+/gu, " ").trim();
+
+/**
+ * The warnings whose text the document does not already show. A conversation
+ * bundle lists its notes in its Markdown; other bundles may not, and their
+ * notes must still reach the Word file.
+ */
+export function unlistedWarnings(
+  blocks: ReadonlyArray<PandocNode>,
+  warnings: ReadonlyArray<DocumentWarning>,
+): Array<DocumentWarning> {
+  const shown = normalizedText(inlineText(blocks));
+  return warnings.filter((warning) => !shown.includes(normalizedText(warning.message)));
+}
+
 /** A closing "Conversion notes" section listing what this Word export could not carry. */
 export function conversionNotesBlocks(warnings: ReadonlyArray<DocumentWarning>): Array<PandocNode> {
   if (warnings.length === 0) return [];

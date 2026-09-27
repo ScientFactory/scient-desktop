@@ -41,6 +41,7 @@ import {
   applyScientStructure,
   conversionNotesBlocks,
   landscapeWideTables,
+  unlistedWarnings,
 } from "./pandocPreparation.ts";
 import {
   makePandocScratch,
@@ -284,6 +285,8 @@ export const make = Effect.gen(function* () {
           ),
         );
         const document = toPandocDocument(decoded);
+        // The bundle's own notes the Markdown does not already show go into the Word notes.
+        const unlistedBundleWarnings = unlistedWarnings(document.blocks, input.bundle.warnings);
 
         // 2. Prepare and secure.
         const structure = applyScientStructure(document.blocks, {
@@ -322,7 +325,9 @@ export const make = Effect.gen(function* () {
           ...direction.warnings,
           ...pandocWarnings(read.warnings),
         ];
-        document.blocks.push(...conversionNotesBlocks(conversionWarnings));
+        document.blocks.push(
+          ...conversionNotesBlocks([...unlistedBundleWarnings, ...conversionWarnings]),
+        );
         // Scient's own page layout, added after the security pass removed the document's raw nodes.
         const landscapeTables = landscapeWideTables(document.blocks, direction.rtlDocument);
 

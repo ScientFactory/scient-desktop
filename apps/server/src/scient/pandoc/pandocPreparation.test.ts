@@ -17,6 +17,7 @@ import {
   conversionNotesBlocks,
   landscapeWideTables,
   mermaidDiagramAssetId,
+  unlistedWarnings,
 } from "./pandocPreparation.ts";
 import { PNG_BYTES, bytesAsset } from "./pandocTestSupport.ts";
 
@@ -243,6 +244,24 @@ describe("landscapeWideTables", () => {
     expect(breakXml(1)).not.toContain("landscape");
     expect(breakXml(4)).toContain('w:orient="landscape"');
     expect(breakXml(4)).toContain("<w:bidi/>");
+  });
+});
+
+describe("unlistedWarnings", () => {
+  it("keeps only the warnings the document does not already show", () => {
+    const blocks: Array<PandocNode> = [
+      para([{ t: "Strong", c: textInlines("Export notes") }]),
+      bulletList([[plain("This export includes the work log, which can contain secrets.")]]),
+    ];
+    expect(
+      unlistedWarnings(blocks, [
+        {
+          code: "sensitive-content-included",
+          message: "This export includes the work log,  which can contain secrets.",
+        },
+        { code: "resource-unresolved", message: "Image “plot.png” was not included." },
+      ]),
+    ).toEqual([{ code: "resource-unresolved", message: "Image “plot.png” was not included." }]);
   });
 });
 
