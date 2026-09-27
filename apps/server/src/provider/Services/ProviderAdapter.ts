@@ -8,6 +8,7 @@
  * @module ProviderAdapter
  */
 import type {
+  ModelSelection,
   ApprovalRequestId,
   ProviderApprovalDecision,
   ProviderDriverKind,
@@ -85,6 +86,9 @@ export interface ProviderAdapterCapabilities {
   /** The adapter can inject Scient's current thread-scoped MCP session into
       the provider runtime. Omission is fail-closed and means unsupported. */
   readonly mcpSessionInjection?: true;
+  /** SCIENT-FORK: `startSession` honours `forkFrom` by forking the source
+      provider thread natively (full fidelity, no transcript handoff). */
+  readonly nativeFork?: true;
 }
 
 export interface ProviderThreadTurnSnapshot {
@@ -111,9 +115,13 @@ export interface ProviderAdapterShape<TError> {
     input: ProviderSessionStartInput,
   ) => Effect.Effect<ProviderSession, TError>;
 
-  /**
-   * Send a turn to an active provider session.
-   */
+  /** Known capacity of the selected model on this exact provider instance. */
+  readonly getModelContextWindow?: (input: {
+    readonly threadId: ThreadId;
+    readonly modelSelection: ModelSelection;
+  }) => Effect.Effect<number | undefined>;
+
+  /** Send a turn to an active provider session. */
   readonly sendTurn: (
     input: ProviderAdapterSendTurnInput,
   ) => Effect.Effect<ProviderTurnStartResult, TError>;

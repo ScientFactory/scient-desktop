@@ -12,6 +12,7 @@ const scientGrants: Record<OperationCapability, McpCapability> = {
   "skills:read": "skills:read",
   "sources:read": "sources:read",
   "sources:write": "sources:write",
+  "threads:read": "threads:read",
 };
 
 export function scientInvocationForMcp(scope: McpInvocationScope): AgentInvocationScope {

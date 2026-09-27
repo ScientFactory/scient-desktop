@@ -6,6 +6,7 @@ import { ScientComputeToolkit } from "./toolkits/compute/tools.ts";
 import { PreviewToolkit } from "./toolkits/preview/tools.ts";
 import { ScientSkillsToolkit } from "./toolkits/skills/tools.ts";
 import { ScientSourcesToolkit } from "./toolkits/sources/tools.ts";
+import { ScientThreadsToolkit } from "./toolkits/threads/tools.ts";
 
 const tools: ReadonlyArray<Tool.Any> = [
   ...Object.values(PreviewToolkit.tools),
@@ -13,6 +14,7 @@ const tools: ReadonlyArray<Tool.Any> = [
   ...Object.values(ScientSkillsToolkit.tools),
   ...Object.values(ScientDocumentsToolkit.tools),
   ...Object.values(ScientComputeToolkit.tools),
+  ...Object.values(ScientThreadsToolkit.tools),
 ];
 
 it("publishes a provider-compatible MCP tool catalog", () => {

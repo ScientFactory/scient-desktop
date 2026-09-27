@@ -17,6 +17,7 @@ import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import {
   claimFork,
   getForkStatus,
+  getReadyForkAttachmentIdMap,
   insertPendingFork,
   listRecoverableForks,
   markForkAbandoned,
@@ -433,3 +434,29 @@ it.layer(layer)("forkRepository lifecycle", (it) => {
     }),
   );
 });
+
+it.effect("returns the durable attachment mapping only for a ready fork", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const source = {
+      type: "file" as const,
+      id: "origin-file-pdf",
+      name: "paper.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 20,
+    };
+    const target = { ...source, id: "fork-file-pdf" };
+    yield* insertPendingFork(sql, { ...makePayload(), attachmentCopies: [{ source, target }] });
+    assert.deepStrictEqual(yield* getReadyForkAttachmentIdMap(sql, THREAD), {});
+    yield* markForkReady(sql, {
+      threadId: THREAD,
+      checkpointStatus: "ready",
+      workspaceStatus: "shared",
+      updatedAt: NOW,
+    });
+    assert.deepStrictEqual(yield* getReadyForkAttachmentIdMap(sql, THREAD), {
+      "origin-file-pdf": "fork-file-pdf",
+    });
+    assert.deepStrictEqual(yield* getReadyForkAttachmentIdMap(sql, ThreadId.make("missing")), {});
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);

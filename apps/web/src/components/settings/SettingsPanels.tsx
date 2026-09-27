@@ -154,6 +154,9 @@ import {
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { ScopedSwitch } from "./ScopedSwitch";
+// SCIENT-FORK:START
+import { EmptySectionCleanupSettings } from "../../scient/sections/EmptySectionCleanupSettings";
+// SCIENT-FORK:END
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ThemeLibrary } from "./ThemeSettings";
@@ -185,6 +188,8 @@ import {
 import { searchableSetting } from "./settingsSearch";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { AnalyticsPrivacySettings } from "../../scient/analytics/AnalyticsPrivacySettings";
+// SCIENT-FORK: fork context size preference.
+import { ForkContextSettings } from "../../scient/fork/ForkContextSettings";
 import { useRecordScientAnalytics } from "../../scient/analytics/client";
 import { ScientGettingStartedSettingsRow } from "../../scient/onboarding/ScientGettingStartedSettingsRow";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
@@ -2511,6 +2516,9 @@ export function GeneralSettingsPanel() {
             ) : null}
           </>
         ) : null}
+        {/* SCIENT-FORK:START — optional empty-section cleanup (primary-only). */}
+        <EmptySectionCleanupSettings />
+        {/* SCIENT-FORK:END */}
       </SettingsSection>
 
       <SettingsSection id="behavior" title="Behavior">
@@ -3398,6 +3406,8 @@ export function GeneralSettingsPanel() {
           }
         />
       </SettingsSection>
+
+      <ForkContextSettings />
 
       <AnalyticsPrivacySettings />
 

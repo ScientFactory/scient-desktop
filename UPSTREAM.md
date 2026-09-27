@@ -503,6 +503,30 @@ than infer deletion from an absent sidebar entry. See the
 [fork maintenance contract](docs/internals/scient-fork-divergence.md) for
 workspace fidelity, lineage links, provider selection, and recovery boundaries.
 
+Scient layers two sidebar divergences beside T3's thread list: user-defined
+sections with a Sections view, and a labelled New thread row below search that
+replaces the header's New thread icon. Section membership is an optional
+`sectionId` written by the Scient `thread.section.set` command (advertised by the
+`threadSections` capability); like `thread.active.reorder`, it emits
+`thread.meta-updated` with an unchanged `updatedAt`, so organizing never reads as
+activity. Migration 058 adds `projection_threads.section_id`. The catalog, the
+built-in General group's position and the opt-in empty-section cleanup live in the
+primary environment's server settings; catalog writes carry the catalog they were
+based on, and `updateSettings` applies them only while it still matches, so
+concurrent clients never overwrite each other. Scient code lives under
+`apps/web/src/scient/sections`, `apps/web/src/scient/sidebar` and
+`apps/server/src/scient/threadSections`; upstream files carry `SCIENT-FORK`-marked
+mounts. A few lines change in place: two in `Sidebar.tsx`, the search field's class
+list and the New thread icon's `hidden` attribute in `SidebarThreadHeader.tsx`, and
+the undo-action union in `showThreadUndoNotice.ts`. New thread always opens the
+"New thread in…" picker (`shouldOpenNewThreadTargetPicker` changes in place), which
+ends with Add project, so a project, including the first, can be added from New
+thread; Shift+click and ⇧⌘N still start directly in the current project. The
+Sections view reuses T3's rows, shelves and order keys and never changes pin state. If T3 ships its own
+grouping or collapsible shelves, reconcile against these seams instead of layering a
+second grouping. Decisions, invariants and the full seam list are in
+[sidebar sections](docs/internals/scient-sidebar-sections.md).
+
 Antigravity reasoning presentation is a narrow client-side divergence. The shared
 `packages/client-runtime/src/antigravityModelPresentation.ts` groups recognized
 Google Gemini effort variants for the existing model and reasoning controls.

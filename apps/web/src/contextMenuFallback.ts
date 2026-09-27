@@ -111,6 +111,13 @@ const ICON_PATHS: Record<string, ReadonlyArray<{ tag: string; attrs: Record<stri
     },
     { tag: "circle", attrs: { cx: "12", cy: "12", r: "3" } },
   ],
+  // SCIENT-FORK:START — thread sections.
+  "list-filter": [
+    { tag: "path", attrs: { d: "M2 5h20" } },
+    { tag: "path", attrs: { d: "M6 12h12" } },
+    { tag: "path", attrs: { d: "M9 19h6" } },
+  ],
+  // SCIENT-FORK:END
   "folder-tree": [
     {
       tag: "path",

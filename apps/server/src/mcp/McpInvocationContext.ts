@@ -19,7 +19,9 @@ export type McpCapability =
   | "compute:inventory"
   | "skills:read"
   | "sources:read"
-  | "sources:write";
+  | "sources:write"
+  // SCIENT-THREAD-READ: read-only t3_thread_read bridge until V2's orchestrator toolkit lands.
+  | "threads:read";
 
 export interface McpInvocationScope {
   readonly environmentId: EnvironmentId;

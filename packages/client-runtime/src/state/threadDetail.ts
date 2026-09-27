@@ -62,6 +62,9 @@ export function mergeEnvironmentThread(
     settledAt: shell.settledAt,
     unsettledAt: shell.unsettledAt,
     activeOrderKey: shell.activeOrderKey,
+    // SCIENT-FORK:START — thread sections
+    sectionId: shell.sectionId,
+    // SCIENT-FORK:END
     autoSettleDisabledAt: shell.autoSettleDisabledAt,
     snoozedUntil: shell.snoozedUntil,
     snoozedAt: shell.snoozedAt,

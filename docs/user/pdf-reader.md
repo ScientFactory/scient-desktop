@@ -8,6 +8,10 @@ panel. The reader uses the full panel by default; the project file explorer and
 the PDF pages/outline sidebar remain optional.
 
 The first time a PDF opens, it starts fit to width with the PDF sidebar closed.
+Each conversation keeps its own PDF reading position. A fork starts from the
+original conversation’s position; navigating either conversation afterward does
+not move the other.
+
 When you return to the same document, Scient restores its page, exact reading
 position, zoom or fit mode, rotation, and sidebar mode. This survives leaving and
 returning to the conversation, restarting Scient, and refreshed versions that

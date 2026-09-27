@@ -12,6 +12,7 @@
  * @module ProviderService
  */
 import type {
+  ModelSelection,
   ProviderInterruptTurnInput,
   ProviderInstanceId,
   ProviderRespondToRequestInput,
@@ -52,6 +53,8 @@ export interface ProviderServiceShape {
    */
   readonly sendTurn: (
     input: ProviderSendTurnInput,
+    /** Internal allowance checked after all prompt additions; never sent to an adapter. */
+    contextRequestTokenBudget?: number,
   ) => Effect.Effect<ProviderTurnStartResult, ProviderServiceError>;
 
   readonly compactThread: (
@@ -87,6 +90,15 @@ export interface ProviderServiceShape {
   readonly stopSession: (
     input: ProviderStopSessionInput,
   ) => Effect.Effect<void, ProviderServiceError>;
+
+  /**
+   * SCIENT-FORK: stop the thread's provider session and forget its resume
+   * cursor, so the next session starts a new provider-native thread. Used when
+   * conversation context may have reached the old one without confirmation.
+   */
+  readonly discardSessionContinuity?: (input: {
+    readonly threadId: ThreadId;
+  }) => Effect.Effect<void, ProviderServiceError>;
 
   /** Capture the currently bound runtime without recovering or starting a session. */
   readonly captureTurnStop?: (input: {

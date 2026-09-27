@@ -213,13 +213,45 @@ describe("electron development launcher", () => {
   it("restores execute permissions on an unchanged launcher", () => {
     const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-launcher-"));
     const launcherPath = NodePath.join(directory, "Scient.app", "Contents", "MacOS", "Launcher");
+    const startCommandPath = NodePath.join(directory, "Scient.app.start.command");
     try {
-      writeDevelopmentLauncherScript(launcherPath, "/runtime/Electron");
+      writeDevelopmentLauncherScript(launcherPath, "/runtime/Electron", { startCommandPath });
       NodeFS.chmodSync(launcherPath, 0o644);
 
-      assert.isFalse(writeDevelopmentLauncherScript(launcherPath, "/runtime/Electron"));
+      assert.isFalse(
+        writeDevelopmentLauncherScript(launcherPath, "/runtime/Electron", { startCommandPath }),
+      );
       assert.equal(NodeFS.statSync(launcherPath).mode & 0o777, 0o755);
     } finally {
+      NodeFS.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps launch-dependent start details outside the signed bundle", () => {
+    const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-launcher-"));
+    const appBundlePath = NodePath.join(directory, "Scient.app");
+    const launcherPath = NodePath.join(appBundlePath, "Contents", "MacOS", "Launcher");
+    const startCommandPath = NodePath.join(directory, "Scient.app.start.command");
+    const previousExecPath = process.env.npm_execpath;
+    try {
+      process.env.npm_execpath = "/tool/pnpm-a.cjs";
+      writeDevelopmentLauncherScript(launcherPath, "/runtime/Electron", { startCommandPath });
+      // A launch from another shell or pnpm install must not touch the bundle.
+      process.env.npm_execpath = "/tool/pnpm-b.cjs";
+      assert.isFalse(
+        writeDevelopmentLauncherScript(launcherPath, "/runtime/Electron", { startCommandPath }),
+      );
+
+      assert.include(NodeFS.readFileSync(startCommandPath, "utf8"), "/tool/pnpm-b.cjs");
+      const bundledCommand = NodeFS.readFileSync(
+        NodePath.join(appBundlePath, "Contents", "Resources", "run-scient-next-dev.command"),
+        "utf8",
+      );
+      assert.notInclude(bundledCommand, "pnpm-");
+      assert.include(bundledCommand, startCommandPath);
+    } finally {
+      if (previousExecPath === undefined) delete process.env.npm_execpath;
+      else process.env.npm_execpath = previousExecPath;
       NodeFS.rmSync(directory, { recursive: true, force: true });
     }
   });

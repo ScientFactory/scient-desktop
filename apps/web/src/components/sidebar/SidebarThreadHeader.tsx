@@ -31,6 +31,11 @@ export interface SidebarThreadHeaderProps {
   hasProjects: boolean;
   /** The project scope combobox, rendered as the first icon of the group. */
   projectScope: ReactNode;
+  // SCIENT-FORK:START — the Status/Sections grouping toggle, and Scient's own
+  // New thread row below this header, which replaces the icon.
+  groupingToggle?: ReactNode;
+  hideNewThreadButton?: boolean;
+  // SCIENT-FORK:END
   onNewProject: () => void;
   /** Receives the click so Shift+click can skip the project picker. */
   onNewThread: (event: ReactMouseEvent) => void;
@@ -53,6 +58,10 @@ export function SidebarThreadHeader({
   searchFieldRef,
   hasProjects,
   projectScope,
+  // SCIENT-FORK:START
+  groupingToggle,
+  hideNewThreadButton,
+  // SCIENT-FORK:END
   onNewProject,
   onNewThread,
   newThreadDisabled,
@@ -79,10 +88,15 @@ export function SidebarThreadHeader({
 
   return (
     <div className="flex items-center gap-1">
+      {/* SCIENT-FORK:START — the search icon and placeholder rest at the
+          sidebar icon color and strengthen only on hover (T3's icon never
+          changes and its placeholder rests at the stronger muted color). Set
+          here because SidebarInput owns its own colors. */}
       <div
         ref={searchFieldRef}
-        className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+        className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground [&_input[data-slot=input]]:placeholder:text-(--sidebar-icon-color) hover:[&_input[data-slot=input]]:placeholder:text-sidebar-foreground hover:[&>svg]:text-sidebar-foreground"
       >
+        {/* SCIENT-FORK:END */}
         <SearchIcon className="size-4 shrink-0 text-(--sidebar-icon-color)" />
         <SidebarInput
           ref={searchInputRef}
@@ -124,6 +138,9 @@ export function SidebarThreadHeader({
           hover states, and a background well reads far louder on themed
           palettes than on the base light and dark ones. */}
       <div className="flex shrink-0 items-center">
+        {/* SCIENT-FORK:START */}
+        {groupingToggle}
+        {/* SCIENT-FORK:END */}
         {hasProjects ? (
           <>
             {projectScope}
@@ -149,6 +166,8 @@ export function SidebarThreadHeader({
           }
           disabled={newThreadDisabled}
           onClick={onNewThread}
+          // SCIENT-FORK: the `hidden` attribute (display: none) keeps this block intact.
+          hidden={hideNewThreadButton}
         >
           <SquarePenIcon />
         </SidebarHeaderIconButton>

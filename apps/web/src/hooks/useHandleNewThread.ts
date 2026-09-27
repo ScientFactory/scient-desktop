@@ -45,6 +45,9 @@ import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useClientSettings } from "./useSettings";
 import { toastManager } from "../components/ui/toast";
+// SCIENT-FORK:START
+import { forgetSectionForNewThread } from "../scient/sections/pendingNewThreadSections";
+// SCIENT-FORK:END
 
 interface NewThreadWorkspaceOptions {
   branch?: string | null;
@@ -275,6 +278,10 @@ export function useNewThreadHandler() {
           : getDraftSession(currentRouteTarget.draftId)
         : null;
       if (emptyStoredDraftThread) {
+        // SCIENT-FORK:START — a reused draft sheds any section remembered by
+        // "New thread in section"; that path remembers it again afterward.
+        forgetSectionForNewThread(emptyStoredDraftThread.threadId);
+        // SCIENT-FORK:END
         return (async () => {
           const isDraftAlreadyOpen =
             currentRouteTarget?.kind === "draft" &&

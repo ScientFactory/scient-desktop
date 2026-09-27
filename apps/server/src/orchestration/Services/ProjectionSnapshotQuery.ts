@@ -31,6 +31,7 @@ import * as Context from "effect/Context";
 import type * as Option from "effect/Option";
 import type * as Effect from "effect/Effect";
 
+import type { HistoryReadQuery, HistoryPage } from "../scient-fork/historyRead.ts";
 import type { ProjectionRepositoryError } from "../../persistence/Errors.ts";
 
 export interface ProjectionSnapshotCounts {
@@ -71,6 +72,8 @@ export type ProjectionThreadPullRequests = Pick<
 >;
 
 export interface ProjectionThreadDetailQuery {
+  /** Internal fork hydration only; ordinary detail reads remain bounded. */
+  readonly fullHistory?: boolean;
   /**
    * Limit activities before SQLite returns and decodes their payloads.
    * Any explicit filter omits pinned-request reads. An empty list also skips
@@ -280,6 +283,10 @@ export interface ProjectionSnapshotQueryShape {
    * Read a single non-deleted thread detail snapshot by id, including an
    * archived thread addressed explicitly by its id.
    */
+  readonly getThreadHistoryPage: (
+    input: HistoryReadQuery,
+  ) => Effect.Effect<HistoryPage, ProjectionRepositoryError>;
+
   readonly getThreadDetailById: (
     threadId: ThreadId,
     query?: ProjectionThreadDetailQuery,

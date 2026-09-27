@@ -19,6 +19,7 @@ type SourcePreviewAssetState = AssetUrlState & {
 };
 
 export function SourcePdfPreview(props: {
+  readonly readerScope?: string | undefined;
   readonly attachmentId: string;
   readonly environmentId: EnvironmentId;
   readonly fileName: string;
@@ -126,7 +127,7 @@ export function SourcePdfPreview(props: {
   }
   return (
     <Suspense fallback={null}>
-      <ScientPdfReader source={source} resolver={resolver} />
+      <ScientPdfReader source={source} resolver={resolver} readerScope={props.readerScope} />
     </Suspense>
   );
 }

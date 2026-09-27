@@ -42,6 +42,9 @@ import { useCopyToClipboard } from "./useCopyToClipboard";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { useClientSettings } from "./useSettings";
 import { useThreadActions } from "./useThreadActions";
+// SCIENT-FORK:START
+import { useThreadSectionMenu } from "../scient/sections/useThreadSectionMenu";
+// SCIENT-FORK:END
 
 function failureToast(title: string, error: unknown) {
   toastManager.add(
@@ -68,8 +71,15 @@ export function useThreadActionMenu(input: {
   /** Fallback for "Copy path" when the thread has no worktree. */
   readonly projectCwd: string | null;
   readonly onStartRename: () => void;
+  // SCIENT-FORK:START — "New section…" needs a name, which the caller asks for.
+  readonly onRequestNewSection: (threadRefs: readonly ScopedThreadRef[]) => void;
+  // SCIENT-FORK:END
 }) {
   const { threadRef, projectCwd, onStartRename } = input;
+  // SCIENT-FORK:START
+  const { menuFor: sectionMenuFor, handleMenuAction: handleSectionMenuAction } =
+    useThreadSectionMenu(input.onRequestNewSection);
+  // SCIENT-FORK:END
   const router = useRouter();
   const projects = useProjects();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -156,6 +166,9 @@ export function useThreadActionMenu(input: {
           isRunning: thread.session?.status === "running" && thread.session.activeTurnId != null,
           supports,
           snoozePresets,
+          // SCIENT-FORK:START
+          sectionMenu: sectionMenuFor([thread]),
+          // SCIENT-FORK:END
         });
         const clicked = await settlePromise(() => api.contextMenu.show(items, position));
         if (clicked._tag === "Failure" || clicked.value === null) return;
@@ -172,6 +185,9 @@ export function useThreadActionMenu(input: {
           }
           return;
         }
+        // SCIENT-FORK:START
+        if (await handleSectionMenuAction(action, [threadRef])) return;
+        // SCIENT-FORK:END
         const reportFailure = async (
           title: string,
           run: () => Promise<AtomCommandResult<unknown, unknown>>,
@@ -340,12 +356,18 @@ export function useThreadActionMenu(input: {
       handleNewThread,
       logicalProjectKeyByPhysicalKey,
       markThreadUnread,
+      // SCIENT-FORK:START
+      handleSectionMenuAction,
+      // SCIENT-FORK:END
       onStartRename,
       pinThread,
       projectCwd,
       projectGroupingSettings,
       projects,
       router,
+      // SCIENT-FORK:START
+      sectionMenuFor,
+      // SCIENT-FORK:END
       setThreadAutoSettle,
       settleThread,
       snoozeThread,

@@ -690,6 +690,11 @@ const sidebarMenuButtonVariants = cva(
       variant: {
         default: "font-medium text-sidebar-muted-foreground/80",
         outline: "bg-sidebar-control-surface ring-1 ring-sidebar-border",
+        // SCIENT-FORK:START — a pressed toggle draws its own smaller "on" mark,
+        // so the button keeps only the ordinary hover fill.
+        toggle:
+          "font-medium text-sidebar-muted-foreground/80 data-[active=true]:bg-transparent data-[active=true]:hover:bg-sidebar-row-hover",
+        // SCIENT-FORK:END
       },
     },
   },

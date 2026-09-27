@@ -138,6 +138,10 @@ export const EnvironmentId = makeEntityId("EnvironmentId");
 export type EnvironmentId = typeof EnvironmentId.Type;
 export const CommandId = makeEntityId("CommandId");
 export type CommandId = typeof CommandId.Type;
+// SCIENT-FORK:START — user-defined thread sections.
+export const ThreadSectionId = makeEntityId("ThreadSectionId");
+export type ThreadSectionId = typeof ThreadSectionId.Type;
+// SCIENT-FORK:END
 export const EventId = makeEntityId("EventId");
 export type EventId = typeof EventId.Type;
 export const MessageId = makeEntityId("MessageId");

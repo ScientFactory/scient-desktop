@@ -174,6 +174,8 @@ export interface CodexSessionRuntimeOptions {
   readonly model?: string;
   readonly serviceTier?: CodexServiceTier | undefined;
   readonly resumeCursor?: CodexResumeCursor;
+  /** SCIENT-FORK: open as a native fork of another Codex thread instead of a new one. */
+  readonly forkFrom?: { readonly threadId: string; readonly lastTurnId: string };
   readonly appServerArgs?: ReadonlyArray<string>;
   readonly scientAwarenessCapabilities?: ReadonlySet<McpCapability>;
   /** The provider's model list; supplies the display name for runtime info. */
@@ -711,12 +713,16 @@ const decodeCodexThreadResumeMetadata = Schema.decodeUnknownEffect(CodexThreadRe
 
 interface CodexThreadOpenClient {
   readonly raw: {
-    readonly request: (
-      method: "thread/resume",
-      payload: CodexRpc.ClientRequestParamsByMethod["thread/resume"] & {
-        readonly excludeTurns?: boolean;
-      },
-    ) => Effect.Effect<unknown, CodexErrors.CodexAppServerError>;
+    // SCIENT-FORK: also thread/fork (native fork, inclusive through lastTurnId).
+    // Method syntax keeps single-method test fakes assignable.
+    request(
+      method: "thread/resume" | "thread/fork",
+      payload:
+        | (CodexRpc.ClientRequestParamsByMethod["thread/resume"] & {
+            readonly excludeTurns?: boolean;
+          })
+        | CodexRpc.ClientRequestParamsByMethod["thread/fork"],
+    ): Effect.Effect<unknown, CodexErrors.CodexAppServerError>;
   };
   readonly request: (
     method: "thread/start",
@@ -735,6 +741,7 @@ export const openCodexThread = (input: {
   readonly requestedModel: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
   readonly resumeThreadId: string | undefined;
+  readonly forkFrom?: { readonly threadId: string; readonly lastTurnId: string } | undefined;
 }): Effect.Effect<typeof CodexThreadResumeMetadata.Type, CodexErrors.CodexAppServerError> => {
   const resumeThreadId = input.resumeThreadId;
   const startParams = buildThreadStartParams({
@@ -743,6 +750,32 @@ export const openCodexThread = (input: {
     model: input.requestedModel,
     serviceTier: input.serviceTier,
   });
+
+  // SCIENT-FORK: a fork's first session clones the source conversation through
+  // the forked turn. Failure is surfaced, never silently replaced by a fresh
+  // thread: the caller then falls back to a recorded portable handoff.
+  if (resumeThreadId === undefined && input.forkFrom !== undefined) {
+    return input.client.raw
+      .request("thread/fork", {
+        threadId: input.forkFrom.threadId,
+        lastTurnId: input.forkFrom.lastTurnId,
+        ...startParams,
+        excludeTurns: true,
+      })
+      .pipe(
+        Effect.flatMap((response) =>
+          decodeCodexThreadResumeMetadata(response).pipe(
+            Effect.mapError((error) =>
+              CodexErrors.CodexAppServerRequestError.invalidPayload(
+                "thread/fork",
+                "decode-payload",
+                error,
+              ),
+            ),
+          ),
+        ),
+      );
+  }
 
   if (resumeThreadId === undefined) {
     return input.client.request("thread/start", startParams);
@@ -2530,6 +2563,7 @@ export const makeCodexSessionRuntime = (
         requestedModel,
         serviceTier: options.serviceTier,
         resumeThreadId: readResumeCursorThreadId(options.resumeCursor),
+        forkFrom: options.forkFrom,
       });
 
       const providerThreadId = opened.thread.id;

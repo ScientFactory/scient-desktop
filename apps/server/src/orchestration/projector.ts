@@ -27,6 +27,8 @@ import * as Schema from "effect/Schema";
 import * as Predicate from "effect/Predicate";
 
 import { toProjectorDecodeError, type OrchestrationProjectorDecodeError } from "./Errors.ts";
+// SCIENT-FORK: inherited transcript turns survive revert.
+import { inheritedTurnIdsOf } from "./scient-fork/inheritedTurns.ts";
 import {
   MessageSentPayloadSchema,
   ProjectCreatedPayload,
@@ -655,6 +657,9 @@ export function projectEvent(
               ...(payload.activeOrderKey !== undefined
                 ? { activeOrderKey: payload.activeOrderKey }
                 : {}),
+              // SCIENT-FORK:START — thread sections
+              ...(payload.sectionId !== undefined ? { sectionId: payload.sectionId } : {}),
+              // SCIENT-FORK:END
               ...(payload.branchPullRequest !== undefined
                 ? { branchPullRequest: payload.branchPullRequest }
                 : {}),
@@ -956,6 +961,7 @@ export function projectEvent(
               forkLineage: {
                 originThreadId: payload.originThreadId,
                 baselineAssistantMessageId: payload.baselineAssistantMessageId,
+                inheritedTurnIds: inheritedTurnIdsOf(payload),
               },
               latestTurn: {
                 turnId: payload.baselineTurnId,
@@ -1068,6 +1074,9 @@ export function projectEvent(
           // baseline assistant message via the narrow forkLineage marker.
           // The baseline (count 0) must survive reverts to any count ≥ 0.
           const forkLineage = thread.forkLineage ?? null;
+          // SCIENT-FORK: every inherited transcript turn survives, not only the
+          // selected boundary turn.
+          for (const turnId of forkLineage?.inheritedTurnIds ?? []) retainedTurnIds.add(turnId);
           if (forkLineage !== null && forkLineage.baselineAssistantMessageId !== null) {
             const baselineMessage = thread.messages.find(
               (message) => message.id === forkLineage.baselineAssistantMessageId,

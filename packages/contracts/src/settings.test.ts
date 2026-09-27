@@ -24,6 +24,31 @@ const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
+// SCIENT-FORK:START
+describe("ServerSettings thread sections", () => {
+  it("defaults to an empty catalog with General first, and round-trips a layout", () => {
+    const decoded = decodeServerSettings({});
+    expect(decoded.threadSections).toEqual([]);
+    expect(decoded.threadSectionsGeneralIndex).toBe(0);
+    expect(decoded.threadSectionsDeleteEmptyAfterDays).toBeNull();
+    const input = {
+      threadSections: [
+        { id: "research", name: "Research", order: 0 },
+        { id: "perma", name: "Perma", order: 1 },
+      ],
+      threadSectionsGeneralIndex: 1,
+      threadSectionsDeleteEmptyAfterDays: 7,
+    };
+    expect(encodeServerSettings(decodeServerSettings(input))).toMatchObject(input);
+    expect(decodeServerSettingsPatch(input)).toEqual(input);
+  });
+
+  it("leaves the layout alone when a patch omits it", () => {
+    expect(decodeServerSettingsPatch({})).toEqual({});
+  });
+});
+// SCIENT-FORK:END
+
 describe("storage cleanup settings", () => {
   it("keeps cleanup disabled for existing installations", () => {
     expect(decodeServerSettings({}).worktreeCleanup).toBeNull();

@@ -240,6 +240,15 @@ import {
 import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
+// SCIENT-FORK:START
+import type { SectionsLifecycle } from "../scient/sections/logic";
+import {
+  SECTION_HEADER_OFFSET_CLASS,
+  SidebarSectionsView,
+} from "../scient/sections/SidebarSectionsView";
+import { useSidebarSections } from "../scient/sections/useSidebarSections";
+import { SidebarNewThreadRow } from "../scient/sidebar/SidebarNewThreadRow";
+// SCIENT-FORK:END
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuShortcut, MenuTrigger } from "./ui/menu";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { MiddleTruncate } from "./ui/middle-truncate";
@@ -2814,10 +2823,33 @@ export default function Sidebar() {
     return routeThread === undefined ? EMPTY_THREADS : [routeThread];
   }, [routeThreadKey, snoozedShelfExpanded, snoozedThreads]);
 
-  const orderedThreads = useMemo(
+  // SCIENT-FORK:START — user-defined sections (see scient/sections).
+  const closeMobileSidebar = useCallback(() => {
+    if (isMobile) setOpenMobile(false);
+  }, [isMobile, setOpenMobile]);
+  const sections = useSidebarSections({
+    threads,
+    pinnedThreads,
+    activeThreads,
+    routeThreadKey,
+    newThreadContext,
+    onBeforeNewThread: closeMobileSidebar,
+  });
+  // Row handlers depend on these stable callbacks, never on `sections` itself.
+  const { handleSectionMenuAction, sectionMenuFor, sectionsView, visibleGroupThreads } = sections;
+  const sectionsOrderedThreads = useMemo(
+    () => [...visibleGroupThreads, ...visibleSnoozedThreads, ...renderedSettledThreads],
+    [renderedSettledThreads, visibleGroupThreads, visibleSnoozedThreads],
+  );
+  // SCIENT-FORK:END
+  // SCIENT-FORK: renamed from orderedThreads; the Sections view swaps in its own order below.
+  const statusOrderedThreads = useMemo(
     () => [...pinnedThreads, ...activeThreads, ...visibleSnoozedThreads, ...renderedSettledThreads],
     [activeThreads, pinnedThreads, renderedSettledThreads, visibleSnoozedThreads],
   );
+  // SCIENT-FORK:START
+  const orderedThreads = sectionsView ? sectionsOrderedThreads : statusOrderedThreads;
+  // SCIENT-FORK:END
   const orderedThreadKeys = useMemo(
     () =>
       orderedThreads.map((thread) =>
@@ -3869,6 +3901,9 @@ export default function Sidebar() {
         pinnedCount: pinnedSelectedThreads.length,
       });
       const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat);
+      // SCIENT-FORK:START
+      const bulkSectionMenu = sectionMenuFor(selectedThreads);
+      // SCIENT-FORK:END
       const clicked = await settlePromise(() =>
         api.contextMenu.show(
           [
@@ -3890,6 +3925,9 @@ export default function Sidebar() {
                 ]
               : []),
             ...(titleRegenerationMenuItem ? [titleRegenerationMenuItem] : []),
+            // SCIENT-FORK:START
+            ...(bulkSectionMenu ? [bulkSectionMenu] : []),
+            // SCIENT-FORK:END
             { id: "mark-unread", label: `Mark unread (${count})` },
             { id: "delete", label: `Delete (${count})`, destructive: true },
           ],
@@ -3897,6 +3935,15 @@ export default function Sidebar() {
         ),
       );
       if (clicked._tag === "Failure") return;
+      // SCIENT-FORK:START
+      const selectedRefs = selectedThreads.map((thread) =>
+        scopeThreadRef(thread.environmentId, thread.id),
+      );
+      if (await handleSectionMenuAction(clicked.value, selectedRefs)) {
+        clearSelection();
+        return;
+      }
+      // SCIENT-FORK:END
       if (clicked.value?.startsWith("snooze:")) {
         const preset =
           clicked.value === "snooze:custom"
@@ -4038,8 +4085,14 @@ export default function Sidebar() {
       confirmThreadDelete,
       deleteThread,
       markThreadUnread,
+      // SCIENT-FORK:START
+      handleSectionMenuAction,
+      // SCIENT-FORK:END
       performSnooze,
       removeFromSelection,
+      // SCIENT-FORK:START
+      sectionMenuFor,
+      // SCIENT-FORK:END
       serverConfigs,
       updateThreadMetadata,
       timestampFormat,
@@ -4119,11 +4172,17 @@ export default function Sidebar() {
                 titleRegeneration: supportsTitleRegeneration,
               },
               snoozePresets,
+              // SCIENT-FORK:START
+              sectionMenu: sectionMenuFor([thread]),
+              // SCIENT-FORK:END
             }),
             position,
           ),
         );
         if (clicked._tag === "Failure") return;
+        // SCIENT-FORK:START
+        if (await handleSectionMenuAction(clicked.value, [threadRef])) return;
+        // SCIENT-FORK:END
         if (clicked.value?.startsWith("snooze:")) {
           const preset =
             clicked.value === "snooze:custom"
@@ -4329,6 +4388,10 @@ export default function Sidebar() {
       openProjectSettings,
       projectScopeKey,
       projectByKey,
+      // SCIENT-FORK:START
+      handleSectionMenuAction,
+      sectionMenuFor,
+      // SCIENT-FORK:END
       serverConfigs,
       setProjectScopeKey,
       setThreadAutoSettle,
@@ -4433,6 +4496,25 @@ export default function Sidebar() {
     if (isMobile) setOpenMobile(false);
     openCommandPalette({ open: "new-thread-in" });
   }, [isMobile, newThreadContext, opensNewThreadTargetPicker, setOpenMobile]);
+  // SCIENT-FORK:START — the New thread row honours the Shift+click its tooltip
+  // advertises: straight into the current project, skipping the picker.
+  const handleNewThreadRowClick = useCallback(
+    (event: { readonly shiftKey: boolean }) => {
+      if (!event.shiftKey || projectGroups.length === 0) {
+        handleNewThreadClick();
+        return;
+      }
+      if (isMobile) setOpenMobile(false);
+      void startNewThreadFromContext({
+        activeDraftThread: newThreadContext.activeDraftThread,
+        activeThread: newThreadContext.activeThread ?? undefined,
+        defaultProjectRef: newThreadContext.defaultProjectRef,
+        handleNewThread: newThreadContext.handleNewThread,
+      });
+    },
+    [handleNewThreadClick, isMobile, newThreadContext, projectGroups.length, setOpenMobile],
+  );
+  // SCIENT-FORK:END
 
   // chat.newLocal is a valid fallback label only when both commands create
   // directly. When the picker is available, it is advertised separately as
@@ -4445,6 +4527,75 @@ export default function Sidebar() {
   const showNewThreadInProjectHint = opensNewThreadTargetPicker && projectGroups.length > 0;
   const newThreadInProjectShortcutLabel = shortcutLabelForCommand(keybindings, "chat.newLocal");
 
+  // SCIENT-FORK:START — a Sections view row, rendered like the Status view's.
+  const renderSectionsThreadRow = (
+    thread: EnvironmentThreadShell,
+    lifecycle: SectionsLifecycle,
+    sortable: SortableThreadRowBag | undefined,
+    dropVerb: SidebarDropVerb | null,
+  ) => {
+    // Same row as the Status view: shelved rows are slim, the rest are cards.
+    const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+    const capabilities = serverConfigs.get(thread.environmentId)?.environment.capabilities;
+    const rowVariant = lifecycle === "active" || lifecycle === "pinned" ? "card" : "slim";
+    return (
+      <SidebarThreadRow
+        key={`${threadKey}:${rowVariant}`}
+        thread={thread}
+        variant={rowVariant}
+        variantAction={
+          lifecycle === "snoozed" ? "unsnooze" : lifecycle === "settled" ? "unsettle" : "settle"
+        }
+        settlementSupported={capabilities?.threadSettlement === true}
+        snoozeSupported={capabilities?.threadSnooze === true}
+        pinningSupported={capabilities?.threadPinning === true}
+        isPinned={thread.pinnedAt != null}
+        sortable={sortable}
+        dropVerb={dropVerb}
+        dragOverPinned={false}
+        snoozeWakeLabelText={
+          lifecycle === "snoozed" && thread.snoozedUntil != null
+            ? snoozeWakeLabel(thread.snoozedUntil, { now: new Date().toISOString() })
+            : null
+        }
+        wokeAt={threadWokeAt(thread, { now: snoozeNow })}
+        isActive={routeThreadKey === threadKey}
+        openPullRequestsInRightPanel={routeThreadRef !== null}
+        jumpLabel={showThreadJumpHints ? (jumpLabelByKey.get(threadKey) ?? null) : null}
+        currentEnvironmentId={primaryEnvironmentId}
+        environmentLabel={environmentLabelById.get(thread.environmentId) ?? null}
+        environmentMachine={environmentMachineById.get(thread.environmentId) ?? "server"}
+        project={projectByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null}
+        projectDisplayName={
+          thread.projectId === null
+            ? null
+            : (projectDisplayNameByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null)
+        }
+        providerEntryByInstanceId={
+          providerEntriesByEnvironment.get(thread.environmentId) ?? EMPTY_PROVIDER_ENTRIES
+        }
+        timestampFormat={timestampFormat}
+        onThreadClick={handleThreadClick}
+        onThreadActivate={navigateToThread}
+        onStartRename={startThreadRename}
+        onRenameTitleChange={setRenamingTitle}
+        onCommitRename={commitThreadRename}
+        onCancelRename={cancelThreadRename}
+        isRenaming={renamingThreadKey === threadKey}
+        renamingTitle={renamingThreadKey === threadKey ? renamingTitle : ""}
+        onContextMenu={handleThreadContextMenu}
+        onSettle={attemptSettle}
+        onUnsettle={attemptUnsettle}
+        onSnooze={attemptSnooze}
+        onUnsnooze={attemptUnsnooze}
+        onUnpin={attemptUnpin}
+        onAcknowledgeWoke={acknowledgeWoke}
+        onFileDropThreads={handleThreadFileDrop}
+      />
+    );
+  };
+  // SCIENT-FORK:END
+
   return (
     <>
       <SidebarChromeHeader isElectron={isElectron} />
@@ -4455,6 +4606,10 @@ export default function Sidebar() {
           // header and would otherwise paint across the search row's outline.
           <SidebarGroup className="z-[1]">
             <SidebarThreadHeader
+              // SCIENT-FORK:START
+              hideNewThreadButton
+              groupingToggle={sections.toggle}
+              // SCIENT-FORK:END
               searchFieldRef={headerSearchRef}
               hasProjects={projectGroups.length > 0}
               projectScope={
@@ -4607,6 +4762,14 @@ export default function Sidebar() {
               activeSearchResultIndex={activeSearchResultIndex}
               onClearSearch={clearThreadSearch}
             />
+            {/* SCIENT-FORK:START — New thread gets its own labelled row below search. */}
+            <SidebarNewThreadRow
+              onNewThread={handleNewThreadRowClick}
+              shortcutLabel={newThreadShortcutLabel}
+              inProjectShortcutLabel={newThreadInProjectShortcutLabel}
+              showInProjectHint={showNewThreadInProjectHint}
+            />
+            {/* SCIENT-FORK:END */}
           </SidebarGroup>
         }
       >
@@ -4680,7 +4843,87 @@ export default function Sidebar() {
               </p>
             )
           ) : null}
-          {!isSearchingThreads ? (
+          {/* SCIENT-FORK:START — group by user-defined section. The Status list below
+              renders only when not grouped (its condition gains `&& !sectionsView`). */}
+          {!isSearchingThreads && sectionsView ? (
+            <TooltipProvider
+              key="sidebar-section-tooltips-150"
+              delay={150}
+              closeDelay={0}
+              timeout={400}
+            >
+              <SidebarSectionsView
+                {...sections.viewProps}
+                snoozedThreads={visibleSnoozedThreads}
+                settledThreads={renderedSettledThreads}
+                showSnoozedShelf={snoozedThreads.length > 0}
+                pinnedKeysById={pinnedKeysById}
+                activeKeysById={activeKeysById}
+                canDragThread={(thread) =>
+                  serverConfigs.get(thread.environmentId)?.environment.capabilities
+                    .threadSections === true &&
+                  renamingThreadKey !==
+                    scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))
+                }
+                renderThreadRow={renderSectionsThreadRow}
+                shelfMarkerId={(shelf) =>
+                  sidebarMarkerId(shelf === "snoozed" ? "snoozed-header" : "settled-header")
+                }
+                renderShelfHeader={(shelf, state) =>
+                  shelf === "snoozed" ? (
+                    <SidebarSectionHeader
+                      marker="snoozed-header"
+                      className={cn("mt-auto", SECTION_HEADER_OFFSET_CLASS)}
+                      label={
+                        snoozedShelfExpanded ? "Snoozed" : `Snoozed (${snoozedThreads.length})`
+                      }
+                      toggle={{ expanded: snoozedShelfExpanded, onToggle: toggleSnoozedShelf }}
+                    />
+                  ) : (
+                    <SidebarSectionHeader
+                      marker="settled-header"
+                      className={cn(
+                        snoozedThreads.length === 0 && "mt-auto",
+                        SECTION_HEADER_OFFSET_CLASS,
+                      )}
+                      label={
+                        settledShelfExpanded ? "Settled" : `Settled (${settledThreads.length})`
+                      }
+                      dragging={state.dragging}
+                      isDropTarget={state.isDropTarget}
+                      toggle={{ expanded: settledShelfExpanded, onToggle: toggleSettledShelf }}
+                    />
+                  )
+                }
+                leading={
+                  <SidebarDraftBlock
+                    projectByKey={projectByKey}
+                    projectDisplayNameByKey={projectDisplayNameByKey}
+                    scopedProjectKeys={scopedProjectKeys}
+                    routeDraftId={routeDraftIdForRows}
+                    onNavigateToDraft={navigateToDraft}
+                  />
+                }
+                trailing={
+                  settledShelfExpanded && hiddenSettledCount > 0 ? (
+                    <li className="list-none">
+                      <button
+                        type="button"
+                        onClick={showMoreSettled}
+                        className="flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm text-sidebar-muted-foreground/55 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+                      >
+                        <PlusIcon aria-hidden className="size-4 shrink-0" />
+                        Show {Math.min(hiddenSettledCount, SETTLED_TAIL_PAGE_COUNT)} more
+                      </button>
+                    </li>
+                  ) : null
+                }
+                onSettleThread={attemptSettle}
+              />
+            </TooltipProvider>
+          ) : null}
+          {/* SCIENT-FORK:END */}
+          {!isSearchingThreads && !sectionsView ? (
             <TooltipProvider
               key="sidebar-thread-tooltips-150"
               delay={150}
@@ -5009,6 +5252,9 @@ export default function Sidebar() {
         </SidebarGroup>
       </SidebarContent>
       <SidebarChromeFooter />
+      {/* SCIENT-FORK:START */}
+      {sections.dialog}
+      {/* SCIENT-FORK:END */}
     </>
   );
 }

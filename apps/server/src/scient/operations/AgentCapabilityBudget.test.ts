@@ -191,7 +191,7 @@ it.live(
         );
       expect(size(500)).toBeGreaterThan(size(100) * 4);
       expect(size(100)).toBeGreaterThan(size(29) * 2);
-      expect(scientTools).toHaveLength(29);
+      expect(scientTools).toHaveLength(30);
       yield* Effect.logInfo({
         fixture: "eager-input-schemas",
         actual29Bytes: Buffer.byteLength(encode(schemas)),

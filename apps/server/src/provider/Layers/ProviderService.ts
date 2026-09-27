@@ -52,7 +52,10 @@ import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as Stream from "effect/Stream";
 
+import { fitsForkRequestBudget } from "../../orchestration/scient-fork/context/finalRequestBudget.ts";
 import { appendUserInputAttachmentPaths } from "../userInputAttachments.ts";
+// SCIENT-FORK: failures after adapter dispatch may have reached the provider.
+import { markTurnDispatchAttempted } from "../turnDispatchPhase.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as DeviceService from "../../device/DeviceService.ts";
@@ -986,6 +989,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       "compute:inventory",
       "sources:read",
       "sources:write",
+      // SCIENT-THREAD-READ: every MCP-injected session may read its own project's threads.
+      "threads:read",
       ...(supportsScientSkills ? (["skills:read"] satisfies ReadonlyArray<McpCapability>) : []),
     ]);
     const access = yield* agentAccessSettings(threadId);
@@ -1608,9 +1613,26 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         const adapter = yield* registry.getByInstance(resolvedInstanceId);
         yield* clearTurnAnalyticsSession(resolvedInstanceId, threadId);
         yield* prepareMcpSession(threadId, resolvedInstanceId, adapter);
+        // SCIENT-FORK: a native fork is honoured or rejected, never silently
+        // dropped: success must mean the new provider thread is the fork. It
+        // applies only to a brand-new thread of an adapter that declares it.
+        const { forkFrom, ...startInput } = input;
+        if (
+          forkFrom !== undefined &&
+          (effectiveResumeCursor != null || adapter.capabilities.nativeFork !== true)
+        ) {
+          return yield* toValidationError(
+            "ProviderService.startSession",
+            effectiveResumeCursor != null
+              ? "A native fork needs a new provider thread, but this thread already has one."
+              : `Provider '${adapter.provider}' cannot fork a conversation natively.`,
+          );
+        }
+        const nativeFork = forkFrom !== undefined ? { forkFrom } : {};
         const session = yield* adapter
           .startSession({
-            ...input,
+            ...startInput,
+            ...nativeFork,
             providerInstanceId: resolvedInstanceId,
             ...(effectiveCwd !== undefined ? { cwd: effectiveCwd } : {}),
             ...(effectiveResumeCursor !== undefined ? { resumeCursor: effectiveResumeCursor } : {}),
@@ -1673,7 +1695,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     },
   );
 
-  const sendTurn: ProviderServiceMethod<"sendTurn"> = Effect.fn("sendTurn")(function* (rawInput) {
+  type SendTurn = ProviderServiceMethod<"sendTurn">;
+  const sendTurn: SendTurn = Effect.fn("sendTurn")(function* (rawInput, budget) {
     const parsed = yield* decodeInputOrValidationError({
       operation: "ProviderService.sendTurn",
       schema: ProviderSendTurnInput,
@@ -1798,6 +1821,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     });
     let metricProvider = "unknown";
     let metricModel = input.modelSelection?.model;
+    // SCIENT-FORK: set immediately before the adapter receives the turn.
+    let dispatchAttempted = false;
     return yield* Effect.gen(function* () {
       let routed = yield* resolveRoutableSession({
         threadId: input.threadId,
@@ -1862,19 +1887,54 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         providerNativeSkillTool: scientTools.providerNativeSkillTool,
         deferred: scientTools.deferred,
       };
-      const skillTurn = prepareScientSkillTurn(
-        input.input,
-        skillPlan.delivery === "mcp" ? skillPlan.skills : [],
-        skillPlan.delivery === "mcp" ? skillPlan.releases : new Map(),
-        skillProjection,
-        parsed.selectedScientSkillNames ?? [],
-        skillPlan.catalogStatus,
-      );
+      const prepareSkillTurn = (projection: typeof skillProjection) =>
+        prepareScientSkillTurn(
+          input.input,
+          skillPlan.delivery === "mcp" ? skillPlan.skills : [],
+          skillPlan.delivery === "mcp" ? skillPlan.releases : new Map(),
+          projection,
+          parsed.selectedScientSkillNames ?? [],
+          skillPlan.catalogStatus,
+        );
+      let skillTurn = prepareSkillTurn(skillProjection);
+      // Skill discovery is optional context: drop its catalog marker before
+      // rejecting an input that only exceeds the limit because of it. Skills the
+      // user selected stay, as do attachments and their context.
+      if (
+        (skillTurn.input?.length ?? 0) > PROVIDER_SEND_TURN_MAX_INPUT_CHARS &&
+        skillProjection.includeCatalogMarker
+      ) {
+        skillTurn = prepareSkillTurn({ ...skillProjection, includeCatalogMarker: false });
+      }
       if ((skillTurn.input?.length ?? 0) > PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
         return yield* toValidationError(
           "ProviderService.sendTurn",
           "The message, selected context, attachments and Scient instructions exceed the provider input limit. Shorten the message or remove a context selection and retry; nothing was sent.",
         );
+      }
+      // SCIENT-FORK: retained conversation context goes first. Its producer
+      // budgets it against the model window; the user-input limit above keeps
+      // measuring only what the user sent.
+      let dispatchInput =
+        parsed.contextPreamble === undefined
+          ? skillTurn.input
+          : [parsed.contextPreamble, skillTurn.input].filter(Boolean).join("\n\n");
+      if (parsed.contextPreamble !== undefined) {
+        const fits = () =>
+          fitsForkRequestBudget({
+            input: dispatchInput ?? "",
+            attachments: parsed.attachments ?? [],
+            tokenBudget: budget,
+          });
+        if (!fits() && skillProjection.includeCatalogMarker) {
+          skillTurn = prepareSkillTurn({ ...skillProjection, includeCatalogMarker: false });
+          dispatchInput = [parsed.contextPreamble, skillTurn.input].filter(Boolean).join("\n\n");
+        }
+        if (!fits())
+          return yield* toValidationError(
+            "ProviderService.sendTurn",
+            "Conversation history, message, attachments and selected instructions exceed this model's available context. Choose a smaller fork history size or shorten the message; nothing was sent.",
+          );
       }
       if (
         routed.adapter.capabilities.mcpSessionInjection === true &&
@@ -1899,10 +1959,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         }),
         (turnMetadata) =>
           Effect.gen(function* () {
+            const { contextPreamble: _contextPreamble, ...adapterInput } = input;
+            dispatchAttempted = true;
             const turn = yield* routed.adapter.sendTurn({
-              ...input,
+              ...adapterInput,
               ...(parsed.input !== undefined ? { originalInput: parsed.input } : {}),
-              ...(skillTurn.input !== undefined ? { input: skillTurn.input } : {}),
+              ...(dispatchInput !== undefined ? { input: dispatchInput } : {}),
             });
             yield* associateTurnAnalytics({
               providerInstanceId: routed.instanceId,
@@ -1948,6 +2010,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       });
       return turn;
     }).pipe(
+      Effect.tapError((error) =>
+        Effect.sync(() => {
+          if (dispatchAttempted) markTurnDispatchAttempted(error);
+        }),
+      ),
       withMetrics({
         counter: providerTurnsTotal,
         timer: providerTurnDuration,
@@ -2264,6 +2331,24 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       );
     },
   );
+
+  // SCIENT-FORK: a fresh provider-native thread after an uncertain delivery.
+  const discardSessionContinuity: NonNullable<ProviderServiceMethod<"discardSessionContinuity">> =
+    Effect.fn("discardSessionContinuity")(function* (input) {
+      const binding = Option.getOrUndefined(yield* directory.getBinding(input.threadId));
+      if (binding === undefined) return;
+      const active = (yield* listSessions()).some((session) => session.threadId === input.threadId);
+      if (active) yield* stopSession({ threadId: input.threadId });
+      yield* directory.upsert({
+        threadId: input.threadId,
+        provider: binding.provider,
+        ...(binding.providerInstanceId !== undefined
+          ? { providerInstanceId: binding.providerInstanceId }
+          : {}),
+        status: "stopped",
+        resumeCursor: null,
+      });
+    });
 
   const captureTurnStop: NonNullable<ProviderServiceMethod<"captureTurnStop">> = Effect.fn(
     "captureTurnStop",
@@ -2663,6 +2748,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     respondToUserInput,
     stopSession,
     captureTurnStop,
+    discardSessionContinuity,
     listSessions,
     getCapabilities,
     getInstanceInfo,

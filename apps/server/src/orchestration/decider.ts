@@ -48,7 +48,7 @@ import {
 import { projectEvent } from "./projector.ts";
 // SCIENT-FORK:START — delegate the Scient-owned thread.fork command out of T3.
 import type { ResolvedForkBoundaries } from "./scient-fork/forkBoundaryTypes.ts";
-import { forkThread } from "./scient-fork/forkDecider.ts";
+import { decideForkComplete, forkThread } from "./scient-fork/forkDecider.ts";
 // SCIENT-FORK:END
 import { threadHasQueuedTurnStart } from "./ThreadSettlementPolicy.ts";
 
@@ -892,6 +892,38 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         },
       };
     }
+
+    // SCIENT-FORK:START — file a thread into a user-defined section.
+    case "thread.section.set": {
+      const thread = yield* requireThreadNotArchived({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (thread.deletedAt !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `thread ${command.threadId} is deleted and cannot be filed into a section`,
+        });
+      }
+      const occurredAt = yield* nowIso;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.meta-updated",
+        payload: {
+          threadId: command.threadId,
+          sectionId: command.sectionId,
+          // Organizing the list is not thread activity or a lifecycle transition.
+          updatedAt: thread.updatedAt,
+        },
+      };
+    }
+    // SCIENT-FORK:END
 
     case "thread.active.reorder": {
       const thread = yield* requireThreadNotArchived({
@@ -2315,20 +2347,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
-      return {
-        ...(yield* withEventBase({
-          aggregateKind: "thread",
-          aggregateId: command.threadId,
-          occurredAt: command.createdAt,
-          commandId: command.commandId,
-        })),
-        type: "thread.fork-completed",
-        payload: {
-          threadId: command.threadId,
-          checkpointStatus: command.checkpointStatus,
-          workspaceStatus: command.workspaceStatus,
-        },
-      };
+      return yield* decideForkComplete({ command });
     }
     // SCIENT-FORK:END
 
