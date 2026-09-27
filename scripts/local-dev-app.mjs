@@ -855,6 +855,29 @@ export async function stopApp({
     }
     return unloaded;
   };
+  const resolvers = {
+    matchesRunner,
+    resolveOwnedApp,
+    resolveOwnedBackend,
+    resolveOwnedApps,
+    resolveOwnedBackends,
+  };
+  const forceStopRemaining = async (runnerPid) => {
+    const remainingApp = resolveOwnedApp(paths);
+    if (remainingApp) killProcess(remainingApp.pid, "SIGKILL");
+    const remainingBackend = resolveOwnedBackend(paths);
+    if (remainingBackend) killProcess(remainingBackend.pid, "SIGKILL");
+    signalOwnedDevelopmentProcesses(resolveOwnedApps(paths), "SIGKILL", killProcess);
+    signalOwnedDevelopmentProcesses(resolveOwnedBackends(paths), "SIGKILL", killProcess);
+    if (runnerPid && matchesRunner(runnerPid, paths.root)) killProcess(runnerPid, "SIGKILL");
+    return waitUntilStopped(paths, runnerPid, { ...resolvers, timeoutMs: 2_000 });
+  };
+  const failStop = async () => {
+    await stopBackgroundService();
+    throw new Error(
+      `Could not stop every owned ${appName} process for ${paths.root}; some are still running.`,
+    );
+  };
   if (
     !state &&
     !ownedApp &&
@@ -882,14 +905,10 @@ export async function stopApp({
         "SIGTERM",
         killProcess,
       );
-      await waitUntilStopped(paths, null, {
-        timeoutMs: 2_000,
-        matchesRunner,
-        resolveOwnedApp,
-        resolveOwnedBackend,
-        resolveOwnedApps,
-        resolveOwnedBackends,
-      });
+      const stopped =
+        (await waitUntilStopped(paths, null, { ...resolvers, timeoutMs: 2_000 })) ||
+        (await forceStopRemaining(null));
+      if (!stopped) await failStop();
       NodeFS.rmSync(paths.runnerDir, { recursive: true, force: true });
       removeDevelopmentLaunchFiles(paths.appPidPath, paths.backendPidPath);
       writeLine(`Stopped ${appName} while it was starting for ${paths.root}.`);
@@ -917,29 +936,9 @@ export async function stopApp({
   signalOwnedDevelopmentProcesses(ownedApps, "SIGTERM", killProcess);
   signalOwnedDevelopmentProcesses(ownedBackends, "SIGTERM", killProcess);
   if (!state) {
-    const stopped = await waitUntilStopped(paths, null, {
-      matchesRunner,
-      resolveOwnedApp,
-      resolveOwnedBackend,
-      resolveOwnedApps,
-      resolveOwnedBackends,
-    });
-    if (!stopped) {
-      const remaining = resolveOwnedApp(paths);
-      if (remaining) killProcess(remaining.pid, "SIGKILL");
-      const remainingBackend = resolveOwnedBackend(paths);
-      if (remainingBackend) killProcess(remainingBackend.pid, "SIGKILL");
-      signalOwnedDevelopmentProcesses(resolveOwnedApps(paths), "SIGKILL", killProcess);
-      signalOwnedDevelopmentProcesses(resolveOwnedBackends(paths), "SIGKILL", killProcess);
-      await waitUntilStopped(paths, null, {
-        timeoutMs: 2_000,
-        matchesRunner,
-        resolveOwnedApp,
-        resolveOwnedBackend,
-        resolveOwnedApps,
-        resolveOwnedBackends,
-      });
-    }
+    const stopped =
+      (await waitUntilStopped(paths, null, resolvers)) || (await forceStopRemaining(null));
+    if (!stopped) await failStop();
     removeDevelopmentLaunchFiles(paths.appPidPath, paths.backendPidPath);
     await stopBackgroundService();
     writeLine(`Stopped orphaned ${appName} app process for ${paths.root}.`);
@@ -954,30 +953,9 @@ export async function stopApp({
     writeLine(`${appName} is already stopped for ${paths.root}`);
     return;
   }
-  const stopped = await waitUntilStopped(paths, state.pid, {
-    matchesRunner,
-    resolveOwnedApp,
-    resolveOwnedBackend,
-    resolveOwnedApps,
-    resolveOwnedBackends,
-  });
-  if (!stopped) {
-    const remainingApp = resolveOwnedApp(paths);
-    if (remainingApp) killProcess(remainingApp.pid, "SIGKILL");
-    const remainingBackend = resolveOwnedBackend(paths);
-    if (remainingBackend) killProcess(remainingBackend.pid, "SIGKILL");
-    signalOwnedDevelopmentProcesses(resolveOwnedApps(paths), "SIGKILL", killProcess);
-    signalOwnedDevelopmentProcesses(resolveOwnedBackends(paths), "SIGKILL", killProcess);
-    if (matchesRunner(state.pid, paths.root)) killProcess(state.pid, "SIGKILL");
-    await waitUntilStopped(paths, state.pid, {
-      timeoutMs: 2_000,
-      matchesRunner,
-      resolveOwnedApp,
-      resolveOwnedBackend,
-      resolveOwnedApps,
-      resolveOwnedBackends,
-    });
-  }
+  const stopped =
+    (await waitUntilStopped(paths, state.pid, resolvers)) || (await forceStopRemaining(state.pid));
+  if (!stopped) await failStop();
   clearStaleRunner(paths, { matchesRunner });
   removeDevelopmentLaunchFiles(paths.appPidPath, paths.backendPidPath);
   await stopBackgroundService();

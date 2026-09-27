@@ -9,6 +9,8 @@ import {
   resolveElectronLaunchCommand,
 } from "./electron-launcher.mjs";
 import {
+  createCoalescedRestartScheduler,
+  developmentLauncherIsActive,
   findOwnedDevelopmentProcesses,
   inspectProcessCommand,
   makeMacDevelopmentAppLaunchCommand,
@@ -102,9 +104,7 @@ const backendPidFilePath = NodePath.join(launchStateDir, "backend.pid");
 const backendEntryPath = NodePath.resolve(desktopDir, "..", "server", "dist", "bin.mjs");
 
 let shuttingDown = false;
-let restartTimer = null;
 let currentApp = null;
-let restartQueue = Promise.resolve();
 const expectedExits = new WeakSet();
 const watchers = [];
 let launchSequence = 0;
@@ -177,7 +177,7 @@ async function waitForManagedProcessesToExit(app, timeoutMs) {
       !ownedBackend &&
       ownedApps.length === 0 &&
       ownedBackends.length === 0 &&
-      app.launcher.exitCode !== null
+      !developmentLauncherIsActive(app.launcher)
     )
       return true;
     await new Promise((resolve) => setTimeout(resolve, 50));
@@ -312,7 +312,7 @@ function startApp() {
     }
 
     if (!shuttingDown) {
-      scheduleRestart();
+      restartScheduler.request();
     }
   });
 
@@ -327,7 +327,7 @@ function startApp() {
 
     const exitedAbnormally = signal !== null || code !== 0;
     if (!shuttingDown && !expectedExits.has(launcher) && exitedAbnormally) {
-      scheduleRestart();
+      restartScheduler.request();
     }
   });
 }
@@ -348,7 +348,7 @@ async function stopApp() {
     if (!(await waitForManagedProcessesToExit(app, forcedShutdownTimeoutMs))) {
       signalOwnedProcesses(app.mainCommandPrefix, "SIGKILL");
       signalOwnedProcesses(app.backendCommandPrefix, "SIGKILL");
-      if (app.launcher.exitCode === null) app.launcher.kill("SIGKILL");
+      if (developmentLauncherIsActive(app.launcher)) app.launcher.kill("SIGKILL");
       await waitForManagedProcessesToExit(app, 2_000);
     }
     cleanupLaunchFiles(app);
@@ -376,34 +376,22 @@ async function stopApp() {
         return;
       }
 
-      if (app.launcher.exitCode === null) app.launcher.kill("SIGKILL");
+      if (developmentLauncherIsActive(app.launcher)) app.launcher.kill("SIGKILL");
       signalCapturedBackend(app, "SIGKILL");
       finish();
     }, forcedShutdownTimeoutMs).unref();
   }).finally(() => cleanupLaunchFiles(app));
 }
 
-function scheduleRestart() {
-  if (shuttingDown) {
-    return;
-  }
-
-  if (restartTimer) {
-    clearTimeout(restartTimer);
-  }
-
-  restartTimer = setTimeout(() => {
-    restartTimer = null;
-    restartQueue = restartQueue
-      .catch(() => undefined)
-      .then(async () => {
-        await stopApp();
-        if (!shuttingDown) {
-          startApp();
-        }
-      });
-  }, restartDebounceMs);
-}
+const restartScheduler = createCoalescedRestartScheduler({
+  debounceMs: restartDebounceMs,
+  restart: async () => {
+    await stopApp();
+    if (!shuttingDown) {
+      startApp();
+    }
+  },
+});
 
 function startWatchers() {
   for (const { directory, files } of watchedDirectories) {
@@ -415,7 +403,7 @@ function startWatchers() {
           return;
         }
 
-        scheduleRestart();
+        restartScheduler.request();
       },
     );
 
@@ -427,15 +415,14 @@ async function shutdown(exitCode) {
   if (shuttingDown) return;
   shuttingDown = true;
 
-  if (restartTimer) {
-    clearTimeout(restartTimer);
-    restartTimer = null;
-  }
-
   for (const watcher of watchers) {
     watcher.close();
   }
 
+  // A restart may still be stopping the previous app. stopApp() alone would
+  // see no current app and exit before that stop (and its SIGKILL fallback)
+  // finished, leaving the app or backend running.
+  await restartScheduler.close();
   await stopApp();
 
   process.exit(exitCode);

@@ -201,7 +201,9 @@ concurrently, while a second instance of the same worktree is refused.
 `dev:app:logs` prints the last 200 background-launch lines. `dev:app:stop`
 validates and stops only that checkout's recorded service, runner, Electron
 app, and backend PIDs, waits for those processes to exit, and removes its launch
-files. Never stop Electron, Node, pnpm, or ports by name or pattern.
+files. If any of them is still running after the forced stop, it fails with an
+error and keeps the launch records instead of reporting success. Never stop
+Electron, Node, pnpm, or ports by name or pattern.
 
 The desktop renderer hot-reloads, but its local backend runs from the server
 bundle built when the candidate starts. After changing `apps/server`, an HTTP
