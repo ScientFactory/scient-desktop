@@ -114,15 +114,42 @@ export function signInForeground(appBundlePath, sign, environment = process.env)
   }
 }
 
+/** A staging directory this old belongs to an interrupted build, not a live one. */
+const ABANDONED_STAGING_AGE_MS = 10 * 60 * 1000;
+
+/**
+ * Cleans up after a build that was killed mid-way (for example Ctrl-C while
+ * signing): restores a bundle left mid-swap and removes abandoned copies.
+ */
+function recoverInterruptedBuilds(runtimeDir, bundleName, fs, now) {
+  const targetAppBundlePath = NodePath.join(runtimeDir, bundleName);
+  for (const entry of fs.readdirSync(runtimeDir)) {
+    if (!entry.startsWith(".staging-")) continue;
+    const stagingDir = NodePath.join(runtimeDir, entry);
+    const previous = NodePath.join(stagingDir, `${bundleName}.previous`);
+    if (!fs.existsSync(targetAppBundlePath) && fs.existsSync(previous)) {
+      fs.renameSync(previous, targetAppBundlePath);
+    }
+    if (now - fs.statSync(stagingDir).mtimeMs > ABANDONED_STAGING_AGE_MS) {
+      fs.rmSync(stagingDir, { recursive: true, force: true });
+    }
+  }
+}
+
 /**
  * Builds a bundle in a staging directory and swaps it into place only after
  * `build` succeeds. The staged bundle keeps the final bundle's name, so any
  * path derived from that name matches after the swap.
  */
-export function replaceAppBundleAtomically(targetAppBundlePath, build, { fs = NodeFS } = {}) {
+export function replaceAppBundleAtomically(
+  targetAppBundlePath,
+  build,
+  { fs = NodeFS, now = Date.now() } = {},
+) {
   const runtimeDir = NodePath.dirname(targetAppBundlePath);
   const bundleName = NodePath.basename(targetAppBundlePath);
   fs.mkdirSync(runtimeDir, { recursive: true });
+  recoverInterruptedBuilds(runtimeDir, bundleName, fs, now);
   const stagingDir = fs.mkdtempSync(NodePath.join(runtimeDir, ".staging-"));
   const stagedAppBundlePath = NodePath.join(stagingDir, bundleName);
   const previousAppBundlePath = NodePath.join(stagingDir, `${bundleName}.previous`);

@@ -15,6 +15,7 @@ import {
   MACOS_LSREGISTER_PATH,
   makeLocalDevAppLaunchAgentPlist,
   prepareDevelopmentAppBundle,
+  resolveDevelopmentAppEnvironment,
   watchForLaunchFailure,
   readLocalDevAppMarker,
   registerDevelopmentAppBundle,
@@ -301,6 +302,16 @@ describe("local dev app background service", () => {
       paths.servicePlistPath,
     ]);
     assert.match(lines[0], /^Launching Scient \(Dev\)/u);
+  });
+
+  it("names the app from the checkout, not a label inherited from another dev app", () => {
+    const { paths } = fixture();
+
+    const environment = resolveDevelopmentAppEnvironment(paths, {
+      SCIENT_DEV_APP_LABEL: "other-worktree",
+    });
+
+    assert.isUndefined(environment.SCIENT_DEV_APP_LABEL);
   });
 
   it("does not launch the service when the app bundle cannot be prepared", async () => {

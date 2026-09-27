@@ -128,6 +128,43 @@ describe("development app bundle", () => {
     assert.deepEqual(NodeFS.readdirSync(runtimeDir), ["Scient (Dev).app"]);
   });
 
+  it("recovers from a build killed mid-way before building again", () => {
+    const runtimeDir = tempDir();
+    const target = NodePath.join(runtimeDir, "Scient (Dev).app");
+    // Killed between the two renames: the live bundle survives only as `.previous`.
+    const midSwap = NodePath.join(runtimeDir, ".staging-midswap");
+    writeBundle(NodePath.join(midSwap, "Scient (Dev).app.previous"), "old");
+    // Killed while signing long ago: a full abandoned copy.
+    const abandoned = NodePath.join(runtimeDir, ".staging-abandoned");
+    writeBundle(NodePath.join(abandoned, "Scient (Dev).app"), "half-built");
+    const later = Date.now() + 11 * 60 * 1000;
+
+    let sawRestored = false;
+    replaceAppBundleAtomically(
+      target,
+      (staged) => {
+        sawRestored = readMarker(target) === "old";
+        writeBundle(staged, "new");
+      },
+      { now: later },
+    );
+
+    assert.isTrue(sawRestored);
+    assert.equal(readMarker(target), "new");
+    assert.deepEqual(NodeFS.readdirSync(runtimeDir), ["Scient (Dev).app"]);
+  });
+
+  it("leaves a concurrent build's recent staging directory alone", () => {
+    const runtimeDir = tempDir();
+    const target = NodePath.join(runtimeDir, "Scient (Dev).app");
+    const live = NodePath.join(runtimeDir, ".staging-live");
+    writeBundle(NodePath.join(live, "Scient (Dev).app"), "in progress");
+
+    replaceAppBundleAtomically(target, (staged) => writeBundle(staged, "new"));
+
+    assert.isTrue(NodeFS.existsSync(live));
+  });
+
   it("restores the previous bundle if the swap itself fails", () => {
     const runtimeDir = tempDir();
     const target = NodePath.join(runtimeDir, "Scient (Dev).app");

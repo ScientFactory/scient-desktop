@@ -301,6 +301,9 @@ export function watchForLaunchFailure(paths, onFailure, { intervalMs = 1_000 } =
 /** The app name and role a launch uses; the prepared bundle must match it. */
 export function resolveDevelopmentAppEnvironment(paths, environment = process.env) {
   const result = { ...environment };
+  // The service derives its name from the checkout alone; an inherited label
+  // (for example from a terminal inside another dev app) must not rename it.
+  delete result.SCIENT_DEV_APP_LABEL;
   if (paths.role === "stable") {
     result[SCIENT_DEV_APP_ROLE_ENV] = "stable";
     result[SCIENT_NEXT_HOME_ENV] ??= paths.stateRoot;
