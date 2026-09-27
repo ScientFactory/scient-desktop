@@ -65,6 +65,18 @@ rule after the name needs at least 24px: the header's button wraps, and a rule
 without room drops to a clipped second line rather than showing as a stub. This
 is pure layout, so it can't flicker while the sidebar is resized.
 
+**Names are capitalized as typed.** Every section-name field (inline create,
+inline rename, the New section dialog) runs `readTypedSectionName`, which
+capitalizes the first letter in place without moving the caret and skips IME
+composition. Changing that letter back to lowercase only flips its case, which
+counts as deliberate and is kept (`capitalizeTypedSectionName`). On save,
+`normalizeSectionName` collapses whitespace and applies the same rule, and
+`readThreadSections` normalizes names saved before capitalization existed.
+
+**The toggle's on state is quieter than hover.** While grouping is on, a gray
+(`sidebar-control-surface`) mark sits inset inside the toggle; on hover it gives
+way to the header's usual full-size white fill, so the two never show together.
+
 **Section drags never reflow the list.** Dragging a header freezes every
 section's measured block at drag start and slides whole blocks (header plus
 rows) by transform. Targets are judged against the frozen geometry, and

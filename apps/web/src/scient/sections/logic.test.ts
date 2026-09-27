@@ -9,6 +9,7 @@ import {
   catalogWithoutSection,
   groupThreadsBySection,
   layoutFromGroupOrder,
+  capitalizeTypedSectionName,
   normalizeSectionName,
   readThreadSections,
   sweepEmptySections,
@@ -49,6 +50,19 @@ describe("catalog edits", () => {
     expect(normalizeSectionName("macOS")).toBe("macOS");
     expect(normalizeSectionName("2026 plans")).toBe("2026 plans");
     expect(normalizeSectionName("מחקר")).toBe("מחקר");
+  });
+
+  it("capitalizes the first letter as it is typed, unless flipped to lowercase by hand", () => {
+    expect(capitalizeTypedSectionName("", "r")).toBe("R");
+    // Select-all and type over an existing name.
+    expect(capitalizeTypedSectionName("Perma", "r")).toBe("R");
+    expect(capitalizeTypedSectionName("R", "Re")).toBe("Re");
+    expect(capitalizeTypedSectionName("ello", "hello")).toBe("Hello");
+    // Flipping "M" to "m" for "mRNA" is deliberate, and so is typing on after it.
+    expect(capitalizeTypedSectionName("MRNA", "mRNA")).toBe("mRNA");
+    expect(capitalizeTypedSectionName("mRNA", "mRNAs")).toBe("mRNAs");
+    expect(capitalizeTypedSectionName("", "2")).toBe("2");
+    expect(capitalizeTypedSectionName("", "מ")).toBe("מ");
   });
 
   it("reads older lowercase names capitalized, and edits save them that way", () => {

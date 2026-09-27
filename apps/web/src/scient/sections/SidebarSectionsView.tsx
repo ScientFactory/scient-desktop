@@ -57,6 +57,7 @@ import {
   sectionGroupIdFromHeaderItemId,
   sectionHeaderItemId,
 } from "./logic";
+import { readTypedSectionName } from "./sectionNameInput";
 
 type Shell = EnvironmentThreadShell;
 
@@ -862,7 +863,7 @@ function SectionNameInput(props: {
       value={name}
       maxLength={80}
       placeholder={props.placeholder}
-      onChange={(event) => setName(event.currentTarget.value)}
+      onChange={(event) => setName(readTypedSectionName(event, name))}
       onKeyDown={onKeyDown}
       onBlur={() => finish(true)}
       className="h-6 min-w-0 flex-1 rounded border border-ring bg-background px-1.5 text-xs font-medium text-foreground outline-none"

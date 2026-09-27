@@ -43,6 +43,18 @@ export function normalizeSectionName(name: string): string {
   return collapsed.charAt(0).toLocaleUpperCase() + collapsed.slice(1);
 }
 
+/**
+ * Capitalizes a name's first letter as it is typed. Turning the first letter
+ * lowercase by hand (for "mRNA") only flips its case, and is kept.
+ */
+export function capitalizeTypedSectionName(previous: string, next: string): string {
+  const first = next.charAt(0);
+  const upper = first.toLocaleUpperCase();
+  if (first === upper) return next;
+  if (previous.length > 0 && previous.charAt(0).toLocaleLowerCase() === first) return next;
+  return upper + next.slice(1);
+}
+
 /** Case- and accent-insensitive: "Research" and "research" are one section. */
 export function findSectionByName(
   sections: ThreadSections,

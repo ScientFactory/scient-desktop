@@ -42,7 +42,12 @@ const thread = (id: string, sectionId: string | null) =>
 
 function renderView(
   onReorderSections: (ids: readonly string[]) => void,
-  options: { readonly names?: readonly string[]; readonly collapsed?: readonly string[] } = {},
+  options: {
+    readonly names?: readonly string[];
+    readonly collapsed?: readonly string[];
+    readonly renaming?: string;
+    readonly onRename?: (name: string) => void;
+  } = {},
 ) {
   const sections = (options.names ?? ["A", "B", "C"]).map((name, order) => ({
     id: ["a", "b", "c"][order]!,
@@ -98,9 +103,9 @@ function renderView(
       onReorderSections={onReorderSections}
       onSectionMenu={() => {}}
       onNewThreadInSection={() => {}}
-      renamingSectionId={null}
+      renamingSectionId={options.renaming ?? null}
       onRenamingSectionChange={() => {}}
-      onRenameSection={() => {}}
+      onRenameSection={(_id: string, name: string) => options.onRename?.(name)}
       creatingSection={null}
       onStartCreateSection={() => {}}
       onCancelCreateSection={() => {}}
@@ -257,4 +262,17 @@ it("drops the rule entirely when less than 24px would be left beside the name", 
   expect(ruleOf("a").width).toBeGreaterThanOrEqual(24);
   // The long name keeps the row; the rule drops to the clipped second line.
   expect(ruleOf("b").visible).toBe(false);
+});
+
+it("capitalizes a section name as it is typed, keeping the caret in place", async () => {
+  const onRename = vi.fn();
+  renderView(() => {}, { renaming: "a", onRename });
+  await nextFrame();
+  const input = document.querySelector<HTMLInputElement>('input[aria-label="Section name"]')!;
+  // The field opens with the name selected; typing replaces it.
+  await userEvent.keyboard("research notes");
+  expect(input.value).toBe("Research notes");
+  expect(input.selectionStart).toBe("Research notes".length);
+  await userEvent.keyboard("{Enter}");
+  expect(onRename).toHaveBeenCalledWith("Research notes");
 });

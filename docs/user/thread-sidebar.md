@@ -145,8 +145,8 @@ Sections view:
   menu also offers **Move up**, **Move down**, and **Delete section**.
 - Empty sections stay visible so you can drag threads into them. **New section**, after the last
   section, adds one at the end.
-- Section names start with a capital letter, however you type them. A first word that mixes case on
-  purpose, such as _iOS_ or _mRNA_, is kept as typed.
+- Section names start with a capital letter: the first letter is capitalized as you type. To start
+  a name in lowercase, such as _mRNA_ or _iOS_, change that letter back by hand; it stays as typed.
 
 To remove sections you no longer use, turn on **Settings → General → Delete empty sections** and
 choose how many days a section may stay empty (7 by default). It is off unless you turn it on. A

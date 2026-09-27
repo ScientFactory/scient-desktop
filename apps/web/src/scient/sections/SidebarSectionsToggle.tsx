@@ -5,8 +5,8 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/toolt
 
 /**
  * Two-state sidebar grouping: off shows the Status layout, on groups threads
- * by section. While on, a white mark inset inside the button keeps the mode
- * visible; hovering still shows the header's usual full-size fill.
+ * by section. While on, a gray mark inset inside the button keeps the mode
+ * visible; hovering shows the header's usual full-size white fill instead.
  */
 export function SidebarSectionsToggle(props: {
   readonly active: boolean;
@@ -30,11 +30,12 @@ export function SidebarSectionsToggle(props: {
           />
         }
       >
-        {/* The "on" mark is inset so it reads smaller than the hover fill. */}
+        {/* The "on" mark is inset so it reads smaller than the hover fill, and
+            gives way to it on hover so the two never show together. */}
         {props.active ? (
           <span
             aria-hidden
-            className="pointer-events-none absolute inset-[3px] rounded-md bg-sidebar-row-selected"
+            className="pointer-events-none absolute inset-[3px] rounded-md bg-sidebar-control-surface [:hover>&]:hidden"
           />
         ) : null}
         <ListFilterIcon className="relative size-3.5" />

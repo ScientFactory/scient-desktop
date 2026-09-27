@@ -11,6 +11,8 @@ import {
 } from "../../components/ui/dialog";
 import { Input } from "../../components/ui/input";
 
+import { readTypedSectionName } from "./sectionNameInput";
+
 /**
  * Names a new section from surfaces with no inline place to type (the Status
  * view and the chat header). The Sections view creates sections inline.
@@ -83,7 +85,7 @@ function NewSectionForm(props: {
             maxLength={80}
             placeholder="Section name"
             onChange={(event) => {
-              setName(event.currentTarget.value);
+              setName(readTypedSectionName(event, name));
               setError(null);
             }}
           />
