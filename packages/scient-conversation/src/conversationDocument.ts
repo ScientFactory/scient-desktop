@@ -422,11 +422,19 @@ export function buildConversationDocument(input: ConversationDocumentInput): Con
       registerAsset(attachment, `m${n}-a${attachmentIndex + 1}`),
     );
     const contextDetails: string[] = [];
-    const bodySource = renderReferences(message, {
-      assetIdByLocalId,
-      citations,
-      contextDetails,
-    });
+    const unresolvedImage = (alt: string) =>
+      warnings.push({
+        code: "resource-unresolved",
+        message: `Image “${alt || "untitled"}” in message ${n} refers to a file on the original computer and is not included.`,
+      });
+    const bodySource = replaceLocalImages(
+      renderReferences(message, {
+        assetIdByLocalId,
+        citations,
+        contextDetails,
+      }),
+      unresolvedImage,
+    );
     const text =
       bodySource.trim().length === 0 &&
       role === "assistant" &&
@@ -455,7 +463,7 @@ export function buildConversationDocument(input: ConversationDocumentInput): Con
       blocks.push(part("context", `**Context**\n\n${contextDetails.join("\n")}`));
     }
     for (const [planIndex, plan] of owner.plans.entries()) {
-      const planBody = writeMessageBody(plan.markdown, {
+      const planBody = writeMessageBody(replaceLocalImages(plan.markdown, unresolvedImage), {
         namespace: `${namespace}p${planIndex + 1}-`,
         preserveLineBreaks: false,
         rawHtml: "render",
@@ -497,7 +505,7 @@ export function buildConversationDocument(input: ConversationDocumentInput): Con
     if (owner.reasoning.length > 0) {
       const bodies = owner.reasoning.map(
         (reasoning, reasoningIndex) =>
-          writeMessageBody(reasoning.text, {
+          writeMessageBody(replaceLocalImages(reasoning.text, unresolvedImage), {
             namespace: `${namespace}r${reasoningIndex + 1}-`,
             preserveLineBreaks: true,
             rawHtml: "render",
@@ -550,6 +558,47 @@ export function buildConversationDocument(input: ConversationDocumentInput): Con
     },
     messageCount: exported.length,
   };
+}
+
+const REMOTE_IMAGE_URL = /^(?:https?:|data:image\/|\/\/)/iu;
+
+/**
+ * Images a message points at by a path on the original computer (for example
+ * `![Plot](./figures/plot.png)`) cannot travel with the export. Each becomes a
+ * labelled placeholder and reports itself; remote and bundle images stay.
+ */
+function replaceLocalImages(source: string, onUnresolved: (alt: string) => void): string {
+  if (!source.includes("![")) return source;
+  const root = parseMarkdown(source);
+  const definitions = new Map<string, string>();
+  visitNodes(root, (node) => {
+    if (node.type === "definition") definitions.set(node.identifier, node.url);
+  });
+  const edits: SourceEdit[] = [];
+  visitNodes(root, (node) => {
+    const url =
+      node.type === "image"
+        ? node.url
+        : node.type === "imageReference"
+          ? definitions.get(node.identifier)
+          : undefined;
+    if (
+      url === undefined ||
+      url.startsWith(DOCUMENT_ASSET_URL_PREFIX) ||
+      REMOTE_IMAGE_URL.test(url)
+    )
+      return;
+    const range = nodeRange(node);
+    if (!range) return;
+    const alt = "alt" in node ? (node.alt ?? "") : "";
+    onUnresolved(alt);
+    edits.push({
+      start: range.start,
+      end: range.end,
+      text: `*\\[Image not included${alt ? `: ${escapeMarkdownText(alt)}` : ""}\\]*`,
+    });
+  });
+  return applyEdits(source, edits);
 }
 
 function assetListItem(asset: DocumentAsset): string {
