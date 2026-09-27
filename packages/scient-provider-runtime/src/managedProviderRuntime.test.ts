@@ -343,26 +343,29 @@ describe("ManagedProviderRuntime contract", () => {
     expect(events).not.toContain("commit");
   });
 
-  it("persists qualified Pi receipts across runtime recreation", async () => {
-    const { root, runtime } = await makeRuntime();
-    const recipe = artifact("2.1.0", {
-      provider: "pi",
-      catalogRevision: "pi:2.1.0:test",
-    });
+  it.each(["pi", "omp"] as const)(
+    "persists qualified %s receipts across runtime recreation",
+    async (provider) => {
+      const { root, runtime } = await makeRuntime();
+      const recipe = artifact("2.1.0", {
+        provider,
+        catalogRevision: `${provider}:2.1.0:test`,
+      });
 
-    await install(runtime, recipe);
-    const recreated = new ManagedProviderRuntime(root, {
-      providerDirectory: "test-provider",
-      displayName: "Test Provider",
-    });
+      await install(runtime, recipe);
+      const recreated = new ManagedProviderRuntime(root, {
+        providerDirectory: "test-provider",
+        displayName: "Test Provider",
+      });
 
-    expect(await recreated.status(recipe)).toMatchObject({
-      installed: true,
-      selected: true,
-      activeVersion: "2.1.0",
-      activeArtifact: { provider: "pi", version: "2.1.0" },
-    });
-  });
+      expect(await recreated.status(recipe)).toMatchObject({
+        installed: true,
+        selected: true,
+        activeVersion: "2.1.0",
+        activeArtifact: { provider, version: "2.1.0" },
+      });
+    },
+  );
 
   it("reads legacy state without silently treating it as an explicit managed selection", async () => {
     const { root, runtime } = await makeRuntime();
