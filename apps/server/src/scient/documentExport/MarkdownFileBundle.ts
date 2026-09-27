@@ -18,6 +18,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import { sha256Digest } from "./DocumentCapture.ts";
+import { DOCUMENT_CAPTURE_MAX_ASSET_BYTES } from "./documentPageInput.ts";
 
 /**
  * Turns a saved project Markdown file into a document bundle: the file's
@@ -140,12 +141,13 @@ export const readProjectMarkdownFile = Effect.fn("MarkdownFileBundle.readProject
   },
 );
 
-type ImageResolution =
+type LocatedImage =
   | {
-      readonly _tag: "available";
+      readonly _tag: "located";
+      readonly canonicalPath: string;
       readonly fileName: string;
       readonly mediaType: string;
-      readonly bytes: Uint8Array;
+      readonly size: number;
     }
   | {
       readonly _tag: "unavailable";
@@ -154,7 +156,8 @@ type ImageResolution =
       readonly message: string;
     };
 
-const resolveWorkspaceImage = Effect.fn("MarkdownFileBundle.resolveWorkspaceImage")(function* (
+/** Finds and checks one image without reading it, so budgets apply before any bytes are held. */
+const locateWorkspaceImage = Effect.fn("MarkdownFileBundle.locateWorkspaceImage")(function* (
   file: ResolvedMarkdownFile,
   destination: string,
 ) {
@@ -168,7 +171,7 @@ const resolveWorkspaceImage = Effect.fn("MarkdownFileBundle.resolveWorkspaceImag
       fileName,
       reason: "missing",
       message: `Image "${destination}" is outside the project and was not included.`,
-    } satisfies ImageResolution;
+    } satisfies LocatedImage;
   }
   const mediaType = IMAGE_MEDIA_TYPES[path.extname(relative).toLowerCase()];
   if (mediaType === undefined) {
@@ -177,7 +180,7 @@ const resolveWorkspaceImage = Effect.fn("MarkdownFileBundle.resolveWorkspaceImag
       fileName,
       reason: "unsupported",
       message: `"${destination}" is not a supported image type and was not included.`,
-    } satisfies ImageResolution;
+    } satisfies LocatedImage;
   }
   const canonical = yield* fileSystem
     .realPath(path.resolve(file.canonicalRoot, relative))
@@ -196,32 +199,29 @@ const resolveWorkspaceImage = Effect.fn("MarkdownFileBundle.resolveWorkspaceImag
       fileName,
       reason: "missing",
       message: `Image "${destination}" was not found in the project.`,
-    } satisfies ImageResolution;
-  }
-  if (Number(info.value.size) > MAX_IMAGE_BYTES) {
-    return {
-      _tag: "unavailable",
-      fileName,
-      reason: "too-large",
-      message: `Image "${destination}" is larger than 64 MiB and was not included.`,
-    } satisfies ImageResolution;
-  }
-  const bytes = yield* fileSystem.readFile(canonical.value).pipe(Effect.option);
-  if (Option.isNone(bytes)) {
-    return {
-      _tag: "unavailable",
-      fileName,
-      reason: "unreadable",
-      message: `Image "${destination}" could not be read.`,
-    } satisfies ImageResolution;
+    } satisfies LocatedImage;
   }
   return {
-    _tag: "available",
+    _tag: "located",
+    canonicalPath: canonical.value,
     fileName,
     mediaType,
-    bytes: bytes.value,
-  } satisfies ImageResolution;
+    size: Number(info.value.size),
+  } satisfies LocatedImage;
 });
+
+/** How much image data one Markdown export may hold; fixed in production, smaller in tests. */
+export interface MarkdownImageBudget {
+  readonly maxImageBytes: number;
+  readonly maxTotalBytes: number;
+  readonly maxImages: number;
+}
+
+export const MARKDOWN_IMAGE_BUDGET: MarkdownImageBudget = {
+  maxImageBytes: MAX_IMAGE_BYTES,
+  maxTotalBytes: DOCUMENT_CAPTURE_MAX_ASSET_BYTES,
+  maxImages: MAX_IMAGES,
+};
 
 const isDirectImageDestination = (destination: string) =>
   /^(?:https?:)?\/\//iu.test(destination) ||
@@ -232,6 +232,7 @@ const isDirectImageDestination = (destination: string) =>
 export const buildMarkdownFileBundle = Effect.fn("MarkdownFileBundle.build")(function* (input: {
   readonly workspaceRoot: string;
   readonly file: ResolvedMarkdownFile;
+  readonly budget?: MarkdownImageBudget;
 }) {
   const path = yield* Path.Path;
   const source = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
@@ -240,37 +241,117 @@ export const buildMarkdownFileBundle = Effect.fn("MarkdownFileBundle.build")(fun
     catch: () => sourceError("invalid-source", "The Markdown file is not valid UTF-8 text."),
   });
   const inspection = inspectMarkdownDocument(markdown);
+  const fileSystem = yield* FileSystem.FileSystem;
+  const budget = input.budget ?? MARKDOWN_IMAGE_BUDGET;
   const warnings: DocumentWarning[] = [];
   const assets: DocumentAsset[] = [];
   const assetIds = new Map<string, string>();
-  for (const destination of inspection.imageReferences) {
-    if (isDirectImageDestination(destination) || assets.length >= MAX_IMAGES) continue;
-    const resolved = yield* resolveWorkspaceImage(input.file, destination);
+  // Destinations that differ only by query, fragment, or a symlink share one asset.
+  const assetIdsByFile = new Map<string, string>();
+  let heldBytes = 0;
+  let heldImages = 0;
+  const addAsset = (
+    destination: string,
+    fileName: string,
+    content:
+      | { readonly _tag: "bytes"; readonly bytes: Uint8Array; readonly mediaType: string }
+      | {
+          readonly _tag: "unavailable";
+          readonly reason: "missing" | "unreadable" | "unsupported" | "too-large";
+          readonly message: string;
+        },
+  ) => {
     const id = `image-${String(assets.length + 1).padStart(4, "0")}`;
     assetIds.set(destination, id);
-    const packagePath = `assets/${id}-${resolved.fileName}`.slice(0, 512);
-    if (resolved._tag === "available") {
+    const base = {
+      id,
+      role: "image" as const,
+      fileName: fileName.slice(0, 255),
+      packagePath: `assets/${id}-${fileName}`.slice(0, 512),
+    };
+    if (content._tag === "bytes") {
       assets.push({
-        id,
-        role: "image",
-        fileName: resolved.fileName.slice(0, 255),
-        mediaType: resolved.mediaType,
-        byteLength: resolved.bytes.byteLength,
-        packagePath,
-        content: { _tag: "bytes", bytes: resolved.bytes, sha256: sha256Digest(resolved.bytes) },
+        ...base,
+        mediaType: content.mediaType,
+        byteLength: content.bytes.byteLength,
+        content: { _tag: "bytes", bytes: content.bytes, sha256: sha256Digest(content.bytes) },
       });
     } else {
       assets.push({
-        id,
-        role: "image",
-        fileName: resolved.fileName.slice(0, 255),
+        ...base,
         mediaType: "application/octet-stream",
         byteLength: 0,
-        packagePath,
-        content: { _tag: "unavailable", reason: resolved.reason },
+        content: { _tag: "unavailable", reason: content.reason },
       });
-      warnings.push({ code: "resource-unresolved", message: resolved.message });
+      warnings.push({ code: "resource-unresolved", message: content.message });
     }
+    return id;
+  };
+  for (const destination of inspection.imageReferences) {
+    if (isDirectImageDestination(destination)) continue;
+    const located = yield* locateWorkspaceImage(input.file, destination);
+    if (located._tag === "unavailable") {
+      addAsset(destination, located.fileName, located);
+      continue;
+    }
+    const shared = assetIdsByFile.get(located.canonicalPath);
+    if (shared !== undefined) {
+      assetIds.set(destination, shared);
+      continue;
+    }
+    const overBudget =
+      located.size > budget.maxImageBytes
+        ? `Image "${destination}" is larger than the per-image export limit and was not included.`
+        : heldImages >= budget.maxImages
+          ? `Image "${destination}" was not included because the document has more than ${budget.maxImages} images.`
+          : heldBytes + located.size > budget.maxTotalBytes
+            ? `Image "${destination}" was not included because the document's images exceed the export size limit.`
+            : null;
+    if (overBudget !== null) {
+      assetIdsByFile.set(
+        located.canonicalPath,
+        addAsset(destination, located.fileName, {
+          _tag: "unavailable",
+          reason: "too-large",
+          message: overBudget,
+        }),
+      );
+      continue;
+    }
+    const bytes = yield* fileSystem.readFile(located.canonicalPath).pipe(Effect.option);
+    // A file that grew after it was measured is held to the same budget.
+    if (Option.isSome(bytes) && heldBytes + bytes.value.byteLength > budget.maxTotalBytes) {
+      assetIdsByFile.set(
+        located.canonicalPath,
+        addAsset(destination, located.fileName, {
+          _tag: "unavailable",
+          reason: "too-large",
+          message: `Image "${destination}" was not included because the document's images exceed the export size limit.`,
+        }),
+      );
+      continue;
+    }
+    if (Option.isNone(bytes)) {
+      assetIdsByFile.set(
+        located.canonicalPath,
+        addAsset(destination, located.fileName, {
+          _tag: "unavailable",
+          reason: "unreadable",
+          message: `Image "${destination}" could not be read.`,
+        }),
+      );
+      continue;
+    }
+    heldBytes += bytes.value.byteLength;
+    heldImages += 1;
+    assetIdsByFile.set(
+      located.canonicalPath,
+      addAsset(destination, located.fileName, {
+        _tag: "bytes",
+        bytes: bytes.value,
+        mediaType: located.mediaType,
+      }),
+    );
   }
   const rewritten = rewriteMarkdownImageDestinations(markdown, (destination) => {
     const id = assetIds.get(destination);

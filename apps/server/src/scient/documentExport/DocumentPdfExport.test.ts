@@ -31,6 +31,7 @@ import {
   publishCapturedDocumentPdf,
 } from "./DocumentPdfPublication.ts";
 import { prepareMarkdownPdf } from "./MarkdownPdfPreparation.ts";
+import { buildMarkdownFileBundle, readProjectMarkdownFile } from "./MarkdownFileBundle.ts";
 
 const fixtures: string[] = [];
 const layer = Layer.orDie(documentExportTestLayer("scient-document-pdf-test-"));
@@ -175,6 +176,67 @@ describe("Markdown PDF preparation", () => {
         }).pipe(Effect.flip);
         expect(error.reason, relativePath).toBe(reason);
       }
+    }).pipe(Effect.provide(layer)),
+  );
+});
+
+describe("Markdown image budget", () => {
+  const bundleFor = (
+    markdown: string,
+    budget: { maxImageBytes: number; maxTotalBytes: number; maxImages: number },
+  ) =>
+    Effect.gen(function* () {
+      const root = yield* Effect.promise(() =>
+        makeFixtureDirectory(fixtures, "scient-document-pdf-budget-"),
+      );
+      yield* Effect.promise(async () => {
+        await writeFixtureFile(root, "report.md", markdown);
+        await writeFixtureFile(root, "a.png", PNG);
+        await writeFixtureFile(root, "b.png", PNG);
+        await NodeFSP.symlink(NodePath.join(root, "a.png"), NodePath.join(root, "alias.png"));
+      });
+      const file = yield* readProjectMarkdownFile(root, "report.md");
+      return yield* buildMarkdownFileBundle({ workspaceRoot: root, file, budget });
+    });
+
+  it.effect("reads one file once, however many destinations name it", () =>
+    Effect.gen(function* () {
+      const bundle = yield* bundleFor(
+        "![1](a.png?1) ![2](a.png?2) ![3](./a.png#x) ![4](alias.png)\n",
+        { maxImageBytes: 1_000, maxTotalBytes: PNG.byteLength, maxImages: 10 },
+      );
+      expect(bundle.assets).toHaveLength(1);
+      expect(bundle.assets[0]?.content._tag).toBe("bytes");
+      expect(bundle.markdown.match(/scient-asset:image-0001/gu)).toHaveLength(4);
+      expect(bundle.warnings).toEqual([]);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("holds images to the total, count, and per-image budgets before reading them", () =>
+    Effect.gen(function* () {
+      const total = yield* bundleFor("![a](a.png) ![b](b.png)\n", {
+        maxImageBytes: 1_000,
+        maxTotalBytes: PNG.byteLength + 1,
+        maxImages: 10,
+      });
+      expect(total.assets.map((asset) => asset.content._tag)).toEqual(["bytes", "unavailable"]);
+      expect(total.assets[1]?.content).toEqual({ _tag: "unavailable", reason: "too-large" });
+      expect(total.warnings[0]?.message).toContain("exceed the export size limit");
+
+      const count = yield* bundleFor("![a](a.png) ![b](b.png)\n", {
+        maxImageBytes: 1_000,
+        maxTotalBytes: 1_000,
+        maxImages: 1,
+      });
+      expect(count.assets[1]?.content).toEqual({ _tag: "unavailable", reason: "too-large" });
+      expect(count.warnings[0]?.message).toContain("more than 1 images");
+
+      const single = yield* bundleFor("![a](a.png)\n", {
+        maxImageBytes: PNG.byteLength - 1,
+        maxTotalBytes: 1_000,
+        maxImages: 10,
+      });
+      expect(single.assets[0]?.content).toEqual({ _tag: "unavailable", reason: "too-large" });
     }).pipe(Effect.provide(layer)),
   );
 });
