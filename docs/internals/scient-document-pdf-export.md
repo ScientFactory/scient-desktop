@@ -1,7 +1,6 @@
 # Scient document PDF export
 
-Scient turns a document bundle — a project Markdown file today, a conversation once conversation
-export lands — into a PDF by rendering it on one dedicated, complete document page and printing
+Scient turns a document bundle — a project Markdown file or a conversation — into a PDF by rendering it on one dedicated, complete document page and printing
 that page in the desktop's Chromium. It is the PDF path of the
 [conversation export and document conversion design](./scient-conversation-export-import-proposal.md);
 there is one PDF path, not one per source.
@@ -14,7 +13,9 @@ there is one PDF path, not one per source.
    at a verified revision: the editor saves pending edits first and sends the revision it saved;
    the server refuses a file whose SHA-256 differs. Workspace images resolve against the file's
    directory, must stay inside the project (symlinks included), and must be a supported image
-   type under 64 MiB; anything else becomes an unavailable asset with a warning. Image
+   type. Each image is measured before it is read: one image may be up to 64 MiB, one export up
+   to 1,024 images and 256 MiB, and destinations that reach the same file (by query, fragment, or
+   symlink) share one copy. Anything else becomes an unavailable asset with a warning. Image
    destinations are rewritten to `scient-asset:<id>` inside each parsed image's own source span,
    using the rich editor's Markdown grammar (`@scientfactory/scient-markdown`).
 2. **Render (desktop).** The capture is exposed through a five-minute signed asset capability.
@@ -29,7 +30,8 @@ there is one PDF path, not one per source.
    report matches the requested capture exactly and has no fatal diagnostic
    (`scientDocumentReadinessRejection`, shared with the server).
 4. **Publish (server).** The server checks the report again, enforces the 64 MiB transport limit
-   (`BROWSER_PDF_EXPORT_MAX_BYTES`), confirms a Markdown file still has the captured revision,
+   (`BROWSER_PDF_EXPORT_MAX_BYTES`), resolves a Markdown file's requested path again and requires
+   the same canonical file with the captured revision,
    and publishes the bytes as an immutable `controlled-render` revision in the generated-document
    store (`browser-export` structural validation). The PDF opens in Scient's reader, where Save
    Copy works as for any generated PDF. The capture is removed after publication; captures that
@@ -39,15 +41,17 @@ there is one PDF path, not one per source.
 
 An execution failure stops publication: the page did not load or start, its input was missing or
 invalid, it reported a different capture, kind, or revision, a diagram or image did not finish,
-a captured image failed to load, fonts did not settle, the source changed, the PDF is invalid, or
+Mermaid itself failed (for example, its code did not load), a captured image failed to load, a
+font the page used failed or did not finish loading, the source changed, the PDF is invalid, or
 it is larger than 64 MiB (the message suggests a shorter document or range, or leaving out the
 work log).
 
-A known content limitation does not: a missing or unsupported image prints as a labelled
-placeholder, a remote image is not downloaded, a Mermaid diagram with a syntax error prints its
-source, TeX that KaTeX cannot typeset prints as TeX, Plotly and Vega-Lite fences print as source,
+A known content limitation does not: a missing, unsupported, or undecodable image prints as a
+labelled placeholder, a remote image is not downloaded, a Mermaid diagram with a syntax error
+prints its source (the full parse error is in the notes), TeX that KaTeX cannot typeset prints as TeX, Plotly and Vega-Lite fences print as source,
 and raw HTML outside GitHub's safe subset is removed. Each becomes a warning returned with the
-result and listed under **Export notes** at the end of the PDF.
+result and listed under **Export notes** at the end of the PDF. The page re-renders until those
+notes include everything its final inspection found, so a reported limitation is always printed.
 
 ## The document page
 
