@@ -657,6 +657,9 @@ export function projectEvent(
               ...(payload.activeOrderKey !== undefined
                 ? { activeOrderKey: payload.activeOrderKey }
                 : {}),
+              // SCIENT-FORK:START — thread sections
+              ...(payload.sectionId !== undefined ? { sectionId: payload.sectionId } : {}),
+              // SCIENT-FORK:END
               ...(payload.branchPullRequest !== undefined
                 ? { branchPullRequest: payload.branchPullRequest }
                 : {}),

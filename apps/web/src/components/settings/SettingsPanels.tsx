@@ -154,6 +154,9 @@ import {
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { ScopedSwitch } from "./ScopedSwitch";
+// SCIENT-FORK:START
+import { EmptySectionCleanupSettings } from "../../scient/sections/EmptySectionCleanupSettings";
+// SCIENT-FORK:END
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ThemeLibrary } from "./ThemeSettings";
@@ -2513,6 +2516,9 @@ export function GeneralSettingsPanel() {
             ) : null}
           </>
         ) : null}
+        {/* SCIENT-FORK:START — optional empty-section cleanup (primary-only). */}
+        <EmptySectionCleanupSettings />
+        {/* SCIENT-FORK:END */}
       </SettingsSection>
 
       <SettingsSection id="behavior" title="Behavior">

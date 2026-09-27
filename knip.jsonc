@@ -67,6 +67,8 @@
         "src/mac-permission-preload.ts!",
         "src/preview/Annotation.css!",
         "scripts/sign-development-app.mjs",
+        // Spawned by scripts/local-dev-app.mjs to sign the dev app in the foreground.
+        "scripts/prepare-dev-app-bundle.mjs",
       ],
       // The injected runtime resolves Playwright by string; release tooling runs
       // electron-builder from this workspace, outside its package scripts.

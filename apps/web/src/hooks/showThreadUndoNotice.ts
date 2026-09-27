@@ -9,7 +9,8 @@ import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import * as ThreadUndo from "./threadUndo";
 
 type UndoOptions = {
-  action: "Settled" | "Snoozed" | "Unpinned" | "Archived";
+  // SCIENT-FORK: "Moved" is a thread-section move.
+  action: "Settled" | "Snoozed" | "Unpinned" | "Archived" | "Moved";
   undo: () => Promise<AtomCommandResult<unknown, unknown>>;
   failureTitle: string;
   claim: ReturnType<typeof ThreadUndo.begin>;
