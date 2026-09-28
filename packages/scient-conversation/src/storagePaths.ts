@@ -50,11 +50,13 @@ function escapeRegExp(text: string): string {
 }
 
 /**
- * Where a root ends: at a separator or wherever its last segment cannot go on,
- * so `/data` matches `/data`, `/data/x`, and "in /data." but not `/database`
- * or `/data.bak`.
+ * Where a root ends: at a path separator, the end of the text, whitespace, a
+ * quote, or closing punctuation (`)`, `]`, `>`, `,`, `;`, `:`, `.`) that is
+ * itself followed by whitespace or the end. So `/data` matches in `/data/x`,
+ * "(see /data)", and "in /data." but not in `/database`, `/data.bak`,
+ * `/data!archive`, or `/data(backup)/x`.
  */
-const ROOT_END = "(?![\\p{L}\\p{N}\\p{M}_~@+%=#$-]|\\.[\\p{L}\\p{N}\\p{M}_~-])";
+const ROOT_END = "(?=[\\\\/]|$|[\\s\"'`“”‘’«»]|[)\\]>,;:.]+(?:\\s|$))";
 
 /**
  * A matcher for each root that accepts either separator, so `C:\Users\a` and
