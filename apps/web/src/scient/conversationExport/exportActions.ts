@@ -2,11 +2,28 @@ import type {
   DesktopAssetCopyResult,
   EnvironmentId,
   ScientConversationExportFile,
+  ScopedThreadRef,
 } from "@t3tools/contracts";
 
+import { toastManager } from "../../components/ui/toast";
 import { writeTextToClipboard } from "../../hooks/useCopyToClipboard";
 import { ensureLocalApi } from "../../localApi";
-import { exportFileUrl } from "./client";
+import { exportConversation, exportFileUrl } from "./client";
+import { copyMarkdownRequest } from "./exportDialog.logic";
+
+export function exportErrorMessage(error: unknown): string {
+  return error instanceof Error && error.message.length > 0
+    ? error.message
+    : "The conversation could not be exported.";
+}
+
+export function localTimeZone(): string | null {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Saves a produced export with the same path every document uses: the native
@@ -21,8 +38,34 @@ export async function saveConversationExport(
   return ensureLocalApi().documents.saveAssetCopy({ url, suggestedFileName: file.fileName });
 }
 
-export async function copyConversationExport(text: string): Promise<void> {
-  await writeTextToClipboard(text, "conversation Markdown");
+/**
+ * Copy ▸ Conversation as Markdown: copies the whole conversation as text-only
+ * Markdown and reports the outcome in a toast.
+ */
+export async function copyConversationMarkdown(threadRef: ScopedThreadRef): Promise<void> {
+  try {
+    const result = await exportConversation(
+      threadRef.environmentId,
+      copyMarkdownRequest(threadRef.threadId, localTimeZone()),
+    );
+    const copied = await writeTextToClipboard(result.text ?? "", "conversation Markdown");
+    if (!copied) throw new Error("The conversation has nothing to copy yet.");
+    toastManager.add(
+      result.warnings.length > 0
+        ? {
+            type: "warning",
+            title: "Markdown copied with notes",
+            description: result.warnings.map((warning) => warning.message).join("\n"),
+          }
+        : { type: "success", title: "Markdown copied" },
+    );
+  } catch (cause) {
+    toastManager.add({
+      type: "error",
+      title: "Could not copy the conversation",
+      description: exportErrorMessage(cause),
+    });
+  }
 }
 
 const SAVE_FAILURE_MESSAGES: Record<

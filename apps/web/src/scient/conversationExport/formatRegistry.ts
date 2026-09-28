@@ -10,29 +10,37 @@ import type {
 import type { ComponentType } from "react";
 
 /**
- * Export formats the dialog offers. A format appears once it registers here
- * and the connected server advertises it; the dialog itself knows no format.
- * Registration order is display order.
+ * Export formats the thread menu offers. Each registered format gets an
+ * Export submenu entry that opens the dialog preset to it; the dialog itself
+ * knows no format. The connected server decides whether a format can be
+ * produced now. Registration order is menu order.
  */
 export interface ConversationExportVariant {
+  /** Accessible name of the choice. */
   readonly label: string;
-  readonly choices: ReadonlyArray<{ readonly value: string; readonly label: string }>;
+  readonly choices: ReadonlyArray<{
+    readonly value: string;
+    readonly label: string;
+    /** The primary button's label while this choice is selected. */
+    readonly saveLabel: string;
+  }>;
   readonly defaultValue: string;
   /** Whether the choice is offered for this conversation. */
   readonly isOffered: (preparation: ScientConversationExportPreparation) => boolean;
   readonly apply: (options: ConversationExportOptions, value: string) => ConversationExportOptions;
-  /** Whether the chosen value can be copied to the clipboard. */
-  readonly copyable: (value: string) => boolean;
 }
 
 export interface ConversationExportFormatRegistration {
   readonly format: ConversationExportFormat;
+  /** The format's name: the dialog is titled "Export as <label>". */
   readonly label: string;
-  /** Offers Copy next to Export. */
-  readonly supportsCopy: boolean;
+  /** The entry in the thread menu's Export submenu. */
+  readonly menuLabel: string;
+  /** One or two sentences behind the dialog title's info button. */
+  readonly about: string;
+  /** The primary button's label, unless a variant choice names its own. */
+  readonly saveLabel: string;
   readonly variant?: ConversationExportVariant;
-  /** A one-line note shown while the format is selected. */
-  readonly note?: (preparation: ScientConversationExportPreparation) => string | null;
   /**
    * Whether this client can produce the format, beyond the server's own
    * capability. PDF, for example, needs a current Scient desktop.
@@ -46,9 +54,15 @@ export interface ConversationExportFormatRegistration {
     readonly threadRef: ScopedThreadRef;
     readonly request: ScientConversationExportRequest;
   }) => Promise<ConversationExportProduced>;
-  /** Shown when the user can install a missing converter, such as Pandoc. */
+  /**
+   * Shown in place of the options while the format is unavailable, when the
+   * user can make it available here (installing Pandoc for Word). `disabled`
+   * is set while an export is running.
+   */
   readonly UnavailableAction?: ComponentType<{
     readonly environmentId: EnvironmentId;
+    readonly reason: string;
+    readonly disabled: boolean;
     readonly onAvailable: () => void;
   }>;
 }

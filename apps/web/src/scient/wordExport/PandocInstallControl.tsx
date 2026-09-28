@@ -1,7 +1,5 @@
-import type { EnvironmentId } from "@t3tools/contracts";
-
 import { Button } from "../../components/ui/button";
-import { usePandocTool, type PandocToolController } from "./usePandocTool";
+import type { PandocToolController } from "./usePandocTool";
 
 /** The install offer, progress, or failure, and the one button that acts on it. */
 export function PandocInstallStatus(props: {
@@ -27,13 +25,4 @@ export function PandocInstallStatus(props: {
       ) : null}
     </div>
   );
-}
-
-/** Offers the managed Pandoc install where Word export is unavailable. */
-export function PandocInstallAction(props: {
-  readonly environmentId: EnvironmentId;
-  readonly onAvailable: () => void;
-}) {
-  const controller = usePandocTool(props.environmentId, props.onAvailable);
-  return <PandocInstallStatus controller={controller} />;
 }
