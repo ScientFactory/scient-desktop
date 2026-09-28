@@ -90,6 +90,22 @@ const PACKAGE_FILE = "package.scic";
 const ATTEMPT_DIRECTORY = "attempt";
 const ATTACHMENTS_DIRECTORY = "attachments";
 const SWEEP_INTERVAL_MS = 60_000;
+/** A receive that gets no bytes for this long has stalled. */
+const UPLOAD_IDLE_TIMEOUT_MS = 60_000;
+/** Every upload may take this long, plus its size at the slowest rate Scient waits for. */
+const UPLOAD_BASE_DURATION_MS = 10 * 60_000;
+const UPLOAD_MIN_BYTES_PER_SECOND = 256 * 1024;
+
+/** The longest a receive of `sizeBytes` may take, however steadily bytes arrive. */
+export function conversationImportUploadDeadlineMs(sizeBytes: number): number {
+  return UPLOAD_BASE_DURATION_MS + Math.ceil(sizeBytes / UPLOAD_MIN_BYTES_PER_SECOND) * 1_000;
+}
+
+/** Why a receive ended before its bytes were all in. */
+class UploadEnded extends Schema.TaggedError<UploadEnded>()("UploadEnded", {
+  reason: Schema.Literals(["stalled", "too-slow"]),
+}) {}
+const isUploadEnded = Schema.is(UploadEnded);
 
 /** Failures the client cannot act on; the HTTP layer reports them as internal errors. */
 export class ConversationImportStagingFailure extends Schema.TaggedError<ConversationImportStagingFailure>()(
@@ -138,7 +154,13 @@ type ImportOutcome =
 
 type Phase =
   | { readonly _tag: "awaiting-upload"; readonly uploadExpiresAt: number }
-  | { readonly _tag: "uploading" }
+  | {
+      readonly _tag: "uploading";
+      /** Completed by cancel: the receive stops reading. */
+      readonly stop: Deferred.Deferred<void>;
+      /** Completed once the receive has stopped and its area is settled. */
+      readonly stopped: Deferred.Deferred<void>;
+    }
   | {
       readonly _tag: "uploaded";
       readonly packageSha256: Sha256Digest;
@@ -368,11 +390,30 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
           ),
         );
 
+    /**
+     * Removes an area and then forgets it. An area that cannot be removed yet
+     * (a file still open on Windows) stays abandoned, counted against the
+     * quota, until a sweep removes it.
+     */
     const removeArea = (record: ImportRecord) =>
       Effect.gen(function* () {
         record.phase = { _tag: "removing" };
-        yield* removeDirectory(record.directory);
-        yield* locked(Effect.sync(() => records.delete(record.importId)));
+        const removed = yield* fileSystem
+          .remove(record.directory, { recursive: true, force: true })
+          .pipe(
+            Effect.as(true),
+            Effect.catch((cause) =>
+              Effect.logWarning("Could not remove a conversation import staging area.", {
+                cause,
+              }).pipe(Effect.as(false)),
+            ),
+          );
+        yield* locked(
+          Effect.sync(() => {
+            if (removed) records.delete(record.importId);
+            else record.phase = { _tag: "abandoned" };
+          }),
+        );
       });
 
     // ---------------------------------------------------------------------
@@ -609,12 +650,67 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
         return decoded.value;
       });
 
+    /** Streams the body into the area's package file; how the receive ended. */
+    const receiveBody = <E>(
+      record: ImportRecord,
+      claims: ConversationImportUploadClaims,
+      body: Stream.Stream<Uint8Array, E>,
+      stop: Deferred.Deferred<void>,
+    ) =>
+      Effect.gen(function* () {
+        const target = NodePath.join(record.directory, PACKAGE_FILE);
+        const part = `${target}.${NodeCrypto.randomUUID()}.part`;
+        const hash = NodeCrypto.createHash("sha256");
+        let received = 0;
+        // Every way of ending (cancel, stall, deadline) stops the stream itself,
+        // so the file is closed before the part file and the area are removed.
+        const outcome = yield* Stream.run(
+          body.pipe(
+            Stream.timeoutOrElse({
+              duration: UPLOAD_IDLE_TIMEOUT_MS,
+              orElse: () => Stream.fail(new UploadEnded({ reason: "stalled" })),
+            }),
+            Stream.takeWhile((chunk) => {
+              received += chunk.byteLength;
+              return received <= claims.sizeBytes;
+            }),
+            Stream.tap((chunk) => Effect.sync(() => hash.update(chunk))),
+            Stream.interruptWhen(Deferred.await(stop)),
+            Stream.interruptWhen(
+              Effect.sleep(conversationImportUploadDeadlineMs(claims.sizeBytes)).pipe(
+                Effect.andThen(Effect.fail(new UploadEnded({ reason: "too-slow" }))),
+              ),
+            ),
+          ),
+          fileSystem.sink(part),
+        ).pipe(
+          Effect.flatMap(() =>
+            received === claims.sizeBytes
+              ? fileSystem.rename(part, target).pipe(Effect.as("stored" as const))
+              : Effect.succeed("incomplete" as const),
+          ),
+          Effect.catch((cause) =>
+            isUploadEnded(cause)
+              ? Effect.succeed(cause.reason)
+              : Effect.logWarning("A conversation import upload failed.", { cause }).pipe(
+                  Effect.as("failed" as const),
+                ),
+          ),
+          Effect.ensuring(fileSystem.remove(part, { force: true }).pipe(Effect.ignore)),
+        );
+        return { outcome, received, packageSha256: `sha256:${hash.digest("hex")}` } as const;
+      });
+
     const receiveUpload: ConversationImportStaging["Service"]["receiveUpload"] = Effect.fn(
       "ConversationImportStaging.receiveUpload",
     )(function* (claims, body) {
       return yield* Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {
-          const uploading = { _tag: "uploading" } as const;
+          const uploading = {
+            _tag: "uploading",
+            stop: yield* Deferred.make<void>(),
+            stopped: yield* Deferred.make<void>(),
+          } as const;
           const record = yield* locked(
             Effect.sync(() => {
               const found = records.get(claims.importId);
@@ -640,64 +736,62 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
           }
           return yield* restore(
             Effect.gen(function* () {
-              const target = NodePath.join(record.directory, PACKAGE_FILE);
-              const part = `${target}.${NodeCrypto.randomUUID()}.part`;
-              const hash = NodeCrypto.createHash("sha256");
-              let received = 0;
-              const stored = yield* Stream.run(
-                body.pipe(
-                  Stream.takeWhile((chunk) => {
-                    received += chunk.byteLength;
-                    return received <= claims.sizeBytes;
-                  }),
-                  Stream.tap((chunk) => Effect.sync(() => hash.update(chunk))),
-                ),
-                fileSystem.sink(part),
-              ).pipe(
-                Effect.flatMap(() =>
-                  received === claims.sizeBytes
-                    ? fileSystem.rename(part, target).pipe(Effect.as(true))
-                    : Effect.succeed(false),
-                ),
-                Effect.catch((cause) =>
-                  Effect.logWarning("A conversation import upload failed.", { cause }).pipe(
-                    Effect.as(false),
-                  ),
-                ),
-                Effect.timeoutOption(ATTACHMENT_UPLOAD_URL_TTL_MS),
-                Effect.map(Option.getOrElse(() => false)),
-                Effect.ensuring(fileSystem.remove(part, { force: true }).pipe(Effect.ignore)),
+              const { outcome, received, packageSha256 } = yield* receiveBody(
+                record,
+                claims,
+                body,
+                uploading.stop,
               );
               const at = yield* now;
               const accepted = yield* locked(
                 Effect.sync(() => {
                   if (
-                    !stored ||
+                    outcome !== "stored" ||
                     record.cancelRequested ||
                     records.get(record.importId) !== record
                   ) {
                     return false;
                   }
-                  record.phase = {
-                    _tag: "uploaded",
-                    packageSha256: `sha256:${hash.digest("hex")}`,
-                    packageBytes: received,
-                  };
+                  record.phase = { _tag: "uploaded", packageSha256, packageBytes: received };
                   record.touchedAt = at;
                   return true;
                 }),
               );
               if (accepted) return { ok: true } as const;
               // A failed or cancelled upload ends the import; the client starts again.
-              return stored
-                ? ({ ok: false, status: 409, detail: "This import was cancelled." } as const)
-                : ({
+              if (outcome === "stored" || record.cancelRequested) {
+                return { ok: false, status: 409, detail: "This import was cancelled." } as const;
+              }
+              switch (outcome) {
+                case "incomplete":
+                  return {
                     ok: false,
                     status: 400,
                     detail: `The upload must be exactly ${claims.sizeBytes} bytes.`,
-                  } as const);
+                  } as const;
+                case "stalled":
+                  return {
+                    ok: false,
+                    status: 408,
+                    detail: "The upload stopped sending data. Try again.",
+                  } as const;
+                case "too-slow":
+                  return {
+                    ok: false,
+                    status: 408,
+                    detail: "The upload took too long. Try again on a faster connection.",
+                  } as const;
+                case "failed":
+                  return {
+                    ok: false,
+                    status: 400,
+                    detail: "The upload did not complete. Try again.",
+                  } as const;
+              }
             }),
           ).pipe(
+            // The reservation is held until the receive has stopped and its
+            // area is gone; only then does a cancel waiting on it return.
             Effect.ensuring(
               locked(
                 Effect.sync(() => {
@@ -707,7 +801,10 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
                   record.phase = { _tag: "removing" };
                   return true;
                 }),
-              ).pipe(Effect.flatMap((owned) => (owned ? removeArea(record) : Effect.void))),
+              ).pipe(
+                Effect.flatMap((owned) => (owned ? removeArea(record) : Effect.void)),
+                Effect.ensuring(Deferred.succeed(uploading.stopped, undefined)),
+              ),
             ),
           );
         }),
@@ -1187,6 +1284,11 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
               "The import could not be cancelled cleanly. Scient will finish cleaning up.",
             );
           }
+          return { _tag: "cancelled" } as const;
+        }
+        case "uploading": {
+          yield* Deferred.succeed(phase.stop, undefined);
+          yield* Deferred.await(phase.stopped);
           return { _tag: "cancelled" } as const;
         }
         case "validating": {

@@ -177,6 +177,9 @@ const expectRejected = Effect.fnUntraced(function* (
   if (entry !== undefined) expect(error?._tag === "ScicRejection" ? error.entry : null).toBe(entry);
 });
 
+// What a client decodes: a trimmed, non-empty name of at most 512 units, or null.
+const decodeRejection = Schema.decodeExit(ConversationImportRejection);
+
 const packageZip = (pkg = makePackage()) => zipBytes(pkg.files);
 
 it.effect("reports a staged-file write error without an unhandled stream error", () =>
@@ -635,8 +638,6 @@ describe("the .scic reader", () => {
 
     it.effect("reports entry names that always fit the rejection contract", () =>
       Effect.gen(function* () {
-        // What a client decodes: a trimmed, non-empty name of at most 512 units, or null.
-        const decodeRejection = Schema.decodeUnknownExit(ConversationImportRejection);
         // A name of spaces only is reported as no name at all.
         yield* expectRejected(
           yield* zipBytes([...makePackage().files, { path: "   ", bytes: PNG }]),
