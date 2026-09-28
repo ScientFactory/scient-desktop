@@ -7,12 +7,31 @@ import {
   ScientWordFileExportRequest,
   ScientWordFileExportResult,
 } from "./scientPandoc.ts";
+import { ScientWordDiagramCapture } from "./scientConversationExport.ts";
 
 const decodeToolStatus = Schema.decodeUnknownSync(ScientPandocToolStatus);
 const decodeFileRequest = Schema.decodeUnknownSync(ScientWordFileExportRequest);
 const decodeFileResult = Schema.decodeUnknownSync(ScientWordFileExportResult);
+const decodeDiagramCapture = Schema.decodeUnknownSync(ScientWordDiagramCapture);
 
 describe("Word export contracts", () => {
+  it("bounds aggregate PNG payload before export service decoding", () => {
+    const digest = `sha256:${"a".repeat(64)}`;
+    const entry = (n: number) => ({
+      id: `mermaid-${n.toString(16).padStart(16, "0")}`,
+      result: { _tag: "png", base64: "A".repeat(2_000_000) },
+    });
+    expect(() =>
+      decodeDiagramCapture({
+        sourceDigest: digest,
+        diagrams: Array.from({ length: 6 }, (_, n) => entry(n)),
+      }),
+    ).toThrow();
+    expect(
+      decodeDiagramCapture({ sourceDigest: digest, diagrams: [entry(0)] }).diagrams,
+    ).toHaveLength(1);
+  });
+
   it("decodes the managed tool's status while an install runs", () => {
     const status = decodeToolStatus({
       version: "3.11",

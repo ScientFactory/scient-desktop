@@ -12,7 +12,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 const prepareConversationExport = vi.fn();
 const exportConversation = vi.fn();
-vi.mock("./client", () => ({ prepareConversationExport, exportConversation }));
+const prepareConversationWordDiagrams = vi.fn();
+vi.mock("./client", () => ({
+  prepareConversationExport,
+  exportConversation,
+  prepareConversationWordDiagrams,
+}));
 const readPandocTool = vi.fn();
 const installPandocTool = vi.fn();
 vi.mock("../wordExport/client", () => ({ readPandocTool, installPandocTool }));
@@ -75,6 +80,9 @@ beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   prepareConversationExport.mockReset();
   exportConversation.mockReset();
+  prepareConversationWordDiagrams
+    .mockReset()
+    .mockResolvedValue({ sourceDigest: `sha256:${"a".repeat(64)}`, diagrams: [] });
   readPandocTool.mockReset();
   readPandocTool.mockResolvedValue(pandocStatus(false));
   installPandocTool.mockReset();
@@ -192,5 +200,15 @@ describe("ConversationExportDialog", () => {
     );
     expect(pressed).toEqual(["Word"]);
     expect(document.body.textContent).not.toContain("Install Pandoc");
+    exportConversation.mockResolvedValue({ file: null, warnings: [] });
+    const exportButton = [...document.querySelectorAll("button")].find(
+      (button) => button.textContent === "Export",
+    )!;
+    await act(async () => exportButton.click());
+    expect(prepareConversationWordDiagrams).toHaveBeenCalledOnce();
+    expect(exportConversation.mock.calls[0]?.[1]).toMatchObject({
+      format: "docx",
+      diagramCapture: { sourceDigest: `sha256:${"a".repeat(64)}`, diagrams: [] },
+    });
   });
 });

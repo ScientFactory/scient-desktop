@@ -3,7 +3,11 @@ import * as HttpServerRespondable from "effect/unstable/http/HttpServerRespondab
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
-import { DocumentWarning, ScientConversationExportFile } from "./scientConversationExport.ts";
+import {
+  DocumentWarning,
+  ScientConversationExportFile,
+  ScientWordDiagramCapture,
+} from "./scientConversationExport.ts";
 
 /**
  * The managed Pandoc tool behind Word export, from a client's point of view.
@@ -72,6 +76,7 @@ export const ScientWordFileExportRequest = Schema.Struct({
   cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(4_096)),
   relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(4_096)),
   revision: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+  diagramCapture: Schema.optionalKey(ScientWordDiagramCapture),
 });
 export type ScientWordFileExportRequest = typeof ScientWordFileExportRequest.Type;
 

@@ -49,6 +49,13 @@ export const scientWordExportHttpApiLayer = HttpApiBuilder.group(
           return yield* tool.install;
         }),
       )
+      .handle("prepareFileDiagrams", ({ endpoint, payload }) =>
+        Effect.gen(function* () {
+          yield* annotateEnvironmentRequest(endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          return yield* fileExport.prepareDiagrams(payload);
+        }),
+      )
       .handle("exportFile", ({ endpoint, payload }) =>
         Effect.gen(function* () {
           yield* annotateEnvironmentRequest(endpoint.name);

@@ -153,6 +153,7 @@ import {
   ScientConversationExportPrepareRequest,
   ScientConversationExportRequest,
   ScientConversationExportResult,
+  ScientWordDiagramPlan,
 } from "./scientConversationExport.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — Scient conversation import contracts.
@@ -1133,6 +1134,18 @@ export class EnvironmentScientConversationExportHttpApi extends HttpApiGroup.mak
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
+    HttpApiEndpoint.post(
+      "prepareWordDiagrams",
+      "/api/scient/conversation-export/v1/word-diagrams",
+      {
+        headers: OptionalBearerHeaders,
+        payload: ScientConversationExportRequest,
+        success: ScientWordDiagramPlan,
+        error: [EnvironmentHttpCommonError, ScientConversationExportError],
+      },
+    ).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
     HttpApiEndpoint.post("export", "/api/scient/conversation-export/v1/export", {
       headers: OptionalBearerHeaders,
       payload: ScientConversationExportRequest,
@@ -1199,6 +1212,14 @@ export class EnvironmentScientWordExportHttpApi extends HttpApiGroup.make("scien
       headers: OptionalBearerHeaders,
       success: ScientPandocToolStatus,
       error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("prepareFileDiagrams", "/api/scient/word-export/v1/file-diagrams", {
+      headers: OptionalBearerHeaders,
+      payload: ScientWordFileExportRequest,
+      success: ScientWordDiagramPlan,
+      error: [EnvironmentHttpCommonError, ScientWordExportError],
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(

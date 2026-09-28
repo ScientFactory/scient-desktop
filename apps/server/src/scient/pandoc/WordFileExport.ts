@@ -17,6 +17,7 @@ import {
   type DocumentWarning,
   type ScientWordFileExportRequest,
   type ScientWordLatexExportRequest,
+  type ScientWordDiagramPlan,
 } from "@t3tools/contracts";
 import { exportFileName } from "@scientfactory/conversation";
 import * as Context from "effect/Context";
@@ -36,6 +37,7 @@ import {
 import { PandocWordConverter, type WordConversionFailureReason } from "./PandocWordConverter.ts";
 import { LatexPreparationError, prepareLatexProject } from "./latexProjectPreparation.ts";
 import { citationsFromCslJson, markdownReferenceDeclarations } from "./markdownWordReferences.ts";
+import { capturedWordDiagramAssets, planWordDiagrams } from "./wordDiagramCapture.ts";
 
 const MARKDOWN_FILE = /\.(?:md|markdown|mdown|mkd)$/iu;
 const isLatexPreparationError = Schema.is(LatexPreparationError);
@@ -53,6 +55,9 @@ export class WordFileExport extends Context.Service<
     readonly export: (
       request: ScientWordFileExportRequest,
     ) => Effect.Effect<ProducedWordFile, ScientWordExportError | ConversationExportFileError>;
+    readonly prepareDiagrams: (
+      request: ScientWordFileExportRequest,
+    ) => Effect.Effect<ScientWordDiagramPlan, ScientWordExportError>;
     readonly exportLatex: (
       request: ScientWordLatexExportRequest,
     ) => Effect.Effect<ProducedWordFile, ScientWordExportError | ConversationExportFileError>;
@@ -78,37 +83,60 @@ const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const fileSystem = yield* FileSystem.FileSystem;
 
+  const readSavedMarkdown = Effect.fn("WordFileExport.readSavedMarkdown")(function* (
+    request: ScientWordFileExportRequest,
+  ) {
+    if (path.isAbsolute(request.relativePath) || !MARKDOWN_FILE.test(request.relativePath)) {
+      return yield* reject(
+        "not-markdown",
+        "Only Markdown files in the project can be exported to Word.",
+      );
+    }
+    const unreadable = () =>
+      new ScientWordExportError({
+        reason: "file-unreadable",
+        message: "Scient could not read this file from the project.",
+      });
+    const root = yield* workspacePaths
+      .normalizeWorkspaceRoot(request.cwd)
+      .pipe(Effect.mapError(unreadable));
+    const target = yield* workspacePaths
+      .resolveRelativePathWithinRoot({
+        workspaceRoot: root,
+        relativePath: request.relativePath,
+      })
+      .pipe(Effect.mapError(unreadable));
+    const read = yield* workspaceFiles
+      .readFile({ cwd: root, relativePath: target.relativePath })
+      .pipe(Effect.mapError(unreadable));
+    if (read.truncated)
+      return yield* reject("too-large", "This file is too large to export to Word.");
+    if (read.revision !== request.revision) {
+      return yield* reject(
+        "file-changed",
+        "The file on disk is not the version shown in the editor. Save it, then export again.",
+      );
+    }
+    return { root, target, read };
+  });
+
+  const prepareDiagrams: WordFileExport["Service"]["prepareDiagrams"] = Effect.fn(
+    "WordFileExport.prepareDiagrams",
+  )(function* (request) {
+    const { read } = yield* readSavedMarkdown(request);
+    return yield* Effect.try({
+      try: () => planWordDiagrams(read.contents, read.revision),
+      catch: () =>
+        new ScientWordExportError({
+          reason: "too-large",
+          message: "This file has too many or oversized Mermaid diagrams for Word export.",
+        }),
+    });
+  });
+
   const exportFile: WordFileExport["Service"]["export"] = Effect.fn("WordFileExport.export")(
     function* (request) {
-      if (path.isAbsolute(request.relativePath) || !MARKDOWN_FILE.test(request.relativePath)) {
-        return yield* reject(
-          "not-markdown",
-          "Only Markdown files in the project can be exported to Word.",
-        );
-      }
-      const unreadable = () =>
-        new ScientWordExportError({
-          reason: "file-unreadable",
-          message: "Scient could not read this file from the project.",
-        });
-      const root = yield* workspacePaths
-        .normalizeWorkspaceRoot(request.cwd)
-        .pipe(Effect.mapError(unreadable));
-      const target = yield* workspacePaths
-        .resolveRelativePathWithinRoot({ workspaceRoot: root, relativePath: request.relativePath })
-        .pipe(Effect.mapError(unreadable));
-      const read = yield* workspaceFiles
-        .readFile({ cwd: root, relativePath: target.relativePath })
-        .pipe(Effect.mapError(unreadable));
-      if (read.truncated) {
-        return yield* reject("too-large", "This file is too large to export to Word.");
-      }
-      if (read.revision !== request.revision) {
-        return yield* reject(
-          "file-changed",
-          "The file on disk is not the version shown in the editor. Save it, then export again.",
-        );
-      }
+      const { root, target, read } = yield* readSavedMarkdown(request);
 
       const title = path.basename(target.relativePath).replace(MARKDOWN_FILE, "") || "Document";
       const declared = markdownReferenceDeclarations(read.contents);
@@ -174,12 +202,20 @@ const make = Effect.gen(function* () {
         citations,
         warnings,
       };
+      const diagrams = yield* Effect.try({
+        try: () => capturedWordDiagramAssets(bundle, read.revision, request.diagramCapture),
+        catch: (cause) =>
+          new ScientWordExportError({
+            reason: "conversion-failed",
+            message: cause instanceof Error ? cause.message : "The diagram capture is invalid.",
+          }),
+      });
       const exportId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
       const fileName = exportFileName(title, ".docx");
       const reserved = yield* files.reserve({ exportId, fileName });
       const converted = yield* words
         .convert({
-          bundle,
+          bundle: { ...bundle, assets: [...bundle.assets, ...diagrams] },
           bibliographySources,
           outputPath: reserved.path,
           files: { baseDirectory: path.dirname(target.absolutePath), allowRoots: [root] },
@@ -305,7 +341,7 @@ const make = Effect.gen(function* () {
     };
   });
 
-  return WordFileExport.of({ export: exportFile, exportLatex });
+  return WordFileExport.of({ export: exportFile, prepareDiagrams, exportLatex });
 });
 
 export const layer = Layer.effect(WordFileExport, make);

@@ -56,3 +56,25 @@ export const exportEnvironmentConversation = Effect.fn(
     request: ({ client, headers }) => client.export({ headers, payload: input.request }),
   });
 });
+
+export const prepareEnvironmentConversationWordDiagrams = Effect.fn(
+  "clientRuntime.state.prepareEnvironmentConversationWordDiagrams",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly request: ScientConversationExportRequest;
+}) {
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared: input.prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (httpBaseUrl) =>
+      environmentEndpointUrl(httpBaseUrl, "/api/scient/conversation-export/v1/word-diagrams"),
+    timeoutMs: EXPORT_TIMEOUT_MS,
+    group: "scientConversationExport",
+    request: ({ client, headers }) =>
+      client.prepareWordDiagrams({ headers, payload: input.request }),
+  });
+});

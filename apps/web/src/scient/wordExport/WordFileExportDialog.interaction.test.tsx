@@ -8,10 +8,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 const readPandocTool = vi.fn();
 const installPandocTool = vi.fn();
 const exportWordFile = vi.fn();
+const prepareWordFileDiagrams = vi.fn();
+vi.mock("./captureDiagrams", () => ({
+  captureWordDiagrams: vi.fn(async (plan) => ({ sourceDigest: plan.sourceDigest, diagrams: [] })),
+}));
 vi.mock("./client", () => ({
   readPandocTool,
   installPandocTool,
   exportWordFile,
+  prepareWordFileDiagrams,
   exportWordLatex: vi.fn(),
 }));
 
@@ -51,6 +56,7 @@ beforeEach(() => {
   readPandocTool.mockReset().mockResolvedValue(status(false));
   installPandocTool.mockReset().mockResolvedValue(status(true));
   exportWordFile.mockReset();
+  prepareWordFileDiagrams.mockReset().mockResolvedValue({ sourceDigest: revision, diagrams: [] });
   saveConversationExport.mockReset().mockResolvedValue({ _tag: "cancelled" });
   container = document.createElement("div");
   document.body.append(container);
@@ -97,6 +103,7 @@ describe("WordFileExportDialog", () => {
       cwd: "/project",
       relativePath: "notes/report.md",
       revision,
+      diagramCapture: { sourceDigest: revision, diagrams: [] },
     });
     expect(onClose).not.toHaveBeenCalled();
 

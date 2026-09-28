@@ -21,6 +21,7 @@ import {
   type ScientConversationExportPreparation,
   type ScientConversationExportRequest,
   type Sha256Digest,
+  type ScientWordDiagramPlan,
   type ThreadId,
 } from "@t3tools/contracts";
 import {
@@ -49,6 +50,7 @@ import {
   PandocWordConverter,
   type WordConversionFailureReason,
 } from "../pandoc/PandocWordConverter.ts";
+import { capturedWordDiagramAssets, planWordDiagrams } from "../pandoc/wordDiagramCapture.ts";
 import {
   ConversationExportFiles,
   type ConversationExportFileError,
@@ -117,6 +119,9 @@ export class ConversationExportService extends Context.Service<
     readonly produce: (
       request: ScientConversationExportRequest,
     ) => Effect.Effect<ProducedExport, ConversationExportServiceError>;
+    readonly prepareWordDiagrams: (
+      request: ScientConversationExportRequest,
+    ) => Effect.Effect<ScientWordDiagramPlan, ConversationExportServiceError>;
     /**
      * The document bundle for the request's options (work log, reasoning,
      * range), with Scient's storage locations redacted, for writers that run
@@ -313,6 +318,24 @@ const make = Effect.gen(function* () {
     return { snapshot, resolved, document: { ...document, exportValue } };
   });
 
+  const prepareWordDiagrams: ConversationExportService["Service"]["prepareWordDiagrams"] =
+    Effect.fn("ConversationExportService.prepareWordDiagrams")(function* (request) {
+      const { snapshot, document } = yield* buildDocument(request);
+      return yield* Effect.try({
+        try: () =>
+          planWordDiagrams(
+            redactStoragePaths(document.bundle.markdown, storageRoots),
+            snapshot.contentDigest,
+          ),
+        catch: () =>
+          new ScientConversationExportError({
+            reason: "too-large",
+            message:
+              "This conversation has too many or oversized Mermaid diagrams for Word export.",
+          }),
+      });
+    });
+
   const produce: ConversationExportService["Service"]["produce"] = Effect.fn(
     "ConversationExportService.produce",
   )(function* (request) {
@@ -400,13 +423,28 @@ const make = Effect.gen(function* () {
     };
 
     if (request.format === "docx") {
+      const wordMarkdown = redactStoragePaths(document.bundle.markdown, storageRoots);
+      const diagrams = yield* Effect.try({
+        try: () =>
+          capturedWordDiagramAssets(
+            { ...document.bundle, markdown: wordMarkdown },
+            snapshot.contentDigest,
+            request.diagramCapture,
+          ),
+        catch: (cause) =>
+          new ScientConversationExportError({
+            reason: "conversion-failed",
+            message: cause instanceof Error ? cause.message : "The diagram capture is invalid.",
+          }),
+      });
       const fileName = exportFileName(snapshot.thread.title, ".docx");
       const target = yield* files.reserve({ exportId, fileName });
       const converted = yield* words
         .convert({
           bundle: {
             ...document.bundle,
-            markdown: redactStoragePaths(document.bundle.markdown, storageRoots),
+            markdown: wordMarkdown,
+            assets: [...document.bundle.assets, ...diagrams],
           },
           outputPath: target.path,
         })
@@ -494,7 +532,7 @@ const make = Effect.gen(function* () {
     };
   });
 
-  return ConversationExportService.of({ prepare, produce, document });
+  return ConversationExportService.of({ prepare, prepareWordDiagrams, produce, document });
 });
 
 export const layer = Layer.effect(ConversationExportService, make);

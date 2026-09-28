@@ -5,6 +5,7 @@ import {
   diagramFileBaseName,
   mermaidMarkdownCopySource,
   prepareSvgForExport,
+  mermaidSvgToPngBlob,
 } from "./mermaidExport";
 
 describe("diagram export helpers", () => {
@@ -44,4 +45,13 @@ describe("diagram export helpers", () => {
       expect(() => prepareSvgForExport(source, "light")).toThrow(/not an SVG/);
     },
   );
+
+  it("refuses external resources before rasterizing a Mermaid SVG", async () => {
+    await expect(
+      mermaidSvgToPngBlob(
+        '<svg xmlns="http://www.w3.org/2000/svg"><image href="https://example.invalid/plot.png"/></svg>',
+        "light",
+      ),
+    ).rejects.toThrow(/external image/);
+  });
 });

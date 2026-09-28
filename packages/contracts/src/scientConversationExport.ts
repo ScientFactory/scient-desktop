@@ -30,6 +30,42 @@ const ShortText = (max: number) => Schema.String.check(Schema.isMaxLength(max));
 export const Sha256Digest = Schema.String.check(Schema.isPattern(/^sha256:[a-f0-9]{64}$/));
 export type Sha256Digest = typeof Sha256Digest.Type;
 
+/** Server-selected Mermaid fences for Word's browser rasterization step. */
+export const ScientWordDiagramPlan = Schema.Struct({
+  sourceDigest: Sha256Digest,
+  diagrams: Schema.Array(
+    Schema.Struct({
+      id: Schema.String.check(Schema.isPattern(/^mermaid-[a-f0-9]{16}$/)),
+      source: Schema.String.check(Schema.isMaxLength(100_000)),
+    }),
+  ).check(Schema.isMaxLength(64)),
+});
+export type ScientWordDiagramPlan = typeof ScientWordDiagramPlan.Type;
+
+export const ScientWordDiagramCapture = Schema.Struct({
+  sourceDigest: Sha256Digest,
+  diagrams: Schema.Array(
+    Schema.Struct({
+      id: Schema.String.check(Schema.isPattern(/^mermaid-[a-f0-9]{16}$/)),
+      result: Schema.Union([
+        Schema.TaggedStruct("png", { base64: Schema.String.check(Schema.isMaxLength(2_800_000)) }),
+        Schema.TaggedStruct("render-failed", {}),
+      ]),
+    }),
+  ).check(
+    Schema.isMaxLength(64),
+    Schema.makeFilter(
+      (diagrams) =>
+        diagrams.reduce(
+          (sum, entry) => sum + (entry.result._tag === "png" ? entry.result.base64.length : 0),
+          0,
+        ) <= 11_184_812,
+      { identifier: "WordDiagramCaptureBase64Budget" },
+    ),
+  ),
+});
+export type ScientWordDiagramCapture = typeof ScientWordDiagramCapture.Type;
+
 /**
  * Text kept to a head and tail by the export projection. `omittedLines` and
  * `omittedChars` describe what was cut from the middle; both are zero when the
@@ -729,6 +765,7 @@ export const ScientConversationExportRequest = Schema.Struct({
   format: ConversationExportFormat,
   options: ConversationExportOptions,
   delivery: ScientConversationExportDelivery,
+  diagramCapture: Schema.optionalKey(ScientWordDiagramCapture),
   /** IANA time zone for human-readable times in the output; UTC when absent or unknown. */
   timeZone: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(64))),
 });

@@ -31,7 +31,12 @@ import {
 import { Switch } from "../../components/ui/switch";
 import { toastManager } from "../../components/ui/toast";
 import { Toggle, ToggleGroup } from "../../components/ui/toggle-group";
-import { exportConversation, prepareConversationExport } from "./client";
+import {
+  exportConversation,
+  prepareConversationExport,
+  prepareConversationWordDiagrams,
+} from "./client";
+import { captureWordDiagrams } from "../wordExport/captureDiagrams";
 import {
   buildExportRequest,
   canCopyExport,
@@ -169,7 +174,16 @@ function ConversationExportDialog({ threadRef }: { readonly threadRef: ScopedThr
         closeRequest();
         return;
       }
-      const result = await exportConversation(threadRef.environmentId, request);
+      const preparedRequest =
+        request.format === "docx"
+          ? {
+              ...request,
+              diagramCapture: await captureWordDiagrams(
+                await prepareConversationWordDiagrams(threadRef.environmentId, request),
+              ),
+            }
+          : request;
+      const result = await exportConversation(threadRef.environmentId, preparedRequest);
       if (delivery === "clipboard") {
         await copyConversationExport(result.text ?? "");
         toastManager.add({ type: "success", title: "Markdown copied" });

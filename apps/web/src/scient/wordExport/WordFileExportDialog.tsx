@@ -13,7 +13,8 @@ import {
 } from "../../components/ui/dialog";
 import { toastManager } from "../../components/ui/toast";
 import { saveConversationExport, saveFailureMessage } from "../conversationExport/exportActions";
-import { exportWordFile, exportWordLatex } from "./client";
+import { exportWordFile, exportWordLatex, prepareWordFileDiagrams } from "./client";
+import { captureWordDiagrams } from "./captureDiagrams";
 import { PandocInstallStatus } from "./PandocInstallControl";
 import { usePandocTool } from "./usePandocTool";
 
@@ -56,7 +57,14 @@ export function WordFileExportDialog(props: {
       }
       const result =
         rootRelativePath === undefined
-          ? await exportWordFile(environmentId, { cwd, relativePath, revision })
+          ? await exportWordFile(environmentId, {
+              cwd,
+              relativePath,
+              revision,
+              diagramCapture: await captureWordDiagrams(
+                await prepareWordFileDiagrams(environmentId, { cwd, relativePath, revision }),
+              ),
+            })
           : await exportWordLatex(environmentId, { cwd, relativePath, rootRelativePath, revision });
       const saved = await saveConversationExport(environmentId, result.file);
       if (saved._tag === "cancelled") return;

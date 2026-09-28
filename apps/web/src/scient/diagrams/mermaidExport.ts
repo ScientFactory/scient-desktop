@@ -101,9 +101,39 @@ function canvasToPngBlob(canvas: HTMLCanvasElement): Promise<Blob> {
   });
 }
 
-async function mermaidSvgToPngBlob(svg: string, theme: MermaidTheme): Promise<Blob> {
+export async function mermaidSvgToPngBlob(svg: string, theme: MermaidTheme): Promise<Blob> {
   const prepared = prepareSvgForExport(svg, theme);
   const svgElement = new DOMParser().parseFromString(prepared, "image/svg+xml").documentElement;
+  // A saved document may contain arbitrary Mermaid. Rasterization must never
+  // cause the client's browser to retrieve an external image or stylesheet.
+  for (const element of [svgElement, ...svgElement.querySelectorAll("*")]) {
+    if (
+      ["image", "img", "script", "iframe", "object", "embed", "link"].includes(element.localName)
+    ) {
+      throw new Error("The diagram contains an external image and cannot be exported.");
+    }
+    for (const attribute of element.attributes) {
+      const value = attribute.value;
+      if (/^on/iu.test(attribute.localName)) {
+        throw new Error("The diagram contains active content and cannot be exported.");
+      }
+      if (
+        (attribute.localName === "href" || attribute.localName === "src") &&
+        !value.startsWith("#")
+      ) {
+        throw new Error("The diagram contains an external resource and cannot be exported.");
+      }
+      if (/url\(\s*(?!['"]?#)[^)]+\)|@import/iu.test(value)) {
+        throw new Error("The diagram contains an external resource and cannot be exported.");
+      }
+    }
+    if (
+      element.localName === "style" &&
+      /url\(\s*(?!['"]?#)[^)]+\)|@import/iu.test(element.textContent ?? "")
+    ) {
+      throw new Error("The diagram contains an external stylesheet and cannot be exported.");
+    }
+  }
   const dimensions = parseSvgDimensions(svgElement);
   // Give the rasterizer an intrinsic viewport, independent of the chat's CSS
   // or the browser's default size for SVGs with width="100%".

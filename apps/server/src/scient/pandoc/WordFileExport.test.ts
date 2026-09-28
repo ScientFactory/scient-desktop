@@ -23,7 +23,12 @@ import {
   type WordConversionInput,
 } from "./PandocWordConverter.ts";
 import { WordFileExport, layer as wordFileExportLayer } from "./WordFileExport.ts";
-import { managedToolLayer, pandocBinaryForTests, readDocx } from "./pandocTestSupport.ts";
+import {
+  managedToolLayer,
+  pandocBinaryForTests,
+  readDocx,
+  PNG_BYTES,
+} from "./pandocTestSupport.ts";
 
 const binary = pandocBinaryForTests();
 
@@ -124,6 +129,64 @@ const run = <A, E>(
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
 describe("WordFileExport", () => {
+  it.live("sends captured Mermaid PNG bytes to the Word converter", () => {
+    const seen: Array<WordConversionInput> = [];
+    return run(
+      ({ service, project, revisionOf }) =>
+        Effect.gen(function* () {
+          NodeFS.writeFileSync(
+            NodePath.join(project, "notes", "report.md"),
+            "```mermaid\nflowchart LR\n A --> B\n```\n",
+          );
+          const revision = yield* revisionOf("notes/report.md");
+          const request = { cwd: project, relativePath: "notes/report.md", revision };
+          const plan = yield* service.prepareDiagrams(request);
+          yield* service.export({
+            ...request,
+            diagramCapture: {
+              sourceDigest: plan.sourceDigest,
+              diagrams: [
+                {
+                  id: plan.diagrams[0]!.id,
+                  result: { _tag: "png", base64: Buffer.from(PNG_BYTES).toString("base64") },
+                },
+              ],
+            },
+          });
+          expect(
+            seen[0]?.bundle.assets.find((asset) => asset.role === "rendered-diagram")?.id,
+          ).toBe(plan.diagrams[0]!.id);
+        }),
+      { seen },
+    );
+  });
+
+  it.live(
+    "prepares saved Mermaid source and rejects a changed file before accepting its capture",
+    () =>
+      run(({ service, project, revisionOf }) =>
+        Effect.gen(function* () {
+          const file = NodePath.join(project, "notes", "report.md");
+          NodeFS.writeFileSync(file, "```mermaid\nflowchart LR\n A --> B\n```\n");
+          const revision = yield* revisionOf("notes/report.md");
+          const request = { cwd: project, relativePath: "notes/report.md", revision };
+          const plan = yield* service.prepareDiagrams(request);
+          expect(plan.diagrams).toHaveLength(1);
+          NodeFS.writeFileSync(file, "```mermaid\nflowchart LR\n A --> C\n```\n");
+          const error = yield* service
+            .export({
+              ...request,
+              diagramCapture: {
+                sourceDigest: plan.sourceDigest,
+                diagrams: [{ id: plan.diagrams[0]!.id, result: { _tag: "render-failed" } }],
+              },
+            })
+            .pipe(Effect.flip);
+          expect(error._tag === "ScientWordExportError" && error.reason).toBe("file-changed");
+        }),
+      ),
+  );
+
   if (binary !== null)
     it.live(
       "produces Word from saved Markdown with Mermaid source and local CSL and BibTeX references",

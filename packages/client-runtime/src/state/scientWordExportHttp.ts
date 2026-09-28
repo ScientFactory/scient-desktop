@@ -75,6 +75,28 @@ export const exportEnvironmentWordFile = Effect.fn("clientRuntime.state.exportEn
   },
 );
 
+export const prepareEnvironmentWordFileDiagrams = Effect.fn(
+  "clientRuntime.state.prepareEnvironmentWordFileDiagrams",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly request: ScientWordFileExportRequest;
+}) {
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared: input.prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (httpBaseUrl) =>
+      environmentEndpointUrl(httpBaseUrl, "/api/scient/word-export/v1/file-diagrams"),
+    timeoutMs: TOOL_TIMEOUT_MS,
+    group: "scientWordExport",
+    request: ({ client, headers }) =>
+      client.prepareFileDiagrams({ headers, payload: input.request }),
+  });
+});
+
 export const exportEnvironmentWordLatex = Effect.fn(
   "clientRuntime.state.exportEnvironmentWordLatex",
 )(function* (input: {

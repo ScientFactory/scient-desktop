@@ -3,6 +3,7 @@ import {
   exportEnvironmentWordLatex,
   getEnvironmentWordExportTool,
   installEnvironmentWordExportTool,
+  prepareEnvironmentWordFileDiagrams,
 } from "@t3tools/client-runtime/state/scient-word-export";
 import type {
   EnvironmentId,
@@ -37,6 +38,15 @@ export async function exportWordFile(
 ) {
   return runtime.runPromise(
     exportEnvironmentWordFile({ prepared: prepared(environmentId), request }),
+  );
+}
+
+export async function prepareWordFileDiagrams(
+  environmentId: EnvironmentId,
+  request: ScientWordFileExportRequest,
+) {
+  return runtime.runPromise(
+    prepareEnvironmentWordFileDiagrams({ prepared: prepared(environmentId), request }),
   );
 }
 

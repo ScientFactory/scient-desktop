@@ -45,7 +45,12 @@ import {
   layer as realConverterLayer,
   type WordConversionFailureReason,
 } from "../pandoc/PandocWordConverter.ts";
-import { managedToolLayer, pandocBinaryForTests, readDocx } from "../pandoc/pandocTestSupport.ts";
+import {
+  managedToolLayer,
+  pandocBinaryForTests,
+  readDocx,
+  PNG_BYTES,
+} from "../pandoc/pandocTestSupport.ts";
 
 const pandocBinary = pandocBinaryForTests();
 
@@ -621,6 +626,46 @@ describe("conversation export delivery", () => {
   );
 
   const wordConversions: Array<DocumentBundle> = [];
+  const diagramConversions: Array<DocumentBundle> = [];
+  it.effect("captures a PNG for server-selected, redacted conversation Mermaid source", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      yield* seedThread({
+        pairs: 1,
+        firstUserText: `\`\`\`mermaid\nflowchart LR\n A["${config.stateDir}/logs/x"] --> B\n\`\`\``,
+      });
+      const service = yield* ConversationExportService.ConversationExportService;
+      const wordRequest = request({ format: "docx" });
+      const plan = yield* service.prepareWordDiagrams(wordRequest);
+      assert.lengthOf(plan.diagrams, 1);
+      assert.notInclude(plan.diagrams[0]!.source, config.stateDir);
+      const produced = yield* service.produce({
+        ...wordRequest,
+        diagramCapture: {
+          sourceDigest: plan.sourceDigest,
+          diagrams: [
+            {
+              id: plan.diagrams[0]!.id,
+              result: { _tag: "png", base64: Buffer.from(PNG_BYTES).toString("base64") },
+            },
+          ],
+        },
+      });
+      assert.strictEqual(produced.format, "docx");
+      const bundle = diagramConversions.at(-1)!;
+      assert.strictEqual(
+        bundle.assets.find((asset) => asset.role === "rendered-diagram")?.id,
+        plan.diagrams[0]!.id,
+      );
+    }).pipe(
+      Effect.provide(
+        exportLayer("scient-convexport-word-diagram-", {
+          _tag: "converts",
+          seen: diagramConversions,
+        }),
+      ),
+    ),
+  );
   it.effect("converts the conversation bundle to Word when Pandoc is installed", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;

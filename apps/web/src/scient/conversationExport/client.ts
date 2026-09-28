@@ -1,6 +1,7 @@
 import {
   exportEnvironmentConversation,
   prepareEnvironmentConversationExport,
+  prepareEnvironmentConversationWordDiagrams,
 } from "@t3tools/client-runtime/state/scient-conversation-export";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import type { EnvironmentId, ScientConversationExportRequest, ThreadId } from "@t3tools/contracts";
@@ -28,6 +29,15 @@ export async function exportConversation(
 ) {
   return runtime.runPromise(
     exportEnvironmentConversation({ prepared: prepared(environmentId), request }),
+  );
+}
+
+export async function prepareConversationWordDiagrams(
+  environmentId: EnvironmentId,
+  request: ScientConversationExportRequest,
+) {
+  return runtime.runPromise(
+    prepareEnvironmentConversationWordDiagrams({ prepared: prepared(environmentId), request }),
   );
 }
 

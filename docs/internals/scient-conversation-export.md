@@ -184,6 +184,17 @@ idempotent command receipt, and rollback of exactly the files it owns if the imp
 commit. Fork, revert, and provider continuation operate on the imported thread's inherited
 history; they do not adopt the sender's provider session.
 
+Word export of a conversation or saved project Markdown file asks the server for the Mermaid fences
+in the selected snapshot or saved revision. The browser renders each fence to a bounded PNG and
+returns the bytes with that source digest. The server rereads the authoritative source, checks the
+digest and every diagram ID, and passes only validated PNG bytes to Pandoc. It never accepts an asset
+path from the client or fetches a remote resource for this step. A syntax failure keeps the full
+Mermaid source in Word with a warning; a renderer or PNG encoder failure stops the UI export. A
+server-only Word caller that supplies no capture retains the labeled source fallback and warning.
+The two Word export POST routes cap request bodies at 12 MiB before JSON parsing; the PNG budget is
+2 MiB per diagram and 8 MiB in total. An oversized chunked request may have its connection reset
+by the Node HTTP adapter as it stops reading the body.
+
 ## Dialog
 
 Thread menu → **Export…** (sidebar and chat header) opens the dialog. Formats come from

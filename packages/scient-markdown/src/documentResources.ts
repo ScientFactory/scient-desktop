@@ -20,6 +20,17 @@ export interface MarkdownDocumentInspection {
   readonly hasRawHtml: boolean;
 }
 
+/** Unique Mermaid code fences in source order, using the document parser. */
+export function mermaidSourcesInMarkdown(source: string): ReadonlyArray<string> {
+  const found = new Set<string>();
+  const visit = (node: Nodes) => {
+    if (node.type === "code" && node.lang === "mermaid") found.add(node.value);
+    if ("children" in node) node.children.forEach(visit);
+  };
+  visit(parse(source));
+  return [...found];
+}
+
 function parse(source: string): Root {
   return fromMarkdown(source, {
     extensions: [frontmatter(["yaml", "toml"]), gfm(), math()],

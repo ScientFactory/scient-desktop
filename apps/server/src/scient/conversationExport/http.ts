@@ -42,6 +42,18 @@ export const scientConversationExportHttpApiLayer = HttpApiBuilder.group(
           );
         }),
       )
+      .handle("prepareWordDiagrams", ({ endpoint, payload }) =>
+        Effect.gen(function* () {
+          yield* annotateEnvironmentRequest(endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          return yield* exports.prepareWordDiagrams(payload).pipe(
+            Effect.catchTags({
+              ConversationSnapshotReadError: internal,
+              ConversationExportFileError: internal,
+            }),
+          );
+        }),
+      )
       .handle("export", ({ endpoint, payload }) =>
         Effect.gen(function* () {
           yield* annotateEnvironmentRequest(endpoint.name);

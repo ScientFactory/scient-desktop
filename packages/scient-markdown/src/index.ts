@@ -35,6 +35,7 @@ export {
 export { reconcileMarkdown, type MarkdownReconciliation } from "./reconciliation.ts";
 export {
   inspectMarkdownDocument,
+  mermaidSourcesInMarkdown,
   rewriteMarkdownImageDestinations,
   resolveMarkdownDocumentRelativePath,
   type MarkdownDocumentInspection,
