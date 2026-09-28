@@ -236,7 +236,9 @@ describe.runIf(ompQualifyBinary)("real OMP background continuation", () => {
             if (mode === "message") {
               const second = yield* adapter.sendTurn({ threadId, input: "What is the answer?" });
               expect(second.turnId).not.toBe(first.turnId);
-              for (let attempt = 0; attempt < 200 && calls < 3; attempt++) {
+              // The stub's request handler counts calls.
+              for (let attempt = 0; attempt < 200; attempt++) {
+                if (calls >= 3) break;
                 yield* Effect.sleep("50 millis").pipe(TestClock.withLive);
               }
               expect(calls).toBe(3);

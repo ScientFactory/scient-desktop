@@ -281,7 +281,7 @@ describe("Oh My Pi background continuation and Stop", () => {
       expect(h.liveness()).toBe("monitoring");
       const second = yield* h.adapter.sendTurn({ threadId: h.threadId, input: "Another question" });
       expect(second.turnId).not.toBe(h.first.turnId);
-      expect(h.wire.written.filter((command) => command.type === "prompt").at(-1)).toMatchObject({
+      expect(h.wire.written.findLast((command) => command.type === "prompt")).toMatchObject({
         message: "Another question",
         streamingBehavior: "steer",
       });
