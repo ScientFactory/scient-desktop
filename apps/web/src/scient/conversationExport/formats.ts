@@ -36,8 +36,7 @@ registerConversationExportFormat({
   supportsCopy: false,
   clientAvailability: conversationPdfAvailability,
   produce: exportConversationPdf,
-  note: () =>
-    "Opens in Scient's PDF reader, where Save Copy keeps a copy. Images stay inside the PDF.",
+  note: () => "A print-ready document with images, math, and diagrams inside.",
 });
 
 registerConversationExportFormat({
