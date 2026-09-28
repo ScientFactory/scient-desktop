@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -12,6 +13,7 @@ import {
   type OmpRpcClient,
   type OmpRpcNotification,
 } from "effect-omp-rpc/client";
+import { OmpRpcCommandError } from "effect-omp-rpc/errors";
 import type { OmpRpcResponse } from "effect-omp-rpc/schema";
 
 import { makeOmpScriptedWire } from "./OmpCaptureReplay.testFixtures.ts";
@@ -328,44 +330,6 @@ describe("Oh My Pi session runtime", () => {
       yield* Scope.close(harness.scope, Exit.void);
     }),
   );
-
-  it.effect("settles an accepted turn as cancelled when abort wins before agent start", () =>
-    Effect.gen(function* () {
-      const harness = yield* runtimeHarness();
-      yield* harness.runtime.begin("turn-cancel-before-start");
-      yield* takeUpdate(harness.updates);
-      yield* harness.runtime.accepted("prompt-cancel", true);
-      yield* harness.runtime.requestCancel();
-      yield* harness.runtime.confirmCancel();
-      expect(yield* takeUpdate(harness.updates)).toMatchObject({
-        type: "turn-outcome",
-        outcome: "interrupted",
-      });
-      expect(yield* harness.runtime.awaitTurnSettled()).toBeUndefined();
-      yield* Scope.close(harness.scope, Exit.void);
-    }),
-  );
-
-  it.effect("settles a cancel that arrives after a racing agent start", () =>
-    Effect.gen(function* () {
-      const harness = yield* runtimeHarness();
-      yield* harness.runtime.begin("turn-cancel-agent-start");
-      yield* takeUpdate(harness.updates);
-      yield* harness.runtime.accepted("prompt-cancel-race", true);
-      yield* harness.runtime.requestCancel();
-      // The agent starts after the cancel request and before the
-      // acknowledgement, and OMP never reports a terminal end.
-      yield* Queue.offer(harness.events, { _tag: "Event", event: { type: "agent_start" } });
-      yield* Effect.sleep("200 millis").pipe(TestClock.withLive);
-      yield* harness.runtime.confirmCancel();
-      const updates = yield* Queue.takeAll(harness.updates);
-      expect(updates).toContainEqual(
-        expect.objectContaining({ type: "turn-outcome", outcome: "interrupted" }) as never,
-      );
-      expect(yield* harness.runtime.awaitTurnSettled()).toBeUndefined();
-      yield* Scope.close(harness.scope, Exit.void);
-    }),
-  );
 });
 
 /**
@@ -503,15 +467,8 @@ describe("Oh My Pi session runtime outcomes", () => {
     }),
   );
 
-  for (const [label, cancelled, expected] of [
-    ["by the user is interrupted", true, { outcome: "interrupted" }],
-    [
-      "elsewhere fails with the retry's final error",
-      false,
-      { outcome: "failed", detail: "Retry cancelled" },
-    ],
-  ] as const) {
-    it.effect(`a session retry cancelled ${label}`, () =>
+  {
+    it.effect("a session retry cancelled elsewhere fails with the retry's final error", () =>
       Effect.gen(function* () {
         const h = yield* wireHarness();
         yield* h.runtime.begin("retry-cancel");
@@ -528,14 +485,13 @@ describe("Oh My Pi session runtime outcomes", () => {
             errorMessage: "429 rate limited",
           },
         );
-        if (cancelled) yield* h.runtime.requestCancel();
         yield* h.wire.send(
           { type: "auto_retry_end", success: false, attempt: 1, finalError: "Retry cancelled" },
           { type: "agent_end", messages: [], isTerminal: true },
         );
         const outcome = yield* h.outcome;
         yield* Scope.close(h.scope, Exit.void);
-        expect(outcome).toMatchObject(expected);
+        expect(outcome).toMatchObject({ outcome: "failed", detail: "Retry cancelled" });
       }),
     );
   }
@@ -545,11 +501,11 @@ describe("Oh My Pi session runtime outcomes", () => {
       const h = yield* wireHarness();
       yield* h.runtime.begin("first");
       yield* h.runtime.accepted("prompt-1", true);
-      yield* h.runtime.requestCancel();
-      yield* h.runtime.confirmCancel();
-      expect(yield* h.outcome).toMatchObject({ outcome: "interrupted", requestId: "prompt-1" });
+      // The turn settles before OMP reports the prompt's own result.
+      yield* h.runtime.commandFailed();
+      expect(yield* h.outcome).toMatchObject({ outcome: "failed", requestId: "prompt-1" });
       yield* h.runtime.begin("second");
-      // The aborted prompt's result lands before the next prompt is accepted.
+      // The settled prompt's result lands before the next prompt is accepted.
       yield* h.wire.send({
         type: "prompt_result",
         id: "prompt-1",
@@ -611,10 +567,9 @@ describe("Oh My Pi session runtime outcomes", () => {
     Effect.gen(function* () {
       const h = yield* wireHarness();
       yield* h.runtime.begin("first");
-      // Cancelled before OMP acknowledged the prompt.
-      yield* h.runtime.requestCancel();
-      yield* h.runtime.confirmCancel();
-      expect(yield* h.outcome).toMatchObject({ outcome: "interrupted" });
+      // Settled before OMP acknowledged the prompt.
+      yield* h.runtime.commandFailed("first");
+      expect(yield* h.outcome).toMatchObject({ outcome: "failed" });
       // The acknowledgement arrives after the turn settled.
       yield* h.runtime.accepted("7", true);
       yield* h.runtime.begin("second");
@@ -653,7 +608,7 @@ describe("Oh My Pi session runtime outcomes", () => {
   );
 
   it.effect(
-    "R1-F3 tool and question frames of an aborted run stay out of the next turn; its background subagent reports on",
+    "R1-F3 tool and question frames of an abandoned run stay out of the next turn; its background subagent reports on",
     () =>
       Effect.gen(function* () {
         const h = yield* wireHarness();
@@ -661,10 +616,9 @@ describe("Oh My Pi session runtime outcomes", () => {
         yield* h.runtime.accepted("prompt-1", true);
         yield* h.wire.send({ type: "agent_start" });
         expect(yield* h.settleFrames).toMatchObject([{ type: "turn-started" }]);
-        // The abort is acknowledged while run 1 is still open.
-        yield* h.runtime.requestCancel();
-        yield* h.runtime.confirmCancel();
-        expect(yield* h.outcome).toMatchObject({ outcome: "interrupted" });
+        // The turn settles while run 1 is still open.
+        yield* h.runtime.commandFailed("first");
+        expect(yield* h.outcome).toMatchObject({ outcome: "failed" });
         yield* h.runtime.begin("second");
         yield* h.wire.send(
           { type: "tool_execution_start", toolCallId: "stale-tool", toolName: "read" },
@@ -681,9 +635,9 @@ describe("Oh My Pi session runtime outcomes", () => {
             title: "Continue?",
           },
         );
-        // An abort does not stop OMP's background subagents (OMP 18.3.1
-        // AgentSession.abort), so the task keeps reporting; the adapter
-        // attributes it to the turn that started it.
+        // A settled turn does not stop OMP's background subagents, so the
+        // task keeps reporting; the adapter attributes it to the turn that
+        // started it.
         expect(yield* h.settleFrames).toEqual([
           { type: "turn-started", turnId: "second" },
           { type: "subagent", id: "stale-sub", title: "Stale", status: "inProgress" },
@@ -695,7 +649,7 @@ describe("Oh My Pi session runtime outcomes", () => {
           cancelled: true,
         });
         expect(h.runtime.lookupQuestion("stale-question")).toBeUndefined();
-        // The aborted run ends; the next turn's own run reports its tools.
+        // The abandoned run ends; the next turn's own run reports its tools.
         yield* h.wire.send(
           { type: "agent_end", messages: [], isTerminal: true },
           { type: "agent_start" },
@@ -802,11 +756,13 @@ describe("Oh My Pi autonomous continuation ownership", () => {
       yield* h.wire.send(
         { type: "agent_start" },
         { type: "agent_end", messages: [], isTerminal: false, yielded: true },
+        { type: "prompt_result", id: "user-prompt", agentInvoked: true, status: "completed" },
       );
       yield* h.outcome;
       yield* h.wire.send(
         { type: "agent_start" },
         {
+          // A duplicate result for the settled prompt belongs to no turn.
           type: "prompt_result",
           id: "user-prompt",
           agentInvoked: true,
@@ -859,6 +815,92 @@ describe("Oh My Pi autonomous continuation ownership", () => {
       expect(updates.filter((update) => update.type === "turn-started")).toEqual([
         { type: "turn-started", turnId: "second" },
       ]);
+      yield* Scope.close(h.scope, Exit.void);
+    }),
+  );
+
+  it.effect("a message racing a native wake-up owns its turn until its own prompt_result", () =>
+    Effect.gen(function* () {
+      const h = yield* wireHarness();
+      yield* h.runtime.begin("first");
+      yield* h.runtime.accepted("first-prompt", true);
+      yield* h.wire.send(
+        { type: "agent_start" },
+        { type: "agent_end", messages: [], yielded: true },
+        { type: "prompt_result", id: "first-prompt", agentInvoked: true, status: "completed" },
+      );
+      expect(yield* h.outcome).toMatchObject({ outcome: "completed", requestId: "first-prompt" });
+      // A new message is admitted as a user turn. Before Scient learns its
+      // prompt id, a background job's wake-up runs and yields: OMP events
+      // carry no run id, so that run is indistinguishable from the message's.
+      expect(yield* h.runtime.begin("second")).toEqual({ turnId: "second", steering: false });
+      yield* h.wire.send(
+        { type: "agent_start" },
+        {
+          type: "message_end",
+          message: {
+            role: "custom",
+            customType: "async-result",
+            content: "Background job finished: BUILD OK",
+          },
+        },
+        assistantEnd({ content: [{ type: "text", text: "The build passed." }] }),
+        { type: "agent_end", messages: [], yielded: true },
+      );
+      const woken = yield* h.settleFrames;
+      expect(woken).toContainEqual({
+        type: "background-result",
+        detail: "Background job finished: BUILD OK",
+      });
+      // The wake-up opens no continuation and does not settle the message.
+      expect(woken.filter((update) => update.type === "turn-started")).toEqual([
+        { type: "turn-started", turnId: "second" },
+      ]);
+      expect(woken.filter((update) => update.type === "turn-outcome")).toEqual([]);
+      // Acknowledged, but not yet reported: the turn stays open.
+      yield* h.runtime.accepted("second-prompt", true);
+      expect((yield* h.settleFrames).filter((update) => update.type === "turn-outcome")).toEqual(
+        [],
+      );
+      // The message's own run answers it and reports its result.
+      yield* h.wire.send(
+        { type: "agent_start" },
+        assistantEnd({ content: [{ type: "text", text: "Here is your answer." }] }),
+        { type: "agent_end", messages: [], yielded: true },
+        { type: "prompt_result", id: "second-prompt", agentInvoked: true, status: "completed" },
+      );
+      const answered: Array<OmpSessionUpdate> = [];
+      for (;;) {
+        const update = yield* Queue.take(h.updates);
+        answered.push(update);
+        if (update.type === "turn-outcome") break;
+      }
+      expect(answered.filter((update) => update.type === "turn-started")).toEqual([]);
+      expect(answered).toContainEqual(
+        expect.objectContaining({ type: "assistant-delta", delta: "Here is your answer." }),
+      );
+      expect(answered.at(-1)).toMatchObject({ outcome: "completed", requestId: "second-prompt" });
+      yield* Scope.close(h.scope, Exit.void);
+    }),
+  );
+
+  it.effect("a release without prompt results settles a user turn once it is acknowledged", () =>
+    Effect.gen(function* () {
+      const h = yield* wireHarness();
+      yield* h.runtime.begin("legacy");
+      // OMP 18.2.8 reports neither yields nor prompt results.
+      yield* h.wire.send(
+        { type: "agent_start" },
+        assistantEnd({ content: [{ type: "text", text: "done" }] }),
+        { type: "agent_end", messages: [], isTerminal: true },
+      );
+      // Past the idle check's round trip, the unacknowledged turn is still open.
+      const early = yield* h.settleFrames;
+      yield* Effect.sleep("100 millis").pipe(TestClock.withLive);
+      early.push(...(yield* h.settleFrames));
+      expect(early.filter((update) => update.type === "turn-outcome")).toEqual([]);
+      yield* h.runtime.accepted("legacy-prompt", true);
+      expect(yield* h.outcome).toMatchObject({ outcome: "completed", requestId: "legacy-prompt" });
       yield* Scope.close(h.scope, Exit.void);
     }),
   );
@@ -917,6 +959,10 @@ it.effect("a buffered idle snapshot cannot resurrect monitoring after session_se
       _tag: "Event",
       event: { type: "agent_end", messages: [], isTerminal: true },
     });
+    yield* Queue.offer(events, {
+      _tag: "Event",
+      event: { type: "prompt_result", id: "first-prompt", agentInvoked: true, status: "completed" },
+    });
     const observed: Array<OmpSessionUpdate> = [];
     for (;;) {
       const update = yield* Queue.take(updates);
@@ -931,4 +977,72 @@ it.effect("a buffered idle snapshot cannot resurrect monitoring after session_se
       pending: true,
     });
   }),
+);
+
+const failingStateHarness = Effect.fn("ompFailingStateHarness")(function* (
+  getState: OmpRpcClient["getState"],
+) {
+  const events = yield* Queue.unbounded<OmpRpcNotification, Cause.Done>();
+  const updates = yield* Queue.unbounded<OmpSessionUpdate>();
+  const scope = yield* Scope.make("sequential");
+  const runtime = yield* makeOmpSessionRuntime({
+    continuationIdPrefix: "state-continuation",
+    client: { ...makeClient(events), getState },
+    scope,
+    onUpdate: (update) => Queue.offer(updates, update).pipe(Effect.asVoid),
+  });
+  const next = (type: OmpSessionUpdate["type"]) =>
+    Effect.gen(function* () {
+      for (;;) {
+        const update = yield* Queue.take(updates);
+        if (update.type === type) return update;
+      }
+    });
+  return { events, updates, scope, runtime, next };
+});
+
+it.effect("a background wake-up after an uncertain outcome opens a continuation", () =>
+  Effect.gen(function* () {
+    const h = yield* failingStateHarness(() =>
+      Effect.fail(new OmpRpcCommandError({ command: "get_state", detail: "unavailable" })),
+    );
+    yield* h.runtime.begin("uncertain");
+    yield* h.runtime.accepted("uncertain-prompt", true);
+    yield* Queue.offer(h.events, { _tag: "Event", event: { type: "agent_start" } });
+    yield* Queue.offer(h.events, {
+      _tag: "Event",
+      event: { type: "agent_end", messages: [], isTerminal: true },
+    });
+    expect(yield* h.next("turn-outcome")).toMatchObject({ outcome: "unknown" });
+    // The process is still alive, so its background work can wake it.
+    yield* Queue.offer(h.events, { _tag: "Event", event: { type: "agent_start" } });
+    expect(yield* h.next("turn-started")).toEqual({
+      type: "turn-started",
+      turnId: "state-continuation:1",
+    });
+    yield* Scope.close(h.scope, Exit.void);
+  }),
+);
+
+it.effect("a message whose prompt_result never arrives settles as uncertain", () =>
+  Effect.gen(function* () {
+    const h = yield* failingStateHarness(() =>
+      Effect.succeed({ isStreaming: false, isCompacting: false, isSettled: true }),
+    );
+    yield* h.runtime.begin("silent");
+    yield* h.runtime.accepted("silent-prompt", true);
+    yield* Queue.offer(h.events, { _tag: "Event", event: { type: "agent_start" } });
+    yield* Queue.offer(h.events, {
+      _tag: "Event",
+      event: { type: "agent_end", messages: [], yielded: true },
+    });
+    const fiber = yield* h.next("turn-outcome").pipe(Effect.forkScoped);
+    // Every idle recheck waits a quarter second; the wait is bounded.
+    for (let step = 0; step < 300; step++) {
+      yield* TestClock.adjust("250 millis");
+      for (let hop = 0; hop < 10; hop++) yield* Effect.yieldNow;
+    }
+    expect(yield* Fiber.join(fiber)).toMatchObject({ outcome: "unknown" });
+    yield* Scope.close(h.scope, Exit.void);
+  }).pipe(Effect.scoped),
 );

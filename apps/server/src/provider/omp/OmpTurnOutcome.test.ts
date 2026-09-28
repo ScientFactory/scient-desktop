@@ -8,26 +8,16 @@ import {
   type OmpTurnVerdict,
 } from "./OmpTurnOutcome.ts";
 
-const terminal = { settlement: "terminal", cancelRequested: false } as const;
+const terminal = { settlement: "terminal" } as const;
 
 const cases: ReadonlyArray<readonly [string, OmpTurnEvidence, OmpTurnVerdict]> = [
   [
-    "an unconfirmed drain is uncertain, even with a user cancel",
-    { settlement: "unconfirmed", cancelRequested: true, stopReason: "error" },
+    "an unconfirmed drain is uncertain, even after a model error",
+    { settlement: "unconfirmed", stopReason: "error" },
     { outcome: "unknown" },
   ],
   [
-    "a user cancel is interrupted, even when the model also failed",
-    { ...terminal, cancelRequested: true, stopReason: "error", errorMessage: "boom" },
-    { outcome: "interrupted" },
-  ],
-  [
-    "an acknowledged abort is interrupted",
-    { settlement: "cancel-confirmed", cancelRequested: true },
-    { outcome: "interrupted" },
-  ],
-  [
-    "a provider abort without a user cancel fails with stopReason abort",
+    "an abort fails with stopReason abort",
     { ...terminal, stopReason: "aborted", errorMessage: "Request was aborted" },
     { outcome: "failed", stopReason: "abort", errorMessage: "Request was aborted" },
   ],

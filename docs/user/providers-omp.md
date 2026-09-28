@@ -101,9 +101,12 @@ enable them or provide compatible evidence.
   running under the turn that started it until it reports its own end, Oh My Pi reports the session
   settled, or the conversation closes. When a background subagent finishes after its turn ended,
   Oh My Pi may run the agent again on its own to read the result; Scient shows that as a
-  continuation in the same thread. A new message waits until detached background work settles
-  because Oh My Pi does not identify which run produced an agent event. You can use Stop to end
-  that work and then send your message.
+  continuation in the same thread, including after a turn whose outcome was uncertain. You can
+  send a new message while background work is pending. With Oh My Pi 18.3.1 or newer, your
+  message's turn ends only when Oh My Pi reports that message's own result, so a background run
+  that starts at the same moment cannot end it early. When a background result reaches Oh My Pi
+  while it answers you, the answer can use it, and the turn shows a "Background result" entry
+  where it arrived.
 - Send `/compact` when this conversation's command list includes it. Scient does not show a compact
   button for Oh My Pi, because native compaction has not been confirmed against a live `omp`.
 - See only explicitly qualified Oh My Pi command names in the provider snapshot. Session,
@@ -200,8 +203,10 @@ The evidence covers macOS Apple silicon only:
 
 - opt-in suites run against a real system `omp` 18.3.1, each in a temporary home with synthetic
   keys and local stub or Ollama models: discovery, session start and stop, a full model turn and
-  resume, custom models and their refresh, inline and `read`-tool images, and Scient tools and
-  awareness;
+  resume, custom models and their refresh, inline and `read`-tool images, Scient tools and
+  awareness, and background jobs: a continuation, Stop, and a message sent while a job runs;
+- the background continuation and Stop cases against the Scient-managed 18.2.8 binary, which
+  keeps the first turn open across a job's pause instead of reporting pending work;
 - the Scient-managed 18.2.8 runtime: install, RPC handshake, state request, reloading its install
   record, and removal;
 - recorded 18.3.1 protocol captures (success, reasoning, tool call, abort, authentication and

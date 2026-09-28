@@ -25,6 +25,12 @@ import {
 import { classifyOmpTurnOutcome, clipOmpErrorMessage } from "./OmpTurnOutcome.ts";
 
 const OMP_DRAIN_RETRY_LIMIT = 20;
+/**
+ * Idle confirmations a user turn waits for its own prompt_result (OMP 18.3.1+)
+ * before its outcome is reported as uncertain. OMP reports every accepted
+ * prompt, so this bounds only a prompt that never reports.
+ */
+const OMP_PROMPT_RESULT_WAIT_LIMIT = 240;
 const OMP_INBOX_CAPACITY = 256;
 /** Prompt ids of settled turns, so their late prompt_result cannot touch a newer turn. */
 const OMP_SETTLED_PROMPT_MEMORY = 16;
@@ -117,6 +123,8 @@ export type OmpSessionUpdate =
    */
   | { readonly type: "session-settled" }
   | { readonly type: "background-work"; readonly pending: boolean }
+  /** OMP injected a finished background job's result into the open turn's run. */
+  | { readonly type: "background-result"; readonly detail?: string }
   | { readonly type: "model-changed"; readonly model?: string; readonly thinkingLevel?: string }
   | { readonly type: "warning"; readonly message: string }
   | { readonly type: "error"; readonly message: string }
@@ -128,15 +136,7 @@ export type OmpSessionUpdate =
   | { readonly type: "session-info"; readonly sessionFile?: string; readonly sessionId?: string };
 
 interface InboxItem {
-  readonly type:
-    | "begin"
-    | "accepted"
-    | "command-failed"
-    | "cancel-requested"
-    | "confirm-cancel"
-    | "retry-drain"
-    | "process-exit"
-    | "event";
+  readonly type: "begin" | "accepted" | "command-failed" | "retry-drain" | "process-exit" | "event";
   readonly turnId?: string;
   readonly done?: Deferred.Deferred<void>;
   readonly admission?: Deferred.Deferred<{ readonly turnId: string; readonly steering: boolean }>;
@@ -163,10 +163,7 @@ export interface OmpSessionRuntime {
   ) => Effect.Effect<void>;
   /** The open turn's prompt command was rejected before OMP accepted it. */
   readonly commandFailed: (turnId?: string) => Effect.Effect<void>;
-  readonly requestCancel: () => Effect.Effect<void>;
-  readonly confirmCancel: () => Effect.Effect<void>;
   readonly requestProcessExit: () => Effect.Effect<void>;
-  readonly awaitTurnSettled: () => Effect.Effect<void>;
 }
 
 const text = (value: unknown): string | undefined =>
@@ -214,6 +211,14 @@ const messageRole = (message: unknown): string | undefined => {
 };
 
 const isAssistantMessage = (message: unknown): boolean => messageRole(message) === "assistant";
+
+/** OMP's `customType` for a finished background job's result injected into a run. */
+const OMP_ASYNC_RESULT_MESSAGE_TYPE = "async-result";
+
+const isBackgroundResultMessage = (message: unknown): boolean =>
+  isRecord(message) &&
+  messageRole(message) === "custom" &&
+  message.customType === OMP_ASYNC_RESULT_MESSAGE_TYPE;
 
 const subagentPayload = (event: OmpRpcEvent): Record<string, unknown> | undefined =>
   isRecord(event.payload) ? event.payload : undefined;
@@ -345,16 +350,14 @@ const lastAssistantMessage = (messages: unknown): Record<string, unknown> | unde
   return undefined;
 };
 
-/** Item status of a finished assistant message: a failed model request fails its item. */
-const assistantItemStatus = (
-  message: unknown,
-  cancelRequested: boolean,
-): "completed" | "failed" => {
+/**
+ * Item status of a finished assistant message: a failed model request fails
+ * its item. Scient's Stop closes the process, so an abort came from elsewhere.
+ */
+const assistantItemStatus = (message: unknown): "completed" | "failed" => {
   if (!isRecord(message)) return "completed";
   const stopReason = text(message.stopReason);
-  return stopReason === "error" || (stopReason === "aborted" && !cancelRequested)
-    ? "failed"
-    : "completed";
+  return stopReason === "error" || stopReason === "aborted" ? "failed" : "completed";
 };
 
 export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function* (input: {
@@ -395,7 +398,14 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
   let drainRetries = 0;
   let drainRetryPending = false;
   let pendingDrainState: OmpRpcState | undefined;
-  let turnSettled: Deferred.Deferred<void> | undefined;
+  /**
+   * OMP 18.3.1+ closes every accepted prompt with its own prompt_result, and
+   * marks yields and settlement. Learned from the first such frame.
+   */
+  let reportsPromptResults = false;
+  /** The open user turn's own prompt_result arrived. */
+  let promptReported = false;
+  let promptWaitRetries = 0;
   let eventSequence = 0;
   /** Agent runs are numbered at agent_start; OMP events carry no run id. */
   let runSequence = 0;
@@ -481,13 +491,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       };
     }
     const verdict = classifyOmpTurnOutcome({
-      settlement:
-        outcome === "unknown"
-          ? "unconfirmed"
-          : signal.type === "cancel-confirmed"
-            ? "cancel-confirmed"
-            : "terminal",
-      cancelRequested: turn.cancelRequested,
+      settlement: outcome === "unknown" ? "unconfirmed" : "terminal",
       ...evidence,
     });
     if (verdict.outcome === "unknown") {
@@ -521,10 +525,6 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         ...(requestId ? { requestId } : {}),
       });
       activeTurnId = undefined;
-      if (turnSettled) {
-        yield* Deferred.succeed(turnSettled, undefined);
-        turnSettled = undefined;
-      }
     });
 
   const applySignal = (signal: OmpTurnSignal) =>
@@ -536,7 +536,6 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
 
   const startTurn = (turnId: string, autonomous: boolean) =>
     Effect.gen(function* () {
-      turnSettled = yield* Deferred.make<void>();
       activeTurnId = turnId;
       autonomousTurn = autonomous;
       assistantMessageSequence = 0;
@@ -549,6 +548,8 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       pendingDrainState = undefined;
       failureDetail = undefined;
       commandRejected = false;
+      promptReported = false;
+      promptWaitRetries = 0;
       evidence = {};
       pendingOutcomes = [];
       yield* applySignal({
@@ -567,9 +568,29 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         })
       : Effect.void;
 
+  /**
+   * A user turn is decided by its own prompt, never by an idle session alone.
+   * OMP events carry no run id, so a background wake-up racing a new message
+   * looks like that message's run. OMP queues the message into such a run and
+   * reports its prompt_result once the message's work yields; older releases
+   * have no prompt_result, and the acknowledgement is all a turn can wait for.
+   */
+  const awaitingOwnPrompt = () =>
+    !autonomousTurn && (turn.requestId === undefined || (reportsPromptResults && !promptReported));
+
+  const scheduleDrainRetry = Effect.gen(function* () {
+    if (drainRetryPending) return;
+    drainRetryPending = true;
+    yield* Effect.sleep("250 millis").pipe(
+      Effect.andThen(Queue.offer(inbox, { type: "retry-drain" })),
+      Effect.forkIn(input.scope),
+    );
+  });
+
   const finishIdleState = (state: OmpRpcState) =>
     Effect.gen(function* () {
       yield* sessionInfo(state.sessionFile, state.sessionId);
+      if (state.isSettled !== undefined) reportsPromptResults = true;
       const pending = state.isSettled === undefined ? state.hasPendingAsyncWork : !state.isSettled;
       if (pending !== undefined) yield* publish({ type: "background-work", pending });
       const decision = ompDrainRetry(
@@ -578,6 +599,21 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       );
       if (decision === "confirm") {
         drainRetries = 0;
+        if (awaitingOwnPrompt()) {
+          if (promptWaitRetries >= OMP_PROMPT_RESULT_WAIT_LIMIT) {
+            yield* publish({
+              type: "warning",
+              message: "Oh My Pi did not report the result of this message.",
+            });
+            yield* applySignal({ type: "unconfirmed" });
+            return;
+          }
+          // The acknowledgement or prompt_result wakes the drain on arrival;
+          // this retry only bounds a prompt that never reports.
+          promptWaitRetries += 1;
+          yield* scheduleDrainRetry;
+          return;
+        }
         yield* applySignal({ type: "drain-idle" });
         return;
       }
@@ -590,12 +626,8 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         return;
       }
       if (drainRetryPending) return;
-      drainRetryPending = true;
       drainRetries += 1;
-      yield* Effect.sleep("250 millis").pipe(
-        Effect.andThen(Queue.offer(inbox, { type: "retry-drain" })),
-        Effect.forkIn(input.scope),
-      );
+      yield* scheduleDrainRetry;
     });
 
   const confirmIdle = Effect.gen(function* () {
@@ -761,12 +793,13 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       if (event.type === "agent_start") {
         pendingDrainState = undefined;
         // Only a fresh native run can wake a settled turn. Late message/tool
-        // frames, cancelled runs and uncertain exits never manufacture turns.
+        // frames never manufacture turns. A turn whose outcome was uncertain
+        // still leaves a live process whose background work can wake it; a
+        // protocol failure ends the process instead.
         if (
           !turnIsOpen(turn) &&
-          !turn.cancelRequested &&
           !protocolFailed &&
-          (turn.phase === "terminal" || turn.phase === "failed")
+          (turn.phase === "terminal" || turn.phase === "failed" || turn.phase === "unknown")
         ) {
           yield* startTurn(`${input.continuationIdPrefix}:${++continuationSequence}`, true);
         }
@@ -781,6 +814,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         const stale = runId !== undefined && runId === turn.staleRunId;
         // Yield ends the visible response even when a background result can
         // wake another run. Older OMP versions only report isTerminal.
+        if (event.yielded !== undefined) reportsPromptResults = true;
         const terminal = event.yielded ?? event.isTerminal !== false;
         const fallbackMessage =
           !stale && turnIsOpen(turn) ? lastAssistantMessage(event.messages) : undefined;
@@ -802,7 +836,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
             const messageId = yield* ensureAssistant();
             activeAssistantHasDelta = true;
             yield* publish({ type: "assistant-delta", messageId, delta: fallback });
-            yield* finishAssistant(assistantItemStatus(fallbackMessage, turn.cancelRequested));
+            yield* finishAssistant(assistantItemStatus(fallbackMessage));
           }
         }
         return;
@@ -814,6 +848,10 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         const route = routePromptOutcome(promptId);
         if (route === "hold") holdPromptOutcome({ _tag: "Event", event });
         if (route !== "current") return;
+        if (event.status !== undefined) {
+          reportsPromptResults = true;
+          promptReported = true;
+        }
         if (event.sessionSettled !== undefined) {
           yield* publish({ type: "background-work", pending: !event.sessionSettled });
         }
@@ -903,6 +941,13 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       }
       if (event.type === "message_end") {
         if (!turnIsOpen(turn) || staleRunOpen()) return;
+        if (isBackgroundResultMessage(event.message)) {
+          // Marks where OMP resumed with a background job's result, since
+          // that run can also carry the answer to a newer message.
+          const detail = detailText(event.message);
+          yield* publish({ type: "background-result", ...(detail ? { detail } : {}) });
+          return;
+        }
         if (!isAssistantMessage(event.message)) return;
         const message = isRecord(event.message) ? event.message : {};
         evidence.assistantEnded = true;
@@ -916,7 +961,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
           activeAssistantHasDelta = true;
           yield* publish({ type: "assistant-delta", messageId, delta: fallback });
         }
-        yield* finishAssistant(assistantItemStatus(message, turn.cancelRequested));
+        yield* finishAssistant(assistantItemStatus(message));
         return;
       }
       if (event.type === "message_update") {
@@ -1163,23 +1208,6 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         yield* applySignal({ type: "command-failed" });
         return;
       }
-      if (item.type === "cancel-requested") {
-        yield* applySignal({ type: "cancel-requested" });
-        if (item.done) yield* Deferred.succeed(item.done, undefined);
-        return;
-      }
-      if (item.type === "confirm-cancel") {
-        // An acknowledged abort is the settlement, even when a racing
-        // agent_start already moved the turn to running. Waiting for a terminal
-        // agent_end there would hang the turn until the cancel deadline and
-        // then kill a healthy process.
-        if (turn.cancelRequested) {
-          yield* applySignal({ type: "cancel-confirmed" });
-        } else {
-          yield* confirmIdle;
-        }
-        return;
-      }
       if (item.type === "retry-drain") {
         drainRetryPending = false;
         yield* confirmIdle;
@@ -1245,19 +1273,11 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       }),
     commandFailed: (turnId) =>
       offer({ type: "command-failed", ...(turnId === undefined ? {} : { turnId }) }),
-    requestCancel: () =>
-      Effect.gen(function* () {
-        const done = yield* Deferred.make<void>();
-        yield* offer({ type: "cancel-requested", done });
-        yield* Deferred.await(done);
-      }),
-    confirmCancel: () => offer({ type: "confirm-cancel" }),
     requestProcessExit: () =>
       Effect.gen(function* () {
         const done = yield* Deferred.make<void>();
         yield* offer({ type: "process-exit", done });
         yield* Deferred.await(done);
       }),
-    awaitTurnSettled: () => (turnSettled ? Deferred.await(turnSettled) : Effect.void),
   };
 });

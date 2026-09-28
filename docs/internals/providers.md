@@ -500,12 +500,18 @@ orchestration types. The adapter owns the process and the turn mapping.
   variable is retained only as a compatibility fallback in the process environment.
 - A prompt response is acceptance. Completion is a local prompt, or a yielded `agent_end` confirmed
   idle with `get_state` (older runtimes use `isTerminal`). Background work may still wake the parent.
+  OMP events carry no run id, so a user turn is never decided by an idle session alone: it waits
+  for its prompt's acknowledgement and, from 18.3.1, for that prompt's own `prompt_result`
+  (bounded; a prompt that never reports is uncertain). Prompts are sent with
+  `streamingBehavior: "steer"`, so a message that meets a background run Scient has not seen yet
+  is queued into that run instead of being rejected as busy.
   Stop closes this thread's session and marks its active turn interrupted; an unexpected process
   exit during a turn is an uncertain failure. OMP reports model failures as turn data, so
-  `omp/OmpTurnOutcome.ts` classifies each settled turn once: a user cancel is interrupted; an
-  unrequested abort, a model error (`stopReason: "error"`), or an exhausted session retry fails the
-  turn with OMP's message (clipped to 512 characters); `length` completes with that stop reason.
-  From 18.3 `prompt_result.status` is authoritative. A failed compaction is a warning.
+  `omp/OmpTurnOutcome.ts` classifies each settled turn once: an abort (Scient's Stop closes the
+  process instead of aborting), a model error (`stopReason: "error"`), or an exhausted session
+  retry fails the turn with OMP's message (clipped to 512 characters); `length` completes with that
+  stop reason. From 18.3.1 `prompt_result.status` is authoritative. A failed compaction is a
+  warning.
 - At startup the adapter pins the session to `OMP_KNOWN_EVENT_TYPES` with `set_event_filter` on
   18.3.1 and newer, so new event kinds can neither break nor flood a conversation. 18.2.x answers
   that unknown command without an id, so the filter is not sent there.
@@ -558,7 +564,9 @@ orchestration types. The adapter owns the process and the turn mapping.
   without an open turn: OMP 18.3.1 runs `task` spawns as background jobs that can outlive the
   turn and an abort. A task closes on its own terminal `subagent_lifecycle`, on `session_settled`,
   or when the session closes. A fresh native run delivering a background result starts a visible
-  continuation turn. A user message arriving during that continuation steers it. With native
+  continuation turn, also after a turn whose outcome was uncertain. A user message arriving during
+  that continuation steers it. An injected `async-result` message is marked as a "Background
+  result" work item in whichever turn receives it. With native
   settlement signals (18.3.1), pending async work uses the shared Monitoring indicator; live
   subagents retain the Working indicator. Older runtimes such as 18.2.8 keep the original turn
   Working across a nonterminal pause and deliver the result into that same turn.

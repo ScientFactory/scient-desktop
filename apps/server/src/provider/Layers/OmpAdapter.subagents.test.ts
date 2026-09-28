@@ -96,13 +96,9 @@ describe("Oh My Pi adapter background subagents", () => {
       ]);
       expect(tasks(events, "task.completed")).toEqual([]);
 
-      // Native wake-ups carry no request id. A new user prompt while the
-      // detached run is pending could claim its output as the user's answer.
-      const rejected = yield* adapter
-        .sendTurn({ threadId, input: "Something else." })
-        .pipe(Effect.flip);
-      expect(rejected.message).toContain("background work");
-      expect(wire.written.filter((command) => command.type === "prompt")).toHaveLength(1);
+      // A later turn is open when the first turn's subagent reports and ends.
+      const second = yield* adapter.sendTurn({ threadId, input: "Something else." });
+      yield* until((event) => event.type === "turn.completed" && event.turnId === second.turnId);
       yield* wire.send(
         {
           type: "subagent_progress",
@@ -118,17 +114,8 @@ describe("Oh My Pi adapter background subagents", () => {
         { turnId: first.turnId, taskId: "bg-1", status: "completed" },
       ]);
 
-      // Once the native session settles, a fresh prompt can be admitted.
-      yield* wire.send({ type: "session_settled" });
-      yield* until(
-        (event) => event.type === "task.completed" && event.payload.taskType === "monitor",
-      );
-      expect(tasks(events, "task.completed")).toMatchObject([
-        { turnId: first.turnId, taskId: "bg-1", status: "completed" },
-      ]);
-      const second = yield* adapter.sendTurn({ threadId, input: "Something else." });
-      yield* until((event) => event.type === "turn.completed" && event.turnId === second.turnId);
-      // The second subagent never reports an end, so session_settled closes it.
+      // OMP settles the session: the second turn's subagent never reported an
+      // end, so nothing can still be running it.
       yield* wire.send({ type: "session_settled" });
       yield* until(
         (event) =>
@@ -287,6 +274,49 @@ describe("Oh My Pi background continuation and Stop", () => {
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
   }
+
+  it.live("a message sent while background work is pending answers in its own turn", () =>
+    Effect.gen(function* () {
+      const h = yield* continuationHarness(false);
+      expect(h.liveness()).toBe("monitoring");
+      const second = yield* h.adapter.sendTurn({ threadId: h.threadId, input: "Another question" });
+      expect(second.turnId).not.toBe(h.first.turnId);
+      expect(h.wire.written.filter((command) => command.type === "prompt").at(-1)).toMatchObject({
+        message: "Another question",
+        streamingBehavior: "steer",
+      });
+      const completed = yield* h.until(
+        (event) => event.type === "turn.completed" && event.turnId === second.turnId,
+      );
+      expect(completed.payload).toMatchObject({ state: "completed" });
+      // The job's later wake-up is its own continuation, and its result is marked.
+      yield* h.wire.send(
+        { type: "agent_start" },
+        {
+          type: "message_end",
+          message: { role: "custom", customType: "async-result", content: "Job finished" },
+        },
+        { type: "agent_end", messages: [], yielded: true },
+      );
+      const continuation = yield* h.until(
+        (event) =>
+          event.type === "turn.started" &&
+          event.turnId !== h.first.turnId &&
+          event.turnId !== second.turnId,
+      );
+      const marker = yield* h.until(
+        (event) =>
+          event.type === "item.completed" &&
+          event.turnId === continuation.turnId &&
+          event.payload.title === "Background result",
+      );
+      expect(marker.payload).toMatchObject({
+        itemType: "dynamic_tool_call",
+        status: "completed",
+        detail: "Job finished",
+      });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 
   it.live("captured Stop closes the monitored runtime between turns", () =>
     Effect.gen(function* () {

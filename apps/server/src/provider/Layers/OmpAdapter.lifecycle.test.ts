@@ -768,7 +768,7 @@ describe("Oh My Pi session ownership", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("a user stop mid-turn is interrupted and graceful", () =>
+  it.effect("a user Stop mid-turn cancels the turn and closes the process cleanly", () =>
     Effect.gen(function* () {
       const root = makeRoot("user-stop");
       const events = yield* Queue.unbounded<OmpRpcNotification, Cause.Done>();
@@ -829,7 +829,7 @@ describe("Oh My Pi session ownership", () => {
       const first = yield* adapter.sendTurn({ threadId, input: "first" });
       yield* Queue.offer(events, { _tag: "Event", event: { type: "agent_start" } });
       yield* takeMatching(runtimeEvents, (event) => event.type === "turn.started");
-      // The abort is acknowledged before the aborted run reports its end.
+      // Stop closes this runtime before its run reports an end.
       yield* adapter.interruptTurn(threadId, first.turnId);
       yield* takeMatching(runtimeEvents, (event) => event.type === "turn.aborted");
       yield* adapter.startSession({ threadId, cwd: root, runtimeMode: "full-access" });

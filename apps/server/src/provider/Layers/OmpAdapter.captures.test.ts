@@ -283,7 +283,7 @@ describe("Oh My Pi adapter on recorded OMP 18.3.1 captures", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.live("a user abort is interrupted, not failed", () =>
+  it.live("a user Stop mid-turn is recorded as cancelled, not failed", () =>
     Effect.gen(function* () {
       const result = yield* replayTurn("user-abort", { interrupt: true });
       expect(terminal(result.events).map((event) => [event.type, event.payload])).toEqual([

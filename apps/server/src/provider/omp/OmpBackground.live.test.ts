@@ -23,11 +23,14 @@ import { ompLiveInstance, ompQualifyBinary } from "./OmpLive.testFixtures.ts";
 
 /** Real native async bash and result delivery; all model responses come from loopback. */
 describe.runIf(ompQualifyBinary)("real OMP background continuation", () => {
-  for (const stop of [false, true]) {
+  for (const mode of ["continuation", "stop", "message"] as const) {
+    const stop = mode === "stop";
     it.effect(
-      stop
+      mode === "stop"
         ? "Stop terminates a waiting native job"
-        : "a native job wakes the parent into a visible continuation",
+        : mode === "message"
+          ? "a message sent while a native job waits gets its own answer"
+          : "a native job wakes the parent into a visible continuation",
       () =>
         Effect.scoped(
           Effect.gen(function* () {
@@ -43,7 +46,14 @@ describe.runIf(ompQualifyBinary)("real OMP background continuation", () => {
             });
             const releaseFile = NodePath.join(root, "release");
             const pidFile = NodePath.join(root, "job-pid");
+            const doneFile = NodePath.join(root, "job-done");
             let calls = 0;
+            // The message's reply is held until the job has finished, so its
+            // result reaches OMP while that reply's run is still open.
+            let openAnswer: () => void = () => {};
+            const answerGate = new Promise<void>((resolve) => {
+              openAnswer = resolve;
+            });
             const server = NodeHttp.createServer((request, response) => {
               request.resume();
               request.on("end", () => {
@@ -64,7 +74,7 @@ describe.runIf(ompQualifyBinary)("real OMP background continuation", () => {
                         function: {
                           name: "bash",
                           arguments: JSON.stringify({
-                            command: `echo $$ > '${pidFile}'; while [ ! -f '${releaseFile}' ]; do sleep 0.1; done; printf 'BACKGROUND_RESULT'`,
+                            command: `echo $$ > '${pidFile}'; while [ ! -f '${releaseFile}' ]; do sleep 0.1; done; printf 'BACKGROUND_RESULT'; : > '${doneFile}'`,
                             async: true,
                             timeout: 60,
                           }),
@@ -73,6 +83,13 @@ describe.runIf(ompQualifyBinary)("real OMP background continuation", () => {
                     ],
                   });
                   delta({}, "tool_calls");
+                } else if (mode === "message" && calls === 3) {
+                  void answerGate.then(() => {
+                    delta({ content: "USER_ANSWER" });
+                    delta({}, "stop");
+                    response.end("data: [DONE]\n\n");
+                  });
+                  return;
                 } else {
                   delta({
                     content:
@@ -210,7 +227,68 @@ describe.runIf(ompQualifyBinary)("real OMP background continuation", () => {
               expect((yield* adapter.listSessions())[0]?.activeTurnId).toBe(first.turnId);
               expect(events.some((event) => event.type === "turn.completed")).toBe(false);
             }
-            if (stop) {
+            if (mode === "message" && !reportsSettlement) {
+              // Before 18.3.1 the first turn stays open across the pause, so
+              // a message steers it; there is no pending-work state to test.
+              yield* adapter.stopAll();
+              return;
+            }
+            if (mode === "message") {
+              const second = yield* adapter.sendTurn({ threadId, input: "What is the answer?" });
+              expect(second.turnId).not.toBe(first.turnId);
+              for (let attempt = 0; attempt < 200 && calls < 3; attempt++) {
+                yield* Effect.sleep("50 millis").pipe(TestClock.withLive);
+              }
+              expect(calls).toBe(3);
+              NodeFS.writeFileSync(releaseFile, "done");
+              // OMP's shell can outlive the job, so the job marks its own end.
+              for (let attempt = 0; attempt < 200 && !NodeFS.existsSync(doneFile); attempt++) {
+                yield* Effect.sleep("50 millis").pipe(TestClock.withLive);
+              }
+              expect(NodeFS.existsSync(doneFile)).toBe(true);
+              // Time for OMP to take in the finished job's result.
+              yield* Effect.sleep("1 second").pipe(TestClock.withLive);
+              openAnswer();
+              const answered = yield* until(
+                (event) => event.type === "turn.completed" && event.turnId === second.turnId,
+              );
+              expect(answered.payload).toMatchObject({ state: "completed" });
+              const deltaIn = (turnId: string | undefined, text: string) =>
+                events.some(
+                  (event) =>
+                    event.type === "content.delta" &&
+                    event.turnId === turnId &&
+                    event.payload.delta.includes(text),
+                );
+              expect(deltaIn(second.turnId, "USER_ANSWER")).toBe(true);
+              // The job's result is read in the message's run or in a
+              // continuation after it; wherever it lands, it is marked there.
+              const received = yield* until(
+                (event) =>
+                  event.type === "content.delta" &&
+                  event.payload.delta.includes("I received the background result."),
+              );
+              const marker = yield* until(
+                (event) =>
+                  event.type === "item.completed" && event.payload.title === "Background result",
+              );
+              expect(marker.turnId).toBe(received.turnId);
+              if (received.turnId !== second.turnId) {
+                yield* until(
+                  (event) => event.type === "turn.completed" && event.turnId === received.turnId,
+                );
+              }
+              // No turn other than the message's carries its answer.
+              expect(
+                events.filter(
+                  (event) =>
+                    event.type === "content.delta" &&
+                    event.payload.delta.includes("USER_ANSWER") &&
+                    event.turnId !== second.turnId,
+                ),
+              ).toEqual([]);
+              expect(calls).toBe(4);
+            } else if (stop) {
               yield* adapter.interruptTurn(threadId, undefined);
               yield* until((event) => event.type === "session.exited");
               expect(yield* adapter.hasSession(threadId)).toBe(false);
