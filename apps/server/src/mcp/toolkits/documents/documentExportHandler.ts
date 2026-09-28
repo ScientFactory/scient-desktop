@@ -1,6 +1,5 @@
 import {
   ScientDocumentPageRenderOutcome,
-  scientDocumentBlockedRequestsNote,
   type DocumentWarning,
   type ScientDocumentExportInput,
   type ScientDocumentExportResult,
@@ -19,10 +18,11 @@ import {
   beginDocumentPdfProduction,
   confirmCapturedSourceCurrent,
   DOCUMENT_PDF_TOO_LARGE_DETAIL,
-  documentPdfWarnings,
+  collectDocumentPdfWarnings,
   publishDocumentPdfBytes,
   validateDocumentRender,
 } from "../../../scient/documentExport/DocumentPdfPublication.ts";
+import { boundWarnings } from "../../../scient/documentExport/documentPageInput.ts";
 import { isMarkdownDocumentPath } from "../../../scient/documentExport/MarkdownFileBundle.ts";
 import { captureProjectMarkdownFile } from "../../../scient/documentExport/MarkdownPdfPreparation.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
@@ -268,30 +268,20 @@ export const exportScientDocumentForInvocation = Effect.fn("ScientDocumentExport
       // document's own notes do not fit; a closing entry counts the rest.
       const describe = (warning: DocumentWarning) =>
         `${warning.code}: ${warning.message}`.slice(0, 640);
+      const { ordinary, mandatory } = collectDocumentPdfWarnings(record, rendered);
       const flags = [
-        ...(rendered.blockedRequestCount > 0
-          ? [
-              describe({
-                code: "resource-unresolved",
-                message: scientDocumentBlockedRequestsNote(rendered.blockedRequestCount),
-              }),
-              "blocked-external-resources",
-            ]
-          : []),
+        ...mandatory.map(describe),
+        ...(rendered.blockedRequestCount > 0 ? ["blocked-external-resources"] : []),
         ...(presented ? [] : ["presentation-unavailable"]),
       ];
-      const notes = [
-        ...new Set([...documentPdfWarnings(record, rendered).map(describe), ...rendered.warnings]),
-      ].filter((note) => !flags.includes(note));
-      const room = MAX_TOOL_WARNINGS - flags.length;
-      const warnings =
-        notes.length <= room
-          ? [...notes, ...flags]
-          : [
-              ...notes.slice(0, room - 1),
-              ...flags,
-              `…and ${notes.length - (room - 1)} more notes, listed at the end of the PDF.`,
-            ];
+      const warnings = boundWarnings({
+        ordinary: [...new Set([...ordinary.map(describe), ...rendered.warnings])].filter(
+          (note) => !flags.includes(note),
+        ),
+        mandatory: flags,
+        limit: MAX_TOOL_WARNINGS,
+        omitted: (count) => `…and ${count} more notes, listed at the end of the PDF.`,
+      });
       return {
         sourcePath: file.relativePath,
         outputPath: output.outputPath,

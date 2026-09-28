@@ -23,6 +23,7 @@ import {
   removeDocumentCapture,
   type DocumentCaptureRecord,
 } from "./DocumentCapture.ts";
+import { boundWarnings } from "./documentPageInput.ts";
 import { readProjectMarkdownFile } from "./MarkdownFileBundle.ts";
 
 /**
@@ -51,28 +52,18 @@ const PAGE_WARNING_CODES: Readonly<
 };
 
 /**
- * The capture's own warnings followed by the page's, each message once, then
- * the notes that must always be reported. When the list would exceed the
- * contract's limit, room is kept for those notes and for one closing entry
- * that counts the warnings left out.
+ * Every warning a published PDF carries, before any limit: the capture's own
+ * warnings followed by the page's, each message once (`ordinary`), and the
+ * notes that must always be reported (`mandatory`). Callers bound the list
+ * with `boundWarnings`, so each output counts what it left out exactly.
  */
-export function documentPdfWarnings(
+export function collectDocumentPdfWarnings(
   record: DocumentCaptureRecord,
   render: ScientDocumentPageRenderResult,
-): ReadonlyArray<DocumentWarning> {
-  const warnings: DocumentWarning[] = [];
-  const seen = new Set<string>();
-  const add = (warning: DocumentWarning) => {
-    if (seen.has(warning.message)) return;
-    seen.add(warning.message);
-    warnings.push(warning);
-  };
-  record.warnings.forEach(add);
-  for (const diagnostic of render.readiness.diagnostics) {
-    if (diagnostic.severity !== "warning") continue;
-    const message = diagnostic.detail.trim();
-    if (message) add({ code: PAGE_WARNING_CODES[diagnostic.code], message });
-  }
+): {
+  readonly ordinary: ReadonlyArray<DocumentWarning>;
+  readonly mandatory: ReadonlyArray<DocumentWarning>;
+} {
   // Refused requests are the page's isolation working, not a failure; they are
   // reported, never silent. See DocumentPagePdfRenderer.
   const mandatory: DocumentWarning[] =
@@ -84,21 +75,37 @@ export function documentPdfWarnings(
           },
         ]
       : [];
-  const ordinary = warnings.filter(
-    (warning) => !mandatory.some((note) => note.message === warning.message),
-  );
-  const room = SCIENT_DOCUMENT_MAX_WARNINGS - mandatory.length;
-  if (ordinary.length <= room) return [...ordinary, ...mandatory];
-  const shown = ordinary.slice(0, room - 1);
-  const omitted = ordinary.length - shown.length;
-  return [
-    ...shown,
-    ...mandatory,
-    {
-      code: shown[0]?.code ?? "resource-unresolved",
-      message: `…and ${omitted} more notes, not listed here.`,
-    },
-  ];
+  const ordinary: DocumentWarning[] = [];
+  const seen = new Set(mandatory.map((note) => note.message));
+  const add = (warning: DocumentWarning) => {
+    if (seen.has(warning.message)) return;
+    seen.add(warning.message);
+    ordinary.push(warning);
+  };
+  record.warnings.forEach(add);
+  for (const diagnostic of render.readiness.diagnostics) {
+    if (diagnostic.severity !== "warning") continue;
+    const message = diagnostic.detail.trim();
+    if (message) add({ code: PAGE_WARNING_CODES[diagnostic.code], message });
+  }
+  return { ordinary, mandatory };
+}
+
+/** The warnings a published PDF returns, within the contract's limit. */
+export function documentPdfWarnings(
+  record: DocumentCaptureRecord,
+  render: ScientDocumentPageRenderResult,
+): ReadonlyArray<DocumentWarning> {
+  const { ordinary, mandatory } = collectDocumentPdfWarnings(record, render);
+  return boundWarnings({
+    ordinary,
+    mandatory,
+    limit: SCIENT_DOCUMENT_MAX_WARNINGS,
+    omitted: (count) => ({
+      code: ordinary[0]?.code ?? "resource-unresolved",
+      message: `…and ${count} more notes, not listed here.`,
+    }),
+  });
 }
 
 /** Decodes and checks a render against its capture without touching any store. */

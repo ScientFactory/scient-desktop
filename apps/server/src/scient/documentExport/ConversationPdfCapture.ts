@@ -6,6 +6,7 @@ import {
 import * as Effect from "effect/Effect";
 
 import { documentLogicalKey, writeDocumentCapture } from "./DocumentCapture.ts";
+import { boundCaptureWarnings } from "./documentPageInput.ts";
 
 /**
  * Captures a conversation's document bundle for PDF export. The conversation
@@ -32,6 +33,6 @@ export const captureConversationBundle = Effect.fn("ConversationPdfCapture.captu
     inputRelativeUrl,
     expected: record.expected,
     title: record.title || "Conversation",
-    warnings: record.warnings,
+    warnings: boundCaptureWarnings(record.warnings),
   } satisfies ScientDocumentPdfPrepared;
 });

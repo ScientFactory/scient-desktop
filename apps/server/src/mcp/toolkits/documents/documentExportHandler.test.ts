@@ -212,23 +212,32 @@ describe("scient_document_export", () => {
     }),
   );
 
-  it.effect("keeps the refused-request note when the document's notes exceed the limit", () =>
+  it.effect("keeps the refused-request note and counts exactly what the limit left out", () =>
     Effect.gen(function* () {
       const root = yield* Effect.promise(async () => {
         const directory = await makeFixtureDirectory(fixtures, "scient-document-export-notes-");
-        const images = Array.from({ length: 80 }, (_, index) => `![m${index}](m${index}.png)`);
+        const images = Array.from({ length: 500 }, (_, index) => `![m${index}](m${index}.png)`);
         await writeFixtureFile(directory, "notes/report.md", `# Report\n\n${images.join(" ")}\n`);
         return directory;
       });
+      // 500 capture warnings and 20 page warnings: 520 distinct notes, more
+      // than the export's own 512.
+      const diagnostics = Array.from({ length: 20 }, (_, index) => ({
+        severity: "warning",
+        code: "math-unrendered",
+        detail: `Math ${index} could not be typeset.`,
+      }));
       const { effect } = run(
         { sourcePath: "notes/report.md", outputPath: "out/report.pdf" },
-        { root, behavior: { _tag: "render", blockedRequestCount: 2 } },
+        { root, behavior: { _tag: "render", overrides: { diagnostics }, blockedRequestCount: 2 } },
       );
       const result = yield* effect;
       expect(result.warnings).toHaveLength(64);
       expect(result.warnings).toContain("resource-unresolved: 2 web resources were not loaded.");
       expect(result.warnings).toContain("blocked-external-resources");
-      expect(result.warnings.at(-1)).toBe("…and 19 more notes, listed at the end of the PDF.");
+      // 61 of the 520 are listed; the count is not taken from the export's own summary.
+      expect(result.warnings.at(-1)).toBe("…and 459 more notes, listed at the end of the PDF.");
+      expect(result.warnings.some((warning) => warning.includes("not listed here"))).toBe(false);
     }),
   );
 

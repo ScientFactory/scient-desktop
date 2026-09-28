@@ -708,25 +708,31 @@ describe("document PDF publication", () => {
     }).pipe(Effect.provide(layer)),
   );
 
-  it.effect("keeps the refused-request note when the other warnings exceed the limit", () =>
+  it.effect("keeps the refused-request note and counts exactly what the limit left out", () =>
     Effect.gen(function* () {
       const { prepared } = yield* prepare;
       const record = yield* readDocumentCapture(prepared.expected.captureId);
+      // 400 capture warnings and 200 page warnings: 600 distinct notes.
       const many = {
         ...record,
-        warnings: Array.from({ length: 600 }, (_, index) => ({
+        warnings: Array.from({ length: 400 }, (_, index) => ({
           code: "resource-unresolved" as const,
           message: `Image ${index} was not found in the project.`,
         })),
       };
-      const warnings = documentPdfWarnings(many, {
-        ...renderResultFor(prepared.expected),
-        blockedRequestCount: 3,
+      const render = renderResultFor(prepared.expected, {
+        diagnostics: Array.from({ length: 200 }, (_, index) => ({
+          severity: "warning" as const,
+          code: "math-unrendered" as const,
+          detail: `Math ${index} could not be typeset.`,
+        })),
       });
+      const warnings = documentPdfWarnings(many, { ...render, blockedRequestCount: 3 });
       expect(warnings).toHaveLength(SCIENT_DOCUMENT_MAX_WARNINGS);
       expect(warnings.map((warning) => warning.message)).toContain(
         "3 web resources were not loaded.",
       );
+      // 510 of the 600 are listed.
       expect(warnings.at(-1)?.message).toBe("…and 90 more notes, not listed here.");
       // Within the limit, nothing is cut and no closing entry is added.
       const few = documentPdfWarnings(
@@ -738,6 +744,36 @@ describe("document PDF publication", () => {
         "Image 1 was not found in the project.",
         "1 web resource was not loaded.",
       ]);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("keeps every capture warning and counts the ones a page cannot list", () =>
+    Effect.gen(function* () {
+      const images = Array.from({ length: 600 }, (_, index) => `![m${index}](m${index}.png)`);
+      const { root, revision } = yield* Effect.promise(() =>
+        writeReport(`# Report\n\n${images.join(" ")}\n`),
+      );
+      const prepared = yield* prepareMarkdownPdf({
+        cwd: root,
+        relativePath: "notes/report.md",
+        expectedRevision: revision,
+      });
+      expect(prepared.warnings).toHaveLength(SCIENT_DOCUMENT_MAX_WARNINGS);
+      expect(prepared.warnings.at(-1)?.message).toBe("…and 89 more notes, not listed here.");
+      const input = decodePageInput(
+        new TextDecoder().decode((yield* readCapturedInput(prepared))!),
+      );
+      expect(input.warnings.at(-1)?.message).toBe("…and 89 more notes, not listed here.");
+      const record = yield* readDocumentCapture(prepared.expected.captureId);
+      expect(record.warnings).toHaveLength(600);
+      const store = makeGeneratedDocumentStore();
+      const published = yield* publishCapturedDocumentPdf({
+        captureId: prepared.expected.captureId,
+        render: { ...renderResultFor(prepared.expected), blockedRequestCount: 1 },
+      }).pipe(Effect.provideService(GeneratedDocumentStore, store.store));
+      expect(published.warnings).toHaveLength(SCIENT_DOCUMENT_MAX_WARNINGS);
+      expect(published.warnings.at(-2)?.message).toBe("1 web resource was not loaded.");
+      expect(published.warnings.at(-1)?.message).toBe("…and 90 more notes, not listed here.");
     }).pipe(Effect.provide(layer)),
   );
 

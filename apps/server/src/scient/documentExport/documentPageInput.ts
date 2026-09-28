@@ -35,6 +35,23 @@ const ASSET_EXTENSIONS: Readonly<Record<string, string>> = {
 
 const SHA256_DIGEST = /^sha256:[0-9a-f]{64}$/u;
 
+/**
+ * At most `limit` entries: `mandatory` always, as many of `ordinary` as fit,
+ * and, when some do not, one closing entry from `omitted` with their exact
+ * number.
+ */
+export function boundWarnings<A>(input: {
+  readonly ordinary: ReadonlyArray<A>;
+  readonly mandatory: ReadonlyArray<A>;
+  readonly limit: number;
+  readonly omitted: (count: number) => A;
+}): ReadonlyArray<A> {
+  const room = input.limit - input.mandatory.length;
+  if (input.ordinary.length <= room) return [...input.ordinary, ...input.mandatory];
+  const shown = input.ordinary.slice(0, Math.max(0, room - 1));
+  return [...shown, ...input.mandatory, input.omitted(input.ordinary.length - shown.length)];
+}
+
 /** The asset ids a bundle's Markdown actually refers to. */
 export function referencedDocumentAssetIds(markdown: string): ReadonlySet<string> {
   const ids = new Set<string>();
@@ -55,10 +72,26 @@ export function bundleSourceDigest(bundle: DocumentBundle): Sha256Digest | null 
   return SHA256_DIGEST.test(digest) ? (digest as Sha256Digest) : null;
 }
 
+/** Capture warnings within the contract's limit, ending with a count of those left out. */
+export function boundCaptureWarnings(
+  warnings: ReadonlyArray<DocumentWarning>,
+): ReadonlyArray<DocumentWarning> {
+  return boundWarnings({
+    ordinary: warnings,
+    mandatory: [],
+    limit: SCIENT_DOCUMENT_MAX_WARNINGS,
+    omitted: (count) => ({
+      code: warnings[0]?.code ?? "resource-unresolved",
+      message: `…and ${count} more notes, not listed here.`,
+    }),
+  });
+}
+
 export interface DocumentPageCapture {
   readonly pageInput: ScientDocumentPageInput;
   /** Files to write next to the page input, keyed by their capture-relative path. */
   readonly files: ReadonlyArray<{ readonly path: string; readonly bytes: Uint8Array }>;
+  /** Every capture warning, without the page input's limit. */
   readonly warnings: ReadonlyArray<DocumentWarning>;
 }
 
@@ -116,7 +149,6 @@ export function buildDocumentPageCapture(input: {
     files.push({ path, bytes: asset.content.bytes });
     assets.push({ ...base, content: { _tag: "captured", path, sha256: asset.content.sha256 } });
   }
-  const boundedWarnings = warnings.slice(0, SCIENT_DOCUMENT_MAX_WARNINGS);
   return {
     pageInput: {
       protocol: SCIENT_DOCUMENT_PAGE_PROTOCOL,
@@ -130,9 +162,10 @@ export function buildDocumentPageCapture(input: {
       createdAt: bundle.metadata.createdAt,
       markdown: bundle.markdown,
       assets,
-      warnings: boundedWarnings,
+      // The page prints these; the capture record keeps every warning.
+      warnings: boundCaptureWarnings(warnings),
     },
     files,
-    warnings: boundedWarnings,
+    warnings,
   };
 }

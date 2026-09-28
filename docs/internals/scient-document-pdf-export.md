@@ -98,9 +98,11 @@ A request the page's isolation refused is that isolation working, not a failure.
 request for a captured asset is fatal (above) and a remote image is a placeholder; any other
 refused request, such as a font or stylesheet, does not stop publication, but the desktop adds
 "N web resources were not loaded." to the page's export notes before printing, and the server
-returns the same note as a warning. When a result's warnings would exceed its limit (512 for
-the export, 64 for the agent tool), room is kept for this note, and a closing entry counts the
-warnings left out; the PDF itself lists every note.
+returns the same note as a warning.
+
+The capture record keeps every warning. Each list that has a limit (the page input's and the
+export result's 512, the agent tool's 64) is bounded from that complete list, keeps room for the
+notes that must always be reported, and ends with one entry giving the exact number it left out.
 
 ## The document page
 
