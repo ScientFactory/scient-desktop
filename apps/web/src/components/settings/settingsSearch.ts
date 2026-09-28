@@ -158,6 +158,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["scientific computing languages"],
   },
   {
+    id: "word-export",
+    title: "Word export (Pandoc)",
+    to: "/settings/scientific-computing",
+    searchTerms: ["word", "docx", "export", "pandoc", "document conversion", "latex", "reinstall"],
+  },
+  {
     id: "storage-worktrees",
     title: "Worktree cleanup",
     to: "/settings/storage",

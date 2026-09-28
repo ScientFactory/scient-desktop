@@ -63,3 +63,15 @@ a document, not impersonated as a transcript.
 The file is ordinary Markdown with a short header that identifies it as a Scient conversation.
 Comments between messages mark where each message starts; they are invisible in most Markdown
 viewers. Keep them if you may want to bring the conversation back into Scient later.
+
+## Word export and Pandoc
+
+Word export runs Pandoc, which Scient downloads into its own folder the first time you need it;
+nothing is installed system-wide. Pandoc is free software under the GNU GPL, version 2 or later.
+**Settings → Scientific Computing → Word export** shows the Pandoc release, its licence, and a link
+to that release's source code; the full notice is under **Open source licenses**. Search Settings
+for "Word" or "Pandoc" to find it.
+
+If Pandoc was installed but can no longer start, the export says so and Settings offers **Reinstall
+Pandoc**. Word export stops a conversion that takes longer than two minutes; export a shorter range
+or leave out the work log.

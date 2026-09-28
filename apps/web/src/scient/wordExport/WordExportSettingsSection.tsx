@@ -10,7 +10,8 @@ import { usePandocTool } from "./usePandocTool";
 /**
  * Settings ▸ Scientific Computing ▸ Word export: whether this server can
  * export Word files, the install or reinstall of the managed Pandoc it needs,
- * and that release's licence and source.
+ * and that release's licence and source. Settings search and the page's
+ * section list lead here for "Word", "export", and "Pandoc".
  */
 export function WordExportSettingsSection(props: { readonly environmentId: EnvironmentId }) {
   const { status, view, act } = usePandocTool(props.environmentId);
