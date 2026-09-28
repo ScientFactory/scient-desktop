@@ -65,6 +65,117 @@ const isInside = (path: Path.Path, root: string, candidate: string) => {
   );
 };
 
+/** What a path check established about one file, for the handle-bound read to confirm. */
+interface CheckedFile {
+  readonly canonicalPath: string;
+  readonly size: number;
+  readonly dev: number;
+  readonly ino: number | null;
+  readonly mtimeMs: number | null;
+}
+
+const statIdentity = (canonicalPath: string, info: FileSystem.File.Info): CheckedFile => ({
+  canonicalPath,
+  size: Number(info.size),
+  dev: info.dev,
+  ino: Option.isSome(info.ino) ? info.ino.value : null,
+  mtimeMs: Option.isSome(info.mtime) ? info.mtime.value.getTime() : null,
+});
+
+type VerifiedRead =
+  | { readonly _tag: "bytes"; readonly bytes: Uint8Array }
+  | { readonly _tag: "too-large" }
+  | { readonly _tag: "unsupported-platform" }
+  | { readonly _tag: "unreadable" };
+
+const isInsideNative = (root: string, candidate: string) => {
+  if (!NodePath.isAbsolute(candidate)) return false;
+  const relative = NodePath.relative(root, candidate);
+  return (
+    relative !== "" &&
+    relative !== ".." &&
+    !relative.startsWith(`..${NodePath.sep}`) &&
+    !NodePath.isAbsolute(relative)
+  );
+};
+
+// Darwin's O_NOFOLLOW_ANY applies to every path component, unlike O_NOFOLLOW.
+// Node does not expose it as a named constant, but passes numeric open flags through.
+const DARWIN_O_NOFOLLOW_ANY = 0x20000000;
+
+/**
+ * Reads a checked workspace file from the same inode the check saw, holding
+ * at most `maxBytes` plus one. The open refuses any symlink on the way
+ * (macOS) or is confirmed inside the project through its descriptor (Linux);
+ * other platforms cannot confirm that and read nothing.
+ */
+const readVerifiedWorkspaceFile = (
+  located: CheckedFile,
+  canonicalRoot: string,
+  platform: NodeJS.Platform,
+  maxBytes: number,
+) =>
+  Effect.tryPromise({
+    try: async (): Promise<VerifiedRead> => {
+      // Node exposes no path-independent containment check for an opened file
+      // on other platforms. Read nothing rather than trust raceable rechecks.
+      if (platform !== "darwin" && platform !== "linux") {
+        return { _tag: "unsupported-platform" };
+      }
+      const handle = await NodeFS.promises.open(
+        located.canonicalPath,
+        NodeFS.constants.O_RDONLY |
+          (platform === "darwin" ? DARWIN_O_NOFOLLOW_ANY : (NodeFS.constants.O_NOFOLLOW ?? 0)),
+      );
+      try {
+        if (platform === "linux") {
+          // /proc resolves this particular open fd, not a pathname the attacker can toggle.
+          const openedPath = await NodeFS.promises.readlink(`/proc/self/fd/${handle.fd}`);
+          if (openedPath.endsWith(" (deleted)") || !isInsideNative(canonicalRoot, openedPath))
+            return { _tag: "unreadable" };
+        }
+        const before = await handle.stat();
+        if (
+          !before.isFile() ||
+          before.dev !== located.dev ||
+          (located.ino !== null && before.ino !== located.ino) ||
+          before.size !== located.size ||
+          (located.mtimeMs !== null && Math.trunc(before.mtimeMs) !== located.mtimeMs)
+        )
+          return { _tag: "unreadable" };
+        const buffer = Buffer.allocUnsafe(Math.min(before.size, maxBytes) + 1);
+        let length = 0;
+        while (length < buffer.byteLength) {
+          const { bytesRead } = await handle.read(buffer, length, buffer.byteLength - length, null);
+          if (bytesRead === 0) break;
+          length += bytesRead;
+        }
+        if (length > maxBytes) return { _tag: "too-large" };
+        const after = await handle.stat();
+        const current = await NodeFS.promises.lstat(located.canonicalPath);
+        if (
+          !current.isFile() ||
+          current.dev !== before.dev ||
+          current.ino !== before.ino ||
+          after.dev !== before.dev ||
+          after.ino !== before.ino ||
+          after.size !== before.size ||
+          after.mtimeMs !== before.mtimeMs ||
+          after.ctimeMs !== before.ctimeMs ||
+          current.size !== before.size ||
+          current.mtimeMs !== before.mtimeMs ||
+          current.ctimeMs !== before.ctimeMs ||
+          length !== before.size
+        )
+          return { _tag: "unreadable" };
+        return { _tag: "bytes", bytes: new Uint8Array(buffer.subarray(0, length)) };
+      } finally {
+        await handle.close();
+      }
+    },
+    catch: () => ({ _tag: "unreadable" }) as VerifiedRead,
+  }).pipe(Effect.orElseSucceed(() => ({ _tag: "unreadable" }) as const));
+
 export interface ResolvedMarkdownFile {
   readonly canonicalRoot: string;
   readonly canonicalPath: string;
@@ -132,13 +243,31 @@ export const readProjectMarkdownFile = Effect.fn("MarkdownFileBundle.readProject
     if (Number(info.size) > SCIENT_DOCUMENT_MAX_MARKDOWN_LENGTH) {
       return yield* sourceError("too-large", "The Markdown file is too large to export as PDF.");
     }
-    const bytes = yield* fileSystem
-      .readFile(canonicalPath)
-      .pipe(
-        Effect.mapError(() =>
-          sourceError("source-unavailable", "The Markdown file could not be read."),
-        ),
+    // The same handle-bound, byte-capped read as the file's images: the bytes
+    // come from the inode that was checked, inside the project, and no more
+    // than the cap is ever held.
+    const read = yield* readVerifiedWorkspaceFile(
+      statIdentity(canonicalPath, info),
+      canonicalRoot,
+      yield* HostProcessPlatform,
+      SCIENT_DOCUMENT_MAX_MARKDOWN_LENGTH,
+    );
+    if (read._tag === "unsupported-platform") {
+      return yield* sourceError(
+        "source-unavailable",
+        "PDF export of project files is not available on this platform yet: Scient cannot safely confirm the file stays inside the project while reading it.",
       );
+    }
+    if (read._tag === "too-large") {
+      return yield* sourceError("too-large", "The Markdown file is too large to export as PDF.");
+    }
+    if (read._tag === "unreadable") {
+      return yield* sourceError(
+        "source-unavailable",
+        "The Markdown file changed or could not be read. Export it again.",
+      );
+    }
+    const bytes = read.bytes;
     return {
       canonicalRoot,
       canonicalPath,
@@ -155,16 +284,11 @@ export const readProjectMarkdownFile = Effect.fn("MarkdownFileBundle.readProject
 );
 
 type LocatedImage =
-  | {
+  | (CheckedFile & {
       readonly _tag: "located";
-      readonly canonicalPath: string;
       readonly fileName: string;
       readonly mediaType: string;
-      readonly size: number;
-      readonly dev: number;
-      readonly ino: number | null;
-      readonly mtimeMs: number | null;
-    }
+    })
   | {
       readonly _tag: "unavailable";
       readonly fileName: string;
@@ -219,107 +343,11 @@ const locateWorkspaceImage = Effect.fn("MarkdownFileBundle.locateWorkspaceImage"
   }
   return {
     _tag: "located",
-    canonicalPath: canonical.value,
+    ...statIdentity(canonical.value, info.value),
     fileName,
     mediaType,
-    size: Number(info.value.size),
-    dev: info.value.dev,
-    ino: Option.isSome(info.value.ino) ? info.value.ino.value : null,
-    mtimeMs: Option.isSome(info.value.mtime) ? info.value.mtime.value.getTime() : null,
   } satisfies LocatedImage;
 });
-
-type ImageRead =
-  | { readonly _tag: "bytes"; readonly bytes: Uint8Array }
-  | { readonly _tag: "too-large"; readonly limit: "image" | "total" }
-  | { readonly _tag: "unsupported-platform" }
-  | { readonly _tag: "unreadable" };
-
-const isInsideNative = (root: string, candidate: string) => {
-  if (!NodePath.isAbsolute(candidate)) return false;
-  const relative = NodePath.relative(root, candidate);
-  return (
-    relative !== "" &&
-    relative !== ".." &&
-    !relative.startsWith(`..${NodePath.sep}`) &&
-    !NodePath.isAbsolute(relative)
-  );
-};
-
-// Darwin's O_NOFOLLOW_ANY applies to every path component, unlike O_NOFOLLOW.
-// Node does not expose it as a named constant, but passes numeric open flags through.
-const DARWIN_O_NOFOLLOW_ANY = 0x20000000;
-
-/** Reads at most the remaining budget plus one byte, from the same verified inode. */
-const readLocatedImage = (
-  located: Extract<LocatedImage, { readonly _tag: "located" }>,
-  canonicalRoot: string,
-  platform: NodeJS.Platform,
-  imageLimit: number,
-  totalLimit: number,
-) =>
-  Effect.tryPromise({
-    try: async (): Promise<ImageRead> => {
-      // Node exposes no path-independent containment check for an opened file
-      // on other platforms. Omit the asset rather than trust raceable rechecks.
-      if (platform !== "darwin" && platform !== "linux") {
-        return { _tag: "unsupported-platform" };
-      }
-      const handle = await NodeFS.promises.open(
-        located.canonicalPath,
-        NodeFS.constants.O_RDONLY |
-          (platform === "darwin" ? DARWIN_O_NOFOLLOW_ANY : (NodeFS.constants.O_NOFOLLOW ?? 0)),
-      );
-      try {
-        if (platform === "linux") {
-          // /proc resolves this particular open fd, not a pathname the attacker can toggle.
-          const openedPath = await NodeFS.promises.readlink(`/proc/self/fd/${handle.fd}`);
-          if (openedPath.endsWith(" (deleted)") || !isInsideNative(canonicalRoot, openedPath))
-            return { _tag: "unreadable" };
-        }
-        const before = await handle.stat();
-        if (
-          !before.isFile() ||
-          before.dev !== located.dev ||
-          (located.ino !== null && before.ino !== located.ino) ||
-          before.size !== located.size ||
-          (located.mtimeMs !== null && Math.trunc(before.mtimeMs) !== located.mtimeMs)
-        )
-          return { _tag: "unreadable" };
-        const limit = Math.min(imageLimit, totalLimit);
-        const buffer = Buffer.allocUnsafe(Math.min(before.size, limit) + 1);
-        let length = 0;
-        while (length < buffer.byteLength) {
-          const { bytesRead } = await handle.read(buffer, length, buffer.byteLength - length, null);
-          if (bytesRead === 0) break;
-          length += bytesRead;
-        }
-        if (length > imageLimit) return { _tag: "too-large", limit: "image" };
-        if (length > totalLimit) return { _tag: "too-large", limit: "total" };
-        const after = await handle.stat();
-        const current = await NodeFS.promises.lstat(located.canonicalPath);
-        if (
-          !current.isFile() ||
-          current.dev !== before.dev ||
-          current.ino !== before.ino ||
-          after.dev !== before.dev ||
-          after.ino !== before.ino ||
-          after.size !== before.size ||
-          after.mtimeMs !== before.mtimeMs ||
-          after.ctimeMs !== before.ctimeMs ||
-          current.size !== before.size ||
-          current.mtimeMs !== before.mtimeMs ||
-          current.ctimeMs !== before.ctimeMs ||
-          length !== before.size
-        )
-          return { _tag: "unreadable" };
-        return { _tag: "bytes", bytes: new Uint8Array(buffer.subarray(0, length)) };
-      } finally {
-        await handle.close();
-      }
-    },
-    catch: () => ({ _tag: "unreadable" }) as ImageRead,
-  }).pipe(Effect.orElseSucceed(() => ({ _tag: "unreadable" }) as const));
 
 /** How much image data one Markdown export may hold; fixed in production, smaller in tests. */
 export interface MarkdownImageBudget {
@@ -429,12 +457,16 @@ export const buildMarkdownFileBundle = Effect.fn("MarkdownFileBundle.build")(fun
       );
       continue;
     }
-    const read = yield* readLocatedImage(
+    const imageLimit = Math.max(0, Math.min(MAX_IMAGE_BYTES, budget.maxImageBytes));
+    const totalLimit = Math.max(
+      0,
+      Math.min(DOCUMENT_CAPTURE_MAX_ASSET_BYTES, budget.maxTotalBytes - heldBytes),
+    );
+    const read = yield* readVerifiedWorkspaceFile(
       located,
       input.file.canonicalRoot,
       platform,
-      Math.max(0, Math.min(MAX_IMAGE_BYTES, budget.maxImageBytes)),
-      Math.max(0, Math.min(DOCUMENT_CAPTURE_MAX_ASSET_BYTES, budget.maxTotalBytes - heldBytes)),
+      Math.min(imageLimit, totalLimit),
     );
     if (read._tag === "too-large") {
       assetIdsByFile.set(
@@ -443,7 +475,8 @@ export const buildMarkdownFileBundle = Effect.fn("MarkdownFileBundle.build")(fun
           _tag: "unavailable",
           reason: "too-large",
           message:
-            read.limit === "image"
+            // The smaller limit is the one the read exceeded.
+            imageLimit <= totalLimit
               ? `Image "${destination}" is larger than the per-image export limit and was not included.`
               : `Image "${destination}" was not included because the document's images exceed the export size limit.`,
         }),

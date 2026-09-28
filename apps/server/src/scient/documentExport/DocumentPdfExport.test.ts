@@ -226,6 +226,74 @@ describe("Markdown PDF preparation", () => {
   );
 });
 
+describe("Markdown source read", () => {
+  const readWithFileChangedAfterStat = (change: (filePath: string) => Promise<void>) =>
+    Effect.gen(function* () {
+      const root = yield* Effect.promise(() =>
+        makeFixtureDirectory(fixtures, "scient-document-pdf-source-race-"),
+      );
+      const filePath = yield* Effect.promise(() =>
+        writeFixtureFile(root, "report.md", "# Report\n\nSaved text.\n"),
+      );
+      const fileSystem = yield* FileSystem.FileSystem;
+      let changed = false;
+      const racingFileSystem = FileSystem.FileSystem.of({
+        ...fileSystem,
+        stat: (candidate) =>
+          fileSystem.stat(candidate).pipe(
+            Effect.tap(() =>
+              candidate === filePath && !changed
+                ? Effect.promise(() => {
+                    changed = true;
+                    return change(filePath);
+                  })
+                : Effect.void,
+            ),
+          ),
+      });
+      const error = yield* readProjectMarkdownFile(root, "report.md").pipe(
+        Effect.provideService(FileSystem.FileSystem, racingFileSystem),
+        Effect.flip,
+      );
+      expect(changed).toBe(true);
+      return error;
+    });
+
+  it.effect("refuses a same-size replacement between the check and the read", () =>
+    Effect.gen(function* () {
+      const error = yield* readWithFileChangedAfterStat(async (filePath) => {
+        const replacement = `${filePath}.replacement`;
+        await NodeFSP.writeFile(replacement, "# Report\n\nOther text.\n");
+        await NodeFSP.rename(replacement, filePath);
+      });
+      expect(error).toMatchObject({ reason: "source-unavailable" });
+      expect(error.detail).toContain("changed or could not be read");
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("refuses a file that grows after the size check instead of reading it all", () =>
+    Effect.gen(function* () {
+      const error = yield* readWithFileChangedAfterStat((filePath) =>
+        NodeFSP.appendFile(filePath, "x".repeat(4_096)),
+      );
+      expect(error).toMatchObject({ reason: "source-unavailable" });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("fails clearly where the open file cannot be bound to the project", () =>
+    Effect.gen(function* () {
+      const { root, revision } = yield* Effect.promise(() => writeReport());
+      const error = yield* prepareMarkdownPdf({
+        cwd: root,
+        relativePath: "notes/report.md",
+        expectedRevision: revision,
+      }).pipe(Effect.provideService(HostProcessPlatform, "win32"), Effect.flip);
+      expect(error.reason).toBe("source-unavailable");
+      expect(error.detail).toContain("not available on this platform");
+    }).pipe(Effect.provide(layer)),
+  );
+});
+
 describe("Markdown image budget", () => {
   const bundleWithImageChangedAfterStat = (
     change: (imagePath: string) => Promise<void>,
@@ -266,6 +334,7 @@ describe("Markdown image budget", () => {
   const bundleFor = (
     markdown: string,
     budget: { maxImageBytes: number; maxTotalBytes: number; maxImages: number },
+    platform?: NodeJS.Platform,
   ) =>
     Effect.gen(function* () {
       const root = yield* Effect.promise(() =>
@@ -278,7 +347,10 @@ describe("Markdown image budget", () => {
         await NodeFSP.symlink(NodePath.join(root, "a.png"), NodePath.join(root, "alias.png"));
       });
       const file = yield* readProjectMarkdownFile(root, "report.md");
-      return yield* buildMarkdownFileBundle({ workspaceRoot: root, file, budget });
+      const build = buildMarkdownFileBundle({ workspaceRoot: root, file, budget });
+      return yield* platform === undefined
+        ? build
+        : build.pipe(Effect.provideService(HostProcessPlatform, platform));
     });
 
   it.effect("reads one file once, however many destinations name it", () =>
@@ -313,11 +385,11 @@ describe("Markdown image budget", () => {
 
   it.effect("fails closed when the host cannot bind an opened image to the workspace", () =>
     Effect.gen(function* () {
-      const bundle = yield* bundleFor("![a](a.png)\n", {
-        maxImageBytes: 1_000,
-        maxTotalBytes: 1_000,
-        maxImages: 10,
-      }).pipe(Effect.provideService(HostProcessPlatform, "win32"));
+      const bundle = yield* bundleFor(
+        "![a](a.png)\n",
+        { maxImageBytes: 1_000, maxTotalBytes: 1_000, maxImages: 10 },
+        "win32",
+      );
       expect(bundle.assets[0]?.content).toEqual({ _tag: "unavailable", reason: "unsupported" });
       expect(bundle.warnings[0]?.message).toContain(
         "this platform cannot safely verify workspace image paths",
