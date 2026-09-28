@@ -58,6 +58,10 @@ if any markers are damaged, the preview identifies them and requires you to ackn
 clean messages will be imported. An ordinary Markdown document is added to a new conversation as
 a document, not impersonated as a transcript.
 
+One import holds up to 5,000 messages, work-log entries, and other items. For a longer
+conversation, export it again without the work log, or only up to an earlier message. Anything an
+import leaves out, such as damaged Markdown sections, is noted on the imported conversation.
+
 ## Using Markdown later
 
 The file is ordinary Markdown with a short header that identifies it as a Scient conversation.

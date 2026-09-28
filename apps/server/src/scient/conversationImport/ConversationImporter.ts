@@ -31,16 +31,24 @@
  * belongs to the importer (its attempt journal) and which staging only ever
  * removes as part of the whole area. Each area counts against
  * `CONVERSATION_IMPORT_STAGING_QUOTA_BYTES` and `CONVERSATION_IMPORT_MAX_LIVE`
- * from admission until removal. An idle area expires
- * `CONVERSATION_IMPORT_STAGING_TTL_MS` after its last upload, preview, or
- * confirm; an area whose upload never arrives expires with its upload URL.
+ * from admission until it is gone: its declared upload size until it is
+ * validated, then its staged snapshot and attachments. Validation and imports
+ * run one at a time, so the only bytes beyond the quota are the expansion of
+ * the one package being validated, at most `SCIC_MAX_UNCOMPRESSED_BYTES`. A
+ * receive ends after a minute without bytes or at a deadline scaled to its
+ * size. An idle area expires `CONVERSATION_IMPORT_STAGING_TTL_MS` after its
+ * last upload, preview, or confirm; an area whose upload never arrives expires
+ * with its upload URL.
  *
  * Staging removes an area when the user cancels, after a successful import,
- * when it expires, and at server startup (every area left from an earlier run
- * is abandoned). Before removing an area whose `attemptDirectory` is not empty,
- * staging calls `settleAttempt`; if settling fails, the area stays and is
- * settled again on the next sweep. An empty `attemptDirectory` means nothing
- * was published.
+ * when it expires, when its file is refused, and at server startup (every
+ * area left from an earlier run is abandoned). A validation that fails for a
+ * reason a retry may clear (no room yet, a read error) keeps the upload for
+ * the next preview instead. Before removing an area whose `attemptDirectory`
+ * is not empty, staging calls `settleAttempt`; if settling fails, the area
+ * stays and is settled again on the next sweep. An area that cannot be
+ * removed yet stays, still counted, until a sweep removes it. An empty
+ * `attemptDirectory` means nothing was published.
  *
  * ## The per-import lease
  *
@@ -54,8 +62,9 @@
  *   then imports; a second confirm joins the running import if its package
  *   digest and destination match, and fails `import-busy` otherwise;
  * - expiry skips the area (both operations refresh its expiry);
- * - cancel marks the import cancel-requested, interrupts the running fiber,
- *   and joins it before deciding anything.
+ * - cancel marks the import cancel-requested, stops a receive in progress or
+ *   interrupts the running fiber, and joins it before deciding anything, so
+ *   an upload's reservation is held until its stream has stopped.
  *
  * A preview is returned only if the import is still live when validation
  * ends; a cancelled validation fails its joined previews `cancelled`. A
