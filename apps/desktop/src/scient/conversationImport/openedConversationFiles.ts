@@ -29,6 +29,7 @@ import * as Schema from "effect/Schema";
 import type * as Electron from "electron";
 
 import * as ElectronApp from "../../electron/ElectronApp.ts";
+import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import { makeIpcMethod } from "../../ipc/DesktopIpc.ts";
@@ -40,15 +41,22 @@ import {
 
 /** Files waiting for the renderer at once; the oldest is dropped beyond this. */
 const MAX_PENDING_CONVERSATION_FILES = 8;
+const TAKEN_FILE_LIFETIME_MS = 30 * 60_000;
 
 interface OpenedFile extends DesktopOpenedConversationFile {
   readonly path: string;
 }
 
+interface TakenFile extends OpenedFile {
+  readonly expiresAt: number;
+  readonly approvedOrigins: Set<string>;
+  uploading: boolean;
+}
+
 /** Opened but not yet taken by the renderer. */
 const waiting = new Map<string, OpenedFile>();
-/** Taken by the renderer and not yet uploaded. */
-const taken = new Map<string, OpenedFile>();
+/** Taken by the renderer; retained briefly so upload and preview can be retried. */
+const taken = new Map<string, TakenFile>();
 
 /** The `.scic` paths among process arguments, resolved against the working directory. */
 function conversationFilePathsFromArgv(
@@ -65,7 +73,7 @@ function conversationFilePathsFromArgv(
 }
 
 /** Queues a regular `.scic` file for the renderer; false when it is not one. */
-async function registerOpenedConversationFile(path: string): Promise<boolean> {
+export async function registerOpenedConversationFile(path: string): Promise<boolean> {
   if (!path.toLowerCase().endsWith(SCIC_FILE_EXTENSION)) return false;
   const stat = await NodeFS.promises.stat(path).catch(() => null);
   if (stat === null || !stat.isFile()) return false;
@@ -88,64 +96,137 @@ async function registerOpenedConversationFile(path: string): Promise<boolean> {
 }
 
 /** Hands every waiting file to the renderer, by token. */
-function takeOpenedConversationFileList(): ReadonlyArray<DesktopOpenedConversationFile> {
+export function takeOpenedConversationFileList(): ReadonlyArray<DesktopOpenedConversationFile> {
   const files = [...waiting.values()];
   waiting.clear();
+  for (const [token, file] of taken) {
+    if (file.expiresAt <= performance.now()) taken.delete(token);
+  }
   for (const file of files) {
     while (taken.size >= MAX_PENDING_CONVERSATION_FILES) {
       const oldest = taken.keys().next().value;
       if (oldest === undefined) break;
       taken.delete(oldest);
     }
-    taken.set(file.token, file);
+    taken.set(file.token, {
+      ...file,
+      expiresAt: performance.now() + TAKEN_FILE_LIFETIME_MS,
+      approvedOrigins: new Set(),
+      uploading: false,
+    });
   }
   return files.map(({ token, fileName, sizeBytes }) => ({ token, fileName, sizeBytes }));
 }
 
-export function uploadTarget(rawUrl: string, allowedOrigins: ReadonlySet<string>): URL | null {
+export function uploadTarget(
+  rawUrl: string,
+  allowedOrigins: ReadonlySet<string>,
+): {
+  readonly url: URL;
+  readonly requiresApproval: boolean;
+  readonly plaintextNetwork: boolean;
+} | null {
   try {
     const url = new URL(rawUrl);
-    // The renderer may display untrusted imported content. Only the exact
-    // origins of managed local backends may receive an OS-opened file; remote
-    // environments can import a user-picked browser File instead.
-    return (url.protocol === "http:" || url.protocol === "https:") &&
-      allowedOrigins.has(url.origin) &&
-      url.pathname.startsWith(`${SCIENT_CONVERSATION_IMPORT_UPLOAD_PATH}/`) &&
-      url.search === "" &&
-      url.hash === "" &&
-      url.username === "" &&
-      url.password === ""
-      ? url
+    const prefix = `${SCIENT_CONVERSATION_IMPORT_UPLOAD_PATH}/`;
+    const token = url.pathname.startsWith(prefix) ? url.pathname.slice(prefix.length) : "";
+    if (
+      !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u.test(token) ||
+      url.search !== "" ||
+      url.hash !== "" ||
+      url.username !== "" ||
+      url.password !== ""
+    )
+      return null;
+    const managed = allowedOrigins.has(url.origin);
+    return url.protocol === "http:" || url.protocol === "https:"
+      ? {
+          url,
+          requiresApproval: !managed,
+          plaintextNetwork:
+            !managed &&
+            url.protocol === "http:" &&
+            url.hostname !== "127.0.0.1" &&
+            url.hostname !== "[::1]",
+        }
       : null;
   } catch {
     return null;
   }
 }
 
-/** Streams a taken file to its signed upload URL. The token is spent either way. */
-async function uploadOpenedConversationFileTo(
+export function remoteUploadApprovalOptions(
+  origin: string,
+  fileName: string,
+  plaintextNetwork: boolean,
+): Electron.MessageBoxOptions {
+  const displayName = fileName.replace(/[\p{Cc}\p{Cf}]/gu, "�");
+  return {
+    type: plaintextNetwork ? "warning" : "question",
+    title: plaintextNetwork ? "HTTP upload has no TLS protection" : "Send conversation file?",
+    message: plaintextNetwork
+      ? `Send “${displayName}” to ${origin} over HTTP without TLS?`
+      : `Send “${displayName}” to ${origin}?`,
+    detail: plaintextNetwork
+      ? "This HTTP upload has no TLS protection. Others may read the file on an unprotected network. Continue only if you trust this destination and the network or VPN carrying it."
+      : "Scient will upload this OS-opened file to that server for preview. Confirm you recognize the destination.",
+    buttons: ["Cancel", "Send file"],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+  };
+}
+
+/** Streams a taken file to its signed upload URL, retaining it for a fresh-URL retry. */
+export async function uploadOpenedConversationFileTo(
   request: DesktopConversationFileUploadRequest,
   allowedOrigins: ReadonlySet<string>,
+  approveRemote: (origin: string, fileName: string, plaintextNetwork: boolean) => Promise<boolean>,
   fetchImpl: typeof fetch = fetch,
 ): Promise<DesktopConversationFileUploadResult> {
   const file = taken.get(request.token);
   if (!file) return { _tag: "failed", reason: "file-unavailable" };
+  if (file.expiresAt <= performance.now()) {
+    taken.delete(request.token);
+    return { _tag: "failed", reason: "file-unavailable" };
+  }
+  if (file.uploading) return { _tag: "failed", reason: "file-unavailable" };
   const target = uploadTarget(request.url, allowedOrigins);
   if (target === null) return { _tag: "failed", reason: "invalid-url" };
-  taken.delete(request.token);
-  const stat = await NodeFS.promises.stat(file.path).catch(() => null);
-  if (stat === null || !stat.isFile()) return { _tag: "failed", reason: "file-unavailable" };
-  if (stat.size !== file.sizeBytes) return { _tag: "failed", reason: "file-changed" };
+  file.uploading = true;
   try {
-    const response = await fetchImpl(target, {
-      method: "POST",
-      headers: { "content-type": SCIC_MEDIA_TYPE },
-      body: NodeStream.Readable.toWeb(NodeFS.createReadStream(file.path)) as ReadableStream,
-      duplex: "half",
-    } as RequestInit);
-    return response.ok ? { _tag: "uploaded" } : { _tag: "failed", reason: "rejected" };
+    const stat = await NodeFS.promises.stat(file.path).catch(() => null);
+    if (stat === null || !stat.isFile()) return { _tag: "failed", reason: "file-unavailable" };
+    if (stat.size !== file.sizeBytes) return { _tag: "failed", reason: "file-changed" };
+    if (target.requiresApproval && !file.approvedOrigins.has(target.url.origin)) {
+      const approved = await approveRemote(
+        target.url.origin,
+        file.fileName,
+        target.plaintextNetwork,
+      ).catch(() => false);
+      if (!approved) return { _tag: "failed", reason: "rejected" };
+      file.approvedOrigins.add(target.url.origin);
+    }
+    if (file.expiresAt <= performance.now()) {
+      return { _tag: "failed", reason: "file-unavailable" };
+    }
+    const source = NodeFS.createReadStream(file.path);
+    try {
+      const response = await fetchImpl(target.url, {
+        method: "POST",
+        headers: { "content-type": SCIC_MEDIA_TYPE },
+        body: NodeStream.Readable.toWeb(source) as ReadableStream,
+        duplex: "half",
+        redirect: "error",
+      } as RequestInit);
+      return response.ok ? { _tag: "uploaded" } : { _tag: "failed", reason: "rejected" };
+    } finally {
+      source.destroy();
+    }
   } catch {
     return { _tag: "failed", reason: "network-failed" };
+  } finally {
+    file.uploading = false;
   }
 }
 
@@ -200,12 +281,24 @@ export const uploadOpenedConversationFile = makeIpcMethod({
   handler: (request) =>
     Effect.gen(function* () {
       const pool = yield* DesktopBackendPool.DesktopBackendPool;
+      const dialog = yield* ElectronDialog.ElectronDialog;
+      const runPromise = Effect.runPromiseWith(
+        yield* Effect.context<ElectronDialog.ElectronDialog>(),
+      );
       const instances = yield* pool.list;
       const origins = new Set<string>();
       for (const instance of instances) {
         const config = yield* instance.currentConfig;
         if (Option.isSome(config)) origins.add(config.value.httpBaseUrl.origin);
       }
-      return yield* Effect.promise(() => uploadOpenedConversationFileTo(request, origins));
+      const approveRemote = (origin: string, fileName: string, plaintextNetwork: boolean) =>
+        runPromise(
+          dialog
+            .showMessageBox(remoteUploadApprovalOptions(origin, fileName, plaintextNetwork))
+            .pipe(Effect.map((result) => result.response === 1)),
+        );
+      return yield* Effect.promise(() =>
+        uploadOpenedConversationFileTo(request, origins, approveRemote),
+      );
     }),
 });
