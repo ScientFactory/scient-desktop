@@ -105,6 +105,8 @@ describe("storage path redaction", () => {
       ["[/data]", "[«scient-data»]"],
       ["see /data/, /data;", "see «scient-data»/, «scient-data»;"],
       ["/data_x /data's", "/data_x /data's"],
+      ["/data#archive/report.md /data🧪/x /data±", "/data#archive/report.md /data🧪/x /data±"],
+      ["/data_/report.md /data./x /data!/x", "/data_/report.md /data./x /data!/x"],
       ["C:\\Scient\\a", "«scient-data»\\a"],
       ["**C:\\Scient**", "**«scient-data»**"],
       ["c:/scient/a", "«scient-data»/a"],

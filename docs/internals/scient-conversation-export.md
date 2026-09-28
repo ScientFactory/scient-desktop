@@ -184,8 +184,11 @@ excerpts of message text and should be treated as conversation content.
   `«scient-data»` in the snapshot's text before any writer escapes it, with either path separator,
   in any case, and only where the root's path ends: before a separator, the end, a character that
   cannot continue a path segment (so `**/data**` and `<code>/data</code>` are redacted), or trailing
-  punctuation that nothing continuing a segment follows ("(see /data)," and "in /data."), never
-  inside a longer name (`/database`, `/data.bak`, `/data!archive`, `/data(backup)/x`).
+  punctuation followed by whitespace, the end, or a formatting delimiter ("(see /data)," and
+  "in /data."), never inside a longer name (`/database`, `/data.bak`, `/data#archive`, `/data_/x`,
+  `/data(backup)/x`). Redaction is intentionally conservative: an unusual sibling path that shares
+  a storage root's exact prefix and ends in a formatting delimiter may be over-redacted, which is
+  accepted because real storage roots are long and specific.
 - The client saves a file with the shared Save Copy path: the native save dialog in desktop
   (`apps/desktop/src/scient/documentArtifacts/AssetCopy.ts`) and a download in a browser.
 

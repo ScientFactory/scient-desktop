@@ -49,20 +49,32 @@ function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
-/** Characters that can continue a path segment: letters, digits, and URL-safe punctuation. */
-const PATH_CONTINUATION = String.raw`\p{L}\p{N}\p{M}._~!$&'()+,;=@%\-`;
-/** Trailing punctuation that ends a path when nothing that continues a segment follows it. */
+/**
+ * Characters that can continue a path segment: ASCII letters and digits, the
+ * punctuation file and URL names use, and every non-ASCII code point (letters,
+ * emoji, and symbols alike).
+ */
+const PATH_CONTINUATION = String.raw`A-Za-z0-9._~!$&'()+,;=@%#\-\u{80}-\u{10FFFF}`;
+/** Trailing punctuation that can end a path in prose, as in "(see /data)," or "in /data.". */
 const TRAILING_PUNCTUATION = String.raw`.,;:)\]!'_`;
+/** What may follow trailing punctuation for it to end the path: space, the end, or formatting. */
+const AFTER_TRAILING_PUNCTUATION = String.raw`\s|$|[*${"`"}<>"')\]|~]`;
 
 /**
  * Where a root ends: at a path separator, at the end of the text, before a
  * character that cannot continue a path segment (space, `*`, `<`, a backtick,
- * a double quote, …), or before a run of trailing punctuation that nothing
- * continuing a segment follows. So `/data` matches in `/data/x`, `**\/data**`,
- * `<code>/data</code>`, "(see /data),", and "in /data." but not in
- * `/database`, `/data.bak`, `/data!archive`, or `/data(backup)/x`.
+ * a double quote, …), or before a run of trailing punctuation followed by
+ * whitespace, the end, or a formatting delimiter. So `/data` matches in
+ * `/data/x`, `**\/data**`, `<code>/data</code>`, "(see /data),", and
+ * "in /data." but not in `/database`, `/data.bak`, `/data#archive`,
+ * `/data_/x`, or `/data(backup)/x`.
+ *
+ * Redaction is intentionally conservative: an unusual sibling path that shares
+ * a storage root's exact prefix and ends in a formatting delimiter (`/data_*`)
+ * may be over-redacted. That is accepted because real storage roots are long
+ * and specific.
  */
-const ROOT_END = String.raw`(?=[\\/]|$|[^${PATH_CONTINUATION}]|[${TRAILING_PUNCTUATION}]+(?![${PATH_CONTINUATION}]))`;
+const ROOT_END = String.raw`(?=[\\/]|$|[^${PATH_CONTINUATION}]|[${TRAILING_PUNCTUATION}]+(?:${AFTER_TRAILING_PUNCTUATION}))`;
 
 /**
  * A matcher for each root that accepts either separator, so `C:\Users\a` and
