@@ -9,9 +9,9 @@ import type { ConversationSnapshotV1 } from "@t3tools/contracts";
 export const STORAGE_PATH_PLACEHOLDER = "«scient-data»";
 export const SCIENT_ASSET_URL_PLACEHOLDER = "«scient-protected-asset»";
 
-const WEB_URL_PATTERN = /\bhttps?:\/\/[^\s<>"'`\)\]\}]+/giu;
+const WEB_URL_PATTERN = /\bhttps?:\/\/[^\s<>"'`)\]}]+/giu;
 const ASSET_PATH_TEST = /\/api\/assets\/[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?:\/|$)/iu;
-const PATH_CANDIDATE_PATTERN = /\/[^\s<>"'`\)\]\}]+/giu;
+const PATH_CANDIDATE_PATTERN = /\/[^\s<>"'`)\]}]+/giu;
 
 function assetPath(candidate: string): boolean {
   let decoded = candidate;
@@ -50,11 +50,18 @@ function escapeRegExp(text: string): string {
 }
 
 /**
+ * Where a root ends: at a separator or wherever its last segment cannot go on,
+ * so `/data` matches `/data`, `/data/x`, and "in /data." but not `/database`
+ * or `/data.bak`.
+ */
+const ROOT_END = "(?![\\p{L}\\p{N}\\p{M}_~@+%=#$-]|\\.[\\p{L}\\p{N}\\p{M}_~-])";
+
+/**
  * A matcher for each root that accepts either separator, so `C:\Users\a` and
- * `C:/Users/a` are both found. Match without case on every platform: macOS
- * volumes may be case-insensitive, and over-redaction is safer than leaking a
- * storage path whose spelling differs from the configured root. Longer roots
- * are tried first.
+ * `C:/Users/a` are both found, and that ends only at a path boundary. Match
+ * without case on every platform: macOS volumes may be case-insensitive, and
+ * over-redaction is safer than leaking a storage path whose spelling differs
+ * from the configured root. Longer roots are tried first.
  */
 function rootPatterns(roots: ReadonlyArray<string>): ReadonlyArray<RegExp> {
   return [...new Set(roots)]
@@ -63,7 +70,7 @@ function rootPatterns(roots: ReadonlyArray<string>): ReadonlyArray<RegExp> {
     .toSorted((left, right) => right.length - left.length)
     .map((root) => {
       const segments = root.split(/[\\/]+/u).map(escapeRegExp);
-      return new RegExp(segments.join("[\\\\/]+"), "giu");
+      return new RegExp(`${segments.join("[\\\\/]+")}${ROOT_END}`, "giu");
     });
 }
 

@@ -80,6 +80,21 @@ describe("storage path redaction", () => {
     );
   });
 
+  it("matches a root only where its path ends", () => {
+    const roots = ["/data", "C:\\Scient"];
+    expect(
+      redactStoragePaths(
+        "/data /data/x.log (/data) in /data. /database /data.bak /data-old /data2 /data_x",
+        roots,
+      ),
+    ).toBe(
+      "«scient-data» «scient-data»/x.log («scient-data») in «scient-data». /database /data.bak /data-old /data2 /data_x",
+    );
+    expect(redactStoragePaths("C:\\Scient\\a C:\\ScientData\\b", roots)).toBe(
+      "«scient-data»\\a C:\\ScientData\\b",
+    );
+  });
+
   it("removes roots before Markdown escaping can change their spelling", () => {
     const source = thread({
       title: `Notes on ${POSIX_ROOT}`,
