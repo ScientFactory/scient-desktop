@@ -90,8 +90,12 @@ vi.mock("../../state/environments", () => ({
 }));
 
 const { ConversationImportDialogHost } = await import("./ConversationImportDialog");
-const { dropConversationImportFile, requestConversationImport, useConversationImportRequests } =
-  await import("./requests");
+const {
+  dropConversationImportFile,
+  replaceConversationImportSource,
+  requestConversationImport,
+  useConversationImportRequests,
+} = await import("./requests");
 
 const importId = ConversationImportId.make("cimp_00000000-0000-4000-8000-000000000001");
 const secondImportId = ConversationImportId.make("cimp_00000000-0000-4000-8000-000000000002");
@@ -134,7 +138,7 @@ beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   state.environmentIds = [local];
   state.runtimeMode = "approval-required";
-  useConversationImportRequests.setState({ nextId: 0, queue: [], replaceable: true });
+  useConversationImportRequests.setState({ nextId: 0, queue: [], replaceable: false });
   for (const mock of [
     createConversationImportUpload,
     uploadConversationFile,
@@ -185,6 +189,7 @@ async function openWith(file: File, suspended = false) {
 }
 
 const scic = () => new File(["archive"], "field-notes.scic");
+const opened = { token: "token-1", fileName: "field-notes.scic", sizeBytes: 7 };
 const dialog = () => document.querySelector<HTMLElement>('[role="dialog"]');
 const button = (label: string) =>
   [...document.querySelectorAll("button")].find((candidate) => candidate.textContent === label);
@@ -293,21 +298,95 @@ describe("ConversationImportDialog", () => {
   it("closes quietly when the desktop's send prompt is declined", async () => {
     const uploadOpenedConversationFile = vi
       .fn()
-      .mockResolvedValue({ _tag: "failed", reason: "rejected" });
+      .mockResolvedValue({ _tag: "failed", reason: "declined" });
     Object.assign(window, { desktopBridge: { uploadOpenedConversationFile } });
     await act(async () => root.render(<ConversationImportDialogHost />));
-    await act(async () =>
-      requestConversationImport({
-        _tag: "desktop-file",
-        file: { token: "token-1", fileName: "field-notes.scic", sizeBytes: 7 },
-      }),
-    );
+    await act(async () => requestConversationImport({ _tag: "desktop-file", file: opened }));
     await flush();
 
     expect(uploadOpenedConversationFile).toHaveBeenCalledOnce();
     expect(dialog()).toBeNull();
     expect(cancelConversationImport).toHaveBeenCalledWith(local, importId);
     expect(toastAdd).not.toHaveBeenCalled();
+  });
+
+  it("stops a desktop upload on Cancel before releasing the staged import", async () => {
+    const calls: string[] = [];
+    let settle: (result: unknown) => void = () => {};
+    const uploadOpenedConversationFile = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          settle = resolve;
+        }),
+    );
+    const cancelOpenedConversationFileUpload = vi.fn(async () => {
+      calls.push("desktop");
+      settle({ _tag: "failed", reason: "cancelled" });
+    });
+    cancelConversationImport.mockImplementation(async () => {
+      calls.push("server");
+      return { _tag: "cancelled" };
+    });
+    Object.assign(window, {
+      desktopBridge: { uploadOpenedConversationFile, cancelOpenedConversationFileUpload },
+    });
+    await act(async () => root.render(<ConversationImportDialogHost />));
+    await act(async () => requestConversationImport({ _tag: "desktop-file", file: opened }));
+    await flush();
+    expect(uploadOpenedConversationFile).toHaveBeenCalledOnce();
+
+    await act(async () => button("Cancel")!.click());
+    await flush();
+    expect(cancelOpenedConversationFileUpload).toHaveBeenCalledWith({ token: "token-1" });
+    expect(cancelConversationImport).toHaveBeenCalledWith(local, importId);
+    expect(calls).toEqual(["desktop", "server"]);
+    expect(dialog()).toBeNull();
+    expect(toastAdd).not.toHaveBeenCalled();
+  });
+
+  it("never starts a queued desktop upload once its attempt is cancelled", async () => {
+    let settleFirst: (result: unknown) => void = () => {};
+    const uploadOpenedConversationFile = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          settleFirst = resolve;
+        }),
+    );
+    // This desktop cannot stop a stream early; the next upload waits for it.
+    Object.assign(window, { desktopBridge: { uploadOpenedConversationFile } });
+    await act(async () => root.render(<ConversationImportDialogHost />));
+    await act(async () => requestConversationImport({ _tag: "desktop-file", file: opened }));
+    await flush();
+    await act(async () =>
+      replaceConversationImportSource({
+        _tag: "desktop-file",
+        file: { token: "token-2", fileName: "other.scic", sizeBytes: 7 },
+      }),
+    );
+    await flush();
+    expect(createConversationImportUpload).toHaveBeenCalledTimes(2);
+
+    await act(async () => button("Cancel")!.click());
+    await act(async () => settleFirst({ _tag: "failed", reason: "cancelled" }));
+    await flush();
+    expect(uploadOpenedConversationFile).toHaveBeenCalledOnce();
+    expect(cancelConversationImport).toHaveBeenCalledWith(local, secondImportId);
+    expect(dialog()).toBeNull();
+  });
+
+  it("says plainly when the destination refuses a desktop upload", async () => {
+    Object.assign(window, {
+      desktopBridge: {
+        uploadOpenedConversationFile: vi
+          .fn()
+          .mockResolvedValue({ _tag: "failed", reason: "rejected" }),
+      },
+    });
+    await act(async () => root.render(<ConversationImportDialogHost />));
+    await act(async () => requestConversationImport({ _tag: "desktop-file", file: opened }));
+    await flush();
+    expect(alerts()).toEqual(["The destination didn't accept the file. Try again."]);
+    expect(dialog()?.textContent).not.toContain("rejected");
   });
 
   it("words other desktop failures plainly", async () => {
@@ -319,12 +398,7 @@ describe("ConversationImportDialog", () => {
       },
     });
     await act(async () => root.render(<ConversationImportDialogHost />));
-    await act(async () =>
-      requestConversationImport({
-        _tag: "desktop-file",
-        file: { token: "token-1", fileName: "field-notes.scic", sizeBytes: 7 },
-      }),
-    );
+    await act(async () => requestConversationImport({ _tag: "desktop-file", file: opened }));
     await flush();
 
     expect(alerts()).toEqual(["The file couldn't be sent. Check the connection and try again."]);
@@ -463,5 +537,49 @@ describe("ConversationImportDialog", () => {
     await flush();
     expect(dialog()).not.toBeNull();
     expect(createConversationImportUpload).toHaveBeenCalledOnce();
+  });
+
+  it("opens every file dropped during setup in turn", async () => {
+    await openWith(scic(), true);
+    await act(async () => dropConversationImportFile(new File(["b"], "second.scic")));
+    expect(useConversationImportRequests.getState().queue).toHaveLength(2);
+
+    await act(async () => root.render(<ConversationImportDialogHost />));
+    await flush();
+    expect(dialog()?.textContent).toContain("field-notes.scic");
+    await act(async () => button("Cancel")!.click());
+    await flush();
+    expect(dialog()?.textContent).toContain("second.scic");
+    expect(createConversationImportUpload).toHaveBeenLastCalledWith(
+      local,
+      "second.scic",
+      1,
+      undefined,
+    );
+  });
+
+  it("checks a file chosen with the picker straight away", async () => {
+    await act(async () => root.render(<ConversationImportDialogHost />));
+    await act(async () => requestConversationImport());
+    await flush();
+    expect(createConversationImportUpload).not.toHaveBeenCalled();
+    expect(button("Import")?.disabled).toBe(true);
+
+    const input = dialog()!.querySelector<HTMLInputElement>('input[type="file"]')!;
+    expect(input.accept).toBe(".scic,.md");
+    const chosen = scic();
+    Object.defineProperty(input, "files", { configurable: true, value: [chosen] });
+    await act(async () => input.dispatchEvent(new Event("change", { bubbles: true })));
+    await flush();
+
+    expect(createConversationImportUpload).toHaveBeenCalledWith(
+      local,
+      "field-notes.scic",
+      7,
+      undefined,
+    );
+    expect(uploadConversationFile.mock.calls[0]?.[1]).toBe(chosen);
+    expect(dialog()?.textContent).toContain("1 message · 2 attachments");
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("What's in this file");
   });
 });
