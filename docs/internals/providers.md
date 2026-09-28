@@ -743,7 +743,10 @@ Starting a replacement session joins that cleanup before acquiring the thread's 
 A provider-confirmed idle turn leaves its session ready, not stopped.
 
 Claude and OMP close their sessions on Stop so native background work cannot continue. Other
-adapters retain native interrupt behavior. Automatic destructive recovery is available only
+adapters retain native interrupt behavior. The Monitoring banner's Stop targets a ready session
+with no turn. It carries that session's `updatedAt`, so a delayed click cannot close a replacement
+session, and it calls the captured handle's `stop`. Codex, Claude, OMP, and Antigravity close the
+idle session that owns the background work; Antigravity does so only while no prompt is running. Automatic destructive recovery is available only
 through an adapter-owned cancellation handle; shared code must not stop whichever runtime happens
 to occupy a thread later. An unconfirmed result keeps execution state intact and reports the
 failure through the existing activity and session-error surfaces. Stale terminal-event guards

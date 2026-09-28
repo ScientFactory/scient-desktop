@@ -1218,6 +1218,38 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
         );
     });
 
+  /**
+   * The shared Stop for background work between turns. Commands that
+   * outlived their turn die with the session, so an idle session closes. A
+   * running prompt keeps the interrupt-only Stop above.
+   */
+  const captureTurnStop: NonNullable<Adapter["captureTurnStop"]> = (threadId) =>
+    Effect.map(requireSession(threadId), (context) => {
+      const owns = () => sessions.get(threadId) === context && !context.stopped;
+      return {
+        interrupt: Effect.suspend(() => (owns() ? interruptTurn(threadId) : Effect.void)),
+        confirm: Effect.succeed("unknown" as const),
+        stop: (onStopped = Effect.void) =>
+          Effect.uninterruptible(
+            Effect.gen(function* () {
+              // Decided under the prompt lock so a turn cannot start in between.
+              const idle = yield* context.promptLock.withPermit(
+                Effect.sync(() => {
+                  if (!owns() || context.promptFiber) return false;
+                  context.stopped = true;
+                  return true;
+                }),
+              );
+              if (!idle) return false;
+              yield* withThreadLock(threadId, stopContext(context));
+              if (!context.closed) return false;
+              yield* onStopped;
+              return true;
+            }),
+          ),
+      };
+    });
+
   const respondToRequest: Adapter["respondToRequest"] = (threadId, requestId, decision) =>
     Effect.gen(function* () {
       const context = yield* requireSession(threadId);
@@ -1299,6 +1331,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
     startSession,
     sendTurn,
     interruptTurn,
+    captureTurnStop,
     respondToRequest,
     respondToUserInput,
     stopSession,
