@@ -61,7 +61,8 @@ const DARWIN_O_NOFOLLOW_ANY = 0x20000000;
 
 /**
  * Reads a checked workspace file from the same inode the check saw, holding
- * at most `maxBytes` plus one. The open refuses any symlink on the way
+ * at most `maxBytes` plus one. The open never waits (a FIFO or device is
+ * refused, not read) and refuses any symlink on the way
  * (macOS) or is confirmed inside the project through its descriptor (Linux);
  * other platforms cannot confirm that and read nothing.
  */
@@ -78,9 +79,12 @@ export const readVerifiedWorkspaceFile = (
       if (platform !== "darwin" && platform !== "linux") {
         return { _tag: "unsupported-platform" };
       }
+      // Non-blocking, so a FIFO or device swapped in cannot hold the open; the
+      // descriptor's stat below refuses anything that is not a regular file.
       const handle = await NodeFS.promises.open(
         located.canonicalPath,
         NodeFS.constants.O_RDONLY |
+          (NodeFS.constants.O_NONBLOCK ?? 0) |
           (platform === "darwin" ? DARWIN_O_NOFOLLOW_ANY : (NodeFS.constants.O_NOFOLLOW ?? 0)),
       );
       try {
