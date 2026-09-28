@@ -21,6 +21,7 @@ import {
   importRuntimeModeNote,
   modelDisplayName,
   providerDisplayName,
+  selectedModelName,
 } from "./importDialog.logic";
 
 function testProvider(
@@ -135,6 +136,34 @@ describe("destination model", () => {
     ).toBe(
       "Imported conversations start in Supervised mode, which asks before commands and file changes.",
     );
+  });
+
+  it("names a committed model from every provider, ready or not", () => {
+    const offline = testProvider(
+      "cursor",
+      "cursor",
+      [{ slug: "composer", name: "Composer" }],
+      "error",
+    );
+    const withOffline = testConfig([codex, offline]);
+    expect(
+      selectedModelName(withOffline, {
+        instanceId: ProviderInstanceId.make("cursor"),
+        model: "composer",
+      }),
+    ).toBe("Composer");
+    expect(
+      selectedModelName(withOffline, {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-4",
+      }),
+    ).toBeNull();
+    expect(
+      selectedModelName(undefined, {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5",
+      }),
+    ).toBeNull();
   });
 
   it("names the source provider and model for people", () => {

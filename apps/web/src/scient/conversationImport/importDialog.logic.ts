@@ -172,6 +172,18 @@ export function modelDisplayName(
   return slug;
 }
 
+/**
+ * A selection's model name from every provider the environment knows, ready
+ * or not; null when the environment does not list it.
+ */
+export function selectedModelName(
+  config: ServerConfig | undefined,
+  selection: Pick<ModelSelection, "instanceId" | "model">,
+): string | null {
+  const provider = config?.providers.find((entry) => entry.instanceId === selection.instanceId);
+  return provider?.models.find((model) => model.slug === selection.model)?.name ?? null;
+}
+
 export function pluralize(count: number, one: string, many: string): string {
   return `${count} ${count === 1 ? one : many}`;
 }

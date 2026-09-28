@@ -57,6 +57,7 @@ import {
   isAbort,
   isConversationImportError,
   modelDisplayName,
+  selectedModelName,
 } from "./importDialog.logic";
 import {
   dismissConversationImportRequest,
@@ -203,7 +204,6 @@ interface StagedAttempt {
 interface Confirmation {
   readonly staged: StagedAttempt;
   readonly request: ScientConversationImportConfirmRequest;
-  readonly modelName: string;
   readonly isDocument: boolean;
   /** `unknown`: the answer never arrived; the server may still have committed it. */
   readonly phase: "sending" | "unknown";
@@ -487,20 +487,19 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
     next.staged.importId = null;
     next.staged.confirming = false;
     dismissConversationImportRequest();
-    // The committed destination is the server's, which can differ from this confirm's.
-    const committed = result.destination.modelSelection;
-    const modelName =
-      modelGroups
-        .flatMap((group) => group.models)
-        .find(
-          (model) =>
-            model.selection.instanceId === committed.instanceId &&
-            model.selection.model === committed.model,
-        )?.name ?? next.modelName;
+    // The committed destination is the server's, which can differ from this
+    // confirm's; name its model only when the environment lists it.
+    const modelName = selectedModelName(
+      configs.get(next.staged.environmentId),
+      result.destination.modelSelection,
+    );
     toastManager.add({
       type: "success",
       title: next.isDocument ? "Conversation started" : "Conversation imported",
-      description: `Your next message continues it with ${modelName}.`,
+      description:
+        modelName === null
+          ? "Your next message continues it."
+          : `Your next message continues it with ${modelName}.`,
     });
     void navigate({
       to: "/$environmentId/$threadId",
@@ -605,7 +604,6 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
           interactionMode: "default",
         },
       },
-      modelName: selectedModel.name,
       isDocument,
       phase: "sending",
       interrupted: false,
