@@ -257,9 +257,13 @@ describe("Markdown conversation import adapter", () => {
       .replace(`n=2 role=assistant`, `n=2 role=robot`)
       .replace(`n=4 role=assistant`, `n=5 role=assistant`);
     const result = read(edited);
-    const ranges = new Set(result.issues.map((issue) => issue.startLine)).size;
-    expect(ranges).toBe(2);
-    expect(result.validated.skippedSourceRecords).toBe(ranges);
+    // Two ranges are reported, but only the dropped message left content out:
+    // message 4 is simply absent from the file.
+    expect(result.issues.map((issue) => issue.kind).toSorted()).toEqual([
+      "missing-number",
+      "unknown-role",
+    ]);
+    expect(result.validated.skippedSourceRecords).toBe(1);
     const ids = decodeImportIds({
       threadId: "fresh-thread",
       commandId: "fresh-command",
@@ -281,10 +285,21 @@ describe("Markdown conversation import adapter", () => {
       destination: destination(),
       importedAt: "2026-09-28T10:01:00.000Z",
     });
-    expect(command.origin.omissions).toContainEqual({ _tag: "records-skipped", count: 2 });
+    expect(command.origin.omissions).toContainEqual({ _tag: "records-skipped", count: 1 });
     // The whole file as a document leaves nothing out.
     expect(read(edited, "document").validated.skippedSourceRecords).toBeUndefined();
     expect(read(fixtureMarkdown()).validated.skippedSourceRecords).toBeUndefined();
+  });
+
+  it("counts no skipped record for a foreign part marker it keeps as text", () => {
+    const edited = fixtureMarkdown().replace(
+      "Question 1",
+      "Question 1\n\n<!-- scient:part export=0123456789ab kind=context -->\n\nStill question 1",
+    );
+    const result = read(edited);
+    expect(result.issues.map((issue) => issue.kind)).toEqual(["foreign-marker"]);
+    expect(result.validated.snapshot.messages[0]?.text).toContain("Still question 1");
+    expect(result.validated.skippedSourceRecords).toBeUndefined();
   });
 
   it("does not import an edited assistant marker as part of the preceding user request", () => {
