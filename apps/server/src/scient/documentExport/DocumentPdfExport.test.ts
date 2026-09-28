@@ -38,7 +38,7 @@ import {
   DOCUMENT_PDF_TOO_LARGE_DETAIL,
   publishCapturedDocumentPdf,
 } from "./DocumentPdfPublication.ts";
-import { prepareMarkdownPdf } from "./MarkdownPdfPreparation.ts";
+import { captureProjectMarkdownFile, prepareMarkdownPdf } from "./MarkdownPdfPreparation.ts";
 import { buildMarkdownFileBundle, readProjectMarkdownFile } from "./MarkdownFileBundle.ts";
 
 const fixtures: string[] = [];
@@ -286,18 +286,98 @@ describe("Markdown source read", () => {
     }).pipe(Effect.provide(layer)),
   );
 
-  it.effect("fails clearly where the open file cannot be bound to the project", () =>
-    Effect.gen(function* () {
-      const { root, revision } = yield* Effect.promise(() => writeReport());
-      const error = yield* prepareMarkdownPdf({
-        cwd: root,
-        relativePath: "notes/report.md",
-        expectedRevision: revision,
-      }).pipe(Effect.provideService(HostProcessPlatform, "win32"), Effect.flip);
-      expect(error.reason).toBe("source-unavailable");
-      expect(error.detail).toContain("not available on this platform");
-    }).pipe(Effect.provide(layer)),
-  );
+  // Windows cannot bind an opened file to the project, so the editor's saved
+  // revision is what proves the bytes read are the file the editor saved.
+  describe("where the open file cannot be bound to the project", () => {
+    const onWindows = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      effect.pipe(Effect.provideService(HostProcessPlatform, "win32"));
+
+    it.effect("exports and publishes the file when its bytes are the saved revision", () =>
+      Effect.gen(function* () {
+        const { root, revision } = yield* Effect.promise(() => writeReport());
+        const prepared = yield* onWindows(
+          prepareMarkdownPdf({
+            cwd: root,
+            relativePath: "notes/report.md",
+            expectedRevision: revision,
+          }),
+        );
+        expect(prepared.expected.sourceDigest).toBe(revision);
+        // Its workspace images are still left out, with a warning.
+        expect(prepared.warnings.map((warning) => warning.message)).toContain(
+          'Image "figures/plot.png" was not included because this platform cannot safely verify workspace image paths during PDF export.',
+        );
+        const store = makeGeneratedDocumentStore();
+        const published = yield* onWindows(
+          publishCapturedDocumentPdf({
+            captureId: prepared.expected.captureId,
+            render: renderResultFor(prepared.expected),
+          }).pipe(Effect.provideService(GeneratedDocumentStore, store.store)),
+        );
+        expect(published.source).toEqual(publishedSource);
+      }).pipe(Effect.provide(layer)),
+    );
+
+    it.effect("refuses a file whose bytes are not the saved revision", () =>
+      Effect.gen(function* () {
+        const { root } = yield* Effect.promise(() => writeReport());
+        const error = yield* onWindows(
+          prepareMarkdownPdf({
+            cwd: root,
+            relativePath: "notes/report.md",
+            expectedRevision: sha256Digest(new TextEncoder().encode("older")),
+          }),
+        ).pipe(Effect.flip);
+        expect(error).toMatchObject({
+          reason: "source-changed",
+          detail: "The file changed while exporting. Try again.",
+        });
+      }).pipe(Effect.provide(layer)),
+    );
+
+    it.effect("refuses a file swapped in between the check and the read", () =>
+      Effect.gen(function* () {
+        const contents = "# Report\n\nSaved text.\n";
+        const root = yield* Effect.promise(() =>
+          makeFixtureDirectory(fixtures, "scient-document-pdf-windows-race-"),
+        );
+        const filePath = yield* Effect.promise(() => writeFixtureFile(root, "report.md", contents));
+        const fileSystem = yield* FileSystem.FileSystem;
+        const racingFileSystem = FileSystem.FileSystem.of({
+          ...fileSystem,
+          stat: (candidate) =>
+            fileSystem
+              .stat(candidate)
+              .pipe(
+                Effect.tap(() =>
+                  candidate === filePath
+                    ? Effect.promise(() => NodeFSP.writeFile(filePath, "# Report\n\nOther text.\n"))
+                    : Effect.void,
+                ),
+              ),
+        });
+        const error = yield* onWindows(
+          readProjectMarkdownFile(
+            root,
+            "report.md",
+            sha256Digest(new TextEncoder().encode(contents)),
+          ),
+        ).pipe(Effect.provideService(FileSystem.FileSystem, racingFileSystem), Effect.flip);
+        expect(error).toMatchObject({ reason: "source-changed" });
+      }).pipe(Effect.provide(layer)),
+    );
+
+    it.effect("refuses the agent tool's export, which has no saved revision to check", () =>
+      Effect.gen(function* () {
+        const { root } = yield* Effect.promise(() => writeReport());
+        const error = yield* onWindows(
+          captureProjectMarkdownFile({ workspaceRoot: root, relativePath: "notes/report.md" }),
+        ).pipe(Effect.flip);
+        expect(error.reason).toBe("source-unavailable");
+        expect(error.detail).toContain("only from its editor");
+      }).pipe(Effect.provide(layer)),
+    );
+  });
 });
 
 describe("Markdown image budget", () => {

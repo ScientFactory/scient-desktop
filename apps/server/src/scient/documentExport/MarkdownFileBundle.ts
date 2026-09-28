@@ -176,6 +176,36 @@ const readVerifiedWorkspaceFile = (
     catch: () => ({ _tag: "unreadable" }) as VerifiedRead,
   }).pipe(Effect.orElseSucceed(() => ({ _tag: "unreadable" }) as const));
 
+/**
+ * Reads at most `maxBytes` plus one from a path, without binding the open file
+ * to the project. Only for a caller that then checks the bytes themselves
+ * against a known revision, so a file swapped in by path cannot pass.
+ */
+const readCappedFile = (canonicalPath: string, maxBytes: number) =>
+  Effect.tryPromise({
+    try: async (): Promise<VerifiedRead> => {
+      const handle = await NodeFS.promises.open(canonicalPath, NodeFS.constants.O_RDONLY);
+      try {
+        const info = await handle.stat();
+        if (!info.isFile()) return { _tag: "unreadable" };
+        const buffer = Buffer.allocUnsafe(Math.min(info.size, maxBytes) + 1);
+        let length = 0;
+        while (length < buffer.byteLength) {
+          const { bytesRead } = await handle.read(buffer, length, buffer.byteLength - length, null);
+          if (bytesRead === 0) break;
+          length += bytesRead;
+        }
+        if (length > maxBytes) return { _tag: "too-large" };
+        return { _tag: "bytes", bytes: new Uint8Array(buffer.subarray(0, length)) };
+      } finally {
+        await handle.close();
+      }
+    },
+    catch: () => ({ _tag: "unreadable" }) as VerifiedRead,
+  }).pipe(Effect.orElseSucceed(() => ({ _tag: "unreadable" }) as const));
+
+const MARKDOWN_SOURCE_CHANGED_DETAIL = "The file changed while exporting. Try again.";
+
 export interface ResolvedMarkdownFile {
   readonly canonicalRoot: string;
   readonly canonicalPath: string;
@@ -191,9 +221,15 @@ export interface ResolvedMarkdownFile {
 /**
  * Reads a project Markdown file that must stay inside `workspaceRoot`,
  * symlinks included. The revision matches the editor's saved-file revision.
+ *
+ * Where the open file cannot be bound to the project (Windows), the file is
+ * read by path with the same byte cap and accepted only when its bytes are
+ * `expectedRevision`, the revision the editor saved: a file swapped in during
+ * the read has other bytes and is refused. Without an expected revision
+ * there is nothing to check the bytes against, so such a read is refused.
  */
 export const readProjectMarkdownFile = Effect.fn("MarkdownFileBundle.readProjectMarkdownFile")(
-  function* (workspaceRoot: string, requestedPath: string) {
+  function* (workspaceRoot: string, requestedPath: string, expectedRevision?: string) {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const portable = requestedPath.replaceAll("\\", "/");
@@ -246,22 +282,29 @@ export const readProjectMarkdownFile = Effect.fn("MarkdownFileBundle.readProject
     // The same handle-bound, byte-capped read as the file's images: the bytes
     // come from the inode that was checked, inside the project, and no more
     // than the cap is ever held.
-    const read = yield* readVerifiedWorkspaceFile(
+    const verified = yield* readVerifiedWorkspaceFile(
       statIdentity(canonicalPath, info),
       canonicalRoot,
       yield* HostProcessPlatform,
       SCIENT_DOCUMENT_MAX_MARKDOWN_LENGTH,
     );
-    if (read._tag === "unsupported-platform") {
-      return yield* sourceError(
-        "source-unavailable",
-        "PDF export of project files is not available on this platform yet: Scient cannot safely confirm the file stays inside the project while reading it.",
-      );
+    let read: VerifiedRead = verified;
+    if (verified._tag === "unsupported-platform") {
+      if (expectedRevision === undefined) {
+        return yield* sourceError(
+          "source-unavailable",
+          "On this platform, a project file can be exported as PDF only from its editor: Scient cannot otherwise confirm which file it read.",
+        );
+      }
+      read = yield* readCappedFile(canonicalPath, SCIENT_DOCUMENT_MAX_MARKDOWN_LENGTH);
+      if (read._tag === "bytes" && sha256Digest(read.bytes) !== expectedRevision) {
+        return yield* sourceError("source-changed", MARKDOWN_SOURCE_CHANGED_DETAIL);
+      }
     }
     if (read._tag === "too-large") {
       return yield* sourceError("too-large", "The Markdown file is too large to export as PDF.");
     }
-    if (read._tag === "unreadable") {
+    if (read._tag !== "bytes") {
       return yield* sourceError(
         "source-unavailable",
         "The Markdown file changed or could not be read. Export it again.",

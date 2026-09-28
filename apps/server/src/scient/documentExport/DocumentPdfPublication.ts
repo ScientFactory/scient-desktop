@@ -114,9 +114,11 @@ export const confirmCapturedSourceCurrent = Effect.fn(
     reason: "source-changed",
     detail: "The document changed while the PDF was being made. Export it again.",
   });
-  const current = yield* readProjectMarkdownFile(workspaceRoot, relativePath).pipe(
-    Effect.mapError(() => changed),
-  );
+  const current = yield* readProjectMarkdownFile(
+    workspaceRoot,
+    relativePath,
+    record.expected.sourceDigest,
+  ).pipe(Effect.mapError(() => changed));
   if (
     current.canonicalPath !== canonicalPath ||
     current.revision !== record.expected.sourceDigest

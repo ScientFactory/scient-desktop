@@ -19,7 +19,11 @@ export const captureProjectMarkdownFile = Effect.fn("MarkdownPdfPreparation.capt
     readonly relativePath: string;
     readonly expectedRevision?: string;
   }) {
-    const file = yield* readProjectMarkdownFile(input.workspaceRoot, input.relativePath);
+    const file = yield* readProjectMarkdownFile(
+      input.workspaceRoot,
+      input.relativePath,
+      input.expectedRevision,
+    );
     if (input.expectedRevision !== undefined && file.revision !== input.expectedRevision) {
       return yield* new ScientDocumentPdfExportError({
         reason: "source-changed",
