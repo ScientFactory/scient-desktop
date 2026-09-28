@@ -12,6 +12,8 @@ import type {
   ScopedThreadRef,
 } from "@t3tools/contracts";
 
+import type { useNavigate } from "@tanstack/react-router";
+
 import { resolveAssetUrl } from "~/assets/assetUrls";
 import { ensureLocalApi } from "~/localApi";
 import { useRightPanelStore } from "~/rightPanelStore";
@@ -23,6 +25,8 @@ import { readPreparedConnection } from "~/state/session";
 import { saveFailureMessage } from "../conversationExport/exportActions";
 import { pdfSourceAssetResource } from "../pdf/pdfSource";
 import { scientGeneratedPdfSurface } from "../rightPanel/surfaces";
+import { summarizeDocumentWarnings } from "./markdownPdfExport";
+import { showInOwningThread } from "./showInOwningThread";
 
 /**
  * Delivering a published document PDF the way every export is delivered: the
@@ -105,6 +109,37 @@ export async function saveDocumentPdfCopy(
   if (url === null) return { _tag: "failed", reason: "source-unavailable" };
   // The stored PDF's own name is internal; the title-based name is what every export suggests.
   return ensureLocalApi().documents.saveAssetCopy({ url, suggestedFileName });
+}
+
+/**
+ * The notice for a saved document PDF: the save result, any export notes, and
+ * an Open action that shows the PDF in the thread that owns it.
+ */
+export function documentPdfSavedNotice(input: {
+  readonly delivery: Extract<DocumentPdfDelivery, { readonly _tag: "delivered" }>;
+  readonly published: ScientDocumentPdfPublished;
+  readonly threadRef: ScopedThreadRef;
+  readonly navigate: ReturnType<typeof useNavigate>;
+}) {
+  const { delivery, published, threadRef, navigate } = input;
+  const actionProps = {
+    children: "Open",
+    onClick: () =>
+      showInOwningThread(navigate, threadRef, () => openDocumentPdf(threadRef, published)),
+  };
+  return published.warnings.length > 0
+    ? {
+        type: "warning" as const,
+        title: `${delivery.title} with notes`,
+        description: summarizeDocumentWarnings(published.warnings),
+        actionProps,
+      }
+    : {
+        type: "success" as const,
+        title: delivery.title,
+        description: delivery.description,
+        actionProps,
+      };
 }
 
 /** Opens a published PDF in the reader of the conversation it was exported from. */

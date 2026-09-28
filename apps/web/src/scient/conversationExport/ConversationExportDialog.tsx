@@ -32,12 +32,12 @@ import {
 import { Switch } from "../../components/ui/switch";
 import { toastManager } from "../../components/ui/toast";
 import { Toggle, ToggleGroup } from "../../components/ui/toggle-group";
-import { buildThreadRouteParams } from "../../threadRoutes";
 import {
   exportConversation,
   prepareConversationExport,
   prepareConversationWordDiagrams,
 } from "./client";
+import { showInOwningThread } from "../documentExport/showInOwningThread";
 import { captureWordDiagrams } from "../wordExport/captureDiagrams";
 import {
   buildExportRequest,
@@ -174,14 +174,8 @@ function ConversationExportDialog({ threadRef }: { readonly threadRef: ScopedThr
             : {
                 actionProps: {
                   children: "Open",
-                  onClick: () => {
-                    // The conversation may not be the one on screen (a sidebar export).
-                    open();
-                    void navigate({
-                      to: "/$environmentId/$threadId",
-                      params: buildThreadRouteParams(threadRef),
-                    });
-                  },
+                  // A sidebar export's conversation may not be the one on screen.
+                  onClick: () => showInOwningThread(navigate, threadRef, open),
                 },
               };
         toastManager.add(

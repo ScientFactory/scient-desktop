@@ -1,5 +1,6 @@
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import { useNavigate } from "@tanstack/react-router";
 import { FileDown } from "lucide-react";
 import { useCallback, useRef } from "react";
 
@@ -15,12 +16,12 @@ import { DockCommandItem } from "../markdownEditor/ui/dockChrome";
 import { documentPdfAvailability, renderDocumentPagePdf } from "./documentPagePdf";
 import {
   deliverDocumentPdf,
+  documentPdfSavedNotice,
   markdownPdfFileName,
-  openDocumentPdf,
   releaseDocumentPdfCapture,
   saveDocumentPdfCopy,
 } from "./documentPdfDelivery";
-import { runMarkdownPdfExport, summarizeDocumentWarnings } from "./markdownPdfExport";
+import { runMarkdownPdfExport } from "./markdownPdfExport";
 
 export interface MarkdownPdfExportTarget {
   readonly environmentId: EnvironmentId;
@@ -41,6 +42,7 @@ function useMarkdownPdfExport(target: MarkdownPdfExportTarget) {
   });
   const publish = useAtomCommand(scientDocumentPdfEnvironment.publish, { reportFailure: false });
   const runningRef = useRef(false);
+  const navigate = useNavigate();
 
   return useCallback(async () => {
     if (runningRef.current) return;
@@ -101,26 +103,8 @@ function useMarkdownPdfExport(target: MarkdownPdfExportTarget) {
         markdownPdfFileName(target.relativePath),
       );
       if (delivery._tag === "delivered") {
-        const open = {
-          actionProps: {
-            children: "Open",
-            onClick: () => openDocumentPdf(target.threadRef, published),
-          },
-        };
         toastManager.add(
-          published.warnings.length > 0
-            ? {
-                type: "warning",
-                title: `${delivery.title} with notes`,
-                description: summarizeDocumentWarnings(published.warnings),
-                ...open,
-              }
-            : {
-                type: "success",
-                title: delivery.title,
-                description: delivery.description,
-                ...open,
-              },
+          documentPdfSavedNotice({ delivery, published, threadRef: target.threadRef, navigate }),
         );
       }
       finish("completed");
@@ -135,7 +119,7 @@ function useMarkdownPdfExport(target: MarkdownPdfExportTarget) {
     } finally {
       runningRef.current = false;
     }
-  }, [httpBaseUrl, prepare, publish, target]);
+  }, [httpBaseUrl, navigate, prepare, publish, target]);
 }
 
 /** Markdown editor → More actions → Export ▸ PDF / Word. */
