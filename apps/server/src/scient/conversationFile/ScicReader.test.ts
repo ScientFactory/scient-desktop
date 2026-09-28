@@ -4,6 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { afterEach, describe, expect, it } from "@effect/vitest";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import {
   ConversationImportRejection,
   SCIC_MEDIA_TYPE,
@@ -178,6 +179,30 @@ const expectRejected = Effect.fnUntraced(function* (
 const decodeRejection = Schema.decodeExit(ConversationImportRejection);
 
 const packageZip = (pkg = makePackage()) => zipBytes(pkg.files);
+
+if (HostProcessPlatform.defaultValue() !== "win32" && process.getuid?.() !== 0) {
+  it.effect("reports a package it cannot open as a read error, not a damaged file", () =>
+    Effect.gen(function* () {
+      const bytes = yield* packageZip();
+      const directory = temporaryDirectory();
+      const packagePath = NodePath.join(directory, "package.scic");
+      NodeFS.writeFileSync(packagePath, bytes);
+      NodeFS.chmodSync(packagePath, 0o000);
+      NodeFS.mkdirSync(NodePath.join(directory, "attachments"));
+      const error = yield* Effect.flip(
+        readScicPackage({
+          importId: IMPORT_ID,
+          packagePath,
+          packageSha256: sha256Digest(bytes),
+          packageBytes: bytes.byteLength,
+          attachmentsDirectory: NodePath.join(directory, "attachments"),
+        }),
+      );
+      NodeFS.chmodSync(packagePath, 0o600);
+      expect(error._tag).toBe("ScicReadError");
+    }),
+  );
+}
 
 it.effect("reports a staged-file write error without an unhandled stream error", () =>
   Effect.gen(function* () {

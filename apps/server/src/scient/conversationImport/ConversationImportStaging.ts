@@ -211,6 +211,8 @@ interface ImportRecord {
   readonly markdownMode: "messages" | "document";
   markdownPreview: Pick<MarkdownReadResult, "kind" | "issues"> | null;
   reservedBytes: number;
+  /** A validated import's package that could not be removed yet; still counted. */
+  leftoverPackageBytes: number;
   touchedAt: number;
   cancelRequested: boolean;
   phase: Phase;
@@ -469,6 +471,7 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
         markdownMode: "messages",
         markdownPreview: null,
         reservedBytes: 0,
+        leftoverPackageBytes: 0,
         touchedAt: startedAt,
         cancelRequested: true,
         phase: { _tag: "abandoned" },
@@ -551,6 +554,7 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
             markdownMode: request.markdownMode ?? "messages",
             markdownPreview: null,
             reservedBytes: request.sizeBytes,
+            leftoverPackageBytes: 0,
             touchedAt: at,
             cancelRequested: false,
             phase: { _tag: "awaiting-upload", uploadExpiresAt: expiresAt },
@@ -860,9 +864,35 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
       );
 
     /**
+     * Removes a validated import's package and stops counting it. A package
+     * that cannot be removed stays counted, and the sweep tries again.
+     */
+    const removeLeftoverPackage = (record: ImportRecord) =>
+      fileSystem.remove(NodePath.join(record.directory, PACKAGE_FILE), { force: true }).pipe(
+        Effect.as(true),
+        Effect.catch((cause) =>
+          Effect.logWarning("Could not remove a validated conversation import package yet.", {
+            cause,
+          }).pipe(Effect.as(false)),
+        ),
+        Effect.flatMap((removed) =>
+          removed
+            ? locked(
+                Effect.sync(() => {
+                  record.reservedBytes -= record.leftoverPackageBytes;
+                  record.leftoverPackageBytes = 0;
+                }),
+              )
+            : Effect.void,
+        ),
+      );
+
+    /**
      * Validation, in a fiber staging owns. A refused file ends the import; a
      * failure that may pass on a retry (no room yet, a read error) keeps the
-     * upload, so the next preview validates it again.
+     * upload, so the next preview validates it again. It holds the one slot
+     * until its output is settled on disk, cleanup included, and counts every
+     * file still there.
      */
     const validate = (
       record: ImportRecord,
@@ -870,7 +900,7 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
       result: Deferred.Deferred<StagedImport, ConversationImportStagingServiceError>,
     ) =>
       Effect.gen(function* () {
-        const read = yield* Effect.exit(oneAtATime(stageUpload(record, uploaded)));
+        const read = yield* Effect.exit(stageUpload(record, uploaded));
         const at = yield* now;
         const decided = yield* locked(
           Effect.sync(() => {
@@ -891,7 +921,9 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
                   ),
                 } as const;
               }
-              record.reservedBytes = stagedBytes;
+              // The package counts until it is actually gone.
+              record.reservedBytes = stagedBytes + uploaded.packageBytes;
+              record.leftoverPackageBytes = uploaded.packageBytes;
               record.touchedAt = at;
               record.markdownPreview = read.value.markdownPreview;
               record.phase = { _tag: "ready", staged: read.value.staged };
@@ -922,9 +954,7 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
             return;
           case "ready":
             // The package is no longer needed; the snapshot and attachments are what remain.
-            yield* fileSystem
-              .remove(NodePath.join(record.directory, PACKAGE_FILE), { force: true })
-              .pipe(Effect.ignore);
+            yield* removeLeftoverPackage(record);
             yield* Deferred.succeed(result, decided.staged);
             return;
           case "refused":
@@ -950,7 +980,7 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
             return;
           }
         }
-      });
+      }).pipe(oneAtATime);
 
     const buildPreview = (
       record: ImportRecord,
@@ -1395,6 +1425,16 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
         }
         yield* settleAndRemove(record, "expired");
       }
+      const leftovers = yield* locked(
+        Effect.sync(() =>
+          [...records.values()].filter(
+            (record) =>
+              record.leftoverPackageBytes > 0 &&
+              (record.phase._tag === "ready" || record.phase._tag === "importing"),
+          ),
+        ),
+      );
+      for (const record of leftovers) yield* removeLeftoverPackage(record);
       for (const name of yield* fileSystem
         .readDirectory(completionsRoot)
         .pipe(Effect.orElseSucceed(() => []))) {

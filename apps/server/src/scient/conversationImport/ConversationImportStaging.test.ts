@@ -24,7 +24,9 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -653,6 +655,76 @@ describe("ConversationImportStaging", () => {
       assert.isFalse(NodeFS.existsSync(NodePath.join(area, "package.scic")));
     }).pipe(Effect.scoped, Effect.provide(TestLayer)),
   );
+
+  it.effect("keeps counting a package it could not remove until a sweep removes it", () =>
+    Effect.gen(function* () {
+      resetImporter();
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      let packageRemovable = false;
+      const refusing = FileSystem.make({
+        ...fs,
+        remove: (path, options) =>
+          !packageRemovable && path.endsWith("package.scic")
+            ? Effect.fail(
+                PlatformError.systemError({
+                  _tag: "PermissionDenied",
+                  module: "FileSystem",
+                  method: "remove",
+                  cause: new Error("synthetic: the file is still open"),
+                }),
+              )
+            : fs.remove(path, options),
+      });
+      const bytes = yield* packageBytes;
+      const files = makePackage().files;
+      const snapshotBytes = files.find((file) => file.path === "conversation.json")!.bytes;
+      const stagedBytes = snapshotBytes.byteLength + PNG.byteLength + PDF.byteLength;
+      // Room for the staged import and its package, not for another package besides.
+      const quotaBytes = stagedBytes + 2 * bytes.byteLength - 1;
+      const staging = yield* makeStaging({ quotaBytes }).pipe(
+        Effect.provideService(FileSystem.FileSystem, refusing),
+      );
+      const { importId } = yield* upload(staging, bytes);
+      yield* staging.preview(importId);
+      const packagePath = NodePath.join(stagingRoot(config), importId, "package.scic");
+      assert.isTrue(NodeFS.existsSync(packagePath));
+      // The package is still on disk, so it still takes room.
+      assert.strictEqual(
+        yield* reasonOf(staging.createUpload({ fileName: "b.scic", sizeBytes: bytes.byteLength })),
+        "staging-full",
+      );
+      packageRemovable = true;
+      yield* staging.sweep;
+      assert.isFalse(NodeFS.existsSync(packagePath));
+      yield* staging.createUpload({ fileName: "b.scic", sizeBytes: bytes.byteLength });
+      // The import itself stays ready.
+      assert.strictEqual((yield* staging.preview(importId)).importId, importId);
+    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+  );
+
+  if (HostProcessPlatform.defaultValue() !== "win32" && process.getuid?.() !== 0) {
+    it.effect(
+      "keeps the upload when the package cannot be opened, and validates it again later",
+      () =>
+        Effect.gen(function* () {
+          resetImporter();
+          const config = yield* ServerConfig.ServerConfig;
+          const staging = yield* makeStaging();
+          const bytes = yield* packageBytes;
+          const { importId } = yield* upload(staging, bytes);
+          const packagePath = NodePath.join(stagingRoot(config), importId, "package.scic");
+          // An operating-system failure (here EACCES) says nothing about the file.
+          NodeFS.chmodSync(packagePath, 0o000);
+          const error = yield* Effect.flip(staging.preview(importId));
+          assert.strictEqual(error._tag, "ConversationImportStagingFailure");
+          assert.isTrue(NodeFS.existsSync(packagePath));
+          NodeFS.chmodSync(packagePath, 0o600);
+          const preview = yield* staging.preview(importId);
+          assert.strictEqual(preview.package.packageSha256, sha256Digest(bytes));
+        }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+    );
+  }
 
   it.effect("keeps the upload after a read error, and validates it again later", () =>
     Effect.gen(function* () {

@@ -49,6 +49,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as Yauzl from "yauzl";
 
@@ -139,6 +140,23 @@ export function reportedEntryName(entry: string | null): string | null {
   }
   bounded = bounded.trim();
   return bounded.length === 0 ? null : bounded;
+}
+
+/**
+ * An operating-system failure (too many open files, permission, I/O), which
+ * says nothing about the file's content: reported as a read error, which the
+ * caller may retry, never as a damaged archive. Errno codes are `E` and
+ * capitals; zlib's (`Z_DATA_ERROR`) and yauzl's own format errors are not.
+ */
+function isSystemError(cause: unknown): boolean {
+  const code = Predicate.isObject(cause) ? (cause as { readonly code?: unknown }).code : undefined;
+  return typeof code === "string" && /^E[A-Z0-9]+$/u.test(code);
+}
+
+/** `reject(...)` for a damaged archive, unless `cause` is an OS failure, which is rethrown. */
+function rejectDamaged(cause: unknown, detail: string, entry: string | null = null): never {
+  if (isSystemError(cause)) throw cause;
+  return reject("corrupt-archive", detail, entry);
 }
 
 function reject(
@@ -271,8 +289,8 @@ async function readEntry(
   let readable: NodeStream.Readable;
   try {
     readable = await openEntry(zip, entry);
-  } catch {
-    return reject("corrupt-archive", "An entry could not be read.", name);
+  } catch (cause) {
+    return rejectDamaged(cause, "An entry could not be read.", name);
   }
   const hash = NodeCrypto.createHash("sha256");
   // A kept entry is copied into one buffer of its declared size as it arrives,
@@ -328,7 +346,7 @@ async function readEntry(
       if (sinkError !== null) throw sinkError;
       if (isScicRejection(cause)) throw cause;
       if (signal.aborted) throw cause;
-      return reject("corrupt-archive", "An entry is damaged.", name);
+      return rejectDamaged(cause, "An entry is damaged.", name);
     }
     if (byteLength !== entry.uncompressedSize || crc >>> 0 !== entry.crc32 >>> 0) {
       return reject("corrupt-archive", "An entry does not match its checksum.", name);
@@ -510,8 +528,8 @@ async function readPackage(
   let zip: Yauzl.ZipFile;
   try {
     zip = await openZip(input.packagePath);
-  } catch {
-    return reject("corrupt-archive", "The file is not a readable ZIP archive.");
+  } catch (cause) {
+    return rejectDamaged(cause, "The file is not a readable ZIP archive.");
   }
   try {
     // yauzl reads the (possibly ZIP64) central-directory count when opening.
@@ -522,8 +540,8 @@ async function readPackage(
     let listed: ReadonlyArray<Yauzl.Entry>;
     try {
       listed = await listEntries(zip);
-    } catch {
-      return reject("corrupt-archive", "The file's directory is damaged.");
+    } catch (cause) {
+      return rejectDamaged(cause, "The file's directory is damaged.");
     }
     const checked = checkStructure(listed);
     const archive = new Map(checked.map((entry) => [entry.name, entry]));

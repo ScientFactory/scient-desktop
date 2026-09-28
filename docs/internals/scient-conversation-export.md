@@ -226,13 +226,16 @@ The contract between staging and the importer is the header of
   database: about 3.5 s at 5,000 records, 14 s at 10,000, and 65 s at 20,000.
 - **Refusals and retries.** A refused file ends the import and removes its area; every rejection
   reason has its own short message, and a reported entry name is bounded, trimmed, and omitted when
-  blank. Failures a retry may clear (no room yet, a read error) keep the upload, so the next
-  preview validates it again.
+  blank. Failures a retry may clear (no room yet, or an operating-system error such as a file
+  that cannot be opened) keep the upload, so the next preview validates it again. Once a file is
+  validated its package is removed; a package that cannot be removed yet stays counted against the
+  quota until the sweep removes it.
 - **Confirm.** Attachments are published into the attachment store before the thread commits, each
   flushed to disk before its rename and its folder after, so a published file survives a power
   loss. The command's receipt then decides the outcome, as the contract describes.
 - **Partial Markdown.** Importing only the clean messages of damaged Scient Markdown counts each
-  damaged range left out as a skipped record, so the thread's banner, provider handoff, and a
+  damaged range whose content was left out as a skipped record (a foreign marker kept as text, or
+  a gap in the message numbers, is not one), so the thread's banner, provider handoff, and a
   re-export keep the gap. An ordinary Markdown document is imported as the first message's
   attachment, and the provider handoff says the user shared a document, not an imported
   transcript.
