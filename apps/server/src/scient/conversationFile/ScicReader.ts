@@ -117,16 +117,28 @@ export function stagedAttachmentFile(attachmentsDirectory: string, sha256: Sha25
 
 const MAX_REPORTED_ENTRY_CHARS = 512;
 
+/**
+ * An entry path as a rejection reports it: at most 512 UTF-16 units, never
+ * ending inside a surrogate pair, trimmed, and null when nothing is left, so
+ * it always fits the contract's bounded, trimmed, non-empty entry text.
+ */
+export function reportedEntryName(entry: string | null): string | null {
+  if (entry === null) return null;
+  let bounded = entry.slice(0, MAX_REPORTED_ENTRY_CHARS);
+  const last = bounded.charCodeAt(bounded.length - 1);
+  if (bounded.length < entry.length && last >= 0xd800 && last <= 0xdbff) {
+    bounded = bounded.slice(0, -1);
+  }
+  bounded = bounded.trim();
+  return bounded.length === 0 ? null : bounded;
+}
+
 function reject(
   reason: ConversationImportRejectionReason,
   detail: string,
   entry: string | null = null,
 ): never {
-  throw new ScicRejection({
-    reason,
-    entry: entry === null ? null : entry.slice(0, MAX_REPORTED_ENTRY_CHARS),
-    detail,
-  });
+  throw new ScicRejection({ reason, entry: reportedEntryName(entry), detail });
 }
 
 const utf8 = new TextDecoder("utf-8", { fatal: true });

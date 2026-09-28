@@ -221,10 +221,25 @@ const importError = (
   rejection: ConversationImportRejection | null = null,
 ) => new ScientConversationImportError({ reason, rejection, message });
 
-const REJECTION_MESSAGES: Partial<Record<ConversationImportRejection["reason"], string>> = {
-  "unsupported-version": "This file was made by a newer Scient. Update Scient to import it.",
+/** What the user reads for each rejection: plain, short, and free of codes or paths. */
+const REJECTION_MESSAGES: Record<ConversationImportRejection["reason"], string> = {
+  "corrupt-archive": "This file is damaged and cannot be opened.",
   "mimetype-invalid": "This is not a Scient conversation file.",
-  "corrupt-archive": "This file is damaged.",
+  "unsafe-path": "This file contains a file name Scient does not accept.",
+  "special-entry": "This file contains a link or folder Scient does not accept.",
+  "duplicate-path": "This file contains the same item twice.",
+  "encrypted-entry": "This file is encrypted. Scient cannot import encrypted files.",
+  "too-many-entries": "This file contains too many items to import.",
+  "entry-too-large": "Part of this file is too large to import.",
+  "package-too-large": "This file is too large to import.",
+  "compression-ratio": "This file is compressed in a way Scient does not accept.",
+  "manifest-invalid": "This file's list of contents is damaged.",
+  "unsupported-version": "This file was made by a newer Scient. Update Scient to import it.",
+  "manifest-mismatch": "This file was changed or damaged after it was exported.",
+  "undeclared-entry": "This file contains content Scient did not expect.",
+  "snapshot-invalid": "The conversation in this file is damaged or was edited.",
+  "attachment-type-mismatch": "An attachment in this file is not the type it claims to be.",
+  "attachment-policy": "An attachment in this file is a type or size Scient does not accept.",
 };
 
 function directoryIsEmpty(directory: string): boolean {
@@ -807,12 +822,7 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
             const cause = read.cause.reasons.find((reason) => reason._tag === "Fail")?.error;
             if (cause?._tag === "ScicRejection") {
               const rejection = { reason: cause.reason, entry: cause.entry };
-              return importError(
-                "package-rejected",
-                REJECTION_MESSAGES[cause.reason] ??
-                  "This file cannot be imported: it failed Scient's checks.",
-                rejection,
-              );
+              return importError("package-rejected", REJECTION_MESSAGES[cause.reason], rejection);
             }
             if (cause?._tag === "ScientConversationImportError") return cause;
             return new ConversationImportStagingFailure({

@@ -13,6 +13,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   SCIENT_CONVERSATION_IMPORT_MAX_PACKAGE_BYTES,
+  ScientConversationImportError,
   ThreadId,
   type ConversationImportDestination,
   type ConversationImportId,
@@ -21,8 +22,10 @@ import {
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -398,8 +401,32 @@ describe("ConversationImportStaging", () => {
       if (error._tag === "ScientConversationImportError") {
         assert.strictEqual(error.reason, "package-rejected");
         assert.deepStrictEqual(error.rejection, { reason: "corrupt-archive", entry: null });
+        assert.strictEqual(error.message, "This file is damaged and cannot be opened.");
       }
       assert.isFalse(NodeFS.existsSync(NodePath.join(stagingRoot(config), importId)));
+    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+  );
+
+  it.effect("tells the user in plain words why each kind of file was refused", () =>
+    Effect.gen(function* () {
+      resetImporter();
+      const staging = yield* makeStaging();
+      const files = makePackage().files;
+      const { importId } = yield* upload(
+        staging,
+        yield* Effect.promise(() => zipBytesPromise([...files, { path: "   ", bytes: PNG }])),
+      );
+      const error = yield* Effect.flip(staging.preview(importId));
+      assert.strictEqual(error._tag, "ScientConversationImportError");
+      if (error._tag === "ScientConversationImportError") {
+        assert.deepStrictEqual(error.rejection, { reason: "undeclared-entry", entry: null });
+        assert.strictEqual(error.message, "This file contains content Scient did not expect.");
+        // The error survives the HTTP encoding and a client's decoding.
+        const wire = yield* Schema.encodeEffect(ScientConversationImportError)(error);
+        assert.isTrue(
+          Exit.isSuccess(Schema.decodeUnknownExit(ScientConversationImportError)(wire)),
+        );
+      }
     }).pipe(Effect.scoped, Effect.provide(TestLayer)),
   );
 

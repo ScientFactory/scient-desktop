@@ -5,16 +5,23 @@ import * as NodePath from "node:path";
 
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import {
+  ConversationImportRejection,
   SCIC_MEDIA_TYPE,
   type ConversationImportId,
   type ConversationImportRejectionReason,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Schema from "effect/Schema";
 import * as yazl from "yazl";
 
 import { conversationContentDigest } from "../conversationImport/ConversationImporter.ts";
-import { inspectScicExpandedBytes, readScicPackage, stagedAttachmentFile } from "./ScicReader.ts";
+import {
+  inspectScicExpandedBytes,
+  readScicPackage,
+  reportedEntryName,
+  stagedAttachmentFile,
+} from "./ScicReader.ts";
 import {
   PDF,
   PNG,
@@ -160,7 +167,7 @@ const read = Effect.fnUntraced(function* (bytes: Uint8Array, directory = tempora
 const expectRejected = Effect.fnUntraced(function* (
   bytes: Uint8Array,
   reason: ConversationImportRejectionReason,
-  entry?: string,
+  entry?: string | null,
 ) {
   const { exit } = yield* read(bytes);
   if (Exit.isSuccess(exit)) throw new Error(`Expected ${reason}, but the package validated.`);
@@ -623,6 +630,32 @@ describe("the .scic reader", () => {
           "undeclared-entry",
           "notes.txt",
         );
+      }),
+    );
+
+    it.effect("reports entry names that always fit the rejection contract", () =>
+      Effect.gen(function* () {
+        // What a client decodes: a trimmed, non-empty name of at most 512 units, or null.
+        const decodeRejection = Schema.decodeUnknownExit(ConversationImportRejection);
+        // A name of spaces only is reported as no name at all.
+        yield* expectRejected(
+          yield* zipBytes([...makePackage().files, { path: "   ", bytes: PNG }]),
+          "undeclared-entry",
+          null,
+        );
+        // A long name is cut at 512 units, never inside a surrogate pair, and trimmed.
+        const long = `${"a".repeat(509)} b😀c`;
+        const entry = `${"a".repeat(509)} b`;
+        yield* expectRejected(
+          yield* zipBytes([...makePackage().files, { path: long, bytes: PNG }]),
+          "unsafe-path",
+          entry,
+        );
+        for (const name of [entry, reportedEntryName("  \t "), reportedEntryName(long)]) {
+          expect(Exit.isSuccess(decodeRejection({ reason: "undeclared-entry", entry: name }))).toBe(
+            true,
+          );
+        }
       }),
     );
 
