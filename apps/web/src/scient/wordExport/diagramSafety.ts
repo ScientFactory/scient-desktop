@@ -12,8 +12,9 @@
 /** CSS that loads a resource, once CSS escapes are decoded. */
 const FETCHING_CSS =
   /(?:^|[^\w-])(?:-(?:webkit|moz|o|ms)-)?(?:url|image|image-set|cross-fade|element|src)\s*\(|@import/iu;
-/** A styling statement, at the start of a line or after a `;` statement separator. */
-const STYLE_STATEMENT = /(?:^|;)[ \t]*(?:style|classDef|linkStyle|cssClass)\b/giu;
+const STYLE_STATEMENT = /^\s*(?:style|classDef|linkStyle|cssClass)\b/iu;
+/** A CSS declaration (`background: …`) that a `;` inside a style list introduced. */
+const CSS_DECLARATION = /^\s*-?[a-z][a-z0-9-]*\s*:(?!:)/iu;
 
 /** Decodes CSS escapes (`\75`, `\72 `, `\(`) so an escaped `url(` is still seen. */
 function decodeCssEscapes(text: string): string {
@@ -28,14 +29,40 @@ function decodeCssEscapes(text: string): string {
 
 const fetchesInCss = (css: string) => FETCHING_CSS.test(decodeCssEscapes(css));
 
-/** Why the diagram's styling statements could fetch a resource, or null when they cannot. */
+/** A line's statements: split at each `;` that is not inside a double-quoted string. */
+function statementsOf(line: string): string[] {
+  const statements: string[] = [];
+  let quoted = false;
+  let start = 0;
+  for (let at = 0; at < line.length; at += 1) {
+    if (line[at] === '"') quoted = !quoted;
+    else if (line[at] === ";" && !quoted) {
+      statements.push(line.slice(start, at));
+      start = at + 1;
+    }
+  }
+  statements.push(line.slice(start));
+  return statements;
+}
+
+/**
+ * Why the diagram's styling statements could fetch a resource, or null when
+ * they cannot. Each statement ends at a newline or an unquoted `;`, except
+ * that the declarations of a style list some diagram types read to the end
+ * of the line (`fill:red; background:url(…)`) stay part of it. Labels in
+ * later statements are not inspected.
+ */
 export function mermaidStyleFetchRisk(source: string): string | null {
   for (const line of source.split(/\r\n?|\n/u)) {
-    for (const statement of line.matchAll(STYLE_STATEMENT)) {
-      // The rest of the line: the statement and anything a `;` joined after it.
-      if (fetchesInCss(line.slice(statement.index))) {
-        return "the diagram's styles refer to an outside resource";
+    const statements = statementsOf(line);
+    for (const [index, statement] of statements.entries()) {
+      if (!STYLE_STATEMENT.test(statement)) continue;
+      let css = statement;
+      for (const next of statements.slice(index + 1)) {
+        if (!CSS_DECLARATION.test(next) || STYLE_STATEMENT.test(next)) break;
+        css += `;${next}`;
       }
+      if (fetchesInCss(css)) return "the diagram's styles refer to an outside resource";
     }
   }
   return null;

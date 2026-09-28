@@ -20,7 +20,7 @@ const png = (bytes = 3) => new Blob([new Uint8Array(bytes).fill(1)], { type: "im
 beforeEach(() => {
   mermaidSvgToPngBlob.mockReset().mockResolvedValue(png());
   parse.mockReset().mockResolvedValue({ config: {} });
-  render.mockReset().mockResolvedValue({ svg: "<svg/>", refused: 0 });
+  render.mockReset().mockResolvedValue({ svg: "<svg/>", diagramType: "flowchart-v2", refused: 0 });
   close.mockReset();
   openIsolatedMermaid.mockReset().mockResolvedValue({ parse, render, close, window: {} as Window });
 });
@@ -50,7 +50,7 @@ describe("Word Mermaid capture", () => {
   });
 
   it("falls back when the frame refused a load while drawing", async () => {
-    render.mockResolvedValueOnce({ svg: "<svg/>", refused: 1 });
+    render.mockResolvedValueOnce({ svg: "<svg/>", diagramType: "sequence", refused: 1 });
     const joined =
       'sequenceDiagram\nparticipant A;properties A: {"icon":"https://example.invalid/pixel.png"}\nA->>A: hi';
     expect(await tags(joined, "flowchart LR\nA --> B")).toEqual(["render-failed", "png"]);
@@ -91,7 +91,7 @@ describe("Word Mermaid capture", () => {
   it("never fails the export: frame, draw, rasterise, and size failures fall back", async () => {
     render
       .mockRejectedValueOnce(new Error("Parse error"))
-      .mockResolvedValue({ svg: "<svg/>", refused: 0 });
+      .mockResolvedValue({ svg: "<svg/>", diagramType: "flowchart-v2", refused: 0 });
     mermaidSvgToPngBlob
       .mockResolvedValueOnce(png())
       .mockRejectedValueOnce(new Error("The diagram contains an external resource"))
@@ -114,6 +114,25 @@ describe("Word Mermaid capture", () => {
       "render-failed",
       "render-failed",
     ]);
+  });
+
+  it("falls back for a diagram over chat's size limit instead of drawing Mermaid's stand-in", async () => {
+    // Few edges, one long label: Mermaid parses it, then draws a stand-in over maxTextSize.
+    const oversized = `flowchart LR\nA["${"x".repeat(50_000)}"] --> B`;
+    expect(oversized.length).toBeGreaterThan(50_000);
+    expect(await tags(oversized, "   ", "flowchart LR\nA --> B")).toEqual([
+      "render-failed",
+      "render-failed",
+      "png",
+    ]);
+    expect(parse).toHaveBeenCalledTimes(1);
+    expect(render).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back when Mermaid drew its own error diagram", async () => {
+    render.mockResolvedValueOnce({ svg: "<svg/>", diagramType: "error", refused: 0 });
+    expect(await tags("flowchart LR\nA --> B")).toEqual(["render-failed"]);
+    expect(mermaidSvgToPngBlob).not.toHaveBeenCalled();
   });
 
   it("stops embedding once the diagrams' total PNG budget is spent", async () => {

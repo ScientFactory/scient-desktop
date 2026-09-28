@@ -32,8 +32,15 @@ type MermaidApi = typeof import("mermaid").default;
 export interface IsolatedMermaid {
   /** The front matter and `%%{init}%%` settings as Mermaid read them, or null when it does not parse. */
   readonly parse: (source: string) => Promise<{ readonly config: MermaidConfig } | null>;
-  /** The SVG, and how many loads the frame refused while drawing it. */
-  readonly render: (source: string) => Promise<{ readonly svg: string; readonly refused: number }>;
+  /**
+   * The SVG, the diagram type Mermaid drew (`error` for its own error
+   * diagram), and how many loads the frame refused while drawing it.
+   */
+  readonly render: (source: string) => Promise<{
+    readonly svg: string;
+    readonly diagramType: string;
+    readonly refused: number;
+  }>;
   /** The frame's window, for tests of what it requested. */
   readonly window: Window;
   readonly close: () => void;
@@ -118,9 +125,12 @@ export async function openIsolatedMermaid(): Promise<IsolatedMermaid> {
         const before = refused;
         sequence += 1;
         try {
-          const { svg } = await mermaid.render(`scient-word-diagram-${sequence}`, source);
+          const { svg, diagramType } = await mermaid.render(
+            `scient-word-diagram-${sequence}`,
+            source,
+          );
           await settle();
-          return { svg, refused: refused - before };
+          return { svg, diagramType, refused: refused - before };
         } catch (cause) {
           throw asPageError(cause);
         }

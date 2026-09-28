@@ -1,7 +1,7 @@
 import type { ScientWordDiagramCapture, ScientWordDiagramPlan } from "@t3tools/contracts";
 
 import { mermaidSvgToPngBlob } from "../diagrams/mermaidExport";
-import { planMermaidRecovery } from "../diagrams/mermaidRecovery";
+import { MAX_MERMAID_SOURCE_LENGTH, planMermaidRecovery } from "../diagrams/mermaidRecovery";
 import { mermaidConfigFetchRisk, mermaidStyleFetchRisk } from "./diagramSafety";
 import { openIsolatedMermaid, type IsolatedMermaid } from "./isolatedMermaid";
 
@@ -12,13 +12,23 @@ type DiagramResult = ScientWordDiagramCapture["diagrams"][number]["result"];
 const RENDER_FAILED: DiagramResult = { _tag: "render-failed" };
 
 /**
+ * Chat's own bounds on what it renders. Mermaid does not refuse a source
+ * over its `maxTextSize`: it draws a small "text size exceeded" diagram
+ * instead, which must not reach the Word file as if it were the diagram.
+ */
+const withinRenderLimits = (source: string) =>
+  source.trim().length > 0 && source.length <= MAX_MERMAID_SOURCE_LENGTH;
+
+/**
  * The source to draw: the diagram as written, or the repaired copy chat
- * falls back to after a syntax error. Null when neither parses, or when its
- * styles or settings refer to an outside resource.
+ * falls back to after a syntax error. Null when neither parses, when either
+ * is outside chat's render limits, or when its styles or settings refer to
+ * an outside resource.
  */
 async function drawableSource(mermaid: IsolatedMermaid, source: string): Promise<string | null> {
+  if (!withinRenderLimits(source)) return null;
   for (const candidate of [source, planMermaidRecovery(source)?.source]) {
-    if (candidate === undefined) continue;
+    if (candidate === undefined || !withinRenderLimits(candidate)) continue;
     const parsed = await mermaid.parse(candidate);
     if (parsed === null) continue;
     return mermaidStyleFetchRisk(candidate) === null &&
@@ -63,8 +73,8 @@ export async function captureWordDiagrams(
       const result = await (async (): Promise<DiagramResult> => {
         const drawable = await drawableSource(mermaid, source);
         if (drawable === null) return RENDER_FAILED;
-        const { svg, refused } = await mermaid.render(drawable);
-        if (refused > 0) return RENDER_FAILED;
+        const { svg, diagramType, refused } = await mermaid.render(drawable);
+        if (refused > 0 || diagramType === "error") return RENDER_FAILED;
         // Refuses an SVG that still refers outside itself before drawing it.
         const blob = await mermaidSvgToPngBlob(svg, "light");
         if (

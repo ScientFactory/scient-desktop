@@ -85,6 +85,12 @@ describe("Word diagram capture with the real Mermaid", () => {
     expect(results).toEqual(["png", "png", "png", "png", "png"]);
   });
 
+  it("falls back for a diagram over chat's size limit, not Mermaid's stand-in image", async () => {
+    // Few edges, one long label: Mermaid parses it, then draws a stand-in over maxTextSize.
+    const oversized = `flowchart LR\nA["${"x".repeat(50_000)}"] --> B`;
+    expect(await capture([oversized])).toEqual(["render-failed"]);
+  });
+
   it("makes no request for a diagram that names an outside resource, and falls back", async () => {
     const results = await capture(Object.values(FETCHING));
     await settle();

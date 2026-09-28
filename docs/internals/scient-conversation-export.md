@@ -202,8 +202,10 @@ a refused load makes that diagram fall back. The frame loads Mermaid's standalon
 export has diagrams, and draws with the settings chat uses (`mermaidRenderConfig`). As a second layer,
 `wordExport/diagramSafety.ts` refuses, before drawing, styling statements (`style`, `classDef`,
 `linkStyle`, `cssClass`) with CSS fetch functions and configuration outside the theme, layout, and
-per-diagram options, read as Mermaid parsed it from front matter and `%%{init}%%`; label text is not
-inspected. The rasteriser inspects the SVG again before drawing. Any diagram that is refused, needed
+per-diagram options, read as Mermaid parsed it from front matter and `%%{init}%%`; each styling
+statement ends at a newline or an unquoted `;` (keeping a style list's later declarations), and label
+text is not inspected. Sources over chat's render limit (50,000 characters) are not drawn, because
+Mermaid would substitute a small "text size exceeded" diagram; its own error diagram also falls back. The rasteriser inspects the SVG again before drawing. Any diagram that is refused, needed
 an outside resource, fails to render or encode, or exceeds the PNG budget is captured as
 `render-failed`: Word shows its labeled Mermaid source with a warning, and the export continues. A
 server-only Word caller that supplies no capture retains the same fallback.

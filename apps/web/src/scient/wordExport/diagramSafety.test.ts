@@ -9,6 +9,10 @@ describe("mermaidStyleFetchRisk", () => {
       'flowchart LR\nA["a label that mentions url(x)"] --> B["@import"]',
       'flowchart LR\nA["url(x)"];style A fill:#f9f,stroke:#333',
       "flowchart LR\nA[see image-set(x) docs] --> B\nclassDef note fill:#ffe",
+      // Statements after a style end it; their labels are not styles.
+      'flowchart LR\nA-->B\nstyle A fill:#f9f; B["https://example.org/url(report)"]',
+      'flowchart LR\nstyle A fill:#f9f;B:::c["url(x)"]',
+      'flowchart LR\nA["a;style x url(y)"] --> B',
     ]) {
       expect(mermaidStyleFetchRisk(source), source).toBeNull();
     }
@@ -21,6 +25,9 @@ describe("mermaidStyleFetchRisk", () => {
       "flowchart LR\nA --> B;linkStyle 0 stroke:url(#x)",
       "classDiagram\nclass A\ncssClass \"A\" x;classDef x background:image-set('p.png' 1x)",
       "flowchart LR\nA --> B\n  classDef c font:@\\69mport",
+      // A style list read to the end of the line keeps its later declarations.
+      "stateDiagram-v2\nclassDef c fill:red; background-image:url(https://example.invalid/p)",
+      'flowchart LR\nA-->B; style A stroke:#333 ; B["x"]; linkStyle 0 stroke:url(#x)',
     ]) {
       expect(mermaidStyleFetchRisk(source), source).not.toBeNull();
     }
