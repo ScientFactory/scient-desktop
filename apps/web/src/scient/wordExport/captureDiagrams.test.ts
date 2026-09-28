@@ -70,4 +70,22 @@ describe("Word Mermaid capture", () => {
     ).rejects.toThrow(/external resource/);
     expect(renderMermaidDiagram).not.toHaveBeenCalled();
   });
+
+  it("refuses Mermaid config and CSS-escaped resource URLs before rendering", async () => {
+    const escapedResource =
+      '%%{init: {"themeCSS":"*{background-image:u\\72l(h\\74tps://example.invalid/pixel)}"}}%%\nflowchart LR\nA --> B';
+    await expect(
+      captureWordDiagrams({
+        ...plan,
+        diagrams: [{ ...plan.diagrams[0]!, source: escapedResource }],
+      }),
+    ).rejects.toThrow(/external resource/);
+    await expect(
+      captureWordDiagrams({
+        ...plan,
+        diagrams: [{ ...plan.diagrams[0]!, source: "flowchart LR\nstyle A fill:u\\72l(x)" }],
+      }),
+    ).rejects.toThrow(/external resource/);
+    expect(renderMermaidDiagram).not.toHaveBeenCalled();
+  });
 });

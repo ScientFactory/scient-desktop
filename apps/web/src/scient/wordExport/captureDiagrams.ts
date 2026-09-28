@@ -17,7 +17,7 @@ export async function captureWordDiagrams(
     // Mermaid can create DOM while rendering, before the SVG rasterizer gets
     // a chance to inspect it. Refuse sources that could load a resource there.
     if (
-      /(?:https?:|(?:^|[\s"'(])\/\/|url\s*\(|@import|<\s*(?:img|image|link|iframe|script)\b|\b(?:img|image)\s*:)/iu.test(
+      /(?:https?:|(?:^|[\s"'(])\/\/|url\s*\(|@import|<\s*(?:img|image|link|iframe|script)\b|\b(?:img|image)\s*:|%%\s*\{|\\[0-9a-f]{1,6}(?:\s|$)?)/iu.test(
         source,
       )
     ) {
