@@ -6,6 +6,9 @@ import * as NodePath from "node:path";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
 import {
+  cancelOpenedConversationFileUploadFor,
+  listenForOpenedConversationFiles,
+  makeOpenedPathRelay,
   registerOpenedConversationFile,
   remoteUploadApprovalOptions,
   takeOpenedConversationFileList,
@@ -26,11 +29,14 @@ afterEach(() => {
   }
 });
 
-async function openedFile(name = "opened.scic") {
+async function openedFile(
+  name = "opened.scic",
+  contents: string | Uint8Array = "portable conversation",
+) {
   const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-opened-scic-"));
   directories.push(directory);
   const path = NodePath.join(directory, name);
-  NodeFS.writeFileSync(path, "portable conversation");
+  NodeFS.writeFileSync(path, contents);
   expect(await registerOpenedConversationFile(path)).toBe(true);
   const [file] = takeOpenedConversationFileList();
   if (!file) throw new Error("The opened file was not returned to the renderer.");
@@ -116,7 +122,7 @@ describe("OS-opened conversation file upload retry", () => {
         approveRemote,
         fetchImpl,
       ),
-    ).toEqual({ _tag: "failed", reason: "rejected" });
+    ).toEqual({ _tag: "failed", reason: "declined" });
     expect(requests).toBe(0);
     expect(
       await uploadOpenedConversationFileTo(
@@ -163,7 +169,7 @@ describe("OS-opened conversation file upload retry", () => {
     expect(await upload(remoteUrl.replace("remote.example.com", "REMOTE.example.com:443"))).toEqual(
       {
         _tag: "failed",
-        reason: "rejected",
+        reason: "declined",
       },
     );
     expect(requests).toBe(0);
@@ -254,5 +260,157 @@ describe("OS-opened conversation file upload retry", () => {
       fetchImpl,
     );
     expect(result).toEqual({ _tag: "failed", reason: "network-failed" });
+  });
+});
+
+describe("OS-opened conversation file upload outcomes", () => {
+  const managedUrl = `http://127.0.0.1:31234${route}`;
+  const managed = new Set(["http://127.0.0.1:31234"]);
+
+  it("tells a declined send from a server refusal", async () => {
+    const file = await openedFile();
+    let requests = 0;
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      requests += 1;
+      await new Response(init?.body).arrayBuffer();
+      return new Response(null, { status: 409 });
+    };
+    expect(
+      await uploadOpenedConversationFileTo(
+        { token: file.token, url: remoteUrl },
+        permitted,
+        async () => false,
+        fetchImpl,
+      ),
+    ).toEqual({ _tag: "failed", reason: "declined" });
+    expect(requests).toBe(0);
+    expect(
+      await uploadOpenedConversationFileTo(
+        { token: file.token, url: managedUrl },
+        managed,
+        async () => false,
+        fetchImpl,
+      ),
+    ).toEqual({ _tag: "failed", reason: "rejected" });
+    expect(requests).toBe(1);
+  });
+
+  it("stops the request and the file read when an upload is cancelled midway", async () => {
+    const file = await openedFile("large.scic", new Uint8Array(4 * 1024 * 1024));
+    let firstChunk: () => void = () => undefined;
+    const started = new Promise<void>((resolve) => {
+      firstChunk = resolve;
+    });
+    let signal: AbortSignal | undefined;
+    let readAfterCancel: "failed" | "continued" | null = null;
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      signal = init?.signal ?? undefined;
+      const body = init?.body as ReadableStream<Uint8Array> | undefined;
+      if (body === undefined) throw new Error("The upload has no body.");
+      const reader = body.getReader();
+      await reader.read();
+      firstChunk();
+      await new Promise((resolve) => signal?.addEventListener("abort", resolve, { once: true }));
+      readAfterCancel = await reader.read().then(
+        () => "continued" as const,
+        () => "failed" as const,
+      );
+      throw new DOMException("The upload was aborted.", "AbortError");
+    };
+    const uploading = uploadOpenedConversationFileTo(
+      { token: file.token, url: managedUrl },
+      managed,
+      async () => false,
+      fetchImpl,
+    );
+    await started;
+    cancelOpenedConversationFileUploadFor(file.token);
+    expect(await uploading).toEqual({ _tag: "failed", reason: "cancelled" });
+    expect(signal?.aborted).toBe(true);
+    // The file stream was closed under the request's body.
+    expect(readAfterCancel).toBe("failed");
+  });
+
+  it("sends nothing for an upload cancelled before it started", async () => {
+    const file = await openedFile();
+    let requests = 0;
+    const fetchImpl: typeof fetch = async () => {
+      requests += 1;
+      return new Response(null, { status: 204 });
+    };
+    cancelOpenedConversationFileUploadFor(file.token);
+    expect(
+      await uploadOpenedConversationFileTo(
+        { token: file.token, url: managedUrl },
+        managed,
+        async () => true,
+        fetchImpl,
+      ),
+    ).toEqual({ _tag: "failed", reason: "cancelled" });
+    expect(requests).toBe(0);
+    // An unknown token is ignored.
+    cancelOpenedConversationFileUploadFor("unknown-token");
+  });
+
+  it("sends nothing when the import is cancelled while the send is awaiting approval", async () => {
+    const file = await openedFile();
+    let requests = 0;
+    const fetchImpl: typeof fetch = async () => {
+      requests += 1;
+      return new Response(null, { status: 204 });
+    };
+    const result = await uploadOpenedConversationFileTo(
+      { token: file.token, url: remoteUrl },
+      permitted,
+      async () => {
+        cancelOpenedConversationFileUploadFor(file.token);
+        return true;
+      },
+      fetchImpl,
+    );
+    expect(result).toEqual({ _tag: "failed", reason: "cancelled" });
+    expect(requests).toBe(0);
+  });
+});
+
+describe("files macOS opens before Scient is ready", () => {
+  it("holds paths until a handler attaches, then hands over each one as it arrives", () => {
+    const relay = makeOpenedPathRelay(2);
+    relay.receive("/files/first.scic");
+    relay.receive("/files/second.scic");
+    relay.receive("/files/third.scic");
+    const opened: string[] = [];
+    const detach = relay.attach((path) => opened.push(path));
+    // The oldest is dropped beyond the limit.
+    expect(opened).toEqual(["/files/second.scic", "/files/third.scic"]);
+    relay.receive("/files/fourth.scic");
+    expect(opened).toEqual(["/files/second.scic", "/files/third.scic", "/files/fourth.scic"]);
+    detach();
+    relay.receive("/files/fifth.scic");
+    expect(opened).toHaveLength(3);
+    const later: string[] = [];
+    relay.attach((path) => later.push(path));
+    expect(later).toEqual(["/files/fifth.scic"]);
+  });
+
+  it("takes over open-file only for conversation files", () => {
+    const listeners: Array<(event: { preventDefault: () => void }, path: string) => void> = [];
+    const app = {
+      on: (_event: "open-file", listener: (event: never, path: string) => void) => {
+        listeners.push(listener as (typeof listeners)[number]);
+      },
+    };
+    const relay = makeOpenedPathRelay();
+    listenForOpenedConversationFiles(app, relay);
+    expect(listeners).toHaveLength(1);
+    const prevented: string[] = [];
+    const emit = (path: string) =>
+      listeners[0]!({ preventDefault: () => prevented.push(path) }, path);
+    emit("/files/Opened.SCIC");
+    emit("/files/notes.txt");
+    expect(prevented).toEqual(["/files/Opened.SCIC"]);
+    const opened: string[] = [];
+    relay.attach((path) => opened.push(path));
+    expect(opened).toEqual(["/files/Opened.SCIC"]);
   });
 });

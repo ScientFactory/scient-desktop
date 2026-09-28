@@ -410,7 +410,21 @@ export const DesktopConversationFileUploadResult = Schema.Union([
       "network-failed",
       /** The server refused the upload. */
       "rejected",
+      /** The user declined to send the file to that server; nothing was sent. */
+      "declined",
+      /** The upload was cancelled (`cancelOpenedConversationFileUpload`); the request was stopped. */
+      "cancelled",
     ]),
   }),
 ]);
 export type DesktopConversationFileUploadResult = typeof DesktopConversationFileUploadResult.Type;
+
+/**
+ * Stops an opened file's upload, or keeps it from starting: every later
+ * upload of this token ends `cancelled` without sending anything.
+ */
+export const DesktopConversationFileUploadCancelRequest = Schema.Struct({
+  token: ShortText(64),
+});
+export type DesktopConversationFileUploadCancelRequest =
+  typeof DesktopConversationFileUploadCancelRequest.Type;
