@@ -12,8 +12,6 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
-import * as NodeStreamPromises from "node:stream/promises";
-import { waitForWritableDrain } from "../conversationFile/waitForWritableDrain.ts";
 
 import {
   ATTACHMENT_UPLOAD_URL_TTL_MS,
@@ -58,6 +56,7 @@ import {
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
 import { readScicPackage, stagedAttachmentFile } from "../conversationFile/ScicReader.ts";
+import { copyVerified, sha256File } from "./stagedAttachmentCopy.ts";
 import {
   MARKDOWN_IMPORT_MAX_BYTES,
   MarkdownConversationRejection,
@@ -289,87 +288,6 @@ function directoryIsEmpty(directory: string): boolean {
     return NodeFS.readdirSync(directory).length === 0;
   } catch {
     return true;
-  }
-}
-
-async function sha256File(
-  path: string,
-  signal?: AbortSignal,
-): Promise<{ sha256: Sha256Digest; byteLength: number }> {
-  const hash = NodeCrypto.createHash("sha256");
-  let byteLength = 0;
-  for await (const chunk of NodeFS.createReadStream(path, { signal }) as AsyncIterable<Buffer>) {
-    hash.update(chunk);
-    byteLength += chunk.byteLength;
-  }
-  return { sha256: `sha256:${hash.digest("hex")}`, byteLength };
-}
-
-/** Copies `source` to `destination` through a temporary file, verifying it on the way. */
-async function copyVerified(
-  input: {
-    readonly source: string;
-    readonly destination: string;
-    readonly sha256: Sha256Digest;
-    readonly byteLength: number;
-  },
-  signal: AbortSignal,
-): Promise<"copied" | "present" | "corrupt" | "conflict"> {
-  if (signal.aborted) throw new Error("Attachment copy was interrupted.");
-  const existing = await NodeFS.promises.stat(input.destination).catch(() => null);
-  if (existing !== null) {
-    const present = await sha256File(input.destination, signal);
-    return present.sha256 === input.sha256 && present.byteLength === input.byteLength
-      ? "present"
-      : "conflict";
-  }
-  await NodeFS.promises.mkdir(NodePath.dirname(input.destination), { recursive: true });
-  const temporary = `${input.destination}.${NodeCrypto.randomUUID()}.part`;
-  const hash = NodeCrypto.createHash("sha256");
-  let byteLength = 0;
-  const sink = NodeFS.createWriteStream(temporary, { flags: "wx" });
-  const source = NodeFS.createReadStream(input.source, { signal });
-  source.on("error", () => {});
-  let sinkError: Error | null = null;
-  sink.on("error", (error: Error) => {
-    sinkError = error;
-    source.destroy(error);
-  });
-  const sinkFinished = NodeStreamPromises.finished(sink);
-  void sinkFinished.catch(() => {});
-  const sinkClosed = new Promise<void>((resolve) => sink.once("close", resolve));
-  const abort = () => {
-    const error = new Error("Attachment copy was interrupted.");
-    source.destroy(error);
-    sink.destroy(error);
-  };
-  signal.addEventListener("abort", abort, { once: true });
-  if (signal.aborted) abort();
-  try {
-    for await (const chunk of source as AsyncIterable<Buffer>) {
-      hash.update(chunk);
-      byteLength += chunk.byteLength;
-      if (!sink.write(chunk)) {
-        if (sinkError !== null) throw sinkError;
-        await waitForWritableDrain(sink);
-      }
-    }
-    if (signal.aborted) throw new Error("Attachment copy was interrupted.");
-    if (sinkError !== null) throw sinkError;
-    sink.end();
-    await sinkFinished;
-    if (`sha256:${hash.digest("hex")}` !== input.sha256 || byteLength !== input.byteLength) {
-      return "corrupt";
-    }
-    if (signal.aborted) throw new Error("Attachment copy was interrupted.");
-    await NodeFS.promises.rename(temporary, input.destination);
-    return "copied";
-  } finally {
-    signal.removeEventListener("abort", abort);
-    source.destroy();
-    if (!sink.closed) sink.destroy();
-    await sinkClosed;
-    await NodeFS.promises.rm(temporary, { force: true });
   }
 }
 
