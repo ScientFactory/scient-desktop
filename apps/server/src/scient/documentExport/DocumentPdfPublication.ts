@@ -4,6 +4,7 @@ import {
   BROWSER_PDF_EXPORT_MAX_BYTES,
   SCIENT_DOCUMENT_MAX_WARNINGS,
   ScientDocumentPdfExportError,
+  scientDocumentBlockedRequestsNote,
   scientDocumentReadinessRejection,
   type DocumentWarning,
   type ScientDocumentPageDiagnostic,
@@ -66,6 +67,14 @@ export function documentPdfWarnings(
     if (diagnostic.severity !== "warning") continue;
     const message = diagnostic.detail.trim();
     if (message) add({ code: PAGE_WARNING_CODES[diagnostic.code], message });
+  }
+  // Refused requests are the page's isolation working, not a failure; they are
+  // reported, never silent. See DocumentPagePdfRenderer.
+  if (render.blockedRequestCount > 0) {
+    add({
+      code: "resource-unresolved",
+      message: scientDocumentBlockedRequestsNote(render.blockedRequestCount),
+    });
   }
   return warnings.slice(0, SCIENT_DOCUMENT_MAX_WARNINGS);
 }

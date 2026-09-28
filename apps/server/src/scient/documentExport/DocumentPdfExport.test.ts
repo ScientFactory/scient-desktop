@@ -691,6 +691,21 @@ describe("document PDF publication", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("publishes a page whose isolation refused requests, and reports them", () =>
+    Effect.gen(function* () {
+      const { prepared } = yield* prepare;
+      const store = makeGeneratedDocumentStore();
+      const published = yield* publishCapturedDocumentPdf({
+        captureId: prepared.expected.captureId,
+        render: { ...renderResultFor(prepared.expected), blockedRequestCount: 2 },
+      }).pipe(Effect.provideService(GeneratedDocumentStore, store.store));
+      expect(published.warnings.at(-1)).toEqual({
+        code: "resource-unresolved",
+        message: "2 web resources were not loaded.",
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("rejects a wrong, stale, or unfinished page before publication", () =>
     Effect.gen(function* () {
       const cases = [

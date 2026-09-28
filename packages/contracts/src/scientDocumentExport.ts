@@ -324,6 +324,15 @@ export const ScientDocumentExportResult = Schema.Struct({
 });
 export type ScientDocumentExportResult = typeof ScientDocumentExportResult.Type;
 
+/**
+ * The export note for requests the document page's isolation refused. The
+ * desktop prints it in the PDF's notes and the server returns it as a warning,
+ * so a refused request never passes silently.
+ */
+export function scientDocumentBlockedRequestsNote(count: number): string {
+  return count === 1 ? "1 web resource was not loaded." : `${count} web resources were not loaded.`;
+}
+
 /** A readiness report the desktop may print: the expected page, finished, with no fatal diagnostic. */
 export function scientDocumentReadinessRejection(
   readiness: ScientDocumentPageReadiness,

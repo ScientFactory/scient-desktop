@@ -80,10 +80,12 @@ page used failed or did not finish loading, the source changed, the PDF is inval
 larger than 64 MiB (for a conversation, the message suggests leaving out the work log and
 reasoning, or exporting it as Markdown; for a file, a shorter document).
 
-The browser reports an image it could not fetch and one it could not decode the same way, so when
-a captured image does not display (an error, or a load with no measurable size, such as an SVG
-with only a `viewBox`), the page fetches it once more. Only bytes that were served and match the
-capture's digest are a content limitation.
+Every captured image the page shows is fetched once more and its bytes compared with the digest
+the capture recorded, whether or not it decoded; the final inspection refuses a shown image that
+was never checked. The browser reports an image it could not fetch and one it could not decode
+the same way, so a captured image that does not display (an error, or a load with no measurable
+size, such as an SVG with only a `viewBox`) is a content limitation only when that check found
+its bytes served and matching.
 
 A known content limitation does not stop publication: a missing, unsupported, or undecodable
 image prints as a labelled placeholder, a remote image is not downloaded, a Mermaid diagram with a syntax error
@@ -91,6 +93,12 @@ prints its source (the full parse error is in the notes), TeX that KaTeX cannot 
 and raw HTML outside GitHub's safe subset is removed. Each becomes a warning returned with the
 result and listed under **Export notes** at the end of the PDF. The page re-renders until those
 notes include everything its final inspection found, so a reported limitation is always printed.
+
+A request the page's isolation refused is that isolation working, not a failure. A refused
+request for a captured asset is fatal (above) and a remote image is a placeholder; any other
+refused request, such as a font or stylesheet, does not stop publication, but the desktop adds
+"N web resources were not loaded." to the page's export notes before printing, and the server
+returns the same note as a warning.
 
 ## The document page
 

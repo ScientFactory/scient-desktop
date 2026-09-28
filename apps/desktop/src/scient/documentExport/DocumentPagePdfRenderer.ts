@@ -5,6 +5,7 @@ import {
   SCIENT_DOCUMENT_PAGE_PATH,
   SCIENT_DOCUMENT_PAGE_READINESS_GLOBAL,
   ScientDocumentPageReadiness,
+  scientDocumentBlockedRequestsNote,
   scientDocumentReadinessRejection,
   type DesktopDocumentPageRenderInput,
   type DesktopDocumentPageRenderOutcome,
@@ -193,6 +194,11 @@ export interface DocumentPagePdfRendererOptions {
     webContents: WebContents,
   ) => Effect.Effect<DesktopPreviewPdfExportArtifact, BrowserPdfRendererError>;
   readonly readReadiness?: (webContents: WebContents) => Promise<unknown>;
+  /** Adds notes to the rendered page's export notes before it is printed. */
+  readonly appendNotes?: (
+    webContents: WebContents,
+    notes: ReadonlyArray<string>,
+  ) => Promise<unknown>;
   readonly fetchDevelopment?: (url: string) => Promise<Response>;
   readonly timeoutMs?: number;
 }
@@ -205,6 +211,31 @@ const readinessScript = `
       await new Promise((resolve) => setTimeout(resolve, ${READINESS_POLL_INTERVAL_MS}));
     }
     return null;
+  })()
+`;
+
+/** Appends notes to the page's "Export notes" section, creating it if the page had none. */
+const appendNotesScript = (notes: ReadonlyArray<string>) => `
+  (() => {
+    const article = document.querySelector("article.scient-document");
+    if (article === null) return false;
+    let section = article.querySelector("section.scient-document-notes");
+    if (section === null) {
+      section = document.createElement("section");
+      section.className = "scient-document-notes";
+      section.setAttribute("aria-label", "Export notes");
+      const heading = document.createElement("h2");
+      heading.textContent = "Export notes";
+      section.append(heading, document.createElement("ul"));
+      article.append(section);
+    }
+    const list = section.querySelector("ul") ?? section.appendChild(document.createElement("ul"));
+    for (const note of ${JSON.stringify(notes)}) {
+      const item = document.createElement("li");
+      item.textContent = note;
+      list.append(item);
+    }
+    return true;
   })()
 `;
 
@@ -247,6 +278,10 @@ export function createDocumentPagePdfRenderer(options: DocumentPagePdfRendererOp
   const readReadiness =
     options.readReadiness ??
     ((webContents: WebContents) => webContents.executeJavaScript(readinessScript, true));
+  const appendNotes =
+    options.appendNotes ??
+    ((webContents: WebContents, notes: ReadonlyArray<string>) =>
+      webContents.executeJavaScript(appendNotesScript(notes), true));
   const fetchDevelopment = options.fetchDevelopment ?? ((url: string) => Electron.net.fetch(url));
   const timeoutMs = options.timeoutMs ?? DOCUMENT_PAGE_TIMEOUT_MS;
   // Chromium print jobs compete for renderer resources; one document at a time.
@@ -376,6 +411,21 @@ export function createDocumentPagePdfRenderer(options: DocumentPagePdfRendererOp
           if (rejection !== null) {
             return yield* new DocumentPageRejection({
               outcome: rejected("page-rejected", rejection),
+            });
+          }
+          // A refused request is the page's isolation working, not a failed
+          // export: the page already treats a refused captured asset as fatal,
+          // and a remote image as a placeholder. Anything else refused (a font,
+          // a stylesheet) is printed as an export note and returned as a
+          // warning with blockedRequestCount, so it never passes silently.
+          if (blockedRequests.count > 0) {
+            const note = scientDocumentBlockedRequestsNote(blockedRequests.count);
+            yield* Effect.tryPromise({
+              try: () => appendNotes(window.webContents, [note]),
+              catch: () =>
+                new DocumentPageRejection({
+                  outcome: rejected("failed", "The document page could not list its export notes."),
+                }),
             });
           }
           const artifact = yield* print(window.webContents).pipe(
