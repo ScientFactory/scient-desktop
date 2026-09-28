@@ -151,8 +151,8 @@ type ImageRefusal =
 const REFUSAL_TEXT: Record<ImageRefusal, string> = {
   missing: "file not found",
   unavailable: "not available in this export",
-  "outside-allowlist": "outside the document's folder",
-  "symlink-outside-allowlist": "links outside the document's folder",
+  "outside-allowlist": "outside the project folder",
+  "symlink-outside-allowlist": "links outside the project folder",
   "absolute-path": "absolute paths are not embedded",
   "remote-or-scheme": "remote and non-file images are not embedded",
   "not-a-file": "not a regular file",
@@ -163,7 +163,7 @@ const REFUSAL_TEXT: Record<ImageRefusal, string> = {
   "too-large": "larger than 25 MB",
   "budget-exceeded": "the export's image size limit was reached",
   "changed-during-capture": "the file changed while its bytes were being captured",
-  "not-in-snapshot": "this image was not in the source snapshot; save and retry",
+  "not-in-snapshot": "not found in the project folder",
 };
 
 /** Loads the PNG rendering that stands in for an SVG, when there is one. */

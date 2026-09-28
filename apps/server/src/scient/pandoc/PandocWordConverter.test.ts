@@ -67,6 +67,51 @@ describe("PandocWordConverter", () => {
       }),
     ),
   );
+  it.live("names what to shorten when a LaTeX document or a file is over the source limit", () =>
+    run(withCommand(null), ({ converter, directory }) =>
+      Effect.gen(function* () {
+        const oversized = "a".repeat(MAX_WORD_SOURCE_BYTES + 1);
+        const latex = yield* converter
+          .convert({
+            bundle: makeBundle({ markdown: "" }),
+            latex: {
+              source: oversized,
+              baseDirectory: directory,
+              files: [],
+              imageReferences: [],
+              bibliography: [],
+              warnings: [],
+            },
+            outputPath: NodePath.join(directory, "latex.docx"),
+          })
+          .pipe(Effect.flip);
+        expect(latex.reason).toBe("too-large");
+        expect(latex.message).toContain("LaTeX document");
+        expect(latex.message).not.toContain("work log");
+        const file = yield* converter
+          .convert({
+            bundle: {
+              ...makeBundle({ markdown: oversized }),
+              metadata: {
+                ...makeBundle({ markdown: "" }).metadata,
+                source: {
+                  _tag: "workspace-file",
+                  cwd: directory,
+                  relativePath: "notes.md",
+                  revision: "r1",
+                },
+              },
+            },
+            outputPath: NodePath.join(directory, "file.docx"),
+          })
+          .pipe(Effect.flip);
+        expect(file.message).toBe(
+          "This file is over the 8 MB Word export limit. Export a shorter file.",
+        );
+      }),
+    ),
+  );
+
   it.live("keeps tabs on the Markdown read so Mermaid fences keep their capture id", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

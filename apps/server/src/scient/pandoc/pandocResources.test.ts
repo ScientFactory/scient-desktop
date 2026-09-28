@@ -108,7 +108,7 @@ describe("securePandocDocument", () => {
         expect(report.embeddedImages).toBe(1);
         expect(report.placeholders).toBe(1);
         expect(report.warnings.map((warning) => warning.message).join("\n")).toContain(
-          "not in the source snapshot; save and retry",
+          "not found in the project folder",
         );
       }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
@@ -383,7 +383,7 @@ describe("securePandocDocument", () => {
           "figures/vector.svg",
           `data:image/png;base64,${Buffer.from(PNG_BYTES_ALT).toString("base64")}`,
         ],
-        ["../home/notes.txt", "outside the document"],
+        ["../home/notes.txt", "outside the project folder"],
         [NodePath.join(home, "notes.txt"), "absolute paths"],
         ["C:\\Users\\someone\\notes.txt", "absolute paths"],
         ["\\\\server\\share\\x.png", "absolute paths"],

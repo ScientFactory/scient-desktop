@@ -190,6 +190,16 @@ const conversionTimeout = () =>
     message: "Converting to Word took too long and was stopped. Export a shorter range.",
   });
 
+/** What to shorten depends on what is being exported. */
+function sourceTooLarge(input: WordConversionInput): WordConversionError {
+  const message = input.latex
+    ? "This LaTeX document, with the files it includes, is over the 8 MB Word export limit. Export a shorter document."
+    : input.bundle.metadata.source._tag === "conversation"
+      ? "The Word source exceeds 8 MB. Export a shorter range or leave out the work log."
+      : "This file is over the 8 MB Word export limit. Export a shorter file.";
+  return new WordConversionError({ reason: "too-large", message });
+}
+
 function formatMegabytes(bytes: number): string {
   return `${Math.round(bytes / (1024 * 1024))} MB`;
 }
@@ -272,10 +282,7 @@ const make = Effect.gen(function* () {
   )(function* (input) {
     const source = input.latex?.source ?? input.bundle.markdown;
     if (Buffer.byteLength(source, "utf8") > MAX_WORD_SOURCE_BYTES) {
-      return yield* new WordConversionError({
-        reason: "too-large",
-        message: "The Word source exceeds 8 MB. Export a shorter range or leave out the work log.",
-      });
+      return yield* sourceTooLarge(input);
     }
     const pandoc = yield* tool.command;
     if (pandoc === null) {

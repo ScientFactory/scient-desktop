@@ -260,8 +260,9 @@ describe.skipIf(binary === null)("Word export with the real Pandoc (local integr
     () =>
       withConverter(({ converter, directory }) =>
         Effect.gen(function* () {
-          const paper = NodePath.join(directory, "paper");
-          NodeFS.mkdirSync(paper);
+          const project = NodePath.join(directory, "project");
+          const paper = NodePath.join(project, "paper");
+          NodeFS.mkdirSync(paper, { recursive: true });
           NodeFS.writeFileSync(NodePath.join(directory, "secret.tex"), "FAKE-SECRET-TEX");
           NodeFS.writeFileSync(
             NodePath.join(directory, "secret.bib"),
@@ -271,21 +272,21 @@ describe.skipIf(binary === null)("Word export with the real Pandoc (local integr
             NodePath.join(paper, "main.tex"),
             [
               "\\documentclass{article}\\begin{document}",
-              "\\input{../secret}",
-              "\\bibliography{../secret}",
+              "\\input{../../secret}",
+              "\\bibliography{../../secret}",
               "\\nocite{*}",
               "Safe text.\\end{document}",
             ].join("\n"),
           );
-          const latex = yield* prepareLatexProject(NodePath.join(paper, "main.tex"), directory);
+          const latex = yield* prepareLatexProject(NodePath.join(paper, "main.tex"), project);
           const output = yield* convertTo(converter, directory, "latex-secure", {
             bundle: makeBundle({ markdown: "" }),
             latex,
-            files: { baseDirectory: paper, allowRoots: [paper] },
+            files: { baseDirectory: paper, allowRoots: [project] },
           });
           const xml = output.docx.text("word/document.xml");
           expect(xml).toContain("Safe text");
-          expect(xml).toContain("Unresolved include");
+          expect(xml).toContain("Include outside the project folder");
           expect(xml).not.toContain("FAKE-SECRET-TEX");
           expect(xml).not.toContain("FAKE-SECRET-BIB");
         }),
