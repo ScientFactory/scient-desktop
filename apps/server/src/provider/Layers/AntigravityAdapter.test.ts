@@ -1251,6 +1251,25 @@ it.layer(layer)("AntigravityAdapter", (it) => {
     );
   }
 
+  it.effect("the shared Stop does not wait on a prompt that is starting", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness({ holdDispatch: true });
+      yield* h.adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });
+      const sending = yield* h.adapter
+        .sendTurn({ threadId, input: "Still starting" })
+        .pipe(Effect.forkChild);
+      // The prompt holds the prompt lock while it waits to dispatch.
+      yield* Deferred.await(h.dispatchStarted);
+      const handle = yield* h.adapter.captureTurnStop!(threadId);
+      expect(yield* handle.stop()).toBe(false);
+      // The session's own Stop is not blocked behind it.
+      yield* h.adapter.stopSession(threadId);
+      expect(yield* h.adapter.hasSession(threadId)).toBe(false);
+      yield* Deferred.succeed(h.dispatchRelease, undefined);
+      yield* Fiber.await(sending);
+    }),
+  );
+
   it.effect("retires a prompt cancelled before native dispatch", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness({ holdDispatch: true });

@@ -1238,14 +1238,16 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
             Effect.uninterruptible(
               Effect.gen(function* () {
                 // Decided under the prompt lock so a turn cannot start in between.
-                const idle = yield* context.promptLock.withPermit(
+                // A held prompt lock means a prompt is starting: this is not
+                // an idle session, and waiting here would block stopSession.
+                const idle = yield* context.promptLock.withPermitsIfAvailable(1)(
                   Effect.sync(() => {
                     if (!owns() || context.promptFiber) return false;
                     context.stopped = true;
                     return true;
                   }),
                 );
-                if (!idle) return false;
+                if (idle._tag === "None" || !idle.value) return false;
                 yield* stopContext(context);
                 yield* onStopped;
                 return true;
