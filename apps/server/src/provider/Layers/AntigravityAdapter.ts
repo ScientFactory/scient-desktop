@@ -1229,23 +1229,28 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
       return {
         interrupt: Effect.suspend(() => (owns() ? interruptTurn(threadId) : Effect.void)),
         confirm: Effect.succeed("unknown" as const),
+        // The thread lock excludes a replacement session until onStopped
+        // has run. Waiting for it stays interruptible; once the session is
+        // marked stopped it must close.
         stop: (onStopped = Effect.void) =>
-          Effect.uninterruptible(
-            Effect.gen(function* () {
-              // Decided under the prompt lock so a turn cannot start in between.
-              const idle = yield* context.promptLock.withPermit(
-                Effect.sync(() => {
-                  if (!owns() || context.promptFiber) return false;
-                  context.stopped = true;
-                  return true;
-                }),
-              );
-              if (!idle) return false;
-              yield* withThreadLock(threadId, stopContext(context));
-              if (!context.closed) return false;
-              yield* onStopped;
-              return true;
-            }),
+          withThreadLock(
+            threadId,
+            Effect.uninterruptible(
+              Effect.gen(function* () {
+                // Decided under the prompt lock so a turn cannot start in between.
+                const idle = yield* context.promptLock.withPermit(
+                  Effect.sync(() => {
+                    if (!owns() || context.promptFiber) return false;
+                    context.stopped = true;
+                    return true;
+                  }),
+                );
+                if (!idle) return false;
+                yield* stopContext(context);
+                yield* onStopped;
+                return true;
+              }),
+            ),
           ),
       };
     });
