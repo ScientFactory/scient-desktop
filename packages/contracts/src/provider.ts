@@ -44,6 +44,9 @@ export const ProviderSession = Schema.Struct({
   cwd: Schema.optional(TrimmedNonEmptyString),
   model: Schema.optional(TrimmedNonEmptyString),
   threadId: ThreadId,
+  // Native conversation identity, available before durable resume state for
+  // some adapters. Must match the identity later carried by resumeCursor.
+  nativeSessionId: Schema.optional(TrimmedNonEmptyString),
   resumeCursor: Schema.optional(Schema.Unknown),
   activeTurnId: Schema.optional(TurnId),
   createdAt: IsoDateTime,
