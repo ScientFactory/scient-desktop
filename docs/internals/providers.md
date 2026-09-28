@@ -502,9 +502,13 @@ orchestration types. The adapter owns the process and the turn mapping.
   idle with `get_state` (older runtimes use `isTerminal`). Background work may still wake the parent.
   OMP events carry no run id, so a user turn is never decided by an idle session alone: it waits
   for its prompt's acknowledgement and, from 18.3.1, for that prompt's own `prompt_result`
-  (bounded; a prompt that never reports is uncertain). Prompts are sent with
-  `streamingBehavior: "steer"`, so a message that meets a background run Scient has not seen yet
-  is queued into that run instead of being rejected as busy.
+  (bounded to a minute; a prompt that never reports is uncertain). A prompt OMP handled locally
+  (`agentInvoked: false`) owes no result, and a reported prompt that never started a run settles
+  from its status. Prompts are sent with `streamingBehavior: "steer"`, so a message that meets a
+  background run Scient has not seen yet is queued into that run instead of being rejected as
+  busy. Native commands are refused while background work is pending, since OMP runs some as a
+  prompt without that flag. If `begin` joins a continuation that appeared while the message was
+  prepared, a model or level change is restored and a command is refused, both as not sent.
   Stop closes this thread's session and marks its active turn interrupted; an unexpected process
   exit during a turn is an uncertain failure. OMP reports model failures as turn data, so
   `omp/OmpTurnOutcome.ts` classifies each settled turn once: an abort (Scient's Stop closes the

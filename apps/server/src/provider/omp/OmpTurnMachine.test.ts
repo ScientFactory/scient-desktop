@@ -86,6 +86,28 @@ describe("Oh My Pi turn machine", () => {
     expect(reduceOmpTurn(initialOmpTurnState, { type: "process-exit" }).outcome).toBeUndefined();
   });
 
+  it("settles a reported prompt that never started a run", () => {
+    const accepted = reduceOmpTurn(begin(), { type: "prompt-accepted", requestId: "p" }).state;
+    expect(
+      reduceOmpTurn(accepted, {
+        type: "prompt-result",
+        requestId: "p",
+        agentInvoked: true,
+        reported: true,
+      }).outcome,
+    ).toBe("completed");
+    // Once a run started, only the idle session decides the turn.
+    const running = reduceOmpTurn(accepted, { type: "agent-start" }).state;
+    expect(
+      reduceOmpTurn(running, {
+        type: "prompt-result",
+        requestId: "p",
+        agentInvoked: true,
+        reported: true,
+      }).outcome,
+    ).toBeUndefined();
+  });
+
   it("keeps an unconfirmed idle check uncertain", () => {
     const running = reduceOmpTurn(begin(), { type: "agent-start" }).state;
     const draining = reduceOmpTurn(running, { type: "agent-end", terminal: true }).state;
