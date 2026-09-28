@@ -1,9 +1,9 @@
 # Scient conversation export
 
 Scient exports a conversation from a server-side snapshot, never from the chat timeline. This page
-describes what exists today: the snapshot, the document bundle, the Markdown writer and its file
-format, delivery, and the dialog. The design, the later formats (PDF, Word, `.scic`), and import are
-in the [accepted proposal](./scient-conversation-export-import-proposal.md).
+describes the snapshot, readable document exports, portable conversation files, and import. The
+[accepted proposal](./scient-conversation-export-import-proposal.md) records the design decisions;
+the implementation here remains subject to release qualification.
 
 ## Pipeline
 
@@ -130,8 +130,9 @@ Here is what I found …
 `parseConversationMarkdown` reads this grammar with the Markdown parser. A file without this front
 matter is a `document`, never a transcript. It returns the messages whose markers parsed cleanly
 and issues (`foreign-marker`, `malformed-marker`, `duplicate-number`, `out-of-order-number`,
-`missing-number`, `unknown-role`, `invalid-time`, `unknown-part`) with their lines. It exists for
-round-trip tests today; Markdown import (PR 7) builds on it.
+`missing-number`, `unknown-role`, `invalid-time`, `unknown-part`) with their lines. On import, the
+preview discloses these issues before confirmation; malformed or ordinary Markdown is not silently
+treated as a complete native conversation.
 
 ## Delivery
 
@@ -152,19 +153,45 @@ exported content. `POST /api/scient/conversation-export/v1/export` produces the 
 - The client saves a file with the shared Save Copy path: the native save dialog in desktop
   (`apps/desktop/src/scient/documentArtifacts/AssetCopy.ts`) and a download in a browser.
 
-Formats this server cannot produce are advertised with `available: false` and a reason. The server
-advertises Markdown and PDF. PDF is not written by `export`: the `documents.prepareConversationPdf`
-RPC builds the same bundle with the dialog's options (`ConversationExportService.document`),
-captures it for Scient's document page, and the client prints and publishes it as described in
+Formats this server cannot produce are advertised with `available: false` and a reason. PDF is not
+written by `export`: the `documents.prepareConversationPdf` RPC builds the same bundle with the
+dialog's options (`ConversationExportService.document`), captures it for Scient's document page,
+and the client prints and publishes it as described in
 [document PDF export](./scient-document-pdf-export.md).
+
+## Other export and conversion paths
+
+- **Portable `.scic`.** The server writes a versioned ZIP with a canonical conversation snapshot,
+  Markdown reading copy, manifest, and included attachments. A receiver previews and validates
+  structure, digests, size bounds, and omissions before choosing a local project and provider.
+  Confirmation creates a new independent thread with fresh local IDs and explicit import
+  provenance. Provider sessions, pending actions, credentials, and workspace files do not transfer;
+  foreign tool calls are never replayed.
+- **PDF.** The controlled desktop document page renders the entire saved conversation or project
+  Markdown file, waits for fonts/images/math/diagrams, then prints and publishes a searchable PDF.
+  Rendering failure stops publication; the live chat UI is not printed.
+- **Word.** A managed, pinned Pandoc executable converts the document bundle or a saved project
+  Markdown file to `.docx`, with a Scient reference style. LaTeX projects enter Pandoc's LaTeX reader
+  directly. File conversion checks the saved revision again on the server. Pandoc availability is
+  explicit and first use requires installation; a missing tool is not silently replaced with a
+  lower-fidelity converter. Unsupported content is reported as warnings.
+- **Markdown import.** Scient-marked Markdown v1 can reconstruct the readable message transcript
+  with disclosed losses, while an ordinary Markdown file is imported as a document rather than
+  impersonating a native conversation. Both enter the same preview-and-confirm flow as `.scic`.
+
+The portable importer uses staged files, a bounded quota, a durable attempt journal, an
+idempotent command receipt, and rollback of exactly the files it owns if the import does not
+commit. Fork, revert, and provider continuation operate on the imported thread's inherited
+history; they do not adopt the sender's provider session.
 
 ## Dialog
 
 Thread menu → **Export…** (sidebar and chat header) opens the dialog. Formats come from
-`formatRegistry.ts`; `formats.ts` registers Markdown, and a later format registers there without
-changing the dialog. A registration may add a client requirement (`clientAvailability`: PDF needs a
-current Scient desktop, and says so otherwise) and produce the export itself (`produce`: PDF opens
-in Scient's PDF reader instead of a save dialog). Work log and reasoning start off on every opening, the range is the whole
-conversation or up to a chosen message, and the text-only or `.zip` choice appears only when the
-conversation has attachments. The dialog warns when work log or reasoning is included and when a
-turn is running; the file's own warnings are shown after export and written into the file.
+`formatRegistry.ts`; a registration may add a client requirement (`clientAvailability`: PDF needs
+a current Scient desktop, and says so otherwise) and produce the export itself (`produce`: PDF
+opens in Scient's PDF reader instead of a save dialog). Work log and reasoning start off on every
+opening, the range is the whole conversation or up to a chosen message, and the text-only or `.zip`
+choice appears only when the conversation has attachments. The dialog warns when work log or
+reasoning is included and when a turn is running; the file's own warnings are shown after export
+and written into the file. **Import conversation** is also available from the app menu/sidebar and
+file-open flow; the import dialog displays omissions and warnings before confirmation.
