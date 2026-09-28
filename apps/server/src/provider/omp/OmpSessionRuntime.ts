@@ -796,6 +796,9 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       const sequence = eventSequence;
       if (event.type === "agent_start") {
         pendingDrainState = undefined;
+        // A new run ends any wait for this turn's prompt_result; the next
+        // drain starts its own bound.
+        promptWaitStartedAt = undefined;
         // Only a fresh native run can wake a settled turn. Late message/tool
         // frames never manufacture turns. A turn whose outcome was uncertain
         // still leaves a live process whose background work can wake it; a

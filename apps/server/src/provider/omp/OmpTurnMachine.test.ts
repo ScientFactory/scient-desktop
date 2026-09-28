@@ -108,6 +108,23 @@ describe("Oh My Pi turn machine", () => {
     ).toBeUndefined();
   });
 
+  it("a reported prompt after the previous turn's unfinished run ended is uncertain", () => {
+    // Run 7 was still open when the previous turn settled.
+    const stale = reduceOmpTurn(initialOmpTurnState, { type: "begin", staleRunId: 7 }).state;
+    const accepted = reduceOmpTurn(stale, { type: "prompt-accepted", requestId: "p" }).state;
+    const ended = reduceOmpTurn(accepted, { type: "agent-end", terminal: true, runId: 7 });
+    expect(ended.outcome).toBeUndefined();
+    // The prompt may have been queued into run 7, whose frames were dropped.
+    expect(
+      reduceOmpTurn(ended.state, {
+        type: "prompt-result",
+        requestId: "p",
+        agentInvoked: true,
+        reported: true,
+      }).outcome,
+    ).toBe("unknown");
+  });
+
   it("keeps an unconfirmed idle check uncertain", () => {
     const running = reduceOmpTurn(begin(), { type: "agent-start" }).state;
     const draining = reduceOmpTurn(running, { type: "agent-end", terminal: true }).state;
