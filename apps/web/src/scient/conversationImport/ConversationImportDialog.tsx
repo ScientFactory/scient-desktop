@@ -207,12 +207,21 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
       }),
     [configs, environments, primaryEnvironmentId],
   );
-  const [chosenEnvironmentId, setEnvironmentId] = useState<EnvironmentId | null>(null);
+  // The destination is fixed once a file is sent there, or once the person
+  // picks one. Until then the first option (this device) is used. A fixed
+  // destination that disappears stops the import; the file is never sent
+  // to a destination nobody chose.
+  const [destination, setDestination] = useState<EnvironmentId | null>(null);
+  const destinationAvailable = environmentOptions.some(
+    (option) => option.environmentId === destination,
+  );
+  const destinationLost = destination !== null && !destinationAvailable;
   const environmentId =
-    environmentOptions.find((option) => option.environmentId === chosenEnvironmentId)
-      ?.environmentId ??
-    environmentOptions[0]?.environmentId ??
-    null;
+    destination === null
+      ? (environmentOptions[0]?.environmentId ?? null)
+      : destinationAvailable
+        ? destination
+        : null;
   const config = environmentId === null ? undefined : configs.get(environmentId);
   const availableProjects = projects.filter((project) => project.environmentId === environmentId);
   const [chosenProjectId, setProjectId] = useState<string | null>(null);
@@ -291,6 +300,7 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
     };
     const { name, sizeBytes } = sourceFile(source)!;
     void (async () => {
+      setDestination((current) => current ?? environmentId);
       try {
         const upload = await createConversationImportUpload(
           environmentId,
@@ -432,7 +442,13 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
   };
 
   const status = fileProblem === null ? stageStatus(stage) : null;
-  const failure = fileProblem ?? (stage._tag === "failed" ? stage.message : null);
+  const failure =
+    fileProblem ??
+    (destinationLost
+      ? "That destination is no longer available. Choose another."
+      : stage._tag === "failed"
+        ? stage.message
+        : null);
   const environmentLabel = environmentOptions.find(
     (option) => option.environmentId === environmentId,
   )?.label;
@@ -457,7 +473,7 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
         <DialogPanel>
           <div className="flex flex-col gap-4">
             <ConversationFileZone file={file} disabled={importing} />
-            {environmentOptions.length > 1 ? (
+            {environmentOptions.length > 1 || destinationLost ? (
               <div className="flex flex-col gap-2">
                 <span id={`${id}-environment`} className="text-sm font-medium">
                   Destination
@@ -473,13 +489,13 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
                       (candidate) => candidate.environmentId === value,
                     );
                     if (!option || option.environmentId === environmentId) return;
-                    setEnvironmentId(option.environmentId);
+                    setDestination(option.environmentId);
                     setProjectId(null);
                     setModelKey(null);
                   }}
                 >
                   <SelectTrigger aria-labelledby={`${id}-environment`} className="min-w-0">
-                    <SelectValue />
+                    <SelectValue placeholder="Choose a destination" />
                   </SelectTrigger>
                   <SelectPopup>
                     {environmentOptions.map((option) => (
@@ -501,7 +517,7 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
                 <p role="alert" className="text-destructive text-sm">
                   {failure}
                 </p>
-                {fileProblem === null ? (
+                {fileProblem === null && !destinationLost ? (
                   <Button
                     type="button"
                     size="xs"

@@ -14,7 +14,7 @@ import {
   type ServerConfig,
   type ServerProvider,
 } from "@t3tools/contracts";
-import { act } from "react";
+import { act, useMemo, useSyncExternalStore } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -41,6 +41,11 @@ const state = vi.hoisted(() => ({
   environmentIds: [] as EnvironmentId[],
   runtimeMode: "approval-required" as string,
 }));
+const connected = vi.hoisted(() => ({ listeners: new Set<() => void>() }));
+function setConnectedEnvironments(ids: EnvironmentId[]) {
+  state.environmentIds = ids;
+  for (const listener of connected.listeners) listener();
+}
 
 function provider(): ServerProvider {
   return {
@@ -77,7 +82,17 @@ vi.mock("../../state/entities", () => ({
       defaultModelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-mini" },
     },
   ],
-  useServerConfigs: () => new Map(state.environmentIds.map((id) => [id, config()])),
+  // Connected environments are a subscription, as the real atom is.
+  useServerConfigs: () => {
+    const ids = useSyncExternalStore(
+      (listener) => {
+        connected.listeners.add(listener);
+        return () => connected.listeners.delete(listener);
+      },
+      () => state.environmentIds,
+    );
+    return useMemo(() => new Map(ids.map((id) => [id, config()])), [ids]);
+  },
 }));
 vi.mock("../../state/environments", () => ({
   useEnvironments: () => ({
@@ -260,6 +275,29 @@ describe("ConversationImportDialog", () => {
     expect(dialog()?.textContent).toContain(
       "Imported conversations start in Supervised mode, which asks before commands and file changes.",
     );
+  });
+
+  it("stops, and never sends the file elsewhere, when the destination disappears", async () => {
+    state.environmentIds = [local, remote];
+    previewConversationImport.mockReturnValue(new Promise(() => {}));
+    await openWith(scic());
+    expect(document.querySelector('[role="status"]')?.textContent).toBe("Checking the file…");
+
+    await act(async () => setConnectedEnvironments([remote]));
+    await flush();
+
+    expect(createConversationImportUpload).toHaveBeenCalledOnce();
+    expect(uploadConversationFile).toHaveBeenCalledOnce();
+    expect(cancelConversationImport).toHaveBeenCalledWith(local, importId);
+    expect(alerts()).toEqual(["That destination is no longer available. Choose another."]);
+    expect(button("Try again")).toBeUndefined();
+    expect(dialog()?.textContent).toContain("Destination");
+    expect(button("Import")?.disabled).toBe(true);
+
+    // It stays stopped when the remaining environments change again.
+    await act(async () => setConnectedEnvironments([remote, EnvironmentId.make("third")]));
+    await flush();
+    expect(createConversationImportUpload).toHaveBeenCalledOnce();
   });
 
   it("stops the upload and releases the staged import when cancelled", async () => {

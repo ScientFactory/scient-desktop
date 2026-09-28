@@ -60,7 +60,9 @@ Open a conversation file in any of these ways:
 Scient sends the file to the destination and checks it straight away; the dialog shows its
 progress, and **Cancel** or Esc stops it at any point before you import. If you have more than
 one connected environment, choose where the conversation goes under **Destination**; this device
-is chosen first. Dropping another file on the open dialog checks that file instead.
+is chosen first. If the destination stops being available while the dialog is open, Scient
+stops and asks you to choose another; it never sends the file somewhere else on its own.
+Dropping another file on the open dialog checks that file instead.
 
 The check shows what is in the file without showing its messages: how many messages and
 attachments it has, which provider and model it came from, what was left out when it was made
