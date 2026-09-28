@@ -196,7 +196,7 @@ describe("scient_document_export", () => {
         expect.objectContaining({ operation: "documentPdfPresent" }),
       );
       expect(store.publishPdf).toHaveBeenCalledWith(
-        expect.objectContaining({ provenanceKind: "controlled-render" }),
+        expect.objectContaining({ provenanceKind: "browser-export" }),
       );
       const written = yield* Effect.promise(() =>
         NodeFSP.readFile(NodePath.join(root, "out/report.pdf")),
