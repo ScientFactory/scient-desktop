@@ -198,12 +198,19 @@ by the Node HTTP adapter as it stops reading the body.
 
 ## Dialog
 
-Thread menu → **Export…** (sidebar and chat header) opens the dialog. Formats come from
-`formatRegistry.ts`; a registration may add a client requirement (`clientAvailability`: PDF needs
-a current Scient desktop, and says so otherwise) and produce the export itself (`produce`: PDF
-opens in Scient's PDF reader instead of a save dialog). Work log and reasoning start off on every
-opening, the range is the whole conversation or up to a chosen message, and the text-only or `.zip`
-choice appears only when the conversation has attachments. The dialog warns when work log or
-reasoning is included and when a turn is running; the file's own warnings are shown after export
-and written into the file. **Import conversation** is also available from the app menu/sidebar and
-file-open flow; the import dialog displays omissions and warnings before confirmation.
+Thread menu (sidebar and chat header) → **Export ▸** one entry per registered format opens the
+dialog preset to that format. There is no format switcher in the dialog.
+Formats come from `formatRegistry.ts`, in registration order (Markdown, PDF, Word, Scient file).
+Each registration names its menu entry, the dialog's info card (`about`), and its Save label; it
+may add a client requirement (`clientAvailability`: PDF needs a current Scient desktop, and says so
+otherwise), produce the export itself (`produce`: PDF opens in Scient's PDF reader instead of a save
+dialog), and offer a way to become available (`UnavailableAction`: Word's Pandoc install, shown in
+place of the options). A format this host cannot produce shows its reason and no Save button.
+Work log and reasoning start off on every opening, every export covers the whole conversation (the
+request's message range is not offered in the UI), and the text-only or `.zip` choice appears only
+when the conversation has attachments. The dialog shows a caution line while work log or reasoning is included and warns
+when a turn is running; the file's own warnings are shown after export and written into the file.
+**Copy ▸ Conversation as Markdown** in the thread menu copies text-only Markdown with the default
+options through the same export request with `delivery: "clipboard"`.
+**Import conversation** is also available from the app menu/sidebar and file-open flow; the import
+dialog displays omissions and warnings before confirmation.

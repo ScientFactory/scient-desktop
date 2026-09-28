@@ -5,25 +5,34 @@ portable `.scic` file.
 
 1. Open the thread's menu: right-click the thread in the sidebar, or use the menu in the chat
    header.
-2. Choose **Export…**.
-3. Choose what to include, then **Export** to save a file or **Copy** to put the Markdown on the
-   clipboard.
+2. Choose **Export**, then the format: **Markdown (.md)…**, **PDF (.pdf)…**, **Word (.docx)…**, or
+   **Scient file (.scic)…**.
+3. Choose what to include, then press the Save button (**Save .md**, **Save PDF**, **Save .docx**,
+   or **Save .scic**).
 
-On the desktop app, Export opens a save dialog. In a browser, the file downloads.
+For Markdown, Word, and Scient files, Save opens a save dialog on the desktop app; in a browser, the
+file downloads. The ⓘ button next to the dialog's title says what the format is for.
 
-Choose **PDF** to get a readable document with a heading for each speaker and the images inside the
-file. The PDF opens in Scient's PDF reader; use **Save Copy** there to keep a copy. The options
-below apply to PDF too: the work log and reasoning appear as indented blocks under each answer.
-PDF needs the Scient desktop app; in a browser the option is unavailable and says why.
+To put the conversation on the clipboard instead, choose **Copy ▸ Conversation as Markdown** in the
+thread's menu. It copies the whole conversation as text-only Markdown, without the work log or
+reasoning.
 
-Choose **Scient (.scic)** when the recipient wants to import and continue the conversation in
-Scient. Choose **Word** for an editable `.docx`; Word export requires Scient's managed Pandoc tool,
-which the export dialog can offer to install when unavailable. A Word or PDF file is for reading
-and editing, not for restoring a native conversation.
+Choose **PDF** for a print-ready document with a heading for each speaker and the images, math, and
+diagrams inside the file. The PDF opens in Scient's PDF reader; use **Save Copy** there to keep a
+copy. The work log and reasoning appear as indented blocks under each answer. PDF needs the Scient
+desktop app; in a browser the dialog says so and offers no Save button.
+
+Choose **Word** for an editable `.docx`: equations stay editable, and images, tables, footnotes, and
+citations are kept. Word export needs Pandoc. The first time, the Word dialog offers
+**Install Pandoc**, a one-time download that shows its progress in the dialog; once it is
+installed, the Word options appear. If Pandoc cannot run on this computer, the dialog says why.
+
+Choose **Scient file** when the recipient wants to open and continue the conversation in their own
+Scient. A Word or PDF file is for reading and editing, not for restoring a conversation.
 
 ## What the file contains
 
-The export contains the whole conversation as it is saved on the server, including messages the
+Every export covers the whole conversation as it is saved on the server, including messages the
 chat view has not loaded yet. Each message appears under a heading with the speaker and the time.
 Line breaks appear where chat shows them.
 
@@ -34,15 +43,13 @@ If a response is still being written, that turn is left out and the file says so
 - **Work log** adds the tools, commands, and results under each answer, in collapsible sections.
 - **Reasoning** adds the thinking chat shows in its collapsed blocks.
 
-Both are off each time you open the dialog. The work log and reasoning can contain file paths,
-command output, and secrets, so check the file before you share it.
+Both are off each time you open the dialog. While either is on, the dialog reminds you that the
+export may include file paths, commands, and their output, so check the file before you share it.
 
-- **Range** exports the whole conversation, or everything up to a message you choose.
-
-When the conversation has images or attachments, you can export **Text only (.md)**, which lists
-attachments by name, or **With attachments (.zip)**, which keeps the files next to the Markdown in
-one `.zip`. Copy always copies text only. Attachments that are no longer available are listed by
-name and noted in the file.
+When the conversation has images or attachments, the Markdown dialog offers **Text only (.md)**,
+which lists attachments by name, or **With attachments (.zip)**, which keeps the files next to the
+Markdown in one `.zip`. Attachments that are no longer available are listed by name and noted in the
+file.
 
 ## Import and continue
 

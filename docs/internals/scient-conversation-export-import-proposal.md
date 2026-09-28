@@ -762,7 +762,11 @@ thread and a lineage row. An import has neither, so the model is extended explic
 
 ### Entry points
 
-- Thread menu → **Export…** opens the export dialog for that conversation.
+- Thread menu (sidebar row and chat header) → **Export ▸** `Markdown (.md)…`, `PDF (.pdf)…`,
+  `Word (.docx)…`, `Scient file (.scic)…`. Each entry opens the export dialog for that format. Every
+  entry is always enabled; a format this host cannot produce says why inside its dialog.
+- Thread menu → **Copy ▸ Conversation as Markdown** copies the whole conversation as text-only
+  Markdown with the default options (no work log, no reasoning) and confirms with a toast.
 - Markdown editor → More menu → **Export ▸ PDF / Word**.
 - LaTeX workspace → **Export ▸ Word** (and Markdown, if it passes qualification).
 - **File ▸ Import…**, drag and drop onto Scient, or double-click a `.scic` file. Accepts `.scic` and
@@ -771,31 +775,40 @@ thread and a lineage row. An import has neither, so the model is extended explic
 
 ### The export dialog
 
-One compact dialog, built from existing primitives (`dialog`, `toggle-group`, `switch`, `radio-group`
-in `apps/web/src/components/ui/`):
+One compact dialog per format, built from existing primitives (`dialog`, `switch`, `radio-group`,
+`select`, `popover` in `apps/web/src/components/ui/`). The title names the format; there is no format
+switcher. The Markdown dialog:
 
 ```text
-┌ Export conversation ─────────────────────────────────────────┐
-│  Format   [ Markdown ] [ PDF ] [ Word ] [ Scient (.scic) ]     │
-│           Markdown:  ( ) Text only (.md)                       │
-│                      ( ) With attachments (.zip)               │
-│                                                                │
-│  Include  [ ] Work log — tools, commands, results              │
-│           [ ] Reasoning — the thinking shown in chat           │
-│                                                                │
-│  Range    (•) Whole conversation  ( ) Up to selected message   │
-│                                                                │
-│  ⚠ Work log may include file paths, command output, secrets.   │
-│  ⚠ The current turn is still running; it will be left out.     │
-│  Only a Scient file (.scic) can be continued in another Scient. │
-│                                          [ Copy ]  [ Export ]  │
-└────────────────────────────────────────────────────────────────┘
+┌ Export as Markdown ⓘ ───────────────────────────────────────────┐
+│  Study                                                          │
+│  ( ) Text only (.md)                                            │
+│  ( ) With attachments (.zip)                                    │
+│                                                                 │
+│  Include  [ ] Work log — tools, commands, results               │
+│           [ ] Reasoning — the thinking shown in chat            │
+│           ⚠ May include file paths, commands and their output.  │
+│                                                                 │
+│  ⚠ The current turn is still running; it will be left out.      │
+│                                        [ Cancel ]  [ Save .md ] │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-- The Markdown sub-choice appears only when the conversation has images or attachments.
-- **Copy** appears only for Markdown.
-- A format unavailable on this host (PDF with no connected desktop, Word before Pandoc is installed)
-  is shown disabled with its reason, or offers the installation.
+- The ⓘ next to the title opens a one- or two-sentence card about the format (accessible name
+  "About <format> export"). Info buttons are used only where a choice needs one.
+- The Markdown packaging choice appears only when the conversation has images or attachments.
+- The primary button names what is saved: **Save .md** / **Save .zip**, **Save PDF**,
+  **Save .docx**, **Save .scic**. There is no Copy button; copying lives in the thread menu.
+- The caution line appears only while the work log or reasoning is on.
+- Word without Pandoc shows, in place of the options, "Word export needs Pandoc (N MB, one-time
+  download)." with **Install Pandoc** and inline progress; the install control is disabled while an
+  export runs. Once Pandoc is installed the normal options appear, with no Pandoc mention. When Pandoc
+  cannot run on this computer, the dialog gives the reason and has no Save button. Any other format
+  this host cannot produce (PDF without a current Scient desktop) shows its reason and no Save button.
+- Every export covers the whole conversation. Exporting up to a chosen message is deferred; the
+  export request and snapshot already support it.
+- Changing any option clears the last error. "Preparing the conversation…" and "Exporting…" are
+  announced as status text.
 - Warnings are one line each, and the same warnings are included in the exported file.
 
 ### Work log and reasoning
@@ -821,7 +834,7 @@ expose (some send summaries), and the export includes only what Scient received 
 **Why the work log is opt-in even for `.scic`:** it would help the recipient's agent, but bounded tool
 output can still contain private paths, source code, environment details, or secrets, and a `.scic`
 goes to another person. "Nothing executable" does not mean "safe to share". When either option is
-turned on, the dialog shows the warning line above.
+turned on, the dialog shows the caution line under the toggles.
 
 Long tool output is bounded to a head and tail by the export projection, with an "N lines omitted"
 marker, so a single command cannot swamp a document. Nothing executable (approvals, questions awaiting

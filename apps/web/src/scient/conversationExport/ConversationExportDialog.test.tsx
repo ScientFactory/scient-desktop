@@ -4,7 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { ConversationExportForm } from "./ConversationExportDialog";
 import {
-  PRIVACY_WARNING,
+  INCLUDE_CAUTION,
   RUNNING_TURN_WARNING,
   initialExportDialogState,
 } from "./exportDialog.logic";
@@ -37,7 +37,10 @@ function render(overrides: Partial<ScientConversationExportPreparation> = {}, st
     <ConversationExportForm
       preparation={prepared}
       registrations={registrations}
-      state={{ ...initialExportDialogState(prepared, registrations), ...state }}
+      state={{
+        ...initialExportDialogState(registrations, "markdown"),
+        ...state,
+      }}
       disabled={false}
       onChange={() => undefined}
     />,
@@ -45,32 +48,26 @@ function render(overrides: Partial<ScientConversationExportPreparation> = {}, st
 }
 
 describe("ConversationExportForm", () => {
-  it("renders registered formats and keyboard-operable controls with work log and reasoning off", () => {
+  it("renders keyboard-operable controls with work log and reasoning off, and no format or range choice", () => {
     const markup = render();
-    expect(markup).toContain(">Markdown<");
+    expect(markup).not.toContain("aria-pressed");
     expect(markup.match(/role="switch"/g)).toHaveLength(2);
     expect(markup.match(/aria-checked="false"/g)?.length).toBeGreaterThanOrEqual(2);
-    expect(markup).toContain('role="radiogroup"');
-    expect(markup).toContain("Whole conversation");
+    expect(markup).not.toContain('role="radiogroup"');
+    expect(markup).not.toContain("Whole conversation");
     expect(markup).not.toContain("With attachments (.zip)");
-    expect(markup).not.toContain(PRIVACY_WARNING);
+    expect(markup).not.toContain(INCLUDE_CAUTION);
   });
 
   it("offers the zip choice only when there are attachments", () => {
     expect(render({ attachmentCount: 2 })).toContain("With attachments (.zip)");
   });
 
-  it("shows the privacy and running-turn warnings", () => {
-    const markup = render({ runningTurnOmitted: true }, { includeWorkLog: true });
-    expect(markup).toContain(PRIVACY_WARNING);
+  it("shows the caution line only while a toggle is on, and the running-turn warning", () => {
+    expect(render({}, { includeWorkLog: true })).toContain(INCLUDE_CAUTION);
+    expect(render({}, { includeReasoning: true })).toContain(INCLUDE_CAUTION);
+    const markup = render({ runningTurnOmitted: true });
+    expect(markup).not.toContain(INCLUDE_CAUTION);
     expect(markup).toContain(RUNNING_TURN_WARNING);
-  });
-
-  it("names formats this server cannot produce", () => {
-    expect(
-      render({
-        formats: [{ format: "markdown", available: false, unavailableReason: "Not here." }],
-      }),
-    ).toContain("Markdown: Not here.");
   });
 });
