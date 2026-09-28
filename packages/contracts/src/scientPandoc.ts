@@ -51,6 +51,9 @@ export type ScientPandocInstallState = typeof ScientPandocInstallState.Type;
 export const ScientPandocToolStatus = Schema.Struct({
   /** The pinned release this server installs and runs. */
   version: Schema.String,
+  /** That release's licence (an SPDX expression) and where its exact source is published. */
+  license: Schema.optionalKey(Schema.String),
+  sourceUrl: Schema.optionalKey(Schema.String),
   /** The pinned release is installed and answered its `--version` check. */
   installed: Schema.Boolean,
   /** Scient has a pinned build for this server's platform and architecture. */
@@ -60,8 +63,20 @@ export const ScientPandocToolStatus = Schema.Struct({
   /** Size of the download an install fetches, for the install prompt. */
   downloadBytes: Schema.NullOr(Schema.Number),
   install: ScientPandocInstallState,
+  /**
+   * The installed Pandoc could not be started, so the server stopped using it;
+   * installing again replaces it. Absent from servers that predate it.
+   */
+  reinstallRequired: Schema.optionalKey(Schema.Boolean),
 });
 export type ScientPandocToolStatus = typeof ScientPandocToolStatus.Type;
+
+/**
+ * The longest one Word conversion may run on the server, across all of its
+ * Pandoc passes. Clients wait longer than this for an export that includes a
+ * conversion, so the server's own timeout is what the user sees.
+ */
+export const SCIENT_WORD_CONVERSION_TIMEOUT_MS = 120_000;
 
 // ---------------------------------------------------------------------------
 // Project Markdown file → Word

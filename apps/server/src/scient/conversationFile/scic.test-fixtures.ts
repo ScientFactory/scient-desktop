@@ -140,3 +140,55 @@ export function zipBytesPromise(files: ReadonlyArray<ZipFileSpec>): Promise<Buff
     zip.end();
   });
 }
+
+/** Name pieces that stress code-point handling: astral letters, CJK, combining marks, emoji, RTL. */
+const NAME_PIECES = [
+  "研究",
+  "結果",
+  "𝒜",
+  "𠀀",
+  "𝟙",
+  "é",
+  "é",
+  "q̃",
+  "İ",
+  "ß",
+  "🧪",
+  "👩‍🔬",
+  "ب",
+  "א",
+  "क्ष",
+  "‍",
+  ".",
+  " ",
+  "-",
+  "_",
+  "a",
+  "Z",
+  "9",
+  ".png",
+];
+
+/**
+ * Deterministic attachment-style names (at most 255 UTF-16 units, as chat
+ * attachments allow) for property-style tests.
+ */
+export function generatedNames(count: number, seed = 0x5c1e47): ReadonlyArray<string> {
+  let state = seed;
+  const next = () => {
+    state = (state + 0x6d2b79f5) | 0;
+    let value = Math.imul(state ^ (state >>> 15), 1 | state);
+    value = (value + Math.imul(value ^ (value >>> 7), 61 | value)) ^ value;
+    return ((value ^ (value >>> 14)) >>> 0) / 4_294_967_296;
+  };
+  return Array.from({ length: count }, () => {
+    const pieces = 1 + Math.floor(next() * 160);
+    let name = "";
+    for (let index = 0; index < pieces; index += 1) {
+      const piece = NAME_PIECES[Math.floor(next() * NAME_PIECES.length)]!;
+      if (name.length + piece.length > 255) break;
+      name += piece;
+    }
+    return name.trim() || "x";
+  });
+}

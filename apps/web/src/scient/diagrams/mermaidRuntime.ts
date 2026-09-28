@@ -144,12 +144,9 @@ function enqueueRender<T>(operation: () => Promise<T>): Promise<T> {
   return result;
 }
 
-async function renderNativeTemplate(
-  source: string,
-  theme: MermaidTheme,
-): Promise<CachedMermaidDiagram> {
-  const { default: mermaid } = await getMermaidRuntimePromise();
-  mermaid.initialize({
+/** The settings every Scient Mermaid render uses, in chat and in exports alike. */
+export function mermaidRenderConfig(theme: MermaidTheme): import("mermaid").MermaidConfig {
+  return {
     startOnLoad: false,
     securityLevel: "strict",
     suppressErrorRendering: true,
@@ -166,7 +163,15 @@ async function renderNativeTemplate(
     fontFamily:
       'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     logLevel: "fatal",
-  });
+  };
+}
+
+async function renderNativeTemplate(
+  source: string,
+  theme: MermaidTheme,
+): Promise<CachedMermaidDiagram> {
+  const { default: mermaid } = await getMermaidRuntimePromise();
+  mermaid.initialize(mermaidRenderConfig(theme));
 
   const result = await mermaid.render(nextRenderId("render"), source);
   if (!result.svg.includes("<svg")) {

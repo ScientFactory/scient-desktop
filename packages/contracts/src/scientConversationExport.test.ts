@@ -6,6 +6,8 @@ import {
   ConversationSnapshotV1,
   DocumentBundle,
   DocumentCitation,
+  ScientConversationExportError,
+  ScientConversationExportPreparation,
   ScientConversationExportRequest,
   ScientConversationExportResult,
 } from "./scientConversationExport.ts";
@@ -18,6 +20,9 @@ const decodeUnknownBundle = Schema.decodeUnknownSync(DocumentBundle);
 const decodeOptions = Schema.decodeUnknownSync(ConversationExportOptions);
 const decodeRequest = Schema.decodeSync(ScientConversationExportRequest);
 const decodeResult = Schema.decodeSync(ScientConversationExportResult);
+const decodeUnknownResult = Schema.decodeUnknownSync(ScientConversationExportResult);
+const decodeUnknownPreparation = Schema.decodeUnknownSync(ScientConversationExportPreparation);
+const decodeUnknownError = Schema.decodeUnknownSync(ScientConversationExportError);
 const decodeCitation = Schema.decodeUnknownSync(DocumentCitation);
 
 const snapshot = {
@@ -262,6 +267,56 @@ describe("conversation export contracts", () => {
         warnings: [],
       }).file?.fileName,
     ).toBe("Export design.md");
+  });
+
+  it("lets an older client read a newer server's formats, warnings, and refusals", () => {
+    const preparation = decodeUnknownPreparation({
+      threadId: "thread-1",
+      title: "Export design",
+      formats: [
+        { format: "markdown", available: true, unavailableReason: null },
+        { format: "epub", available: true, unavailableReason: null },
+      ],
+      messageCount: 2,
+      attachmentCount: 0,
+      workLogEntryCount: 0,
+      reasoningCount: 0,
+      runningTurnOmitted: false,
+      messages: [],
+    });
+    expect(preparation.formats.map((format) => format.format)).toEqual(["markdown"]);
+
+    const result = decodeUnknownResult({
+      exportId: "export-1",
+      format: "markdown",
+      contentDigest: DIGEST,
+      messageCount: 2,
+      file: null,
+      text: "# Export design\n",
+      warnings: [
+        { code: "attachment-unavailable", message: "Attachment “a.png” was unavailable." },
+        { code: "some-future-warning", message: "Something new happened." },
+      ],
+    });
+    expect(result.warnings).toEqual([
+      { code: "attachment-unavailable", message: "Attachment “a.png” was unavailable." },
+      { code: null, message: "Something new happened." },
+    ]);
+
+    const refusal = decodeUnknownError({
+      _tag: "ScientConversationExportError",
+      reason: "some-future-reason",
+      message: "This export is not possible yet.",
+    });
+    expect(refusal.reason).toBeNull();
+    expect(refusal.message).toBe("This export is not possible yet.");
+    expect(
+      decodeUnknownError({
+        _tag: "ScientConversationExportError",
+        reason: "too-large",
+        message: "Too large.",
+      }).reason,
+    ).toBe("too-large");
   });
 
   it("carries complete CSL-JSON for a journal article", () => {

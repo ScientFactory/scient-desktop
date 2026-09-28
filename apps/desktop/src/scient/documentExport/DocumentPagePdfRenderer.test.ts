@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { vi } from "vite-plus/test";
 
+import { createBrowserPdfRenderer } from "./BrowserPdfRenderer.ts";
 import {
   createDocumentPagePdfRenderer,
   documentPageContentSecurityPolicy,
@@ -17,6 +18,10 @@ import {
 } from "./DocumentPagePdfRenderer.ts";
 
 vi.mock("electron", () => ({ BrowserWindow: vi.fn(), net: { fetch: vi.fn() } }));
+vi.mock("./BrowserPdfRenderer.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./BrowserPdfRenderer.ts")>();
+  return { ...actual, createBrowserPdfRenderer: vi.fn(actual.createBrowserPdfRenderer) };
+});
 
 const inputUrl = "https://environment.test/api/assets/signed-token/document.json";
 const expected: ScientDocumentPageExpectation = {
@@ -194,11 +199,24 @@ describe("DocumentPagePdfRenderer", () => {
     expect(documentPageContentSecurityPolicy(page.files)).toContain("object-src 'none'");
   });
 
+  it("prints with the page's own margins and break rules, not the HTML-export defaults", () => {
+    createDocumentPagePdfRenderer({ page });
+    // The HTML-export defaults keep every quote and details block whole,
+    // leaving page-sized gaps before long work logs and reasoning.
+    expect(createBrowserPdfRenderer).toHaveBeenCalledWith({
+      marginPolicy: "source-authored",
+      paginationDefaults: false,
+    });
+  });
+
   it.effect("prints only after a matching readiness report, in an isolated window", () =>
     Effect.gen(function* () {
       const fixture = makeWindow();
       let partition: string | undefined;
       const print = vi.fn(() => Effect.succeed(printed));
+      const appendNotes = vi.fn(
+        async (_webContents: unknown, _notes: ReadonlyArray<string>) => true,
+      );
       const render = createDocumentPagePdfRenderer({
         page,
         createWindow: (options) => {
@@ -209,10 +227,18 @@ describe("DocumentPagePdfRenderer", () => {
           expect(fixture.request("https://example.com/beacon")).toBe(false);
           return readiness();
         },
+        appendNotes,
         print,
       });
 
       const outcome = yield* render({ inputUrl, expected });
+      // The refused request does not stop the export, but it is printed as a note.
+      expect(appendNotes).toHaveBeenCalledWith(fixture.window.webContents, [
+        "1 web resource was not loaded.",
+      ]);
+      expect(appendNotes.mock.invocationCallOrder[0]!).toBeLessThan(
+        print.mock.invocationCallOrder[0]!,
+      );
 
       expect(outcome).toMatchObject({
         _tag: "rendered",
@@ -227,6 +253,73 @@ describe("DocumentPagePdfRenderer", () => {
       expect(fixture.window.destroy).toHaveBeenCalledOnce();
       expect(fixture.browserSession.clearStorageData).toHaveBeenCalledOnce();
       expect(fixture.webContentsListeners.size).toBe(0);
+    }),
+  );
+
+  it.effect("prints refused requests into the page's export notes", () =>
+    Effect.gen(function* () {
+      // A minimal document: the script only finds, creates, and appends elements.
+      class FakeElement {
+        readonly children: FakeElement[] = [];
+        className = "";
+        textContent = "";
+        readonly tagName: string;
+        constructor(tagName: string) {
+          this.tagName = tagName;
+        }
+        setAttribute() {}
+        append(...children: FakeElement[]) {
+          this.children.push(...children);
+        }
+        appendChild(child: FakeElement) {
+          this.children.push(child);
+          return child;
+        }
+        querySelector(selector: string): FakeElement | null {
+          const [tag, className] = selector.split(".");
+          for (const child of this.children) {
+            if (child.tagName === tag && (className === undefined || child.className === className))
+              return child;
+            const found = child.querySelector(selector);
+            if (found) return found;
+          }
+          return null;
+        }
+      }
+      const body = new FakeElement("body");
+      const article = new FakeElement("article");
+      article.className = "scient-document";
+      body.append(article);
+      const fakeDocument = {
+        querySelector: (selector: string) => body.querySelector(selector),
+        createElement: (tag: string) => new FakeElement(tag),
+      };
+      const fixture = makeWindow();
+      const executeJavaScript = vi.fn(
+        async (code: string) =>
+          // Evaluates the page script against the fake document above.
+          new Function("document", `return (${code});`)(fakeDocument) as unknown,
+      );
+      Object.assign(fixture.window.webContents, { executeJavaScript });
+      const render = createDocumentPagePdfRenderer({
+        page,
+        createWindow: () => fixture.window as never,
+        readReadiness: async () => {
+          fixture.request("https://example.com/font.woff2");
+          fixture.request("https://example.com/style.css");
+          return readiness();
+        },
+        print: () => Effect.succeed(printed),
+      });
+
+      const outcome = yield* render({ inputUrl, expected });
+
+      expect(outcome).toMatchObject({ _tag: "rendered", artifact: { blockedRequestCount: 2 } });
+      const notes = article.querySelector("section.scient-document-notes");
+      expect(notes?.children.map((child) => child.tagName)).toEqual(["h2", "ul"]);
+      expect(notes?.querySelector("ul")?.children.map((item) => item.textContent)).toEqual([
+        "2 web resources were not loaded.",
+      ]);
     }),
   );
 

@@ -72,6 +72,7 @@ import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 import {
   ScientForkContextDelivery,
+  ScientForkContextError,
   type ForkDeliveryOutcome,
   type ForkTurnContext,
   type NativeForkPlan,
@@ -712,16 +713,31 @@ const make = Effect.gen(function* () {
         detail,
         ...(cause === undefined ? {} : { cause }),
       });
-    const detail = yield* projectionSnapshotQuery
+    // Read only when this turn must carry the history, never after its delivery.
+    const historyUnavailable = (cause?: unknown) =>
+      new ScientForkContextError({
+        threadId: input.thread.id,
+        detail: "The conversation history is unavailable.",
+        ...(cause === undefined ? {} : { cause }),
+      });
+    const loadThread = projectionSnapshotQuery
       .getThreadDetailById(input.thread.id, { fullHistory: true })
-      .pipe(Effect.map(Option.getOrUndefined));
-    if (!detail) return yield* toTurnStartError("The conversation history is unavailable.");
+      .pipe(
+        Effect.mapError(historyUnavailable),
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.fail(historyUnavailable()),
+            onSome: Effect.succeed,
+          }),
+        ),
+      );
     const liveSession = (yield* providerService.listSessions()).find(
       (session) => session.threadId === input.thread.id,
     );
     const context = yield* scientForkContextDelivery
       .prepareTurn({
-        thread: detail,
+        threadId: input.thread.id,
+        loadThread,
         modelSelection: input.modelSelection,
         message: input.message,
         userText: input.providerMessageText,

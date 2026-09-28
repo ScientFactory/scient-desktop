@@ -318,7 +318,7 @@ export const ScientConversationImportCancelResult = Schema.Union([
 export type ScientConversationImportCancelResult = typeof ScientConversationImportCancelResult.Type;
 
 export const ScientConversationImportErrorReason = Schema.Literals([
-  /** Unknown, expired, cancelled, or cleaned-up import. */
+  /** Unknown, expired, cancelled, or cleaned-up import, with no committed result retained. */
   "import-not-found",
   "package-too-large",
   /** The server's staging quota or live-import limit is reached. */
@@ -337,7 +337,10 @@ export const ScientConversationImportErrorReason = Schema.Literals([
   "destination-changed",
   /** The confirm's `packageSha256` is not the staged (or already imported) package's. */
   "package-changed",
-  /** This import already committed, to another destination; it is not imported twice. */
+  /**
+   * This import already committed; it is not imported twice. A confirm fails
+   * so only when it names another destination; a preview always does.
+   */
   "already-imported",
   "project-not-found",
   "provider-unavailable",
@@ -410,7 +413,21 @@ export const DesktopConversationFileUploadResult = Schema.Union([
       "network-failed",
       /** The server refused the upload. */
       "rejected",
+      /** The user declined to send the file to that server; nothing was sent. */
+      "declined",
+      /** The upload was cancelled (`cancelOpenedConversationFileUpload`); the request was stopped. */
+      "cancelled",
     ]),
   }),
 ]);
 export type DesktopConversationFileUploadResult = typeof DesktopConversationFileUploadResult.Type;
+
+/**
+ * Stops an opened file's upload, or keeps it from starting: every later
+ * upload of this token ends `cancelled` without sending anything.
+ */
+export const DesktopConversationFileUploadCancelRequest = Schema.Struct({
+  token: ShortText(64),
+});
+export type DesktopConversationFileUploadCancelRequest =
+  typeof DesktopConversationFileUploadCancelRequest.Type;

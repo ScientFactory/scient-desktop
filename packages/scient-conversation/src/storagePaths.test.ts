@@ -80,6 +80,42 @@ describe("storage path redaction", () => {
     );
   });
 
+  it("matches a root only where its path ends", () => {
+    const roots = ["/data", "/data/userdata", "C:\\Scient"];
+    const cases: ReadonlyArray<readonly [string, string]> = [
+      ["/data", "«scient-data»"],
+      ["/data/x.log", "«scient-data»/x.log"],
+      ["/data/userdata/a and /data/userdata.", "«scient-data»/a and «scient-data»."],
+      ["(see /data)", "(see «scient-data»)"],
+      ["(see /data), then", "(see «scient-data»), then"],
+      ["It is in /data.", "It is in «scient-data»."],
+      ["Try /data. Then", "Try «scient-data». Then"],
+      ["\"/data\" and '/data'", "\"«scient-data»\" and '«scient-data»'"],
+      ["/database", "/database"],
+      ["/data.bak", "/data.bak"],
+      ["/data!archive/x", "/data!archive/x"],
+      ["/data(backup)/x", "/data(backup)/x"],
+      ["/data-old /data2 /data_x /data~1", "/data-old /data2 /data_x /data~1"],
+      // `:` cannot continue a path segment, so the root ends before it.
+      ["/data:x", "«scient-data»:x"],
+      ["Stored in **/data**.", "Stored in **«scient-data»**."],
+      ["_/data_", "_«scient-data»_"],
+      ["`/data`", "`«scient-data»`"],
+      ["<code>/data</code>", "<code>«scient-data»</code>"],
+      ["[/data]", "[«scient-data»]"],
+      ["see /data/, /data;", "see «scient-data»/, «scient-data»;"],
+      ["/data_x /data's", "/data_x /data's"],
+      ["/data#archive/report.md /data🧪/x /data±", "/data#archive/report.md /data🧪/x /data±"],
+      ["/data_/report.md /data./x /data!/x", "/data_/report.md /data./x /data!/x"],
+      ["C:\\Scient\\a", "«scient-data»\\a"],
+      ["**C:\\Scient**", "**«scient-data»**"],
+      ["c:/scient/a", "«scient-data»/a"],
+      ["in C:\\Scient.", "in «scient-data»."],
+      ["C:\\ScientData\\b C:\\Scient(1)\\c", "C:\\ScientData\\b C:\\Scient(1)\\c"],
+    ];
+    for (const [text, redacted] of cases) expect(redactStoragePaths(text, roots)).toBe(redacted);
+  });
+
   it("removes roots before Markdown escaping can change their spelling", () => {
     const source = thread({
       title: `Notes on ${POSIX_ROOT}`,

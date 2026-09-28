@@ -103,6 +103,12 @@ export const ScientDocumentPageAsset = Schema.Struct({
   content: Schema.Union([
     Schema.TaggedStruct("captured", {
       path: Schema.String.check(Schema.isPattern(/^assets\/[0-9]{4}\.[a-z0-9]{1,8}$/u)),
+      /**
+       * Digest of the captured bytes. A captured image that loads but does not
+       * decode is a placeholder only when the served bytes match it; otherwise
+       * the capture was not served as recorded. Absent from older servers.
+       */
+      sha256: Schema.optionalKey(Sha256Digest),
     }),
     Schema.TaggedStruct("unavailable", { reason: DocumentAssetUnavailableReason }),
   ]),
@@ -248,6 +254,12 @@ export const ScientDocumentPdfPublishInput = Schema.Struct({
 });
 export type ScientDocumentPdfPublishInput = typeof ScientDocumentPdfPublishInput.Type;
 
+/** Gives up a capture the desktop refused to print, so it does not wait out its expiry. */
+export const ScientDocumentPdfReleaseInput = Schema.Struct({
+  captureId: ScientDocumentCaptureId,
+});
+export type ScientDocumentPdfReleaseInput = typeof ScientDocumentPdfReleaseInput.Type;
+
 export const ScientDocumentPdfPublished = Schema.Struct({
   source: PdfSourceDescriptor,
   title: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(512)),
@@ -311,6 +323,15 @@ export const ScientDocumentExportResult = Schema.Struct({
   visualReviewPerformed: Schema.Literal(false),
 });
 export type ScientDocumentExportResult = typeof ScientDocumentExportResult.Type;
+
+/**
+ * The export note for requests the document page's isolation refused. The
+ * desktop prints it in the PDF's notes and the server returns it as a warning,
+ * so a refused request never passes silently.
+ */
+export function scientDocumentBlockedRequestsNote(count: number): string {
+  return count === 1 ? "1 web resource was not loaded." : `${count} web resources were not loaded.`;
+}
 
 /** A readiness report the desktop may print: the expected page, finished, with no fatal diagnostic. */
 export function scientDocumentReadinessRejection(

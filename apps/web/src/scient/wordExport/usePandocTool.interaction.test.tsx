@@ -30,8 +30,20 @@ const active = {
 
 function Harness() {
   const controller = usePandocTool(environmentId);
-  return <PandocInstallStatus controller={controller} showReady />;
+  return (
+    <>
+      <PandocInstallStatus controller={controller} showReady />
+      <button type="button" onClick={controller.refresh}>
+        Export failed
+      </button>
+    </>
+  );
 }
+
+const button = (label: string) =>
+  [...document.querySelectorAll("button")].find((candidate) =>
+    candidate.textContent?.startsWith(label),
+  );
 
 let root: Root;
 let container: HTMLDivElement;
@@ -81,5 +93,40 @@ describe("usePandocTool status polling", () => {
     expect(installPandocTool).not.toHaveBeenCalled();
     expect(document.querySelector('[role="alert"]')).toBeNull();
     expect(document.body.textContent).toContain("Word export is available");
+  });
+});
+
+describe("usePandocTool reinstall", () => {
+  const installed = {
+    ...active,
+    installed: true,
+    install: { ...active.install, state: "ready" as const },
+  };
+  const unstartable = {
+    ...active,
+    reinstallRequired: true,
+    install: { ...active.install, state: "idle" as const, bytesReceived: null, totalBytes: null },
+  };
+
+  it("re-reads the status after a failed export and reinstalls from the offer", async () => {
+    readPandocTool.mockResolvedValueOnce(installed).mockResolvedValueOnce(unstartable);
+    installPandocTool.mockResolvedValueOnce(active);
+
+    await act(async () => root.render(<Harness />));
+    expect(document.body.textContent).toContain("Word export is available");
+
+    // The export dialog asks for a fresh status when an export fails.
+    await act(async () => button("Export failed")?.click());
+    expect(document.querySelector('[role="alert"]')?.textContent).toBe(
+      "Pandoc could not be started. Reinstall it to export to Word.",
+    );
+    const reinstall = button("Reinstall Pandoc");
+    expect(reinstall?.textContent).toBe("Reinstall Pandoc (40 MB)");
+    expect(reinstall?.disabled).toBe(false);
+
+    await act(async () => reinstall?.click());
+    expect(installPandocTool).toHaveBeenCalledTimes(1);
+    expect(document.body.textContent).toContain("Downloading Pandoc");
+    expect(button("Reinstall Pandoc")).toBeUndefined();
   });
 });

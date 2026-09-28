@@ -163,6 +163,140 @@ describe("ConversationImporter", () => {
     ),
   );
 
+  it.effect("adds up the gaps of an already-imported source and of this file", () =>
+    withImporter(
+      Effect.gen(function* () {
+        const fixture = importFixture({ attachments: true });
+        const input: typeof fixture.input = {
+          ...fixture.input,
+          snapshot: {
+            ...fixture.input.snapshot,
+            provenance: {
+              _tag: "import",
+              source: "scic",
+              exportId: "previous-export",
+              sourceThreadId: "previous-thread",
+              packageDigest: `sha256:${"a".repeat(64)}`,
+              sourceFormat: "scient.conversation-file",
+              sourceFormatVersion: 1,
+              importedAt: "2026-09-27T10:00:00.000Z",
+              omissions: [
+                { _tag: "attachments-unavailable", count: 2 },
+                { _tag: "records-skipped", count: 4 },
+              ],
+            },
+          },
+          omissions: [
+            ...fixture.input.omissions,
+            {
+              _tag: "snapshot-warning",
+              warning: { _tag: "records-skipped", kind: "activity", count: 3 },
+            },
+          ],
+        };
+        const ids = yield* mintConversationImportIds(input);
+        const command = buildConversationImportCommand({
+          validated: input,
+          ids,
+          destination: destination(),
+          importedAt: "2026-09-28T10:00:00.000Z",
+        });
+        assert.deepInclude(command.origin.omissions, { _tag: "attachments-unavailable", count: 3 });
+        assert.deepInclude(command.origin.omissions, { _tag: "records-skipped", count: 7 });
+      }),
+    ),
+  );
+
+  it.effect("counts an unavailable answer attachment once, not again on its folded message", () =>
+    withImporter(
+      Effect.gen(function* () {
+        const fixture = importFixture({ turns: 1, attachments: true });
+        const source = fixture.input.snapshot;
+        const gone = {
+          localId: "attachment-4",
+          kind: "file" as const,
+          name: "gone.csv",
+          mimeType: "text/csv",
+          sizeBytes: 10,
+          pastedText: false,
+          available: false,
+        };
+        const answer = source.questionAnswers[0]!;
+        const warnings = [
+          ...source.warnings,
+          { _tag: "attachment-unavailable" as const, name: "gone.csv", messageN: 2 },
+          { _tag: "attachment-unavailable" as const, name: "gone.csv", messageN: null },
+        ];
+        const input: typeof fixture.input = {
+          ...fixture.input,
+          snapshot: {
+            ...source,
+            messages: [
+              source.messages[0]!,
+              {
+                ...source.messages[0]!,
+                n: 2,
+                id: MessageId.make(`async-answer:${answer.id}`),
+                text: "This one",
+                attachments: [gone],
+                references: [],
+                createdAt: answer.createdAt,
+                updatedAt: answer.createdAt,
+              },
+              { ...source.messages[1]!, n: 3 },
+            ],
+            questionAnswers: [{ ...answer, items: [{ ...answer.items[0]!, attachments: [gone] }] }],
+            warnings,
+          },
+          omissions: [
+            ...fixture.input.omissions.filter((omission) => omission._tag !== "snapshot-warning"),
+            ...warnings.map((warning) => ({ _tag: "snapshot-warning" as const, warning })),
+          ],
+        };
+        const ids = yield* mintConversationImportIds(input);
+        const command = buildConversationImportCommand({
+          validated: input,
+          ids,
+          destination: destination(),
+          importedAt: "2026-09-28T10:00:00.000Z",
+        });
+        // missing.pdf and gone.csv: two attachments, three warnings.
+        assert.deepInclude(command.origin.omissions, { _tag: "attachments-unavailable", count: 2 });
+      }),
+    ),
+  );
+
+  it.effect("files a prompt whose turn has no reply under that turn, not the next one", () =>
+    withImporter(
+      Effect.gen(function* () {
+        const fixture = importFixture({ turns: 2, workLog: true, reasoning: true });
+        const { snapshot } = fixture.input;
+        // Turn 1 was interrupted: its reasoning and work log remain, its reply does not.
+        const messages = snapshot.messages
+          .filter((message) => message.id !== "src-assistant-1")
+          .map((message, index) => ({ ...message, n: index + 1 }));
+        const input: typeof fixture.input = {
+          ...fixture.input,
+          snapshot: { ...snapshot, messages },
+        };
+        const ids = yield* mintConversationImportIds(input);
+        const command = buildConversationImportCommand({
+          validated: input,
+          ids,
+          destination: destination(),
+          importedAt: "2026-09-28T10:00:00.000Z",
+        });
+        const turnOf = (externalId: string) =>
+          command.messages.find((message) => message.messageId === ids.messages[externalId])
+            ?.turnId;
+        assert.strictEqual(turnOf("src-user-1"), ids.turns["turn:src-turn-1"]);
+        assert.strictEqual(turnOf("src-reasoning-1"), ids.turns["turn:src-turn-1"]);
+        assert.strictEqual(turnOf("src-user-2"), ids.turns["turn:src-turn-2"]);
+        assert.strictEqual(turnOf("src-assistant-2"), ids.turns["turn:src-turn-2"]);
+      }),
+    ),
+  );
+
   it.effect("gives null-turn imported reasoning a retained inherited turn", () =>
     withImporter(
       Effect.gen(function* () {

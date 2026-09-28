@@ -134,6 +134,8 @@ export function pandocBinaryForTests(): string | null {
 export function managedToolLayer(input: {
   readonly command: PandocCommand | null;
   readonly scratchRoot: string;
+  /** Records the commands a conversion reported as unstartable. */
+  readonly discarded?: Array<PandocCommand>;
 }) {
   return Layer.succeed(
     PandocManagedTool,
@@ -155,6 +157,10 @@ export function managedToolLayer(input: {
         },
       }),
       command: Effect.succeed(input.command),
+      discardUnstartable: (command) =>
+        Effect.sync(() => {
+          input.discarded?.push(command);
+        }),
       scratchRoot: input.scratchRoot,
     }),
   );
@@ -164,7 +170,9 @@ export function managedToolLayer(input: {
  * A stand-in for Pandoc run as `node -e <source> -- <args>`. Behaviour comes
  * from the first argument after `--`: `echo` copies stdin to stdout, `env`
  * prints its environment and arguments as JSON, `sleep` records its pid and
- * waits, `flood` writes without end, `exit:<code>` prints to stderr and exits.
+ * waits, `flood` writes without end, `exit:<code>` prints to stderr and exits,
+ * and `record-args` appends each run's arguments to `<pidFile>.args` and
+ * answers like a minimal Pandoc.
  */
 export function fakePandoc(pidFile: string): (mode: string) => PandocCommand {
   const source = [
@@ -177,6 +185,7 @@ export function fakePandoc(pidFile: string): (mode: string) => PandocCommand {
     "else if (mode === 'flood') { const chunk = Buffer.alloc(65536, 120); const pump = () => { while (process.stdout.write(chunk)) {} process.stdout.once('drain', pump); }; pump(); }",
     "else if (mode === 'warn-writer') { if (rest[rest.indexOf('-t') + 1] === 'json') { process.stdin.resume(); process.stdin.on('end', () => process.stdout.write(JSON.stringify({ 'pandoc-api-version': [1, 23, 1, 2], meta: {}, blocks: [{ t: 'Para', c: [{ t: 'Str', c: 'Body' }] }] }))); } else { process.stderr.write('[WARNING] Writer pass note.\\n'); process.stdin.pipe(process.stdout); } }",
     `else if (mode === 'warn-writer-changing') { if (rest[rest.indexOf('-t') + 1] === 'json') { process.stdin.resume(); process.stdin.on('end', () => process.stdout.write(JSON.stringify({ 'pandoc-api-version': [1, 23, 1, 2], meta: {}, blocks: [{ t: 'Para', c: [{ t: 'Str', c: 'Body' }] }] }))); } else { const countFile = ${JSON.stringify(`${pidFile}.count`)}; const count = (fs.existsSync(countFile) ? Number(fs.readFileSync(countFile, 'utf8')) : 0) + 1; fs.writeFileSync(countFile, String(count)); process.stderr.write('[WARNING] Writer pass ' + count + ' note.\\n'); process.stdin.pipe(process.stdout); } }`,
+    `else if (mode === 'record-args') { fs.appendFileSync(${JSON.stringify(`${pidFile}.args`)}, JSON.stringify(rest) + '\\n'); if (rest[rest.indexOf('-t') + 1] === 'json') { process.stdin.resume(); process.stdin.on('end', () => process.stdout.write(JSON.stringify({ 'pandoc-api-version': [1, 23, 1, 2], meta: {}, blocks: [{ t: 'Para', c: [{ t: 'Str', c: 'Body' }] }] }))); } else { process.stdin.pipe(process.stdout); } }`,
     "else if (mode.startsWith('exit:')) { process.stderr.write('[WARNING] something odd\\n  continued\\npandoc: failure detail\\n'); process.exit(Number(mode.slice(5))); }",
   ].join("\n");
   return (mode) => ({ command: process.execPath, leadingArgs: ["-e", source, "--", mode] });

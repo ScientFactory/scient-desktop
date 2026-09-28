@@ -1,7 +1,12 @@
 import type { ScientPandocToolStatus } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { formatMegabytes, isActivePandocInstall, pandocToolView } from "./pandocToolModel";
+import {
+  formatMegabytes,
+  isActivePandocInstall,
+  pandocReleaseNotice,
+  pandocToolView,
+} from "./pandocToolModel";
 
 function status(overrides: Partial<ScientPandocToolStatus> = {}): ScientPandocToolStatus {
   return {
@@ -69,6 +74,41 @@ describe("pandocToolView", () => {
     expect(view.actionLabel).toBe("Try again");
   });
 
+  it("offers a reinstall when the installed Pandoc could not be started", () => {
+    const view = pandocToolView({
+      status: status({ reinstallRequired: true }),
+      requesting: false,
+      error: null,
+    });
+    expect(view).toMatchObject({
+      kind: "reinstall",
+      actionLabel: "Reinstall Pandoc (40 MB)",
+      busy: false,
+    });
+    expect(view.detail).toBe("Pandoc could not be started. Reinstall it to export to Word.");
+    // While the reinstall runs, and if it fails, the usual progress and retry show.
+    expect(
+      pandocToolView({ status: status({ reinstallRequired: true }), requesting: true, error: null })
+        .kind,
+    ).toBe("installing");
+    expect(
+      pandocToolView({
+        status: status({
+          reinstallRequired: true,
+          install: {
+            state: "failed",
+            bytesReceived: null,
+            totalBytes: null,
+            failureReason: "download-failed",
+            updatedAtEpochMs: 4,
+          },
+        }),
+        requesting: false,
+        error: null,
+      }).actionLabel,
+    ).toBe("Try again");
+  });
+
   it("says when Word export cannot run here, and when it is ready", () => {
     expect(
       pandocToolView({
@@ -115,6 +155,30 @@ describe("pandocToolView", () => {
       detail: "Status temporarily unavailable.",
       actionLabel: "Try again",
     });
+  });
+});
+
+describe("pandocReleaseNotice", () => {
+  it("names the release, its licence, and its source", () => {
+    expect(
+      pandocReleaseNotice(
+        status({
+          license: "GPL-2.0-or-later",
+          sourceUrl: "https://github.com/jgm/pandoc/archive/refs/tags/3.11.tar.gz",
+        }),
+      ),
+    ).toEqual({
+      release: "Pandoc 3.11",
+      label: "Pandoc 3.11 · GPL-2.0-or-later",
+      sourceUrl: "https://github.com/jgm/pandoc/archive/refs/tags/3.11.tar.gz",
+    });
+    // A server that predates the notice still names its release.
+    expect(pandocReleaseNotice(status())).toEqual({
+      release: "Pandoc 3.11",
+      label: "Pandoc 3.11",
+      sourceUrl: null,
+    });
+    expect(pandocReleaseNotice(null)).toBeNull();
   });
 });
 

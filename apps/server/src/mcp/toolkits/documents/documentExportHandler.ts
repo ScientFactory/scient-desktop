@@ -1,5 +1,6 @@
 import {
   ScientDocumentPageRenderOutcome,
+  type DocumentWarning,
   type ScientDocumentExportInput,
   type ScientDocumentExportResult,
   type ScientDocumentPdfExportError,
@@ -17,10 +18,11 @@ import {
   beginDocumentPdfProduction,
   confirmCapturedSourceCurrent,
   DOCUMENT_PDF_TOO_LARGE_DETAIL,
-  documentPdfWarnings,
+  collectDocumentPdfWarnings,
   publishDocumentPdfBytes,
   validateDocumentRender,
 } from "../../../scient/documentExport/DocumentPdfPublication.ts";
+import { boundWarnings } from "../../../scient/documentExport/documentPageInput.ts";
 import { isMarkdownDocumentPath } from "../../../scient/documentExport/MarkdownFileBundle.ts";
 import { captureProjectMarkdownFile } from "../../../scient/documentExport/MarkdownPdfPreparation.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
@@ -44,6 +46,9 @@ const toolError = (
 
 const boundaryToolError = (cause: ProjectDocumentBuildBoundaryError) =>
   toolError(cause.code, cause.message);
+
+/** `ScientDocumentExportResult.warnings` holds at most this many entries. */
+const MAX_TOOL_WARNINGS = 64;
 
 const RENDERER_UNAVAILABLE_MESSAGE =
   "A current connected Scient desktop is required to export this PDF.";
@@ -258,14 +263,25 @@ export const exportScientDocumentForInvocation = Effect.fn("ScientDocumentExport
         });
       }
 
-      const warnings = [
-        ...documentPdfWarnings(record, rendered).map((warning) =>
-          `${warning.code}: ${warning.message}`.slice(0, 640),
-        ),
-        ...rendered.warnings,
+      // The tool result holds 64 warnings. What must always be reported (the
+      // refused-request note and the status flags) keeps its place when the
+      // document's own notes do not fit; a closing entry counts the rest.
+      const describe = (warning: DocumentWarning) =>
+        `${warning.code}: ${warning.message}`.slice(0, 640);
+      const { ordinary, mandatory } = collectDocumentPdfWarnings(record, rendered);
+      const flags = [
+        ...mandatory.map(describe),
         ...(rendered.blockedRequestCount > 0 ? ["blocked-external-resources"] : []),
         ...(presented ? [] : ["presentation-unavailable"]),
       ];
+      const warnings = boundWarnings({
+        ordinary: [...new Set([...ordinary.map(describe), ...rendered.warnings])].filter(
+          (note) => !flags.includes(note),
+        ),
+        mandatory: flags,
+        limit: MAX_TOOL_WARNINGS,
+        omitted: (count) => `…and ${count} more notes, not listed here.`,
+      });
       return {
         sourcePath: file.relativePath,
         outputPath: output.outputPath,
@@ -274,7 +290,7 @@ export const exportScientDocumentForInvocation = Effect.fn("ScientDocumentExport
         title: record.title || "Document",
         pageCount: source.pageCount ?? 1,
         byteLength: bytes.byteLength,
-        warnings: [...new Set(warnings)].slice(0, 64),
+        warnings,
         validation: "structural",
         visualReviewPerformed: false,
       } satisfies ScientDocumentExportResult;

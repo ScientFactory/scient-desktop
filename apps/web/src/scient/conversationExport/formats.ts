@@ -2,19 +2,22 @@ import {
   conversationPdfAvailability,
   exportConversationPdf,
 } from "../documentExport/conversationPdfExport";
-import { PandocInstallAction } from "../wordExport/PandocInstallControl";
 import { registerConversationExportFormat } from "./formatRegistry";
+import { WordPandocRequirement } from "./WordPandocRequirement";
 
-/** Formats this build offers, in display order. */
+/** Formats this build offers, in menu order. */
 registerConversationExportFormat({
   format: "markdown",
   label: "Markdown",
-  supportsCopy: true,
+  menuLabel: "Markdown (.md)…",
+  about:
+    "Plain text that opens anywhere. With attachments, images and files are saved next to it in a .zip.",
+  saveLabel: "Save .md",
   variant: {
-    label: "Markdown",
+    label: "Attachments",
     choices: [
-      { value: "text", label: "Text only (.md)" },
-      { value: "with-attachments", label: "With attachments (.zip)" },
+      { value: "text", label: "Text only (.md)", saveLabel: "Save .md" },
+      { value: "with-attachments", label: "With attachments (.zip)", saveLabel: "Save .zip" },
     ],
     defaultValue: "text",
     isOffered: (preparation) => preparation.attachmentCount > 0,
@@ -22,37 +25,32 @@ registerConversationExportFormat({
       ...options,
       markdownPackaging: value === "with-attachments" ? "with-attachments" : "text",
     }),
-    copyable: (value) => value === "text",
   },
-  note: (preparation) =>
-    preparation.attachmentCount > 0
-      ? "A text-only file lists attachments by name. The .zip keeps them next to the Markdown."
-      : null,
 });
 
 registerConversationExportFormat({
   format: "pdf",
   label: "PDF",
-  supportsCopy: false,
+  menuLabel: "PDF (.pdf)…",
+  about: "A print-ready document with images, math and diagrams inside.",
+  saveLabel: "Save PDF",
   clientAvailability: conversationPdfAvailability,
   produce: exportConversationPdf,
-  note: () =>
-    "Opens in Scient's PDF reader, where Save Copy keeps a copy. Images stay inside the PDF.",
-});
-
-registerConversationExportFormat({
-  format: "scic",
-  label: "Scient (.scic)",
-  supportsCopy: false,
-  note: () =>
-    "Another Scient can import this file and continue the conversation in a fresh session.",
 });
 
 registerConversationExportFormat({
   format: "docx",
   label: "Word",
-  supportsCopy: false,
-  note: () =>
-    "Equations stay editable in Word. Images, tables, and footnotes are kept; the work log and reasoning get their own Word styles.",
-  UnavailableAction: PandocInstallAction,
+  menuLabel: "Word (.docx)…",
+  about: "Equations stay editable. Images, tables, footnotes and citations are kept.",
+  saveLabel: "Save .docx",
+  UnavailableAction: WordPandocRequirement,
+});
+
+registerConversationExportFormat({
+  format: "scic",
+  label: "Scient file",
+  menuLabel: "Scient file (.scic)…",
+  about: "Another Scient can open this file and continue the conversation.",
+  saveLabel: "Save .scic",
 });

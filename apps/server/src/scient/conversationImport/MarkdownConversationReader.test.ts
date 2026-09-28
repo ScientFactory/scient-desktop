@@ -252,6 +252,56 @@ describe("Markdown conversation import adapter", () => {
     expect(result.issues.every((issue) => issue.endLine >= issue.startLine)).toBe(true);
   });
 
+  it("keeps every damaged range it leaves out as a skipped-record gap in the imported thread", () => {
+    const edited = fixtureMarkdown()
+      .replace(`n=2 role=assistant`, `n=2 role=robot`)
+      .replace(`n=4 role=assistant`, `n=5 role=assistant`);
+    const result = read(edited);
+    // Two ranges are reported, but only the dropped message left content out:
+    // message 4 is simply absent from the file.
+    expect(result.issues.map((issue) => issue.kind).toSorted()).toEqual([
+      "missing-number",
+      "unknown-role",
+    ]);
+    expect(result.validated.skippedSourceRecords).toBe(1);
+    const ids = decodeImportIds({
+      threadId: "fresh-thread",
+      commandId: "fresh-command",
+      messages: Object.fromEntries(
+        result.validated.snapshot.messages.map((message, index) => [
+          message.id,
+          `fresh-message-${index + 1}`,
+        ]),
+      ),
+      turns: { "turn:markdown-turn-2": "fresh-turn-2", "turn:markdown-turn-3": "fresh-turn-3" },
+      attachments: {},
+      proposedPlans: {},
+      workLog: {},
+      questionAnswers: {},
+    });
+    const command = buildConversationImportCommand({
+      validated: result.validated,
+      ids,
+      destination: destination(),
+      importedAt: "2026-09-28T10:01:00.000Z",
+    });
+    expect(command.origin.omissions).toContainEqual({ _tag: "records-skipped", count: 1 });
+    // The whole file as a document leaves nothing out.
+    expect(read(edited, "document").validated.skippedSourceRecords).toBeUndefined();
+    expect(read(fixtureMarkdown()).validated.skippedSourceRecords).toBeUndefined();
+  });
+
+  it("counts no skipped record for a foreign part marker it keeps as text", () => {
+    const edited = fixtureMarkdown().replace(
+      "Question 1",
+      "Question 1\n\n<!-- scient:part export=0123456789ab kind=context -->\n\nStill question 1",
+    );
+    const result = read(edited);
+    expect(result.issues.map((issue) => issue.kind)).toEqual(["foreign-marker"]);
+    expect(result.validated.snapshot.messages[0]?.text).toContain("Still question 1");
+    expect(result.validated.skippedSourceRecords).toBeUndefined();
+  });
+
   it("does not import an edited assistant marker as part of the preceding user request", () => {
     const edited = fixtureMarkdown().replace(
       `<!-- scient:message export=${EXPORT_VALUE} n=2 role=assistant`,

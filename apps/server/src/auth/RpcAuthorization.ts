@@ -172,6 +172,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.documentsPrepareMarkdownPdf]: AuthOrchestrationOperateScope,
   [WS_METHODS.documentsPublishDocumentPdf]: AuthOrchestrationOperateScope,
   [WS_METHODS.documentsPrepareConversationPdf]: AuthOrchestrationOperateScope,
+  [WS_METHODS.documentsReleaseDocumentPdf]: AuthOrchestrationOperateScope,
   [WS_METHODS.attachmentsCreateUploadUrl]: AuthOrchestrationOperateScope,
   [WS_METHODS.attachmentsDelete]: AuthOrchestrationOperateScope,
   [WS_METHODS.providerUploadFeedback]: AuthOrchestrationOperateScope,

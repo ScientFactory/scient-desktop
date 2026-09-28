@@ -14,12 +14,19 @@ import { SCIC_MEDIA_TYPE, SCIENT_CONVERSATION_IMPORT_UPLOAD_PATH } from "@t3tool
 
 import { runtime } from "../../lib/runtime";
 import { readPreparedConnection } from "../../state/session";
+import { ConversationImportNotice } from "./importDialog.logic";
 
 function prepared(environmentId: EnvironmentId) {
   const connection = readPreparedConnection(environmentId);
-  if (connection === null) throw new Error("The destination environment is not connected.");
+  if (connection === null) {
+    throw new ConversationImportNotice(
+      "The destination isn't connected. Reconnect it and try again.",
+    );
+  }
   return connection;
 }
+
+const UNSAFE_UPLOAD = "The destination can't receive files right now. Try again.";
 
 export async function createConversationImportUpload(
   environmentId: EnvironmentId,
@@ -35,7 +42,7 @@ export async function createConversationImportUpload(
     }),
   );
   const url = resolveAssetUrl(connection.httpBaseUrl, upload.relativeUrl);
-  if (url === null) throw new Error("The import upload URL is invalid.");
+  if (url === null) throw new ConversationImportNotice(UNSAFE_UPLOAD);
   const target = new URL(url);
   const environment = new URL(connection.httpBaseUrl);
   if (
@@ -46,22 +53,62 @@ export async function createConversationImportUpload(
     target.search !== "" ||
     target.hash !== ""
   ) {
-    throw new Error("The environment returned an unsafe import upload URL.");
+    throw new ConversationImportNotice(UNSAFE_UPLOAD);
   }
   return { ...upload, url };
 }
 
-export async function uploadConversationFile(url: string, file: File): Promise<void> {
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "content-type": file.name.toLowerCase().endsWith(".md")
-        ? "text/markdown; charset=utf-8"
-        : SCIC_MEDIA_TYPE,
-    },
-    body: file,
+/**
+ * Streams a browser file to its signed upload URL. Reports progress, and
+ * stops the transfer when `signal` aborts (the promise then rejects with an
+ * `AbortError`); the caller releases the staged import.
+ */
+export function uploadConversationFile(
+  url: string,
+  file: File,
+  options: {
+    readonly signal: AbortSignal;
+    readonly onProgress: (sentBytes: number, totalBytes: number) => void;
+  },
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const abortError = () => new DOMException("The upload was cancelled.", "AbortError");
+    if (options.signal.aborted) {
+      reject(abortError());
+      return;
+    }
+    const request = new XMLHttpRequest();
+    const abort = () => request.abort();
+    const settle = () => options.signal.removeEventListener("abort", abort);
+    request.open("POST", url);
+    request.setRequestHeader(
+      "content-type",
+      file.name.toLowerCase().endsWith(".md") ? "text/markdown; charset=utf-8" : SCIC_MEDIA_TYPE,
+    );
+    request.upload.addEventListener("progress", (event) => {
+      if (event.lengthComputable) options.onProgress(event.loaded, event.total);
+    });
+    request.addEventListener("load", () => {
+      settle();
+      if (request.status >= 200 && request.status < 300) resolve();
+      else
+        reject(new ConversationImportNotice("The destination didn't accept the file. Try again."));
+    });
+    request.addEventListener("error", () => {
+      settle();
+      reject(
+        new ConversationImportNotice(
+          "The file couldn't be sent. Check the connection and try again.",
+        ),
+      );
+    });
+    request.addEventListener("abort", () => {
+      settle();
+      reject(abortError());
+    });
+    options.signal.addEventListener("abort", abort, { once: true });
+    request.send(file);
   });
-  if (!response.ok) throw new Error(`The import upload was refused (${response.status}).`);
 }
 
 export async function previewConversationImport(

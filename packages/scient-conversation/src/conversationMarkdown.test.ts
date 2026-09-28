@@ -292,10 +292,34 @@ describe("Scient conversation Markdown v1", () => {
       "unknown-role",
       "missing-number",
     ]);
+    // Which issues left content out, and which kept it or found none to keep.
+    expect(parsed.issues.map((issue) => [issue.kind, issue.excluded])).toEqual([
+      ["foreign-marker", true],
+      ["malformed-marker", true],
+      ["unknown-role", true],
+      ["missing-number", false],
+    ]);
+  });
+
+  it("marks a foreign part marker it keeps as text as excluding nothing", () => {
+    const { markdown } = roundTrip([
+      message({ id: "m1", role: "user", text: "one" }),
+      message({ id: "m2", role: "assistant", text: "two", turnId: "t1" }),
+    ]);
+    const edited = markdown.replace(
+      "\none\n",
+      "\none\n\n<!-- scient:part export=0123456789ab kind=context -->\n\nstill one\n",
+    );
+    const parsed = parseConversationMarkdown(edited);
+    if (parsed.kind !== "conversation") throw new Error("Expected a conversation.");
+    expect(parsed.messages[0]?.body).toContain("still one");
+    expect(parsed.issues.map((issue) => [issue.kind, issue.excluded])).toEqual([
+      ["foreign-marker", false],
+    ]);
   });
 
   it("cuts a clean message at a damaged marker and rejects a reopened turn", () => {
-    const { markdown } = roundTrip([
+    const { markdown, parsed } = roundTrip([
       message({ id: "m1", role: "user", text: "one" }),
       message({ id: "m2", role: "assistant", text: "two", turnId: "t1" }),
       message({ id: "m3", role: "assistant", text: "three", turnId: "t2" }),
@@ -305,12 +329,24 @@ describe("Scient conversation Markdown v1", () => {
       `<!-- scient:message export=${EXPORT_VALUE} n=2 role=assistant`,
       "<!-- scient:message broken",
     );
-    const parsed = parseConversationMarkdown(damaged);
-    if (parsed.kind !== "conversation") throw new Error("Expected a conversation.");
-    expect(parsed.messages[0]?.body).toBe("one");
-    expect(parsed.messages.some((entry) => entry.body.includes("two"))).toBe(false);
-    expect(parsed.issues.map((issue) => issue.kind)).toContain("malformed-marker");
-    const reopened = parseConversationMarkdown(markdown);
+    const cut = parseConversationMarkdown(damaged);
+    if (cut.kind !== "conversation") throw new Error("Expected a conversation.");
+    expect(cut.messages[0]?.body).toBe("one");
+    expect(cut.messages.some((entry) => entry.body.includes("two"))).toBe(false);
+    expect(cut.issues.map((issue) => issue.kind)).toContain("malformed-marker");
+
+    // A turn that returns after another one continues as a new turn in the
+    // file; an edited file that reopens a turn is refused.
+    expect(summary(parsed.messages)).toEqual([
+      { n: 1, role: "user", turn: null },
+      { n: 2, role: "assistant", turn: 1 },
+      { n: 3, role: "assistant", turn: 2 },
+      { n: 4, role: "assistant", turn: 3 },
+    ]);
+    expect(parsed.issues).toEqual([]);
+    const reopened = parseConversationMarkdown(
+      markdown.replace(/( n=4 role=assistant time=\S+) turn=3/u, "$1 turn=1"),
+    );
     if (reopened.kind !== "conversation") throw new Error("Expected a conversation.");
     expect(reopened.issues.map((issue) => issue.kind)).toContain("out-of-order-turn");
   });

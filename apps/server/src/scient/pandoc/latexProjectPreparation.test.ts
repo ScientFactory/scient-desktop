@@ -63,22 +63,61 @@ describe("LaTeX project preparation", () => {
       }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
-  it.live("replaces escaped, missing and cyclic includes without reading outside the project", () =>
+  it.live("resolves includes, figures and bibliographies elsewhere in the same project", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const workspace = yield* fs.makeTempDirectoryScoped({ prefix: "scient-latex-word-" });
+      const paper = NodePath.join(workspace, "paper");
+      NodeFS.mkdirSync(paper);
+      NodeFS.mkdirSync(NodePath.join(workspace, "shared"));
+      NodeFS.mkdirSync(NodePath.join(workspace, "figures"));
+      NodeFS.writeFileSync(NodePath.join(workspace, "shared", "methods.tex"), "Shared methods.");
+      NodeFS.writeFileSync(
+        NodePath.join(workspace, "figures", "plot.png"),
+        Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+      );
+      NodeFS.writeFileSync(NodePath.join(workspace, "refs.bib"), "@article{shared, title={S}}\n");
+      NodeFS.writeFileSync(
+        NodePath.join(paper, "main.tex"),
+        [
+          "\\graphicspath{{../figures/}}",
+          "\\input{../shared/methods}",
+          "\\includegraphics{plot}",
+          "\\bibliography{../refs}",
+        ].join("\n"),
+      );
+      const prepared = yield* prepareLatexProject(NodePath.join(paper, "main.tex"), workspace);
+      expect(prepared.source).toContain("Shared methods.");
+      expect(prepared.source).toContain("{../figures/plot.png}");
+      expect(prepared.imageReferences).toEqual(["../figures/plot.png"]);
+      expect(prepared.bibliography[0]?.contents).toContain("@article{shared");
+      expect(prepared.baseDirectory).toBe(paper);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("replaces escaped, missing and cyclic includes without reading outside the project", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "scient-latex-word-" });
+      const workspace = NodePath.join(directory, "project");
       const project = NodePath.join(workspace, "paper");
-      NodeFS.mkdirSync(project);
-      NodeFS.writeFileSync(NodePath.join(workspace, "secret.tex"), "SECRET OUTSIDE");
+      NodeFS.mkdirSync(project, { recursive: true });
+      NodeFS.writeFileSync(NodePath.join(directory, "secret.tex"), "SECRET OUTSIDE");
       NodeFS.writeFileSync(
         NodePath.join(project, "main.tex"),
-        "\\begin{document}\\input{../secret}\\input{missing}\\input{main}\\includegraphics{../secret}\\bibliography{../secret}\\end{document}",
+        "\\begin{document}\\input{../../secret}\\input{missing}\\input{main}\\includegraphics{../../secret}\\bibliography{../../secret}\\end{document}",
       );
       const prepared = yield* prepareLatexProject(NodePath.join(project, "main.tex"), workspace);
       expect(prepared.source).not.toContain("SECRET OUTSIDE");
+      expect(prepared.source).toContain("[Include outside the project folder]");
       expect(prepared.source).toContain("[Unresolved include]");
-      expect(prepared.source).toContain("[Figure unavailable]");
-      expect(prepared.warnings.length).toBeGreaterThanOrEqual(4);
+      expect(prepared.source).toContain("[Figure outside the project folder]");
+      const notes = prepared.warnings.map((warning) => warning.message);
+      expect(notes).toContain(
+        "A LaTeX include outside the project folder was left out; a placeholder was inserted.",
+      );
+      expect(notes).toContain("A bibliography outside the project folder was omitted.");
+      expect(notes).toContain("A LaTeX include exceeded the depth, file-count, or cycle limit.");
       expect(prepared.bibliography).toHaveLength(0);
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
@@ -86,13 +125,14 @@ describe("LaTeX project preparation", () => {
   it.live("rejects a symlinked include outside the project", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const workspace = yield* fs.makeTempDirectoryScoped({ prefix: "scient-latex-word-" });
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "scient-latex-word-" });
+      const workspace = NodePath.join(directory, "project");
       const project = NodePath.join(workspace, "paper");
-      NodeFS.mkdirSync(project);
-      NodeFS.writeFileSync(NodePath.join(workspace, "secret.tex"), "PRIVATE TEXT");
+      NodeFS.mkdirSync(project, { recursive: true });
+      NodeFS.writeFileSync(NodePath.join(directory, "secret.tex"), "PRIVATE TEXT");
       try {
         NodeFS.symlinkSync(
-          NodePath.join(workspace, "secret.tex"),
+          NodePath.join(directory, "secret.tex"),
           NodePath.join(project, "linked.tex"),
         );
       } catch {
@@ -101,7 +141,7 @@ describe("LaTeX project preparation", () => {
       NodeFS.writeFileSync(NodePath.join(project, "main.tex"), "\\input{linked}");
       const prepared = yield* prepareLatexProject(NodePath.join(project, "main.tex"), workspace);
       expect(prepared.source).not.toContain("PRIVATE TEXT");
-      expect(prepared.source).toContain("[Unresolved include]");
+      expect(prepared.source).toContain("[Include outside the project folder]");
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 });

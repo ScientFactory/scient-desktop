@@ -10,9 +10,10 @@
  * Turns: every message, reasoning item, plan, answer, and work-log entry of a
  * source turn lands in one new local turn. User messages are stored with no
  * turn (turn starts and mid-turn steering alike), so each one joins the turn
- * of the next message that names one: the turn it started, or the turn it
- * steered. A request never answered gets a turn of its own. Every such turn is
- * inherited history: revert keeps it, as it keeps a fork's inherited turns.
+ * of the next record that names one: the turn it started, or the turn it
+ * steered, even when that turn has no reply. A request followed by no turn at
+ * all gets a turn of its own. Every such turn is inherited history: revert
+ * keeps it, as it keeps a fork's inherited turns.
  */
 import {
   ApprovalRequestId,
@@ -95,26 +96,53 @@ function assignTurns(input: ValidatedConversationImport): TurnAssignment {
   };
 
   const byMessageId = new Map<string, string | null>();
-  // The turn named next after each position, scanning from the end.
-  const nextTurn: Array<string | null> = Array.from({ length: snapshot.messages.length });
-  let upcoming: string | null = null;
+  // The next message naming a turn after each position, scanning from the end.
+  const nextNamed: Array<{ readonly turnId: string; readonly createdAt: string } | null> =
+    Array.from({ length: snapshot.messages.length }, () => null);
+  let upcoming: { readonly turnId: string; readonly createdAt: string } | null = null;
   for (let index = snapshot.messages.length - 1; index >= 0; index -= 1) {
-    const turnId = snapshot.messages[index]!.turnId;
-    if (turnId !== null) upcoming = turnId;
-    nextTurn[index] = upcoming;
+    const message = snapshot.messages[index]!;
+    if (message.turnId !== null)
+      upcoming = { turnId: message.turnId, createdAt: message.createdAt };
+    nextNamed[index] = upcoming;
   }
+  // Other records that name a turn, by time: a turn with no reply still has
+  // its reasoning, work log, plans, or answers.
+  const marks = [
+    ...snapshot.reasoning,
+    ...snapshot.workLog,
+    ...snapshot.proposedPlans,
+    ...snapshot.questionAnswers,
+  ]
+    .flatMap((record) =>
+      record.turnId === null ? [] : [{ turnId: record.turnId, createdAt: record.createdAt }],
+    )
+    .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt));
+  const firstMarkFrom = (createdAt: string) => {
+    let low = 0;
+    let high = marks.length;
+    while (low < high) {
+      const middle = low + Math.floor((high - low) / 2);
+      if (marks[middle]!.createdAt < createdAt) low = middle + 1;
+      else high = middle;
+    }
+    return marks[low];
+  };
   for (const [index, message] of snapshot.messages.entries()) {
     if (message.turnId !== null) {
       byMessageId.set(message.id, use(turnKey.source(message.turnId)));
     } else if (message.role === "system") {
       byMessageId.set(message.id, null);
     } else {
-      const next = nextTurn[index];
+      const named = nextNamed[index] ?? null;
+      const mark = firstMarkFrom(message.createdAt);
+      const next =
+        mark !== undefined && (named === null || mark.createdAt < named.createdAt)
+          ? mark.turnId
+          : (named?.turnId ?? null);
       byMessageId.set(
         message.id,
-        use(
-          next === null || next === undefined ? turnKey.message(message.id) : turnKey.source(next),
-        ),
+        use(next === null ? turnKey.message(message.id) : turnKey.source(next)),
       );
     }
   }
@@ -402,8 +430,19 @@ function importOmissions(
   skippedRecords: number,
 ): ReadonlyArray<OrchestrationConversationImportOmission> {
   const omissions: OrchestrationConversationImportOmission[] = [];
-  let unavailableAttachments = 0;
-  let skipped = skippedRecords;
+  // Each unavailable attachment once, although an answer and its folded
+  // message both list it (and so both carry a warning for it).
+  const unavailableAttachments = new Set(
+    [
+      ...input.snapshot.messages.flatMap((message) => message.attachments),
+      ...input.snapshot.questionAnswers.flatMap((answer) =>
+        answer.items.flatMap((item) => item.attachments),
+      ),
+    ]
+      .filter((attachment) => !attachment.available)
+      .map((attachment) => attachment.localId),
+  ).size;
+  let skipped = skippedRecords + (input.skippedSourceRecords ?? 0);
   for (const omission of input.omissions) {
     switch (omission._tag) {
       case "work-log-excluded":
@@ -418,7 +457,7 @@ function importOmissions(
             break;
           case "attachment-unavailable":
           case "attachment-unsupported":
-            unavailableAttachments += 1;
+            // Counted from the attachments themselves, above.
             break;
           case "records-skipped":
             skipped += omission.warning.count;
@@ -451,14 +490,15 @@ function importOmissions(
       previous?._tag === "attachments-unavailable" &&
       omission._tag === "attachments-unavailable"
     ) {
+      // An earlier transfer's gaps and this file's are different records.
       byKind.set(omission._tag, {
         _tag: "attachments-unavailable",
-        count: Math.max(previous.count, omission.count),
+        count: previous.count + omission.count,
       });
     } else if (previous?._tag === "records-skipped" && omission._tag === "records-skipped") {
       byKind.set(omission._tag, {
         _tag: "records-skipped",
-        count: Math.max(previous.count, omission.count),
+        count: previous.count + omission.count,
       });
     } else if (previous === undefined) {
       byKind.set(omission._tag, omission);

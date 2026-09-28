@@ -99,6 +99,8 @@ const manifestFor = (input: {
   readonly sha256?: string;
 }): PandocManifest => ({
   version: "3.11",
+  license: "GPL-2.0-or-later",
+  sourceUrl: "https://example.invalid/pandoc-3.11-source.tar.gz",
   assets: {
     "win32-x64": null,
     "win32-arm64": null,
@@ -206,6 +208,8 @@ describe.skipIf(HOST_PLATFORM === "win32")("PandocManagedTool", () => {
         const before = yield* tool.status;
         expect(before.installed).toBe(false);
         expect(before.downloadBytes).toBe(ARCHIVE.byteLength);
+        expect(before.license).toBe("GPL-2.0-or-later");
+        expect(before.sourceUrl).toBe("https://example.invalid/pandoc-3.11-source.tar.gz");
 
         const begun = yield* tool.install;
         expect(begun.install.state).toBe("downloading");
@@ -227,6 +231,38 @@ describe.skipIf(HOST_PLATFORM === "win32")("PandocManagedTool", () => {
         }
         expect(NodeFS.readdirSync(harness.paths.stagingRoot)).toEqual([]);
         expect(NodeFS.readdirSync(harness.paths.scratchRoot)).toEqual([]);
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("stops using an install that cannot start and offers to reinstall it", () =>
+    Effect.gen(function* () {
+      const server = yield* startArtifactServer();
+      const harness = yield* makeHarness({ manifest: manifestFor({ url: server.handle.url }) });
+      yield* Effect.gen(function* () {
+        const tool = yield* PandocManagedTool;
+        yield* tool.install;
+        yield* awaitInstall(tool);
+        const broken = yield* tool.command;
+        expect(broken).not.toBeNull();
+
+        // A command this install does not run is not a reason to discard it.
+        yield* tool.discardUnstartable({ command: "/elsewhere/pandoc", leadingArgs: [] });
+        expect((yield* tool.status).installed).toBe(true);
+
+        yield* tool.discardUnstartable(broken!);
+        const discarded = yield* tool.status;
+        expect(discarded.installed).toBe(false);
+        expect(discarded.reinstallRequired).toBe(true);
+        expect(yield* tool.command).toBeNull();
+        expect(NodeFS.existsSync(harness.paths.statePath)).toBe(false);
+
+        yield* tool.install;
+        const reinstalled = yield* awaitInstall(tool);
+        expect(reinstalled.install.state).toBe("ready");
+        expect(reinstalled.installed).toBe(true);
+        expect(reinstalled.reinstallRequired).toBeUndefined();
+        expect((yield* tool.command)?.command).not.toBe(broken!.command);
       }).pipe(Effect.provide(harness.serviceLayer));
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );

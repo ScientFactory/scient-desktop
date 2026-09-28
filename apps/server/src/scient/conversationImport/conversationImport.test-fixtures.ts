@@ -63,6 +63,10 @@ export interface ImportFixtureOptions {
   readonly turns?: number;
   readonly reasoning?: boolean;
   readonly workLog?: boolean;
+  /** Tool entries per turn when `workLog` is set; one by default. */
+  readonly workLogPerTurn?: number;
+  /** Characters of output in each tool entry. */
+  readonly workLogOutputChars?: number;
   readonly attachments?: boolean;
   /** Distinguishes packages of separate exports. */
   readonly packageSha256?: string;
@@ -156,21 +160,31 @@ export function importFixture(options: ImportFixtureOptions = {}): ImportFixture
       });
     }
     if (options.workLog === true) {
-      workLog.push({
-        _tag: "tool",
-        id: `src-tool-${turn}`,
-        turnId: `src-turn-${turn}`,
-        createdAt: at(10 * turn + 3),
-        title: "Run tests",
-        itemType: "command_execution",
-        toolName: "Bash",
-        status: "completed",
-        command: { text: "rm -rf build && npm test", omittedLines: 0, omittedChars: 0 },
-        detail: null,
-        output: { text: `ok ${turn}`, omittedLines: 0, omittedChars: 0 },
-        changedFiles: [],
-        omittedChangedFiles: 0,
-      });
+      const perTurn = options.workLogPerTurn ?? 1;
+      for (let step = 0; step < perTurn; step += 1) {
+        workLog.push({
+          _tag: "tool",
+          id: step === 0 ? `src-tool-${turn}` : `src-tool-${turn}-${step}`,
+          turnId: `src-turn-${turn}`,
+          createdAt: at(10 * turn + 3),
+          title: "Run tests",
+          itemType: "command_execution",
+          toolName: "Bash",
+          status: "completed",
+          command: { text: "rm -rf build && npm test", omittedLines: 0, omittedChars: 0 },
+          detail: null,
+          output: {
+            text:
+              options.workLogOutputChars === undefined
+                ? `ok ${turn}`
+                : `ok ${turn} `.padEnd(options.workLogOutputChars, "x"),
+            omittedLines: 0,
+            omittedChars: 0,
+          },
+          changedFiles: [],
+          omittedChangedFiles: 0,
+        });
+      }
     }
     messages.push({
       n: userN + 1,

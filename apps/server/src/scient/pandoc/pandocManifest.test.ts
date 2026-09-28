@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off preferSchemaOverJson:off -- Reads the repository's licence notice configuration.
+import * as NodeFS from "node:fs";
+
 import { describe, expect, it } from "@effect/vitest";
 
 import { artifactUrlRejection } from "../latex/LatexManagedToolchain.ts";
@@ -25,6 +28,37 @@ describe("PANDOC_MANIFEST", () => {
       expect(asset.executableRelativePath.startsWith("pandoc-3.11")).toBe(true);
     }
     expect(PANDOC_SOURCE_URL).toBe("https://github.com/jgm/pandoc/archive/refs/tags/3.11.tar.gz");
+  });
+
+  it("ships Pandoc's licence notice and the pinned release's exact source link", () => {
+    const repositoryRoot = new URL("../../../../../", import.meta.url);
+    const config = JSON.parse(
+      NodeFS.readFileSync(new URL("third-party-licenses.config.json", repositoryRoot), "utf8"),
+    ) as {
+      customNotices: ReadonlyArray<{
+        name: string;
+        license: string;
+        version?: string;
+        sourceUrl?: string;
+        noticeFiles?: ReadonlyArray<string>;
+      }>;
+    };
+    const notice = config.customNotices.find((entry) => entry.name === "Pandoc");
+    expect(notice).toMatchObject({
+      license: PANDOC_MANIFEST.license,
+      version: PANDOC_MANIFEST.version,
+      sourceUrl: PANDOC_SOURCE_URL,
+    });
+    expect(PANDOC_MANIFEST.license).toBe("GPL-2.0-or-later");
+    expect(PANDOC_MANIFEST.sourceUrl).toBe(PANDOC_SOURCE_URL);
+    const [copyright, copying] = (notice?.noticeFiles ?? []).map((file) =>
+      NodeFS.readFileSync(new URL(file, repositoryRoot), "utf8"),
+    );
+    expect(copyright).toMatch(/^Pandoc\nCopyright \(C\) 2006-2024 John MacFarlane/u);
+    expect(copyright).toContain(
+      "either version 2 of the License, or\n   (at your option) any later version.",
+    );
+    expect(copying).toContain("GNU GENERAL PUBLIC LICENSE");
   });
 
   it("names the executable where each release packs it", () => {

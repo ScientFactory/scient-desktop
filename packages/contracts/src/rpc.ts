@@ -75,6 +75,7 @@ import {
   ScientDocumentPdfPrepared,
   ScientDocumentPdfPublished,
   ScientDocumentPdfPublishInput,
+  ScientDocumentPdfReleaseInput,
   ScientMarkdownPdfPrepareInput,
 } from "./scientDocumentExport.ts";
 import {
@@ -464,6 +465,7 @@ export const WS_METHODS = {
   documentsPrepareMarkdownPdf: "documents.prepareMarkdownPdf",
   documentsPublishDocumentPdf: "documents.publishDocumentPdf",
   documentsPrepareConversationPdf: "documents.prepareConversationPdf",
+  documentsReleaseDocumentPdf: "documents.releaseDocumentPdf",
   attachmentsCreateUploadUrl: "attachments.createUploadUrl",
   attachmentsDelete: "attachments.delete",
 
@@ -1524,6 +1526,10 @@ const WsDocumentsPublishDocumentPdfRpc = Rpc.make(WS_METHODS.documentsPublishDoc
   success: ScientDocumentPdfPublished,
   error: Schema.Union([ScientDocumentPdfExportError, EnvironmentAuthorizationError]),
 });
+const WsDocumentsReleaseDocumentPdfRpc = Rpc.make(WS_METHODS.documentsReleaseDocumentPdf, {
+  payload: ScientDocumentPdfReleaseInput,
+  error: EnvironmentAuthorizationError,
+});
 const WsAttachmentsCreateUploadUrlRpc = Rpc.make(WS_METHODS.attachmentsCreateUploadUrl, {
   payload: AttachmentCreateUploadUrlInput,
   success: AttachmentCreateUploadUrlResult,
@@ -2076,6 +2082,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsDocumentsPublishBrowserPdfExportRpc,
   WsDocumentsPrepareMarkdownPdfRpc,
   WsDocumentsPublishDocumentPdfRpc,
+  WsDocumentsReleaseDocumentPdfRpc,
   WsDocumentsPrepareConversationPdfRpc,
   WsAttachmentsCreateUploadUrlRpc,
   WsAttachmentsDeleteRpc,

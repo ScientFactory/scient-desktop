@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import * as NodeCrypto from "node:crypto";
+
 import type { ScientDocumentPageInput } from "@t3tools/contracts";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -196,32 +198,173 @@ describe("ScientDocumentPage", () => {
     expect(tracker.diagnostics.every((diagnostic) => diagnostic.severity === "warning")).toBe(true);
   });
 
-  it("replaces an image that fails to decode with a labelled placeholder and a warning", async () => {
-    const { article, tracker } = await renderPage(
-      input("![Broken](data:image/png;base64,AAAA) ![Plot](scient-asset:image-0001)\n"),
-    );
-    const [broken, captured] = article.querySelectorAll("img");
-    await act(async () => {
-      broken!.dispatchEvent(new Event("error"));
-      captured!.dispatchEvent(new Event("error"));
-    });
+  it("replaces an inline image that fails to decode with a labelled placeholder and a warning", async () => {
+    const { article, tracker } = await renderPage(input("![Broken](data:image/png;base64,AAAA)\n"));
+    // happy-dom may settle a data URL itself; otherwise report the failure.
+    const image = article.querySelector("img");
+    if (image) {
+      await act(async () => {
+        image.dispatchEvent(new Event("error"));
+      });
+    }
     expect(article.textContent).toContain("Image could not be displayed: Broken");
-    expect(article.textContent).toContain("Image could not be displayed: plot.png");
     expect(article.querySelectorAll("img")).toHaveLength(0);
-    // Fatal diagnostics are listed first.
     expect(tracker.diagnostics).toEqual([
-      {
-        severity: "fatal",
-        code: "resource-unresolved",
-        detail: 'The captured image "plot.png" could not be loaded.',
-      },
       {
         severity: "warning",
         code: "missing-image",
         detail: 'Image "Broken" could not be displayed and was left out.',
       },
     ]);
-    expect([...tracker.unresolvedAssets]).toEqual(["image-0001"]);
+  });
+
+  describe("a captured image that does not display", () => {
+    const capturedBytes = new TextEncoder().encode("corrupt PNG bytes");
+    const capturedDigest = `sha256:${NodeCrypto.createHash("sha256").update(capturedBytes).digest("hex")}`;
+    const withDigest = (sha256?: string) =>
+      input("![Plot](scient-asset:image-0001)\n", {
+        assets: [
+          {
+            id: "image-0001",
+            role: "image",
+            fileName: "plot.png",
+            mediaType: "image/png",
+            content: {
+              _tag: "captured",
+              path: "assets/0001.png",
+              ...(sha256 === undefined ? {} : { sha256 }),
+            },
+          },
+        ],
+      });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    async function fail(
+      page: ScientDocumentPageInput,
+      served: () => Promise<Response>,
+      event: "error" | "load" = "error",
+      size = { width: 0, height: 0 },
+    ) {
+      const fetchCapture = vi.fn(served);
+      vi.stubGlobal("fetch", fetchCapture);
+      const rendered = await renderPage(page);
+      const image = rendered.article.querySelector("img")!;
+      Object.defineProperty(image, "naturalWidth", { value: size.width });
+      Object.defineProperty(image, "naturalHeight", { value: size.height });
+      await act(async () => {
+        image.dispatchEvent(new Event(event));
+      });
+      // The page fetches and hashes the image again before it decides; wait
+      // for that work, which the tracker holds open, to finish.
+      await act(async () => {
+        expect(await rendered.tracker.settle(5_000)).toBe(true);
+      });
+      return { ...rendered, fetchCapture };
+    }
+
+    it.each([
+      ["does not decode", "error"],
+      ["loads with no measurable size", "load"],
+    ] as const)(
+      "prints a placeholder and an export note when it was served but %s",
+      async (_case, event) => {
+        const { article, tracker, fetchCapture } = await fail(
+          withDigest(capturedDigest),
+          async () => new Response(capturedBytes),
+          event,
+        );
+        expect(fetchCapture).toHaveBeenCalledWith(
+          "https://environment.test/api/assets/token/assets/0001.png",
+          { credentials: "omit", cache: "no-store" },
+        );
+        expect(article.textContent).toContain("Image could not be displayed: plot.png");
+        expect(article.querySelectorAll("img")).toHaveLength(0);
+        expect(tracker.failed).toBe(false);
+        expect(tracker.diagnostics).toEqual([
+          {
+            severity: "warning",
+            code: "missing-image",
+            detail: 'The image "plot.png" could not be decoded and is shown as a placeholder.',
+          },
+        ]);
+        expect([...tracker.unresolvedAssets]).toEqual([]);
+      },
+    );
+
+    it("checks a captured image that decodes against the capture, and keeps it", async () => {
+      const { article, tracker, fetchCapture } = await fail(
+        withDigest(capturedDigest),
+        async () => new Response(capturedBytes),
+        "load",
+        { width: 320, height: 180 },
+      );
+      expect(article.querySelector("img[data-scient-asset='image-0001']")).not.toBeNull();
+      expect(fetchCapture).toHaveBeenCalledOnce();
+      expect([...tracker.verifiedAssets]).toEqual(["image-0001"]);
+      expect(tracker.diagnostics).toEqual([]);
+    });
+
+    it("refuses a captured image that decodes but is not the captured bytes", async () => {
+      const { article, tracker } = await fail(
+        withDigest(capturedDigest),
+        async () => new Response(new TextEncoder().encode("a different, decodable image")),
+        "load",
+        { width: 320, height: 180 },
+      );
+      // The image itself displayed; the page still is not the capture.
+      expect(article.querySelector("img[data-scient-asset='image-0001']")).not.toBeNull();
+      expect(tracker.failed).toBe(true);
+      expect(tracker.diagnostics).toEqual([
+        {
+          severity: "fatal",
+          code: "resource-unresolved",
+          detail: 'The captured image "plot.png" does not match the capture.',
+        },
+      ]);
+      expect([...tracker.unresolvedAssets]).toEqual(["image-0001"]);
+    });
+
+    it.each([
+      [
+        "was never served",
+        async () => new Response(null, { status: 404 }),
+        'The captured image "plot.png" could not be loaded.',
+      ],
+      [
+        "was refused as unauthorized",
+        async () => new Response(null, { status: 403 }),
+        'The captured image "plot.png" could not be loaded.',
+      ],
+      [
+        "was blocked",
+        async () => {
+          throw new TypeError("Failed to fetch");
+        },
+        'The captured image "plot.png" could not be loaded.',
+      ],
+      [
+        "was served with other bytes than the capture",
+        async () => new Response(new TextEncoder().encode("substituted")),
+        'The captured image "plot.png" does not match the capture.',
+      ],
+    ])("refuses the page when it %s", async (_case, served, detail) => {
+      const { article, tracker } = await fail(withDigest(capturedDigest), served);
+      expect(article.textContent).toContain("Image could not be displayed: plot.png");
+      expect(tracker.failed).toBe(true);
+      expect(tracker.diagnostics).toEqual([
+        { severity: "fatal", code: "resource-unresolved", detail },
+      ]);
+      expect([...tracker.unresolvedAssets]).toEqual(["image-0001"]);
+    });
+
+    it("accepts served bytes from a server that records no digest", async () => {
+      const { tracker } = await fail(withDigest(), async () => new Response(capturedBytes));
+      expect(tracker.failed).toBe(false);
+      expect(tracker.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(["missing-image"]);
+    });
   });
 
   it("treats a Mermaid runtime failure as fatal, not as a labelled placeholder", async () => {
@@ -260,6 +403,32 @@ describe("ScientDocumentPage", () => {
       "diagram-failed",
       "math-unrendered",
     ]);
+  });
+
+  it.each([
+    ["YAML", "---\ntitle: Field notes\nauthor: Someone\ntags: [a, b]\n---\n"],
+    ["TOML", '+++\ntitle = "Field notes"\nauthor = "Someone"\n+++\n'],
+  ])("drops %s front matter instead of printing it", async (_kind, frontMatter) => {
+    const { article } = await renderPage(
+      input(`${frontMatter}\nBody paragraph.\n\n## Methods\n\nMore.\n`, {
+        title: "Field notes",
+      }),
+    );
+    expect(article.textContent).not.toMatch(/author|Someone|tags|title/u);
+    expect(article.querySelector("hr")).toBeNull();
+    // The front matter title titles the document; no heading comes from the metadata.
+    expect(
+      [...article.querySelectorAll(":scope > h1, :scope > h2")].map(
+        (heading) => heading.textContent,
+      ),
+    ).toEqual(["Field notes", "Methods"]);
+    expect(article.querySelector("p")?.textContent).toBe("Body paragraph.");
+  });
+
+  it("keeps a thematic break that is not front matter", async () => {
+    const { article } = await renderPage(input("Intro.\n\n---\n\nAfter the break.\n"));
+    expect(article.querySelector("hr")).not.toBeNull();
+    expect(article.textContent).toContain("After the break.");
   });
 
   it("uses the conversation layout and the resolved text direction", async () => {

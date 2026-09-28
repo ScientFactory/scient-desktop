@@ -177,6 +177,13 @@ export interface MarkdownIssue {
   /** 1-based line of the marker the issue concerns. */
   readonly line: number;
   readonly detail: string;
+  /**
+   * The issue left content out of `messages`: a dropped message, the text a
+   * damaged boundary cut off, or a dropped part. False when the content was
+   * kept (a foreign marker read as text) or was never in the file (a gap in
+   * the message numbers).
+   */
+  readonly excluded: boolean;
 }
 
 export type ParsedConversationMarkdown =
@@ -284,6 +291,7 @@ export function parseConversationMarkdown(source: string): ParsedConversationMar
         kind: "malformed-marker",
         line,
         detail: "The marker does not follow the format.",
+        excluded: true,
       });
       markers.push({
         type: "invalid",
@@ -309,6 +317,7 @@ export function parseConversationMarkdown(source: string): ParsedConversationMar
           match[1] === "message"
             ? "A message marker from another export stopped the preceding message; its content was excluded."
             : "A marker from another export was treated as text.",
+        excluded: match[1] === "message",
       });
       // An edited message marker must not let the following speaker heading
       // and response become part of the preceding clean message. Writer output
@@ -320,7 +329,12 @@ export function parseConversationMarkdown(source: string): ParsedConversationMar
       continue;
     }
     if (duplicateAttribute) {
-      issues.push({ kind: "malformed-marker", line, detail: "The marker repeats an attribute." });
+      issues.push({
+        kind: "malformed-marker",
+        line,
+        detail: "The marker repeats an attribute.",
+        excluded: true,
+      });
       markers.push({ type: "invalid", attributes, start: range.start, end: range.end, line });
       continue;
     }
@@ -361,6 +375,7 @@ export function parseConversationMarkdown(source: string): ParsedConversationMar
         kind: "malformed-marker",
         line: marker.line,
         detail: "The message number is invalid.",
+        excluded: true,
       });
       clean = false;
     } else if (seen.has(n)) {
@@ -368,6 +383,7 @@ export function parseConversationMarkdown(source: string): ParsedConversationMar
         kind: "duplicate-number",
         line: marker.line,
         detail: `Message ${n} appears twice.`,
+        excluded: true,
       });
       clean = false;
     } else if (n < expected) {
@@ -375,6 +391,7 @@ export function parseConversationMarkdown(source: string): ParsedConversationMar
         kind: "out-of-order-number",
         line: marker.line,
         detail: `Message ${n} is out of order.`,
+        excluded: true,
       });
       clean = false;
     } else if (n > expected) {
@@ -382,6 +399,7 @@ export function parseConversationMarkdown(source: string): ParsedConversationMar
         kind: "missing-number",
         line: marker.line,
         detail: `Messages ${expected}–${n - 1} are missing.`,
+        excluded: false,
       });
     }
     if (role !== "user" && role !== "assistant") {
@@ -389,6 +407,7 @@ export function parseConversationMarkdown(source: string): ParsedConversationMar
         kind: "unknown-role",
         line: marker.line,
         detail: `Unknown role "${(role ?? "").slice(0, 80)}".`,
+        excluded: true,
       });
       clean = false;
     }
@@ -401,6 +420,7 @@ export function parseConversationMarkdown(source: string): ParsedConversationMar
         kind: "invalid-time",
         line: marker.line,
         detail: "The message time is invalid.",
+        excluded: true,
       });
       clean = false;
     }
@@ -414,6 +434,7 @@ export function parseConversationMarkdown(source: string): ParsedConversationMar
           kind: "out-of-order-turn",
           line: marker.line,
           detail: `Turn ${turn} reappears after another turn.`,
+          excluded: true,
         });
         continue;
       }
@@ -437,6 +458,7 @@ export function parseConversationMarkdown(source: string): ParsedConversationMar
           kind: "malformed-marker",
           line: other.line,
           detail: `Unknown marker "${other.type}".`,
+          excluded: false,
         });
       }
     }
@@ -465,6 +487,7 @@ export function parseConversationMarkdown(source: string): ParsedConversationMar
           kind: "unknown-part",
           line: part.line,
           detail: `Unknown part "${(kind ?? "").slice(0, 80)}".`,
+          excluded: true,
         });
         return [];
       }

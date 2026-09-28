@@ -31,16 +31,24 @@
  * belongs to the importer (its attempt journal) and which staging only ever
  * removes as part of the whole area. Each area counts against
  * `CONVERSATION_IMPORT_STAGING_QUOTA_BYTES` and `CONVERSATION_IMPORT_MAX_LIVE`
- * from admission until removal. An idle area expires
- * `CONVERSATION_IMPORT_STAGING_TTL_MS` after its last upload, preview, or
- * confirm; an area whose upload never arrives expires with its upload URL.
+ * from admission until it is gone: its declared upload size until it is
+ * validated, then its staged snapshot and attachments. Validation and imports
+ * run one at a time, so the only bytes beyond the quota are the expansion of
+ * the one package being validated, at most `SCIC_MAX_UNCOMPRESSED_BYTES`. A
+ * receive ends after a minute without bytes or at a deadline scaled to its
+ * size. An idle area expires `CONVERSATION_IMPORT_STAGING_TTL_MS` after its
+ * last upload, preview, or confirm; an area whose upload never arrives expires
+ * with its upload URL.
  *
  * Staging removes an area when the user cancels, after a successful import,
- * when it expires, and at server startup (every area left from an earlier run
- * is abandoned). Before removing an area whose `attemptDirectory` is not empty,
- * staging calls `settleAttempt`; if settling fails, the area stays and is
- * settled again on the next sweep. An empty `attemptDirectory` means nothing
- * was published.
+ * when it expires, when its file is refused, and at server startup (every
+ * area left from an earlier run is abandoned). A validation that fails for a
+ * reason a retry may clear (no room yet, a read error) keeps the upload for
+ * the next preview instead. Before removing an area whose `attemptDirectory`
+ * is not empty, staging calls `settleAttempt`; if settling fails, the area
+ * stays and is settled again on the next sweep. An area that cannot be
+ * removed yet stays, still counted, until a sweep removes it. An empty
+ * `attemptDirectory` means nothing was published.
  *
  * ## The per-import lease
  *
@@ -54,8 +62,9 @@
  *   then imports; a second confirm joins the running import if its package
  *   digest and destination match, and fails `import-busy` otherwise;
  * - expiry skips the area (both operations refresh its expiry);
- * - cancel marks the import cancel-requested, interrupts the running fiber,
- *   and joins it before deciding anything.
+ * - cancel marks the import cancel-requested, stops a receive in progress or
+ *   interrupts the running fiber, and joins it before deciding anything, so
+ *   an upload's reservation is held until its stream has stopped.
  *
  * A preview is returned only if the import is still live when validation
  * ends; a cancelled validation fails its joined previews `cancelled`. A
@@ -117,17 +126,20 @@
  * area, journal included. If step 1 fails, the area and journal stay and the
  * next sweep settles again, so a crash anywhere between commit and cleanup
  * still ends with the completion recorded. Records are kept for
- * `CONVERSATION_IMPORT_COMPLETION_RETENTION_MS` across restarts. A repeated
- * confirm is answered from the record: same digest and destination return the
- * result, another digest fails `package-changed`, another destination
- * `already-imported`.
+ * `CONVERSATION_IMPORT_COMPLETION_RETENTION_MS` across restarts. While it is
+ * retained it answers first, whatever the staging area is doing (still being
+ * removed, or gone): a repeated confirm with the same digest and destination
+ * returns the result, another digest fails `package-changed`, another
+ * destination `already-imported`; a cancel answers `already-imported`, and a
+ * preview fails `already-imported`. Only an import with no retained
+ * completion and no live area is `import-not-found`.
  */
 import * as NodeCrypto from "node:crypto";
 
-import { canonicalSnapshotContent } from "@scientfactory/conversation";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import {
   ConversationImportDestination,
@@ -167,6 +179,27 @@ export const CONVERSATION_IMPORT_STAGING_QUOTA_BYTES = 2 * 1024 * 1024 * 1024;
 export const CONVERSATION_IMPORT_MAX_LIVE = 8;
 /** How long a committed import's confirm binding and result are kept. */
 export const CONVERSATION_IMPORT_COMPLETION_RETENTION_MS = 24 * 60 * 60_000;
+/**
+ * Records one import may write: messages, reasoning, work-log entries, plans,
+ * and answers. One `thread.conversation.import` command writes them all in one
+ * transaction, which holds the orchestration engine. Measured with the opt-in
+ * `ConversationImportBenchmark` on an on-disk database, a work-log-heavy import
+ * (eight tool entries of 8,000 output characters per turn) commits 5,000
+ * records in about 3.5 s; the cost then grows faster than linearly (about 14 s
+ * at 10,000 and 65 s at 20,000).
+ */
+export const CONVERSATION_IMPORT_MAX_RECORDS = 5_000;
+
+/** The records an import of this snapshot writes, as `CONVERSATION_IMPORT_MAX_RECORDS` counts them. */
+export function conversationImportRecordCount(snapshot: ConversationSnapshotV1): number {
+  return (
+    snapshot.messages.length +
+    snapshot.reasoning.length +
+    snapshot.workLog.length +
+    snapshot.proposedPlans.length +
+    snapshot.questionAnswers.length
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Validated import input
@@ -188,11 +221,98 @@ export const CONVERSATION_IMPORT_COMPLETION_RETENTION_MS = 24 * 60 * 60_000;
  * with a warning.
  */
 export function conversationContentDigest(snapshot: ConversationSnapshotV1): Sha256Digest {
-  const { contentDigest: _contentDigest, ...content } = snapshot;
-  const hex = NodeCrypto.createHash("sha256")
-    .update(canonicalSnapshotContent(content))
-    .digest("hex");
-  return `sha256:${hex}`;
+  const { contentDigest: _contentDigest, captured: _captured, ...content } = snapshot;
+  // Hashed as it is written, so a large snapshot is never copied into one string.
+  const hash = NodeCrypto.createHash("sha256");
+  let pending = "";
+  writeCanonicalJson(content, (text) => {
+    pending += text;
+    if (pending.length >= CANONICAL_HASH_CHUNK_CHARS) {
+      hash.update(pending);
+      pending = "";
+    }
+  });
+  hash.update(pending);
+  return `sha256:${hash.digest("hex")}`;
+}
+
+const CANONICAL_HASH_CHUNK_CHARS = 64 * 1024;
+
+/** A value as `canonicalSnapshotContent` sees it before `JSON.stringify`: bytes become numbers. */
+const canonicalInput = (value: unknown) =>
+  value instanceof Uint8Array && !Array.isArray(value) ? Array.from(value) : value;
+
+/** `JSON.stringify` leaves these out of objects and writes them as `null` in arrays. */
+const isOmittedJson = (value: unknown) => value === undefined || typeof value === "symbol";
+
+/**
+ * Writes `canonicalSnapshotContent`'s text for `value` (sorted keys at every
+ * level, then `JSON.stringify`) in pieces. Every piece is a whole JSON token,
+ * so no surrogate pair is split between pieces.
+ */
+function writeCanonicalJson(value: unknown, write: (text: string) => void): void {
+  const input = canonicalInput(value);
+  if (Array.isArray(input)) {
+    write("[");
+    for (const [index, item] of input.entries()) {
+      if (index > 0) write(",");
+      if (isOmittedJson(item)) write("null");
+      else writeCanonicalJson(item, write);
+    }
+    write("]");
+    return;
+  }
+  if (Predicate.isObject(input)) {
+    const record = input as Record<string, unknown>;
+    write("{");
+    let first = true;
+    for (const key of Object.keys(record).toSorted()) {
+      const item = record[key];
+      if (isOmittedJson(item)) continue;
+      write(`${first ? "" : ","}${JSON.stringify(key)}:`);
+      first = false;
+      writeCanonicalJson(item, write);
+    }
+    write("}");
+    return;
+  }
+  write(JSON.stringify(input));
+}
+
+/**
+ * Whether two values have the same `canonicalSnapshotContent` text, compared
+ * structurally, so a decoded snapshot can be checked against the JSON it was
+ * decoded from without writing either out.
+ */
+export function sameCanonicalJson(left: unknown, right: unknown): boolean {
+  const a = canonicalInput(left);
+  const b = canonicalInput(right);
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    return a.every((item, index) =>
+      sameCanonicalJson(
+        isOmittedJson(item) ? null : item,
+        isOmittedJson(b[index]) ? null : b[index],
+      ),
+    );
+  }
+  if (Predicate.isObject(a) || Predicate.isObject(b)) {
+    if (!Predicate.isObject(a) || !Predicate.isObject(b)) return false;
+    const leftRecord = a as Record<string, unknown>;
+    const rightRecord = b as Record<string, unknown>;
+    const leftKeys = Object.keys(leftRecord).filter((key) => !isOmittedJson(leftRecord[key]));
+    const rightKeys = Object.keys(rightRecord).filter((key) => !isOmittedJson(rightRecord[key]));
+    return (
+      leftKeys.length === rightKeys.length &&
+      leftKeys.every(
+        (key) =>
+          Object.hasOwn(rightRecord, key) &&
+          !isOmittedJson(rightRecord[key]) &&
+          sameCanonicalJson(leftRecord[key], rightRecord[key]),
+      )
+    );
+  }
+  return a === b || JSON.stringify(a) === JSON.stringify(b);
 }
 
 const stagedAttachmentFields = {
@@ -448,13 +568,16 @@ function checkAttachments(input: {
  * imply, and the staged attachments back exactly the available snapshot
  * attachments.
  */
-function checkValidatedConversationImport(input: {
-  readonly package: ConversationImportPackageSummary;
-  readonly snapshot: ConversationSnapshotV1;
-  readonly attachments: ReadonlyArray<StagedConversationImportAttachment>;
-  readonly omissions: ReadonlyArray<ConversationImportOmission>;
-  readonly warnings: ReadonlyArray<ConversationImportWarning>;
-}): true | string {
+function checkValidatedConversationImport(
+  input: {
+    readonly package: ConversationImportPackageSummary;
+    readonly snapshot: ConversationSnapshotV1;
+    readonly attachments: ReadonlyArray<StagedConversationImportAttachment>;
+    readonly omissions: ReadonlyArray<ConversationImportOmission>;
+    readonly warnings: ReadonlyArray<ConversationImportWarning>;
+  },
+  computedContentDigest?: Sha256Digest,
+): true | string {
   const { formatVersion } = input.package;
   if (formatVersion.major !== SCIC_FORMAT_MAJOR_VERSION) {
     return `Format version ${formatVersion.major} is not supported.`;
@@ -462,7 +585,10 @@ function checkValidatedConversationImport(input: {
   if (input.package.contentDigest !== input.snapshot.contentDigest) {
     return "The package digest is not the snapshot's content digest.";
   }
-  if (conversationContentDigest(input.snapshot) !== input.snapshot.contentDigest) {
+  if (
+    (computedContentDigest ?? conversationContentDigest(input.snapshot)) !==
+    input.snapshot.contentDigest
+  ) {
     return "The snapshot's content does not match its content digest.";
   }
   if (
@@ -515,12 +641,43 @@ export const ValidatedConversationImport = Schema.Struct({
   attachments: Schema.Array(StagedConversationImportAttachment),
   omissions: Schema.Array(ConversationImportOmission),
   warnings: Schema.Array(ConversationImportWarning),
+  /**
+   * Parts of the file itself that could not be read and are left out: each
+   * damaged Markdown range the user chose to skip counts as one. The import
+   * reports them with its other skipped records, so the gap stays visible.
+   */
+  skippedSourceRecords: Schema.optionalKey(PositiveInt),
 }).check(
-  Schema.makeFilter(checkValidatedConversationImport, {
+  Schema.makeFilter((input) => checkValidatedConversationImport(input), {
     identifier: "ValidatedConversationImport",
   }),
 );
 export type ValidatedConversationImport = typeof ValidatedConversationImport.Type;
+
+/** Everything in a `ValidatedConversationImport` but the snapshot: small, whatever the conversation. */
+export const ValidatedConversationImportParts = ValidatedConversationImport.mapFields(
+  ({ snapshot: _snapshot, ...parts }) => parts,
+);
+export type ValidatedConversationImportParts = typeof ValidatedConversationImportParts.Type;
+
+/**
+ * Joins a decoded snapshot and the rest of its import with every guarantee of
+ * `ValidatedConversationImport`, without encoding and decoding the snapshot
+ * again. `computedContentDigest` is `conversationContentDigest` of this
+ * snapshot, computed by the caller (the reader computes it once), or the
+ * digest of a snapshot the caller staged byte for byte after validating it.
+ */
+export function joinValidatedConversationImport(
+  parts: ValidatedConversationImportParts,
+  snapshot: ConversationSnapshotV1,
+  computedContentDigest: Sha256Digest,
+):
+  | { readonly _tag: "valid"; readonly validated: ValidatedConversationImport }
+  | { readonly _tag: "invalid"; readonly detail: string } {
+  const validated = { ...parts, snapshot };
+  const checked = checkValidatedConversationImport(validated, computedContentDigest);
+  return checked === true ? { _tag: "valid", validated } : { _tag: "invalid", detail: checked };
+}
 
 export type ConversationImportProvenance = Extract<ConversationProvenance, { _tag: "import" }>;
 

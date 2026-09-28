@@ -1,9 +1,11 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Tests exercise the real project filesystem boundary.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import {
   BROWSER_PDF_EXPORT_MAX_BYTES,
+  SCIENT_DOCUMENT_MAX_WARNINGS,
   ScientDocumentPageInput,
   type ScientDocumentPdfPrepared,
 } from "@t3tools/contracts";
@@ -18,7 +20,13 @@ import * as TestClock from "effect/testing/TestClock";
 import { resolveAsset } from "../../assets/AssetAccess.ts";
 import * as NativeAppIconResolver from "../../assets/NativeAppIconResolver.ts";
 import { GeneratedDocumentStore } from "../documentArtifacts/GeneratedDocumentStore.ts";
-import { readDocumentCapture, sha256Digest } from "./DocumentCapture.ts";
+import * as ServerConfig from "../../config.ts";
+import {
+  documentCaptureStartupSweepLayer,
+  readDocumentCapture,
+  removeDocumentCapture,
+  sha256Digest,
+} from "./DocumentCapture.ts";
 import {
   documentExportTestLayer,
   makeFixtureDirectory,
@@ -30,9 +38,10 @@ import {
 } from "./DocumentExportTestUtils.ts";
 import {
   DOCUMENT_PDF_TOO_LARGE_DETAIL,
+  documentPdfWarnings,
   publishCapturedDocumentPdf,
 } from "./DocumentPdfPublication.ts";
-import { prepareMarkdownPdf } from "./MarkdownPdfPreparation.ts";
+import { captureProjectMarkdownFile, prepareMarkdownPdf } from "./MarkdownPdfPreparation.ts";
 import { buildMarkdownFileBundle, readProjectMarkdownFile } from "./MarkdownFileBundle.ts";
 
 const fixtures: string[] = [];
@@ -125,7 +134,7 @@ describe("Markdown PDF preparation", () => {
           role: "image",
           fileName: "plot.png",
           mediaType: "image/png",
-          content: { _tag: "captured", path: "assets/0001.png" },
+          content: { _tag: "captured", path: "assets/0001.png", sha256: sha256Digest(PNG) },
         },
         expect.objectContaining({
           id: "image-0002",
@@ -165,6 +174,24 @@ describe("Markdown PDF preparation", () => {
         expectedRevision: sha256Digest(new TextEncoder().encode(contents)),
       });
       expect(yield* readCapturedInput(prepared, "assets/0001.png")).toEqual(Buffer.from(shown));
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("titles the capture from front matter and leaves the block to the page", () =>
+    Effect.gen(function* () {
+      const contents = "---\ntitle: Field notes\nauthor: Someone\n---\n\n# Heading\n";
+      const { root, revision } = yield* Effect.promise(() => writeReport(contents));
+      const prepared = yield* prepareMarkdownPdf({
+        cwd: root,
+        relativePath: "notes/report.md",
+        expectedRevision: revision,
+      });
+      expect(prepared.title).toBe("Field notes");
+      const input = decodePageInput(
+        new TextDecoder().decode((yield* readCapturedInput(prepared))!),
+      );
+      expect(input.title).toBe("Field notes");
+      expect(input.markdown).toBe(contents);
     }).pipe(Effect.provide(layer)),
   );
 
@@ -208,6 +235,198 @@ describe("Markdown PDF preparation", () => {
   );
 });
 
+describe("Markdown source read", () => {
+  const readWithFileChangedAfterStat = (change: (filePath: string) => Promise<void>) =>
+    Effect.gen(function* () {
+      const root = yield* Effect.promise(() =>
+        makeFixtureDirectory(fixtures, "scient-document-pdf-source-race-"),
+      );
+      const filePath = yield* Effect.promise(() =>
+        writeFixtureFile(root, "report.md", "# Report\n\nSaved text.\n"),
+      );
+      const fileSystem = yield* FileSystem.FileSystem;
+      let changed = false;
+      const racingFileSystem = FileSystem.FileSystem.of({
+        ...fileSystem,
+        stat: (candidate) =>
+          fileSystem.stat(candidate).pipe(
+            Effect.tap(() =>
+              candidate === filePath && !changed
+                ? Effect.promise(() => {
+                    changed = true;
+                    return change(filePath);
+                  })
+                : Effect.void,
+            ),
+          ),
+      });
+      const error = yield* readProjectMarkdownFile(root, "report.md").pipe(
+        Effect.provideService(FileSystem.FileSystem, racingFileSystem),
+        Effect.flip,
+      );
+      expect(changed).toBe(true);
+      return error;
+    });
+
+  it.effect("refuses a same-size replacement between the check and the read", () =>
+    Effect.gen(function* () {
+      const error = yield* readWithFileChangedAfterStat(async (filePath) => {
+        const replacement = `${filePath}.replacement`;
+        await NodeFSP.writeFile(replacement, "# Report\n\nOther text.\n");
+        await NodeFSP.rename(replacement, filePath);
+      });
+      expect(error).toMatchObject({ reason: "source-unavailable" });
+      expect(error.detail).toContain("changed or could not be read");
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("refuses a file that grows after the size check instead of reading it all", () =>
+    Effect.gen(function* () {
+      const error = yield* readWithFileChangedAfterStat((filePath) =>
+        NodeFSP.appendFile(filePath, "x".repeat(4_096)),
+      );
+      expect(error).toMatchObject({ reason: "source-unavailable" });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  // Windows cannot bind an opened file to the project, so the editor's saved
+  // revision is what proves the bytes read are the file the editor saved.
+  describe("where the open file cannot be bound to the project", () => {
+    const onWindows = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      effect.pipe(Effect.provideService(HostProcessPlatform, "win32"));
+
+    it.effect("exports and publishes the file when its bytes are the saved revision", () =>
+      Effect.gen(function* () {
+        const { root, revision } = yield* Effect.promise(() => writeReport());
+        const prepared = yield* onWindows(
+          prepareMarkdownPdf({
+            cwd: root,
+            relativePath: "notes/report.md",
+            expectedRevision: revision,
+          }),
+        );
+        expect(prepared.expected.sourceDigest).toBe(revision);
+        // Its workspace images are still left out, with a warning.
+        expect(prepared.warnings.map((warning) => warning.message)).toContain(
+          'Image "figures/plot.png" was not included because this platform cannot safely verify workspace image paths during PDF export.',
+        );
+        const store = makeGeneratedDocumentStore();
+        const published = yield* onWindows(
+          publishCapturedDocumentPdf({
+            captureId: prepared.expected.captureId,
+            render: renderResultFor(prepared.expected),
+          }).pipe(Effect.provideService(GeneratedDocumentStore, store.store)),
+        );
+        expect(published.source).toEqual(publishedSource);
+      }).pipe(Effect.provide(layer)),
+    );
+
+    it.effect("refuses a file whose bytes are not the saved revision", () =>
+      Effect.gen(function* () {
+        const { root } = yield* Effect.promise(() => writeReport());
+        const error = yield* onWindows(
+          prepareMarkdownPdf({
+            cwd: root,
+            relativePath: "notes/report.md",
+            expectedRevision: sha256Digest(new TextEncoder().encode("older")),
+          }),
+        ).pipe(Effect.flip);
+        expect(error).toMatchObject({
+          reason: "source-changed",
+          detail: "The file changed while exporting. Try again.",
+        });
+      }).pipe(Effect.provide(layer)),
+    );
+
+    it.effect("refuses a file swapped in between the check and the read", () =>
+      Effect.gen(function* () {
+        const contents = "# Report\n\nSaved text.\n";
+        const root = yield* Effect.promise(() =>
+          makeFixtureDirectory(fixtures, "scient-document-pdf-windows-race-"),
+        );
+        const filePath = yield* Effect.promise(() => writeFixtureFile(root, "report.md", contents));
+        const fileSystem = yield* FileSystem.FileSystem;
+        const racingFileSystem = FileSystem.FileSystem.of({
+          ...fileSystem,
+          stat: (candidate) =>
+            fileSystem
+              .stat(candidate)
+              .pipe(
+                Effect.tap(() =>
+                  candidate === filePath
+                    ? Effect.promise(() => NodeFSP.writeFile(filePath, "# Report\n\nOther text.\n"))
+                    : Effect.void,
+                ),
+              ),
+        });
+        const error = yield* onWindows(
+          readProjectMarkdownFile(
+            root,
+            "report.md",
+            sha256Digest(new TextEncoder().encode(contents)),
+          ),
+        ).pipe(Effect.provideService(FileSystem.FileSystem, racingFileSystem), Effect.flip);
+        expect(error).toMatchObject({ reason: "source-changed" });
+      }).pipe(Effect.provide(layer)),
+    );
+
+    // Without a non-blocking open this would hang on the pipe.
+    it.effect(
+      "refuses a pipe swapped in for the file without blocking on it",
+      () =>
+        Effect.gen(function* () {
+          // mkfifo exists only on the POSIX hosts that run this test.
+          if ((yield* HostProcessPlatform) === "win32") return;
+          const contents = "# Report\n\nSaved text.\n";
+          const root = yield* Effect.promise(() =>
+            makeFixtureDirectory(fixtures, "scient-document-pdf-windows-fifo-"),
+          );
+          const filePath = yield* Effect.promise(() =>
+            writeFixtureFile(root, "report.md", contents),
+          );
+          const fileSystem = yield* FileSystem.FileSystem;
+          const racingFileSystem = FileSystem.FileSystem.of({
+            ...fileSystem,
+            stat: (candidate) =>
+              fileSystem.stat(candidate).pipe(
+                Effect.tap(() =>
+                  candidate === filePath
+                    ? Effect.promise(async () => {
+                        await NodeFSP.rm(filePath);
+                        NodeChildProcess.execFileSync("mkfifo", [filePath]);
+                      })
+                    : Effect.void,
+                ),
+              ),
+          });
+          const error = yield* onWindows(
+            readProjectMarkdownFile(
+              root,
+              "report.md",
+              sha256Digest(new TextEncoder().encode(contents)),
+            ),
+          ).pipe(Effect.provideService(FileSystem.FileSystem, racingFileSystem), Effect.flip);
+          expect(error).toMatchObject({
+            reason: "source-changed",
+            detail: "The file changed while exporting. Try again.",
+          });
+        }).pipe(Effect.provide(layer)),
+      10_000,
+    );
+
+    it.effect("refuses the agent tool's export, which has no saved revision to check", () =>
+      Effect.gen(function* () {
+        const { root } = yield* Effect.promise(() => writeReport());
+        const error = yield* onWindows(
+          captureProjectMarkdownFile({ workspaceRoot: root, relativePath: "notes/report.md" }),
+        ).pipe(Effect.flip);
+        expect(error.reason).toBe("source-unavailable");
+        expect(error.detail).toContain("only from its editor");
+      }).pipe(Effect.provide(layer)),
+    );
+  });
+});
+
 describe("Markdown image budget", () => {
   const bundleWithImageChangedAfterStat = (
     change: (imagePath: string) => Promise<void>,
@@ -248,6 +467,7 @@ describe("Markdown image budget", () => {
   const bundleFor = (
     markdown: string,
     budget: { maxImageBytes: number; maxTotalBytes: number; maxImages: number },
+    platform?: NodeJS.Platform,
   ) =>
     Effect.gen(function* () {
       const root = yield* Effect.promise(() =>
@@ -260,7 +480,10 @@ describe("Markdown image budget", () => {
         await NodeFSP.symlink(NodePath.join(root, "a.png"), NodePath.join(root, "alias.png"));
       });
       const file = yield* readProjectMarkdownFile(root, "report.md");
-      return yield* buildMarkdownFileBundle({ workspaceRoot: root, file, budget });
+      const build = buildMarkdownFileBundle({ workspaceRoot: root, file, budget });
+      return yield* platform === undefined
+        ? build
+        : build.pipe(Effect.provideService(HostProcessPlatform, platform));
     });
 
   it.effect("reads one file once, however many destinations name it", () =>
@@ -295,11 +518,11 @@ describe("Markdown image budget", () => {
 
   it.effect("fails closed when the host cannot bind an opened image to the workspace", () =>
     Effect.gen(function* () {
-      const bundle = yield* bundleFor("![a](a.png)\n", {
-        maxImageBytes: 1_000,
-        maxTotalBytes: 1_000,
-        maxImages: 10,
-      }).pipe(Effect.provideService(HostProcessPlatform, "win32"));
+      const bundle = yield* bundleFor(
+        "![a](a.png)\n",
+        { maxImageBytes: 1_000, maxTotalBytes: 1_000, maxImages: 10 },
+        "win32",
+      );
       expect(bundle.assets[0]?.content).toEqual({ _tag: "unavailable", reason: "unsupported" });
       expect(bundle.warnings[0]?.message).toContain(
         "this platform cannot safely verify workspace image paths",
@@ -470,6 +693,90 @@ describe("document PDF publication", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("publishes a page whose isolation refused requests, and reports them", () =>
+    Effect.gen(function* () {
+      const { prepared } = yield* prepare;
+      const store = makeGeneratedDocumentStore();
+      const published = yield* publishCapturedDocumentPdf({
+        captureId: prepared.expected.captureId,
+        render: { ...renderResultFor(prepared.expected), blockedRequestCount: 2 },
+      }).pipe(Effect.provideService(GeneratedDocumentStore, store.store));
+      expect(published.warnings.at(-1)).toEqual({
+        code: "resource-unresolved",
+        message: "2 web resources were not loaded.",
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("keeps the refused-request note and counts exactly what the limit left out", () =>
+    Effect.gen(function* () {
+      const { prepared } = yield* prepare;
+      const record = yield* readDocumentCapture(prepared.expected.captureId);
+      // 400 capture warnings and 200 page warnings: 600 distinct notes.
+      const many = {
+        ...record,
+        warnings: Array.from({ length: 400 }, (_, index) => ({
+          code: "resource-unresolved" as const,
+          message: `Image ${index} was not found in the project.`,
+        })),
+      };
+      const render = renderResultFor(prepared.expected, {
+        diagnostics: Array.from({ length: 200 }, (_, index) => ({
+          severity: "warning" as const,
+          code: "math-unrendered" as const,
+          detail: `Math ${index} could not be typeset.`,
+        })),
+      });
+      const warnings = documentPdfWarnings(many, { ...render, blockedRequestCount: 3 });
+      expect(warnings).toHaveLength(SCIENT_DOCUMENT_MAX_WARNINGS);
+      expect(warnings.map((warning) => warning.message)).toContain(
+        "3 web resources were not loaded.",
+      );
+      // 510 of the 600 are listed.
+      expect(warnings.at(-1)?.message).toBe("…and 90 more notes, not listed here.");
+      // Within the limit, nothing is cut and no closing entry is added.
+      const few = documentPdfWarnings(
+        { ...record, warnings: many.warnings.slice(0, 2) },
+        { ...renderResultFor(prepared.expected), blockedRequestCount: 1 },
+      );
+      expect(few.map((warning) => warning.message)).toEqual([
+        "Image 0 was not found in the project.",
+        "Image 1 was not found in the project.",
+        "1 web resource was not loaded.",
+      ]);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("keeps every capture warning and counts the ones a page cannot list", () =>
+    Effect.gen(function* () {
+      const images = Array.from({ length: 600 }, (_, index) => `![m${index}](m${index}.png)`);
+      const { root, revision } = yield* Effect.promise(() =>
+        writeReport(`# Report\n\n${images.join(" ")}\n`),
+      );
+      const prepared = yield* prepareMarkdownPdf({
+        cwd: root,
+        relativePath: "notes/report.md",
+        expectedRevision: revision,
+      });
+      expect(prepared.warnings).toHaveLength(SCIENT_DOCUMENT_MAX_WARNINGS);
+      expect(prepared.warnings.at(-1)?.message).toBe("…and 89 more notes, not listed here.");
+      const input = decodePageInput(
+        new TextDecoder().decode((yield* readCapturedInput(prepared))!),
+      );
+      expect(input.warnings.at(-1)?.message).toBe("…and 89 more notes, not listed here.");
+      const record = yield* readDocumentCapture(prepared.expected.captureId);
+      expect(record.warnings).toHaveLength(600);
+      const store = makeGeneratedDocumentStore();
+      const published = yield* publishCapturedDocumentPdf({
+        captureId: prepared.expected.captureId,
+        render: { ...renderResultFor(prepared.expected), blockedRequestCount: 1 },
+      }).pipe(Effect.provideService(GeneratedDocumentStore, store.store));
+      expect(published.warnings).toHaveLength(SCIENT_DOCUMENT_MAX_WARNINGS);
+      expect(published.warnings.at(-2)?.message).toBe("1 web resource was not loaded.");
+      expect(published.warnings.at(-1)?.message).toBe("…and 90 more notes, not listed here.");
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("rejects a wrong, stale, or unfinished page before publication", () =>
     Effect.gen(function* () {
       const cases = [
@@ -602,6 +909,56 @@ describe("document PDF publication", () => {
       }).pipe(Effect.provideService(GeneratedDocumentStore, store.store), Effect.flip);
       expect(error.reason).toBe("capture-expired");
       expect(store.beginProduction).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(layer)),
+  );
+});
+
+describe("document capture lifetime", () => {
+  const capture = Effect.gen(function* () {
+    const { root, revision } = yield* Effect.promise(() => writeReport());
+    return yield* prepareMarkdownPdf({
+      cwd: root,
+      relativePath: "notes/report.md",
+      expectedRevision: revision,
+    });
+  });
+  const captureExists = (prepared: ScientDocumentPdfPrepared) =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      return yield* fileSystem.exists(
+        NodePath.join(config.stateDir, "document-exports", prepared.expected.captureId),
+      );
+    });
+
+  it.effect("releases a capture the desktop refused to print", () =>
+    Effect.gen(function* () {
+      const prepared = yield* capture;
+      yield* removeDocumentCapture(prepared.expected.captureId);
+      expect(yield* captureExists(prepared)).toBe(false);
+      const error = yield* readDocumentCapture(prepared.expected.captureId).pipe(Effect.flip);
+      expect(error.reason).toBe("capture-expired");
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("sweeps captures a previous run left behind when the server starts", () =>
+    Effect.gen(function* () {
+      const stale = yield* capture;
+      yield* TestClock.adjust("6 minutes");
+      const current = yield* capture;
+      // The stale capture has expired; the current one has four minutes left.
+      yield* TestClock.adjust("6 minutes");
+      expect(yield* captureExists(stale)).toBe(true);
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          yield* Layer.build(documentCaptureStartupSweepLayer);
+          for (let attempt = 0; attempt < 100 && (yield* captureExists(stale)); attempt += 1) {
+            yield* TestClock.withLive(Effect.sleep("20 millis"));
+          }
+        }),
+      );
+      expect(yield* captureExists(stale)).toBe(false);
+      expect(yield* captureExists(current)).toBe(true);
     }).pipe(Effect.provide(layer)),
   );
 });

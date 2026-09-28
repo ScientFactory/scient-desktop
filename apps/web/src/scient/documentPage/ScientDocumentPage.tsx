@@ -12,6 +12,7 @@ import {
   useMemo,
   useState,
   type ReactNode,
+  type SyntheticEvent,
 } from "react";
 import ReactMarkdown, {
   defaultUrlTransform,
@@ -31,6 +32,7 @@ import { useScientMathMarkdownText, useScientMathRemarkPlugins } from "../math/s
 import { resolveScientRichFenceKind } from "../presentation/scientRichFenceKind";
 import { scientMarkdownRemarkPlugins } from "../markdown/scientMarkdownProfiles";
 import type { DocumentPageTracker } from "./documentPageReadiness";
+import { remarkDocumentFrontMatter } from "./remarkDocumentFrontMatter";
 
 import "../bidi/scient-bidi.css";
 import "../math/scient-math.css";
@@ -315,6 +317,17 @@ function PrintImage({
   useEffect(() => {
     if (resolved === null) finish();
   }, [finish, resolved]);
+  // A captured image with a recorded digest is checked whether or not it
+  // decodes; a decoded image with other bytes than the capture is not the
+  // capture either.
+  const capturedDigest = asset?.content._tag === "captured" ? asset.content.sha256 : undefined;
+  useEffect(() => {
+    if (asset === undefined || resolved === null || capturedDigest === undefined) return;
+    void tracker.checkCapturedAsset(
+      { id: asset.id, fileName: asset.fileName, sha256: capturedDigest },
+      resolved,
+    );
+  }, [asset, capturedDigest, resolved, tracker]);
 
   if (resolved === null) {
     const name = asset?.fileName ?? (alt || src);
@@ -340,17 +353,34 @@ function PrintImage({
       <Placeholder label={`Image could not be displayed: ${asset?.fileName ?? (alt || "image")}`} />
     );
   }
-  const onError = () => {
+  const undisplayable = async () => {
     const name = asset?.fileName ?? (alt || "untitled");
-    if (asset) {
-      // A captured image that does not load means the capture was not served as recorded.
-      tracker.unresolvedAssets.add(asset.id);
-      tracker.fatal("resource-unresolved", `The captured image "${name}" could not be loaded.`);
+    if (asset?.content._tag === "captured") {
+      // The browser reports a missing file, a blocked request, and bytes it
+      // cannot decode the same way. Only bytes that were served, and match the
+      // capture's digest, are a content limitation; the check reports the rest.
+      const check = await tracker.checkCapturedAsset(
+        { id: asset.id, fileName: name, sha256: asset.content.sha256 },
+        resolved,
+      );
+      if (check === "served") {
+        tracker.warn(
+          "missing-image",
+          `The image "${name}" could not be decoded and is shown as a placeholder.`,
+        );
+      }
     } else {
       tracker.warn("missing-image", `Image "${name}" could not be displayed and was left out.`);
     }
     setFailed(true);
     finish();
+  };
+  // An image with no measurable size (for example an SVG with only a
+  // viewBox) cannot be laid out on paper either.
+  const onLoad = (event: SyntheticEvent<HTMLImageElement>) => {
+    const image = event.currentTarget;
+    if (image.naturalWidth > 0 && image.naturalHeight > 0) finish();
+    else void undisplayable();
   };
   return (
     <span className="scient-document-image">
@@ -358,8 +388,8 @@ function PrintImage({
         src={resolved}
         alt={alt}
         data-scient-asset={asset?.id}
-        onLoad={finish}
-        onError={onError}
+        onLoad={onLoad}
+        onError={() => void undisplayable()}
       />
       {title ? <span className="scient-document-image-caption">{title}</span> : null}
     </span>
@@ -444,7 +474,7 @@ export function ScientDocumentPage(props: ScientDocumentPageProps) {
   const markdown = useScientMathMarkdownText(input.markdown);
   const remarkPlugins = useScientMathRemarkPlugins(
     // A chat bundle writes its hard breaks explicitly, so both parse as documents.
-    useMemo(() => scientMarkdownRemarkPlugins("document"), []),
+    useMemo(() => [remarkDocumentFrontMatter, ...scientMarkdownRemarkPlugins("document")], []),
     input.markdown,
   );
   const direction = useMemo(

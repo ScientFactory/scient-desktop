@@ -202,7 +202,9 @@ type DocumentBundle = {
 Preparation keeps source forms and adds derived assets rather than replacing one with the other:
 
 - **Mermaid** stays as a fenced block for Markdown output; its rendered image is added as an asset
-  for Word.
+  for Word. The browser renders it in a frame that cannot fetch anything; a diagram that needs an
+  outside resource, or fails to render, appears in Word as its labelled source with a warning, and
+  the export continues.
 - **Math** stays as TeX, so the PDF page renders it with KaTeX and Pandoc can produce editable Word
   equations.
 - **Images and attachments** are resolved to bundle assets with explicit paths; references that only
@@ -255,25 +257,32 @@ Requirements:
   margin boxes, which Chromium supports from version 131 (Scient is on Electron 44). This removes the
   need for Paged.js. It does not cover every advanced publishing feature; advanced running headers
   are out of scope.
-- **Page-break rules that allow splitting.** Keep headings with the following content, and keep small
-  figures and short code blocks together. Long code blocks and tables must be allowed to break across
-  pages; a blanket keep-together rule causes overflow and large blank areas.
+- **Page-break rules that allow splitting.** The page's own stylesheet owns every break rule; the
+  desktop adds none. Headings and a details block's summary line keep with what follows; figures,
+  short code blocks, table rows, alerts, and images stay whole. Long code blocks, tables, quotes,
+  work logs, and reasoning break across pages; a blanket keep-together rule causes overflow and large
+  blank areas.
+- **Front matter is metadata.** A YAML (`---`) or TOML (`+++`) block at the start of a Markdown file
+  never prints; its `title`, when present, is the PDF's title.
 - **Accessibility is qualified, not assumed.** Tagged PDF and outline generation are enabled, but
   correct reading order and bookmarks depend on the generated page and must be checked on real
   documents.
 - No network access, navigation, popups, or arbitrary scripts in the render window. Workspace images
   resolve through approved assets.
-- Output goes through the existing generated-PDF store, opens in Scient's reader, and can be saved
-  with Save Copy.
+- Output goes through the existing generated-PDF store and is saved through the same Save dialog as
+  every other format; the notice's Open shows it in Scient's reader for the conversation or project
+  it came from.
 - The existing bounded PDF byte transport is reused: **64 MiB per PDF**
   (`BROWSER_PDF_EXPORT_MAX_BYTES` in `packages/contracts/src/browserPdfExport.ts`). A larger export fails
-  with a clear message suggesting a shorter range or no work log. A streaming transport is added only
+  with a clear message suggesting leaving out the work log and reasoning, or exporting the
+  conversation as Markdown. A streaming transport is added only
   if measured real conversations need more.
 - **Failure versus limitation.** An execution failure stops publication: the render did not finish,
   a required font or the page itself is wrong, the source changed. A known content limitation does
-  not: an unavailable attachment becomes a clearly labelled placeholder, listed in the export's
-  warnings, and the user can accept that output. Failing on every warning would make ordinary sharing
-  brittle.
+  not: an unavailable attachment, or a captured image that was served but cannot be decoded, becomes
+  a clearly labelled placeholder, listed in the export's warnings, and the user can accept that
+  output. A captured image that was not served, was blocked, or does not match the capture stays an
+  execution failure. Failing on every warning would make ordinary sharing brittle.
 
 **Host availability.** The PDF renderer is a Scient **desktop** capability. The existing HTML→PDF tool
 already reports "A current connected Scient desktop is required to build this PDF" when no desktop is
@@ -328,6 +337,9 @@ or paid for:
   exchanging document files through a command-line interface is the standard arrangement.
 - **If Scient downloads Pandoc on first use** from the official release, as it does TinyTeX, Scient
   does not ship Pandoc in its installer; it still records the notice and the matching source link.
+  The licence list carries Pandoc's `COPYRIGHT` and GPL text for the pinned release, and Settings ▸
+  Word export shows "Pandoc 3.11 · GPL-2.0-or-later · Source code", linking that release's exact
+  source archive.
 - **Release gate:** before the first release that installs Pandoc, a qualified licensing review of the
   exact delivery arrangement and a written source-delivery plan (which release, where its source is
   offered, how notices reach the user).
@@ -664,7 +676,9 @@ Reject:
 - encrypted entries;
 - too many entries, oversized entries, excessive total size, or excessive compression ratio;
 - size or hash mismatches against the manifest, and undeclared extra files;
-- unsupported major schema versions; and
+- unsupported major schema versions;
+- more records than one import command writes (5,000 messages, work-log entries, and other items);
+  and
 - attachment content that contradicts its declared type or the allowed media policy.
 
 Preview shows title, message and attachment counts, source provider/model, omissions, and warnings.
@@ -762,41 +776,72 @@ thread and a lineage row. An import has neither, so the model is extended explic
 
 ### Entry points
 
-- Thread menu → **Export…** opens the export dialog for that conversation.
+- Thread menu (sidebar row and chat header) → **Export ▸** `Markdown (.md)…`, `PDF (.pdf)…`,
+  `Word (.docx)…`, `Scient file (.scic)…`. Each entry opens the export dialog for that format. Every
+  entry is always enabled; a format this host cannot produce says why inside its dialog.
+- Thread menu → **Copy ▸ Conversation as Markdown** copies the whole conversation as text-only
+  Markdown with the default options (no work log, no reasoning) and confirms with a toast.
 - Markdown editor → More menu → **Export ▸ PDF / Word**.
 - LaTeX workspace → **Export ▸ Word** (and Markdown, if it passes qualification).
-- **File ▸ Import…**, drag and drop onto Scient, or double-click a `.scic` file. Accepts `.scic` and
-  `.md`; the preview says which kind of import it will be (faithful copy, text only, or "start a conversation
-  with this document").
+- **File ▸ Import Conversation…** (and the sidebar's **Import conversation**), drag and drop onto
+  Scient, or double-click a `.scic` file. Accepts `.scic` and `.md`; the preview says which kind of
+  import it will be (faithful copy, text only, or "start a conversation with this document").
+- One dropped `.scic` imports wherever it lands, ahead of the chat column's and composer's
+  attachment drop and the sidebar rows' drop: the import drop target listens in the capture phase.
+  Other files keep their owners, so a `.md` dropped on the chat still attaches; one dropped where
+  nothing else takes it is imported. Browsers hide a dragged file's name until the drop, so the
+  "Drop to import conversation" overlay is judged by the reported media type: shown outright for
+  the `.scic` type, and with "Other files attach as usual" for a single file of unknown type
+  (what macOS and most systems report for `.scic`). A drop on an open import dialog replaces its
+  file, except while an import is committing, when it waits its turn.
+- While first-run setup (`/welcome`) is showing, requests from every entry point are queued with a
+  short notice and the dialog opens once setup is finished, like the other startup dialogs.
 
 ### The export dialog
 
-One compact dialog, built from existing primitives (`dialog`, `toggle-group`, `switch`, `radio-group`
-in `apps/web/src/components/ui/`):
+One compact dialog per format, built from existing primitives (`dialog`, `switch`, `radio-group`,
+`select`, `popover` in `apps/web/src/components/ui/`). The title names the format; there is no format
+switcher. The Markdown dialog:
 
 ```text
-┌ Export conversation ─────────────────────────────────────────┐
-│  Format   [ Markdown ] [ PDF ] [ Word ] [ Scient (.scic) ]     │
-│           Markdown:  ( ) Text only (.md)                       │
-│                      ( ) With attachments (.zip)               │
-│                                                                │
-│  Include  [ ] Work log — tools, commands, results              │
-│           [ ] Reasoning — the thinking shown in chat           │
-│                                                                │
-│  Range    (•) Whole conversation  ( ) Up to selected message   │
-│                                                                │
-│  ⚠ Work log may include file paths, command output, secrets.   │
-│  ⚠ The current turn is still running; it will be left out.     │
-│  Only a Scient file (.scic) can be continued in another Scient. │
-│                                          [ Copy ]  [ Export ]  │
-└────────────────────────────────────────────────────────────────┘
+┌ Export as Markdown ⓘ ───────────────────────────────────────────┐
+│  Study                                                          │
+│  ( ) Text only (.md)                                            │
+│  ( ) With attachments (.zip)                                    │
+│                                                                 │
+│  Include  [ ] Work log — tools, commands, results               │
+│           [ ] Reasoning — the thinking shown in chat            │
+│           ⚠ May include file paths, commands and their output.  │
+│                                                                 │
+│  ⚠ The current turn is still running; it will be left out.      │
+│                                        [ Cancel ]  [ Save .md ] │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-- The Markdown sub-choice appears only when the conversation has images or attachments.
-- **Copy** appears only for Markdown.
-- A format unavailable on this host (PDF with no connected desktop, Word before Pandoc is installed)
-  is shown disabled with its reason, or offers the installation.
+- The ⓘ next to the title opens a one- or two-sentence card about the format (accessible name
+  "About <format> export"). Info buttons are used only where a choice needs one.
+- The Markdown packaging choice appears only when the conversation has images or attachments.
+- The primary button names what is saved: **Save .md** / **Save .zip**, **Save PDF**,
+  **Save .docx**, **Save .scic**. There is no Copy button; copying lives in the thread menu.
+- The caution line appears only while the work log or reasoning is on.
+- Word without Pandoc shows, in place of the options, "Word export needs Pandoc (N MB, one-time
+  download)." with **Install Pandoc** and inline progress; the install control is disabled while an
+  export runs. Once Pandoc is installed the normal options appear, with no Pandoc mention. When Pandoc
+  cannot run on this computer, the dialog gives the reason and has no Save button. Any other format
+  this host cannot produce (PDF without a current Scient desktop) shows its reason and no Save button.
+- Every export covers the whole conversation. Exporting up to a chosen message is deferred; the
+  export request and snapshot already support it.
+- Changing any option clears the last error. "Preparing the conversation…" and "Exporting…" are
+  announced as status text.
 - Warnings are one line each, and the same warnings are included in the exported file.
+- **Up to selected message** exports exactly that message and everything before it, nothing after:
+  ending at a prompt leaves out the work, reasoning, plans, and answers that followed it; ending at
+  an answer keeps its turn's work log, reasoning, plans, and questions and answers recorded up to
+  that answer; ending at a steering message leaves out the rest of the turn it interrupted.
+  Attachments of messages and answers after it are neither listed nor read. The bound is applied
+  once, to the snapshot, so every format carries the same content. This range is on hold: the
+  server refuses it and the dialog exports the whole conversation, until records updated after the
+  chosen message are also bounded.
 
 ### Work log and reasoning
 
@@ -821,7 +866,7 @@ expose (some send summaries), and the export includes only what Scient received 
 **Why the work log is opt-in even for `.scic`:** it would help the recipient's agent, but bounded tool
 output can still contain private paths, source code, environment details, or secrets, and a `.scic`
 goes to another person. "Nothing executable" does not mean "safe to share". When either option is
-turned on, the dialog shows the warning line above.
+turned on, the dialog shows the caution line under the toggles.
 
 Long tool output is bounded to a head and tail by the export projection, with an "N lines omitted"
 marker, so a single command cannot swamp a document. Nothing executable (approvals, questions awaiting
@@ -843,8 +888,62 @@ colours, full-width text — not chat bubbles. Detailed styling rules are a late
 
 ### Import
 
-Preview → choose project and provider/model → import. The imported thread shows where it came from,
-what was omitted, and that the next message starts a fresh session.
+A file is sent and checked as soon as it arrives (drop, picker, or OS open); there is no separate
+preview step. The dialog shows upload progress and then "Checking the file…" as status text, and
+Cancel or Esc during either aborts the transfer and calls `cancel`, which releases the staged
+import. Changing the file or the destination environment does the same and starts again.
+
+- **Destination environment.** Listed by name through the same labelling as the branch toolbar
+  (the local environment is "This device"), this device first; the row is hidden when only one
+  environment is known. Availability is config membership and a live connection: a known
+  environment keeps its cached config while disconnected, so its connection phase decides, and
+  an environment that is not connected is listed but cannot be chosen. The first connected
+  option is used only until a file is sent or the user picks one; from then the destination is
+  fixed. If it disappears (removed or disabled), or its connection drops at any stage, the
+  transfer is aborted, the staged import is cancelled as a best effort (unconfirmed imports also
+  expire on the server), and the dialog asks for another destination. After a dropped
+  connection it offers **Try again** once that destination reconnects; reconnecting alone never
+  resends. The file is never sent to a destination the user did not choose.
+- **Preview.** Server validation facts only, never message text: kind, pluralized counts, the
+  source provider and model by display name, what the sender left out, and notes from the file.
+  A plain Markdown document is titled "Start a conversation from this document" and confirmed
+  with **Start conversation**; damaged transcript markers read "Some messages couldn't be read"
+  and need a tick before the readable messages import, or can be re-staged as a document.
+- **Project and model.** Chosen with the shared `Select`; the model defaults to what a new thread
+  in that project would use (project default, then environment default, then the provider's own
+  default) and is left for the user to choose when that model is not ready, never the first entry.
+- **Permissions.** Imports always start with `runtimeMode: "approval-required"` (owner decision:
+  unverified history starts supervised); the dialog states this in one line only when the
+  project's default mode differs.
+- **Failures.** A rejected file shows the server's message. Reason codes, entry paths and
+  connection details are never shown; such a message falls back to plain text per reason. An
+  OS-opened file is streamed by the desktop, which answers `declined` when the user declines its
+  "Send conversation file?" prompt and `cancelled` when the renderer stopped the upload; both
+  close the dialog without an error. `rejected` (the server refused the bytes) and the other
+  desktop failures read as plain sentences. Cancel or Esc during such an upload first asks the
+  desktop to stop it (`cancelOpenedConversationFileUpload`, where available), then calls
+  `cancel`; an attempt cancelled while waiting behind an earlier stream never starts its upload.
+- **Confirming.** Once the confirm is sent, the server may commit the import whatever happens to
+  the connection (it runs the commit in its own scope), so the dialog keeps the staged import and
+  its destination until the outcome is known and never cancels it. If the answer does not
+  arrive, or the connection drops, the dialog says so ("Lost the connection while importing.
+  Scient will check whether the import finished when the connection returns.") without the
+  destination picker, and on reconnect re-sends the identical confirm. The server answers a
+  repeated confirm idempotently: the committed result (the dialog then finishes as usual), the
+  running attempt's outcome, or an error meaning nothing was imported. After such an error
+  **Try again** confirms the same staged import; only when the server no longer has it
+  (`import-not-found`, `cancelled`) does Try again send the file again. `already-imported` for the
+  dialog's own import means it committed (to a destination other than this confirm's); the
+  dialog then asks `cancel`, which answers a committed import with its result, and finishes with
+  that thread, never sending the file again. The dialog calls preview only before confirming.
+  Closing after a confirm that answered "not imported" still cancels the staged import, and if
+  that cancel finds it committed after all, a toast says so.
+- **Queueing.** A dropped file replaces the file of an import dialog only while one is on screen
+  and not committing; otherwise, including during first-run setup, it waits its turn.
+
+On success a toast says the next message continues the conversation with the chosen model, and
+Scient opens the new thread. The imported thread shows where it came from ("Imported —
+unverified"), what was omitted, and that the next message starts a fresh session.
 
 ### Agent access
 
@@ -853,7 +952,8 @@ A general `scient_document_export` tool for explicit project outputs (for exampl
 
 ## Delivery of produced files
 
-- PDFs go through the existing generated-PDF store and reader.
+- PDFs go through the existing generated-PDF store and are then saved with the same Save Copy path;
+  the notice can open the stored PDF in the reader.
 - Other outputs (`.md`, `.docx`, `.scic`) are written to a server-owned temporary
   export file, read through a signed asset, and saved with the existing Save Copy path. They are
   cleaned up after a short retention period and on startup.

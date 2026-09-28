@@ -34,6 +34,7 @@ export {
 } from "./persistenceCoordinator.ts";
 export { reconcileMarkdown, type MarkdownReconciliation } from "./reconciliation.ts";
 export {
+  MARKDOWN_FRONT_MATTER_EXTENSIONS,
   inspectMarkdownDocument,
   mermaidSourcesInMarkdown,
   rewriteMarkdownImageDestinations,

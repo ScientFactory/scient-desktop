@@ -1,12 +1,11 @@
 import type {
   ConversationExportFormat,
-  EnvironmentId,
-  ScientConversationExportDelivery,
   ScientConversationExportPreparation,
   ScopedThreadRef,
 } from "@t3tools/contracts";
+import { useNavigate } from "@tanstack/react-router";
 import { TriangleAlertIcon } from "lucide-react";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useState } from "react";
 import { create } from "zustand";
 
 import { Button } from "../../components/ui/button";
@@ -21,76 +20,65 @@ import {
 } from "../../components/ui/dialog";
 import { Label } from "../../components/ui/label";
 import { Radio, RadioGroup } from "../../components/ui/radio-group";
-import {
-  Select,
-  SelectItem,
-  SelectPopup,
-  SelectTrigger,
-  SelectValue,
-} from "../../components/ui/select";
 import { Switch } from "../../components/ui/switch";
 import { toastManager } from "../../components/ui/toast";
-import { Toggle, ToggleGroup } from "../../components/ui/toggle-group";
 import {
   exportConversation,
   prepareConversationExport,
   prepareConversationWordDiagrams,
 } from "./client";
+import { showInOwningThread } from "../documentExport/showInOwningThread";
 import { captureWordDiagrams } from "../wordExport/captureDiagrams";
 import {
+  INCLUDE_CAUTION,
   buildExportRequest,
-  canCopyExport,
   exportDialogWarnings,
-  exportFormatOptions,
+  exportFormatAvailability,
+  exportSaveLabel,
   initialExportDialogState,
-  messageChoiceLabel,
   offeredVariant,
-  selectedRegistration,
+  showsIncludeCaution,
   type ExportDialogState,
 } from "./exportDialog.logic";
 import {
-  copyConversationExport,
+  exportErrorMessage,
+  localTimeZone,
   saveConversationExport,
   saveFailureMessage,
 } from "./exportActions";
+import { ExportInfoButton } from "./ExportInfoButton";
 import {
   registeredConversationExportFormats,
   type ConversationExportFormatRegistration,
 } from "./formatRegistry";
 import "./formats";
 
-const useRequest = create<{ threadRef: ScopedThreadRef | null; key: number }>(() => ({
-  threadRef: null,
+interface OpenRequest {
+  readonly threadRef: ScopedThreadRef;
+  readonly format: ConversationExportFormat;
+}
+
+const useRequest = create<{ request: OpenRequest | null; key: number }>(() => ({
+  request: null,
   key: 0,
 }));
 
-/** Opens the export dialog for one conversation. Every opening starts from default options. */
-export function requestConversationExport(threadRef: ScopedThreadRef): void {
-  useRequest.setState((state) => ({ threadRef, key: state.key + 1 }));
+/** Opens the export dialog for one conversation in one format. Every opening starts from default options. */
+export function requestConversationExport(
+  threadRef: ScopedThreadRef,
+  format: ConversationExportFormat,
+): void {
+  useRequest.setState((state) => ({ request: { threadRef, format }, key: state.key + 1 }));
 }
 
 function closeRequest() {
-  useRequest.setState({ threadRef: null });
+  useRequest.setState({ request: null });
 }
 
 export function ConversationExportDialogHost() {
-  const { threadRef, key } = useRequest();
+  const { request, key } = useRequest();
   useEffect(() => closeRequest, []);
-  return threadRef ? <ConversationExportDialog key={key} threadRef={threadRef} /> : null;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error && error.message.length > 0
-    ? error.message
-    : "The conversation could not be exported.";
-}
-
-function localTimeZone(): string | null {
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || null;
-  } catch {
-    return null;
-  }
+  return request ? <ConversationExportDialog key={key} request={request} /> : null;
 }
 
 type Loading =
@@ -98,12 +86,16 @@ type Loading =
   | { readonly _tag: "failed"; readonly message: string }
   | { readonly _tag: "ready"; readonly preparation: ScientConversationExportPreparation };
 
-function ConversationExportDialog({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
+function ConversationExportDialog({ request }: { readonly request: OpenRequest }) {
+  const { threadRef } = request;
+  const navigate = useNavigate();
   const [loading, setLoading] = useState<Loading>({ _tag: "loading" });
   const [state, setState] = useState<ExportDialogState | null>(null);
-  const [busy, setBusy] = useState<ScientConversationExportDelivery | null>(null);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const registrations = registeredConversationExportFormats();
+  const registration = registrations.find((entry) => entry.format === request.format) ?? null;
+  const label = registration?.label ?? request.format;
 
   useEffect(() => {
     let cancelled = false;
@@ -111,83 +103,98 @@ function ConversationExportDialog({ threadRef }: { readonly threadRef: ScopedThr
       (preparation) => {
         if (cancelled) return;
         setLoading({ _tag: "ready", preparation });
-        setState(initialExportDialogState(preparation, registrations));
+        setState(initialExportDialogState(registrations, request.format));
       },
       (cause: unknown) => {
-        if (!cancelled) setLoading({ _tag: "failed", message: errorMessage(cause) });
+        if (!cancelled) setLoading({ _tag: "failed", message: exportErrorMessage(cause) });
       },
     );
     return () => {
       cancelled = true;
     };
-  }, [registrations, threadRef.environmentId, threadRef.threadId]);
+  }, [registrations, request, threadRef.environmentId, threadRef.threadId]);
 
-  // A format that became available here (Word, once Pandoc is installed) is
-  // read again from the server and selected, keeping every other choice.
-  const formatAvailable = (format: ConversationExportFormat) => {
+  // The format became available here (Word, once Pandoc is installed): read
+  // the conversation again so the options appear.
+  const formatAvailable = () => {
     prepareConversationExport(threadRef.environmentId, threadRef.threadId).then(
-      (preparation) => {
-        setLoading({ _tag: "ready", preparation });
-        const option = exportFormatOptions(preparation, registrations).find(
-          (candidate) => candidate.registration.format === format && candidate.available,
-        );
-        setState((current) =>
-          current === null || option === undefined
-            ? current
-            : {
-                ...current,
-                format,
-                variant: option.registration.variant?.defaultValue ?? null,
-              },
-        );
-      },
-      (cause: unknown) => setError(errorMessage(cause)),
+      (preparation) => setLoading({ _tag: "ready", preparation }),
+      (cause: unknown) => setError(exportErrorMessage(cause)),
     );
   };
 
-  const run = async (delivery: ScientConversationExportDelivery) => {
-    if (loading._tag !== "ready" || state === null) return;
-    const request = buildExportRequest({
-      threadId: threadRef.threadId,
-      state,
-      preparation: loading.preparation,
-      registrations,
-      delivery,
-      timeZone: localTimeZone(),
-    });
-    if (request === null) return;
-    setBusy(delivery);
+  const change = (next: ExportDialogState) => {
+    setError(null);
+    setState(next);
+  };
+
+  const preparation = loading._tag === "ready" ? loading.preparation : null;
+  const availability =
+    preparation === null
+      ? null
+      : exportFormatAvailability(request.format, preparation, registrations);
+  const exportRequest =
+    preparation === null || state === null || availability?.available !== true
+      ? null
+      : buildExportRequest({
+          threadId: threadRef.threadId,
+          state,
+          preparation,
+          registrations,
+          timeZone: localTimeZone(),
+        });
+
+  const run = async () => {
+    if (exportRequest === null || registration === null) return;
+    setBusy(true);
     setError(null);
     try {
-      const registration = selectedRegistration(state, registrations);
-      if (registration?.produce && delivery === "file") {
-        const produced = await registration.produce({ threadRef, request });
+      if (registration.produce) {
+        const produced = await registration.produce({ threadRef, request: exportRequest });
+        // Save cancelled: the dialog stays open, as for every other format.
+        if (produced === null) return;
+        const open = produced.open;
+        const openAction =
+          open === undefined
+            ? {}
+            : {
+                actionProps: {
+                  children: "Open",
+                  // A sidebar export's conversation may not be the one on screen.
+                  onClick: () => showInOwningThread(navigate, threadRef, open),
+                },
+              };
         toastManager.add(
           produced.warnings.length > 0
             ? {
                 type: "warning",
                 title: `${produced.title} with notes`,
                 description: produced.warnings.map((warning) => warning.message).join("\n"),
+                ...openAction,
               }
-            : { type: "success", title: produced.title },
+            : {
+                type: "success",
+                title: produced.title,
+                ...(produced.description === undefined
+                  ? {}
+                  : { description: produced.description }),
+                ...openAction,
+              },
         );
         closeRequest();
         return;
       }
       const preparedRequest =
-        request.format === "docx"
+        exportRequest.format === "docx"
           ? {
-              ...request,
+              ...exportRequest,
               diagramCapture: await captureWordDiagrams(
-                await prepareConversationWordDiagrams(threadRef.environmentId, request),
+                await prepareConversationWordDiagrams(threadRef.environmentId, exportRequest),
               ),
             }
-          : request;
+          : exportRequest;
       const result = await exportConversation(threadRef.environmentId, preparedRequest);
-      if (delivery === "clipboard") {
-        await copyConversationExport(result.text ?? "");
-        toastManager.add({ type: "success", title: "Markdown copied" });
-      } else if (result.file !== null) {
+      if (result.file !== null) {
         const saved = await saveConversationExport(threadRef.environmentId, result.file);
         if (saved._tag === "cancelled") return;
         if (saved._tag === "failed") {
@@ -209,24 +216,37 @@ function ConversationExportDialog({ threadRef }: { readonly threadRef: ScopedThr
       }
       closeRequest();
     } catch (cause) {
-      setError(errorMessage(cause));
+      setError(exportErrorMessage(cause));
     } finally {
-      setBusy(null);
+      setBusy(false);
     }
   };
+
+  const UnavailableAction = registration?.UnavailableAction;
 
   return (
     <Dialog
       open
       onOpenChange={(open) => {
-        if (!open && busy === null) closeRequest();
+        if (!open && !busy) closeRequest();
       }}
     >
       <DialogPopup className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Export conversation</DialogTitle>
+          <div className="flex items-center gap-1">
+            <DialogTitle>Export as {label}</DialogTitle>
+            {registration ? (
+              <ExportInfoButton label={`About ${label} export`}>
+                {registration.about}
+              </ExportInfoButton>
+            ) : null}
+          </div>
           <DialogDescription>
-            {loading._tag === "ready" ? loading.preparation.title : "Preparing the conversation…"}
+            {preparation !== null ? (
+              preparation.title
+            ) : loading._tag === "loading" ? (
+              <span role="status">Preparing the conversation…</span>
+            ) : null}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -238,21 +258,31 @@ function ConversationExportDialog({ threadRef }: { readonly threadRef: ScopedThr
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => requestConversationExport(threadRef)}
+                onClick={() => requestConversationExport(threadRef, request.format)}
               >
                 Try again
               </Button>
             </div>
           ) : null}
-          {loading._tag === "ready" && state !== null ? (
+          {availability?.available === false ? (
+            UnavailableAction ? (
+              <UnavailableAction
+                environmentId={threadRef.environmentId}
+                reason={availability.reason}
+                disabled={busy}
+                onAvailable={formatAvailable}
+              />
+            ) : (
+              <p className="text-sm">{availability.reason}</p>
+            )
+          ) : null}
+          {preparation !== null && state !== null && availability?.available === true ? (
             <ConversationExportForm
-              environmentId={threadRef.environmentId}
-              onFormatAvailable={formatAvailable}
-              preparation={loading.preparation}
+              preparation={preparation}
               registrations={registrations}
               state={state}
-              disabled={busy !== null}
-              onChange={setState}
+              disabled={busy}
+              onChange={change}
             />
           ) : null}
           {error ? (
@@ -262,33 +292,23 @@ function ConversationExportDialog({ threadRef }: { readonly threadRef: ScopedThr
           ) : null}
         </DialogPanel>
         <DialogFooter>
-          <Button
-            type="button"
-            variant="outline"
-            disabled={busy !== null}
-            onClick={() => closeRequest()}
-          >
+          {busy ? (
+            <p role="status" className="text-muted-foreground text-sm sm:me-auto sm:self-center">
+              Exporting…
+            </p>
+          ) : null}
+          <Button type="button" variant="outline" disabled={busy} onClick={() => closeRequest()}>
             Cancel
           </Button>
-          {loading._tag === "ready" &&
-          state !== null &&
-          canCopyExport(state, loading.preparation, registrations) ? (
+          {preparation !== null && state !== null && availability?.available === true ? (
             <Button
               type="button"
-              variant="outline"
-              disabled={busy !== null}
-              onClick={() => void run("clipboard")}
+              disabled={exportRequest === null || busy}
+              onClick={() => void run()}
             >
-              {busy === "clipboard" ? "Copying…" : "Copy"}
+              {exportSaveLabel(state, preparation, registrations)}
             </Button>
           ) : null}
-          <Button
-            type="button"
-            disabled={loading._tag !== "ready" || state?.format == null || busy !== null}
-            onClick={() => void run("file")}
-          >
-            {busy === "file" ? "Exporting…" : "Export"}
-          </Button>
         </DialogFooter>
       </DialogPopup>
     </Dialog>
@@ -297,9 +317,6 @@ function ConversationExportDialog({ threadRef }: { readonly threadRef: ScopedThr
 
 /** The export choices. Stateless: the dialog owns the state and resets it on every opening. */
 export function ConversationExportForm(props: {
-  /** Lets an unavailable format offer to make itself available here. */
-  readonly environmentId?: EnvironmentId;
-  readonly onFormatAvailable?: (format: ConversationExportFormat) => void;
   readonly preparation: ScientConversationExportPreparation;
   readonly registrations: ReadonlyArray<ConversationExportFormatRegistration>;
   readonly state: ExportDialogState;
@@ -307,79 +324,27 @@ export function ConversationExportForm(props: {
   readonly onChange: (state: ExportDialogState) => void;
 }) {
   const { preparation, registrations, state, disabled, onChange } = props;
-  const id = useId();
-  const formats = exportFormatOptions(preparation, registrations);
   const variant = offeredVariant(state, preparation, registrations);
-  const registration = selectedRegistration(state, registrations);
-  const note = registration?.note?.(preparation) ?? null;
-  const unavailable = formats.filter((option) => !option.available);
-  const warnings = exportDialogWarnings(state, preparation);
+  const warnings = exportDialogWarnings(preparation);
   const update = (patch: Partial<ExportDialogState>) => onChange({ ...state, ...patch });
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-2">
-        <span id={`${id}-format`} className="text-sm font-medium">
-          Format
-        </span>
-        <ToggleGroup
-          aria-labelledby={`${id}-format`}
-          className="w-full *:flex-1"
-          value={state.format === null ? [] : [state.format]}
-          onValueChange={(next) => {
-            const option = formats.find(
-              (candidate) => candidate.registration.format === next[0] && candidate.available,
-            );
-            if (option)
-              update({
-                format: option.registration.format,
-                variant: option.registration.variant?.defaultValue ?? null,
-              });
-          }}
+      {variant ? (
+        <RadioGroup
+          aria-label={variant.label}
+          value={state.variant ?? variant.defaultValue}
+          onValueChange={(value) => update({ variant: String(value) })}
+          disabled={disabled}
         >
-          {formats.map((option) => (
-            <Toggle
-              key={option.registration.format}
-              value={option.registration.format}
-              disabled={disabled || !option.available}
-              title={option.unavailableReason ?? undefined}
-            >
-              {option.registration.label}
-            </Toggle>
+          {variant.choices.map((choice) => (
+            <Label key={choice.value}>
+              <Radio value={choice.value} />
+              {choice.label}
+            </Label>
           ))}
-        </ToggleGroup>
-        {unavailable.map((option) => {
-          const { format, UnavailableAction } = option.registration;
-          return UnavailableAction !== undefined && props.environmentId !== undefined ? (
-            <UnavailableAction
-              key={format}
-              environmentId={props.environmentId}
-              onAvailable={() => props.onFormatAvailable?.(format)}
-            />
-          ) : (
-            <p key={format} className="text-muted-foreground text-xs">
-              {option.registration.label}: {option.unavailableReason}
-            </p>
-          );
-        })}
-        {variant ? (
-          <RadioGroup
-            aria-label={variant.label}
-
-            value={state.variant ?? variant.defaultValue}
-            onValueChange={(value) => update({ variant: String(value) })}
-            disabled={disabled}
-          >
-            {variant.choices.map((choice) => (
-              <Label key={choice.value}>
-                <Radio value={choice.value} />
-                {choice.label}
-              </Label>
-            ))}
-          </RadioGroup>
-        ) : null}
-        {note ? <p className="text-muted-foreground text-xs">{note}</p> : null}
-      </div>
+        </RadioGroup>
+      ) : null}
 
       <div className="flex flex-col gap-2">
         <span className="text-sm font-medium">Include</span>
@@ -399,54 +364,11 @@ export function ConversationExportForm(props: {
           />
           Reasoning — the thinking shown in chat
         </Label>
-      </div>
-
-      <div className="flex flex-col gap-2">
-        <span id={`${id}-range`} className="text-sm font-medium">
-          Range
-        </span>
-        <RadioGroup
-          aria-labelledby={`${id}-range`}
-          value={state.range}
-          disabled={disabled}
-          onValueChange={(value) =>
-            update({ range: value === "through-message" ? "through-message" : "whole" })
-          }
-        >
-          <Label>
-            <Radio value="whole" />
-            Whole conversation
-          </Label>
-          <Label>
-            <Radio value="through-message" disabled={preparation.messages.length === 0} />
-            Up to selected message
-          </Label>
-        </RadioGroup>
-        {state.range === "through-message" ? (
-          <Select
-            value={state.throughMessageId ?? ""}
-            items={Object.fromEntries(
-              preparation.messages.map((choice) => [choice.messageId, messageChoiceLabel(choice)]),
-            )}
-            disabled={disabled}
-            onValueChange={(value) => {
-              const choice = preparation.messages.find(
-                (candidate) => candidate.messageId === value,
-              );
-              if (choice) update({ throughMessageId: choice.messageId });
-            }}
-          >
-            <SelectTrigger aria-label="Last message to include" className="min-w-0">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectPopup>
-              {preparation.messages.map((choice) => (
-                <SelectItem key={choice.messageId} value={choice.messageId}>
-                  {messageChoiceLabel(choice)}
-                </SelectItem>
-              ))}
-            </SelectPopup>
-          </Select>
+        {showsIncludeCaution(state) ? (
+          <p className="flex items-start gap-1.5 text-warning text-xs">
+            <TriangleAlertIcon aria-hidden className="mt-px size-3.5 shrink-0" />
+            {INCLUDE_CAUTION}
+          </p>
         ) : null}
       </div>
 

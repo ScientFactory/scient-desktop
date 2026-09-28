@@ -63,7 +63,12 @@ import {
   handoffTokenCap,
   type ModelContextUsage,
 } from "./context/handoffBudget.ts";
-import { buildHandoffItems, renderHandoff, selectHistory } from "./context/handoffHistory.ts";
+import {
+  buildHandoffItems,
+  importedHistoryKind,
+  renderHandoff,
+  selectHistory,
+} from "./context/handoffHistory.ts";
 
 export class ScientForkContextError extends Schema.TaggedError<ScientForkContextError>()(
   "ScientForkContextError",
@@ -100,19 +105,32 @@ export type ForkDeliveryOutcome =
   | { readonly type: "accepted"; readonly nativeThreadKey: string | null }
   | { readonly type: "maybeDelivered" };
 
+/**
+ * The thread a turn belongs to: its full history, or a way to read it that
+ * runs only when the turn must carry a handoff, so a thread whose history
+ * was already delivered is never read in full again.
+ */
+type PrepareTurnThread =
+  | { readonly thread: OrchestrationThread }
+  | {
+      readonly threadId: ThreadId;
+      readonly loadThread: Effect.Effect<OrchestrationThread, ScientForkContextError>;
+    };
+
 export interface ScientForkContextDeliveryShape {
   /** Decides what context this turn must carry. Non-fork threads pass through. */
-  readonly prepareTurn: (input: {
-    readonly thread: OrchestrationThread;
-    readonly message: OrchestrationMessage;
-    readonly userText: string;
-    readonly attachments: ReadonlyArray<ChatAttachment>;
-    readonly nativeThreadKey: string | null;
-    /** A turn of this thread is starting or running in the current session. */
-    readonly sessionRunning: boolean;
-    readonly modelContextWindow?: number | undefined;
-    readonly modelSelection?: ModelSelection | undefined;
-  }) => Effect.Effect<ForkTurnContext, ScientForkContextError>;
+  readonly prepareTurn: (
+    input: PrepareTurnThread & {
+      readonly message: OrchestrationMessage;
+      readonly userText: string;
+      readonly attachments: ReadonlyArray<ChatAttachment>;
+      readonly nativeThreadKey: string | null;
+      /** A turn of this thread is starting or running in the current session. */
+      readonly sessionRunning: boolean;
+      readonly modelContextWindow?: number | undefined;
+      readonly modelSelection?: ModelSelection | undefined;
+    },
+  ) => Effect.Effect<ForkTurnContext, ScientForkContextError>;
   /** Records the delivery as pending immediately before dispatch. */
   readonly beginDelivery: (input: {
     readonly threadId: ThreadId;
@@ -455,56 +473,58 @@ const make = Effect.gen(function* () {
   const prepareTurn: ScientForkContextDeliveryShape["prepareTurn"] = Effect.fn(
     "prepareScientForkContext",
   )(function* (input) {
-    const transfer = yield* readTransfer(input.thread.id);
+    const threadId = "thread" in input ? input.thread.id : input.threadId;
+    const transfer = yield* readTransfer(threadId);
     if (transfer === undefined) return { kind: "none" } as const;
 
     const existing = yield* resolveExistingDelivery({
-      threadId: input.thread.id,
+      threadId,
       nativeThreadKey: input.nativeThreadKey,
       sessionRunning: input.sessionRunning,
     });
     if (existing.delivered) return { kind: "none" } as const;
+    const thread = "thread" in input ? input.thread : yield* input.loadThread;
 
     const midTurnCut =
       transfer.mid_turn_cut_json === null
         ? undefined
         : Option.getOrUndefined(decodeMidTurnCut(transfer.mid_turn_cut_json));
     const items = buildHandoffItems({
-      messages: input.thread.messages,
-      activities: input.thread.activities,
-      proposedPlans: input.thread.proposedPlans,
+      messages: thread.messages,
+      activities: thread.activities,
+      proposedPlans: thread.proposedPlans,
       beforeMessageId: input.message.id,
       midTurnCut,
     });
     if (items.length === 0) {
       // A fork from the conversation's start has nothing to carry.
       if (transfer.status === "pending") {
-        yield* setTransferStatus(input.thread.id, "consumed", "empty_context", "portable");
+        yield* setTransferStatus(thread.id, "consumed", "empty_context", "portable");
       }
       return { kind: "none" } as const;
     }
 
     const serverSettings = yield* settings.getSettings.pipe(
-      Effect.mapError(fail(input.thread.id, "Unable to read the fork settings.")),
+      Effect.mapError(fail(thread.id, "Unable to read the fork settings.")),
     );
-    const ownUsage = yield* latestUsage(input.thread.id);
+    const ownUsage = yield* latestUsage(thread.id);
     // Usage windows belong to a model and session; a source thread's window
     // cannot size a destination, especially after a model switch.
     const modelWindow =
       input.modelContextWindow ??
       (yield* resolveForkModelWindow({
-        threadId: input.thread.id,
-        modelSelection: input.modelSelection ?? input.thread.modelSelection,
+        threadId: thread.id,
+        modelSelection: input.modelSelection ?? thread.modelSelection,
         settings: serverSettings,
         registry: Option.getOrUndefined(registry),
         sql,
       }).pipe(
-        Effect.mapError(fail(input.thread.id, "Unable to resolve the destination model capacity.")),
+        Effect.mapError(fail(thread.id, "Unable to resolve the destination model capacity.")),
       ));
     const usage = modelWindow === undefined ? undefined : { maxTokens: modelWindow };
     const holdsTurns =
       !existing.requireFreshSession &&
-      (yield* currentThreadHoldsTurns(input.thread.id, input.nativeThreadKey));
+      (yield* currentThreadHoldsTurns(thread.id, input.nativeThreadKey));
     const requestTokenBudget = handoffBudget({
       tokenCap: null,
       userText: "",
@@ -524,11 +544,18 @@ const make = Effect.gen(function* () {
         nativeUsedTokens: holdsTurns ? (ownUsage?.usedTokens ?? 0) : 0,
       }),
     );
+    const imported = importedHistoryKind({
+      transferType: transfer.type,
+      conversationImport: thread.conversationImport,
+      sourceImport: thread.forkLineage?.sourceImport,
+    });
+    const importOmissions =
+      thread.forkLineage?.sourceImport?.omissions ?? thread.conversationImport?.omissions;
     // The purpose and coverage header travel too: charge them before items.
     const headerTokens = estimateTokens(
       renderHandoff({
-        threadId: input.thread.id,
-        title: input.thread.title,
+        threadId: thread.id,
+        title: thread.title,
         selection: {
           items: [],
           omittedItemIds: items.map((item) => item.itemId),
@@ -537,10 +564,8 @@ const make = Effect.gen(function* () {
         },
         totalItemCount: items.length,
         midTurnCut,
-        imported: transfer.type === "import" || input.thread.forkLineage?.sourceImport != null,
-        importOmissions:
-          input.thread.forkLineage?.sourceImport?.omissions ??
-          input.thread.conversationImport?.omissions,
+        imported,
+        importOmissions,
       }).preamble,
     );
     const selection = selectHistory({
@@ -550,26 +575,24 @@ const make = Effect.gen(function* () {
       midTurnCut,
     });
     const rendered = renderHandoff({
-      threadId: input.thread.id,
-      title: input.thread.title,
+      threadId: thread.id,
+      title: thread.title,
       selection,
       totalItemCount: items.length,
       midTurnCut,
-      imported: transfer.type === "import" || input.thread.forkLineage?.sourceImport != null,
-      importOmissions:
-        input.thread.forkLineage?.sourceImport?.omissions ??
-        input.thread.conversationImport?.omissions,
+      imported,
+      importOmissions,
     });
     const renderedTokens =
       estimateTokens(rendered.preamble) + attachmentTokenAllowance(selection.reattached);
     if (renderedTokens > budget)
       return yield* new ScientForkContextError({
-        threadId: input.thread.id,
+        threadId: thread.id,
         detail:
           "This model has insufficient room for the conversation history header and current message. Shorten the message or choose a larger-context model; nothing was sent.",
       });
     const handoffId = `handoff:${yield* crypto.randomUUIDv4.pipe(
-      Effect.mapError(fail(input.thread.id, "Unable to identify the context delivery.")),
+      Effect.mapError(fail(thread.id, "Unable to identify the context delivery.")),
     )}`;
     return {
       kind: "deliver",

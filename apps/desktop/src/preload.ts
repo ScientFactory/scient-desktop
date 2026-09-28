@@ -86,6 +86,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   },
   uploadOpenedConversationFile: (request) =>
     ipcRenderer.invoke(IpcChannels.UPLOAD_OPENED_CONVERSATION_FILE_CHANNEL, request),
+  cancelOpenedConversationFileUpload: (request) =>
+    ipcRenderer.invoke(IpcChannels.CANCEL_OPENED_CONVERSATION_FILE_UPLOAD_CHANNEL, request),
   // SCIENT-FORK:END
   setNotificationBadge: (badge) =>
     ipcRenderer.invoke(IpcChannels.SET_NOTIFICATION_BADGE_CHANNEL, badge),

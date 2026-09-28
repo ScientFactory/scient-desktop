@@ -42,6 +42,12 @@ export interface MarkdownReadResult {
   readonly issues: ScientConversationImportPreview["markdownIssues"];
 }
 
+/** A Markdown file Scient refuses to import; `message` is shown to the user. */
+export class MarkdownConversationRejection extends Schema.TaggedError<MarkdownConversationRejection>()(
+  "MarkdownConversationRejection",
+  { message: Schema.String },
+) {}
+
 const decodeSnapshot = Schema.decodeUnknownSync(ConversationSnapshotV1);
 const decodeValidated = Schema.decodeUnknownSync(ValidatedConversationImport);
 
@@ -54,7 +60,14 @@ export function readMarkdownConversation(input: MarkdownReadInput): MarkdownRead
     throw new Error("Markdown file changed during preview.");
   const actual = `sha256:${NodeCrypto.createHash("sha256").update(bytes).digest("hex")}`;
   if (actual !== input.packageSha256) throw new Error("Markdown file changed during preview.");
-  const source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  let source: string;
+  try {
+    source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    throw new MarkdownConversationRejection({
+      message: "This Markdown file is not plain UTF-8 text.",
+    });
+  }
   const parsed = parseConversationMarkdown(source);
   const document = input.mode === "document" || parsed.kind === "document";
   const title =
@@ -183,6 +196,13 @@ export function readMarkdownConversation(input: MarkdownReadInput): MarkdownRead
       detail: "No valid Scient message markers were found.",
     });
   }
+  // An import of the clean messages leaves out each damaged range whose
+  // content the parser excluded; text it kept, and numbers absent from the
+  // file, are no gap in what is imported.
+  const skippedRanges =
+    document || parsed.kind !== "conversation"
+      ? 0
+      : new Set(parsed.issues.filter((issue) => issue.excluded).map((issue) => issue.line)).size;
   const validated = decodeValidated({
     importId: input.importId,
     package: {
@@ -224,6 +244,7 @@ export function readMarkdownConversation(input: MarkdownReadInput): MarkdownRead
           },
         ]
       : [],
+    ...(skippedRanges > 0 ? { skippedSourceRecords: skippedRanges } : {}),
   });
   return { validated, kind: document ? "document" : "markdown", issues };
 }

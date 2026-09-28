@@ -17,7 +17,13 @@ import {
   SCIENT_PANDOC_READER,
   layer,
 } from "./PandocWordConverter.ts";
-import { fakePandoc, makeBundle, managedToolLayer } from "./pandocTestSupport.ts";
+import {
+  fakePandoc,
+  makeBundle,
+  managedToolLayer,
+  processExists,
+  readPid,
+} from "./pandocTestSupport.ts";
 
 const run = <A, E>(
   toolLayer: (scratchRoot: string) => Layer.Layer<PandocManagedTool>,
@@ -56,11 +62,192 @@ describe("PandocWordConverter", () => {
           })
           .pipe(Effect.flip);
         expect(error.reason).toBe("too-large");
+        expect(error.message).toBe(
+          "This conversation is too large for Word. Try leaving out the work log and reasoning, or export it as PDF or Markdown.",
+        );
         expect(NodeFS.existsSync(outputPath)).toBe(false);
         expect(NodeFS.existsSync(scratchRoot)).toBe(false);
       }),
     ),
   );
+  it.live("names what to shorten when a LaTeX document or a file is over the source limit", () =>
+    run(withCommand(null), ({ converter, directory }) =>
+      Effect.gen(function* () {
+        const oversized = "a".repeat(MAX_WORD_SOURCE_BYTES + 1);
+        const latex = yield* converter
+          .convert({
+            bundle: makeBundle({ markdown: "" }),
+            latex: {
+              source: oversized,
+              baseDirectory: directory,
+              files: [],
+              imageReferences: [],
+              bibliography: [],
+              warnings: [],
+            },
+            outputPath: NodePath.join(directory, "latex.docx"),
+          })
+          .pipe(Effect.flip);
+        expect(latex.reason).toBe("too-large");
+        expect(latex.message).toContain("LaTeX document");
+        expect(latex.message).not.toContain("work log");
+        const file = yield* converter
+          .convert({
+            bundle: {
+              ...makeBundle({ markdown: oversized }),
+              metadata: {
+                ...makeBundle({ markdown: "" }).metadata,
+                source: {
+                  _tag: "workspace-file",
+                  cwd: directory,
+                  relativePath: "notes.md",
+                  revision: "r1",
+                },
+              },
+            },
+            outputPath: NodePath.join(directory, "file.docx"),
+          })
+          .pipe(Effect.flip);
+        expect(file.message).toBe(
+          "This file is over the 8 MB Word export limit. Try a shorter file, or export it as PDF.",
+        );
+      }),
+    ),
+  );
+
+  it.live("keeps tabs on the Markdown read so Mermaid fences keep their capture id", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const pidDirectory = yield* fs.makeTempDirectoryScoped({ prefix: "scient-word-args-" });
+      const pidFile = NodePath.join(pidDirectory, "pid");
+      const fake = fakePandoc(pidFile);
+      yield* run(withCommand(fake("record-args")), ({ converter, directory }) =>
+        Effect.gen(function* () {
+          yield* converter.convert({
+            bundle: makeBundle({ markdown: "Body" }),
+            outputPath: NodePath.join(directory, "markdown.docx"),
+          });
+          yield* converter.convert({
+            bundle: makeBundle({ markdown: "" }),
+            latex: {
+              source: "Body",
+              baseDirectory: directory,
+              files: [],
+              imageReferences: [],
+              bibliography: [],
+              warnings: [],
+            },
+            outputPath: NodePath.join(directory, "latex.docx"),
+          });
+        }),
+      );
+      const runs = NodeFS.readFileSync(`${pidFile}.args`, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as ReadonlyArray<string>);
+      const reads = runs.filter((args) => args[args.indexOf("-t") + 1] === "json");
+      expect(reads).toHaveLength(2);
+      expect(reads[0]).toContain("--preserve-tabs");
+      expect(reads[0]).toContain(SCIENT_PANDOC_READER);
+      expect(reads[1]).toContain("latex");
+      expect(reads[1]).not.toContain("--preserve-tabs");
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("stops a conversion that outlasts its total budget and leaves nothing behind", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const pidDirectory = yield* fs.makeTempDirectoryScoped({ prefix: "scient-word-budget-" });
+      const pidFile = NodePath.join(pidDirectory, "pid");
+      const fake = fakePandoc(pidFile);
+      yield* run(withCommand(fake("sleep")), ({ converter, directory, scratchRoot }) =>
+        Effect.gen(function* () {
+          const outputPath = NodePath.join(directory, "slow.docx");
+          const error = yield* converter
+            .convert({
+              bundle: makeBundle({ markdown: "Body" }),
+              outputPath,
+              limits: {
+                read: { timeout: "30 seconds", maxHeapMb: 64, maxStdoutBytes: 1024 },
+                totalMs: 500,
+              },
+            })
+            .pipe(Effect.flip);
+          expect(error.reason).toBe("timeout");
+          expect(error.message).toBe(
+            "Converting to Word took too long and was stopped. Try leaving out the work log and reasoning, or export it as PDF or Markdown.",
+          );
+          expect(NodeFS.existsSync(outputPath)).toBe(false);
+          expect(NodeFS.existsSync(`${outputPath}.partial`)).toBe(false);
+          expect(NodeFS.readdirSync(scratchRoot)).toEqual([]);
+          const pid = readPid(pidFile);
+          expect(pid).not.toBeNull();
+          expect(processExists(pid!)).toBe(false);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("reports an installed Pandoc that cannot start so it can be reinstalled", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "scient-word-unstartable-" });
+      const missing = { command: NodePath.join(directory, "missing", "pandoc"), leadingArgs: [] };
+      const discarded: Array<PandocCommand> = [];
+      yield* run(
+        (scratchRoot) => managedToolLayer({ command: missing, scratchRoot, discarded }),
+        ({ converter, directory: outputDirectory }) =>
+          Effect.gen(function* () {
+            const error = yield* converter
+              .convert({
+                bundle: makeBundle({ markdown: "Body" }),
+                outputPath: NodePath.join(outputDirectory, "out.docx"),
+              })
+              .pipe(Effect.flip);
+            expect(error.reason).toBe("unavailable");
+            expect(error.message).toContain("Reinstall Pandoc");
+          }),
+      );
+      expect(discarded).toEqual([missing]);
+      yield* run(
+        (scratchRoot) =>
+          Layer.succeed(
+            PandocManagedTool,
+            PandocManagedTool.of({
+              canInstall: true,
+              install: Effect.die("not used"),
+              status: Effect.succeed({
+                version: "3.11",
+                installed: false,
+                canInstall: true,
+                unavailableReason: null,
+                downloadBytes: 41_832_712,
+                reinstallRequired: true,
+                install: {
+                  state: "idle",
+                  bytesReceived: null,
+                  totalBytes: null,
+                  failureReason: null,
+                  updatedAtEpochMs: 0,
+                },
+              }),
+              command: Effect.succeed(null),
+              discardUnstartable: () => Effect.void,
+              scratchRoot,
+            }),
+          ),
+        ({ converter }) =>
+          Effect.gen(function* () {
+            expect(yield* converter.availability).toEqual({
+              available: false,
+              reason: "Pandoc could not be started. Reinstall it to export to Word.",
+              installable: true,
+            });
+          }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it("reads Scient's profiles with CommonMark and only the profiles' extensions", () => {
     expect(SCIENT_PANDOC_READER.startsWith("commonmark_x-")).toBe(true);
     for (const off of ["attributes", "raw_attribute", "fenced_divs", "smart", "subscript"]) {
@@ -112,6 +299,7 @@ describe("PandocWordConverter", () => {
               },
             }),
             command: Effect.succeed(null),
+            discardUnstartable: () => Effect.void,
             scratchRoot,
           }),
         ),
@@ -149,6 +337,8 @@ describe("PandocWordConverter", () => {
                 .pipe(Effect.flip);
               expect(error.reason, mode).toBe(reason);
               expect(error.message, mode).toContain(text);
+              // Exports cover the whole conversation; advice names only what the dialog offers.
+              expect(error.message, mode).not.toMatch(/range/iu);
               expect(NodeFS.existsSync(outputPath)).toBe(false);
               expect(NodeFS.existsSync(`${outputPath}.partial`)).toBe(false);
               expect(NodeFS.readdirSync(scratchRoot)).toEqual([]);

@@ -3,7 +3,8 @@ import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled"
 // SCIENT-FORK:START
 import type { SectionMenuId } from "../scient/sections/menu";
 import {
-  CONVERSATION_EXPORT_MENU_ITEM,
+  COPY_CONVERSATION_MARKDOWN_MENU_ITEM,
+  conversationExportMenuItem,
   type ConversationExportMenuId,
 } from "../scient/conversationExport/menu";
 // SCIENT-FORK:END
@@ -191,10 +192,13 @@ export function buildThreadActionMenuItems(
           ? [{ id: "copy-branch" as const, label: "Branch", icon: "git-branch" }]
           : []),
         { id: "copy-thread-id", label: "Thread ID", icon: "hash" },
+        // SCIENT-FORK:START
+        COPY_CONVERSATION_MARKDOWN_MENU_ITEM,
+        // SCIENT-FORK:END
       ],
     },
     // SCIENT-FORK:START
-    CONVERSATION_EXPORT_MENU_ITEM,
+    conversationExportMenuItem(),
     // SCIENT-FORK:END
     { id: "project-settings", label: "Project settings", icon: "settings" },
     // Archive removes the thread from the sidebar while keeping its

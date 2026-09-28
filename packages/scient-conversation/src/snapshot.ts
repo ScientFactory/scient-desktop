@@ -5,18 +5,21 @@
  */
 import {
   CONVERSATION_SNAPSHOT_FORMAT,
-  type ChatAttachment,
+  ChatAttachment,
   type ConversationAttachment,
   type ConversationMessage,
   type ConversationSnapshotSelection,
   type ConversationSnapshotV1,
   type ConversationSnapshotWarning,
   type MessageId,
+  type OrchestrationMessage,
   type OrchestrationThread,
+  type OrchestrationThreadActivity,
   type TurnId,
 } from "@t3tools/contracts";
 import * as Data from "effect/Data";
 import * as Predicate from "effect/Predicate";
+import * as Schema from "effect/Schema";
 
 import { projectInlineReferences } from "./inlineReferences.ts";
 import { deriveUnsettledTurnId } from "./workLogGrouping.ts";
@@ -68,20 +71,34 @@ export function runningTurnId(thread: OrchestrationThread): TurnId | null {
   return deriveUnsettledTurnId(thread.latestTurn, sessionTurn);
 }
 
-export function buildConversationSnapshot(input: {
-  readonly thread: OrchestrationThread;
-  readonly snapshotSequence: number;
-  readonly threadSequence: number;
-  readonly capturedAt: string;
-  readonly selection: ConversationSnapshotSelection;
-  readonly isAttachmentAvailable: (attachment: ChatAttachment) => boolean;
-}): ConversationSnapshotContent {
-  const { thread, selection } = input;
-  const warnings: ConversationSnapshotWarning[] = [];
-  const roots = [thread.worktreePath, thread.workspaceRoot].filter(
-    (root): root is string => typeof root === "string" && root.length > 0,
-  );
+/**
+ * The part of a thread an export covers, before projection: the settled
+ * messages (reasoning included) through the range's last message, and the
+ * activities and plans recorded before it. Every format is built from this
+ * selection, so a range bounds all of them alike.
+ */
+export interface SelectedConversationContent {
+  readonly runningTurnId: TurnId | null;
+  readonly messages: ReadonlyArray<OrchestrationMessage>;
+  readonly activities: ReadonlyArray<OrchestrationThreadActivity>;
+  readonly proposedPlans: OrchestrationThread["proposedPlans"];
+}
 
+/**
+ * Applies the running-turn cutoff and the range. "Up to a message" ends at
+ * exactly that message: later messages are left out, and so are activities,
+ * plans, and answers recorded after it, including later items of the turn it
+ * belongs to or interrupted. Throws `SnapshotRangeError` when the range's last
+ * message is not a completed user or assistant message.
+ *
+ * Known limitation, and why the server refuses ranges for now: records are
+ * cut by creation time, so a plan, reasoning block, or message created before
+ * the chosen message and updated after it keeps its later content.
+ */
+export function selectConversationContent(
+  thread: OrchestrationThread,
+  throughMessageId: MessageId | null,
+): SelectedConversationContent {
   // The running turn and everything from its prompt on are left out.
   const running = runningTurnId(thread);
   let cutoff: string | null = null;
@@ -116,7 +133,6 @@ export function buildConversationSnapshot(input: {
     ) {
       cutoff = prompt.createdAt;
     }
-    warnings.push({ _tag: "running-turn-omitted", turnId: running });
   }
   const settled = <A extends { readonly turnId: TurnId | null; readonly createdAt: string }>(
     item: A,
@@ -127,41 +143,78 @@ export function buildConversationSnapshot(input: {
   // provider left its streaming flag set; only the running turn is left out.
   const completedMessages = thread.messages.filter(settled);
 
-  // Range: everything through the selected message, and the rest of its turn
-  // up to the next message of that turn.
-  let transcript = completedMessages;
-  let includedTurns: ReadonlySet<TurnId | null> | null = null;
-  let lastTurn: TurnId | null = null;
-  let lastTurnEnd: string | null = null;
+  let messages = completedMessages;
   let rangeEnd: string | null = null;
-  if (selection.throughMessageId !== null) {
+  if (throughMessageId !== null) {
     const index = completedMessages.findIndex(
       (message) =>
-        message.id === selection.throughMessageId &&
+        message.id === throughMessageId &&
         (message.role === "user" || message.role === "assistant"),
     );
-    if (index < 0) throw new SnapshotRangeError({ messageId: selection.throughMessageId });
-    const selected = completedMessages[index]!;
-    transcript = completedMessages.slice(0, index + 1);
-    includedTurns = new Set(transcript.map((message) => message.turnId).filter(Boolean));
-    lastTurn = selected.turnId;
-    lastTurnEnd =
-      completedMessages
-        .slice(index + 1)
-        .find((message) => message.turnId !== null && message.turnId === selected.turnId)
-        ?.createdAt ?? null;
-    rangeEnd = selected.createdAt;
+    if (index < 0) throw new SnapshotRangeError({ messageId: throughMessageId });
+    messages = completedMessages.slice(0, index + 1);
+    rangeEnd = completedMessages[index]!.createdAt;
   }
-  const inRange = <A extends { readonly turnId: TurnId | null; readonly createdAt: string }>(
-    item: A,
-  ) => {
-    if (includedTurns === null) return true;
-    if (item.turnId === null) return rangeEnd !== null && item.createdAt <= rangeEnd;
-    if (!includedTurns.has(item.turnId)) return false;
-    return item.turnId !== lastTurn || lastTurnEnd === null || item.createdAt < lastTurnEnd;
-  };
+  // Records at the selected message's own time are written after it, so they
+  // are after it too.
+  const inRange = <A extends { readonly createdAt: string }>(item: A) =>
+    rangeEnd === null || item.createdAt < rangeEnd;
 
-  const activities = thread.activities.filter((activity) => settled(activity) && inRange(activity));
+  return {
+    runningTurnId: running,
+    messages,
+    activities: thread.activities.filter((activity) => settled(activity) && inRange(activity)),
+    proposedPlans: thread.proposedPlans.filter((plan) => settled(plan) && inRange(plan)),
+  };
+}
+
+const isRecordedAttachment = Schema.is(ChatAttachment);
+
+/**
+ * Every attachment the selected content can export: those of its messages and
+ * those recorded with its submitted answers. Attachments outside the selection
+ * are never inspected, read, or counted.
+ */
+export function selectedConversationAttachments(
+  content: SelectedConversationContent,
+): ReadonlyArray<ChatAttachment> {
+  const answerAttachments = content.activities.flatMap((activity) => {
+    if (activity.kind !== "user-input.answer-submitted") return [];
+    const byQuestion = Predicate.isObject(activity.payload)
+      ? (activity.payload as { readonly attachmentsByQuestionId?: unknown }).attachmentsByQuestionId
+      : undefined;
+    if (!Predicate.isObject(byQuestion)) return [];
+    return Object.values(byQuestion).flatMap((value: unknown) =>
+      Array.isArray(value) ? value.filter(isRecordedAttachment) : [],
+    );
+  });
+  return [
+    ...content.messages.flatMap((message) => message.attachments ?? []),
+    ...answerAttachments,
+  ];
+}
+
+export function buildConversationSnapshot(input: {
+  readonly thread: OrchestrationThread;
+  readonly snapshotSequence: number;
+  readonly threadSequence: number;
+  readonly capturedAt: string;
+  readonly selection: ConversationSnapshotSelection;
+  readonly isAttachmentAvailable: (attachment: ChatAttachment) => boolean;
+  /** The selection already computed for this thread and range, if the caller has it. */
+  readonly content?: SelectedConversationContent;
+}): ConversationSnapshotContent {
+  const { thread, selection } = input;
+  const warnings: ConversationSnapshotWarning[] = [];
+  const roots = [thread.worktreePath, thread.workspaceRoot].filter(
+    (root): root is string => typeof root === "string" && root.length > 0,
+  );
+
+  const content = input.content ?? selectConversationContent(thread, selection.throughMessageId);
+  const running = content.runningTurnId;
+  if (running !== null) warnings.push({ _tag: "running-turn-omitted", turnId: running });
+  const transcript = content.messages;
+  const activities = content.activities;
   let skippedContext = 0;
   const messages: ConversationMessage[] = [];
   for (const message of transcript) {
@@ -268,16 +321,14 @@ export function buildConversationSnapshot(input: {
     messages,
     reasoning,
     workLog: workLog.entries,
-    proposedPlans: thread.proposedPlans
-      .filter((plan) => settled(plan) && inRange(plan))
-      .map((plan) => ({
-        id: plan.id,
-        turnId: plan.turnId,
-        createdAt: plan.createdAt,
-        updatedAt: plan.updatedAt,
-        markdown: plan.planMarkdown,
-        implemented: plan.implementedAt !== null,
-      })),
+    proposedPlans: content.proposedPlans.map((plan) => ({
+      id: plan.id,
+      turnId: plan.turnId,
+      createdAt: plan.createdAt,
+      updatedAt: plan.updatedAt,
+      markdown: plan.planMarkdown,
+      implemented: plan.implementedAt !== null,
+    })),
     questionAnswers: questions.questionAnswers,
     omittedRunningTurn: running === null ? null : { turnId: running },
     warnings,

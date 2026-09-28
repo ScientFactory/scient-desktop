@@ -1,11 +1,11 @@
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import { useNavigate } from "@tanstack/react-router";
 import { FileDown } from "lucide-react";
 import { useCallback, useRef } from "react";
 
 import { MenuSub, MenuSubPopup, MenuSubTrigger } from "~/components/ui/menu";
 import { toastManager } from "~/components/ui/toast";
-import { useRightPanelStore } from "~/rightPanelStore";
 import { useEnvironmentHttpBaseUrl } from "~/state/environments";
 import { scientDocumentPdfEnvironment } from "~/state/scientDocumentPdf";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -13,9 +13,15 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { beginScientUiOperation } from "../analytics/client";
 import type { MarkdownPersistenceLease } from "../markdownEditor/persistence/markdownPersistenceRegistry";
 import { DockCommandItem } from "../markdownEditor/ui/dockChrome";
-import { scientGeneratedPdfSurface } from "../rightPanel/surfaces";
 import { documentPdfAvailability, renderDocumentPagePdf } from "./documentPagePdf";
-import { runMarkdownPdfExport, summarizeDocumentWarnings } from "./markdownPdfExport";
+import {
+  deliverDocumentPdf,
+  documentPdfSavedNotice,
+  markdownPdfFileName,
+  releaseDocumentPdfCapture,
+  saveDocumentPdfCopy,
+} from "./documentPdfDelivery";
+import { runMarkdownPdfExport } from "./markdownPdfExport";
 
 export interface MarkdownPdfExportTarget {
   readonly environmentId: EnvironmentId;
@@ -25,7 +31,10 @@ export interface MarkdownPdfExportTarget {
   readonly persistence: MarkdownPersistenceLease;
 }
 
-/** Exports the saved file and opens the PDF in Scient's reader, where Save Copy lives. */
+/**
+ * Exports the saved file and saves the PDF through the same Save dialog as
+ * every other export; the notice's Open shows it in Scient's reader.
+ */
 function useMarkdownPdfExport(target: MarkdownPdfExportTarget) {
   const httpBaseUrl = useEnvironmentHttpBaseUrl(target.environmentId);
   const prepare = useAtomCommand(scientDocumentPdfEnvironment.prepareMarkdown, {
@@ -33,6 +42,7 @@ function useMarkdownPdfExport(target: MarkdownPdfExportTarget) {
   });
   const publish = useAtomCommand(scientDocumentPdfEnvironment.publish, { reportFailure: false });
   const runningRef = useRef(false);
+  const navigate = useNavigate();
 
   return useCallback(async () => {
     if (runningRef.current) return;
@@ -80,24 +90,23 @@ function useMarkdownPdfExport(target: MarkdownPdfExportTarget) {
             if (result._tag === "Failure") throw squashAtomCommandFailure(result);
             return result.value;
           },
+          release: (captureId) => releaseDocumentPdfCapture(target.environmentId, captureId),
         },
         target,
       );
-      if (published.source._tag === "generated-pdf") {
-        useRightPanelStore
-          .getState()
-          .openScient(target.threadRef, scientGeneratedPdfSurface(published.source));
-      }
       toastManager.close(toastId);
-      toastManager.add(
-        published.warnings.length > 0
-          ? {
-              type: "warning",
-              title: "PDF exported with notes",
-              description: summarizeDocumentWarnings(published.warnings),
-            }
-          : { type: "success", title: "PDF exported", data: { compact: true } },
+      const delivery = await deliverDocumentPdf(
+        {
+          saveCopy: (pdf, fileName) => saveDocumentPdfCopy(target.environmentId, pdf, fileName),
+        },
+        published,
+        markdownPdfFileName(target.relativePath),
       );
+      if (delivery._tag === "delivered") {
+        toastManager.add(
+          documentPdfSavedNotice({ delivery, published, threadRef: target.threadRef, navigate }),
+        );
+      }
       finish("completed");
     } catch (error) {
       toastManager.close(toastId);
@@ -110,7 +119,7 @@ function useMarkdownPdfExport(target: MarkdownPdfExportTarget) {
     } finally {
       runningRef.current = false;
     }
-  }, [httpBaseUrl, prepare, publish, target]);
+  }, [httpBaseUrl, navigate, prepare, publish, target]);
 }
 
 /** Markdown editor → More actions → Export ▸ PDF / Word. */

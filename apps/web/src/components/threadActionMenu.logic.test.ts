@@ -62,7 +62,7 @@ describe("buildThreadActionMenuItems", () => {
     const items = buildThreadActionMenuItems(baseState);
     const copyIndex = items.findIndex((item) => item.id === "copy");
     // SCIENT-FORK: conversation export sits between Copy and Project settings.
-    expect(items[copyIndex + 1]).toMatchObject({ id: "export-conversation", label: "Export…" });
+    expect(items[copyIndex + 1]).toMatchObject({ id: "export-conversation", label: "Export" });
     expect(items[copyIndex + 2]).toMatchObject({
       id: "project-settings",
       label: "Project settings",
@@ -70,6 +70,32 @@ describe("buildThreadActionMenuItems", () => {
     });
     expect(items[copyIndex + 3]?.id).toBe("archive");
   });
+
+  // SCIENT-FORK:START
+  it("offers one Export entry per format and copies the conversation from the Copy submenu", () => {
+    const items = buildThreadActionMenuItems(baseState);
+    const exportItem = items.find((item) => item.id === "export-conversation");
+    expect(
+      exportItem?.children?.map((child) => ({
+        id: child.id,
+        label: child.label,
+        disabled: child.disabled,
+      })),
+    ).toEqual([
+      { id: "export-conversation:markdown", label: "Markdown (.md)…", disabled: undefined },
+      { id: "export-conversation:pdf", label: "PDF (.pdf)…", disabled: undefined },
+      { id: "export-conversation:docx", label: "Word (.docx)…", disabled: undefined },
+      { id: "export-conversation:scic", label: "Scient file (.scic)…", disabled: undefined },
+    ]);
+    const copyItem = items.find((item) => item.id === "copy");
+    expect(copyItem?.children?.map((child) => child.id)).toEqual([
+      "copy-path",
+      "copy-thread-id",
+      "copy-conversation-markdown",
+    ]);
+    expect(copyItem?.children?.at(-1)?.label).toBe("Conversation as Markdown");
+  });
+  // SCIENT-FORK:END
 
   it("offers project filtering only for surfaces with a scoped thread list", () => {
     expect(ids(baseState)).not.toContain("filter-by-project");

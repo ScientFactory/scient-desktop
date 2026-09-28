@@ -163,6 +163,7 @@ import { publishBrowserPdfExport } from "./scient/documentArtifacts/BrowserPdfEx
 import { publishCapturedDocumentPdf } from "./scient/documentExport/DocumentPdfPublication.ts";
 import { prepareMarkdownPdf } from "./scient/documentExport/MarkdownPdfPreparation.ts";
 import { prepareConversationPdf } from "./scient/documentExport/ConversationPdfPreparation.ts";
+import { removeDocumentCapture } from "./scient/documentExport/DocumentCapture.ts";
 import { ConversationExportService } from "./scient/conversationExport/ConversationExportService.ts";
 import * as AnalysisService from "./scient/analysis/AnalysisService.ts";
 import { makeComputeRpcGateway } from "./scient/compute/ComputeRpcGateway.ts";
@@ -3915,6 +3916,12 @@ const makeWsRpcLayer = (
                 generatedDocuments,
               ),
             ),
+            { "rpc.aggregate": "documents" },
+          ),
+        [WS_METHODS.documentsReleaseDocumentPdf]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.documentsReleaseDocumentPdf,
+            removeDocumentCapture(input.captureId),
             { "rpc.aggregate": "documents" },
           ),
         [WS_METHODS.attachmentsCreateUploadUrl]: (input) =>

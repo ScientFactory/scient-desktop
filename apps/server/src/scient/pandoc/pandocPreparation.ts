@@ -70,10 +70,15 @@ export const SCIENT_WORD_STYLES = {
  * `mermaid-` and the first 16 hex digits of the SHA-256 of the fence source
  * (without its final newline). Producers that render diagrams name the
  * `rendered-diagram` asset this way so Word export can find it.
+ *
+ * The source is hashed as Pandoc reads it, so the fence Scient's Markdown
+ * parser found and the code block Pandoc returns get the same id: Pandoc drops
+ * every carriage return from its input, and the Word read pass keeps tabs
+ * (`--preserve-tabs`), so tabs are hashed as written.
  */
 export function mermaidDiagramAssetId(source: string): string {
   const digest = NodeCrypto.createHash("sha256")
-    .update(source.replace(/\r?\n$/u, ""), "utf8")
+    .update(source.replaceAll("\r", "").replace(/\n$/u, ""), "utf8")
     .digest("hex");
   return `mermaid-${digest.slice(0, 16)}`;
 }

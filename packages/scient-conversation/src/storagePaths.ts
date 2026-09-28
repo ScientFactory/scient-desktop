@@ -9,9 +9,9 @@ import type { ConversationSnapshotV1 } from "@t3tools/contracts";
 export const STORAGE_PATH_PLACEHOLDER = "«scient-data»";
 export const SCIENT_ASSET_URL_PLACEHOLDER = "«scient-protected-asset»";
 
-const WEB_URL_PATTERN = /\bhttps?:\/\/[^\s<>"'`\)\]\}]+/giu;
+const WEB_URL_PATTERN = /\bhttps?:\/\/[^\s<>"'`)\]}]+/giu;
 const ASSET_PATH_TEST = /\/api\/assets\/[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?:\/|$)/iu;
-const PATH_CANDIDATE_PATTERN = /\/[^\s<>"'`\)\]\}]+/giu;
+const PATH_CANDIDATE_PATTERN = /\/[^\s<>"'`)\]}]+/giu;
 
 function assetPath(candidate: string): boolean {
   let decoded = candidate;
@@ -50,11 +50,38 @@ function escapeRegExp(text: string): string {
 }
 
 /**
+ * Characters that can continue a path segment: ASCII letters and digits, the
+ * punctuation file and URL names use, and every non-ASCII code point (letters,
+ * emoji, and symbols alike).
+ */
+const PATH_CONTINUATION = String.raw`A-Za-z0-9._~!$&'()+,;=@%#\-\u{80}-\u{10FFFF}`;
+/** Trailing punctuation that can end a path in prose, as in "(see /data)," or "in /data.". */
+const TRAILING_PUNCTUATION = String.raw`.,;:)\]!'_`;
+/** What may follow trailing punctuation for it to end the path: space, the end, or formatting. */
+const AFTER_TRAILING_PUNCTUATION = String.raw`\s|$|[*${"`"}<>"')\]|~]`;
+
+/**
+ * Where a root ends: at a path separator, at the end of the text, before a
+ * character that cannot continue a path segment (space, `*`, `<`, a backtick,
+ * a double quote, …), or before a run of trailing punctuation followed by
+ * whitespace, the end, or a formatting delimiter. So `/data` matches in
+ * `/data/x`, `**\/data**`, `<code>/data</code>`, "(see /data),", and
+ * "in /data." but not in `/database`, `/data.bak`, `/data#archive`,
+ * `/data_/x`, or `/data(backup)/x`.
+ *
+ * Redaction is intentionally conservative: an unusual sibling path that shares
+ * a storage root's exact prefix and ends in a formatting delimiter (`/data_*`)
+ * may be over-redacted. That is accepted because real storage roots are long
+ * and specific.
+ */
+const ROOT_END = String.raw`(?=[\\/]|$|[^${PATH_CONTINUATION}]|[${TRAILING_PUNCTUATION}]+(?:${AFTER_TRAILING_PUNCTUATION}))`;
+
+/**
  * A matcher for each root that accepts either separator, so `C:\Users\a` and
- * `C:/Users/a` are both found. Match without case on every platform: macOS
- * volumes may be case-insensitive, and over-redaction is safer than leaking a
- * storage path whose spelling differs from the configured root. Longer roots
- * are tried first.
+ * `C:/Users/a` are both found, and that ends only at a path boundary. Match
+ * without case on every platform: macOS volumes may be case-insensitive, and
+ * over-redaction is safer than leaking a storage path whose spelling differs
+ * from the configured root. Longer roots are tried first.
  */
 function rootPatterns(roots: ReadonlyArray<string>): ReadonlyArray<RegExp> {
   return [...new Set(roots)]
@@ -63,7 +90,7 @@ function rootPatterns(roots: ReadonlyArray<string>): ReadonlyArray<RegExp> {
     .toSorted((left, right) => right.length - left.length)
     .map((root) => {
       const segments = root.split(/[\\/]+/u).map(escapeRegExp);
-      return new RegExp(segments.join("[\\\\/]+"), "giu");
+      return new RegExp(`${segments.join("[\\\\/]+")}${ROOT_END}`, "giu");
     });
 }
 
