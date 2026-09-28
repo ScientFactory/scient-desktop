@@ -230,6 +230,22 @@ function activityOrder({ snapshot }: ValidatedConversationImport) {
 }
 
 /**
+ * The external ID of the message each answer folds, by answer ID. A file names
+ * a folded answer's user message `async-answer:<answer id>`, as Scient names a
+ * live one; the imported answer names that message's local ID instead.
+ */
+function foldedAnswerMessages({ snapshot }: ValidatedConversationImport): Map<string, string> {
+  const answerIds = new Set(snapshot.questionAnswers.map((answer) => answer.id));
+  const folded = new Map<string, string>();
+  for (const message of snapshot.messages) {
+    if (message.role !== "user" || !message.id.startsWith("async-answer:")) continue;
+    const answerId = message.id.slice("async-answer:".length);
+    if (answerIds.has(answerId) && !folded.has(answerId)) folded.set(answerId, message.id);
+  }
+  return folded;
+}
+
+/**
  * Ids that sort in the order they are minted: `imp-<attempt uuid>-<number>`,
  * the number zero-padded to one width for the whole attempt. Unique across
  * every kind of record, so no two tables share an id.
@@ -278,8 +294,6 @@ export const mintConversationImportIds = Effect.fn("mintConversationImportIds")(
     if (activity.kind === "answer") activityIds[activity.answer.id] = id;
     else workLog[activity.entry.id] = id;
   }
-  // A folded answer's message is named by its request id, so request ids sort
-  // like the answers they belong to.
   const questionAnswers: Record<string, { activityId: EventId; requestId: ApprovalRequestId }> =
     Object.create(null);
   for (const answer of answers) {
@@ -288,23 +302,10 @@ export const mintConversationImportIds = Effect.fn("mintConversationImportIds")(
       requestId: ApprovalRequestId.make(nextId()),
     };
   }
+  // Every message, a folded answer's too, sorts in source order; the answer
+  // names its message (`foldedAnswerMessages`).
   const messages: Record<string, MessageId> = Object.create(null);
-  for (const record of transcript) {
-    const answeredRequestId =
-      record.kind === "message" &&
-      record.message.role === "user" &&
-      record.id.startsWith("async-answer:")
-        ? record.id.slice("async-answer:".length)
-        : null;
-    const answerIds =
-      answeredRequestId !== null && Object.hasOwn(questionAnswers, answeredRequestId)
-        ? questionAnswers[answeredRequestId]
-        : undefined;
-    messages[record.id] =
-      answerIds === undefined
-        ? MessageId.make(nextId())
-        : MessageId.make(`async-answer:${answerIds.requestId}`);
-  }
+  for (const record of transcript) messages[record.id] = MessageId.make(nextId());
   const turns: Record<string, TurnId> = Object.create(null);
   for (const key of assignment.keys) turns[key] = TurnId.make(nextId());
   const proposedPlans: Record<string, string> = Object.create(null);
@@ -665,8 +666,11 @@ export function buildConversationImportCommand(input: {
     });
   }
 
+  const foldedMessages = foldedAnswerMessages(validated);
   const answerActivity = (answer: ConversationQuestionAnswer): OrchestrationThreadActivity => {
     const answerIds = ids.questionAnswers[answer.id]!;
+    const foldedMessage = foldedMessages.get(answer.id);
+    const messageId = foldedMessage === undefined ? undefined : ids.messages[foldedMessage];
     const questionTextById: Record<string, string> = {};
     const answers: Record<string, string> = {};
     const attachmentsByQuestionId: Record<string, ReadonlyArray<ChatAttachment>> = {};
@@ -688,6 +692,7 @@ export function buildConversationImportCommand(input: {
       createdAt: answer.createdAt,
       payload: {
         requestId: answerIds.requestId,
+        ...(messageId === undefined ? {} : { messageId }),
         answers,
         questionTextById,
         attachmentsByQuestionId,

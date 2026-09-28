@@ -1804,6 +1804,46 @@ describe("image asset requests", () => {
 });
 
 describe("deriveTimelineEntries", () => {
+  it("folds the message each submitted answer names, and a live answer's async-answer message", () => {
+    const userMessage = (id: string, text: string, second: number) => ({
+      id: MessageId.make(id),
+      role: "user" as const,
+      text,
+      turnId: null,
+      createdAt: `2026-02-23T00:00:0${second}.000Z`,
+      updatedAt: `2026-02-23T00:00:0${second}.000Z`,
+      streaming: false,
+    });
+    const answer = (requestId: string, second: number, messageId?: string) =>
+      makeActivity({
+        kind: "user-input.answer-submitted",
+        summary: "Question answer submitted",
+        createdAt: `2026-02-23T00:00:0${second}.000Z`,
+        turnId: "answer-turn",
+        payload: {
+          requestId,
+          answers: { color: "Blue" },
+          attachmentsByQuestionId: {},
+          ...(messageId === undefined ? {} : { messageId }),
+        },
+      });
+    const entries = deriveTimelineEntries(
+      [
+        userMessage("plain-message", "Keep me", 1),
+        userMessage("imp-attempt-000002", "Blue", 2),
+        userMessage("async-answer:live-request", "Green", 3),
+      ],
+      [],
+      deriveWorkLogEntries([
+        answer("imported-request", 2, "imp-attempt-000002"),
+        answer("live-request", 3),
+      ]),
+    );
+    expect(
+      entries.flatMap((entry) => (entry.kind === "message" ? [entry.message.text] : [])),
+    ).toEqual(["Keep me"]);
+  });
+
   const streamingMessage = {
     id: MessageId.make("streaming-message"),
     role: "assistant" as const,

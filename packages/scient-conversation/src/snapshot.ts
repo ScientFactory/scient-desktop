@@ -11,7 +11,7 @@ import {
   type ConversationSnapshotSelection,
   type ConversationSnapshotV1,
   type ConversationSnapshotWarning,
-  type MessageId,
+  MessageId,
   type OrchestrationMessage,
   type OrchestrationThread,
   type OrchestrationThreadActivity,
@@ -194,6 +194,30 @@ export function selectedConversationAttachments(
   ];
 }
 
+/**
+ * Local IDs of messages that imported answers fold, mapped to the ID a file
+ * gives them: `async-answer:<request id>`, as Scient names a live answer's
+ * message. Imported history names the folded message on its answer instead,
+ * because its local ID sorts in source order.
+ */
+function foldedAnswerMessageIds(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+): ReadonlyMap<string, MessageId> {
+  const folded = new Map<string, MessageId>();
+  for (const activity of activities) {
+    if (activity.kind !== "user-input.answer-submitted" || !Predicate.isObject(activity.payload))
+      continue;
+    const { messageId, requestId } = activity.payload as {
+      readonly messageId?: unknown;
+      readonly requestId?: unknown;
+    };
+    if (typeof messageId === "string" && typeof requestId === "string" && requestId.length > 0) {
+      folded.set(messageId, MessageId.make(`async-answer:${requestId}`));
+    }
+  }
+  return folded;
+}
+
 export function buildConversationSnapshot(input: {
   readonly thread: OrchestrationThread;
   readonly snapshotSequence: number;
@@ -216,6 +240,7 @@ export function buildConversationSnapshot(input: {
   const transcript = content.messages;
   const activities = content.activities;
   let skippedContext = 0;
+  const foldedIds = foldedAnswerMessageIds(activities);
   const messages: ConversationMessage[] = [];
   for (const message of transcript) {
     if (message.role === "reasoning") continue;
@@ -238,7 +263,7 @@ export function buildConversationSnapshot(input: {
     }
     messages.push({
       n,
-      id: message.id,
+      id: (message.role === "user" ? foldedIds.get(message.id) : undefined) ?? message.id,
       role: message.role,
       turnId: message.turnId,
       createdAt: message.createdAt,
