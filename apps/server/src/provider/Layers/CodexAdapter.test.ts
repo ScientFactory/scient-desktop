@@ -233,7 +233,7 @@ const providerSessionDirectoryTestLayer = Layer.succeed(ProviderSessionDirectory
   recordImportedTranscript: () => Effect.die("unused"),
   getProvider: () =>
     Effect.die(new Error("ProviderSessionDirectory.getProvider is not used in test")),
-  getBinding: () => Effect.succeed(Option.none()),
+  getBinding: () => Effect.succeedNone,
   listThreadIds: () => Effect.succeed([]),
   listBindings: () => Effect.succeed([]),
 });
@@ -2626,6 +2626,12 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
   it.effect("unwraps Codex token usage payloads for context window events", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();
+      const session = yield* runtime.getSession;
+      runtime.startImpl.mockResolvedValue({
+        ...session,
+        model: "gpt-5.4",
+        activeTurnId: asTurnId("turn-1"),
+      });
       const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
 
       yield* runtime.emit({
@@ -2669,6 +2675,27 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         return;
       }
 
+      NodeAssert.equal(
+        yield* adapter.getModelContextWindow!({
+          threadId: asThreadId("another-fork"),
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        }),
+        258_400,
+      );
+      NodeAssert.equal(
+        yield* adapter.getModelContextWindow!({
+          threadId: asThreadId("another-fork"),
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "small-model" },
+        }),
+        undefined,
+      );
+      NodeAssert.equal(
+        yield* adapter.getModelContextWindow!({
+          threadId: asThreadId("another-fork"),
+          modelSelection: { instanceId: ProviderInstanceId.make("other-codex"), model: "gpt-5.4" },
+        }),
+        undefined,
+      );
       NodeAssert.deepEqual(firstEvent.value.payload.usage, {
         usedTokens: 126,
         totalProcessedTokens: 11_839,

@@ -61,10 +61,14 @@ async function click(label: string) {
 }
 function importProps() {
   return mocks.importer.mock.lastCall![0] as {
-    onDone: (projectRef?: {
-      environmentId: EnvironmentId;
-      projectId: ProjectId;
-    }) => Promise<boolean>;
+    onDone: (
+      projectRef?: {
+        environmentId: EnvironmentId;
+        projectId: ProjectId;
+      },
+      importWarning?: string,
+      importedThreadCount?: number,
+    ) => Promise<boolean>;
     onImportingChange: (busy: boolean) => void;
   };
 }
@@ -92,6 +96,31 @@ describe("optional project import entry point", () => {
     expect(container.querySelector('[role="dialog"]')).toBeNull();
     expect(imported).not.toHaveBeenCalled();
     expect(mocks.openProject).not.toHaveBeenCalled();
+    expect(mocks.toast).not.toHaveBeenCalled();
+  });
+
+  it("reports partial and successful history only after the import view closes", async () => {
+    await render();
+    await click("Import projects and conversations");
+    await vi.waitFor(() => expect(mocks.importer).toHaveBeenCalled());
+    await act(() =>
+      importProps().onDone(undefined, "Imported 28 threads. 1 thread could not be imported.", 28),
+    );
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(mocks.toast).toHaveBeenLastCalledWith({
+      type: "warning",
+      title: "Some history was not imported",
+      description: "Imported 28 threads. 1 thread could not be imported.",
+      timeout: 0,
+    });
+
+    await click("Import projects and conversations");
+    await vi.waitFor(() => expect(mocks.importer).toHaveBeenCalledTimes(2));
+    await act(() => importProps().onDone(undefined, undefined, 1));
+    expect(mocks.toast).toHaveBeenLastCalledWith({
+      type: "success",
+      title: "Imported 1 thread",
+    });
   });
 
   it("does not dismiss an active import or expose it to a read-only session", async () => {

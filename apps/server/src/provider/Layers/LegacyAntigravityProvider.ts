@@ -54,7 +54,6 @@ type LegacyAntigravitySettings = Pick<
 
 const ANTIGRAVITY_PRESENTATION = {
   displayName: "Antigravity",
-  badgeLabel: "Early Access",
   showInteractionModeToggle: false,
   requiresNewThreadForModelChange: true,
 } as const;

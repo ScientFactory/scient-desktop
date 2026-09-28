@@ -37,6 +37,9 @@ import { useRemoteOpenState, type RemoteOpenMode } from "../../remoteOpen";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useT3ProjectFileScripts } from "~/hooks/useT3ProjectFileScripts";
 import { useThreadActionMenu } from "~/hooks/useThreadActionMenu";
+// SCIENT-FORK:START
+import { useNewSectionForThreads } from "~/scient/sections/useNewSectionForThreads";
+// SCIENT-FORK:END
 import { readLocalApi } from "~/localApi";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -253,8 +256,14 @@ export const ChatHeader = memo(function ChatHeader({
     },
     [activeThreadEnvironmentId, activeThreadId, activeThreadTitle, updateThreadMetadata],
   );
+  // SCIENT-FORK:START
+  const newSection = useNewSectionForThreads();
+  // SCIENT-FORK:END
   const { openMenu, closeMenu } = useThreadActionMenu({
     threadRef: isServerThread ? activeThreadRef : null,
+    // SCIENT-FORK:START
+    onRequestNewSection: newSection.request,
+    // SCIENT-FORK:END
     projectCwd: activeProjectCwd,
     onStartRename: startRename,
   });
@@ -523,6 +532,9 @@ export const ChatHeader = memo(function ChatHeader({
           </MenuPopup>
         </Menu>
       </div>
+      {/* SCIENT-FORK:START */}
+      {newSection.dialog}
+      {/* SCIENT-FORK:END */}
     </div>
   );
 });

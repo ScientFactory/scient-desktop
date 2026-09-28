@@ -22,6 +22,7 @@ import {
   type ToolActivityNativeAppReference,
   type ToolActivitySource,
   type ProviderUserInputAnswers,
+  type ServerProviderModel,
   RuntimeItemId,
   RuntimeRequestId,
   RuntimeTaskId,
@@ -105,6 +106,8 @@ const CODEX_TURN_END_CONFIRMATION_TIMEOUT = "5 seconds";
 export interface CodexAdapterLiveOptions {
   readonly instanceId?: ProviderInstanceId;
   readonly environment?: NodeJS.ProcessEnv;
+  /** The provider's model list; supplies model display names for runtime info. */
+  readonly models?: Effect.Effect<ReadonlyArray<ServerProviderModel>>;
   readonly makeRuntime?: (
     options: CodexSessionRuntimeOptions,
   ) => Effect.Effect<
@@ -2312,6 +2315,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
   yield* Effect.addFinalizer(() => Scope.close(adapterScope, Exit.void));
   const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
   const sessions = new Map<ThreadId, CodexAdapterSessionContext>();
+  const modelContextWindows = new Map<string, number>();
 
   const startSession: CodexAdapterShape["startSession"] = (input) =>
     Effect.scoped(
@@ -2321,6 +2325,19 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             provider: PROVIDER,
             operation: "startSession",
             issue: `Expected provider '${PROVIDER}' but received '${input.provider}'.`,
+          });
+        }
+
+        // SCIENT-FORK: a native fork needs a Codex source thread; never fall
+        // back to an empty thread while claiming a fork.
+        if (
+          input.forkFrom !== undefined &&
+          !isCodexResumeCursorSchema(input.forkFrom.resumeCursor)
+        ) {
+          return yield* new ProviderAdapterValidationError({
+            provider: PROVIDER,
+            operation: "startSession",
+            issue: "The fork source is not a Codex thread.",
           });
         }
 
@@ -2341,12 +2358,21 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           providerInstanceId: boundInstanceId,
           cwd: input.cwd ?? process.cwd(),
           binaryPath: codexConfig.binaryPath,
+          ...(options?.models ? { models: options.models } : {}),
           launchArgs: resolveCodexLaunchArgs(codexConfig.launchArgs, options?.environment),
           ...(options?.environment ? { environment: options.environment } : {}),
           ...(codexConfig.homePath ? { homePath: codexConfig.homePath } : {}),
           ...(isCodexResumeCursorSchema(input.resumeCursor)
             ? { resumeCursor: input.resumeCursor }
-            : {}),
+            : // SCIENT-FORK: a fork's first session forks the source thread natively.
+              input.forkFrom !== undefined && isCodexResumeCursorSchema(input.forkFrom.resumeCursor)
+              ? {
+                  forkFrom: {
+                    threadId: input.forkFrom.resumeCursor.threadId,
+                    lastTurnId: input.forkFrom.throughTurnId,
+                  },
+                }
+              : {}),
           runtimeMode: input.runtimeMode,
           ...(input.modelSelection?.instanceId === boundInstanceId
             ? { model: input.modelSelection.model }
@@ -2372,6 +2398,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             : {}),
         };
         const turnTokenUsage = makeCodexTurnTokenUsageState();
+        const turnModels = new Map<string, string>();
         // Codex reports a usage-limit stop as OpenAI's own sentence, which on a
         // Business workspace blames credits for a window that ran out. The
         // snapshot naming that window arrives in its own notification, before or
@@ -2407,6 +2434,11 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           Effect.gen(function* () {
             yield* writeNativeEvent(event);
             if (event.method === "turn/started" && event.turnId) {
+              const session = yield* runtime.getSession;
+              if (session.model) {
+                turnModels.set(event.turnId, session.model);
+                if (turnModels.size > 100) turnModels.delete(turnModels.keys().next().value!);
+              }
               if (turnTokenUsage.activeTurnId !== event.turnId) {
                 turnTokenUsage.byTurnId.clear();
                 turnTokenUsage.activeTurnId = event.turnId;
@@ -2418,6 +2450,14 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
                 event.payload,
               );
               if (payload) {
+                const session = yield* runtime.getSession;
+                const capacity = payload.tokenUsage.modelContextWindow;
+                const model =
+                  turnModels.get(payload.turnId) ??
+                  (session.activeTurnId === payload.turnId ? session.model : undefined);
+                if (model && capacity != null && Number.isFinite(capacity) && capacity > 0) {
+                  modelContextWindows.set(model, capacity);
+                }
                 accumulateCodexTurnTokenUsage(turnTokenUsage, payload.turnId, payload.tokenUsage);
               }
             } else if (turnTokenUsage.activeTurnId) {
@@ -2878,7 +2918,15 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       sessionModelSwitch: "in-session",
       promptlessTurnContinuation: true,
       mcpSessionInjection: true,
+      // SCIENT-FORK: startSession honours forkFrom via Codex thread/fork.
+      nativeFork: true,
     },
+    getModelContextWindow: ({ modelSelection }) =>
+      Effect.sync(() =>
+        modelSelection.instanceId === boundInstanceId
+          ? modelContextWindows.get(modelSelection.model)
+          : undefined,
+      ),
     startSession,
     sendTurn,
     compaction: { type: "native", start: compactThread },

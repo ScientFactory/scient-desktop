@@ -8,6 +8,9 @@ import {
   MessageId,
   ProjectId,
   ThreadId,
+  // SCIENT-FORK:START
+  ThreadSectionId,
+  // SCIENT-FORK:END
   type ThreadPullRequestSnapshot,
   ThreadLinkedPullRequest,
   TurnId,
@@ -21,6 +24,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { makeSqlStatementCounter } from "../../../integration/SqlStatementCounter.integration.ts";
@@ -110,6 +114,66 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-curs
               updatedAt: createdAt,
             })),
         );
+      }),
+    );
+  },
+);
+
+it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-cleanup-span-")))(
+  "OrchestrationProjectionPipeline attachment cleanup span",
+  (it) => {
+    it.effect("runs attachment cleanup only for events that remove attachments", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        let cleanupSpans = 0;
+        const tracer = Tracer.make({
+          span: (options) => {
+            if (options.name === "applyAttachmentSideEffects") cleanupSpans += 1;
+            return new Tracer.NativeSpan(options);
+          },
+        });
+        const now = "2026-01-01T00:00:00.000Z";
+        const projectId = ProjectId.make("project-cleanup-span");
+        const threadId = ThreadId.make("thread-cleanup-span");
+
+        const projectCreated = yield* eventStore.append({
+          type: "project.created",
+          eventId: EventId.make("evt-cleanup-span-project"),
+          aggregateKind: "project",
+          aggregateId: projectId,
+          occurredAt: now,
+          commandId: CommandId.make("cmd-cleanup-span-project"),
+          causationEventId: null,
+          correlationId: null,
+          metadata: {},
+          payload: {
+            projectId,
+            title: "Cleanup span project",
+            workspaceRoot: "/tmp/project-cleanup-span",
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+        yield* projectionPipeline.projectEvent(projectCreated).pipe(Effect.withTracer(tracer));
+        assert.strictEqual(cleanupSpans, 0);
+
+        const threadDeleted = yield* eventStore.append({
+          type: "thread.deleted",
+          eventId: EventId.make("evt-cleanup-span-thread-delete"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: CommandId.make("cmd-cleanup-span-thread-delete"),
+          causationEventId: null,
+          correlationId: null,
+          metadata: {},
+          payload: { threadId, deletedAt: now },
+        });
+        yield* projectionPipeline.projectEvent(threadDeleted).pipe(Effect.withTracer(tracer));
+        assert.strictEqual(cleanupSpans, 1);
       }),
     );
   },
@@ -5145,6 +5209,76 @@ it.layer(makeProjectionPipelinePrefixedTestLayer("t3-scient-fork-boot-"))(
           SELECT baseline_turn_id FROM scient_thread_lineage WHERE thread_id = 'fork-boot'
         `;
         assert.equal(lineage[0]?.baseline_turn_id, "baseline-boot");
+      }),
+    );
+  },
+);
+// SCIENT-FORK:END
+
+// SCIENT-FORK:START — user-defined thread sections.
+it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-thread-section-projection-")))(
+  "thread section projection",
+  (it) => {
+    it.effect("persists a section assignment, then clears it, without touching updatedAt", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const createdAt = "2026-01-01T00:00:00.000Z";
+        const threadId = ThreadId.make("thread-section-projection");
+        const appendMeta = (suffix: string, sectionId: ThreadSectionId | null) =>
+          eventStore.append({
+            type: "thread.meta-updated",
+            eventId: EventId.make(`evt-thread-section-${suffix}`),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: "2026-01-02T00:00:00.000Z",
+            commandId: CommandId.make(`cmd-thread-section-${suffix}`),
+            causationEventId: null,
+            correlationId: CommandId.make(`cmd-thread-section-${suffix}`),
+            metadata: {},
+            payload: { threadId, sectionId, updatedAt: createdAt },
+          });
+
+        yield* projectionPipeline.projectEvent(
+          yield* eventStore.append({
+            type: "thread.created",
+            eventId: EventId.make("evt-thread-section-created"),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: createdAt,
+            commandId: CommandId.make("cmd-thread-section-created"),
+            causationEventId: null,
+            correlationId: CommandId.make("cmd-thread-section-created"),
+            metadata: {},
+            payload: {
+              threadId,
+              projectId: ProjectId.make("project-section"),
+              title: "Section thread",
+              modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+              createdAt,
+              updatedAt: createdAt,
+            },
+          }),
+        );
+        const readRow = sql<{ readonly sectionId: string | null; readonly updatedAt: string }>`
+          SELECT section_id AS "sectionId", updated_at AS "updatedAt"
+          FROM projection_threads
+          WHERE thread_id = ${threadId}
+        `;
+        assert.deepEqual(yield* readRow, [{ sectionId: null, updatedAt: createdAt }]);
+
+        yield* projectionPipeline.projectEvent(
+          yield* appendMeta("assigned", ThreadSectionId.make("research")),
+        );
+        assert.deepEqual(yield* readRow, [{ sectionId: "research", updatedAt: createdAt }]);
+
+        yield* projectionPipeline.projectEvent(yield* appendMeta("cleared", null));
+        assert.deepEqual(yield* readRow, [{ sectionId: null, updatedAt: createdAt }]);
       }),
     );
   },

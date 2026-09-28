@@ -111,6 +111,9 @@ import {
   waitForProject,
 } from "../state/entities";
 import { useThreadSearch } from "../state/queries";
+// SCIENT-FORK:START
+import { allEnvironmentProjectSnapshotsReadyAtom } from "../state/shell";
+// SCIENT-FORK:END
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
 import { getAvailableNewFolderName, getAvailableNewProjectPath } from "../lib/projectEntry";
 import {
@@ -528,6 +531,7 @@ function overlayModeForCommand(command: string | null): SearchOverlayMode | null
 }
 
 export function CommandPalette({ children }: { children: ReactNode }) {
+  const navigate = useNavigate();
   const [state, dispatch] = useReducer(reduceCommandPaletteUiState, {
     open: false,
     mode: "command",
@@ -635,6 +639,13 @@ export function CommandPalette({ children }: { children: ReactNode }) {
         });
         return;
       }
+      if (command === "usage.open") {
+        event.preventDefault();
+        event.stopPropagation();
+        setOpen(false);
+        void navigate({ to: "/usage" });
+        return;
+      }
       const mode = overlayModeForCommand(command);
       if (mode === null) {
         return;
@@ -648,9 +659,11 @@ export function CommandPalette({ children }: { children: ReactNode }) {
   }, [
     appearanceMode,
     keybindings,
+    navigate,
     previewOpen,
     resolvedTheme,
     setAppearanceMode,
+    setOpen,
     terminalOpen,
     theme,
     themeHalves,
@@ -1879,6 +1892,26 @@ function OpenCommandPaletteDialog(props: {
     startAddProjectSourceSelection,
   ]);
 
+  // SCIENT-FORK:START — "New thread in…" also offers Add project. Adding one
+  // ends in a new thread in it, as opening a project does, so with no projects
+  // the picker is how New thread gets started.
+  const projectSnapshotsReady = useAtomValue(allEnvironmentProjectSnapshotsReadyAtom);
+  const newThreadAddProjectItem = useMemo(
+    (): CommandPaletteActionItem => ({
+      kind: "action",
+      value: "action:new-thread-in:add-project",
+      searchTerms: ["add project", "new project", "folder", "clone", "repository"],
+      title: "Add project",
+      icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
+      keepOpen: true,
+      run: async () => {
+        openAddProjectFlow();
+      },
+    }),
+    [openAddProjectFlow],
+  );
+  // SCIENT-FORK:END
+
   useLayoutEffect(() => {
     if (openIntent?.kind !== "search") return;
     browseNavigation.invalidate();
@@ -1901,9 +1934,11 @@ function OpenCommandPaletteDialog(props: {
   }, [clearOpenIntent, openAddProjectFlow, openIntent]);
 
   useLayoutEffect(() => {
-    if (openIntent?.kind !== "new-thread-in" || projectThreadItems.length === 0) {
-      return;
-    }
+    // SCIENT-FORK:START — T3 waits for projects; with none (once they have
+    // loaded), the picker opens with only Add project.
+    if (openIntent?.kind !== "new-thread-in") return;
+    if (projectThreadItems.length === 0 && (projects.length > 0 || !projectSnapshotsReady)) return;
+    // SCIENT-FORK:END
     clearOpenIntent();
     browseNavigation.invalidate();
     resetAddProjectBrowseScope();
@@ -1926,7 +1961,9 @@ function OpenCommandPaletteDialog(props: {
         {
           value: "projects",
           label: "Projects",
-          items: enumerateCommandPaletteItems(prioritized),
+          // SCIENT-FORK:START — Add project ends the list (T3: projects only).
+          items: [...enumerateCommandPaletteItems(prioritized), newThreadAddProjectItem],
+          // SCIENT-FORK:END
         },
       ],
     });
@@ -1940,6 +1977,11 @@ function OpenCommandPaletteDialog(props: {
     projectThreadItems,
     pushPaletteView,
     resetAddProjectBrowseScope,
+    // SCIENT-FORK:START
+    newThreadAddProjectItem,
+    projectSnapshotsReady,
+    projects.length,
+    // SCIENT-FORK:END
   ]);
 
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
@@ -1981,7 +2023,15 @@ function OpenCommandPaletteDialog(props: {
       title: "New thread in...",
       icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
       addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
-      groups: [{ value: "projects", label: "Projects", items: projectThreadItems }],
+      // SCIENT-FORK:START — Add project ends the list (T3: projects only).
+      groups: [
+        {
+          value: "projects",
+          label: "Projects",
+          items: [...projectThreadItems, newThreadAddProjectItem],
+        },
+      ],
+      // SCIENT-FORK:END
     });
   }
 
@@ -2234,6 +2284,7 @@ function OpenCommandPaletteDialog(props: {
     searchTerms: ["usage", "use", "tokens", "cost", "spend", "limits", "stats", "analytics"],
     title: "Open usage",
     icon: <ChartNoAxesColumnIcon className={ITEM_ICON_CLASS} />,
+    shortcutCommand: "usage.open",
     run: async () => {
       await navigate({ to: "/usage" });
     },

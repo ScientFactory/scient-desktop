@@ -42,10 +42,9 @@ export interface ProviderClientDefinition {
   readonly supportsCustomModels?: boolean;
   /**
    * Optional short label rendered as a `variant="warning"` badge next to
-   * the instance title. Used to flag drivers that still ship under an
-   * early-access or preview gate — the flag is a property of the driver
-   * kind (not a specific instance), so every instance of that driver —
-   * built-in default or custom — advertises the same marker.
+   * the instance title. The flag is a property of the driver kind (not a
+   * specific instance), so every instance of that driver — built-in default
+   * or custom — advertises the same marker.
    */
   readonly badgeLabel?: string;
 }
@@ -55,7 +54,6 @@ const PROVIDER_CLIENT_DEFINITIONS_UNORDERED: readonly ProviderClientDefinition[]
     value: ProviderDriverKind.make("pi"),
     label: "Pi",
     icon: PiIcon,
-    badgeLabel: "Early Access",
     settingsSchema: PiSettings,
     supportsCustomModels: false,
   },
@@ -75,21 +73,18 @@ const PROVIDER_CLIENT_DEFINITIONS_UNORDERED: readonly ProviderClientDefinition[]
     value: ProviderDriverKind.make("cursor"),
     label: "Cursor",
     icon: CursorIcon,
-    badgeLabel: "Early Access",
     settingsSchema: CursorSettings,
   },
   {
     value: ProviderDriverKind.make("grok"),
     label: "Grok",
     icon: GrokIcon,
-    badgeLabel: "Early Access",
     settingsSchema: GrokSettings,
   },
   {
     value: ProviderDriverKind.make("droid"),
     label: "Droid",
     icon: DroidIcon,
-    badgeLabel: "Early Access",
     settingsSchema: DroidSettings,
     supportsCustomModels: false,
   },
@@ -103,7 +98,6 @@ const PROVIDER_CLIENT_DEFINITIONS_UNORDERED: readonly ProviderClientDefinition[]
     value: ProviderDriverKind.make("antigravity"),
     label: "Antigravity",
     icon: AntigravityIcon,
-    badgeLabel: "Early Access",
     settingsSchema: AntigravitySettings,
     supportsCustomModels: false,
   },

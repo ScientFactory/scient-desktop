@@ -8,6 +8,11 @@ import {
   resolveDevProtocolClient,
   resolveElectronLaunchCommand,
 } from "./electron-launcher.mjs";
+// SCIENT-DEV-APP: runner-only settings must not reach the app or its shells.
+import {
+  SCIENT_DEV_APP_BACKGROUND_SERVICE_ENV,
+  SCIENT_DEV_APP_FAILURE_FILE_ENV,
+} from "./dev-app-bundle.mjs";
 import {
   createCoalescedRestartScheduler,
   createDevelopmentLaunchGeneration,
@@ -96,6 +101,14 @@ delete childEnv[SCIENT_DEV_APP_ENV_FILE_ENV];
 delete childEnv[SCIENT_DEV_APP_PID_FILE_ENV];
 delete childEnv[SCIENT_DEV_APP_LAUNCH_GENERATION_ENV];
 delete childEnv[SCIENT_DEV_BACKEND_PID_FILE_ENV];
+// A build started from a terminal inside the app must neither refuse to sign
+// nor report its failure as this runner's. `open` hands its own environment to
+// the app, so the managed launch gets the same filtered copy.
+delete childEnv[SCIENT_DEV_APP_BACKGROUND_SERVICE_ENV];
+delete childEnv[SCIENT_DEV_APP_FAILURE_FILE_ENV];
+const macOpenEnv = { ...process.env };
+delete macOpenEnv[SCIENT_DEV_APP_BACKGROUND_SERVICE_ENV];
+delete macOpenEnv[SCIENT_DEV_APP_FAILURE_FILE_ENV];
 childEnv.SCIENT_NEXT_SAFETY_ENVELOPE = "true";
 childEnv.SCIENT_NEXT_DEV_RUNNER_ACTIVE = "1";
 const devProtocolClient = resolveDevProtocolClient();
@@ -282,7 +295,7 @@ function startApp() {
     electronCommand.args,
     {
       cwd: desktopDir,
-      env: managedMacLaunch ? process.env : childEnv,
+      env: managedMacLaunch ? macOpenEnv : childEnv,
       stdio: "inherit",
     },
   );
@@ -468,6 +481,9 @@ async function shutdown(exitCode) {
     watcher.close();
   }
 
+  // A restart may still be stopping the previous app. stopApp() alone would
+  // see no current app and exit before that stop (and its SIGKILL fallback)
+  // finished, leaving the app or backend running.
   await restartScheduler.close();
   await stopApp();
 

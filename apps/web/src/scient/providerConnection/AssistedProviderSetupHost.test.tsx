@@ -23,13 +23,22 @@ const enableState = vi.hoisted(() => ({
 function inlineSetup(name: string) {
   return (props: {
     readonly accountAction?: ReactNode;
+    readonly composerController?: unknown;
     readonly managedRuntimePresentedExternally?: boolean;
+    readonly modelsActions?: { readonly primary: ReactNode; readonly secondary: ReactNode };
     readonly onRepairSucceeded?: () => void;
   }) => (
     <div>
       {name} setup
       {props.managedRuntimePresentedExternally ? " · shared runtime" : null}
       {props.onRepairSucceeded ? " · repair callback" : null}
+      {props.composerController ? " · composer controller" : null}
+      {props.modelsActions ? (
+        <>
+          <span data-models-action="primary">{props.modelsActions.primary}</span>
+          <span data-models-action="secondary">{props.modelsActions.secondary}</span>
+        </>
+      ) : null}
       {props.accountAction}
     </div>
   );
@@ -141,6 +150,68 @@ describe("AssistedProviderSetupHost", () => {
     expect(markup).toContain("repair callback");
     expect(markup).toContain("Sign out");
     expect(controllerFactory).toHaveBeenCalledOnce();
+  });
+
+  it("gives Pi its composer presentation only on the composer surface", () => {
+    const driver = "pi";
+    const name = "Pi";
+    const composer = renderToStaticMarkup(
+      <AssistedProviderSetupHost
+        displayName={name}
+        environmentId={EnvironmentId.make("local")}
+        provider={provider(driver, name)}
+        surface="composer"
+      />,
+    );
+    const management = renderToStaticMarkup(
+      <AssistedProviderSetupHost
+        accountActionDisabled={false}
+        displayName={name}
+        environmentId={EnvironmentId.make("local")}
+        managedRuntimePresentedExternally={false}
+        onAccountActionPendingChange={vi.fn()}
+        onRepairSucceeded={vi.fn()}
+        provider={provider(driver, name)}
+        surface="management"
+      />,
+    );
+
+    expect(composer).toContain(`${name} setup · composer controller`);
+    expect(management).toContain(`${name} setup`);
+    expect(management).not.toContain("composer controller");
+  });
+
+  it("puts Droid's Connect models inside the composer frame and beside it in management", () => {
+    const composer = renderToStaticMarkup(
+      <AssistedProviderSetupHost
+        displayName="Droid"
+        environmentId={EnvironmentId.make("local")}
+        provider={provider("droid", "Droid")}
+        surface="composer"
+      />,
+    );
+    const management = renderToStaticMarkup(
+      <AssistedProviderSetupHost
+        accountActionDisabled={false}
+        displayName="Droid"
+        environmentId={EnvironmentId.make("local")}
+        managedRuntimePresentedExternally={false}
+        onAccountActionPendingChange={vi.fn()}
+        onRepairSucceeded={vi.fn()}
+        provider={provider("droid", "Droid")}
+        surface="management"
+      />,
+    );
+
+    expect(composer).toMatch(
+      /data-models-action="primary"><button[^>]*data-variant="ghost-primary"/,
+    );
+    expect(composer).toMatch(
+      /data-models-action="secondary"><button[^>]*data-variant="ghost-muted"/,
+    );
+    expect(composer.match(/Connect models/g)).toHaveLength(2);
+    expect(management).not.toContain("data-models-action");
+    expect(management).toMatch(/<\/div><button[^>]*data-variant="outline"[^>]*>Connect models/);
   });
 
   it("shows the shared sign-out action only when the provider advertises it", () => {

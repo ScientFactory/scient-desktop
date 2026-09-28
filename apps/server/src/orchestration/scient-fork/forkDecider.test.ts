@@ -1,5 +1,7 @@
 import {
   CheckpointRef,
+  EventId,
+  type OrchestrationThreadActivity,
   CommandId,
   MessageId,
   ProjectId,
@@ -23,7 +25,7 @@ import {
   resolveForkBoundariesFromList,
   resolveUserForkBoundariesFromList,
 } from "./forkBoundaryTypes.ts";
-import { forkThread as forkThreadAuthoritative } from "./forkDecider.ts";
+import { decideForkComplete, forkThread as forkThreadAuthoritative } from "./forkDecider.ts";
 import { questionAnswerActivity } from "./questionAnswer.test-fixtures.ts";
 import { retainQuestionAnswers, questionAnswerAttachments } from "./retainedQuestionAnswers.ts";
 
@@ -312,7 +314,6 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
         "thread.message-sent",
         "thread.message-sent",
         "thread.forked",
-        "thread.turn-diff-completed",
       ]);
 
       // Every emitted event targets the NEW thread — never the origin.
@@ -373,12 +374,36 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
       const baselineTurnId =
         forkedPayload?.type === "thread.forked" ? forkedPayload.payload.baselineTurnId : null;
       expect(emittedTurnIds.at(-1)).toBe(baselineTurnId);
-      const baseline = events.find((event) => event.type === "thread.turn-diff-completed");
+      // The turn-zero checkpoint waits for provisioning (decideForkComplete).
+      expect(events.some((event) => event.type === "thread.turn-diff-completed")).toBe(false);
+      const completeCommand = {
+        type: "thread.fork.complete" as const,
+        commandId: CommandId.make("cmd-fork-complete"),
+        threadId: NEW,
+        workspaceStatus: "worktree" as const,
+        createdAt: NOW,
+      };
+      const ready = yield* decideForkComplete({
+        command: {
+          ...completeCommand,
+          checkpointStatus: "ready",
+          checkpointBaseline: { turnId: baselineTurnId!, assistantMessageId: null },
+        },
+      });
+      expect(ready.map((event) => event.type)).toEqual([
+        "thread.fork-completed",
+        "thread.turn-diff-completed",
+      ]);
+      const baseline = ready[1];
       expect(
         baseline?.type === "thread.turn-diff-completed"
-          ? baseline.payload.checkpointTurnCount
+          ? [baseline.payload.checkpointTurnCount, baseline.payload.turnId]
           : null,
-      ).toBe(0);
+      ).toEqual([0, baselineTurnId]);
+      const unavailable = yield* decideForkComplete({
+        command: { ...completeCommand, checkpointStatus: "unavailable" },
+      });
+      expect(unavailable.map((event) => event.type)).toEqual(["thread.fork-completed"]);
       // Event ids are unique.
       const eventIds = events.map((event) => event.eventId);
       expect(new Set(eventIds).size).toBe(eventIds.length);
@@ -1491,6 +1516,377 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
       expect(
         forked?.type === "thread.forked" ? forked.payload.sourceCheckpointTurnCount : undefined,
       ).toBeNull();
+    }),
+  );
+
+  it.effect("copies reasoning in its own turn, the work log, and composer context", () =>
+    Effect.gen(function* () {
+      const base = makeOriginThread();
+      const bigOutput = "o".repeat(40_000);
+      const activity = (
+        id: string,
+        kind: string,
+        turnId: string,
+        payload: unknown,
+      ): OrchestrationThreadActivity => ({
+        id: EventId.make(id),
+        tone: "tool",
+        kind,
+        summary: id,
+        payload,
+        turnId: TurnId.make(turnId),
+        createdAt: NOW,
+      });
+      const origin = makeOriginThread({
+        messages: [
+          ...base.messages
+            .slice(0, 3)
+            .map((entry) =>
+              entry.id === MessageId.make("user-2")
+                ? { ...entry, context: { version: 1 as const, records: [] } }
+                : entry,
+            ),
+          message({
+            id: "reasoning-2",
+            role: "reasoning",
+            text: "thinking about the second prompt",
+            turnId: "turn-2",
+            createdAt: "2026-01-01T00:00:03.500Z",
+          }),
+          base.messages[3]!,
+        ],
+        activities: [
+          activity("tool-done", "tool.completed", "turn-2", {
+            toolCallId: "call-1",
+            data: { output: bigOutput },
+          }),
+          activity("approval", "approval.requested", "turn-2", { requestId: "req-1" }),
+          activity("usage", "context-window.updated", "turn-2", { usedTokens: 10 }),
+        ],
+      });
+      const events = yield* forkThreadForTest({
+        command: forkCommand({ sourceAssistantMessageId: A2 }),
+        readModel: makeReadModel({ origin }),
+      });
+
+      const sent = events.flatMap((event) =>
+        event.type === "thread.message-sent" ? [event.payload] : [],
+      );
+      const reasoning = sent.find((entry) => entry.role === "reasoning");
+      const answer = sent.find((entry) => entry.text === "second answer");
+      expect(reasoning?.turnId).not.toBeNull();
+      expect(reasoning?.turnId).toBe(answer?.turnId);
+      expect(sent.find((entry) => entry.text === "second prompt")?.context).toEqual({
+        version: 1,
+        records: [],
+      });
+
+      const copied = events.flatMap((event) =>
+        event.type === "thread.activity-appended" ? [event.payload.activity] : [],
+      );
+      expect(copied.map((entry) => entry.kind)).toEqual(["tool.completed"]);
+      expect(copied[0]?.turnId).toBe(answer?.turnId);
+      const copiedPayload = copied[0]?.payload as { data: { output: string } } | undefined;
+      const output = copiedPayload?.data.output ?? "";
+      expect(output.length).toBeLessThan(bigOutput.length);
+      expect(output).toContain("truncated in fork");
+
+      const forked = events.find((event) => event.type === "thread.forked");
+      const inherited = forked?.type === "thread.forked" ? forked.payload.inheritedTurnIds : [];
+      const copiedTurns = new Set(sent.flatMap((entry) => (entry.turnId ? [entry.turnId] : [])));
+      expect(new Set(inherited)).toEqual(copiedTurns);
+    }),
+  );
+
+  it.effect("forks a running turn with its latest traces", () =>
+    Effect.gen(function* () {
+      const base = makeOriginThread();
+      const activity = (
+        id: string,
+        kind: string,
+        payload: unknown,
+        summary = id,
+      ): OrchestrationThreadActivity => ({
+        id: EventId.make(id),
+        tone: "tool",
+        kind,
+        summary,
+        payload,
+        turnId: T2,
+        createdAt: NOW,
+      });
+      const origin = makeOriginThread({
+        messages: [
+          ...base.messages.slice(0, 2),
+          message({
+            id: "user-2",
+            role: "user",
+            text: "second prompt",
+            turnId: null,
+            createdAt: "2026-01-01T00:00:03.000Z",
+          }),
+          message({
+            id: "reasoning-2",
+            role: "reasoning",
+            text: "still thinking about",
+            turnId: "turn-2",
+            createdAt: "2026-01-01T00:00:03.500Z",
+            streaming: true,
+          }),
+          message({
+            id: "assistant-2",
+            role: "assistant",
+            text: "Partial ans",
+            turnId: "turn-2",
+            createdAt: "2026-01-01T00:00:04.000Z",
+            streaming: true,
+          }),
+        ],
+        activities: [
+          activity("edit-done", "tool.completed", {
+            toolCallId: "call-edit",
+            data: { changes: [{ path: "src/fit.py" }] },
+          }),
+          activity("run-started", "tool.started", { toolCallId: "call-run" }),
+          activity("run-progress", "tool.updated", { toolCallId: "call-run", detail: "npm test" }),
+          activity(
+            "approval",
+            "approval.requested",
+            { requestId: "req-1" },
+            "Approve running the migration",
+          ),
+        ],
+        latestTurn: {
+          turnId: T2,
+          state: "running",
+          requestedAt: NOW,
+          startedAt: NOW,
+          completedAt: null,
+          assistantMessageId: null,
+        },
+        session: { ...IDLE_SESSION, status: "running", activeTurnId: T2 },
+      });
+      const completed = boundaries.slice(0, 2);
+      const events = yield* forkThreadAuthoritative({
+        command: forkCommand({
+          sourceAssistantMessageId: undefined,
+          sourceRunningTurnId: T2,
+        }),
+        readModel: makeReadModel({ origin }),
+        resolvedBoundaries: {
+          originThreadId: ORIGIN,
+          forkPoint: { kind: "running-turn", turnId: T2 },
+          boundaries: completed,
+          selectedBoundary: completed[1]!,
+        },
+      });
+
+      const sent = events.flatMap((event) =>
+        event.type === "thread.message-sent" ? [event.payload] : [],
+      );
+      expect(sent.map((entry) => entry.text)).toEqual([
+        "first prompt",
+        "first answer",
+        "second prompt",
+        "still thinking about",
+        "Partial ans",
+      ]);
+      expect(sent.every((entry) => entry.streaming === false)).toBe(true);
+      const liveTurnId = sent.at(-1)?.turnId;
+      expect(sent.slice(2).every((entry) => entry.turnId === liveTurnId)).toBe(true);
+
+      const forked = events.find((event) => event.type === "thread.forked");
+      if (forked?.type !== "thread.forked") return expect.unreachable();
+      const cut = forked.payload.midTurnCut;
+      expect(forked.payload.forkPointKind).toBe("running-turn");
+      expect(forked.payload.baselineTurnId).toBe(liveTurnId);
+      expect(forked.payload.sourceCheckpointTurnCount).toBeNull();
+      expect(cut?.sourceTurnId).toBe(T2);
+      expect(cut?.importedTurnId).toBe(liveTurnId);
+      expect(cut?.partialMessageIds).toEqual(sent.slice(3).map((entry) => entry.messageId));
+      expect(cut?.inFlightActivityIds).toHaveLength(1);
+      expect(cut?.pendingRequests).toEqual(["Approve running the migration"]);
+      expect(cut?.touchedFiles).toEqual(["src/fit.py"]);
+      expect(cut?.sharedWorkspace).toBe(true);
+      // The running turn's partial answer is a completed turn of the fork.
+      expect(forked.payload.copiedBoundaries).toHaveLength(2);
+
+      const copied = events.flatMap((event) =>
+        event.type === "thread.activity-appended" ? [event.payload.activity] : [],
+      );
+      // Tool rows only: the approval request is never executable in the fork.
+      expect(copied.map((entry) => entry.kind).toSorted()).toEqual([
+        "tool.completed",
+        "tool.updated",
+      ]);
+      expect(copied.map((entry) => entry.id)).toContain(cut?.inFlightActivityIds[0]);
+    }),
+  );
+
+  it.effect("refuses to fork a turn that is no longer running", () =>
+    Effect.gen(function* () {
+      const completed = boundaries.slice(0, 2);
+      const result = yield* Effect.result(
+        forkThreadAuthoritative({
+          command: forkCommand({ sourceAssistantMessageId: undefined, sourceRunningTurnId: T2 }),
+          readModel: makeReadModel(),
+          resolvedBoundaries: {
+            originThreadId: ORIGIN,
+            forkPoint: { kind: "running-turn", turnId: T2 },
+            boundaries: completed,
+            selectedBoundary: completed[1]!,
+          },
+        }),
+      );
+      expect(result._tag).toBe("Failure");
+      expect(String(result._tag === "Failure" ? result.failure.message : "")).toContain(
+        "no longer running",
+      );
+    }),
+  );
+
+  it.effect("binds an interrupted request to its own turn in a running-turn fork", () =>
+    Effect.gen(function* () {
+      const base = makeOriginThread();
+      const T_INT = TurnId.make("turn-interrupted");
+      const T_RUN = TurnId.make("turn-running");
+      const origin = makeOriginThread({
+        messages: [
+          ...base.messages.slice(0, 2),
+          message({
+            id: "user-interrupted",
+            role: "user",
+            text: "first try",
+            turnId: null,
+            createdAt: "2026-01-01T00:00:03.000Z",
+          }),
+          message({
+            id: "assistant-interrupted",
+            role: "assistant",
+            text: "partial before stop",
+            turnId: "turn-interrupted",
+            createdAt: "2026-01-01T00:00:03.500Z",
+          }),
+          message({
+            id: "user-running",
+            role: "user",
+            text: "second try",
+            turnId: null,
+            createdAt: "2026-01-01T00:00:04.000Z",
+          }),
+          message({
+            id: "reasoning-running",
+            role: "reasoning",
+            text: "thinking",
+            turnId: "turn-running",
+            createdAt: "2026-01-01T00:00:04.500Z",
+            streaming: true,
+          }),
+        ],
+        activities: [
+          {
+            id: EventId.make("legacy-sequenced"),
+            tone: "tool",
+            kind: "tool.completed",
+            summary: "old tool",
+            payload: { toolCallId: "call-old" },
+            turnId: TurnId.make("turn-1"),
+            sequence: 99,
+            createdAt: NOW,
+          },
+        ],
+        latestTurn: {
+          turnId: T_RUN,
+          state: "running",
+          requestedAt: NOW,
+          startedAt: NOW,
+          completedAt: null,
+          assistantMessageId: null,
+        },
+        session: { ...IDLE_SESSION, status: "running", activeTurnId: T_RUN },
+      });
+      const completed = boundaries.slice(0, 2);
+      const events = yield* forkThreadAuthoritative({
+        command: forkCommand({ sourceAssistantMessageId: undefined, sourceRunningTurnId: T_RUN }),
+        readModel: makeReadModel({ origin }),
+        resolvedBoundaries: {
+          originThreadId: ORIGIN,
+          forkPoint: { kind: "running-turn", turnId: T_RUN },
+          boundaries: completed,
+          selectedBoundary: completed[1]!,
+          turnRequests: [
+            { turnId: TurnId.make("turn-1"), userMessageId: MessageId.make("user-1") },
+            { turnId: T_INT, userMessageId: MessageId.make("user-interrupted") },
+          ],
+        },
+      });
+      const sent = events.flatMap((event) =>
+        event.type === "thread.message-sent" ? [event.payload] : [],
+      );
+      const turnOf = (text: string) => sent.find((entry) => entry.text === text)?.turnId;
+      // The interrupted request stays with the answer it produced.
+      expect(turnOf("first try")).toBe(turnOf("partial before stop"));
+      expect(turnOf("second try")).toBe(turnOf("thinking"));
+      expect(turnOf("first try")).not.toBe(turnOf("second try"));
+
+      const forked = events.find((event) => event.type === "thread.forked");
+      if (forked?.type !== "thread.forked") return expect.unreachable();
+      // No answer text in the running turn yet: the baseline stays the last
+      // completed turn, and the interrupted turn's boundary follows it in order.
+      expect(forked.payload.baselineTurnId).toBe(turnOf("first answer"));
+      expect(forked.payload.copiedBoundaries.map((boundary) => boundary.turnId)).toEqual([
+        turnOf("first answer"),
+        turnOf("partial before stop"),
+      ]);
+      // Copied activities are ordered in the fork, never by origin sequence.
+      const copied = events.flatMap((event) =>
+        event.type === "thread.activity-appended" ? [event.payload.activity] : [],
+      );
+      expect(copied).toHaveLength(1);
+      expect(copied[0]).not.toHaveProperty("sequence");
+    }),
+  );
+
+  it.effect("points copied composer context at the fork's own attachment copies", () =>
+    Effect.gen(function* () {
+      const base = makeOriginThread();
+      const image = {
+        type: "image" as const,
+        id: "origin-image-1",
+        name: "plot.png",
+        mimeType: "image/png",
+        sizeBytes: 10,
+      };
+      const origin = makeOriginThread({
+        messages: base.messages.map((entry) =>
+          entry.id === MessageId.make("user-2")
+            ? {
+                ...entry,
+                attachments: [image],
+                context: {
+                  version: 1 as const,
+                  records: [{ kind: "image", contextId: "ctx-1", attachmentId: "origin-image-1" }],
+                } as unknown as OrchestrationMessage["context"],
+              }
+            : entry,
+        ),
+      });
+      const events = yield* forkThreadForTest({
+        command: forkCommand({ sourceAssistantMessageId: A2 }),
+        readModel: makeReadModel({ origin }),
+      });
+      const prompt = events.flatMap((event) =>
+        event.type === "thread.message-sent" && event.payload.text === "second prompt"
+          ? [event.payload]
+          : [],
+      )[0];
+      const copiedImageId = prompt?.attachments?.[0]?.id;
+      expect(copiedImageId).toBeDefined();
+      expect(copiedImageId).not.toBe("origin-image-1");
+      expect(
+        (prompt?.context?.records[0] as { readonly attachmentId?: string } | undefined)
+          ?.attachmentId,
+      ).toBe(copiedImageId);
     }),
   );
 });

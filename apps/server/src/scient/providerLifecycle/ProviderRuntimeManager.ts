@@ -1,4 +1,5 @@
 import {
+  PROVIDER_DISPLAY_NAMES,
   ProviderConnectionError,
   ProviderDriverKind,
   type ProviderInstanceId,
@@ -19,6 +20,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Semaphore from "effect/Semaphore";
@@ -28,6 +30,8 @@ import type {
   ProviderManagedRuntimeProgress,
 } from "../../provider/ProviderDriver.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
+import { ProviderActivity } from "./ProviderActivity.ts";
+import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
 import { ProviderLifecycleCoordinator } from "./ProviderLifecycleCoordinator.ts";
 
 export interface ProviderRuntimeManagerShape {
@@ -46,6 +50,11 @@ export interface ProviderRuntimeManagerShape {
     { readonly providers: ReadonlyArray<ServerProvider> },
     ProviderConnectionError
   >;
+  /**
+   * Reloads an instance whose runtime selection would change, once its
+   * provider is idle. True when it reloaded.
+   */
+  readonly reselect: (instanceId: ProviderInstanceId) => Effect.Effect<boolean>;
 }
 
 export class ProviderRuntimeManager extends Context.Service<
@@ -120,6 +129,7 @@ function operation(input: {
   readonly message: string;
   readonly downloadedBytes?: number;
   readonly totalBytes?: number;
+  readonly waitingForIdle?: boolean;
 }): ProviderRuntimeOperation {
   return {
     operationId: input.operationId,
@@ -134,12 +144,17 @@ function operation(input: {
     ...(input.totalBytes === undefined
       ? {}
       : { totalBytes: Math.max(1, Math.floor(input.totalBytes)) }),
+    ...(input.waitingForIdle ? { waitingForIdle: true } : {}),
   };
 }
+
+const IDLE_POLL_INTERVAL = "1 second";
+const RESELECT_INTERVAL = "10 minutes";
 
 export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
   const providerRegistry = yield* ProviderRegistry;
   const lifecycleCoordinator = yield* ProviderLifecycleCoordinator;
+  const activity = yield* ProviderActivity;
   const crypto = yield* Crypto.Crypto;
   const activeRef = yield* Ref.make<ReadonlyMap<ProviderInstanceId, ActiveRuntimeOperation>>(
     new Map(),
@@ -261,6 +276,30 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
       );
     },
   );
+
+  // Switching or reloading a runtime stops the provider's sessions, so it waits
+  // until nothing would be interrupted. Idle sessions resume from their resume
+  // cursor on the next message. After waiting, idle must hold for a second
+  // poll: a queued follow-up starts its turn moments after the previous one.
+  const waitForIdleTurns = (provider: ProviderDriverKind, onFirstWait: Effect.Effect<void>) =>
+    Effect.gen(function* () {
+      let waited = false;
+      let confirmedIdle = false;
+      while (true) {
+        if (yield* activity.isBusy(provider)) {
+          confirmedIdle = false;
+          if (!waited) {
+            yield* onFirstWait;
+            waited = true;
+          }
+        } else if (!waited || confirmedIdle) {
+          return;
+        } else {
+          confirmedIdle = true;
+        }
+        yield* Effect.sleep(IDLE_POLL_INTERVAL);
+      }
+    });
 
   const plan: ProviderRuntimeManagerShape["plan"] = Effect.fn("ProviderRuntimeManager.plan")(
     function* (input) {
@@ -434,10 +473,32 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
                   ? {}
                   : { downloadedBytes: progress.downloadedBytes }),
                 ...(progress.totalBytes === undefined ? {} : { totalBytes: progress.totalBytes }),
+                ...(progress.waitingForIdle ? { waitingForIdle: true } : {}),
               }),
             },
           });
         });
+
+      const displayName = PROVIDER_DISPLAY_NAMES[target.provider] ?? target.provider;
+      // Before commit the staged change is still cancellable, so the wait is
+      // reported as `waitingForIdle`.
+      const awaitActivationWindow = waitForIdleTurns(
+        target.provider,
+        publishProgress({
+          status: input.action === "remove" ? "removing" : "activating",
+          message: `Waiting for ${displayName} to finish its running work before changing its runtime.`,
+          waitingForIdle: true,
+        }),
+      ).pipe(
+        Effect.andThen(providerRegistry.stopProviderSessions(target.provider)),
+        Effect.mapError(
+          (cause) =>
+            new ProviderConnectionActionError({
+              message: `Scient could not stop idle ${displayName} sessions before changing its runtime.`,
+              cause,
+            }),
+        ),
+      );
 
       const initialProviders = yield* providerRegistry
         .setProviderManagedRuntimeSummary({
@@ -476,14 +537,11 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
 
       const runRuntimeAction = Effect.uninterruptibleMask((restore) =>
         restore(
-          providerRegistry.stopProviderSessions(target.provider).pipe(
-            Effect.mapError((cause) => ({
-              message: `Scient could not stop active ${target.provider} sessions before changing its runtime.`,
-              cause,
-            })),
-            Effect.andThen(
-              target.actions.run(input.action, input.catalogRevision, publishProgress),
-            ),
+          target.actions.run(
+            input.action,
+            input.catalogRevision,
+            publishProgress,
+            awaitActivationWindow,
           ),
         ).pipe(Effect.tap(() => Ref.set(committedRef, true))),
       );
@@ -499,7 +557,18 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
               // The provider action returning successfully is the durable commit
               // boundary. Reconciliation remains interruptible during layer
               // shutdown, but a user cancellation can no longer claim that the
-              // previous runtime was preserved after this point.
+              // previous runtime was preserved after this point. Reloading
+              // restarts the provider, so a turn started during activation
+              // finishes first.
+              // Committed: no longer cancellable, so this wait is reported as
+              // finishing rather than as a cancellable `waitingForIdle`.
+              yield* waitForIdleTurns(
+                target.provider,
+                publishProgress({
+                  status: "activating",
+                  message: `Finishing: ${displayName} restarts once its running work completes.`,
+                }),
+              );
               const reconciliation = yield* refreshRuntimeInstances(target.provider).pipe(
                 Effect.result,
               );
@@ -624,7 +693,95 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
     },
   );
 
-  return ProviderRuntimeManager.of({ plan, start, cancel });
+  // Instances of one driver share its runtime, so one reselection per driver
+  // covers them all; concurrent requests for the same driver are dropped.
+  const reselectingRef = yield* Ref.make<ReadonlySet<ProviderDriverKind>>(new Set());
+  const reselectOnce = (
+    provider: ProviderDriverKind,
+    reselection: Effect.Effect<boolean>,
+  ): Effect.Effect<boolean> =>
+    Effect.acquireUseRelease(
+      Ref.modify(reselectingRef, (current) =>
+        current.has(provider) ? [false, current] : [true, new Set([...current, provider])],
+      ),
+      (acquired) => (acquired ? reselection : Effect.succeed(false)),
+      (acquired) =>
+        acquired
+          ? Ref.update(reselectingRef, (current) => {
+              const next = new Set(current);
+              next.delete(provider);
+              return next;
+            })
+          : Effect.void,
+    );
+
+  const reselect: ProviderRuntimeManagerShape["reselect"] = Effect.fn(
+    "ProviderRuntimeManager.reselect",
+  )(function* (instanceId) {
+    const target = yield* readTarget(instanceId).pipe(Effect.option);
+    if (Option.isNone(target)) return false;
+    const { actions, provider } = target.value;
+    if (!actions.selectionChanged) return false;
+    return yield* reselectOnce(provider, reselectWhenIdle(instanceId, provider, actions));
+  });
+
+  const reselectWhenIdle = Effect.fn("ProviderRuntimeManager.reselectWhenIdle")(function* (
+    instanceId: ProviderInstanceId,
+    provider: ProviderDriverKind,
+    checkedActions: ProviderManagedRuntimeActions,
+  ) {
+    if (!checkedActions.selectionChanged || !(yield* checkedActions.selectionChanged)) {
+      return false;
+    }
+    // Wait without holding the lifecycle reservation, so user actions stay
+    // available while turns run; re-check once reserved.
+    yield* waitForIdleTurns(provider, Effect.void);
+    const operationId = `reselect-${yield* crypto.randomUUIDv4.pipe(Effect.orDie)}`;
+    const reserved = yield* lifecycleCoordinator.reserve({
+      instanceId,
+      provider,
+      reservation: { operationId, kind: "runtime" },
+    });
+    if (!reserved) return false;
+    return yield* Effect.gen(function* () {
+      const changing = [...(yield* Ref.get(activeRef)).values()].some(
+        (candidate) => candidate.provider === provider,
+      );
+      // A rebuilt instance already re-ran selection; its old answer is stale.
+      const current = yield* readTarget(instanceId).pipe(Effect.option);
+      const rebuilt = Option.isNone(current) || current.value.actions !== checkedActions;
+      if (changing || rebuilt || (yield* activity.isBusy(provider))) return false;
+      yield* refreshRuntimeInstances(provider);
+      return true;
+    }).pipe(
+      Effect.ensuring(lifecycleCoordinator.release({ operationId }).pipe(Effect.asVoid)),
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.interrupt
+          : Effect.logError("provider runtime reselection failed", {
+              provider,
+              cause: Cause.pretty(cause),
+            }).pipe(Effect.as(false)),
+      ),
+    );
+  });
+
+  // A fallback runtime can recover on its own (a slow first launch, a busy
+  // disk), so instances standing in for a private runtime are re-checked.
+  yield* Effect.gen(function* () {
+    const providers = yield* providerRegistry.getProviders;
+    yield* Effect.forEach(
+      providers.filter(
+        (provider) =>
+          provider.connection?.runtime?.source === "system" &&
+          provider.connection.runtime.managedVersion !== null,
+      ),
+      (provider) => reselect(provider.instanceId),
+      { discard: true },
+    );
+  }).pipe(Effect.delay(RESELECT_INTERVAL), Effect.forever, Effect.forkScoped);
+
+  return ProviderRuntimeManager.of({ plan, start, cancel, reselect });
 });
 
 export const layer = Layer.effect(ProviderRuntimeManager, make());

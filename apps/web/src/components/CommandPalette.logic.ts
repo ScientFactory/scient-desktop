@@ -188,7 +188,12 @@ export function shouldOpenNewThreadTargetPicker(input: {
   readonly legacySidebarEnabled: boolean;
   readonly projectGroupCount: number;
 }): boolean {
-  return !input.legacySidebarEnabled && input.projectGroupCount > 1;
+  // SCIENT-FORK:START — always, so Add project is always one step away: the
+  // picker lists every project (the current one first) and ends with Add
+  // project (T3: only with more than one project). Starting directly in the
+  // current project stays on chat.newLocal and Shift+click.
+  return !input.legacySidebarEnabled;
+  // SCIENT-FORK:END
 }
 
 export type CommandPaletteMode = "root" | "root-browse" | "submenu" | "submenu-browse";

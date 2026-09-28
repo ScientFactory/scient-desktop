@@ -213,19 +213,29 @@ function derivePendingUserInputCountFromActivities(
   return openRequestIds.size;
 }
 
+// SCIENT-FORK: tolerant read of the lineage inherited-turn list.
+const decodeInheritedTurnIdsOption = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Array(Schema.String)),
+);
+function decodeInheritedTurnIds(json: string | null): ReadonlyArray<string> {
+  if (json === null) return [];
+  return Option.getOrElse(decodeInheritedTurnIdsOption(json), () => []);
+}
+
 function retainProjectionMessagesAfterRevert(
   messages: ReadonlyArray<ProjectionThreadMessage>,
   turns: ReadonlyArray<ProjectionTurn>,
   turnCount: number,
-  baselineTurnId: string | null,
+  // SCIENT-FORK: a fork's inherited transcript turns survive every revert.
+  inheritedTurnIds: ReadonlySet<string>,
 ): ReadonlyArray<ProjectionThreadMessage> {
   const retainedMessageIds = new Set<string>();
-  const retainedTurnIds = new Set<string>();
+  const retainedTurnIds = new Set<string>(inheritedTurnIds);
   const keptTurns = turns.filter(
     (turn) =>
       turn.turnId !== null &&
       ((turn.checkpointTurnCount !== null && turn.checkpointTurnCount <= turnCount) ||
-        turn.turnId === baselineTurnId),
+        inheritedTurnIds.has(turn.turnId)),
   );
   for (const turn of keptTurns) {
     if (turn.turnId !== null) {
@@ -308,9 +318,12 @@ function retainProjectionActivitiesAfterRevert(
   activities: ReadonlyArray<ProjectionThreadActivity>,
   turns: ReadonlyArray<ProjectionTurn>,
   turnCount: number,
+  // SCIENT-FORK: a fork's inherited transcript turns survive every revert.
+  inheritedTurnIds: ReadonlySet<string>,
 ): ReadonlyArray<ProjectionThreadActivity> {
-  const retainedTurnIds = new Set<string>(
-    turns
+  const retainedTurnIds = new Set<string>([
+    ...inheritedTurnIds,
+    ...turns
       .filter(
         (turn) =>
           turn.turnId !== null &&
@@ -318,7 +331,7 @@ function retainProjectionActivitiesAfterRevert(
           turn.checkpointTurnCount <= turnCount,
       )
       .flatMap((turn) => (turn.turnId === null ? [] : [turn.turnId])),
-  );
+  ]);
   return activities.filter(
     (activity) => activity.turnId === null || retainedTurnIds.has(activity.turnId),
   );
@@ -328,9 +341,12 @@ function retainProjectionProposedPlansAfterRevert(
   proposedPlans: ReadonlyArray<ProjectionThreadProposedPlan>,
   turns: ReadonlyArray<ProjectionTurn>,
   turnCount: number,
+  // SCIENT-FORK: a fork's inherited transcript turns survive every revert.
+  inheritedTurnIds: ReadonlySet<string>,
 ): ReadonlyArray<ProjectionThreadProposedPlan> {
-  const retainedTurnIds = new Set<string>(
-    turns
+  const retainedTurnIds = new Set<string>([
+    ...inheritedTurnIds,
+    ...turns
       .filter(
         (turn) =>
           turn.turnId !== null &&
@@ -338,7 +354,7 @@ function retainProjectionProposedPlansAfterRevert(
           turn.checkpointTurnCount <= turnCount,
       )
       .flatMap((turn) => (turn.turnId === null ? [] : [turn.turnId])),
-  );
+  ]);
   return proposedPlans.filter(
     (proposedPlan) => proposedPlan.turnId === null || retainedTurnIds.has(proposedPlan.turnId),
   );
@@ -502,18 +518,31 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     const projectionTurnRepository = yield* ProjectionTurnRepository;
     const projectionPendingApprovalRepository = yield* ProjectionPendingApprovalRepository;
 
-    // SCIENT-FORK:START — the imported transcript is an immutable turn-zero
-    // baseline even when the origin had no Git checkpoint.
-    const getForkBaselineTurnId = Effect.fn("getForkBaselineTurnId")(function* (threadId: string) {
-      const rows = yield* sql<{ readonly baselineTurnId: string | null }>`
-        SELECT baseline_turn_id AS "baselineTurnId"
+    // SCIENT-FORK:START — a fork's inherited transcript is immutable: every
+    // inherited turn (not only the selected boundary) survives any revert, even
+    // when the origin had no Git checkpoint.
+    const getForkInheritedTurnIds = Effect.fn("getForkInheritedTurnIds")(function* (
+      threadId: string,
+    ) {
+      const rows = yield* sql<{
+        readonly baselineTurnId: string | null;
+        readonly inheritedTurnIdsJson: string | null;
+      }>`
+        SELECT
+          baseline_turn_id AS "baselineTurnId",
+          inherited_turn_ids_json AS "inheritedTurnIdsJson"
         FROM scient_thread_lineage
         WHERE thread_id = ${threadId}
         LIMIT 1
       `.pipe(
-        Effect.mapError(toPersistenceSqlError("ProjectionPipeline.getForkBaselineTurnId:query")),
+        Effect.mapError(toPersistenceSqlError("ProjectionPipeline.getForkInheritedTurnIds:query")),
       );
-      return rows[0]?.baselineTurnId ?? null;
+      const row = rows[0];
+      if (row === undefined) return new Set<string>();
+      return new Set<string>([
+        ...(row.baselineTurnId === null ? [] : [row.baselineTurnId]),
+        ...decodeInheritedTurnIds(row.inheritedTurnIdsJson),
+      ]);
     });
     // SCIENT-FORK:END
 
@@ -660,6 +689,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             pinOrderKey: null,
             activeOrderKey: null,
             autoSettleDisabledAt: null,
+            sectionId: null, // SCIENT-FORK: thread sections
             titleRegenerationRequestId: null,
             titleRegenerationStartedAt: null,
             latestUserMessageAt: null,
@@ -886,6 +916,11 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ...(event.payload.worktreePath !== undefined
               ? { worktreePath: event.payload.worktreePath }
               : {}),
+            // SCIENT-FORK:START — thread sections
+            ...(event.payload.sectionId !== undefined
+              ? { sectionId: event.payload.sectionId }
+              : {}),
+            // SCIENT-FORK:END
             // SCIENT-FORK:START — replay immutable historical project
             // reassignment events into the durable shell/detail projection.
             ...(event.payload.projectId !== undefined
@@ -1261,12 +1296,12 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           const existingTurns = yield* projectionTurnRepository.listByThreadId({
             threadId: event.payload.threadId,
           });
-          const baselineTurnId = yield* getForkBaselineTurnId(event.payload.threadId);
+          const inheritedTurnIds = yield* getForkInheritedTurnIds(event.payload.threadId);
           const keptRows = retainProjectionMessagesAfterRevert(
             existingRows,
             existingTurns,
             event.payload.turnCount,
-            baselineTurnId,
+            inheritedTurnIds,
           );
           if (keptRows.length === existingRows.length) {
             return;
@@ -1328,6 +1363,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             existingRows,
             existingTurns,
             event.payload.turnCount,
+            yield* getForkInheritedTurnIds(event.payload.threadId),
           );
           if (keptRows.length === existingRows.length) {
             return;
@@ -1387,6 +1423,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             existingRows,
             existingTurns,
             event.payload.turnCount,
+            yield* getForkInheritedTurnIds(event.payload.threadId),
           );
           if (keptRows.length === existingRows.length) {
             return;
@@ -1829,13 +1866,13 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           const existingTurns = yield* projectionTurnRepository.listByThreadId({
             threadId: event.payload.threadId,
           });
-          const baselineTurnId = yield* getForkBaselineTurnId(event.payload.threadId);
+          const inheritedTurnIds = yield* getForkInheritedTurnIds(event.payload.threadId);
           const keptTurns = existingTurns.filter(
             (turn) =>
               turn.turnId !== null &&
               ((turn.checkpointTurnCount !== null &&
                 turn.checkpointTurnCount <= event.payload.turnCount) ||
-                turn.turnId === baselineTurnId),
+                inheritedTurnIds.has(turn.turnId)),
           );
           yield* projectionTurnRepository.deleteByThreadId({
             threadId: event.payload.threadId,
@@ -2088,13 +2125,6 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
 
     const applyAttachmentSideEffects = Effect.fn("applyAttachmentSideEffects")(
       function* (event: OrchestrationEvent, sideEffects: AttachmentSideEffects) {
-        if (
-          sideEffects.deletedThreadIds.size === 0 &&
-          sideEffects.prunedThreadRelativePaths.size === 0
-        ) {
-          return;
-        }
-
         const deletedThreadIds = new Set<string>();
         for (const threadId of sideEffects.deletedThreadIds) {
           const recreatedLater = yield* eventStore.hasEventAfter({
@@ -2210,9 +2240,15 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               );
             }),
           );
+          const hasCleanup =
+            attachmentSideEffects.deletedThreadIds.size > 0 ||
+            attachmentSideEffects.prunedThreadRelativePaths.size > 0;
           // Return the cleanup effect so the caller runs it after the outer transaction commits.
+          // Most events have no cleanup, so they skip the call and write no cleanup span.
           // @effect-diagnostics-next-line returnEffectInGen:off
-          return applyAttachmentSideEffects(event, attachmentSideEffects).pipe(Effect.asVoid);
+          return hasCleanup
+            ? applyAttachmentSideEffects(event, attachmentSideEffects).pipe(Effect.asVoid)
+            : Effect.void;
         },
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),

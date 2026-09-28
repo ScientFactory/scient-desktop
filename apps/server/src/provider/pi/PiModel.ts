@@ -2,6 +2,12 @@ import type { ModelReasoningMetadata, ServerProviderModel } from "@t3tools/contr
 import { preferredReasoningLevel } from "@t3tools/shared/model";
 
 import type { PiThinkingLevel } from "./PiRpcSchema.ts";
+import {
+  encodeAgentModelSlug,
+  isValidModelSegment,
+  splitAgentModelSlug,
+  thinkingLevelCapabilities,
+} from "../agentModel.ts";
 
 export interface PiDiscoveredModel {
   readonly provider: string;
@@ -20,30 +26,17 @@ export interface PiModelDefaults {
   readonly thinkingLevel?: PiThinkingLevel;
 }
 
-const validSegment = (value: string): boolean => value.length > 0 && value.trim() === value;
+const validSegment = isValidModelSegment;
 
-export function encodePiModelSlug(provider: string, modelId: string): string | undefined {
-  if (!validSegment(provider) || !validSegment(modelId)) return undefined;
-  return `${encodeURIComponent(provider)}/${encodeURIComponent(modelId)}`;
-}
+export const encodePiModelSlug = encodeAgentModelSlug;
 
 export function decodePiModelSlug(
   slug: string,
 ): { readonly provider: string; readonly modelId: string } | undefined {
-  const delimiter = slug.indexOf("/");
-  if (delimiter < 0 || delimiter !== slug.lastIndexOf("/")) return undefined;
-  const encodedProvider = slug.slice(0, delimiter);
-  const encodedModelId = slug.slice(delimiter + 1);
-  if (!encodedProvider || !encodedModelId) return undefined;
-  try {
-    const provider = decodeURIComponent(encodedProvider);
-    const modelId = decodeURIComponent(encodedModelId);
-    if (!validSegment(provider) || !validSegment(modelId)) return undefined;
-    if (encodePiModelSlug(provider, modelId) !== slug) return undefined;
-    return { provider, modelId };
-  } catch {
-    return undefined;
-  }
+  const decoded = splitAgentModelSlug(slug);
+  if (!decoded) return undefined;
+  // Pi accepts only a canonical encoded slug.
+  return encodePiModelSlug(decoded.provider, decoded.modelId) === slug ? decoded : undefined;
 }
 
 export function piDiscoveredModelToServerProviderModel(
@@ -71,28 +64,7 @@ export function piDiscoveredModelToServerProviderModel(
     capabilities:
       thinkingLevels.length === 0 && !model.reasoningMetadata
         ? null
-        : {
-            optionDescriptors: [
-              {
-                id: "thinkingLevel",
-                label: "Reasoning",
-                type: "select",
-                strictSelection: true,
-                concreteReasoning: true,
-                emptySelectionLabel: "Reasoning",
-                options: [
-                  ...thinkingLevels.map((level) => ({
-                    id: level,
-                    label:
-                      level === "xhigh"
-                        ? "Extra-high"
-                        : level.charAt(0).toUpperCase() + level.slice(1),
-                    ...(level === selectedDefault ? { isDefault: true } : {}),
-                  })),
-                ],
-              },
-            ],
-          },
+        : thinkingLevelCapabilities(thinkingLevels, selectedDefault),
   };
 }
 

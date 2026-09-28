@@ -26,6 +26,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../../components/ui/button";
+import { cn } from "../../lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import {
   currentOptimisticProviderValue,
@@ -34,12 +35,20 @@ import {
 } from "./optimisticProviderValue";
 import { ProviderRuntimeDiagnosticsDetails } from "./ProviderRuntimeDiagnostics";
 import {
+  cancelRuntimeActionLabel,
   isActiveProviderRuntimeOperation,
   needsManagedRuntimeRecovery,
   providerLifecycleFailureMessage,
 } from "./providerConnectionPresentation";
 
 type PendingAction = "plan" | "start" | "cancel" | null;
+
+const RUNTIME_ACTION_VERBS = {
+  install: "Install",
+  update: "Update",
+  repair: "Repair",
+  remove: "Remove",
+} satisfies Record<ProviderManagedRuntimeAction, string>;
 type StartedRuntimeOperation = {
   readonly action: ProviderManagedRuntimeAction;
   readonly operationId: ProviderRuntimeOperation["operationId"];
@@ -125,6 +134,12 @@ export function ProviderRuntimeSection(props: {
   readonly provider: ServerProvider;
   readonly displayName: string;
   readonly compact?: boolean;
+  /**
+   * `row` renders as a row of the surrounding settings section: no frame of
+   * its own, status on the left and actions on the right. `card` (default)
+   * frames itself for dialogs. `compact` wins over both.
+   */
+  readonly presentation?: "card" | "row";
   readonly disabled?: boolean;
   /** An explicit action clicked before opening this surface, never inferred from provider state. */
   readonly initialAction?: ProviderManagedRuntimeAction | undefined;
@@ -214,6 +229,9 @@ export function ProviderRuntimeSection(props: {
         )
       : null;
   const isWorking = pendingAction !== null || props.disabled === true;
+  const row = !props.compact && props.presentation === "row";
+  /** Padding of a settings row; a card frames itself instead. */
+  const frame = (card: string) => (row ? "px-3 py-3 sm:px-4" : card);
 
   const startPlan = useCallback(
     async (nextPlan: ProviderRuntimePlan) => {
@@ -392,7 +410,11 @@ export function ProviderRuntimeSection(props: {
   if (activeOperation) {
     return (
       <div
-        className={props.compact ? "space-y-4 py-1" : "space-y-3 rounded-lg border bg-muted/20 p-3"}
+        className={
+          props.compact
+            ? "space-y-4 py-1"
+            : cn("space-y-3", frame("rounded-lg border bg-muted/20 p-3"))
+        }
       >
         <div className="flex items-start gap-3">
           <LoaderIcon className="mt-0.5 size-5 shrink-0 animate-spin text-primary" aria-hidden />
@@ -439,6 +461,7 @@ export function ProviderRuntimeSection(props: {
             </span>
           ) : null}
           <Button
+            aria-label={cancelRuntimeActionLabel(props.displayName, activeOperation.action)}
             type="button"
             size="sm"
             variant={props.compact ? "ghost-destructive-action" : "destructive-outline"}
@@ -459,7 +482,7 @@ export function ProviderRuntimeSection(props: {
         className={
           props.compact
             ? "flex items-start gap-3 py-1"
-            : "flex items-start gap-3 rounded-lg border bg-muted/20 p-3"
+            : cn("flex items-start gap-3", frame("rounded-lg border bg-muted/20 p-3"))
         }
       >
         <LoaderIcon className="mt-0.5 size-5 shrink-0 animate-spin text-primary" aria-hidden />
@@ -478,7 +501,7 @@ export function ProviderRuntimeSection(props: {
         className={
           props.compact
             ? "space-y-3 py-1"
-            : "space-y-3 rounded-lg border border-primary/20 bg-primary/[0.03] p-3"
+            : cn("space-y-3", frame("rounded-lg border border-primary/20 bg-primary/[0.03] p-3"))
         }
       >
         <div className="flex items-start gap-3">
@@ -551,12 +574,22 @@ export function ProviderRuntimeSection(props: {
       : runtime.actions;
 
   return (
-    <div className={props.compact ? "space-y-2 border-b pb-3" : "space-y-3 rounded-lg border p-3"}>
+    <div
+      className={
+        props.compact
+          ? "space-y-2 border-b pb-3"
+          : row
+            ? "@container/runtime-row space-y-2 px-3 py-3 sm:px-4"
+            : "space-y-3 rounded-lg border p-3"
+      }
+    >
       <div
         className={
           props.compact
             ? "grid grid-cols-[minmax(9rem,1fr)_auto] items-center gap-x-3 gap-y-2"
-            : "space-y-3"
+            : row
+              ? "flex flex-col gap-3 @min-[32rem]/runtime-row:grid @min-[32rem]/runtime-row:grid-cols-[minmax(0,1fr)_auto] @min-[32rem]/runtime-row:items-center @min-[32rem]/runtime-row:gap-8"
+              : "space-y-3"
         }
       >
         <div className="flex min-w-0 items-start gap-3">
@@ -571,13 +604,15 @@ export function ProviderRuntimeSection(props: {
           </div>
         </div>
         {trailingActions.length > 0 ? (
-          <div className="flex flex-wrap justify-end gap-1">
+          <div className={cn("flex flex-wrap justify-end", row ? "gap-2" : "gap-1")}>
             {trailingActions.map((action) => {
               const isSystemManagedSwitch = action === "install" && runtime.source === "system";
               const actionButton = (
                 <Button
                   aria-label={
-                    isSystemManagedSwitch ? `Use Scient-managed ${props.displayName}` : undefined
+                    isSystemManagedSwitch
+                      ? `Use Scient-managed ${props.displayName}`
+                      : `${RUNTIME_ACTION_VERBS[action]} ${props.displayName}`
                   }
                   key={action}
                   type="button"

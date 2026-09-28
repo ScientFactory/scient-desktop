@@ -22,7 +22,7 @@ import { HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import * as ModelManifest from "./ModelManifest.ts";
-import { resolveProviderCompatibility } from "./providerCompatibility.ts";
+import { resolveManifestProviderCompatibility } from "./providerCompatibility.ts";
 import { ProviderRegistry } from "./Services/ProviderRegistry.ts";
 import { makeProviderMaintenanceCommandCoordinator } from "./providerMaintenanceCommandCoordinator.ts";
 import {
@@ -405,13 +405,12 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
                 Effect.provideService(HttpClient.HttpClient, httpClient),
                 Effect.provideService(ProviderVersionCache, versionCache),
               ));
-            const advisory =
-              resolveProviderCompatibility(manifest.compatibility, provider, candidateVersion) ??
-              resolveProviderCompatibility(
-                ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
-                provider,
-                candidateVersion,
-              );
+            const advisory = resolveManifestProviderCompatibility({
+              manifest: manifest.compatibility,
+              bundled: ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
+              driver: provider,
+              version: candidateVersion,
+            });
             const command =
               targetVersion !== undefined
                 ? makeTargetedProviderUpdateAction(fresh, targetVersion)

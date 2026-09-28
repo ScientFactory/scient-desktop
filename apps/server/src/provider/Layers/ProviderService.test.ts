@@ -66,6 +66,7 @@ import {
   ProviderWorkspaceMissingError,
   type ProviderAdapterError,
 } from "../Errors.ts";
+import { classifyTurnDispatchFailure } from "../turnDispatchPhase.ts";
 import type {
   ProviderAdapterShape,
   ProviderAdapterSendTurnInput,
@@ -713,6 +714,78 @@ it.effect("ProviderServiceLive catches stopAll failures during shutdown", () =>
     assert.equal(Exit.isSuccess(closeExit), true);
     assert.equal(codex.stopAll.mock.calls.length, 1);
   }),
+);
+
+it.effect("ProviderServiceLive shutdown leaves settled session rows untouched", () =>
+  Effect.gen(function* () {
+    const recordedAnalytics = makeRecordingAnalytics();
+    const codex = makeFakeCodexAdapter();
+    const persistence = yield* Layer.build(
+      ProviderSessionDirectoryLive.pipe(
+        Layer.provide(ProviderSessionRuntime.layer.pipe(Layer.provide(SqlitePersistenceMemory))),
+      ),
+    );
+    const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory.pipe(
+      Effect.provide(persistence),
+    );
+    const seed = (threadId: ThreadId, status: "running" | "stopped", activeTurnId: TurnId | null) =>
+      directory.upsert({
+        threadId,
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        status,
+        runtimePayload: { cwd: "/repo", activeTurnId },
+      });
+    const readBindings = directory
+      .listBindings()
+      .pipe(
+        Effect.map((bindings) => new Map(bindings.map((binding) => [binding.threadId, binding]))),
+      );
+    const settledId = asThreadId("shutdown-settled");
+    const runningId = asThreadId("shutdown-running");
+    const stoppedWithTurnId = asThreadId("shutdown-stopped-with-turn");
+    yield* seed(settledId, "stopped", null);
+    yield* seed(runningId, "running", asTurnId("running-turn"));
+    yield* seed(stoppedWithTurnId, "stopped", asTurnId("stale-turn"));
+    const settledBefore = (yield* readBindings).get(settledId);
+    assert(settledBefore !== undefined);
+
+    const scope = yield* Scope.make();
+    yield* Layer.build(
+      makeProviderServiceLive().pipe(
+        Layer.provide(NodeServices.layer),
+        Layer.provide(Layer.succeed(ProviderSessionDirectory.ProviderSessionDirectory, directory)),
+        Layer.provide(
+          Layer.succeed(
+            ProviderAdapterRegistry.ProviderAdapterRegistry,
+            makeStaticInstanceRegistry([[codexInstanceId, codex.adapter]]),
+          ),
+        ),
+        Layer.provide(defaultServerSettingsLayer),
+        Layer.provide(serverConfigTestLayer),
+        Layer.provide(recordedAnalytics.layer),
+        Layer.provide(
+          Layer.succeed(
+            ProviderEventLoggers.ProviderEventLoggers,
+            ProviderEventLoggers.NoOpProviderEventLoggers,
+          ),
+        ),
+      ),
+    ).pipe(Scope.provide(scope));
+    yield* TestClock.adjust("1 minute");
+    yield* Scope.close(scope, Exit.void);
+
+    const byThread = yield* readBindings;
+    assert.deepStrictEqual(byThread.get(settledId), settledBefore);
+    for (const threadId of [runningId, stoppedWithTurnId]) {
+      const binding = byThread.get(threadId);
+      assert.equal(binding?.status, "stopped");
+      assert.propertyVal(binding?.runtimePayload, "activeTurnId", null);
+      assert.propertyVal(binding?.runtimePayload, "lastRuntimeEvent", "provider.stopAll");
+    }
+    const [stoppedAll] = recordedAnalytics.eventsByName("provider.sessions.stopped_all");
+    assert.equal(stoppedAll?.properties?.stoppedSessionCount, 2);
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect("ProviderServiceLive flushes deferred completions during shutdown", () =>
@@ -4912,6 +4985,182 @@ validation.layer("ProviderServiceLive validation", (it) => {
     }),
   );
 
+  it.effect("rejects a file when its path cannot fit in the prompt", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      validation.codex.sendTurn.mockClear();
+      const failure = yield* provider
+        .sendTurn({
+          threadId: asThreadId("thread-file-path-context-limit"),
+          input: "x".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS),
+          attachments: [
+            {
+              type: "file",
+              id: "thread-attach-12345678-1234-1234-1234-123456789abc-zip",
+              name: "archive.zip",
+              mimeType: "application/zip",
+              sizeBytes: 1024,
+            },
+          ],
+        })
+        .pipe(Effect.flip);
+
+      assert.instanceOf(failure, ProviderValidationError);
+      assert.include(failure.issue, String(PROVIDER_SEND_TURN_MAX_INPUT_CHARS));
+      assert.equal(validation.codex.sendTurn.mock.calls.length, 0);
+    }),
+  );
+
+  it.effect("sends a native image when its path cannot fit in the prompt", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-image-path-context-limit");
+      yield* provider.startSession(threadId, {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      validation.codex.sendTurn.mockClear();
+      const attachment = {
+        type: "image" as const,
+        id: "thread-attach-12345678-1234-1234-1234-123456789abc-png",
+        name: "screen.png",
+        mimeType: "image/png",
+        sizeBytes: 1024,
+      };
+      const input = "x".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS);
+      yield* provider.sendTurn({ threadId, input, attachments: [attachment] });
+      assert.equal(validation.codex.sendTurn.mock.calls[0]?.[0].input, input);
+      assert.deepEqual(validation.codex.sendTurn.mock.calls[0]?.[0].attachments, [attachment]);
+    }),
+  );
+
+  // SCIENT-FORK:START — fork context travels beside the user's input.
+  it.effect("sends fork context beside a full-size user message", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-fork-context-preamble");
+      yield* provider.startSession(threadId, {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      validation.codex.sendTurn.mockClear();
+      const input = "x".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS);
+      const contextPreamble = `SCIENT_CONTEXT_HANDOFF_JSON\n${"h".repeat(150_000)}`;
+      yield* provider.sendTurn({ threadId, input, contextPreamble });
+      const sent = validation.codex.sendTurn.mock.calls[0]?.[0];
+      assert.isTrue(sent?.input?.startsWith(`${contextPreamble}\n\n${input}`));
+      assert.equal(sent?.originalInput, input);
+      assert.notProperty(sent ?? {}, "contextPreamble");
+    }),
+  );
+
+  it.effect("rejects a composed fork request over its available budget before dispatch", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("fork-budget-overflow");
+      yield* provider.startSession(threadId, {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      validation.codex.sendTurn.mockClear();
+      const failure = yield* Effect.flip(
+        provider.sendTurn(
+          {
+            threadId,
+            input: "new question",
+            contextPreamble: "history ".repeat(4000),
+          },
+          1000,
+        ),
+      );
+      assert.instanceOf(failure, ProviderValidationError);
+      assert.include(failure.issue, "available context");
+      assert.strictEqual(validation.codex.sendTurn.mock.calls.length, 0);
+    }),
+  );
+
+  it.effect("rejects a native fork for a thread that already has a provider thread", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-native-fork-existing");
+      yield* provider.startSession(threadId, {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* provider.stopSession({ threadId });
+      const failure = yield* provider
+        .startSession(threadId, {
+          provider: ProviderDriverKind.make("codex"),
+          providerInstanceId: codexInstanceId,
+          threadId,
+          runtimeMode: "full-access",
+          forkFrom: { resumeCursor: { threadId: "source" }, throughTurnId: asTurnId("t1") },
+        })
+        .pipe(Effect.flip);
+      assert.instanceOf(failure, ProviderValidationError);
+      assert.include(failure.issue, "new provider thread");
+    }),
+  );
+
+  it.effect("classifies rejections before dispatch as not sent", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      validation.codex.sendTurn.mockClear();
+      const cause = yield* provider
+        .sendTurn({
+          threadId: asThreadId("thread-dispatch-phase-before"),
+          input: "x".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS),
+          attachments: [
+            {
+              type: "file",
+              id: "thread-attach-12345678-1234-1234-1234-123456789abc-zip",
+              name: "archive.zip",
+              mimeType: "application/zip",
+              sizeBytes: 1024,
+            },
+          ],
+        })
+        .pipe(Effect.sandbox, Effect.flip);
+      assert.equal(classifyTurnDispatchFailure(cause), "notSent");
+      assert.equal(validation.codex.sendTurn.mock.calls.length, 0);
+    }),
+  );
+
+  it.effect("classifies adapter failures as possibly delivered", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-dispatch-phase-after");
+      yield* provider.startSession(threadId, {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      validation.codex.sendTurn.mockImplementationOnce(() =>
+        Effect.fail(
+          new ProviderAdapterRequestError({
+            provider: "codex",
+            method: "turn/start",
+            detail: "connection reset",
+          }),
+        ),
+      );
+      const cause = yield* provider
+        .sendTurn({ threadId, input: "continue" })
+        .pipe(Effect.sandbox, Effect.flip);
+      assert.equal(classifyTurnDispatchFailure(cause), "maybeDelivered");
+    }),
+  );
+  // SCIENT-FORK:END
+
   it.effect("rejects citation-expanded input over the provider character limit", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;
@@ -5077,13 +5326,11 @@ const listThreadIds = vi.fn(() =>
   Effect.succeed([activeSessionThreadId, historicalSessionThreadId]),
 );
 const getBinding = vi.fn((threadId: ThreadId) =>
-  Effect.succeed(
-    Option.some({
-      threadId,
-      provider: CODEX_DRIVER,
-      providerInstanceId: codexInstanceId,
-    }),
-  ),
+  Effect.succeedSome({
+    threadId,
+    provider: CODEX_DRIVER,
+    providerInstanceId: codexInstanceId,
+  }),
 );
 const boundedListing = makeProviderServiceLayer({
   directory: {
@@ -5189,6 +5436,7 @@ describe("agent browser access", () => {
         getSnapshot: () => Effect.die("unused"),
         getShellSnapshot: () => Effect.die("unused"),
         getDeletedWorktreeThreads: () => Effect.die("unused"),
+        listThreadsWithPullRequests: () => Effect.die("unused"),
         getArchivedShellSnapshot: () => Effect.die("unused"),
         getSnapshotSequence: () => Effect.die("unused"),
         getCounts: () => Effect.die("unused"),
@@ -5223,6 +5471,7 @@ describe("agent browser access", () => {
               }),
             );
           }).pipe(Effect.orDie),
+        getThreadHistoryPage: () => Effect.die("unused history page"),
         getThreadDetailById: () => Effect.die("unused"),
         getThreadDetailSnapshot: () => Effect.die("unused"),
         searchThreads: () => Effect.die("unused"),
@@ -5614,7 +5863,20 @@ describe("agent browser access", () => {
         assert.notInclude(codex.sendTurn.mock.calls.at(-1)![0].input!, "selected by the user");
 
         const overhead = sentCombined.input!.length - expanded.length;
-        for (const delta of [-1, 0, 1]) {
+        // SCIENT-FORK: optional skill discovery is dropped before rejecting, so
+        // an input just over the limit still goes out with the user's selection.
+        {
+          const attempt = yield* provider.sendTurn({
+            ...combined,
+            input: "x".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS - overhead + 1),
+          });
+          assert.isDefined(attempt);
+          const sent = codex.sendTurn.mock.calls.at(-1)![0].input!;
+          assert.notInclude(sent, "skill scope for this turn");
+          assert.include(sent, "Scient selected skills");
+          assert.isAtMost(sent.length, PROVIDER_SEND_TURN_MAX_INPUT_CHARS);
+        }
+        for (const delta of [-1, 0, 1_000]) {
           const beforeCalls = codex.sendTurn.mock.calls.length;
           const beforeScopes = replaced.length;
           const attempt = provider.sendTurn({
@@ -5697,6 +5959,7 @@ describe("agent browser access", () => {
             "compute:inventory",
             "sources:read",
             "sources:write",
+            "threads:read",
             "skills:read",
           ]),
           skillScope: {
@@ -5725,6 +5988,7 @@ describe("agent browser access", () => {
             "compute:inventory",
             "sources:read",
             "sources:write",
+            "threads:read",
             "skills:read",
           ]),
           skillScope: {
@@ -5774,6 +6038,7 @@ describe("agent browser access", () => {
                 "compute:inventory",
                 "sources:read",
                 "sources:write",
+                "threads:read",
                 "skills:read",
               ]),
               skillScope: {
@@ -5859,6 +6124,7 @@ describe("agent browser access", () => {
             "compute:inventory",
             "sources:read",
             "sources:write",
+            "threads:read",
             "skills:read",
           ]),
           skillScope: {
@@ -5893,6 +6159,7 @@ describe("agent browser access", () => {
           "compute:inventory",
           "sources:read",
           "sources:write",
+          "threads:read",
           "skills:read",
           "device",
         ]),
@@ -5939,6 +6206,7 @@ describe("agent browser access", () => {
           "compute:inventory",
           "sources:read",
           "sources:write",
+          "threads:read",
           "skills:read",
         ]),
       );

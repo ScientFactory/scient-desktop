@@ -552,7 +552,7 @@ describe("AntigravityInlineSetup", () => {
     );
 
     expect(markup).toContain("Antigravity update available");
-    expect(markup).toContain("Update Antigravity");
+    expect(markup).toContain(" Update</button>");
   });
 
   it("offers one-click reviewed installation when the managed runtime allows it", () => {
@@ -659,8 +659,8 @@ describe("AntigravityInlineSetup", () => {
 
     expect(markup).toContain("Antigravity removed");
     expect(markup).toContain("private Antigravity copy was removed");
-    expect(markup).toContain("Install again");
-    expect(markup).not.toContain("Install Antigravity");
+    expect(markup).toContain(" Install</button>");
+    expect(markup).not.toContain('data-assisted-setup-title="true">Install Antigravity');
   });
 
   it("offers sign-in when removal falls back to an installed system runtime", () => {
@@ -694,7 +694,7 @@ describe("AntigravityInlineSetup", () => {
     expect(markup).toContain("Sign in required");
     expect(markup).toContain("Sign in with Google");
     expect(markup).not.toContain("Antigravity removed");
-    expect(markup).not.toContain("Install again");
+    expect(markup).not.toContain(" Install</button>");
   });
 
   it("leaves post-removal runtime recovery to the shared management section", () => {
@@ -734,7 +734,7 @@ describe("AntigravityInlineSetup", () => {
 
     expect(markup).toContain("Google account connected");
     expect(markup).toContain(">Sign out<");
-    expect(markup).not.toContain("Install again");
+    expect(markup).not.toContain(" Install</button>");
     expect(markup).not.toContain("Sign in with Google");
   });
 });

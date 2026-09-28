@@ -29,7 +29,7 @@ import {
   enrichGrokSnapshot,
 } from "../Layers/GrokProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
-import { readGrokUsageLimits } from "../Layers/grokUsageLimits.ts";
+import { readGrokAccount } from "../Layers/grokUsageLimits.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import {
   defaultProviderContinuationIdentity,
@@ -39,7 +39,13 @@ import {
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import { discoverGrokSkills, setGrokSkillEnabled } from "./GrokSkills.ts";
-import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
+import {
+  makeCachedProviderMaintenanceResolution,
+  makeManualOnlyProviderMaintenanceCapabilities,
+  makeProviderMaintenanceCapabilities,
+  type ProviderMaintenanceCapabilitiesResolver,
+  resolveProviderMaintenanceCapabilitiesEffect,
+} from "../providerMaintenance.ts";
 import {
   haveProviderSnapshotSettingsChanged,
   makeProviderSnapshotSettingsSource,
@@ -48,10 +54,32 @@ import {
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("grok");
-const MAINTENANCE_CAPABILITIES = makeManualOnlyProviderMaintenanceCapabilities({
-  provider: DRIVER_KIND,
-  packageName: null,
-});
+// npm's `latest` tracks Grok's stable channel, the one `grok update` installs
+// by default, so the registry stays the source for "latest".
+const GROK_NPM_PACKAGE = "@xai-official/grok";
+// `grok update` finds the installer that owns the binary itself, so the
+// resolved executable is its own updater. It installs under `GROK_HOME`, so it
+// runs with the instance's environment. No executable means nothing to update,
+// not "whatever is on PATH".
+const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
+  resolve: (context) =>
+    Effect.succeed(
+      context
+        ? makeProviderMaintenanceCapabilities({
+            provider: DRIVER_KIND,
+            packageName: GROK_NPM_PACKAGE,
+            updateExecutable: context.resolvedCommandPath,
+            updateArgs: ["update"],
+            updateLockKey: "grok",
+            platform: context.platform,
+            env: context.env,
+          })
+        : makeManualOnlyProviderMaintenanceCapabilities({
+            provider: DRIVER_KIND,
+            packageName: GROK_NPM_PACKAGE,
+          }),
+    ),
+};
 
 export type GrokDriverEnv =
   | BackgroundPolicy.BackgroundPolicy
@@ -134,6 +162,27 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
         runtime: managedRuntime.summary,
         connectionMethods,
       });
+      // A Scient-managed runtime is updated through the managed runtime
+      // lifecycle, never by the binary's own `grok update`; only an external
+      // install gets the upstream self-update path.
+      const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
+        (managedRuntime.usesManagedPath
+          ? Effect.succeed(
+              makeManualOnlyProviderMaintenanceCapabilities({
+                provider: DRIVER_KIND,
+                packageName: null,
+              }),
+            )
+          : resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
+              binaryPath: effectiveConfig.binaryPath,
+              env: processEnv,
+            })
+        ).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+        ),
+      );
       const adapter = yield* makeGrokAdapter(effectiveConfig, {
         environment: processEnv,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
@@ -146,12 +195,22 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
       );
 
       const checkProvider = checkGrokProviderStatus(effectiveConfig, processEnv, cwd).pipe(
-        Effect.flatMap((snapshot) =>
-          effectiveConfig.enabled && snapshot.installed && snapshot.auth.status === "authenticated"
-            ? readGrokUsageLimits(processEnv).pipe(
-                Effect.map((usageLimits) => ({ ...snapshot, usageLimits })),
-              )
-            : Effect.succeed(snapshot),
+        Effect.filterOrElse(
+          (snapshot) =>
+            !(
+              effectiveConfig.enabled &&
+              snapshot.installed &&
+              snapshot.auth.status === "authenticated"
+            ),
+          (snapshot) =>
+            readGrokAccount(processEnv).pipe(
+              // The email lets clients recognize one account signed in on several environments.
+              Effect.map(({ email, usageLimits }) => ({
+                ...snapshot,
+                auth: email ? { ...snapshot.auth, email } : snapshot.auth,
+                usageLimits,
+              })),
+            ),
         ),
         Effect.map(stampIdentity),
         Effect.provideService(HttpClient.HttpClient, httpClient),
@@ -163,7 +222,7 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
 
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
       const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<GrokSettings>>({
-        resolveMaintenance: () => Effect.succeed(MAINTENANCE_CAPABILITIES),
+        resolveMaintenance,
         getSettings: snapshotSettings.getSettings,
         streamSettings: snapshotSettings.streamSettings,
         haveSettingsChanged: haveProviderSnapshotSettingsChanged,
@@ -171,13 +230,17 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
           buildInitialGrokProviderSnapshot(settings.provider).pipe(Effect.map(stampIdentity)),
         checkProvider,
         enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
-          enrichGrokSnapshot({
-            snapshot: currentSnapshot,
-            maintenanceCapabilities: MAINTENANCE_CAPABILITIES,
-            enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
-            publishSnapshot,
-            httpClient,
-          }),
+          resolveMaintenance().pipe(
+            Effect.flatMap((maintenanceCapabilities) =>
+              enrichGrokSnapshot({
+                snapshot: currentSnapshot,
+                maintenanceCapabilities,
+                enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
+                publishSnapshot,
+                httpClient,
+              }),
+            ),
+          ),
       }).pipe(
         Effect.mapError(
           (cause) =>

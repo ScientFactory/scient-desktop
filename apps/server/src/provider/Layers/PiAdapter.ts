@@ -1463,6 +1463,15 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (options: PiAd
   return {
     provider: PROVIDER,
     capabilities: { sessionModelSwitch: "in-session", mcpSessionInjection: true },
+    getModelContextWindow: ({ threadId, modelSelection }) =>
+      Effect.gen(function* () {
+        const ctx = sessions.get(threadId);
+        if (!ctx) return undefined;
+        const available = yield* ctx.client.getAvailableModels();
+        return available.models.find(
+          (model) => `${model.provider}/${model.id}` === modelSelection.model,
+        )?.contextWindow;
+      }).pipe(Effect.orElseSucceed(() => undefined)),
     startSession,
     sendTurn,
     interruptTurn,

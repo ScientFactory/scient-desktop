@@ -20,6 +20,11 @@ import {
   resolveDevelopmentAppLabel,
   writeDevelopmentProcessPid,
 } from "../apps/desktop/scripts/dev-app-process.mjs";
+import {
+  readDevelopmentAppFailure,
+  SCIENT_DEV_APP_BACKGROUND_SERVICE_ENV,
+  SCIENT_DEV_APP_FAILURE_FILE_ENV,
+} from "../apps/desktop/scripts/dev-app-bundle.mjs";
 
 export const LOCAL_DEV_APP_NAME = "Scient (Dev)";
 export const LOCAL_DEV_APP_STABLE_NAME = "Scient (Dev) Stable";
@@ -164,6 +169,7 @@ export function resolveLocalDevAppPaths({
     serviceLabel,
     servicePlistPath: NodePath.join(runtimeDir, `${serviceLabel}.plist`),
     logPath: NodePath.join(stateRoot, "local-dev-app.log"),
+    failurePath: NodePath.join(runtimeDir, "last-failure.json"),
   };
 }
 
@@ -187,6 +193,8 @@ export function makeLocalDevAppLaunchAgentPlist({
     }),
   );
   serviceEnvironment.PATH = pathParts;
+  // The service launches an app that `start` already built and signed.
+  serviceEnvironment[SCIENT_DEV_APP_BACKGROUND_SERVICE_ENV] = "1";
   if (paths.role === "stable") {
     serviceEnvironment[SCIENT_DEV_APP_ROLE_ENV] = "stable";
     serviceEnvironment[SCIENT_NEXT_HOME_ENV] = paths.stateRoot;
@@ -281,10 +289,69 @@ async function waitForLocalDevAppServiceToUnload(
   return !serviceIsLoaded(paths);
 }
 
+/**
+ * Calls `onFailure` once the desktop launcher records a failure. The web dev
+ * server outlives a failed desktop launch, so without this the runner would
+ * report "starting" indefinitely.
+ */
+export function watchForLaunchFailure(paths, onFailure, { intervalMs = 1_000 } = {}) {
+  const timer = setInterval(() => {
+    const failure = readDevelopmentAppFailure(paths.failurePath);
+    if (failure === null) return;
+    clearInterval(timer);
+    onFailure(failure);
+  }, intervalMs);
+  timer.unref?.();
+  return () => clearInterval(timer);
+}
+
+/** The app name and role a launch uses; the prepared bundle must match it. */
+export function resolveDevelopmentAppEnvironment(paths, environment = process.env) {
+  const result = { ...environment };
+  // The service derives its name from the checkout alone; an inherited label
+  // (for example from a terminal inside another dev app) must not rename it.
+  delete result.SCIENT_DEV_APP_LABEL;
+  if (paths.role === "stable") {
+    result[SCIENT_DEV_APP_ROLE_ENV] = "stable";
+    result[SCIENT_NEXT_HOME_ENV] ??= paths.stateRoot;
+    return result;
+  }
+  const label = resolveDevelopmentAppLabel(paths.root);
+  if (label) result.SCIENT_DEV_APP_LABEL = label;
+  return result;
+}
+
+/**
+ * Builds and signs the development app bundle in this (foreground) process
+ * before the background service launches it. The service never signs.
+ */
+export function prepareDevelopmentAppBundle({
+  paths = resolveLocalDevAppPaths(),
+  spawnSync = NodeChildProcess.spawnSync,
+} = {}) {
+  const environment = resolveDevelopmentAppEnvironment(paths);
+  delete environment[SCIENT_DEV_APP_BACKGROUND_SERVICE_ENV];
+  // Selects the development bundle; the runner writes the live URL at launch.
+  environment.VITE_DEV_SERVER_URL ??= "http://127.0.0.1:5733";
+  environment[SCIENT_DEV_APP_FAILURE_FILE_ENV] = paths.failurePath;
+  const result = spawnSync(
+    process.execPath,
+    [NodePath.join(paths.root, "apps", "desktop", "scripts", "prepare-dev-app-bundle.mjs")],
+    { cwd: paths.root, env: environment, stdio: "inherit" },
+  );
+  if (result.error || result.status !== 0) {
+    throw new Error(
+      readDevelopmentAppFailure(paths.failurePath) ??
+        `Could not prepare the ${paths.appName} app bundle${result.error ? `: ${result.error.message}` : "; see the output above."}`,
+    );
+  }
+}
+
 export async function startAppInBackground({
   paths = resolveLocalDevAppPaths(),
   platform = hostPlatform,
   spawnSync = NodeChildProcess.spawnSync,
+  prepareAppBundle = prepareDevelopmentAppBundle,
   writeLine = console.log,
 } = {}) {
   if (platform !== "darwin") {
@@ -311,6 +378,9 @@ export async function startAppInBackground({
     throw new Error(`Could not finish stopping the previous ${paths.appName} background service.`);
   }
   NodeFS.mkdirSync(paths.runtimeDir, { recursive: true });
+  NodeFS.rmSync(paths.failurePath, { force: true });
+  // Sign here, in the caller's session: macOS can refuse it to the service.
+  prepareAppBundle({ paths });
   const temporaryPath = `${paths.servicePlistPath}.tmp-${String(process.pid)}`;
   NodeFS.writeFileSync(temporaryPath, makeLocalDevAppLaunchAgentPlist({ paths }), { mode: 0o600 });
   NodeFS.renameSync(temporaryPath, paths.servicePlistPath);
@@ -818,13 +888,13 @@ async function runApp() {
   if (paths.role === "stable") {
     devDesktopArgs.push("--home-dir", paths.stateRoot);
   }
+  NodeFS.rmSync(paths.failurePath, { force: true });
   const childEnv = {
-    ...process.env,
+    ...resolveDevelopmentAppEnvironment(paths),
     SCIENT_LOCAL_DEV_APP_MANAGED: "1",
     SCIENT_DEV_APP_PID_FILE: paths.appPidPath,
+    [SCIENT_DEV_APP_FAILURE_FILE_ENV]: paths.failurePath,
   };
-  const label = resolveDevelopmentAppLabel(paths.root);
-  if (paths.role !== "stable" && label) childEnv.SCIENT_DEV_APP_LABEL = label;
   const child = NodeChildProcess.spawn(
     pnpmExecPath ? process.execPath : "pnpm",
     pnpmExecPath ? [pnpmExecPath, ...devDesktopArgs] : devDesktopArgs,
@@ -842,11 +912,28 @@ async function runApp() {
     });
   }
 
+  let launchFailed = false;
+  const stopWatching = watchForLaunchFailure(paths, (failure) => {
+    launchFailed = true;
+    console.error(`${paths.appName} could not start: ${failure}`);
+    signalOwnedDevelopmentApp(paths, "SIGTERM");
+    signalOwnedDevelopmentBackend(paths, "SIGTERM");
+    if (!child.killed) child.kill("SIGTERM");
+  });
+
   const result = await new Promise((resolve, reject) => {
     child.once("error", reject);
     child.once("exit", (code, signal) => resolve({ code, signal }));
-  }).finally(cleanup);
+  }).finally(() => {
+    stopWatching();
+    cleanup();
+  });
 
+  if (launchFailed) {
+    // Status reports the recorded reason once this runner has exited.
+    process.exitCode = 1;
+    return;
+  }
   if (result.signal) {
     process.removeAllListeners(result.signal);
     process.kill(process.pid, result.signal);
@@ -926,13 +1013,20 @@ export function statusApp({
       );
       return;
     }
+    const failure = paths.failurePath ? readDevelopmentAppFailure(paths.failurePath) : null;
     if (serviceIsLoaded(paths)) {
       writeLine(
-        `${appName} background service is loaded for ${paths.root}, but the app is not running. Check pnpm dev:app:logs.`,
+        failure
+          ? `${appName} failed to start for ${paths.root}: ${failure}`
+          : `${appName} background service is loaded for ${paths.root}, but the app is not running. Check pnpm dev:app:logs.`,
       );
       return;
     }
-    writeLine(`${appName} is stopped for ${paths.root}`);
+    writeLine(
+      failure
+        ? `${appName} is stopped for ${paths.root}. Last launch failed: ${failure}`
+        : `${appName} is stopped for ${paths.root}`,
+    );
     return;
   }
   if (ownedLaunches.length > 1 || allOwnedApps.length > 1 || allOwnedBackends.length > 1) {

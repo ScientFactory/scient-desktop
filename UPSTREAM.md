@@ -46,33 +46,34 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current T3 alignment is recorded in
-[`docs/internals/2026-09-25-upstream-sync-d4a33457.md`](docs/internals/2026-09-25-upstream-sync-d4a33457.md)
-and in `upstream-state.json`. Scient PR #369 carries this alignment, extending
-the integration through `d4a33457cb0da797728f4846a9da8592d7d81d36`: 24
-official commits from `e67abcf798f8c4d8458755e3b4dde02c2c1f628b`, merged onto
-owned base `5b214837d5358a117b282b208ddd172c75a2cf00` as
-`b55129b948a647d59b2a96e7f15204d00071a194` (first parent owned base, second
-parent the exact official target). The final reviewed candidate also records
-the narrow composed-web cleanup `e9168a8474e772a638525945502db0b361230d32`,
-the targeted review cleanup `58e12301c6442a4cccc877d81877b15618a79fd0`,
-and the final review cleanup `cc71ec265811be601f452f9311f851ef0a02fb1a`.
-No owned-main catch-up was needed because the frozen base was already the
-current owned `main` tip. The preceding alignment ([PR #365](docs/internals/2026-09-24-upstream-sync-e67abcf798.md))
-remains literal ancestry, including its owned-main catch-up
-`0c10a40a5d885beedd0d59fdbb10e277f397cadf`; all earlier official ancestry
-remains preserved.
+[`docs/internals/2026-09-27-upstream-sync-a727d1d9.md`](docs/internals/2026-09-27-upstream-sync-a727d1d9.md)
+and in `upstream-state.json`. It extends the integration through
+`de251fc2971a884cb5b1305ba4daf309dc8cccb0`: 15 official commits after
+`95030dc674883f0f2a7fd034b32ce742c8cf55d0`, merged onto owned base
+`1ad094bbc3ffc58ad4e171f1e1ea5ce1d859ed5c`. The original a727 merge is
+`0c33fa4233ad8c2293349803bf2ce50c5f1e876b`; the exact upstream extension merge
+is `a556a6905fdbd9b6121f8952a994531b4870671d`, whose second parent is the exact
+official target. The reviewed candidate was then brought forward through owned
+`main` catch-up merges: first to `12437d152ee30d7d39313a05200fcf1c27c82d1a`
+through `70a9f9d980ab4e4aa8ae391211875cfd3ff05cbc`, then to the latest
+`4d95770a0404ac0e0463352b174a5eb40a67c9c8` through
+`4cb506b80b3e553c0d74a3765b697ba6f97a574d`. The alignment is prepared in
+[PR #384](https://github.com/ScientFactory/scient-desktop/pull/384). The preceding alignment
+([PR #372](docs/internals/2026-09-26-upstream-sync-95030dc6.md)) remains literal
+ancestry.
 
-This alignment retains Scient's release pipeline and trust list, composes the
-OTel changes with the fail-closed safety envelope, preserves cloud, mobile,
-provider-lifecycle, identity, scientific, and migration boundaries, and adopts
-upstream reliability, provider, orchestration, desktop-update, theme, and
-shell-terminal improvements at narrow seams. The review also introduced an
-explicit legacy lint boundary for pre-existing Scient scientific/presentation
-surfaces rather than rewriting them wholesale during this upstream sync.
-Automated qualification and source review passed; release publication remains
-separate. The [earlier receipt](docs/internals/2026-09-18-upstream-sync-3fd5d643.md)
-and all earlier official ancestry remain literal history. Later observed
-upstream tips do not move `integrationBase` by themselves.
+This routine range activates no protected boundary. In addition to the original
+a727 accessibility, Usage, telemetry, and offline-banner work, the extension
+makes partially successful onboarding history imports complete instead of
+trapping the user, and carries that behavior into Scient's extracted local
+Getting Started import step. `node-pty` stays on `^1.1.0`; the Usage page keeps
+its Spend metric; unknown usage elements remain forward-compatible; two
+upstream product strings remain labelled `Scient`; and the relaxed
+`simctl`/`adb` guidance stays consistent across the always-on awareness and
+`device_open` quick start. The owned-main catch-up preserves the fork redesign,
+sidebar sections, dev-app signing isolation, and migration `058` beside the
+alignment's `057`. The receipt records the exact conflict compositions,
+clean-merge audits, complete gate results, and remaining owner follow-ups.
 
 ## Receiving T3 updates
 
@@ -504,6 +505,30 @@ than infer deletion from an absent sidebar entry. See the
 [fork maintenance contract](docs/internals/scient-fork-divergence.md) for
 workspace fidelity, lineage links, provider selection, and recovery boundaries.
 
+Scient layers two sidebar divergences beside T3's thread list: user-defined
+sections with a Sections view, and a labelled New thread row below search that
+replaces the header's New thread icon. Section membership is an optional
+`sectionId` written by the Scient `thread.section.set` command (advertised by the
+`threadSections` capability); like `thread.active.reorder`, it emits
+`thread.meta-updated` with an unchanged `updatedAt`, so organizing never reads as
+activity. Migration 058 adds `projection_threads.section_id`. The catalog, the
+built-in General group's position and the opt-in empty-section cleanup live in the
+primary environment's server settings; catalog writes carry the catalog they were
+based on, and `updateSettings` applies them only while it still matches, so
+concurrent clients never overwrite each other. Scient code lives under
+`apps/web/src/scient/sections`, `apps/web/src/scient/sidebar` and
+`apps/server/src/scient/threadSections`; upstream files carry `SCIENT-FORK`-marked
+mounts. A few lines change in place: two in `Sidebar.tsx`, the search field's class
+list and the New thread icon's `hidden` attribute in `SidebarThreadHeader.tsx`, and
+the undo-action union in `showThreadUndoNotice.ts`. New thread always opens the
+"New thread in…" picker (`shouldOpenNewThreadTargetPicker` changes in place), which
+ends with Add project, so a project, including the first, can be added from New
+thread; Shift+click and ⇧⌘N still start directly in the current project. The
+Sections view reuses T3's rows, shelves and order keys and never changes pin state. If T3 ships its own
+grouping or collapsible shelves, reconcile against these seams instead of layering a
+second grouping. Decisions, invariants and the full seam list are in
+[sidebar sections](docs/internals/scient-sidebar-sections.md).
+
 Antigravity reasoning presentation is a narrow client-side divergence. The shared
 `packages/client-runtime/src/antigravityModelPresentation.ts` groups recognized
 Google Gemini effort variants for the existing model and reasoning controls.
@@ -580,6 +605,15 @@ subscription label on its own line above the email/visibility control. Preserve
 this hierarchy rather than joining both with an inline separator. Providers without
 a label retain the account row without an empty subscription row. The shared
 `ProviderInstanceCard.test.ts` covers the layout independently of provider kind.
+
+The same card carries two more narrow divergences, each marked `Scient:` in place.
+Its version label renders through the Scient-owned `ProviderVersionLabel`, which
+fades a clipped version and shows the full text on hover or keyboard focus instead
+of truncating it. A Scient-managed runtime renders as a `row` of the card's Runtime
+section rather than inside an extra padded wrapper. Pi's mark is Pi's own colour
+mark in both web `Icons.tsx` (`PiIcon`) and mobile `ProviderIcon.tsx`, replacing
+T3's monochrome glyph. When T3 changes these spots, keep its surrounding layout and
+reapply only the marked lines.
 
 Scient keeps ordinary browser interaction visually quiet: `PreviewView` shows
 the control badge only during agent control. Preserve the underlying human-input

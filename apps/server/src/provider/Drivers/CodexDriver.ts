@@ -53,7 +53,10 @@ import type { ProviderDriver, ProviderInstance } from "../ProviderDriver.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import { makeCodexConnectionActions } from "../../scient/providerLifecycle/CodexConnectionActions.ts";
-import { makeCodexManagedRuntimeResolution } from "../../scient/providerLifecycle/CodexManagedRuntimeActions.ts";
+import {
+  isStandInForManagedCodex,
+  makeCodexManagedRuntimeResolution,
+} from "../../scient/providerLifecycle/CodexManagedRuntimeActions.ts";
 import { makeCodexVoiceTranscriptCorrection } from "../../scient/voice/CodexVoiceTranscriptCorrection.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
@@ -203,7 +206,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         homePath: homeLayout.effectiveHomePath ?? "",
       } satisfies CodexSettings;
       const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
-        (managedRuntime.usesManagedPath
+        (managedRuntime.usesManagedPath || isStandInForManagedCodex(managedRuntime.summary)
           ? Effect.succeed(
               makeManualOnlyProviderMaintenanceCapabilities({
                 provider: DRIVER_KIND,
@@ -224,17 +227,6 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         ),
       );
 
-      // `makeCodexAdapter` and `makeCodexTextGeneration` have `never` error
-      // channels at construction time — their failure modes are all on the
-      // per-operation closures they return. No `mapError` wrapper is needed
-      // here; the registry only has to worry about snapshot-build and
-      // spawner-availability failures surfaced from `checkCodexProviderStatus`
-      // below.
-      const adapter = yield* makeCodexAdapter(effectiveConfig, {
-        instanceId,
-        environment: processEnv,
-        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
-      });
       const voiceTranscriptCorrection = yield* makeCodexVoiceTranscriptCorrection(
         effectiveConfig,
         processEnv,
@@ -322,11 +314,20 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
             }),
         ),
       );
-      const textGeneration = yield* makeCodexTextGeneration(
-        effectiveConfig,
-        processEnv,
-        snapshot.getSnapshot.pipe(Effect.map((value) => value.models)),
-      );
+      const models = snapshot.getSnapshot.pipe(Effect.map((value) => value.models));
+      // `makeCodexAdapter` and `makeCodexTextGeneration` have `never` error
+      // channels at construction time — their failure modes are all on the
+      // per-operation closures they return. No `mapError` wrapper is needed
+      // here; the registry only has to worry about snapshot-build and
+      // spawner-availability failures surfaced from `checkCodexProviderStatus`
+      // above.
+      const adapter = yield* makeCodexAdapter(effectiveConfig, {
+        instanceId,
+        environment: processEnv,
+        models,
+        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
+      });
+      const textGeneration = yield* makeCodexTextGeneration(effectiveConfig, processEnv, models);
       const snapshotForCwd = (cwd: string) =>
         !effectiveConfig.enabled
           ? snapshot.getSnapshot

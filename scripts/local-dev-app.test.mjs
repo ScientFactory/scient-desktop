@@ -20,6 +20,9 @@ import {
   LOCAL_DEV_APP_SCHEMA,
   MACOS_LSREGISTER_PATH,
   makeLocalDevAppLaunchAgentPlist,
+  prepareDevelopmentAppBundle,
+  resolveDevelopmentAppEnvironment,
+  watchForLaunchFailure,
   readLocalDevAppMarker,
   registerDevelopmentAppBundle,
   releaseRunner,
@@ -275,6 +278,7 @@ describe("local dev app background service", () => {
     assert.notInclude(plist, "SECRET_TOKEN");
     assert.notInclude(plist, "must-not-be-persisted");
     assert.include(plist, "<string>Interactive</string>");
+    assert.include(plist, "<key>SCIENT_DEV_APP_BACKGROUND_SERVICE</key>\n    <string>1</string>");
   });
 
   it("bootstraps one exact per-worktree service and returns immediately", async () => {
@@ -291,18 +295,91 @@ describe("local dev app background service", () => {
         if (args[0] === "print") return { status: 1, stdout: "", stderr: "" };
         return { status: 0, stdout: "", stderr: "" };
       },
+      prepareAppBundle: () => calls.push(["prepare"]),
       writeLine: (line) => lines.push(line),
     });
 
     assert.deepEqual(result, { status: "started" });
     assert.isTrue(NodeFS.existsSync(paths.servicePlistPath));
-    assert.equal(calls.length, 2);
-    assert.deepEqual(calls[1][1], [
+    assert.equal(calls.length, 3);
+    // The bundle is signed in the foreground before the service exists.
+    assert.deepEqual(calls[1], ["prepare"]);
+    assert.deepEqual(calls[2][1], [
       "bootstrap",
       `gui/${String(process.getuid())}`,
       paths.servicePlistPath,
     ]);
     assert.match(lines[0], /^Launching Scient \(Dev\)/u);
+  });
+
+  it("names the app from the checkout, not a label inherited from another dev app", () => {
+    const { paths } = fixture();
+
+    const environment = resolveDevelopmentAppEnvironment(paths, {
+      SCIENT_DEV_APP_LABEL: "other-worktree",
+    });
+
+    assert.isUndefined(environment.SCIENT_DEV_APP_LABEL);
+  });
+
+  it("does not launch the service when the app bundle cannot be prepared", async () => {
+    const { paths } = fixture();
+    const calls = [];
+
+    let failure;
+    try {
+      await startAppInBackground({
+        paths,
+        platform: "darwin",
+        spawnSync: (command, args) => {
+          calls.push(args[0]);
+          return { status: args[0] === "print" ? 1 : 0, stdout: "", stderr: "" };
+        },
+        prepareAppBundle: () => {
+          throw new Error("Signing failed: Operation not permitted");
+        },
+        writeLine: () => undefined,
+      });
+    } catch (error) {
+      failure = error;
+    }
+
+    assert.match(String(failure), /Operation not permitted/u);
+    assert.notInclude(calls, "bootstrap");
+    assert.isFalse(NodeFS.existsSync(paths.servicePlistPath));
+  });
+
+  it("prepares the bundle with the launch's app name and reports its recorded failure", () => {
+    const { paths } = fixture();
+    let invocation;
+
+    let failure;
+    try {
+      prepareDevelopmentAppBundle({
+        paths,
+        spawnSync: (command, args, options) => {
+          invocation = { command, args, options };
+          NodeFS.mkdirSync(NodePath.dirname(paths.failurePath), { recursive: true });
+          NodeFS.writeFileSync(
+            paths.failurePath,
+            JSON.stringify({ message: "Signing Scient (Dev).app failed: Operation not permitted" }),
+          );
+          return { status: 1 };
+        },
+      });
+    } catch (error) {
+      failure = error;
+    }
+
+    assert.equal(invocation.command, process.execPath);
+    assert.match(invocation.args[0], /apps\/desktop\/scripts\/prepare-dev-app-bundle\.mjs$/u);
+    assert.equal(invocation.options.env.SCIENT_DEV_APP_FAILURE_FILE, paths.failurePath);
+    assert.isUndefined(invocation.options.env.SCIENT_DEV_APP_BACKGROUND_SERVICE);
+    assert.isString(invocation.options.env.VITE_DEV_SERVER_URL);
+    assert.equal(
+      String(failure),
+      "Error: Signing Scient (Dev).app failed: Operation not permitted",
+    );
   });
 
   it("unloads only its exact registered service", () => {
@@ -415,6 +492,47 @@ describe("local dev app runner lifecycle", () => {
     assert.deepEqual(lines, [
       `${LOCAL_DEV_APP_NAME} is running for ${paths.root} (runner PID 1234, app PID 2222, backend PID 3333).`,
     ]);
+  });
+
+  it("reports why the last launch failed instead of an unexplained stop", () => {
+    const { paths } = fixture();
+    NodeFS.mkdirSync(paths.runtimeDir, { recursive: true });
+    NodeFS.writeFileSync(
+      paths.failurePath,
+      JSON.stringify({ message: "Run pnpm dev:app:start again." }),
+    );
+    const lines = [];
+
+    statusApp({
+      paths,
+      matchesRunner: () => false,
+      serviceIsLoaded: () => true,
+      resolveOwnedApp: () => null,
+      resolveOwnedBackend: () => null,
+      writeLine: (line) => lines.push(line),
+    });
+
+    assert.deepEqual(lines, [
+      `${LOCAL_DEV_APP_NAME} failed to start for ${paths.root}: Run pnpm dev:app:start again.`,
+    ]);
+  });
+
+  it("ends a launch as soon as the desktop launcher records a failure", async () => {
+    const { paths } = fixture();
+    const failures = [];
+    const stop = watchForLaunchFailure(paths, (failure) => failures.push(failure), {
+      intervalMs: 5,
+    });
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.deepEqual(failures, []);
+      NodeFS.mkdirSync(paths.runtimeDir, { recursive: true });
+      NodeFS.writeFileSync(paths.failurePath, JSON.stringify({ message: "Run pnpm dev:app." }));
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      assert.deepEqual(failures, ["Run pnpm dev:app."]);
+    } finally {
+      stop();
+    }
   });
 
   it("reports a runner without both owned processes as still starting", () => {

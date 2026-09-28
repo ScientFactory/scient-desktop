@@ -14,6 +14,7 @@ function providerEntry(input: {
   source: ProviderRuntimeSource;
   actions: Array<"update" | "repair" | "remove">;
   operation?: ProviderRuntimeOperation | null;
+  managedVersion?: string | null;
 }) {
   const provider: ServerProvider = {
     instanceId: ProviderInstanceId.make("claudeAgent"),
@@ -37,7 +38,12 @@ function providerEntry(input: {
         supportTier: "fully_assisted",
         target: "darwin-arm64",
         actions: input.actions,
-        managedVersion: input.source === "scient_managed" ? "2.1.245" : null,
+        managedVersion:
+          input.managedVersion !== undefined
+            ? input.managedVersion
+            : input.source === "scient_managed"
+              ? "2.1.245"
+              : null,
         previousManagedVersion: null,
         operation: input.operation ?? null,
         message: "Runtime status.",
@@ -66,6 +72,18 @@ describe("canOfferComposerManagedRuntimeUpdate", () => {
         providerEntry({ source: "scient_managed", actions: ["repair", "remove"] }),
       ),
     ).toBe(false);
+  });
+
+  it("offers the private copy's update while the system runtime stands in for it", () => {
+    expect(
+      canOfferComposerManagedRuntimeUpdate(
+        providerEntry({
+          source: "system",
+          actions: ["update", "repair", "remove"],
+          managedVersion: "2.1.240",
+        }),
+      ),
+    ).toBe(true);
   });
 
   it("does not advertise a second update while a runtime operation is active", () => {

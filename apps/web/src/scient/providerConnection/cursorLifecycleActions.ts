@@ -1,16 +1,10 @@
 import type { ServerProvider } from "@t3tools/contracts";
 
 import {
-  hasExternalProviderUpdate,
-  hasManagedProviderUpdate,
   startReviewedProviderRuntimeAction,
   updateManagedOrExternalProviderRuntime,
 } from "./providerLifecycleActions";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
-
-export const hasManagedCursorUpdate = hasManagedProviderUpdate;
-
-export const hasExternalCursorUpdate = hasExternalProviderUpdate;
 
 export const startReviewedCursorRuntimeAction = startReviewedProviderRuntimeAction;
 

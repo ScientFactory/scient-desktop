@@ -249,7 +249,7 @@ export const makeAntigravityGeneration = Effect.fn("makeAntigravityGeneration")(
             yield* applyAntigravityAcpModelSelection({
               runtime,
               model: input.modelSelection.model,
-              defaultModel: yield* options.defaultModel ?? Effect.succeed(undefined),
+              defaultModel: yield* options.defaultModel ?? Effect.undefined,
               mapError: (cause) =>
                 new TextGenerationError({
                   operation,

@@ -18,6 +18,8 @@ import { workspacePdfSourceForPreview } from "~/scient/pdf/pdfSource";
 import {
   pdfReaderSessionDocumentKey,
   pdfReaderSessionStore,
+  normalizePdfReaderSession,
+  type PdfReaderSession,
 } from "~/scient/pdf/pdfReaderSessionStore";
 
 const CONTINUITY_STORAGE_KEY = "scient:fork-view-continuity:v1";
@@ -30,6 +32,7 @@ interface PendingPdfContinuity {
   readonly destinationThreadId: string;
   readonly originWorkspaceRoot: string;
   readonly pdfRelativePaths: ReadonlyArray<string>;
+  readonly pdfSessions?: Readonly<Record<string, PdfReaderSession>>;
   readonly createdAt: number;
 }
 
@@ -41,7 +44,17 @@ function isPortableScientSurface(surface: Extract<RightPanelSurface, { kind: "sc
   );
 }
 
-function portableSurface(surface: RightPanelSurface): RightPanelSurface | null {
+function portableSurface(
+  surface: RightPanelSurface,
+  attachmentIdMap: Readonly<Record<string, string>>,
+): RightPanelSurface | null {
+  if (surface.kind === "file" && surface.attachment) {
+    const id = Object.hasOwn(attachmentIdMap, surface.attachment.id)
+      ? attachmentIdMap[surface.attachment.id]
+      : undefined;
+    if (!id || id === surface.attachment.id) return null;
+    return { ...surface, id: `attachment:${id}`, attachment: { ...surface.attachment, id } };
+  }
   if (surface.kind === "terminal") return null;
   if (surface.kind === "preview") {
     return { id: "browser:new", kind: "preview", resourceId: null };
@@ -50,11 +63,14 @@ function portableSurface(surface: RightPanelSurface): RightPanelSurface | null {
   return surface;
 }
 
-export function forkRightPanelState(source: ThreadRightPanelState): ThreadRightPanelState {
+export function forkRightPanelState(
+  source: ThreadRightPanelState,
+  attachmentIdMap: Readonly<Record<string, string>> = {},
+): ThreadRightPanelState {
   const surfaces: RightPanelSurface[] = [];
   const sourceIndexByDestinationId = new Map<string, number>();
   for (const [index, sourceSurface] of source.surfaces.entries()) {
-    const portable = portableSurface(sourceSurface);
+    const portable = portableSurface(sourceSurface, attachmentIdMap);
     if (portable === null || surfaces.some((surface) => surface.id === portable.id)) continue;
     surfaces.push(portable);
     sourceIndexByDestinationId.set(portable.id, index);
@@ -64,7 +80,7 @@ export function forkRightPanelState(source: ThreadRightPanelState): ThreadRightP
   }
 
   const sourceActive = source.surfaces.find((surface) => surface.id === source.activeSurfaceId);
-  const mappedActive = sourceActive ? portableSurface(sourceActive)?.id : null;
+  const mappedActive = sourceActive ? portableSurface(sourceActive, attachmentIdMap)?.id : null;
   const sourceActiveIndex = Math.max(
     0,
     source.surfaces.findIndex((surface) => surface.id === source.activeSurfaceId),
@@ -112,12 +128,30 @@ function readPending(): ReadonlyArray<PendingPdfContinuity> {
         typeof candidate.createdAt === "number" &&
         Number.isFinite(candidate.createdAt) &&
         candidate.createdAt >= oldestAccepted
-        ? [candidate as PendingPdfContinuity]
+        ? [
+            {
+              ...(candidate as PendingPdfContinuity),
+              pdfSessions: Object.fromEntries(
+                candidate.pdfRelativePaths.flatMap((path) => {
+                  const session = normalizePdfReaderSession(candidate.pdfSessions?.[path]);
+                  return session ? [[path, session]] : [];
+                }),
+              ),
+            },
+          ]
         : [];
     });
   } catch {
     return [];
   }
+}
+
+const pendingListeners = new Set<() => void>();
+
+/** Notifies when a fork's pending PDF positions are staged or applied. */
+export function subscribeForkPdfContinuity(listener: () => void): () => void {
+  pendingListeners.add(listener);
+  return () => pendingListeners.delete(listener);
 }
 
 function writePending(entries: ReadonlyArray<PendingPdfContinuity>): void {
@@ -132,26 +166,52 @@ function writePending(entries: ReadonlyArray<PendingPdfContinuity>): void {
   } catch {
     // Panel continuity is best-effort and must never block a successful fork.
   }
+  for (const listener of pendingListeners) listener();
 }
 
 export function stageForkViewContinuity(input: {
   readonly originRef: ScopedThreadRef;
   readonly destinationThreadId: ThreadId;
   readonly originWorkspaceRoot: string | undefined;
+  readonly attachmentIdMap?: Readonly<Record<string, string>> | undefined;
 }): void {
   const destinationRef = scopeThreadRef(input.originRef.environmentId, input.destinationThreadId);
   const panel = useRightPanelStore.getState();
   const originState = selectThreadRightPanelState(panel.byThreadKey, input.originRef);
-  const destinationState = forkRightPanelState(originState);
+  const destinationState = forkRightPanelState(originState, input.attachmentIdMap);
   panel.restoreThreadState(destinationRef, destinationState);
 
+  pdfReaderSessionStore.forkScope(
+    input.originRef.environmentId,
+    input.originRef.threadId,
+    input.destinationThreadId,
+  );
   if (input.originWorkspaceRoot === undefined) return;
   const pdfRelativePaths = destinationState.surfaces.flatMap((surface) =>
-    surface.kind === "file" && isPortablePdfRelativePath(surface.relativePath)
+    surface.kind === "file" &&
+    surface.attachment === undefined &&
+    isPortablePdfRelativePath(surface.relativePath)
       ? [surface.relativePath]
       : [],
   );
   if (pdfRelativePaths.length === 0) return;
+  const pdfSessions: Record<string, PdfReaderSession> = {};
+  for (const relativePath of pdfRelativePaths) {
+    const source = workspacePdfSourceForPreview({
+      absolutePath: resolvePathLinkTarget(relativePath, input.originWorkspaceRoot),
+      environmentId: input.originRef.environmentId,
+      relativePath,
+      threadId: input.originRef.threadId,
+      workspaceRoot: input.originWorkspaceRoot,
+    });
+    if (!source) continue;
+    const key = pdfReaderSessionDocumentKey(source, input.originRef.threadId);
+    const scoped = pdfReaderSessionStore.get(key);
+    pdfSessions[relativePath] =
+      scoped.updatedAt === 0
+        ? pdfReaderSessionStore.get(pdfReaderSessionDocumentKey(source))
+        : scoped;
+  }
   const current = readPending().filter(
     (entry) =>
       entry.environmentId !== input.originRef.environmentId ||
@@ -164,9 +224,21 @@ export function stageForkViewContinuity(input: {
       destinationThreadId: input.destinationThreadId,
       originWorkspaceRoot: input.originWorkspaceRoot,
       pdfRelativePaths,
+      pdfSessions,
       createdAt: Date.now(),
     },
   ]);
+}
+
+/** Whether a fork still has PDF positions waiting for its workspace folder. */
+export function hasPendingForkPdfContinuity(input: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+}): boolean {
+  return readPending().some(
+    (entry) =>
+      entry.environmentId === input.environmentId && entry.destinationThreadId === input.threadId,
+  );
 }
 
 export function restoreForkPdfContinuity(input: {
@@ -200,9 +272,10 @@ export function restoreForkPdfContinuity(input: {
       workspaceRoot: input.destinationWorkspaceRoot,
     });
     if (source === null || destination === null) continue;
-    pdfReaderSessionStore.copy(
-      pdfReaderSessionDocumentKey(source),
-      pdfReaderSessionDocumentKey(destination),
+    pdfReaderSessionStore.seed(
+      pdfReaderSessionDocumentKey(destination, input.threadId),
+      match.pdfSessions?.[relativePath] ??
+        pdfReaderSessionStore.get(pdfReaderSessionDocumentKey(source)),
     );
   }
   writePending(pending.filter((entry) => entry !== match));

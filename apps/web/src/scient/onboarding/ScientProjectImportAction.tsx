@@ -35,7 +35,7 @@ export function ScientProjectImportAction({ onImported }: { readonly onImported?
   const busy = canImport && importing;
 
   const finish = useCallback(
-    async (projectRef?: ScopedProjectRef) => {
+    async (projectRef?: ScopedProjectRef, importWarning?: string, importedThreadCount = 0) => {
       if (projectRef !== undefined) {
         try {
           const opened = await openNewThread(projectRef);
@@ -51,6 +51,19 @@ export function ScientProjectImportAction({ onImported }: { readonly onImported?
         }
       }
       setOpen(false);
+      if (importWarning) {
+        toastManager.add({
+          type: "warning",
+          title: "Some history was not imported",
+          description: importWarning,
+          timeout: 0,
+        });
+      } else if (importedThreadCount > 0) {
+        toastManager.add({
+          type: "success",
+          title: `Imported ${importedThreadCount} ${importedThreadCount === 1 ? "thread" : "threads"}`,
+        });
+      }
       return true;
     },
     [openNewThread, onImported],

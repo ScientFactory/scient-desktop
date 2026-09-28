@@ -104,7 +104,7 @@ describe("shared project import", () => {
     await render();
     expect(container.textContent).toContain("Scan limit reached");
     await click("Skip");
-    expect(done).toHaveBeenCalledWith();
+    expect(done).toHaveBeenCalledWith(undefined, "", 0);
     expect(state.create).not.toHaveBeenCalled();
     expect(state.importThreads).not.toHaveBeenCalled();
   });
@@ -123,11 +123,12 @@ describe("shared project import", () => {
     expect(busy).toHaveBeenLastCalledWith(false);
     state.projects = [{ id: projectId, environmentId: local, workspaceRoot: "/fixtures/project" }];
     await render();
-    expect(done).toHaveBeenCalledWith({ environmentId: local, projectId });
+    expect(done).toHaveBeenCalledWith({ environmentId: local, projectId }, "", 1);
   });
 
-  it("disables navigation and selection while importing and retries history without duplicating a project", async () => {
+  it("disables navigation while importing and completes after a partial import", async () => {
     let settle!: (value: unknown) => void;
+    let createdProjectId: ProjectId | undefined;
     state.importThreads.mockImplementationOnce(
       () =>
         new Promise((resolve) => {
@@ -136,6 +137,7 @@ describe("shared project import", () => {
     );
     state.create.mockImplementation(
       async ({ input }: { input: { projectId: ProjectId; workspaceRoot: string } }) => {
+        createdProjectId = input.projectId;
         state.projects = [
           { id: input.projectId, environmentId: local, workspaceRoot: input.workspaceRoot },
         ];
@@ -149,13 +151,16 @@ describe("shared project import", () => {
     expect(container.querySelector('[role="checkbox"]')?.getAttribute("aria-disabled")).toBe(
       "true",
     );
-    await act(() => settle({ _tag: "Success", value: { importedCount: 0, skippedCount: 1 } }));
-    expect(container.textContent).toContain("could not be imported");
+    await act(() => settle({ _tag: "Success", value: { importedCount: 28, skippedCount: 1 } }));
+    expect(container.textContent).not.toContain("could not be imported");
     expect(busy).toHaveBeenLastCalledWith(false);
-    await click("Import 1");
     expect(state.create).toHaveBeenCalledTimes(1);
-    expect(state.importThreads).toHaveBeenCalledTimes(2);
-    expect(done).toHaveBeenCalledTimes(1);
+    expect(state.importThreads).toHaveBeenCalledTimes(1);
+    expect(done).toHaveBeenCalledWith(
+      { environmentId: local, projectId: createdProjectId },
+      "Imported 28 threads. 1 thread could not be imported.",
+      28,
+    );
   });
 
   it("does not continue an old machine's import after switching environments", async () => {

@@ -24,23 +24,17 @@ function resolve(input: {
 }
 
 describe("scientForkDialogCopy", () => {
-  it("distinguishes every supported fork source", () => {
-    expect(scientForkDialogCopy("latest-response")).toEqual({
-      title: "Fork latest response",
-      description: "Create a new conversation from the latest response.",
-    });
-    expect(scientForkDialogCopy("this-response")).toEqual({
-      title: "Fork this response",
-      description: "Create a new conversation from this response.",
-    });
-    expect(scientForkDialogCopy("this-message")).toEqual({
-      title: "Fork this message",
-      description: "Create a new conversation from this message.",
-    });
-    expect(scientForkDialogCopy("switch-provider")).toEqual({
-      title: "Fork to switch provider",
-      description: "Continue this conversation with another provider.",
-    });
+  it("uses one title and a one-line subtitle per fork source", () => {
+    const cases = [
+      ["latest-response", "Fork from the latest response"],
+      ["this-response", "Fork from this response"],
+      ["this-message", "Fork and edit this message"],
+      ["switch-provider", "Fork and continue with another provider"],
+      ["running-turn", "Fork with work in progress"],
+    ] as const;
+    for (const [source, description] of cases) {
+      expect(scientForkDialogCopy(source)).toEqual({ title: "Fork this chat", description });
+    }
   });
 });
 

@@ -1972,6 +1972,7 @@ export default function FilePreviewPanel({
               <ScientPdfReader
                 key={absolutePath}
                 source={pdfSource}
+                readerScope={threadRef.threadId}
                 refreshKey={viewerRefreshKey}
               />
             </Suspense>

@@ -1,6 +1,7 @@
 import type {
   ProviderConnectionMethod,
   ProviderConnectionOperation,
+  ProviderManagedRuntimeAction,
   ProviderRuntimeOperation,
   ProviderRuntimeSummary,
   ServerProvider,
@@ -68,6 +69,46 @@ export function providerLifecycleFailureMessage(value: unknown, fallback: string
     return value.message;
   }
   return fallback;
+}
+
+const RUNTIME_ACTION_NOUNS = {
+  install: "installation",
+  update: "update",
+  repair: "repair",
+  remove: "removal",
+} satisfies Record<ProviderManagedRuntimeAction, string>;
+
+/** The accessible name of a short "Cancel" button that stops a runtime operation. */
+export function cancelRuntimeActionLabel(
+  displayName: string,
+  action: ProviderManagedRuntimeAction,
+): string {
+  return `Cancel ${displayName} ${RUNTIME_ACTION_NOUNS[action]}`;
+}
+
+/** The message of a runtime operation that failed while doing `action`. */
+export function failedRuntimeOperationMessage(
+  operation: ProviderRuntimeOperation | null | undefined,
+  action: ProviderManagedRuntimeAction,
+): string | null {
+  return operation?.status === "failed" && operation.action === action ? operation.message : null;
+}
+
+/**
+ * Why a managed runtime needs repair: a repair that failed, else the
+ * provider's current error. An earlier failed install or update says nothing
+ * about the runtime's present state.
+ */
+export function managedRuntimeRepairMessage(
+  provider: ServerProvider,
+  displayName: string,
+  operation: ProviderRuntimeOperation | null | undefined = provider.connection?.runtime?.operation,
+): string {
+  return (
+    failedRuntimeOperationMessage(operation, "repair") ??
+    provider.message ??
+    `${displayName}’s private runtime could not start.`
+  );
 }
 
 export function providerRuntimeComputerLabel(provider: ServerProvider): string {
@@ -169,6 +210,29 @@ export function canManageProviderLifecycle(provider: ServerProvider | undefined)
  * no longer starts correctly. Route that state to runtime recovery instead of
  * presenting account sign-in as the next action.
  */
+/**
+ * The installed private runtime failed its capability check, so a healthy
+ * system runtime is standing in for it until the private copy is repaired or
+ * updated.
+ */
+export function isManagedRuntimeBypassed(provider: ServerProvider | undefined): boolean {
+  const runtime = provider?.connection?.runtime;
+  return (
+    runtime?.source === "system" &&
+    runtime.managedVersion !== null &&
+    runtime.actions.includes("repair")
+  );
+}
+
+/** An installed runtime version this release does not support, which Scient can replace. */
+export function hasInstallableCompatibilityRemedy(provider: ServerProvider | undefined): boolean {
+  const status = provider?.compatibilityAdvisory?.status;
+  return (
+    (status === "unsupported" || status === "broken") &&
+    (provider?.connection?.runtime?.actions.includes("install") ?? false)
+  );
+}
+
 export function needsManagedRuntimeRecovery(provider: ServerProvider | undefined): boolean {
   const runtime = provider?.connection?.runtime;
   return (

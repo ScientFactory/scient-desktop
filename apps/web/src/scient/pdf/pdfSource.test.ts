@@ -107,7 +107,7 @@ describe("PDF source resolution", () => {
     expect(long.fileName).toMatch(/\.pdf$/u);
   });
 
-  it("shares reader state across authorizing threads but isolates environments", () => {
+  it("shares document identity while isolating scoped reader state by thread and environment", () => {
     const sourceForThread = (environmentId: string, threadId: string) =>
       workspacePdfSource({
         environmentId: EnvironmentId.make(environmentId),
@@ -127,10 +127,11 @@ describe("PDF source resolution", () => {
       writeDelayMs: 0,
     });
 
-    store.updateSidebar(pdfReaderSessionDocumentKey(original), "outline");
+    store.updateSidebar(pdfReaderSessionDocumentKey(original, "thread-1"), "outline");
 
     expect(original.logicalDocumentKey).toBe(fork.logicalDocumentKey);
-    expect(store.get(pdfReaderSessionDocumentKey(fork)).sidebar).toBe("outline");
+    expect(store.get(pdfReaderSessionDocumentKey(fork, "thread-2")).sidebar).toBe("closed");
+    expect(store.get(pdfReaderSessionDocumentKey(original, "thread-1")).sidebar).toBe("outline");
     expect(store.get(pdfReaderSessionDocumentKey(otherEnvironment)).sidebar).toBe("closed");
     expect(pdfSourceAssetResource(original)).toMatchObject({ threadId: "thread-1" });
     expect(pdfSourceAssetResource(fork)).toMatchObject({ threadId: "thread-2" });

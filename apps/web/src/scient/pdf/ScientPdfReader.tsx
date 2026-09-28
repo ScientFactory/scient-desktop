@@ -147,6 +147,7 @@ function PdfPasswordPrompt(props: {
 }
 
 export function ScientPdfReader(props: {
+  readonly readerScope?: string | undefined;
   readonly actions?: PdfSourceActions;
   readonly refreshKey?: number;
   readonly resolver?: PdfSourceResolver;
@@ -155,7 +156,8 @@ export function ScientPdfReader(props: {
 }) {
   const resolver = props.resolver ?? webPdfSourceResolver;
   const asset = resolver.useResolve(props.source);
-  const documentKey = pdfReaderSessionDocumentKey(props.source);
+  const legacyDocumentKey = pdfReaderSessionDocumentKey(props.source);
+  const documentKey = pdfReaderSessionDocumentKey(props.source, props.readerScope);
   const displayed = useRetainedPdfSource(documentKey, props.source, asset);
   const previousRefreshKey = useRef(props.refreshKey);
   useEffect(() => {
@@ -188,6 +190,7 @@ export function ScientPdfReader(props: {
     <LoadedScientPdfReader
       key={documentKey}
       documentKey={documentKey}
+      legacyDocumentKey={legacyDocumentKey}
       source={displayed.source}
       sourceAsset={displayed.asset}
       interactionReady={asset._tag === "Success"}
@@ -210,6 +213,7 @@ function LoadedScientPdfReader(props: {
   readonly interactionReady: boolean;
   readonly actions: PdfSourceActions;
   readonly documentKey: string;
+  readonly legacyDocumentKey: string;
   readonly source: PdfSourceDescriptor;
   readonly sourceAsset: Extract<PdfSourceResolution, { readonly _tag: "Success" }>;
   readonly refreshSource: () => void;
@@ -219,9 +223,14 @@ function LoadedScientPdfReader(props: {
     props.source._tag === "generated-pdf" ? props.source.revisionId : null;
   const [container, setContainer] = useState<HTMLDivElement | null>(null);
   const [viewerElement, setViewerElement] = useState<HTMLDivElement | null>(null);
-  const [sidebar, setSidebarState] = useState<PdfSidebarMode>(
-    () => pdfReaderSessionStore.get(props.documentKey).sidebar,
-  );
+  const [sidebar, setSidebarState] = useState<PdfSidebarMode>(() => {
+    // Adopt the old document-wide position once, then keep this view independent.
+    pdfReaderSessionStore.seed(
+      props.documentKey,
+      pdfReaderSessionStore.get(props.legacyDocumentKey),
+    );
+    return pdfReaderSessionStore.get(props.documentKey).sidebar;
+  });
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [savingCopy, setSavingCopy] = useState(false);

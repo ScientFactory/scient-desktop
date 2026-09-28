@@ -363,6 +363,7 @@ function LatexReadOnlyHalf(props: {
  * none of that reaches the PDF reader.
  */
 interface LatexViewerPaneProps {
+  readonly readerScope: string;
   readonly descriptor: LatexPdfDescriptor;
   readonly readerKey: string | null;
   readonly viewer: LatexViewerState;
@@ -382,6 +383,7 @@ interface LatexViewerPaneProps {
  */
 const LatexViewerPane = memo(function LatexViewerPane({
   descriptor,
+  readerScope,
   readerKey,
   viewer,
   toolchainMissing,
@@ -399,6 +401,7 @@ const LatexViewerPane = memo(function LatexViewerPane({
           <ScientPdfReader
             key={readerKey}
             source={descriptor}
+            readerScope={readerScope}
             {...(syncNavigation === undefined ? {} : { syncNavigation })}
           />
         </Suspense>
@@ -1289,6 +1292,11 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
             ) : (
               <LatexViewerPane
                 descriptor={descriptor}
+                readerScope={
+                  typeof props.composerDraftTarget === "string"
+                    ? props.composerDraftTarget
+                    : props.composerDraftTarget.threadId
+                }
                 readerKey={readerKey}
                 viewer={status.viewer}
                 toolchainMissing={status.toolchainMissing}

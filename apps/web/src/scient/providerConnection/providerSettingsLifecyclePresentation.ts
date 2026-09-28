@@ -1,8 +1,10 @@
 import type { ProviderManagedRuntimeAction, ServerProvider } from "@t3tools/contracts";
 
 import {
+  hasInstallableCompatibilityRemedy,
   isActiveProviderConnectionOperation,
   isActiveProviderRuntimeOperation,
+  isManagedRuntimeBypassed,
   isProviderRuntimePresentedAsInstalled,
   needsManagedRuntimeRecovery,
 } from "./providerConnectionPresentation";
@@ -107,8 +109,9 @@ export function providerSettingsLifecyclePresentation(
     };
   }
   if (runtimeOperation && isActiveProviderRuntimeOperation(runtimeOperation)) {
-    const label =
-      runtimeOperation.status === "verifying" || runtimeOperation.status === "testing"
+    const label = runtimeOperation.waitingForIdle
+      ? "Waiting"
+      : runtimeOperation.status === "verifying" || runtimeOperation.status === "testing"
         ? "Verifying"
         : RUNTIME_ACTION_LABELS[runtimeOperation.action];
     const { downloadedBytes, totalBytes } = runtimeOperation;
@@ -160,6 +163,15 @@ export function providerSettingsLifecyclePresentation(
       busy: false,
     };
   }
+  if (isManagedRuntimeBypassed(provider)) {
+    return {
+      kind: "attention",
+      statusLabel: `Using system ${displayName}`,
+      detail: provider.connection?.runtime?.message ?? null,
+      ...action({ kind: "runtime", label: "Repair", runtimeAction: "repair" }),
+      busy: false,
+    };
+  }
   if (hasExternalProviderUpdate(provider)) {
     return {
       kind: "attention",
@@ -168,6 +180,18 @@ export function providerSettingsLifecyclePresentation(
         provider.versionAdvisory?.message ??
         `A newer ${displayName} version is available on this computer.`,
       ...action({ kind: "external-update", label: "Update" }),
+      busy: false,
+    };
+  }
+  if (hasInstallableCompatibilityRemedy(provider)) {
+    return {
+      kind: "attention",
+      statusLabel:
+        provider.compatibilityAdvisory?.status === "broken"
+          ? "Incompatible version"
+          : "Unsupported version",
+      detail: `${provider.compatibilityAdvisory?.message ?? `This ${displayName} version is not supported.`} Install Scient's verified ${displayName} to use a supported version; the current installation stays untouched.`,
+      ...action({ kind: "runtime", label: "Install", runtimeAction: "install" }),
       busy: false,
     };
   }

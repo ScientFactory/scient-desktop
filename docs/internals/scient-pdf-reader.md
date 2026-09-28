@@ -61,15 +61,18 @@ retains a Blob download fallback because it has no native filesystem dialog.
 ## Durable reading state
 
 The reader stores page, PDF scroll coordinates, zoom or fit mode, rotation, and
-sidebar mode in the client. Sessions are keyed by artifact authority plus logical
-document key, never by a renewable asset URL or generated revision. Consequently,
-an authorized-URL renewal or generated-document rebuild preserves the reading
-state for the same logical document. A workspace PDF's current logical key also
-uses its normalized absolute source path. The authorizing thread remains on the
-source descriptor only for exact asset resolution, so the same path in the same
-environment shares one reader session across threads while identical paths in
-different environments remain isolated. Independent worktrees with different
-paths remain distinct until a later fork feature explicitly maps them.
+sidebar mode in the client. Sessions are keyed by artifact authority, logical
+document key, and the hosting thread (or draft). Asset identity stays independent
+of the viewer's scope: authorized-URL renewal and generated-document rebuilds
+preserve reading state, while two chats viewing the same file can keep different
+positions. A workspace PDF's logical key uses its normalized absolute source
+path; identical paths in different environments remain isolated.
+
+Existing document-wide positions are adopted once when a scoped reader first
+opens. A fork seeds its own reading state from the origin without changing the
+origin's position. New-worktree file paths are remapped from a frozen handoff
+snapshot before the destination viewer mounts. A later restore cannot overwrite
+an already established destination view.
 
 A direct PDF outside a workspace uses the same rule: its environment authority
 plus a hash of its normalized canonical path forms the logical key, while the

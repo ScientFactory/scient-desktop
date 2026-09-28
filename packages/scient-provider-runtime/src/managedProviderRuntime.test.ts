@@ -1,15 +1,19 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Tests exercise the package's private filesystem boundary.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import JSZip from "jszip";
-import { afterEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { ManagedRuntimeArtifact } from "./managedRuntimeArtifact.ts";
 import { makeRuntimeFilesystem } from "./runtimeFilesystem.ts";
+import { tryAcquireManagedRuntimeMutationLock } from "./runtimeMutationLock.ts";
 import {
   ManagedProviderRuntime,
+  ManagedProviderRuntimeBusyError,
+  ManagedProviderRuntimeError,
   managedRuntimeSmokeEnvironment,
   type ManagedProviderRuntimeDependencies,
 } from "./managedProviderRuntime.ts";
@@ -52,7 +56,9 @@ async function makeRuntime(
     readonly smokeFailsAtCall?: number;
     readonly stateCommitFailsAtCall?: number;
     readonly onSmoke?: () => void;
+    readonly onStateCommitted?: (statePath: string) => Promise<void>;
     readonly filesystem?: ManagedProviderRuntimeDependencies["filesystem"];
+    readonly acquireMutationLock?: ManagedProviderRuntimeDependencies["acquireMutationLock"];
   } = {},
 ) {
   const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-provider-runtime-"));
@@ -65,6 +71,7 @@ async function makeRuntime(
   let stateCommitCalls = 0;
   const dependencies: Partial<ManagedProviderRuntimeDependencies> = {
     ...(input.filesystem ? { filesystem: input.filesystem } : {}),
+    ...(input.acquireMutationLock ? { acquireMutationLock: input.acquireMutationLock } : {}),
     now: () => now++,
     download: async ({ destination }) => {
       events.push("download");
@@ -100,6 +107,7 @@ async function makeRuntime(
       const temporary = `${statePath}.${nonce}.tmp`;
       await NodeFSP.writeFile(temporary, `${JSON.stringify(state)}\n`, { flag: "wx" });
       await NodeFSP.rename(temporary, statePath);
+      await input.onStateCommitted?.(statePath);
     },
   };
   const runtime = new ManagedProviderRuntime(
@@ -128,6 +136,17 @@ function statePath(root: string): string {
 
 function activationPath(root: string): string {
   return NodePath.join(privateRoot(root), "activation.json");
+}
+
+function mutationLockPath(root: string): string {
+  return NodePath.join(privateRoot(root), "mutation.lock");
+}
+
+/** The pid of a process that has already exited. */
+async function exitedProcessId(): Promise<number> {
+  const child = NodeChildProcess.spawn(process.execPath, ["-e", ""], { stdio: "ignore" });
+  await new Promise((resolve) => child.once("exit", resolve));
+  return child.pid!;
 }
 
 describe("managed provider runtime smoke environment", () => {
@@ -281,6 +300,68 @@ describe("ManagedProviderRuntime contract", () => {
       "activating",
     ]);
     expect(events).toEqual(["download", "verify", "materialize", "smoke", "commit"]);
+  });
+
+  it("waits for the activation window after smoke testing and before activating", async () => {
+    const { runtime, events } = await makeRuntime();
+    const stages: string[] = [];
+
+    await runtime.install({
+      artifact: artifact("1.0.0"),
+      signal: new AbortController().signal,
+      onProgress: ({ stage }) => stages.push(stage),
+      beforeActivate: async () => {
+        events.push("activation-window");
+        stages.push("window");
+      },
+    });
+
+    expect(events).toEqual([
+      "download",
+      "verify",
+      "materialize",
+      "smoke",
+      "activation-window",
+      "commit",
+    ]);
+    expect(stages.slice(-2)).toEqual(["window", "activating"]);
+  });
+
+  it("does not activate when the activation window is cancelled", async () => {
+    const controller = new AbortController();
+    const { runtime, events } = await makeRuntime();
+    const recipe = artifact("1.0.0");
+
+    await expect(
+      runtime.install({
+        artifact: recipe,
+        signal: controller.signal,
+        beforeActivate: async () => controller.abort(),
+      }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(await runtime.readState()).toBeUndefined();
+    expect(events).not.toContain("commit");
+  });
+
+  it("persists qualified Pi receipts across runtime recreation", async () => {
+    const { root, runtime } = await makeRuntime();
+    const recipe = artifact("2.1.0", {
+      provider: "pi",
+      catalogRevision: "pi:2.1.0:test",
+    });
+
+    await install(runtime, recipe);
+    const recreated = new ManagedProviderRuntime(root, {
+      providerDirectory: "test-provider",
+      displayName: "Test Provider",
+    });
+
+    expect(await recreated.status(recipe)).toMatchObject({
+      installed: true,
+      selected: true,
+      activeVersion: "2.1.0",
+      activeArtifact: { provider: "pi", version: "2.1.0" },
+    });
   });
 
   it("reads legacy state without silently treating it as an explicit managed selection", async () => {
@@ -613,6 +694,218 @@ describe("ManagedProviderRuntime contract", () => {
 
     expect(events).toEqual([]);
     await expect(NodeFSP.access(privateRoot(root))).rejects.toThrow();
+  });
+});
+
+describe("ManagedProviderRuntime concurrent reconciliation", () => {
+  const identity = { providerDirectory: "test-provider", displayName: "Test Provider" };
+  const release = (version: string) =>
+    artifact(version, { provider: "pi", catalogRevision: `pi:${version}:test` });
+
+  function replacementEntries(launchPath: string) {
+    const targetDirectory = NodePath.dirname(launchPath);
+    return NodeFSP.readdir(NodePath.dirname(targetDirectory)).then((entries) =>
+      entries.filter((entry) =>
+        entry.startsWith(`${NodePath.basename(targetDirectory)}.replaced-`),
+      ),
+    );
+  }
+
+  it("keeps a same-version repair when another runtime object reconciles during qualification", async () => {
+    const { root, runtime } = await makeRuntime();
+    const recipe = release("2.1.0");
+    await install(runtime, recipe);
+    // Another driver instance for the same provider builds its own runtime.
+    const concurrent = new ManagedProviderRuntime(root, identity);
+
+    const repaired = await runtime.install({
+      artifact: recipe,
+      signal: new AbortController().signal,
+      qualify: async () => {
+        await concurrent.reconcile(recipe);
+        await concurrent.reconcile();
+      },
+    });
+
+    expect(repaired).toMatchObject({ installed: true, activeVersion: "2.1.0" });
+    expect(await NodeFSP.readFile(repaired.launchPath, "utf8")).toBe("install 2");
+    expect(await replacementEntries(repaired.launchPath)).toEqual([]);
+    await expect(NodeFSP.access(activationPath(root))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("keeps an upgrade when another runtime object reconciles during qualification", async () => {
+    const { root, runtime } = await makeRuntime();
+    const previous = await install(runtime, release("2.1.0"));
+    const next = release("2.2.0");
+    const concurrent = new ManagedProviderRuntime(root, identity);
+
+    const upgraded = await runtime.install({
+      artifact: next,
+      signal: new AbortController().signal,
+      qualify: async () => {
+        await concurrent.reconcile(next);
+        await concurrent.reconcile(release("2.1.0"));
+      },
+    });
+
+    expect(upgraded).toMatchObject({
+      installed: true,
+      activeVersion: "2.2.0",
+      previousVersion: "2.1.0",
+    });
+    expect(upgraded.launchPath).toBe(runtime.launchPath(next));
+    expect(await NodeFSP.readFile(upgraded.launchPath, "utf8")).toBe("install 2");
+    expect(await NodeFSP.readFile(previous.launchPath, "utf8")).toBe("install 1");
+    expect(await concurrent.status(next)).toMatchObject({
+      installed: true,
+      activeVersion: "2.2.0",
+    });
+  });
+
+  it("refuses a second concurrent installation instead of interleaving two activations", async () => {
+    const { root, runtime } = await makeRuntime();
+    const recipe = release("2.1.0");
+    await install(runtime, recipe);
+    const concurrent = new ManagedProviderRuntime(root, identity);
+    let secondInstall: Promise<unknown> | undefined;
+
+    await runtime.install({
+      artifact: recipe,
+      signal: new AbortController().signal,
+      qualify: async () => {
+        secondInstall = concurrent.install({
+          artifact: release("2.2.0"),
+          signal: new AbortController().signal,
+        });
+        await secondInstall.catch(() => undefined);
+        await expect(concurrent.remove()).rejects.toBeInstanceOf(ManagedProviderRuntimeBusyError);
+      },
+    });
+
+    await expect(secondInstall).rejects.toBeInstanceOf(ManagedProviderRuntimeBusyError);
+    expect(await runtime.status(recipe)).toMatchObject({
+      installed: true,
+      activeVersion: "2.1.0",
+    });
+    expect(await NodeFSP.readFile(runtime.launchPath(recipe), "utf8")).toBe("install 2");
+    // The lock is released once the owner finishes.
+    expect((await install(runtime, release("2.2.0"))).activeVersion).toBe("2.2.0");
+  });
+
+  it("recovers an interrupted activation whose owning process has exited", async () => {
+    const { root, runtime } = await makeRuntime();
+    const recipe = release("2.1.0");
+    const installed = await install(runtime, recipe);
+    const targetDirectory = NodePath.dirname(installed.launchPath);
+    const replacement = `${targetDirectory}.replaced-99`;
+    await NodeFSP.rename(targetDirectory, replacement);
+    await NodeFSP.mkdir(targetDirectory, { recursive: true });
+    await NodeFSP.writeFile(installed.launchPath, "unqualified replacement", { mode: 0o755 });
+    await NodeFSP.writeFile(
+      activationPath(root),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        activationId: "interrupted-activation",
+        destinationRelativePath: NodePath.relative(privateRoot(root), targetDirectory),
+        replacedRelativePath: NodePath.relative(privateRoot(root), replacement),
+      })}\n`,
+    );
+    await NodeFSP.writeFile(
+      mutationLockPath(root),
+      `${JSON.stringify({ schemaVersion: 1, pid: await exitedProcessId(), processId: "gone", token: "stale" })}\n`,
+    );
+
+    await new ManagedProviderRuntime(root, identity).reconcile(recipe);
+
+    expect(await NodeFSP.readFile(installed.launchPath, "utf8")).toBe("install 1");
+    await expect(NodeFSP.access(replacement)).rejects.toThrow();
+    await expect(NodeFSP.access(mutationLockPath(root))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("leaves an activation alone while another live process owns the runtime", async () => {
+    const { root, runtime } = await makeRuntime();
+    const recipe = release("2.1.0");
+    const installed = await install(runtime, recipe);
+    const targetDirectory = NodePath.dirname(installed.launchPath);
+    const journal = `${JSON.stringify({
+      schemaVersion: 1,
+      activationId: "in-flight-activation",
+      destinationRelativePath: NodePath.relative(privateRoot(root), targetDirectory),
+      replacedRelativePath: null,
+    })}\n`;
+    await NodeFSP.writeFile(activationPath(root), journal);
+    const lock = `${JSON.stringify({ schemaVersion: 1, pid: process.ppid, processId: "other", token: "live" })}\n`;
+    await NodeFSP.writeFile(mutationLockPath(root), lock);
+
+    await new ManagedProviderRuntime(root, identity).reconcile(recipe);
+
+    expect(await NodeFSP.readFile(installed.launchPath, "utf8")).toBe("install 1");
+    expect(await NodeFSP.readFile(activationPath(root), "utf8")).toBe(journal);
+    expect(await NodeFSP.readFile(mutationLockPath(root), "utf8")).toBe(lock);
+  });
+
+  it("takes over a lock whose pid was reused by a live process once its heartbeat is overdue", async () => {
+    const { root, runtime } = await makeRuntime();
+    const recipe = release("2.1.0");
+    await install(runtime, recipe);
+    await NodeFSP.writeFile(
+      mutationLockPath(root),
+      `${JSON.stringify({ schemaVersion: 1, pid: process.ppid, processId: "earlier", token: "reused", heartbeatIntervalMs: 15_000 })}\n`,
+    );
+    // Last refreshed long ago (2001, in seconds since the epoch).
+    await NodeFSP.utimes(mutationLockPath(root), 1_000_000_000, 1_000_000_000);
+
+    expect((await install(runtime, release("2.2.0"))).activeVersion).toBe("2.2.0");
+    await expect(NodeFSP.access(mutationLockPath(root))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+});
+
+describe("ManagedProviderRuntime mutation lock ownership", () => {
+  it("stops an installation and restores the previous runtime once another owner takes its lock over", async () => {
+    const { root, runtime } = await makeRuntime({
+      acquireMutationLock: (lockPath) =>
+        tryAcquireManagedRuntimeMutationLock(lockPath, { heartbeatIntervalMs: 20 }),
+    });
+    const previous = await install(runtime, artifact("1.0.0"));
+    // Another live process that judged this owner's heartbeat overdue.
+    const takeover = `${JSON.stringify({ schemaVersion: 1, pid: process.ppid, processId: "other", token: "takeover", heartbeatIntervalMs: 60_000 })}\n`;
+
+    const installation = runtime.install({
+      artifact: artifact("1.0.0"),
+      signal: new AbortController().signal,
+      qualify: async ({ signal }) => {
+        await NodeFSP.rm(mutationLockPath(root));
+        await NodeFSP.writeFile(mutationLockPath(root), takeover);
+        await expect.poll(() => signal.aborted, { timeout: 2_000 }).toBe(true);
+      },
+    });
+
+    await expect(installation).rejects.toBeInstanceOf(ManagedProviderRuntimeError);
+    await expect(installation).rejects.toThrow(/took over/);
+    expect(await NodeFSP.readFile(previous.launchPath, "utf8")).toBe("install 1");
+    expect(await NodeFSP.readFile(mutationLockPath(root), "utf8")).toBe(takeover);
+  });
+
+  it("keeps a successful installation when its lock cannot be released", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    let lockedRoot: string | undefined;
+    const { runtime } = await makeRuntime({
+      // The runtime directory turns read-only once the new version is committed.
+      onStateCommitted: async (statePath) => {
+        lockedRoot = NodePath.dirname(statePath);
+        await NodeFSP.chmod(lockedRoot, 0o500);
+      },
+    });
+    try {
+      await expect(install(runtime, artifact("1.0.0"))).resolves.toMatchObject({
+        installed: true,
+        activeVersion: "1.0.0",
+      });
+      expect(warn).toHaveBeenCalled();
+    } finally {
+      if (lockedRoot) await NodeFSP.chmod(lockedRoot, 0o700);
+      warn.mockRestore();
+    }
   });
 });
 

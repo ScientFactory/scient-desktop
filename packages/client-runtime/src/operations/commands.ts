@@ -44,6 +44,9 @@ export type UnpinThreadInput = CommandInput<"thread.unpin">;
 export type ReorderPinnedThreadInput = CommandInput<"thread.pin.reorder">;
 export type SetThreadAutoSettleInput = CommandInput<"thread.auto-settle.set">;
 export type ReorderActiveThreadInput = CommandInput<"thread.active.reorder">;
+// SCIENT-FORK:START
+export type SetThreadSectionInput = CommandInput<"thread.section.set">;
+// SCIENT-FORK:END
 export type UpdateThreadMetadataInput = CommandInput<"thread.meta.update">;
 export type LinkThreadPullRequestInput = CommandInput<"thread.pull-request.link">;
 export type UnlinkThreadPullRequestInput = CommandInput<"thread.pull-request.unlink">;
@@ -259,6 +262,18 @@ export const reorderActiveThread: (input: ReorderActiveThreadInput) => CommandEf
     commandId: yield* commandId(input),
   });
 });
+
+// SCIENT-FORK:START
+export const setThreadSection: (input: SetThreadSectionInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.setThreadSection",
+)(function* (input) {
+  return yield* dispatch({
+    ...input,
+    type: "thread.section.set",
+    commandId: yield* commandId(input),
+  });
+});
+// SCIENT-FORK:END
 
 export const updateThreadMetadata: (input: UpdateThreadMetadataInput) => CommandEffect = Effect.fn(
   "EnvironmentCommands.updateThreadMetadata",
