@@ -138,8 +138,9 @@ treated as a complete native conversation.
 
 `POST /api/scient/conversation-export/v1/prepare` returns the title, format capabilities for this
 host, counts, whether a turn is running, and message choices for the range picker. It carries no
-exported content. `POST /api/scient/conversation-export/v1/export` produces the export; both require
-`orchestration:read`.
+full export, but its range-picker choices include bounded excerpts of message text and should be
+treated as conversation content. `POST /api/scient/conversation-export/v1/export` produces the export;
+both require `orchestration:read`.
 
 - **File delivery** writes `<state>/scient/conversation-exports/<exportId>/<name>.md` or `.zip`
   (`name.md` plus `attachments/NN-name`, written with `yazl`). The name comes from the title and is
