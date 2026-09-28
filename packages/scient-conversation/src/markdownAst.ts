@@ -111,10 +111,6 @@ export function literalRanges(root: Root): ReadonlyArray<SourceRange> {
   return ranges;
 }
 
-export function insideAny(offset: number, ranges: ReadonlyArray<SourceRange>): boolean {
-  return ranges.some((range) => offset >= range.start && offset < range.end);
-}
-
 /** The longest run of `character` in `text`, for choosing a fence that cannot close early. */
 export function longestRun(text: string, character: string): number {
   let longest = 0;

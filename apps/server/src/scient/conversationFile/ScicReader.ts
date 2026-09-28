@@ -473,6 +473,11 @@ async function readPackage(
     return reject("corrupt-archive", "The file is not a readable ZIP archive.");
   }
   try {
+    // yauzl reads the (possibly ZIP64) central-directory count when opening.
+    // It emits at most that many entries, so fail before retaining any of them.
+    if (zip.entryCount > SCIC_MAX_ENTRIES) {
+      reject("too-many-entries", `The file has more than ${SCIC_MAX_ENTRIES} entries.`);
+    }
     let listed: ReadonlyArray<Yauzl.Entry>;
     try {
       listed = await listEntries(zip);
@@ -753,6 +758,9 @@ export const inspectScicExpandedBytes = (
         return reject("corrupt-archive", "The file is not a readable ZIP archive.");
       }
       try {
+        if (zip.entryCount > SCIC_MAX_ENTRIES) {
+          reject("too-many-entries", `The file has more than ${SCIC_MAX_ENTRIES} entries.`);
+        }
         let listed: ReadonlyArray<Yauzl.Entry>;
         try {
           listed = await listEntries(zip);

@@ -19,7 +19,6 @@ import { normalizeScientMathDelimiters } from "./chatMathDelimiters.ts";
 import {
   applyEdits,
   fencedBlock,
-  insideAny,
   literalRanges,
   nodeRange,
   parseMarkdown,
@@ -291,13 +290,21 @@ function markerEscapeEdits(
   root: Root,
   skip: ReadonlyArray<SourceEdit>,
 ): SourceEdit[] {
-  const literal = literalRanges(root);
+  const literal = literalRanges(root).toSorted((left, right) => left.start - right.start);
+  const skippedStarts = new Set(
+    skip.filter((edit) => edit.end === edit.start + 1).map((edit) => edit.start),
+  );
   const edits: SourceEdit[] = [];
+  let literalIndex = 0;
   let position = source.indexOf(STRUCTURE_MARKER_PREFIX);
   while (position >= 0) {
+    while (literalIndex < literal.length && literal[literalIndex]!.end <= position) {
+      literalIndex += 1;
+    }
+    const range = literal[literalIndex];
     if (
-      !insideAny(position, literal) &&
-      !skip.some((edit) => edit.start === position && edit.end === position + 1)
+      !(range && position >= range.start && position < range.end) &&
+      !skippedStarts.has(position)
     ) {
       edits.push({ start: position, end: position + 1, text: "&lt;" });
     }

@@ -52,6 +52,12 @@ describe("sniffMediaType", () => {
     expect(sniffMediaType(new TextEncoder().encode("GIF89a..."))).toBe("image/gif");
     expect(sniffMediaType(new TextEncoder().encode("%PDF-1.7"))).toBe("application/pdf");
     expect(sniffMediaType(SVG_BYTES)).toBe("image/svg+xml");
+    const prolog = `<?xml version="1.0"?>\n${"<!-- note -->\n".repeat(20)}<!DOCTYPE svg>\n<!-- end -->\n`;
+    expect(sniffMediaType(new TextEncoder().encode(`${prolog}<svg></svg>`))).toBe("image/svg+xml");
+    expect(sniffMediaType(new TextEncoder().encode(`${prolog}<not-svg/>`))).toBeNull();
+    expect(
+      sniffMediaType(new TextEncoder().encode(`${"<!-- x -->".repeat(50)}<not-svg/>`)),
+    ).toBeNull();
     expect(sniffMediaType(new TextEncoder().encode("FAKE-SECRET-TEXT"))).toBeNull();
   });
 

@@ -25,6 +25,18 @@ describe("message bodies", () => {
     expect(written.markdown).toBe("&lt;!-- scient:message x -->\n\n`<!-- scient:inline`");
   });
 
+  it("handles many user-authored marker lookalikes without changing their text", () => {
+    const count = 512;
+    const body = Array.from(
+      { length: count },
+      (_, index) => `<!-- scient:message ${index} -->`,
+    ).join("\n\n");
+    const written = writeMessageBody(body, { ...OPTIONS, rawHtml: "literal" });
+    expect(written.containedAsLiteral).toBe(false);
+    expect(written.markdown.match(/&lt;!-- scient:message/g)?.length).toBe(count);
+    expect(written.markdown).toContain(`&lt;!-- scient:message ${count - 1} -->`);
+  });
+
   it("reverses only the namespace when reading", () => {
     const body = "[a][ref] and [^n]\n\n[ref]: https://example.org\n\n[^n]: note";
     const written = writeMessageBody(body, OPTIONS).markdown;

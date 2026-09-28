@@ -62,6 +62,39 @@ const MAX_IMAGE_WARNINGS = 20;
 
 export type ImageMediaType = "image/png" | "image/jpeg" | "image/gif" | "image/svg+xml";
 
+/** Sniffs only a bounded XML prolog. Each cursor move is forward-only. */
+function looksLikeSvg(head: string): boolean {
+  let at = 0;
+  const skipWhitespace = () => {
+    while (at < head.length && /\s/u.test(head[at]!)) at += 1;
+  };
+  const skipComments = (): boolean => {
+    while (head.startsWith("<!--", at)) {
+      const end = head.indexOf("-->", at + 4);
+      if (end < 0) return false;
+      at = end + 3;
+      skipWhitespace();
+    }
+    return true;
+  };
+  skipWhitespace();
+  if (head.slice(at, at + 5).toLowerCase() === "<?xml") {
+    const end = head.indexOf(">", at + 5);
+    if (end < 0) return false;
+    at = end + 1;
+    skipWhitespace();
+  }
+  if (!skipComments()) return false;
+  if (head.slice(at, at + 13).toLowerCase() === "<!doctype svg") {
+    const end = head.indexOf(">", at + 13);
+    if (end < 0) return false;
+    at = end + 1;
+    skipWhitespace();
+  }
+  if (!skipComments()) return false;
+  return head.slice(at, at + 4).toLowerCase() === "<svg" && /[\s>]/u.test(head[at + 4] ?? "");
+}
+
 /** What the leading bytes are, independent of any name or declared type. */
 export function sniffMediaType(bytes: Uint8Array): ImageMediaType | "application/pdf" | null {
   const starts = (signature: ReadonlyArray<number>) =>
@@ -74,13 +107,7 @@ export function sniffMediaType(bytes: Uint8Array): ImageMediaType | "application
   const head = new TextDecoder("utf-8", { fatal: false })
     .decode(bytes.subarray(0, 4096))
     .replace(/^﻿/u, "");
-  if (
-    /^\s*(?:<\?xml[^>]*>\s*)?(?:<!--[\s\S]*?-->\s*)*(?:<!DOCTYPE svg[^>]*>\s*)?(?:<!--[\s\S]*?-->\s*)*<svg[\s>]/iu.test(
-      head,
-    )
-  ) {
-    return "image/svg+xml";
-  }
+  if (looksLikeSvg(head)) return "image/svg+xml";
   return null;
 }
 

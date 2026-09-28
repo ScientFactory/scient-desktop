@@ -513,6 +513,15 @@ describe("the .scic reader", () => {
 
     it.effect("too many entries", () =>
       Effect.gen(function* () {
+        // A ZIP64 or forged directory count must be rejected before listing
+        // entry objects. This tiny archive advertises more than the limit.
+        const advertised = Buffer.from(yield* packageZip());
+        const eocd = advertised.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+        expect(eocd).toBeGreaterThanOrEqual(0);
+        advertised.writeUInt16LE(SCIC_MAX_ENTRIES + 1, eocd + 8);
+        advertised.writeUInt16LE(SCIC_MAX_ENTRIES + 1, eocd + 10);
+        yield* expectRejected(advertised, "too-many-entries");
+
         const extra = Array.from({ length: SCIC_MAX_ENTRIES }, (_, index) => ({
           path: `extra/${index}`,
           bytes: new Uint8Array(0),
