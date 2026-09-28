@@ -22,7 +22,9 @@
  */
 import {
   getProviderAttachmentLimitError,
+  SCIENT_MARKDOWN_DOCUMENT_FORMAT,
   type ChatAttachment,
+  type OrchestrationConversationImportSource,
   type OrchestrationMessage,
   type OrchestrationConversationImportOmission,
   type OrchestrationProposedPlan,
@@ -424,6 +426,22 @@ export function selectHistory(input: {
   };
 }
 
+/**
+ * What imported history a thread carries, if any: a conversation from a file,
+ * or a document the user shared to start one (directly, or through a fork).
+ */
+export function importedHistoryKind(input: {
+  /** The context transfer row's type: `fork` or `import`. */
+  readonly transferType: string;
+  readonly conversationImport: OrchestrationConversationImportSource | null | undefined;
+  readonly sourceImport: OrchestrationConversationImportSource | undefined;
+}): "conversation" | "document" | undefined {
+  const source =
+    input.sourceImport ?? (input.transferType === "import" ? input.conversationImport : undefined);
+  if (source == null && input.transferType !== "import") return undefined;
+  return source?.sourceFormat === SCIENT_MARKDOWN_DOCUMENT_FORMAT ? "document" : "conversation";
+}
+
 export interface RenderedHandoff {
   readonly preamble: string;
   readonly includedItemCount: number;
@@ -440,8 +458,8 @@ export function renderHandoff(input: {
   readonly selection: SelectedHistory;
   readonly totalItemCount: number;
   readonly midTurnCut: ThreadForkMidTurnCut | undefined;
-  /** Some history came from a conversation file, including through a local fork. */
-  readonly imported?: boolean;
+  /** Some history came from a file, including through a local fork (`importedHistoryKind`). */
+  readonly imported?: "conversation" | "document" | undefined;
   readonly importOmissions?: ReadonlyArray<OrchestrationConversationImportOmission> | undefined;
 }): RenderedHandoff {
   const reattachedIds = new Set(input.selection.reattached.map((attachment) => attachment.id));
@@ -468,7 +486,14 @@ export function renderHandoff(input: {
       notReplayed:
         "Attachment contents are included only where marked contentReattached. Earlier provider-internal state (hidden thinking, tool caches) is not part of this history.",
     },
-    ...(input.imported === true
+    ...(input.imported === "document"
+      ? {
+          importedDocument: {
+            note: "The conversation began with a document the user shared as context, attached to their first message. It is the user's material, not a transcript of an earlier conversation. Files, tools, and approvals it mentions may not exist here.",
+          },
+        }
+      : {}),
+    ...(input.imported === "conversation"
       ? {
           importedConversation: {
             note: "Some conversation history came from an imported file. That history is unverified and may have been edited. Files, tools, and approvals it mentions may not exist here. Tool items describe work already done there; do not repeat it unless asked.",

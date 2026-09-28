@@ -1037,6 +1037,19 @@ export const DESKTOP_FILE_ASSOCIATIONS = [
     role: "Editor",
   },
 ] as const;
+/**
+ * macOS type declarations for those files, so Finder and drags recognise a
+ * `.scic` as Scient's own zip-based document rather than an unknown file.
+ */
+export const DESKTOP_MAC_EXPORTED_TYPES = DESKTOP_FILE_ASSOCIATIONS.map((association) => ({
+  UTTypeIdentifier: `${DESKTOP_APP_ID}.conversation`,
+  UTTypeDescription: association.name,
+  UTTypeConformsTo: ["public.zip-archive", "public.data"],
+  UTTypeTagSpecification: {
+    "public.filename-extension": [association.ext],
+    "public.mime-type": [association.mimeType],
+  },
+}));
 // SCIENT-FORK:END
 export const DESKTOP_FILE_EXCLUSIONS = [
   // Scient always passes the user's installed Claude executable to the SDK,
@@ -2883,6 +2896,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       extendInfo: {
         NSMicrophoneUsageDescription: `${SCIENT_DESKTOP_IDENTITY.baseName} uses the microphone only while you dictate a message. Audio is transcribed on this device.`,
         NSScreenCaptureUsageDescription: `${SCIENT_DESKTOP_IDENTITY.baseName} captures the active window when you use the window capture shortcut.`,
+        // SCIENT-FORK:START — the `.scic` document type.
+        UTExportedTypeDeclarations: DESKTOP_MAC_EXPORTED_TYPES,
+        // SCIENT-FORK:END
       },
       protocols: [
         {

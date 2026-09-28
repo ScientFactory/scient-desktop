@@ -183,7 +183,8 @@ and the client prints and publishes it as described in
 The portable importer uses staged files, a bounded quota, a durable attempt journal, an
 idempotent command receipt, and rollback of exactly the files it owns if the import does not
 commit. Fork, revert, and provider continuation operate on the imported thread's inherited
-history; they do not adopt the sender's provider session.
+history; they do not adopt the sender's provider session. [Import](#import) describes the
+staging, limits, and failure handling.
 
 Word export of a conversation or saved project Markdown file asks the server for the Mermaid fences
 in the selected snapshot or saved revision. The browser renders each fence to a bounded PNG and
@@ -195,6 +196,60 @@ server-only Word caller that supplies no capture retains the labeled source fall
 The two Word export POST routes cap request bodies at 12 MiB before JSON parsing; the PNG budget is
 2 MiB per diagram and 8 MiB in total. An oversized chunked request may have its connection reset
 by the Node HTTP adapter as it stops reading the body.
+
+## Import
+
+The contract between staging and the importer is the header of
+`apps/server/src/scient/conversationImport/ConversationImporter.ts`. In practice:
+
+- **Upload.** `createUpload` admits a `.scic` of up to 768 MiB or a `.md` of up to 16 MiB against
+  the staging quota (2 GiB for all imports together) and at most eight live imports, and returns a
+  signed, single-use upload URL valid for 10 minutes. A receive ends after 60 seconds without bytes,
+  or at a deadline of 10 minutes plus the declared size at 256 KiB/s; a stalled, slow, short, or
+  cancelled upload each gets its own message. Cancelling during an upload stops the receive and
+  waits for it: the reservation stays counted until the stream has stopped, the file is closed, and
+  the staging area is removed. An area that cannot be removed yet (a file still open on Windows)
+  stays counted until the sweep removes it.
+- **Validation (preview).** Validations and imports run one at a time. The quota covers uploaded
+  packages and what validation stages; the one package being validated may expand beyond it by
+  at most its own expanded size (720 MiB). The reader decodes `conversation.json` (at most
+  128 MiB) once, compares its canonical form with the JSON structurally, and hashes the canonical
+  text as it writes it. A ready import keeps only its preview facts and attachment list in memory;
+  its snapshot waits in the staging area byte for byte and is read back, digest checked, when it
+  is confirmed. The opt-in benchmark
+  (`SCIENT_IMPORT_BENCH=1`, `ConversationImportBenchmark.test.ts`) validates a 122 MiB snapshot in
+  about half a second, with the process growing by about 0.6 GB while it runs (macOS arm64).
+- **Record limit.** One import writes at most 5,000 records (messages, reasoning, work-log entries,
+  plans, and answers) in its single `thread.conversation.import` transaction; a larger file is
+  refused at preview with a message that suggests exporting without the work log or up to an
+  earlier message. The limit comes from the benchmark's work-log-heavy import on an on-disk
+  database: about 3.5 s at 5,000 records, 14 s at 10,000, and 65 s at 20,000.
+- **Refusals and retries.** A refused file ends the import and removes its area; every rejection
+  reason has its own short message, and a reported entry name is bounded, trimmed, and omitted when
+  blank. Failures a retry may clear (no room yet, or an operating-system error such as a file
+  that cannot be opened) keep the upload, so the next preview validates it again. Once a file is
+  validated its package is removed; a package that cannot be removed yet stays counted against the
+  quota until the sweep removes it.
+- **Confirm.** Attachments are published into the attachment store before the thread commits, each
+  flushed to disk before its rename and its folder after, so a published file survives a power
+  loss. The command's receipt then decides the outcome, as the contract describes.
+- **Partial Markdown.** Importing only the clean messages of damaged Scient Markdown counts each
+  damaged range whose content was left out as a skipped record (a foreign marker kept as text, or
+  a gap in the message numbers, is not one), so the thread's banner, provider handoff, and a
+  re-export keep the gap. An ordinary Markdown document is imported as the first message's
+  attachment, and the provider handoff says the user shared a document, not an imported
+  transcript.
+- **Continuation.** The first message after an import carries a budgeted handoff of the history,
+  delivered again only when the provider thread is replaced. The server reads the thread's full
+  history only for a turn that must carry it.
+- **Opened files (desktop).** Scient registers `.scic` with the operating system, and on macOS
+  exports its document type (`com.scientfactory.scient.conversation`, conforming to
+  `public.zip-archive`). The desktop captures macOS `open-file` from module load and holds opened
+  paths until startup can take them, so a double-click while Scient is closed is not lost. The
+  renderer uploads an opened file by token; the desktop asks before sending it to a server it does
+  not manage, and `cancelOpenedConversationFileUpload` aborts an upload in progress or keeps one
+  from starting. Results distinguish a declined send (`declined`), a cancel (`cancelled`), and a
+  server refusal (`rejected`).
 
 ## Dialog
 

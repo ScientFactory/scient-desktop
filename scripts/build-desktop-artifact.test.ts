@@ -2013,6 +2013,18 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const mac = config.mac as Record<string, unknown>;
       const extendInfo = mac.extendInfo as Record<string, unknown>;
       assert.match(String(extendInfo.NSMicrophoneUsageDescription), /dictate a message/u);
+      // Finder and drags recognise a `.scic` as Scient's zip-based document.
+      assert.deepStrictEqual(extendInfo.UTExportedTypeDeclarations, [
+        {
+          UTTypeIdentifier: "com.scientfactory.scient.conversation",
+          UTTypeDescription: "Scient Conversation",
+          UTTypeConformsTo: ["public.zip-archive", "public.data"],
+          UTTypeTagSpecification: {
+            "public.filename-extension": ["scic"],
+            "public.mime-type": ["application/vnd.scient.conversation+zip"],
+          },
+        },
+      ]);
       assert.match(String(mac.entitlements), /scripts[\\/]entitlements\.mac\.plist$/u);
       assert.equal(mac.entitlementsInherit, mac.entitlements);
       assert.include(

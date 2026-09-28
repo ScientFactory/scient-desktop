@@ -4,17 +4,20 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { afterEach, describe, expect, it } from "@effect/vitest";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import {
+  ConversationImportRejection,
   SCIC_MEDIA_TYPE,
   type ConversationImportId,
   type ConversationImportRejectionReason,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Schema from "effect/Schema";
 import * as yazl from "yazl";
 
 import { conversationContentDigest } from "../conversationImport/ConversationImporter.ts";
-import { inspectScicExpandedBytes, readScicPackage, stagedAttachmentFile } from "./ScicReader.ts";
+import { readScicPackage, reportedEntryName, stagedAttachmentFile } from "./ScicReader.ts";
 import {
   PDF,
   PNG,
@@ -144,6 +147,7 @@ const read = Effect.fnUntraced(function* (bytes: Uint8Array, directory = tempora
   const packagePath = NodePath.join(directory, "package.scic");
   NodeFS.writeFileSync(packagePath, bytes);
   const attachmentsDirectory = NodePath.join(directory, "attachments");
+  const snapshotPath = NodePath.join(directory, "conversation.json");
   NodeFS.mkdirSync(attachmentsDirectory);
   const exit = yield* Effect.exit(
     readScicPackage({
@@ -152,15 +156,16 @@ const read = Effect.fnUntraced(function* (bytes: Uint8Array, directory = tempora
       packageSha256: sha256Digest(bytes),
       packageBytes: bytes.byteLength,
       attachmentsDirectory,
+      snapshotPath,
     }),
   );
-  return { exit, attachmentsDirectory };
+  return { exit, attachmentsDirectory, snapshotPath };
 });
 
 const expectRejected = Effect.fnUntraced(function* (
   bytes: Uint8Array,
   reason: ConversationImportRejectionReason,
-  entry?: string,
+  entry?: string | null,
 ) {
   const { exit } = yield* read(bytes);
   if (Exit.isSuccess(exit)) throw new Error(`Expected ${reason}, but the package validated.`);
@@ -170,7 +175,34 @@ const expectRejected = Effect.fnUntraced(function* (
   if (entry !== undefined) expect(error?._tag === "ScicRejection" ? error.entry : null).toBe(entry);
 });
 
+// What a client decodes: a trimmed, non-empty name of at most 512 units, or null.
+const decodeRejection = Schema.decodeExit(ConversationImportRejection);
+
 const packageZip = (pkg = makePackage()) => zipBytes(pkg.files);
+
+if (HostProcessPlatform.defaultValue() !== "win32" && process.getuid?.() !== 0) {
+  it.effect("reports a package it cannot open as a read error, not a damaged file", () =>
+    Effect.gen(function* () {
+      const bytes = yield* packageZip();
+      const directory = temporaryDirectory();
+      const packagePath = NodePath.join(directory, "package.scic");
+      NodeFS.writeFileSync(packagePath, bytes);
+      NodeFS.chmodSync(packagePath, 0o000);
+      NodeFS.mkdirSync(NodePath.join(directory, "attachments"));
+      const error = yield* Effect.flip(
+        readScicPackage({
+          importId: IMPORT_ID,
+          packagePath,
+          packageSha256: sha256Digest(bytes),
+          packageBytes: bytes.byteLength,
+          attachmentsDirectory: NodePath.join(directory, "attachments"),
+        }),
+      );
+      NodeFS.chmodSync(packagePath, 0o600);
+      expect(error._tag).toBe("ScicReadError");
+    }),
+  );
+}
 
 it.effect("reports a staged-file write error without an unhandled stream error", () =>
   Effect.gen(function* () {
@@ -190,32 +222,6 @@ it.effect("reports a staged-file write error without an unhandled stream error",
       }),
     );
     expect(error._tag).toBe("ScicReadError");
-  }),
-);
-
-it.effect("refuses expansion beyond the admitted central-directory size", () =>
-  Effect.gen(function* () {
-    const bytes = yield* packageZip();
-    const directory = temporaryDirectory();
-    const packagePath = NodePath.join(directory, "package.scic");
-    const attachmentsDirectory = NodePath.join(directory, "attachments");
-    NodeFS.writeFileSync(packagePath, bytes);
-    NodeFS.mkdirSync(attachmentsDirectory);
-    const expanded = yield* inspectScicExpandedBytes(packagePath);
-    expect(expanded).toBeGreaterThan(1);
-    const error = yield* Effect.flip(
-      readScicPackage({
-        importId: IMPORT_ID,
-        packagePath,
-        packageSha256: sha256Digest(bytes),
-        packageBytes: bytes.byteLength,
-        attachmentsDirectory,
-        maxExpandedBytes: expanded - 1,
-      }),
-    );
-    expect(error._tag).toBe("ScicRejection");
-    if (error._tag === "ScicRejection") expect(error.reason).toBe("package-too-large");
-    expect(NodeFS.readdirSync(attachmentsDirectory)).toEqual([]);
   }),
 );
 
@@ -358,10 +364,14 @@ describe("the .scic reader", () => {
   it.effect("round-trips a package to an equal snapshot and byte-identical attachments", () =>
     Effect.gen(function* () {
       const pkg = makePackage();
-      const { exit, attachmentsDirectory } = yield* read(yield* zipBytes(pkg.files));
+      const { exit, attachmentsDirectory, snapshotPath } = yield* read(yield* zipBytes(pkg.files));
       if (Exit.isFailure(exit)) throw new Error(String(exit.cause));
       const validated = exit.value;
       expect(encodeSnapshot(validated.snapshot)).toEqual(encodeSnapshot(pkg.snapshot));
+      // The verified conversation.json is staged byte for byte.
+      expect(new Uint8Array(NodeFS.readFileSync(snapshotPath))).toEqual(
+        pkg.files.find((file) => file.path === SCIC_SNAPSHOT_ENTRY)!.bytes,
+      );
       expect(validated.package).toMatchObject({
         exportId: "7f3c9a2e41b8",
         sourceThreadId: "thread-1",
@@ -623,6 +633,30 @@ describe("the .scic reader", () => {
           "undeclared-entry",
           "notes.txt",
         );
+      }),
+    );
+
+    it.effect("reports entry names that always fit the rejection contract", () =>
+      Effect.gen(function* () {
+        // A name of spaces only is reported as no name at all.
+        yield* expectRejected(
+          yield* zipBytes([...makePackage().files, { path: "   ", bytes: PNG }]),
+          "undeclared-entry",
+          null,
+        );
+        // A long name is cut at 512 units, never inside a surrogate pair, and trimmed.
+        const long = `${"a".repeat(509)} b😀c`;
+        const entry = `${"a".repeat(509)} b`;
+        yield* expectRejected(
+          yield* zipBytes([...makePackage().files, { path: long, bytes: PNG }]),
+          "unsafe-path",
+          entry,
+        );
+        for (const name of [entry, reportedEntryName("  \t "), reportedEntryName(long)]) {
+          expect(Exit.isSuccess(decodeRejection({ reason: "undeclared-entry", entry: name }))).toBe(
+            true,
+          );
+        }
       }),
     );
 

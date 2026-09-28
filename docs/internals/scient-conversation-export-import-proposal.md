@@ -664,7 +664,9 @@ Reject:
 - encrypted entries;
 - too many entries, oversized entries, excessive total size, or excessive compression ratio;
 - size or hash mismatches against the manifest, and undeclared extra files;
-- unsupported major schema versions; and
+- unsupported major schema versions;
+- more records than one import command writes (5,000 messages, work-log entries, and other items);
+  and
 - attachment content that contradicts its declared type or the allowed media policy.
 
 Preview shows title, message and attachment counts, source provider/model, omissions, and warnings.

@@ -7,8 +7,14 @@
  * The main process keeps each file's path to itself and gives the renderer an
  * opaque token, its name, and its size. The renderer admits the upload on its
  * server, then asks the main process to stream the file to the signed upload
- * URL, which must be the import upload route. The same preview then opens as
- * for a file picked in the app.
+ * URL, which must be the import upload route, and can cancel that upload. The
+ * same preview then opens as for a file picked in the app.
+ *
+ * macOS delivers the `open-file` of a launch (a double-click while Scient is
+ * closed) before startup has built its services, so `captureConversationFileOpens`
+ * listens from module load and holds paths until `installConversationFileOpening`
+ * takes them; files that arrive before a window exists then wait until the
+ * renderer takes them.
  */
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
@@ -16,6 +22,7 @@ import * as NodePath from "node:path";
 import * as NodeStream from "node:stream";
 
 import {
+  DesktopConversationFileUploadCancelRequest,
   DesktopConversationFileUploadRequest,
   DesktopConversationFileUploadResult,
   DesktopOpenedConversationFile,
@@ -26,7 +33,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import type * as Electron from "electron";
+import * as Electron from "electron";
 
 import * as ElectronApp from "../../electron/ElectronApp.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
@@ -34,6 +41,7 @@ import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import { makeIpcMethod } from "../../ipc/DesktopIpc.ts";
 import {
+  CANCEL_OPENED_CONVERSATION_FILE_UPLOAD_CHANNEL,
   CONVERSATION_FILES_OPENED_CHANNEL,
   TAKE_OPENED_CONVERSATION_FILES_CHANNEL,
   UPLOAD_OPENED_CONVERSATION_FILE_CHANNEL,
@@ -50,7 +58,10 @@ interface OpenedFile extends DesktopOpenedConversationFile {
 interface TakenFile extends OpenedFile {
   readonly expiresAt: number;
   readonly approvedOrigins: Set<string>;
-  uploading: boolean;
+  /** Aborts the upload in progress; null when none is. */
+  upload: AbortController | null;
+  /** The renderer cancelled this file's import: nothing more is sent. */
+  cancelled: boolean;
 }
 
 /** Opened but not yet taken by the renderer. */
@@ -112,7 +123,8 @@ export function takeOpenedConversationFileList(): ReadonlyArray<DesktopOpenedCon
       ...file,
       expiresAt: performance.now() + TAKEN_FILE_LIFETIME_MS,
       approvedOrigins: new Set(),
-      uploading: false,
+      upload: null,
+      cancelled: false,
     });
   }
   return files.map(({ token, fileName, sizeBytes }) => ({ token, fileName, sizeBytes }));
@@ -190,10 +202,13 @@ export async function uploadOpenedConversationFileTo(
     taken.delete(request.token);
     return { _tag: "failed", reason: "file-unavailable" };
   }
-  if (file.uploading) return { _tag: "failed", reason: "file-unavailable" };
+  if (file.cancelled) return { _tag: "failed", reason: "cancelled" };
+  if (file.upload !== null) return { _tag: "failed", reason: "file-unavailable" };
   const target = uploadTarget(request.url, allowedOrigins);
   if (target === null) return { _tag: "failed", reason: "invalid-url" };
-  file.uploading = true;
+  const upload = new AbortController();
+  file.upload = upload;
+  const cancelled = { _tag: "failed", reason: "cancelled" } as const;
   try {
     const stat = await NodeFS.promises.stat(file.path).catch(() => null);
     if (stat === null || !stat.isFile()) return { _tag: "failed", reason: "file-unavailable" };
@@ -204,13 +219,17 @@ export async function uploadOpenedConversationFileTo(
         file.fileName,
         target.plaintextNetwork,
       ).catch(() => false);
-      if (!approved) return { _tag: "failed", reason: "rejected" };
+      if (upload.signal.aborted) return cancelled;
+      if (!approved) return { _tag: "failed", reason: "declined" };
       file.approvedOrigins.add(target.url.origin);
     }
+    if (upload.signal.aborted) return cancelled;
     if (file.expiresAt <= performance.now()) {
       return { _tag: "failed", reason: "file-unavailable" };
     }
-    const source = NodeFS.createReadStream(file.path);
+    // A cancel stops the request and the file read together.
+    const source = NodeFS.createReadStream(file.path, { signal: upload.signal });
+    source.on("error", () => {});
     try {
       const response = await fetchImpl(target.url, {
         method: "POST",
@@ -218,16 +237,30 @@ export async function uploadOpenedConversationFileTo(
         body: NodeStream.Readable.toWeb(source) as ReadableStream,
         duplex: "half",
         redirect: "error",
+        signal: upload.signal,
       } as RequestInit);
+      if (upload.signal.aborted) return cancelled;
       return response.ok ? { _tag: "uploaded" } : { _tag: "failed", reason: "rejected" };
     } finally {
       source.destroy();
     }
   } catch {
-    return { _tag: "failed", reason: "network-failed" };
+    return upload.signal.aborted ? cancelled : { _tag: "failed", reason: "network-failed" };
   } finally {
-    file.uploading = false;
+    file.upload = null;
   }
+}
+
+/**
+ * Cancels an opened file's import: an upload in progress is aborted (request
+ * and file read), and every later upload of the token ends `cancelled`
+ * without sending anything. An unknown token is ignored.
+ */
+export function cancelOpenedConversationFileUploadFor(token: string): void {
+  const file = taken.get(token);
+  if (!file) return;
+  file.cancelled = true;
+  file.upload?.abort();
 }
 
 /** Tells the renderer that files are waiting, and brings Scient forward. */
@@ -240,9 +273,67 @@ const announce = Effect.gen(function* () {
 });
 
 /**
- * Listens for opened files for the life of the app. Registered before the app
- * is ready, because macOS delivers a launch's `open-file` early; files that
- * arrive before a window exists wait until the renderer takes them.
+ * Opened paths on their way to a handler: held, oldest first and at most
+ * `limit`, until one is attached, then handed over as they arrive.
+ */
+export function makeOpenedPathRelay(limit = MAX_PENDING_CONVERSATION_FILES) {
+  const held: string[] = [];
+  let handler: ((path: string) => void) | null = null;
+  return {
+    receive: (path: string) => {
+      if (handler !== null) return handler(path);
+      held.push(path);
+      if (held.length > limit) held.shift();
+    },
+    /** Delivers the held paths, then every later one, until detached. */
+    attach: (next: (path: string) => void) => {
+      handler = next;
+      for (const path of held.splice(0)) next(path);
+      return () => {
+        if (handler === next) handler = null;
+      };
+    },
+  };
+}
+export type OpenedPathRelay = ReturnType<typeof makeOpenedPathRelay>;
+
+const openedPaths = makeOpenedPathRelay();
+
+/** Routes the app's `open-file` for `.scic` files to `relay`; other files keep the default. */
+export function listenForOpenedConversationFiles(
+  app: {
+    readonly on: (
+      event: "open-file",
+      listener: (event: Electron.Event, path: string) => void,
+    ) => unknown;
+  },
+  relay: OpenedPathRelay,
+): void {
+  app.on("open-file", (event, path) => {
+    if (!path.toLowerCase().endsWith(SCIC_FILE_EXTENSION)) return;
+    event.preventDefault();
+    relay.receive(path);
+  });
+}
+
+let capturing = false;
+
+/**
+ * Starts listening for `open-file` at once, synchronously, so a launch's early
+ * event is never missed. Called at module load of the desktop app; idempotent.
+ * Outside Electron's main process (unit tests) there is no app and it does
+ * nothing.
+ */
+export function captureConversationFileOpens(): void {
+  const app = Electron.app as Electron.App | undefined;
+  if (capturing || app === undefined) return;
+  capturing = true;
+  listenForOpenedConversationFiles(app, openedPaths);
+}
+
+/**
+ * Handles opened files for the life of the app: those macOS opened since
+ * module load, later ones, launch arguments, and a second instance's.
  */
 export const installConversationFileOpening = Effect.gen(function* () {
   const electronApp = yield* ElectronApp.ElectronApp;
@@ -253,11 +344,11 @@ export const installConversationFileOpening = Effect.gen(function* () {
       added ? runPromise(announce) : undefined,
     );
   };
-  yield* electronApp.on("open-file", (event: Electron.Event, path: string) => {
-    if (!path.toLowerCase().endsWith(SCIC_FILE_EXTENSION)) return;
-    event.preventDefault();
-    open(path);
-  });
+  captureConversationFileOpens();
+  yield* Effect.acquireRelease(
+    Effect.sync(() => openedPaths.attach(open)),
+    (detach) => Effect.sync(detach),
+  );
   yield* electronApp.on(
     "second-instance",
     (_event: Electron.Event, argv: ReadonlyArray<string>, workingDirectory: string) => {
@@ -272,6 +363,13 @@ export const takeOpenedConversationFiles = makeIpcMethod({
   payload: Schema.Void,
   result: Schema.Array(DesktopOpenedConversationFile),
   handler: () => Effect.sync(takeOpenedConversationFileList),
+});
+
+export const cancelOpenedConversationFileUpload = makeIpcMethod({
+  channel: CANCEL_OPENED_CONVERSATION_FILE_UPLOAD_CHANNEL,
+  payload: DesktopConversationFileUploadCancelRequest,
+  result: Schema.Void,
+  handler: (request) => Effect.sync(() => cancelOpenedConversationFileUploadFor(request.token)),
 });
 
 export const uploadOpenedConversationFile = makeIpcMethod({

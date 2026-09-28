@@ -119,6 +119,7 @@ import { type ClientSettings, type QuitConfirmationMode, SnapShotShortcut } from
 import type { EditorId } from "./editor.ts";
 // SCIENT-FORK:START — conversation files the OS opened with Scient.
 import type {
+  DesktopConversationFileUploadCancelRequest,
   DesktopConversationFileUploadRequest,
   DesktopConversationFileUploadResult,
   DesktopOpenedConversationFile,
@@ -1364,6 +1365,10 @@ export interface DesktopBridge {
   uploadOpenedConversationFile?: (
     request: DesktopConversationFileUploadRequest,
   ) => Promise<DesktopConversationFileUploadResult>;
+  /** Scient: stops an opened file's upload, or keeps it from starting; it ends `cancelled`. */
+  cancelOpenedConversationFileUpload?: (
+    request: DesktopConversationFileUploadCancelRequest,
+  ) => Promise<void>;
   // SCIENT-FORK:END
   getAppBranding: () => DesktopAppBranding | null;
   /** The desktop client's OS platform, read from Electron's preload process. */

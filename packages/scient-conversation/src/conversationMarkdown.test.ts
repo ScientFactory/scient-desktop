@@ -292,6 +292,30 @@ describe("Scient conversation Markdown v1", () => {
       "unknown-role",
       "missing-number",
     ]);
+    // Which issues left content out, and which kept it or found none to keep.
+    expect(parsed.issues.map((issue) => [issue.kind, issue.excluded])).toEqual([
+      ["foreign-marker", true],
+      ["malformed-marker", true],
+      ["unknown-role", true],
+      ["missing-number", false],
+    ]);
+  });
+
+  it("marks a foreign part marker it keeps as text as excluding nothing", () => {
+    const { markdown } = roundTrip([
+      message({ id: "m1", role: "user", text: "one" }),
+      message({ id: "m2", role: "assistant", text: "two", turnId: "t1" }),
+    ]);
+    const edited = markdown.replace(
+      "\none\n",
+      "\none\n\n<!-- scient:part export=0123456789ab kind=context -->\n\nstill one\n",
+    );
+    const parsed = parseConversationMarkdown(edited);
+    if (parsed.kind !== "conversation") throw new Error("Expected a conversation.");
+    expect(parsed.messages[0]?.body).toContain("still one");
+    expect(parsed.issues.map((issue) => [issue.kind, issue.excluded])).toEqual([
+      ["foreign-marker", false],
+    ]);
   });
 
   it("cuts a clean message at a damaged marker and rejects a reopened turn", () => {
