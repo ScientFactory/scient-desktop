@@ -6,6 +6,7 @@ import {
 import * as Effect from "effect/Effect";
 
 import { documentLogicalKey, writeDocumentCapture } from "./DocumentCapture.ts";
+import { boundCaptureWarnings } from "./documentPageInput.ts";
 import { buildMarkdownFileBundle, readProjectMarkdownFile } from "./MarkdownFileBundle.ts";
 
 /**
@@ -19,7 +20,11 @@ export const captureProjectMarkdownFile = Effect.fn("MarkdownPdfPreparation.capt
     readonly relativePath: string;
     readonly expectedRevision?: string;
   }) {
-    const file = yield* readProjectMarkdownFile(input.workspaceRoot, input.relativePath);
+    const file = yield* readProjectMarkdownFile(
+      input.workspaceRoot,
+      input.relativePath,
+      input.expectedRevision,
+    );
     if (input.expectedRevision !== undefined && file.revision !== input.expectedRevision) {
       return yield* new ScientDocumentPdfExportError({
         reason: "source-changed",
@@ -54,6 +59,6 @@ export const prepareMarkdownPdf = Effect.fn("MarkdownPdfPreparation.prepare")(fu
     inputRelativeUrl,
     expected: record.expected,
     title: record.title || "Document",
-    warnings: record.warnings,
+    warnings: boundCaptureWarnings(record.warnings),
   } satisfies ScientDocumentPdfPrepared;
 });

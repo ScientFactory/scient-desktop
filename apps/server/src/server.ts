@@ -216,6 +216,7 @@ import { scientConversationExportHttpApiLayer } from "./scient/conversationExpor
 import * as ConversationExportFiles from "./scient/conversationExport/ConversationExportFiles.ts";
 import * as ConversationExportService from "./scient/conversationExport/ConversationExportService.ts";
 import * as ConversationSnapshotService from "./scient/conversationExport/ConversationSnapshotService.ts";
+import { documentCaptureStartupSweepLayer } from "./scient/documentExport/DocumentCapture.ts";
 import {
   conversationImportUploadRouteLayer,
   scientConversationImportHttpApiLayer,
@@ -815,6 +816,7 @@ export const makeRoutesLayer = Layer.mergeAll(
     staticAndDevRouteLayer,
     websocketRpcRouteLayer,
     wordDiagramRequestBodyLayer,
+    documentCaptureStartupSweepLayer,
   ),
   McpHttpServer.layer.pipe(Layer.provide(McpSessionRegistry.layer)),
   // Last, so no route layer can replace the server's one TracerDisabledWhen.

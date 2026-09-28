@@ -320,8 +320,8 @@ dialog preset to that format. There is no format switcher in the dialog.
 Formats come from `formatRegistry.ts`, in registration order (Markdown, PDF, Word, Scient file).
 Each registration names its menu entry, the dialog's info card (`about`), and its Save label; it
 may add a client requirement (`clientAvailability`: PDF needs a current Scient desktop, and says so
-otherwise), produce the export itself (`produce`: PDF opens in Scient's PDF reader instead of a save
-dialog), and offer a way to become available (`UnavailableAction`: Word's Pandoc install, shown in
+otherwise), produce the export itself (`produce`: PDF renders on the desktop, saves through the same save dialog, and
+offers **Open** on the notice; resolving `null` means the save was cancelled), and offer a way to become available (`UnavailableAction`: Word's Pandoc install, shown in
 place of the options). A format this host cannot produce shows its reason and no Save button.
 Work log and reasoning start off on every opening, every export covers the whole conversation (the
 request's message range is not offered in the UI), and the text-only or `.zip` choice appears only

@@ -17,11 +17,21 @@ import {
   type SourceEdit,
 } from "./markdownAst.ts";
 
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/gu;
+
+/**
+ * `String.prototype.toWellFormed`, written out because the web client, which
+ * also compiles this package, targets ES2023.
+ */
+function wellFormed(value: string): string {
+  return value.replace(LONE_SURROGATE, "�");
+}
+
 /** A relative link to a package file; a lone surrogate never makes encoding throw. */
 function encodePackagePath(path: string): string {
   return path
     .split("/")
-    .map((segment) => encodeURIComponent(segment.toWellFormed()))
+    .map((segment) => encodeURIComponent(wellFormed(segment)))
     .join("/");
 }
 

@@ -3,6 +3,7 @@ import type {
   ScientConversationExportPreparation,
   ScopedThreadRef,
 } from "@t3tools/contracts";
+import { useNavigate } from "@tanstack/react-router";
 import { TriangleAlertIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { create } from "zustand";
@@ -26,6 +27,7 @@ import {
   prepareConversationExport,
   prepareConversationWordDiagrams,
 } from "./client";
+import { showInOwningThread } from "../documentExport/showInOwningThread";
 import { captureWordDiagrams } from "../wordExport/captureDiagrams";
 import {
   INCLUDE_CAUTION,
@@ -86,6 +88,7 @@ type Loading =
 
 function ConversationExportDialog({ request }: { readonly request: OpenRequest }) {
   const { threadRef } = request;
+  const navigate = useNavigate();
   const [loading, setLoading] = useState<Loading>({ _tag: "loading" });
   const [state, setState] = useState<ExportDialogState | null>(null);
   const [busy, setBusy] = useState(false);
@@ -148,14 +151,35 @@ function ConversationExportDialog({ request }: { readonly request: OpenRequest }
     try {
       if (registration.produce) {
         const produced = await registration.produce({ threadRef, request: exportRequest });
+        // Save cancelled: the dialog stays open, as for every other format.
+        if (produced === null) return;
+        const open = produced.open;
+        const openAction =
+          open === undefined
+            ? {}
+            : {
+                actionProps: {
+                  children: "Open",
+                  // A sidebar export's conversation may not be the one on screen.
+                  onClick: () => showInOwningThread(navigate, threadRef, open),
+                },
+              };
         toastManager.add(
           produced.warnings.length > 0
             ? {
                 type: "warning",
                 title: `${produced.title} with notes`,
                 description: produced.warnings.map((warning) => warning.message).join("\n"),
+                ...openAction,
               }
-            : { type: "success", title: produced.title },
+            : {
+                type: "success",
+                title: produced.title,
+                ...(produced.description === undefined
+                  ? {}
+                  : { description: produced.description }),
+                ...openAction,
+              },
         );
         closeRequest();
         return;

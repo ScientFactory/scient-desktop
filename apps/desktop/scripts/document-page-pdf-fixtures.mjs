@@ -56,6 +56,11 @@ function lines(count, render) {
 const pad = (value) => String(value).padStart(3, "0");
 
 /** Each fixture is one captured page input plus what its PDF must show. */
+/** PNG signature followed by bytes no decoder accepts. */
+const corruptPng = Buffer.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0xde, 0xad, 0xbe, 0xef,
+]);
+
 function fixtures(png) {
   const longCode = [
     "# Long code and tables",
@@ -150,6 +155,8 @@ function fixtures(png) {
     "",
     "![Corrupt figure](data:image/png;base64,AAAA)",
     "",
+    "![Undecodable capture](scient-asset:image-0003)",
+    "",
     "IMAGE_END_MARKER",
   ].join("\n");
 
@@ -213,6 +220,62 @@ function fixtures(png) {
     ),
   ].join("\n");
 
+  // Work logs, reasoning, and quotes longer than a page must start right
+  // where they are, under their message, and continue on the next page.
+  const longBlock = (title, intro, block) =>
+    [
+      `# ${title}`,
+      "",
+      "## Assistant · 27 Sep 2026, 09:00",
+      "",
+      intro,
+      "",
+      block,
+      "",
+      "BLOCK_AFTER_MARKER",
+    ].join("\n");
+  const workLog = longBlock(
+    "Long work log",
+    "LOG_INTRO_MARKER Here is what I ran.",
+    [
+      "<!-- scient:part export=fixture n=1 -->",
+      "<details>",
+      "<summary>Work log · 150 steps</summary>",
+      "",
+      lines(
+        150,
+        (n) => `- LOG_STEP_${pad(n)} Ran \`pnpm test --filter step-${n}\` and read its output.`,
+      ),
+      "",
+      "</details>",
+    ].join("\n"),
+  );
+  const reasoning = longBlock(
+    "Long reasoning",
+    "THINK_INTRO_MARKER Here is how I approached it.",
+    [
+      "<!-- scient:part export=fixture n=2 -->",
+      "<details>",
+      "<summary>Reasoning</summary>",
+      "",
+      lines(120, (n) => `THINK_LINE_${pad(n)} considers the next possibility in some detail.\n`),
+      "",
+      "</details>",
+    ].join("\n"),
+  );
+  const quote = longBlock(
+    "Long quotation",
+    "QUOTE_INTRO_MARKER The source reads:",
+    lines(150, (n) => `> QUOTE_LINE_${pad(n)} is one line of the quoted passage.\n>`),
+  );
+  const flowsAcross = (prefix, first, last, summary) => ({
+    minPages: 3,
+    order: [`${prefix}_INTRO_MARKER`, first, last, "BLOCK_AFTER_MARKER"],
+    samePage: [[`${prefix}_INTRO_MARKER`, first], ...(summary ? [[summary, first]] : [])],
+    splitAcrossPages: [first, last],
+    absent: ["scient:part"],
+  });
+
   const asset = (id, fileName, content) => ({
     id,
     role: "image",
@@ -270,10 +333,20 @@ function fixtures(png) {
       name: "images",
       markdown: images,
       assets: [
-        asset("image-0001", "gradient.png", { _tag: "captured", path: "assets/0001.png" }),
+        asset("image-0001", "gradient.png", {
+          _tag: "captured",
+          path: "assets/0001.png",
+          sha256: sha256(png),
+        }),
         asset("image-0002", "missing.png", { _tag: "unavailable", reason: "missing" }),
+        // Served, with a PNG signature and the capture's digest, but not decodable.
+        asset("image-0003", "corrupt.png", {
+          _tag: "captured",
+          path: "assets/0003.png",
+          sha256: sha256(corruptPng),
+        }),
       ],
-      files: { "assets/0001.png": png },
+      files: { "assets/0001.png": png, "assets/0003.png": corruptPng },
       warnings: [
         {
           code: "resource-unresolved",
@@ -287,9 +360,11 @@ function fixtures(png) {
           "Image unavailable: missing.png",
           "Remote image not included",
           "Image could not be displayed: Corrupt figure",
+          "Image could not be displayed: corrupt.png",
           "IMAGE_END_MARKER",
           "Export notes",
           'Image "Corrupt figure" could not be displayed',
+          'The image "corrupt.png" could not be decoded',
         ],
         blocks: { images: 1 },
         warnings: ["remote-image-omitted"],
@@ -317,6 +392,20 @@ function fixtures(png) {
         outlineCount: 31,
       },
     },
+    ...[
+      ["yaml", "---\ntitle: Front matter title\nauthor: FRONT_MATTER_AUTHOR\n---\n"],
+      ["toml", '+++\ntitle = "Front matter title"\nauthor = "FRONT_MATTER_AUTHOR"\n+++\n'],
+    ].map(([kind, frontMatter]) => ({
+      name: `front-matter-${kind}`,
+      title: "Front matter title",
+      markdown: `${frontMatter}\nFRONT_MATTER_BODY opens the document.\n\n## FRONT_MATTER_SECTION\n\nMore text.\n`,
+      expect: {
+        order: ["Front matter title", "FRONT_MATTER_BODY", "FRONT_MATTER_SECTION"],
+        absent: ["FRONT_MATTER_AUTHOR", "author"],
+        outline: ["Front matter title", "FRONT_MATTER_SECTION"],
+        outlineCount: 2,
+      },
+    })),
     {
       name: "long-conversation",
       markdown: conversation,
@@ -329,6 +418,25 @@ function fixtures(png) {
         all: Array.from({ length: 120 }, (_, i) => `MESSAGE_${pad(i + 1)}`),
         outlineCount: 121,
       },
+    },
+    {
+      name: "long-work-log",
+      markdown: workLog,
+      profile: "chat",
+      documentKind: "conversation",
+      expect: flowsAcross("LOG", "LOG_STEP_001", "LOG_STEP_150", "Work log"),
+    },
+    {
+      name: "long-reasoning",
+      markdown: reasoning,
+      profile: "chat",
+      documentKind: "conversation",
+      expect: flowsAcross("THINK", "THINK_LINE_001", "THINK_LINE_120", "Reasoning"),
+    },
+    {
+      name: "long-quotation",
+      markdown: quote,
+      expect: flowsAcross("QUOTE", "QUOTE_LINE_001", "QUOTE_LINE_150"),
     },
     {
       name: "conversation-export",
@@ -480,7 +588,7 @@ function pageInput(fixture) {
     documentKind: fixture.documentKind ?? "workspace-file",
     sourceDigest: sha256(fixture.markdown),
     profile: fixture.profile ?? "document",
-    title: fixture.markdown.split("\n")[0].replace(/^#\s*/u, ""),
+    title: fixture.title ?? fixture.markdown.split("\n")[0].replace(/^#\s*/u, ""),
     language: null,
     direction: "auto",
     createdAt: null,
@@ -760,7 +868,36 @@ async function run() {
     );
     NodeAssert.equal(invalid._tag, "rejected", "an invalid capture must be refused");
     NodeAssert.match(invalid.detail, /not a valid Scient document page input/u);
-    console.log("PASS refusals: stale digest, wrong kind, invalid capture");
+    // A captured image the capture does not serve is a failed export, not a placeholder.
+    const unserved = pageInput({
+      markdown: "# Unserved\n\n![Plot](scient-asset:image-0001)\n",
+      assets: [
+        {
+          id: "image-0001",
+          role: "image",
+          fileName: "plot.png",
+          mediaType: "image/png",
+          content: { _tag: "captured", path: "assets/0001.png" },
+        },
+      ],
+    });
+    const unservedOutcome = await Effect.runPromise(
+      render({
+        inputUrl: register(unserved),
+        expected: {
+          captureId: unserved.captureId,
+          documentKind: unserved.documentKind,
+          sourceDigest: unserved.sourceDigest,
+        },
+      }),
+    );
+    NodeAssert.equal(
+      unservedOutcome._tag,
+      "rejected",
+      "an unserved captured image must be refused",
+    );
+    NodeAssert.match(unservedOutcome.detail, /captured image "plot.png" could not be loaded/u);
+    console.log("PASS refusals: stale digest, wrong kind, invalid capture, unserved image");
     await NodeFSP.writeFile(
       NodePath.join(outDirectory, "report.json"),
       `${JSON.stringify(report, null, 2)}\n`,

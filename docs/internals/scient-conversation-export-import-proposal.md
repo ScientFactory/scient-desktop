@@ -257,25 +257,32 @@ Requirements:
   margin boxes, which Chromium supports from version 131 (Scient is on Electron 44). This removes the
   need for Paged.js. It does not cover every advanced publishing feature; advanced running headers
   are out of scope.
-- **Page-break rules that allow splitting.** Keep headings with the following content, and keep small
-  figures and short code blocks together. Long code blocks and tables must be allowed to break across
-  pages; a blanket keep-together rule causes overflow and large blank areas.
+- **Page-break rules that allow splitting.** The page's own stylesheet owns every break rule; the
+  desktop adds none. Headings and a details block's summary line keep with what follows; figures,
+  short code blocks, table rows, alerts, and images stay whole. Long code blocks, tables, quotes,
+  work logs, and reasoning break across pages; a blanket keep-together rule causes overflow and large
+  blank areas.
+- **Front matter is metadata.** A YAML (`---`) or TOML (`+++`) block at the start of a Markdown file
+  never prints; its `title`, when present, is the PDF's title.
 - **Accessibility is qualified, not assumed.** Tagged PDF and outline generation are enabled, but
   correct reading order and bookmarks depend on the generated page and must be checked on real
   documents.
 - No network access, navigation, popups, or arbitrary scripts in the render window. Workspace images
   resolve through approved assets.
-- Output goes through the existing generated-PDF store, opens in Scient's reader, and can be saved
-  with Save Copy.
+- Output goes through the existing generated-PDF store and is saved through the same Save dialog as
+  every other format; the notice's Open shows it in Scient's reader for the conversation or project
+  it came from.
 - The existing bounded PDF byte transport is reused: **64 MiB per PDF**
   (`BROWSER_PDF_EXPORT_MAX_BYTES` in `packages/contracts/src/browserPdfExport.ts`). A larger export fails
-  with a clear message suggesting a shorter range or no work log. A streaming transport is added only
+  with a clear message suggesting leaving out the work log and reasoning, or exporting the
+  conversation as Markdown. A streaming transport is added only
   if measured real conversations need more.
 - **Failure versus limitation.** An execution failure stops publication: the render did not finish,
   a required font or the page itself is wrong, the source changed. A known content limitation does
-  not: an unavailable attachment becomes a clearly labelled placeholder, listed in the export's
-  warnings, and the user can accept that output. Failing on every warning would make ordinary sharing
-  brittle.
+  not: an unavailable attachment, or a captured image that was served but cannot be decoded, becomes
+  a clearly labelled placeholder, listed in the export's warnings, and the user can accept that
+  output. A captured image that was not served, was blocked, or does not match the capture stays an
+  execution failure. Failing on every warning would make ordinary sharing brittle.
 
 **Host availability.** The PDF renderer is a Scient **desktop** capability. The existing HTML→PDF tool
 already reports "A current connected Scient desktop is required to build this PDF" when no desktop is
@@ -881,7 +888,8 @@ A general `scient_document_export` tool for explicit project outputs (for exampl
 
 ## Delivery of produced files
 
-- PDFs go through the existing generated-PDF store and reader.
+- PDFs go through the existing generated-PDF store and are then saved with the same Save Copy path;
+  the notice can open the stored PDF in the reader.
 - Other outputs (`.md`, `.docx`, `.scic`) are written to a server-owned temporary
   export file, read through a signed asset, and saved with the existing Save Copy path. They are
   cleaned up after a short retention period and on startup.

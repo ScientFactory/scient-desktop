@@ -127,7 +127,7 @@ describe("conversation PDF capture", () => {
           role: "image",
           fileName: "plot.png",
           mediaType: "image/png",
-          content: { _tag: "captured", path: "assets/0001.png" },
+          content: { _tag: "captured", path: "assets/0001.png", sha256: sha256Digest(PNG) },
         },
         {
           id: "att-2",
@@ -152,6 +152,46 @@ describe("conversation PDF capture", () => {
           logicalDocumentKey: expect.stringMatching(/^conversation-pdf:[0-9a-f]{64}$/u),
         }),
       );
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("leaves out an image whose bytes are not the format its type claims", () =>
+    Effect.gen(function* () {
+      // A HEIC photo named .jpg, and a text file named .png.
+      const heic = new Uint8Array([0, 0, 0, 24, ...new TextEncoder().encode("ftypheicmif1heic")]);
+      const text = new TextEncoder().encode("not an image");
+      const prepared = yield* captureConversationBundle({
+        ...bundle,
+        markdown: "# Photos\n\n![a](scient-asset:att-1) ![b](scient-asset:att-2)\n",
+        assets: [
+          {
+            ...bundle.assets[0]!,
+            fileName: "photo.jpg",
+            mediaType: "image/jpeg",
+            content: { _tag: "bytes", bytes: heic, sha256: sha256Digest(heic) },
+          },
+          {
+            ...bundle.assets[0]!,
+            id: "att-2",
+            fileName: "notes.png",
+            content: { _tag: "bytes", bytes: text, sha256: sha256Digest(text) },
+          },
+        ],
+      });
+      const input = decodePageInput(
+        new TextDecoder().decode(
+          (yield* readCaptured(prepared.inputRelativeUrl, "document.json"))!,
+        ),
+      );
+      expect(input.assets.map((asset) => asset.content)).toEqual([
+        { _tag: "unavailable", reason: "unsupported" },
+        { _tag: "unavailable", reason: "unsupported" },
+      ]);
+      expect(prepared.warnings.slice(1).map((warning) => warning.message)).toEqual([
+        'Image "photo.jpg" is not a valid JPEG file and was left out.',
+        'Image "notes.png" is not a valid PNG file and was left out.',
+      ]);
+      expect(yield* readCaptured(prepared.inputRelativeUrl, "assets/0001.jpg")).toBeNull();
     }).pipe(Effect.provide(layer)),
   );
 

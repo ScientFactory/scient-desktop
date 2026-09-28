@@ -5,7 +5,6 @@ import type {
   ScopedThreadRef,
 } from "@t3tools/contracts";
 
-import { useRightPanelStore } from "~/rightPanelStore";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { scientDocumentPdfEnvironment } from "~/state/scientDocumentPdf";
 import { readPreparedConnection } from "~/state/session";
@@ -14,8 +13,15 @@ import type {
   ConversationExportClientAvailability,
   ConversationExportProduced,
 } from "../conversationExport/formatRegistry";
-import { scientGeneratedPdfSurface } from "../rightPanel/surfaces";
 import { documentPdfAvailability, renderDocumentPagePdf } from "./documentPagePdf";
+import {
+  conversationPdfFileName,
+  deliverDocumentPdf,
+  openDocumentPdf,
+  releaseDocumentPdfCapture,
+  saveDocumentPdfCopy,
+  type DocumentPdfDeliveryDependencies,
+} from "./documentPdfDelivery";
 import {
   printAndPublishDocumentPdf,
   type MarkdownPdfExportDependencies,
@@ -23,13 +29,13 @@ import {
 
 /**
  * Conversation → PDF from the export dialog. The server captures the
- * conversation with the dialog's options (work log, reasoning, range, time
- * zone); this desktop prints the capture; the server publishes it; and the
- * PDF opens in Scient's reader, where Save Copy keeps a copy.
+ * conversation with the dialog's options (work log, reasoning, time zone); this desktop prints the capture; the server publishes it; and the
+ * PDF is saved through the same Save dialog as every other format. The
+ * notice's Open shows it in Scient's reader for this conversation.
  */
 
 export const CONVERSATION_PDF_TOO_LARGE_MESSAGE =
-  "The PDF is larger than Scient's 64 MiB export limit. Export a shorter range or leave out the work log.";
+  "This conversation is too large for a PDF. Try leaving out the work log and reasoning, or export it as Markdown.";
 
 export function conversationPdfAvailability(): ConversationExportClientAvailability {
   const availability = documentPdfAvailability();
@@ -38,28 +44,39 @@ export function conversationPdfAvailability(): ConversationExportClientAvailabil
     : { available: false, reason: availability.reason };
 }
 
-export interface ConversationPdfExportDependencies extends Pick<
-  MarkdownPdfExportDependencies,
-  "render" | "publish"
-> {
+export interface ConversationPdfExportDependencies
+  extends
+    Pick<MarkdownPdfExportDependencies, "render" | "publish" | "release">,
+    DocumentPdfDeliveryDependencies {
   readonly prepare: (
     request: ScientConversationExportRequest,
   ) => ReturnType<MarkdownPdfExportDependencies["prepare"]>;
   readonly open: (published: ScientDocumentPdfPublished) => void;
 }
 
+/** Exports and saves the PDF; `null` when the user cancelled the Save dialog. */
 export async function runConversationPdfExport(
   dependencies: ConversationPdfExportDependencies,
   request: ScientConversationExportRequest,
-): Promise<ConversationExportProduced> {
+): Promise<ConversationExportProduced | null> {
   const prepared = await dependencies.prepare(request);
   const published = await printAndPublishDocumentPdf(
     dependencies,
     prepared,
     CONVERSATION_PDF_TOO_LARGE_MESSAGE,
   );
-  dependencies.open(published);
-  return { title: "PDF exported", warnings: published.warnings };
+  const delivery = await deliverDocumentPdf(
+    dependencies,
+    published,
+    conversationPdfFileName(published.title),
+  );
+  if (delivery._tag === "cancelled") return null;
+  return {
+    title: delivery.title,
+    description: delivery.description,
+    warnings: published.warnings,
+    open: () => dependencies.open(published),
+  };
 }
 
 const commandOptions = { reportFailure: false, reportDefect: false } as const;
@@ -68,7 +85,7 @@ const commandOptions = { reportFailure: false, reportDefect: false } as const;
 export function exportConversationPdf(input: {
   readonly threadRef: ScopedThreadRef;
   readonly request: ScientConversationExportRequest;
-}): Promise<ConversationExportProduced> {
+}): Promise<ConversationExportProduced | null> {
   const { environmentId } = input.threadRef;
   const availability = documentPdfAvailability();
   if (!availability.available) return Promise.reject(new Error(availability.reason));
@@ -104,12 +121,9 @@ export function exportConversationPdf(input: {
         if (result._tag === "Failure") throw squashAtomCommandFailure(result);
         return result.value;
       },
-      open: (published) => {
-        if (published.source._tag !== "generated-pdf") return;
-        useRightPanelStore
-          .getState()
-          .openScient(input.threadRef, scientGeneratedPdfSurface(published.source));
-      },
+      release: (captureId) => releaseDocumentPdfCapture(environmentId, captureId),
+      saveCopy: (published, fileName) => saveDocumentPdfCopy(environmentId, published, fileName),
+      open: (published) => openDocumentPdf(input.threadRef, published),
     },
     input.request,
   );

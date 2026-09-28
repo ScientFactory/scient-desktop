@@ -10,17 +10,19 @@ portable `.scic` file.
 3. Choose what to include, then press the Save button (**Save .md**, **Save PDF**, **Save .docx**,
    or **Save .scic**).
 
-For Markdown, Word, and Scient files, Save opens a save dialog on the desktop app; in a browser, the
-file downloads. The ⓘ button next to the dialog's title says what the format is for.
+Save opens a save dialog on the desktop app; in a browser, the file downloads (PDF needs the desktop
+app). The ⓘ button next to the dialog's title says what the format is for.
 
 To put the conversation on the clipboard instead, choose **Copy ▸ Conversation as Markdown** in the
 thread's menu. It copies the whole conversation as text-only Markdown, without the work log or
 reasoning.
 
-Choose **PDF** for a print-ready document with a heading for each speaker and the images, math, and
-diagrams inside the file. The PDF opens in Scient's PDF reader; use **Save Copy** there to keep a
-copy. The work log and reasoning appear as indented blocks under each answer. PDF needs the Scient
-desktop app; in a browser the dialog says so and offers no Save button.
+Choose **Export ▸ PDF (.pdf)…** for a print-ready document with a heading for each speaker and the
+images, math, and diagrams inside the file. Like the other formats, it opens a save dialog; when it is saved, choose **Open** on the
+notice to read it in Scient's PDF reader. The options below apply to PDF too: the work log and
+reasoning appear as indented blocks under each answer, and long ones continue onto the next page.
+An image that cannot be shown prints as a labelled box, listed in the notes at the end of the PDF.
+PDF needs the Scient desktop app; in a browser the option is unavailable and says why.
 
 Choose **Word** for an editable `.docx`: equations stay editable, and images, tables, footnotes, and
 citations are kept. Word export needs Pandoc. The first time, the Word dialog offers

@@ -4,6 +4,7 @@ import {
   BROWSER_PDF_EXPORT_MAX_BYTES,
   SCIENT_DOCUMENT_MAX_WARNINGS,
   ScientDocumentPdfExportError,
+  scientDocumentBlockedRequestsNote,
   scientDocumentReadinessRejection,
   type DocumentWarning,
   type ScientDocumentPageDiagnostic,
@@ -22,6 +23,7 @@ import {
   removeDocumentCapture,
   type DocumentCaptureRecord,
 } from "./DocumentCapture.ts";
+import { boundWarnings } from "./documentPageInput.ts";
 import { readProjectMarkdownFile } from "./MarkdownFileBundle.ts";
 
 /**
@@ -33,7 +35,7 @@ import { readProjectMarkdownFile } from "./MarkdownFileBundle.ts";
 const DOCUMENT_PDF_PRODUCER_ID = ArtifactProducerId.make("scient.document-pdf");
 
 export const DOCUMENT_PDF_TOO_LARGE_DETAIL =
-  "The PDF is larger than Scient's 64 MiB export limit. Export a shorter document or range, or leave out the work log.";
+  "The PDF is larger than Scient's 64 MiB export limit. Export a shorter document, or for a conversation leave out the work log and reasoning.";
 
 const PAGE_WARNING_CODES: Readonly<
   Record<
@@ -49,17 +51,36 @@ const PAGE_WARNING_CODES: Readonly<
   "raw-html-sanitized": "unsupported-construct",
 };
 
-/** The capture's own warnings followed by the page's, each message once. */
-export function documentPdfWarnings(
+/**
+ * Every warning a published PDF carries, before any limit: the capture's own
+ * warnings followed by the page's, each message once (`ordinary`), and the
+ * notes that must always be reported (`mandatory`). Callers bound the list
+ * with `boundWarnings`, so each output counts what it left out exactly.
+ */
+export function collectDocumentPdfWarnings(
   record: DocumentCaptureRecord,
   render: ScientDocumentPageRenderResult,
-): ReadonlyArray<DocumentWarning> {
-  const warnings: DocumentWarning[] = [];
-  const seen = new Set<string>();
+): {
+  readonly ordinary: ReadonlyArray<DocumentWarning>;
+  readonly mandatory: ReadonlyArray<DocumentWarning>;
+} {
+  // Refused requests are the page's isolation working, not a failure; they are
+  // reported, never silent. See DocumentPagePdfRenderer.
+  const mandatory: DocumentWarning[] =
+    render.blockedRequestCount > 0
+      ? [
+          {
+            code: "resource-unresolved",
+            message: scientDocumentBlockedRequestsNote(render.blockedRequestCount),
+          },
+        ]
+      : [];
+  const ordinary: DocumentWarning[] = [];
+  const seen = new Set(mandatory.map((note) => note.message));
   const add = (warning: DocumentWarning) => {
     if (seen.has(warning.message)) return;
     seen.add(warning.message);
-    warnings.push(warning);
+    ordinary.push(warning);
   };
   record.warnings.forEach(add);
   for (const diagnostic of render.readiness.diagnostics) {
@@ -67,7 +88,24 @@ export function documentPdfWarnings(
     const message = diagnostic.detail.trim();
     if (message) add({ code: PAGE_WARNING_CODES[diagnostic.code], message });
   }
-  return warnings.slice(0, SCIENT_DOCUMENT_MAX_WARNINGS);
+  return { ordinary, mandatory };
+}
+
+/** The warnings a published PDF returns, within the contract's limit. */
+export function documentPdfWarnings(
+  record: DocumentCaptureRecord,
+  render: ScientDocumentPageRenderResult,
+): ReadonlyArray<DocumentWarning> {
+  const { ordinary, mandatory } = collectDocumentPdfWarnings(record, render);
+  return boundWarnings({
+    ordinary,
+    mandatory,
+    limit: SCIENT_DOCUMENT_MAX_WARNINGS,
+    omitted: (count) => ({
+      code: ordinary[0]?.code ?? "resource-unresolved",
+      message: `…and ${count} more notes, not listed here.`,
+    }),
+  });
 }
 
 /** Decodes and checks a render against its capture without touching any store. */
@@ -114,9 +152,11 @@ export const confirmCapturedSourceCurrent = Effect.fn(
     reason: "source-changed",
     detail: "The document changed while the PDF was being made. Export it again.",
   });
-  const current = yield* readProjectMarkdownFile(workspaceRoot, relativePath).pipe(
-    Effect.mapError(() => changed),
-  );
+  const current = yield* readProjectMarkdownFile(
+    workspaceRoot,
+    relativePath,
+    record.expected.sourceDigest,
+  ).pipe(Effect.mapError(() => changed));
   if (
     current.canonicalPath !== canonicalPath ||
     current.revision !== record.expected.sourceDigest
