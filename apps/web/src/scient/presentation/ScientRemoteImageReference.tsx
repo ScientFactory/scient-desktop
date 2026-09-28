@@ -26,6 +26,9 @@ function useRemoteImagePermission(url: string) {
  * it. Nothing is requested from the address until the user presses **Load image**; opening
  * the address hands it to the system browser like any chat link.
  *
+ * Inside a link the surrounding link keeps its own target, so the address is plain text
+ * rather than a second link, and the button does not follow the link.
+ *
  * `children` is the media exactly as chat would draw it; it mounts only once loaded.
  */
 export function ScientRemoteImageReference(props: {
@@ -36,6 +39,8 @@ export function ScientRemoteImageReference(props: {
   readonly copyMarkdown?: string | undefined;
   /** The sanitized authored id, so fragment links still land here. */
   readonly id?: string | undefined;
+  /** Rendered as the content of a link, which must stay the only link. */
+  readonly insideLink?: boolean | undefined;
   readonly children: ReactNode;
 }) {
   const { allowed, allow } = useRemoteImagePermission(props.address.url);
@@ -69,29 +74,41 @@ export function ScientRemoteImageReference(props: {
     >
       <Icon aria-hidden className="size-3.5 shrink-0" />
       <span className="min-w-0 max-w-48 shrink-[2] truncate text-foreground">{name}</span>
-      <ScientTooltip
-        content={
-          <span dir="ltr" className="break-all">
-            {props.address.url}
-          </span>
-        }
-      >
-        <a
-          href={props.address.url}
-          target="_blank"
-          rel="noopener noreferrer"
+      {props.insideLink ? (
+        <MiddleTruncate
+          value={props.address.label}
           dir="ltr"
-          aria-label={`Open ${props.address.label} in browser`}
-          className="inline-flex min-w-0 rounded-sm underline-offset-2 hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring"
+          title={props.address.url}
+          showTitle={false}
+        />
+      ) : (
+        <ScientTooltip
+          content={
+            <span dir="ltr" className="break-all">
+              {props.address.url}
+            </span>
+          }
         >
-          <MiddleTruncate value={props.address.label} showTitle={false} />
-        </a>
-      </ScientTooltip>
+          <a
+            href={props.address.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            dir="ltr"
+            aria-label={`Open ${props.address.label} in browser`}
+            className="inline-flex min-w-0 rounded-sm underline-offset-2 hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring"
+          >
+            <MiddleTruncate value={props.address.label} showTitle={false} />
+          </a>
+        </ScientTooltip>
+      )}
       <Button
         size="micro"
         variant="outline"
         aria-label={`Load ${noun} from ${props.address.host}`}
-        onClick={() => {
+        onClick={(event) => {
+          // Inside a link, loading the image must not also follow the link.
+          event.preventDefault();
+          event.stopPropagation();
           moveFocusToMedia.current = true;
           allow();
         }}

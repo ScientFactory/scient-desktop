@@ -208,21 +208,38 @@ describe("web images in chat", () => {
     expect(loadButton(host).textContent).toBe("Load video");
   });
 
-  it("leaves workspace images and images inside links unchanged", async () => {
+  it("leaves workspace images unchanged", async () => {
     const { host, render } = await mount();
-    await render(
-      [
-        "Plot ![plot](results/plot.png) and badge",
-        "[![build](https://ci.example.org/badge.svg)](https://ci.example.org)",
-      ].join(" "),
-    );
+    await render("Plot ![plot](results/plot.png) inline");
 
     expect(host.querySelector('[role="group"]')).toBeNull();
-    expect(imageSources(host)).toEqual([
-      "https://signed.test/asset.png",
-      "https://ci.example.org/badge.svg",
-    ]);
+    expect(imageSources(host)).toEqual(["https://signed.test/asset.png"]);
     expect(testState.resources).toContainEqual(expect.objectContaining({ _tag: "workspace-file" }));
+  });
+
+  it("gates an image inside a link while the surrounding link keeps working", async () => {
+    const { host, render } = await mount();
+    await render("[![build](https://ci.example.org/badge.svg)](https://ci.example.org/runs/9)");
+
+    expect(remoteRequests(host)).toEqual([]);
+    const links = host.querySelectorAll("a");
+    expect(links).toHaveLength(1);
+    const link = links[0]!;
+    expect(link.getAttribute("href")).toBe("https://ci.example.org/runs/9");
+    const card = link.querySelector<HTMLElement>('[role="group"]');
+    expect(card?.getAttribute("aria-label")).toBe("Web image: build");
+    // The image address is shown as text: the link stays the only link.
+    expect(card?.textContent).toContain("ci.example.org/badge.svg");
+
+    const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+    await act(() => loadButton(host).dispatchEvent(click));
+
+    // Loading the image does not follow the link, and the link now holds the image.
+    expect(click.defaultPrevented).toBe(true);
+    expect(host.querySelector("a")?.getAttribute("href")).toBe("https://ci.example.org/runs/9");
+    expect(host.querySelector("a img")?.getAttribute("src")).toBe(
+      "https://ci.example.org/badge.svg",
+    );
   });
 
   it("keeps GitHub media on the authenticated proxy and never falls back to a direct fetch", async () => {

@@ -2730,9 +2730,9 @@ const CHAT_MARKDOWN_COMPONENTS = {
         : null;
     const useScientImageCard = Boolean(node?.properties?.dataScientImageCard);
     // SCIENT-FORK:START — web images render as a referenced link until the user loads one.
-    // An image inside a link keeps loading as the link's content.
+    // Inside a link the card is the link's content and the link keeps working.
     const remoteImage =
-      directUri === null || use(MarkdownLinkContext) || use(ScientRemoteImageLoadedContext)
+      directUri === null || use(ScientRemoteImageLoadedContext)
         ? null
         : remoteImageAddress(directUri);
     const remoteImageReference =
@@ -2743,6 +2743,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
           kind={kind}
           copyMarkdown={markdownSource}
           id={props.id}
+          insideLink={use(MarkdownLinkContext)}
         >
           <MarkdownImg node={node} alt={alt} src={src} title={title} {...props} />
         </ScientRemoteImageReference>
