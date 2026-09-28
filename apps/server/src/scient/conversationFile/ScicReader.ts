@@ -23,12 +23,12 @@
  * 4. The whole result against `ValidatedConversationImport`.
  */
 import * as NodeCrypto from "node:crypto";
-import * as NodeEvents from "node:events";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import type * as NodeStream from "node:stream";
 import * as NodeStreamPromises from "node:stream/promises";
 import * as NodeZlib from "node:zlib";
+import { waitForWritableDrain } from "./waitForWritableDrain.ts";
 
 import {
   ConversationImportRejectionReason,
@@ -299,7 +299,7 @@ async function readEntry(
         if (output.keep) chunks.push(chunk);
         if (sink !== null && !sink.write(chunk)) {
           if (sinkError !== null) throw sinkError;
-          await NodeEvents.once(sink, "drain");
+          await waitForWritableDrain(sink);
         }
       }
     } catch (cause) {

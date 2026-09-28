@@ -10,10 +10,10 @@
  * Only a confirmed import reaches the importer.
  */
 import * as NodeCrypto from "node:crypto";
-import * as NodeEvents from "node:events";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeStreamPromises from "node:stream/promises";
+import { waitForWritableDrain } from "../conversationFile/waitForWritableDrain.ts";
 
 import {
   ATTACHMENT_UPLOAD_URL_TTL_MS,
@@ -294,7 +294,7 @@ async function copyVerified(
       byteLength += chunk.byteLength;
       if (!sink.write(chunk)) {
         if (sinkError !== null) throw sinkError;
-        await NodeEvents.once(sink, "drain");
+        await waitForWritableDrain(sink);
       }
     }
     if (signal.aborted) throw new Error("Attachment copy was interrupted.");
