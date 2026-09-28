@@ -256,7 +256,11 @@ describe("ScientDocumentPage", () => {
       Object.defineProperty(image, "naturalHeight", { value: size.height });
       await act(async () => {
         image.dispatchEvent(new Event(event));
-        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      // The page fetches and hashes the image again before it decides; wait
+      // for that work, which the tracker holds open, to finish.
+      await act(async () => {
+        expect(await rendered.tracker.settle(5_000)).toBe(true);
       });
       return { ...rendered, fetchCapture };
     }
