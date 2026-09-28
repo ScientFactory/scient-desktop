@@ -92,7 +92,7 @@ export function ConversationImportProvenanceBadge({
         }
       >
         <ImportIcon aria-hidden className="size-3" />
-        <span>{document ? "Document attached" : "Imported · unverified"}</span>
+        <span>{document ? "Document attached" : "Imported — unverified"}</span>
         {!document && conversationImport.omissions.length > 0 ? (
           <span>· {plural(conversationImport.omissions.length, "omission", "omissions")}</span>
         ) : null}
