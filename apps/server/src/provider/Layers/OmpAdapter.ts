@@ -690,6 +690,11 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     sessionId: string | undefined,
   ) =>
     Effect.gen(function* () {
+      // OMP allocates its native conversation before creating the transcript.
+      // Expose identity now; only the validated file below grants resumability.
+      if (sessionId?.trim()) {
+        ctx.session = { ...ctx.session, nativeSessionId: sessionId.trim() };
+      }
       const ompVersion = ctx.handles?.client.version;
       if (!sessionFile || ompVersion === undefined) return;
       const relative = sessionFileInsideRoot(ctx.sessionRoot, sessionFile);

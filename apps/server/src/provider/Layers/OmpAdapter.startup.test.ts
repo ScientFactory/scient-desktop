@@ -72,6 +72,35 @@ const warnings = (events: ReadonlyArray<ProviderRuntimeEvent>) =>
   events.filter((event) => event.type === "runtime.warning" || event.type === "runtime.error");
 
 describe("Oh My Pi session startup", () => {
+  it.effect("exposes native identity even before OMP creates its transcript", () =>
+    Effect.gen(function* () {
+      const stateDir = tempStateDir();
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(stateDir, { recursive: true, force: true })),
+      );
+      const { adapter } = yield* makeAdapter(stateDir, "18.3.1", (command) =>
+        command.type === "get_state"
+          ? {
+              type: "response",
+              id: command.id,
+              command: "get_state",
+              success: true,
+              data: { sessionId: "allocated-before-transcript", isStreaming: false },
+            }
+          : undefined,
+      );
+      const session = yield* adapter.startSession({
+        threadId: ThreadId.make("delayed-transcript"),
+        cwd: stateDir,
+        runtimeMode: "full-access",
+      });
+      expect(session.nativeSessionId).toBe("allocated-before-transcript");
+      expect(session.resumeCursor).toBeUndefined();
+      expect((yield* adapter.listSessions())[0]?.nativeSessionId).toBe(session.nativeSessionId);
+      yield* adapter.stopAll();
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("pins the known event set on OMP 18.3.1", () =>
     Effect.gen(function* () {
       const { adapter, written } = yield* makeAdapter(tempStateDir(), "18.3.1");
