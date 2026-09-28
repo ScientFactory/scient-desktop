@@ -272,12 +272,22 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
     stagedRef.current = staged;
     const stopped = () => controller.signal.aborted;
     const setStage = (stage: Stage) => setProgress({ attempt, stage });
+    // Set while the desktop streams this attempt's file; a cancel stops it first.
+    let desktopToken: string | null = null;
     const release = () => {
       const importId = staged.importId;
       staged.importId = null;
-      if (importId !== null) {
-        void cancelConversationImport(staged.environmentId, importId).catch(() => undefined);
-      }
+      if (importId === null) return;
+      const token = desktopToken;
+      desktopToken = null;
+      const stopDesktop =
+        token === null
+          ? Promise.resolve()
+          : Promise.resolve(window.desktopBridge?.cancelOpenedConversationFileUpload?.({ token }));
+      void stopDesktop
+        .catch(() => undefined)
+        .then(() => cancelConversationImport(staged.environmentId, importId))
+        .catch(() => undefined);
     };
     const { name, sizeBytes } = sourceFile(source)!;
     void (async () => {
@@ -298,17 +308,22 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
             },
           });
         } else {
-          const sending = desktopUploadRef.current.then(() =>
-            window.desktopBridge?.uploadOpenedConversationFile?.({
+          // A cancelled attempt never starts its queued upload.
+          const sending = desktopUploadRef.current.then(() => {
+            if (stopped()) return null;
+            desktopToken = source.file.token;
+            return window.desktopBridge?.uploadOpenedConversationFile?.({
               token: source.file.token,
               url: upload.url,
-            }),
-          );
+            });
+          });
           desktopUploadRef.current = sending.catch(() => undefined);
-          const outcome = desktopUploadOutcome(await sending);
-          if (stopped()) return;
+          const result = await sending;
+          desktopToken = null;
+          if (stopped() || result === null) return;
+          const outcome = desktopUploadOutcome(result);
           if (outcome instanceof ConversationImportNotice) throw outcome;
-          if (outcome._tag === "declined") {
+          if (outcome._tag === "stopped") {
             release();
             dismissConversationImportRequest();
             return;
@@ -333,16 +348,26 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
     };
   }, [attempt, fileProblem]);
 
-  useEffect(() => () => setConversationImportReplaceable(true), []);
+  // While this dialog is on screen, a dropped file replaces its file.
+  useEffect(() => {
+    setConversationImportReplaceable(true);
+    return () => setConversationImportReplaceable(false);
+  }, []);
 
   const preview = stage._tag === "ready" ? stage.preview : null;
 
-  // A finished check moves focus to what it found, unless a choice has focus.
+  // A finished check moves focus to what it found when focus is still where
+  // the file came in (the dialog itself or the file zone), never away from a
+  // choice the person is making.
   useEffect(() => {
     if (preview === null) return;
     const active = document.activeElement;
-    if (active instanceof HTMLElement && active.closest('[data-slot="select-trigger"]')) return;
-    detailsRef.current?.focus();
+    const atEntry =
+      active === null ||
+      active === document.body ||
+      active.getAttribute("role") === "dialog" ||
+      active.closest("[data-conversation-file-zone]") !== null;
+    if (atEntry) detailsRef.current?.focus();
   }, [preview]);
 
   const isDocument = preview?.kind === "document";
@@ -633,6 +658,7 @@ function ConversationFileZone({
   };
   return (
     <div
+      data-conversation-file-zone
       className={cn(
         "flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dashed px-3 py-3 transition-colors",
         dropTarget ? "border-ring bg-accent/20" : "border-border/80 bg-muted/20",

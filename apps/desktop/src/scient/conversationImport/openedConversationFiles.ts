@@ -204,7 +204,7 @@ export async function uploadOpenedConversationFileTo(
         file.fileName,
         target.plaintextNetwork,
       ).catch(() => false);
-      if (!approved) return { _tag: "failed", reason: "rejected" };
+      if (!approved) return { _tag: "failed", reason: "declined" };
       file.approvedOrigins.add(target.url.origin);
     }
     if (file.expiresAt <= performance.now()) {

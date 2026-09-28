@@ -1364,6 +1364,8 @@ export interface DesktopBridge {
   uploadOpenedConversationFile?: (
     request: DesktopConversationFileUploadRequest,
   ) => Promise<DesktopConversationFileUploadResult>;
+  /** Scient: stops an opened file's upload; the pending upload then answers `cancelled`. */
+  cancelOpenedConversationFileUpload?: (request: { readonly token: string }) => Promise<void>;
   // SCIENT-FORK:END
   getAppBranding: () => DesktopAppBranding | null;
   /** The desktop client's OS platform, read from Electron's preload process. */

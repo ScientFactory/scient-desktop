@@ -212,13 +212,13 @@ export function isAbort(cause: unknown): boolean {
 }
 
 /**
- * The desktop's answer to "send this opened file". `rejected` is what the
- * desktop reports when the person declines its "Send conversation file?"
- * prompt, which cancels the import without an error.
+ * The desktop's answer to "send this opened file". Declining its "Send
+ * conversation file?" prompt, or cancelling the upload, stops the import
+ * without an error; everything else is worded plainly.
  */
 export function desktopUploadOutcome(
   result: DesktopConversationFileUploadResult | undefined,
-): { readonly _tag: "uploaded" } | { readonly _tag: "declined" } | ConversationImportNotice {
+): { readonly _tag: "uploaded" } | { readonly _tag: "stopped" } | ConversationImportNotice {
   if (result === undefined) {
     return new ConversationImportNotice(
       "This Scient can't send opened files. Choose the file instead.",
@@ -226,8 +226,11 @@ export function desktopUploadOutcome(
   }
   if (result._tag === "uploaded") return result;
   switch (result.reason) {
+    case "declined":
+    case "cancelled":
+      return { _tag: "stopped" };
     case "rejected":
-      return { _tag: "declined" };
+      return new ConversationImportNotice("The destination didn't accept the file. Try again.");
     case "file-unavailable":
       return new ConversationImportNotice("Scient can no longer read this file. Open it again.");
     case "file-changed":

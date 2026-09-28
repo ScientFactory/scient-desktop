@@ -873,11 +873,15 @@ import. Changing the file or the destination environment does the same and start
   unverified history starts supervised); the dialog states this in one line only when the
   project's default mode differs.
 - **Failures.** A rejected file shows the server's message. Reason codes, entry paths and
-  connection details are never shown; such a message falls back to plain text per reason. The
-  desktop answers `rejected` when the user declines its "Send conversation file?" prompt, which
-  closes the dialog without an error. The desktop gives the same answer when the server refuses
-  the streamed bytes, so that rarer case also closes quietly until the desktop result tells the
-  two apart. Its other failures read as plain sentences.
+  connection details are never shown; such a message falls back to plain text per reason. An
+  OS-opened file is streamed by the desktop, which answers `declined` when the user declines its
+  "Send conversation file?" prompt and `cancelled` when the renderer stopped the upload; both
+  close the dialog without an error. `rejected` (the server refused the bytes) and the other
+  desktop failures read as plain sentences. Cancel or Esc during such an upload first asks the
+  desktop to stop it (`cancelOpenedConversationFileUpload`, where available), then calls
+  `cancel`; an attempt cancelled while waiting behind an earlier stream never starts its upload.
+- **Queueing.** A dropped file replaces the file of an import dialog only while one is on screen
+  and not committing; otherwise, including during first-run setup, it waits its turn.
 
 On success a toast says the next message continues the conversation with the chosen model, and
 Scient opens the new thread. The imported thread shows where it came from ("Imported —

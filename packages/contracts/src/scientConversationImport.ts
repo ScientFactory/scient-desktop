@@ -410,6 +410,10 @@ export const DesktopConversationFileUploadResult = Schema.Union([
       "network-failed",
       /** The server refused the upload. */
       "rejected",
+      /** The person declined the desktop's prompt to send the file to that server. */
+      "declined",
+      /** The renderer cancelled the upload while it was streaming. */
+      "cancelled",
     ]),
   }),
 ]);

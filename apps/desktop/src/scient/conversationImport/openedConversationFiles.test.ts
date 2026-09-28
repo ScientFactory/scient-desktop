@@ -116,7 +116,7 @@ describe("OS-opened conversation file upload retry", () => {
         approveRemote,
         fetchImpl,
       ),
-    ).toEqual({ _tag: "failed", reason: "rejected" });
+    ).toEqual({ _tag: "failed", reason: "declined" });
     expect(requests).toBe(0);
     expect(
       await uploadOpenedConversationFileTo(
@@ -163,7 +163,7 @@ describe("OS-opened conversation file upload retry", () => {
     expect(await upload(remoteUrl.replace("remote.example.com", "REMOTE.example.com:443"))).toEqual(
       {
         _tag: "failed",
-        reason: "rejected",
+        reason: "declined",
       },
     );
     expect(requests).toBe(0);

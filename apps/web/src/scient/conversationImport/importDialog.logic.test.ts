@@ -199,12 +199,13 @@ describe("importFailureMessage", () => {
 });
 
 describe("desktopUploadOutcome", () => {
-  it("treats a declined send prompt as a cancel, and words other failures plainly", () => {
+  it("treats a declined prompt or a cancel as stopping, and words other failures plainly", () => {
     expect(desktopUploadOutcome({ _tag: "uploaded" })).toEqual({ _tag: "uploaded" });
-    expect(desktopUploadOutcome({ _tag: "failed", reason: "rejected" })).toEqual({
-      _tag: "declined",
-    });
+    for (const reason of ["declined", "cancelled"] as const) {
+      expect(desktopUploadOutcome({ _tag: "failed", reason })).toEqual({ _tag: "stopped" });
+    }
     for (const reason of [
+      "rejected",
       "file-unavailable",
       "file-changed",
       "invalid-url",
