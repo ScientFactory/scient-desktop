@@ -824,6 +824,8 @@ export const ScientConversationExportErrorReason = Schema.Literals([
   "delivery-unsupported",
   /** A converter (Pandoc, for Word) failed after the export was prepared. */
   "conversion-failed",
+  /** The request asked for part of a conversation; only whole conversations are exported. */
+  "range-unavailable",
 ]);
 export type ScientConversationExportErrorReason = typeof ScientConversationExportErrorReason.Type;
 

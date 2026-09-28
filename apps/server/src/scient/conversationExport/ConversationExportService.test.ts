@@ -588,139 +588,55 @@ describe("ConversationExportService", () => {
   );
 
   const rangeAccesses: Array<FileAccess> = [];
-  it.effect("ends every format at the chosen message, attachments included", () =>
+  it.effect("refuses part of a conversation on every export path", () =>
     Effect.gen(function* () {
-      const attachment = (id: string, name: string): ChatAttachment => ({
-        type: "image",
-        id: `thread-1-${id}`,
-        name,
-        mimeType: "image/png",
-        sizeBytes: PNG_BYTES.byteLength,
-      });
-      const before = attachment("11111111-1111-4111-8111-aaaaaaaaaaaa", "before.png");
-      const answered = attachment("22222222-2222-4222-8222-bbbbbbbbbbbb", "answered-later.png");
-      const later = attachment("33333333-3333-4333-8333-cccccccccccc", "later.png");
-      const beforePath = yield* storeAttachment(before, PNG_BYTES);
-      const excludedPaths = new Set([
-        yield* storeAttachment(answered, PNG_BYTES),
-        yield* storeAttachment(later, PNG_BYTES),
-      ]);
-      const sql = yield* SqlClient.SqlClient;
-      yield* sql`INSERT INTO projection_threads
-        (thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode,
-         latest_turn_id, created_at, updated_at, deleted_at)
-        VALUES (${THREAD}, NULL, 'Steered', '{"provider":"codex","model":"gpt-5"}',
-         'full-access', 'default', 'turn-1', ${at(0)}, ${at(0)}, NULL)`;
-      const message = (
-        id: string,
-        role: string,
-        turnId: string | null,
-        text: string,
-        index: number,
-        attachments: ReadonlyArray<ChatAttachment> | null = null,
-      ) => sql`INSERT INTO projection_thread_messages
-        (message_id, thread_id, turn_id, role, text, attachments_json, is_streaming, created_at, updated_at)
-        VALUES (${id}, ${THREAD}, ${turnId}, ${role}, ${text},
-          ${attachments === null ? null : encodeAttachments(attachments)}, 0, ${at(index)}, ${at(index)})`;
-      const activity = (id: string, kind: string, payload: unknown, index: number) =>
-        sql`INSERT INTO projection_thread_activities
-          (activity_id, thread_id, turn_id, tone, kind, summary, payload_json, sequence, created_at)
-          VALUES (${id}, ${THREAD}, 'turn-1', 'tool', ${kind}, ${kind}, ${encodeJson(payload)},
-            ${index}, ${at(index)})`;
-      yield* message("user-1", "user", null, "Start", 1, [before]);
-      yield* activity("activity-1", "tool.completed", { title: "Before steer" }, 2);
-      yield* message("reasoning-1", "reasoning", "turn-1", "Early thought", 3);
-      yield* message("assistant-1", "assistant", "turn-1", "Working", 4);
-      yield* message("user-2", "user", null, "Change course", 5);
-      yield* activity("activity-2", "tool.completed", { title: "After steer" }, 6);
-      yield* message("reasoning-2", "reasoning", "turn-1", "Late thought", 7);
-      yield* activity(
-        "activity-3",
-        "user-input.requested",
-        { requestId: "request-1", questions: [{ id: "q", question: "Which one?" }] },
-        8,
-      );
-      yield* activity(
-        "activity-4",
-        "user-input.answer-submitted",
-        {
-          requestId: "request-1",
-          answers: { q: "This" },
-          attachmentsByQuestionId: { q: [answered] },
-        },
-        9,
-      );
-      yield* message("async-answer:request-1", "user", null, "This", 10, [answered]);
-      yield* message("assistant-2", "assistant", "turn-1", "Done", 11);
-      yield* message("user-3", "user", null, "Next", 12, [later]);
-      yield* sql`INSERT INTO projection_turns
-        (thread_id, turn_id, pending_message_id, assistant_message_id, state, requested_at, started_at,
-         completed_at, checkpoint_files_json)
-        VALUES (${THREAD}, 'turn-1', NULL, 'assistant-2', 'completed', ${at(1)}, ${at(1)}, ${at(11)}, '[]')`;
-
+      const stored = yield* storeAttachment(image, new Uint8Array([137, 80, 78, 71]));
+      yield* seedThread({ pairs: 2, attachments: [image] });
       const service = yield* ConversationExportService.ConversationExportService;
-      const ranged = (format: ScientConversationExportRequest["format"]) =>
+      const partial = (
+        format: ScientConversationExportRequest["format"],
+        overrides: Partial<ScientConversationExportRequest> = {},
+        options: Partial<ScientConversationExportRequest["options"]> = {},
+      ) =>
         request(
-          { format },
-          {
-            includeWorkLog: true,
-            includeReasoning: true,
-            range: { _tag: "through-message", messageId: MessageId.make("user-2") },
-            markdownPackaging: "with-attachments",
-          },
+          { format, ...overrides },
+          { range: { _tag: "through-message", messageId: MessageId.make("user-2") }, ...options },
         );
-      const excluded = [
-        "After steer",
-        "Late thought",
-        "Which one?",
-        "answered-later",
-        "Done",
-        "Next",
-        "later.png",
-      ];
+      const refusal = <A>(
+        effect: Effect.Effect<A, ConversationExportService.ConversationExportServiceError>,
+      ) =>
+        effect.pipe(
+          Effect.flip,
+          Effect.map((error): { readonly reason: string | null; readonly message: string } =>
+            error._tag === "ScientConversationExportError"
+              ? { reason: error.reason, message: error.message }
+              : { reason: error._tag, message: "" },
+          ),
+        );
+      const expected = {
+        reason: "range-unavailable",
+        message: "Exporting part of a conversation is not available yet.",
+      };
       rangeAccesses.length = 0;
-
-      const markdown = yield* service.produce(ranged("markdown"));
-      assert(markdown.output._tag === "file");
-      const zipped = yield* Effect.promise(() =>
-        readZip((markdown.output as { readonly path: string }).path),
-      );
-      assert.deepStrictEqual([...zipped.keys()], ["Steered.md", "attachments/01-before.png"]);
-      const markdownText = zipped.get("Steered.md")!.toString("utf8");
-      for (const text of ["Start", "Before steer", "Early thought", "Working", "Change course"])
-        assert.include(markdownText, text);
-      for (const text of excluded) assert.notInclude(markdownText, text);
-
-      const scic = yield* service.produce(ranged("scic"));
-      assert(scic.output._tag === "file");
-      const packaged = yield* Effect.promise(() =>
-        readZip((scic.output as { readonly path: string }).path),
-      );
-      const snapshotJson = packaged.get("conversation.json")!.toString("utf8");
-      const manifestJson = packaged.get("manifest.json")!.toString("utf8");
-      assert.strictEqual(scic.messageCount, 3);
-      assert.include(snapshotJson, "Before steer");
-      for (const text of excluded) {
-        assert.notInclude(snapshotJson, text);
-        assert.notInclude(manifestJson, text);
+      for (const refused of [
+        refusal(service.produce(partial("markdown"))),
+        refusal(service.produce(partial("markdown", { delivery: "clipboard" }))),
+        refusal(
+          service.produce(partial("markdown", {}, { markdownPackaging: "with-attachments" })),
+        ),
+        refusal(service.produce(partial("scic"))),
+        refusal(service.produce(partial("docx"))),
+        refusal(service.prepareWordDiagrams(partial("docx"))),
+        refusal(service.document(partial("pdf"))),
+      ]) {
+        assert.deepStrictEqual(yield* refused, expected);
       }
+      // Refused before anything is captured or read.
       assert.deepStrictEqual(
-        [...packaged.keys()].filter((name) => name.startsWith("attachments/")).length,
-        1,
-      );
-
-      const pdf = yield* service.document(ranged("pdf"));
-      assert.deepStrictEqual(
-        pdf.bundle.assets.map((asset) => asset.fileName),
-        ["before.png"],
-      );
-      for (const text of excluded) assert.notInclude(pdf.bundle.markdown, text);
-
-      assert.isTrue(rangeAccesses.some((access) => access.path === beforePath));
-      assert.deepStrictEqual(
-        rangeAccesses.filter((access) => excludedPaths.has(access.path)),
+        rangeAccesses.filter((access) => access.path === stored),
         [],
       );
+      assert.strictEqual((yield* service.produce(request())).messageCount, 4);
     }).pipe(Effect.provide(recordingLayer(rangeAccesses))),
   );
 
@@ -819,7 +735,7 @@ describe("ConversationExportService", () => {
         yield* reasonOf(
           request({}, { range: { _tag: "through-message", messageId: MessageId.make("nope") } }),
         ),
-        "message-not-found",
+        "range-unavailable",
       );
       assert.strictEqual(
         yield* reasonOf(request({ threadId: ThreadId.make("missing") })),
@@ -831,14 +747,6 @@ describe("ConversationExportService", () => {
         ),
         "delivery-unsupported",
       );
-      const ranged = yield* produceText(
-        request(
-          {},
-          { range: { _tag: "through-message", messageId: MessageId.make("assistant-1") } },
-        ),
-      );
-      assert.strictEqual(ranged.produced.messageCount, 2);
-      assert.notInclude(ranged.text, "Question 2");
     }).pipe(Effect.provide(TestLayer)),
   );
 });
@@ -1161,16 +1069,14 @@ describe("conversation PDF preparation", () => {
       );
       assert.notInclude(withoutWorkLog.markdown, "echo 1050");
 
-      const ranged = yield* readCapturedPageInput(
-        (yield* prepareConversationPdf(
-          request(
-            { format: "pdf" },
-            { range: { _tag: "through-message", messageId: MessageId.make("assistant-2") } },
-          ),
-        )).inputRelativeUrl,
-      );
-      assert.include(ranged.markdown, "Answer 2");
-      assert.notInclude(ranged.markdown, "Question 3");
+      const ranged = yield* prepareConversationPdf(
+        request(
+          { format: "pdf" },
+          { range: { _tag: "through-message", messageId: MessageId.make("assistant-2") } },
+        ),
+      ).pipe(Effect.flip);
+      assert(ranged._tag === "ScientConversationExportError");
+      assert.strictEqual(ranged.reason, "range-unavailable");
     }).pipe(Effect.provide(PdfTestLayer)),
   );
 

@@ -260,13 +260,24 @@ const make = Effect.gen(function* () {
   const captureRequest = Effect.fn("ConversationExportService.captureRequest")(function* (
     request: ScientConversationExportRequest,
   ) {
+    // Every export path captures through here, so this is where partial
+    // ranges are refused. The snapshot's range selection stays for later, but
+    // it cuts records by creation time, and a plan, reasoning block, or message
+    // created before the chosen message and updated after it keeps its
+    // creation time while carrying the later content. That must be solved
+    // before ranges are accepted again.
+    if (request.options.range._tag !== "whole") {
+      return yield* reject(
+        "range-unavailable",
+        "Exporting part of a conversation is not available yet.",
+      );
+    }
     const captured = yield* capture({
       threadId: request.threadId,
       selection: {
         workLog: request.options.includeWorkLog,
         reasoning: request.options.includeReasoning,
-        throughMessageId:
-          request.options.range._tag === "through-message" ? request.options.range.messageId : null,
+        throughMessageId: null,
       },
     });
     const exportValue = Encoding.encodeHex(yield* crypto.randomBytes(6).pipe(Effect.orDie));

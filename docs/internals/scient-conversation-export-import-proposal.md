@@ -802,8 +802,9 @@ in `apps/web/src/components/ui/`):
   an answer keeps its turn's work log, reasoning, plans, and questions and answers recorded up to
   that answer; ending at a steering message leaves out the rest of the turn it interrupted.
   Attachments of messages and answers after it are neither listed nor read. The bound is applied
-  once, to the snapshot, so every format carries the same content. The API supports this range;
-  the dialog currently exports the whole conversation.
+  once, to the snapshot, so every format carries the same content. This range is on hold: the
+  server refuses it and the dialog exports the whole conversation, until records updated after the
+  chosen message are also bounded.
 
 ### Work log and reasoning
 

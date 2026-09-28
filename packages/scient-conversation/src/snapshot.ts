@@ -90,6 +90,10 @@ export interface SelectedConversationContent {
  * plans, and answers recorded after it, including later items of the turn it
  * belongs to or interrupted. Throws `SnapshotRangeError` when the range's last
  * message is not a completed user or assistant message.
+ *
+ * Known limitation, and why the server refuses ranges for now: records are
+ * cut by creation time, so a plan, reasoning block, or message created before
+ * the chosen message and updated after it keeps its later content.
  */
 export function selectConversationContent(
   thread: OrchestrationThread,

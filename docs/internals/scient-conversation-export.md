@@ -38,7 +38,11 @@ of the canonical content and excludes them, so two captures of the same state ha
   later items of the turn it belongs to or, for a steering message, interrupted. Records at the
   chosen message's own time come after it. `selectConversationContent` applies the bound once,
   before projection, so every format gets the same content; attachments of excluded messages and
-  answers are never looked up, read, or charged to the byte budget.
+  answers are never looked up, read, or charged to the byte budget. The server does not accept a
+  range yet: every export path refuses `through-message` with `range-unavailable`. Known limitation
+  to solve before accepting ranges: the cut uses creation times, and a plan, reasoning block, or
+  message created before the chosen message but updated after it keeps its creation time while
+  carrying the later content.
 - **Messages.** User, assistant, and system messages outside the running turn, numbered `n = 1…`.
   As in chat, a settled turn's message counts as complete even if a crashed provider left its
   streaming flag set.
@@ -161,8 +165,8 @@ treated as a complete native conversation.
 
 `POST /api/scient/conversation-export/v1/prepare` returns the title, format capabilities for this
 host, counts, whether a turn is running, and message choices for an "up to a message" range. The
-API supports that range, but the export dialog does not currently offer it and always exports the
-whole conversation. The response carries no full export, but its message choices include bounded
+contract carries that range, but the server refuses it (see Range above) and the export dialog
+always exports the whole conversation. The response carries no full export, but its message choices include bounded
 excerpts of message text and should be treated as conversation content.
 `POST /api/scient/conversation-export/v1/export` produces the export; both require
 `orchestration:read`.
