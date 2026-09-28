@@ -1,7 +1,12 @@
 import type { ScientPandocToolStatus } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { formatMegabytes, isActivePandocInstall, pandocToolView } from "./pandocToolModel";
+import {
+  formatMegabytes,
+  isActivePandocInstall,
+  pandocReleaseNotice,
+  pandocToolView,
+} from "./pandocToolModel";
 
 function status(overrides: Partial<ScientPandocToolStatus> = {}): ScientPandocToolStatus {
   return {
@@ -150,6 +155,30 @@ describe("pandocToolView", () => {
       detail: "Status temporarily unavailable.",
       actionLabel: "Try again",
     });
+  });
+});
+
+describe("pandocReleaseNotice", () => {
+  it("names the release, its licence, and its source", () => {
+    expect(
+      pandocReleaseNotice(
+        status({
+          license: "GPL-2.0-or-later",
+          sourceUrl: "https://github.com/jgm/pandoc/archive/refs/tags/3.11.tar.gz",
+        }),
+      ),
+    ).toEqual({
+      release: "Pandoc 3.11",
+      label: "Pandoc 3.11 · GPL-2.0-or-later",
+      sourceUrl: "https://github.com/jgm/pandoc/archive/refs/tags/3.11.tar.gz",
+    });
+    // A server that predates the notice still names its release.
+    expect(pandocReleaseNotice(status())).toEqual({
+      release: "Pandoc 3.11",
+      label: "Pandoc 3.11",
+      sourceUrl: null,
+    });
+    expect(pandocReleaseNotice(null)).toBeNull();
   });
 });
 

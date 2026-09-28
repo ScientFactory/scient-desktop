@@ -51,6 +51,9 @@ export type ScientPandocInstallState = typeof ScientPandocInstallState.Type;
 export const ScientPandocToolStatus = Schema.Struct({
   /** The pinned release this server installs and runs. */
   version: Schema.String,
+  /** That release's licence (an SPDX expression) and where its exact source is published. */
+  license: Schema.optionalKey(Schema.String),
+  sourceUrl: Schema.optionalKey(Schema.String),
   /** The pinned release is installed and answered its `--version` check. */
   installed: Schema.Boolean,
   /** Scient has a pinned build for this server's platform and architecture. */

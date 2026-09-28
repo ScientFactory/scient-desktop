@@ -328,6 +328,9 @@ or paid for:
   exchanging document files through a command-line interface is the standard arrangement.
 - **If Scient downloads Pandoc on first use** from the official release, as it does TinyTeX, Scient
   does not ship Pandoc in its installer; it still records the notice and the matching source link.
+  The licence list carries Pandoc's `COPYRIGHT` and GPL text for the pinned release, and Settings ▸
+  Word export shows "Pandoc 3.11 · GPL-2.0-or-later · Source code", linking that release's exact
+  source archive.
 - **Release gate:** before the first release that installs Pandoc, a qualified licensing review of the
   exact delivery arrangement and a written source-delivery plan (which release, where its source is
   offered, how notices reach the user).

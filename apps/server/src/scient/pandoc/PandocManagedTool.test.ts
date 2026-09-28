@@ -99,6 +99,8 @@ const manifestFor = (input: {
   readonly sha256?: string;
 }): PandocManifest => ({
   version: "3.11",
+  license: "GPL-2.0-or-later",
+  sourceUrl: "https://example.invalid/pandoc-3.11-source.tar.gz",
   assets: {
     "win32-x64": null,
     "win32-arm64": null,
@@ -206,6 +208,8 @@ describe.skipIf(HOST_PLATFORM === "win32")("PandocManagedTool", () => {
         const before = yield* tool.status;
         expect(before.installed).toBe(false);
         expect(before.downloadBytes).toBe(ARCHIVE.byteLength);
+        expect(before.license).toBe("GPL-2.0-or-later");
+        expect(before.sourceUrl).toBe("https://example.invalid/pandoc-3.11-source.tar.gz");
 
         const begun = yield* tool.install;
         expect(begun.install.state).toBe("downloading");

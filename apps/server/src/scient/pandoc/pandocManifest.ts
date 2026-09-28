@@ -56,6 +56,10 @@ function isPandocPlatformArch(value: string): value is PandocPlatformArch {
 
 export interface PandocManifest {
   readonly version: string;
+  /** The release's licence, shown with the install; the notice itself is in the licence list. */
+  readonly license: string;
+  /** Where the exact source of this release is published. */
+  readonly sourceUrl: string;
   readonly assets: Readonly<Record<PandocPlatformArch, PandocAsset | null>>;
 }
 
@@ -78,6 +82,8 @@ export const PANDOC_SOURCE_URL = `https://github.com/jgm/pandoc/archive/refs/tag
 
 export const PANDOC_MANIFEST: PandocManifest = {
   version: VERSION,
+  license: "GPL-2.0-or-later",
+  sourceUrl: PANDOC_SOURCE_URL,
   assets: {
     "darwin-arm64": {
       fileName: `pandoc-${VERSION}-arm64-macOS.zip`,

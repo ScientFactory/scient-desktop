@@ -208,6 +208,8 @@ export const make = Effect.gen(function* () {
       const reinstallRequired = installed === null && (yield* Ref.get(unstartableRef)) !== null;
       return {
         version: manifest.version,
+        license: manifest.license,
+        sourceUrl: manifest.sourceUrl,
         installed: installed !== null,
         canInstall: asset !== null,
         unavailableReason: lookup.supported ? null : lookup.message,

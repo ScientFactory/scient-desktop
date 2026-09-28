@@ -164,6 +164,18 @@
       "name": "Expo text editor implementation",
       "noticeFile": "apps/mobile/modules/t3-composer-editor/LICENSE",
       "sourceUrl": "https://github.com/expo/expo"
+    },
+    {
+      "bundles": ["server"],
+      "includeInBundles": ["web"],
+      "license": "GPL-2.0-or-later",
+      "name": "Pandoc",
+      "noticeFiles": [
+        "apps/server/src/scient/pandoc/notices/COPYRIGHT",
+        "apps/server/src/scient/pandoc/notices/COPYING"
+      ],
+      "sourceUrl": "https://github.com/jgm/pandoc/archive/refs/tags/3.11.tar.gz",
+      "version": "3.11"
     }
   ],
   "packageOverrides": [
