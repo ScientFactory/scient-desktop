@@ -33,6 +33,12 @@ of the canonical content and excludes them, so two captures of the same state ha
   are left out, and exactly one `running-turn-omitted` warning names it.
 - **Selection.** Work log, reasoning, and range are applied while capturing. Unselected content is
   never read into the snapshot.
+- **Range.** "Up to a message" ends at exactly the chosen user or assistant message: later messages
+  are left out, and so are work log, reasoning, plans, and answers recorded after it, including
+  later items of the turn it belongs to or, for a steering message, interrupted. Records at the
+  chosen message's own time come after it. `selectConversationContent` applies the bound once,
+  before projection, so every format gets the same content; attachments of excluded messages and
+  answers are never looked up, read, or charged to the byte budget.
 - **Messages.** User, assistant, and system messages outside the running turn, numbered `n = 1…`.
   As in chat, a settled turn's message counts as complete even if a crashed provider left its
   streaming flag set.
@@ -46,8 +52,8 @@ of the canonical content and excludes them, so two captures of the same state ha
   objects are never copied. Approval requests and unanswered questions are never included; answered
   questions are kept as question-and-answer interactions.
 - **Warnings** agree with the facts: one `attachment-unavailable` warning per attachment whose file
-  was missing, carrying its name and its message number (`null` for an answer attachment), and none
-  for available attachments.
+  was missing, carrying its name and its snapshot message number (`null` for an answer attachment),
+  and none for available attachments.
 
 Size bounds (`boundText`, `boundItems`) keep the head and tail and write an
 `[… N lines omitted …]` line.
@@ -71,8 +77,23 @@ grouping shared with chat (`@scientfactory/conversation/work-log-grouping`, the 
 `scient-asset:<id>`; file-excerpt quotes become a quotation plus the project-relative source file
 and are listed in `citations`. Images referenced by a path on the original computer (for example
 `![Plot](./figures/plot.png)`) become an "Image not included" placeholder with a
-`resource-unresolved` warning; remote and data images are kept. When work log or reasoning is
-included, a `sensitive-content-included` warning puts the dialog's caution into the file.
+`resource-unresolved` warning; remote and data images are kept. Where raw HTML renders (answers,
+plans, reasoning), `<img>` tags with such a `src` get the same placeholder and warning. When work log
+or reasoning is included, a `sensitive-content-included` warning puts the dialog's caution into the
+file.
+
+Bundle warnings refer to messages by the numbers the file shows, after system messages and
+answers folded into their question are left out; an answer's unavailable attachment is reported
+once, with the answer. Quoted names and alt texts are shortened (`warningValue`) so every warning
+fits `DocumentWarning`'s 2,048 characters.
+
+Attachment content comes from the writer. Text-only Markdown, Copy, and the Word diagram plan list
+attachments from their recorded sizes (`external` content) and never open the files. A `.zip` or
+`.scic` checks each file against the 512 MiB export budget (a `.scic` also hashes it by streaming)
+and streams it into the archive when that entry is written, so about one entry is in memory at a
+time; an entry whose size or digest changed since the check fails the export. PDF and Word read the
+bytes they embed. An attachment over the budget is listed by name with a "too large to include"
+warning.
 
 ## Scient conversation Markdown v1
 
@@ -112,8 +133,10 @@ Here is what I found …
   top-level HTML comment blocks carrying the file's own value are markers; quoted markers, markers
   in code, and markers from another export are content.
 - `n` numbers the messages in the file from 1. `role` is `user` or `assistant`. `time` is the
-  message time in UTC. `turn` is the file-local ordinal of the assistant turn; messages of one turn
-  share it and user messages carry none.
+  message time in UTC. `turn` is the file-local ordinal of the assistant turn; consecutive messages
+  of one turn share it (a user message between them does not end the turn) and user messages carry
+  none. A turn whose messages return after another turn continues under a new ordinal, because a
+  reader rejects a turn that reappears.
 - The speaker heading right after a marker is generated for people and is not part of the message.
   Headings inside a message are kept.
 - `scient:part` markers introduce generated material attached to the message: `attachments`,
@@ -137,33 +160,42 @@ treated as a complete native conversation.
 ## Delivery
 
 `POST /api/scient/conversation-export/v1/prepare` returns the title, format capabilities for this
-host, counts, whether a turn is running, and message choices for the range picker. It carries no
-full export, but its range-picker choices include bounded excerpts of message text and should be
-treated as conversation content. `POST /api/scient/conversation-export/v1/export` produces the export;
-both require `orchestration:read`.
+host, counts, whether a turn is running, and message choices for an "up to a message" range. The
+API supports that range, but the export dialog does not currently offer it and always exports the
+whole conversation. The response carries no full export, but its message choices include bounded
+excerpts of message text and should be treated as conversation content.
+`POST /api/scient/conversation-export/v1/export` produces the export; both require
+`orchestration:read`.
 
 - **File delivery** writes `<state>/scient/conversation-exports/<exportId>/<name>.md` or `.zip`
   (`name.md` plus `attachments/NN-name`, written with `yazl`). The name comes from the title and is
-  at most 200 UTF-8 bytes including the extension. The server returns a signed
-  `environment-file` asset URL that expires with the file. The directory is cleared when the server
-  starts and swept every five minutes; exports older than 30 minutes are removed.
+  at most 200 UTF-8 bytes including the extension, never a Windows device name (`CON`, `NUL`,
+  `COM1`, …) and never ending in a dot or space. Attachment names inside a package keep letters,
+  digits, `.`, `_`, and `-`, are cut on code points, and are bounded in UTF-8 bytes. A failed
+  archive leaves no file behind. The server returns a signed `environment-file` asset URL that
+  expires with the file. The directory is cleared when the server starts and swept every five
+  minutes; exports older than 30 minutes are removed.
 - **Clipboard delivery** returns text-only Markdown inline, up to 8 MiB of text.
 - Scient's own state and base directories (as configured and as resolved) are replaced with
-  `«scient-data»` in the snapshot's text before any writer escapes it, with either path separator
-  and, for Windows roots, in any case.
+  `«scient-data»` in the snapshot's text before any writer escapes it, with either path separator,
+  in any case, and only where the root's path ends (`/data` in `/data/x`, not in `/database`).
 - The client saves a file with the shared Save Copy path: the native save dialog in desktop
   (`apps/desktop/src/scient/documentArtifacts/AssetCopy.ts`) and a download in a browser.
 
-Formats this server cannot produce are advertised with `available: false` and a reason. PDF is not
-written by `export`: the `documents.prepareConversationPdf` RPC builds the same bundle with the
-dialog's options (`ConversationExportService.document`), captures it for Scient's document page,
-and the client prints and publishes it as described in
+Formats this server cannot produce are advertised with `available: false` and a reason. The
+responses decode forward-compatibly: an older client drops a format it does not know, shows a
+warning with an unknown code by its message, and reads a refusal with an unknown reason by its
+message. PDF is not written by `export`: the `documents.prepareConversationPdf` RPC builds the same
+bundle with the dialog's options (`ConversationExportService.document`), captures it for Scient's
+document page, and the client prints and publishes it as described in
 [document PDF export](./scient-document-pdf-export.md).
 
 ## Other export and conversion paths
 
 - **Portable `.scic`.** The server writes a versioned ZIP with a canonical conversation snapshot,
-  Markdown reading copy, manifest, and included attachments. A receiver previews and validates
+  Markdown reading copy, manifest, and included attachments. Before writing, the writer decodes
+  its own manifest and checks every entry path with the reader's rules; a package that would fail
+  them is an internal error, never a file handed to the user. A receiver previews and validates
   structure, digests, size bounds, and omissions before choosing a local project and provider.
   Confirmation creates a new independent thread with fresh local IDs and explicit import
   provenance. Provider sessions, pending actions, credentials, and workspace files do not transfer;
@@ -202,8 +234,8 @@ Thread menu → **Export…** (sidebar and chat header) opens the dialog. Format
 `formatRegistry.ts`; a registration may add a client requirement (`clientAvailability`: PDF needs
 a current Scient desktop, and says so otherwise) and produce the export itself (`produce`: PDF
 opens in Scient's PDF reader instead of a save dialog). Work log and reasoning start off on every
-opening, the range is the whole conversation or up to a chosen message, and the text-only or `.zip`
-choice appears only when the conversation has attachments. The dialog warns when work log or
-reasoning is included and when a turn is running; the file's own warnings are shown after export
-and written into the file. **Import conversation** is also available from the app menu/sidebar and
-file-open flow; the import dialog displays omissions and warnings before confirmation.
+opening, the export covers the whole conversation, and the text-only or `.zip` choice appears only
+when the conversation has attachments. The dialog warns when work log or reasoning is included and
+when a turn is running; the file's own warnings are shown after export and written into the file.
+**Import conversation** is also available from the app menu/sidebar and file-open flow; the import
+dialog displays omissions and warnings before confirmation.

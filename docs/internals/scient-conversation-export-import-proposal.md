@@ -797,6 +797,13 @@ in `apps/web/src/components/ui/`):
 - A format unavailable on this host (PDF with no connected desktop, Word before Pandoc is installed)
   is shown disabled with its reason, or offers the installation.
 - Warnings are one line each, and the same warnings are included in the exported file.
+- **Up to selected message** exports exactly that message and everything before it, nothing after:
+  ending at a prompt leaves out the work, reasoning, plans, and answers that followed it; ending at
+  an answer keeps its turn's work log, reasoning, plans, and questions and answers recorded up to
+  that answer; ending at a steering message leaves out the rest of the turn it interrupted.
+  Attachments of messages and answers after it are neither listed nor read. The bound is applied
+  once, to the snapshot, so every format carries the same content. The API supports this range;
+  the dialog currently exports the whole conversation.
 
 ### Work log and reasoning
 
