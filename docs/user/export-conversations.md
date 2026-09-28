@@ -73,5 +73,5 @@ to that release's source code; the full notice is under **Open source licenses**
 for "Word" or "Pandoc" to find it.
 
 If Pandoc was installed but can no longer start, the export says so and Settings offers **Reinstall
-Pandoc**. Word export stops a conversion that takes longer than two minutes; export a shorter range
-or leave out the work log.
+Pandoc**. Word export stops a conversion that takes longer than two minutes; try leaving out the work
+log and reasoning, or export the conversation as PDF or Markdown.

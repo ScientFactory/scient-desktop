@@ -184,42 +184,62 @@ export class PandocWordConverter extends Context.Service<
   }
 >()("t3/scient/pandoc/PandocWordConverter") {}
 
-const conversionTimeout = () =>
+type WordSourceKind = "conversation" | "latex" | "file";
+
+function sourceKind(input: WordConversionInput): WordSourceKind {
+  if (input.latex) return "latex";
+  return input.bundle.metadata.source._tag === "conversation" ? "conversation" : "file";
+}
+
+const SOURCE_NAME: Record<WordSourceKind, string> = {
+  conversation: "This conversation",
+  latex: "This document",
+  file: "This file",
+};
+
+/** What the user can do instead, in terms of what the export dialogs offer. */
+const TOO_LARGE_ADVICE: Record<WordSourceKind, string> = {
+  conversation: "Try leaving out the work log and reasoning, or export it as PDF or Markdown.",
+  latex: "Try a shorter document.",
+  file: "Try a shorter file, or export it as PDF.",
+};
+
+const conversionTimeout = (kind: WordSourceKind) =>
   new WordConversionError({
     reason: "timeout",
-    message: "Converting to Word took too long and was stopped. Export a shorter range.",
+    message: `Converting to Word took too long and was stopped. ${TOO_LARGE_ADVICE[kind]}`,
   });
 
-/** What to shorten depends on what is being exported. */
-function sourceTooLarge(input: WordConversionInput): WordConversionError {
-  const message = input.latex
-    ? "This LaTeX document, with the files it includes, is over the 8 MB Word export limit. Export a shorter document."
-    : input.bundle.metadata.source._tag === "conversation"
-      ? "The Word source exceeds 8 MB. Export a shorter range or leave out the work log."
-      : "This file is over the 8 MB Word export limit. Export a shorter file.";
-  return new WordConversionError({ reason: "too-large", message });
+function sourceTooLarge(kind: WordSourceKind): WordConversionError {
+  const subject = {
+    conversation: "This conversation is too large for Word.",
+    latex: "This LaTeX document, with the files it includes, is over the 8 MB Word export limit.",
+    file: "This file is over the 8 MB Word export limit.",
+  }[kind];
+  return new WordConversionError({
+    reason: "too-large",
+    message: `${subject} ${TOO_LARGE_ADVICE[kind]}`,
+  });
 }
 
 function formatMegabytes(bytes: number): string {
   return `${Math.round(bytes / (1024 * 1024))} MB`;
 }
 
-function runFailure(error: PandocRunError): WordConversionError {
+function runFailure(error: PandocRunError, kind: WordSourceKind): WordConversionError {
   switch (error.reason) {
     case "heap-limit":
       return new WordConversionError({
         reason: "too-large",
-        message:
-          "This document needs more memory than Word export allows. Export a shorter range or leave out the work log.",
+        message: `${SOURCE_NAME[kind]} needs more memory than Word export allows. ${TOO_LARGE_ADVICE[kind]}`,
       });
     case "output-limit":
       return new WordConversionError({
         reason: "too-large",
-        message:
-          "The Word file would be larger than Word export allows. Export a shorter range or fewer images.",
+        message: `The Word file would be larger than Word export allows. ${TOO_LARGE_ADVICE[kind]}`,
       });
     case "timeout":
-      return conversionTimeout();
+      return conversionTimeout(kind);
     case "parse-error":
       return new WordConversionError({
         reason: "failed",
@@ -281,8 +301,9 @@ const make = Effect.gen(function* () {
     "scient.pandoc.convertToWord",
   )(function* (input) {
     const source = input.latex?.source ?? input.bundle.markdown;
+    const kind = sourceKind(input);
     if (Buffer.byteLength(source, "utf8") > MAX_WORD_SOURCE_BYTES) {
-      return yield* sourceTooLarge(input);
+      return yield* sourceTooLarge(kind);
     }
     const pandoc = yield* tool.command;
     if (pandoc === null) {
@@ -319,7 +340,7 @@ const make = Effect.gen(function* () {
             Effect.tapError((error) =>
               error.reason === "spawn-failed" ? tool.discardUnstartable(pandoc) : Effect.void,
             ),
-            Effect.mapError(runFailure),
+            Effect.mapError((error) => runFailure(error, kind)),
           );
 
         // 1. Read. Tabs stay as written, as Scient's Markdown parser reads them
@@ -489,7 +510,7 @@ const make = Effect.gen(function* () {
       // Interrupting the conversion kills its Pandoc and removes its scratch.
       Effect.timeoutOrElse({
         duration: input.limits?.totalMs ?? SCIENT_WORD_CONVERSION_TIMEOUT_MS,
-        orElse: () => Effect.fail(conversionTimeout()),
+        orElse: () => Effect.fail(conversionTimeout(kind)),
       }),
       Effect.catchTag("PlatformError", (cause) =>
         Effect.logWarning("scient pandoc word conversion file error", { cause }).pipe(

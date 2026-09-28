@@ -62,6 +62,9 @@ describe("PandocWordConverter", () => {
           })
           .pipe(Effect.flip);
         expect(error.reason).toBe("too-large");
+        expect(error.message).toBe(
+          "This conversation is too large for Word. Try leaving out the work log and reasoning, or export it as PDF or Markdown.",
+        );
         expect(NodeFS.existsSync(outputPath)).toBe(false);
         expect(NodeFS.existsSync(scratchRoot)).toBe(false);
       }),
@@ -106,7 +109,7 @@ describe("PandocWordConverter", () => {
           })
           .pipe(Effect.flip);
         expect(file.message).toBe(
-          "This file is over the 8 MB Word export limit. Export a shorter file.",
+          "This file is over the 8 MB Word export limit. Try a shorter file, or export it as PDF.",
         );
       }),
     ),
@@ -171,6 +174,9 @@ describe("PandocWordConverter", () => {
             })
             .pipe(Effect.flip);
           expect(error.reason).toBe("timeout");
+          expect(error.message).toBe(
+            "Converting to Word took too long and was stopped. Try leaving out the work log and reasoning, or export it as PDF or Markdown.",
+          );
           expect(NodeFS.existsSync(outputPath)).toBe(false);
           expect(NodeFS.existsSync(`${outputPath}.partial`)).toBe(false);
           expect(NodeFS.readdirSync(scratchRoot)).toEqual([]);
@@ -331,6 +337,8 @@ describe("PandocWordConverter", () => {
                 .pipe(Effect.flip);
               expect(error.reason, mode).toBe(reason);
               expect(error.message, mode).toContain(text);
+              // Exports cover the whole conversation; advice names only what the dialog offers.
+              expect(error.message, mode).not.toMatch(/range/iu);
               expect(NodeFS.existsSync(outputPath)).toBe(false);
               expect(NodeFS.existsSync(`${outputPath}.partial`)).toBe(false);
               expect(NodeFS.readdirSync(scratchRoot)).toEqual([]);
