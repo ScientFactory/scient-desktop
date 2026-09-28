@@ -229,7 +229,8 @@ recovery states.
 Mounted interaction tests cover review-before-send, draft preservation, repeated
 clicks, missing composer/clipboard and stale asynchronous results. Run
 `pnpm --dir apps/desktop test:mermaid-render` for a hidden Chromium test of the
-actual renderer, both themes, full diagnostics and 48 concurrent cache consumers.
+actual renderer (the shared no-network frame, whose Mermaid it inspects), both
+themes, full diagnostics and 48 concurrent cache consumers.
 The same check exercises the recovery corpus, the user's mixed valid/broken
 regression corpus, combined fixes, refused ambiguous
 input, semantic label/value preservation, and bounded scanning; unit tests cover
