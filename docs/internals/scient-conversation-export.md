@@ -189,9 +189,20 @@ Word export of a conversation or saved project Markdown file asks the server for
 in the selected snapshot or saved revision. The browser renders each fence to a bounded PNG and
 returns the bytes with that source digest. The server rereads the authoritative source, checks the
 digest and every diagram ID, and passes only validated PNG bytes to Pandoc. It never accepts an asset
-path from the client or fetches a remote resource for this step. A syntax failure keeps the full
-Mermaid source in Word with a warning; a renderer or PNG encoder failure stops the UI export. A
-server-only Word caller that supplies no capture retains the labeled source fallback and warning.
+path from the client or fetches a remote resource for this step. Diagram IDs hash the fence source as
+Pandoc reads it (carriage returns dropped; the read pass keeps tabs), so CRLF and tab-indented fences
+match their captured image.
+
+Mermaid draws into the live page before its SVG can be inspected, so the browser refuses, before
+rendering, any diagram whose draw could load a resource (`wordExport/diagramSafety.ts`): label markup
+that loads a URL or carries attributes, CSS fetch functions (`url()`, `image-set()`, `@import`, also
+when CSS-escaped) in styles or settings, image shapes, sequence-actor icons, and configuration keys
+outside the theme, layout, and per-diagram options. Configuration is checked as Mermaid itself parsed
+it from front matter and `%%{init}%%`. The renderer's fallback copy after a syntax error is checked the
+same way, and the rasteriser inspects the SVG again before drawing. Math, URLs written as text, and
+theme directives render. Any diagram that is refused, fails to render or encode, or exceeds the PNG
+budget is captured as `render-failed`: Word shows its labeled Mermaid source with a warning, and the
+export continues. A server-only Word caller that supplies no capture retains the same fallback.
 The two Word export POST routes cap request bodies at 12 MiB before JSON parsing; the PNG budget is
 2 MiB per diagram and 8 MiB in total. An oversized chunked request may have its connection reset
 by the Node HTTP adapter as it stops reading the body.
