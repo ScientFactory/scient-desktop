@@ -37,7 +37,6 @@ import type {
   ServerProviderSkill,
   ThreadPullRequestKey,
 } from "@t3tools/contracts";
-import { faviconUrlForOrigin } from "@t3tools/shared/favicon";
 import { githubMediaFetchUrl } from "@t3tools/shared/githubMedia";
 import {
   isAtomCommandInterrupted,
@@ -213,6 +212,13 @@ import {
   ScientPendingWorkspaceImage,
 } from "../scient/images/ScientInlineWorkspaceImage";
 import { ScientDirectImageFigure } from "../scient/images/ScientDirectImageFigure";
+// SCIENT-FORK:START — web images render as a referenced link until the user loads one
+import { hasRemoteSrcSet, remoteImageAddress } from "../scient/presentation/remoteImageAddress";
+import {
+  ScientRemoteImageLoadedContext,
+  ScientRemoteImageReference,
+} from "../scient/presentation/ScientRemoteImageReference";
+// SCIENT-FORK:END
 import {
   inlineWorkspaceImageMarkdownSource,
   inlineWorkspaceImageResource,
@@ -1056,9 +1062,6 @@ const normalizeMarkdownLinkHref = normalizeMarkdownLinkHrefKey;
 
 const MARKDOWN_LINK_FAVICON_CLASS_NAME = "block size-full shrink-0 select-none";
 
-/** Hosts whose favicon request already failed this session — skip straight to the globe. */
-const failedFaviconHosts = new Set<string>();
-
 /** Sites whose brand mark (drawn in `currentColor`) replaces the fetched favicon so it follows the theme. */
 function brandLinkIcon(host: string): typeof GitHubIcon | null {
   const hostname = host.toLowerCase();
@@ -1066,35 +1069,23 @@ function brandLinkIcon(host: string): typeof GitHubIcon | null {
   return null;
 }
 
+// SCIENT-FORK:START — link icons are drawn locally; a fetched favicon would tell a third
+// party which links a conversation holds, and when it was opened.
 const MarkdownLinkFavicon = memo(function MarkdownLinkFavicon({ host }: { host: string }) {
-  const [failedHost, setFailedHost] = useState<string | null>(null);
-  const BrandIcon = brandLinkIcon(host);
-  const faviconUrl = BrandIcon ? null : faviconUrlForOrigin(`https://${host}`);
   return (
     <span
       className="ms-[0.25em] me-[0.2em] inline-flex size-[14px] [vertical-align:-0.125em]"
       aria-hidden
     >
-      {BrandIcon ? (
-        <BrandIcon className={MARKDOWN_LINK_FAVICON_CLASS_NAME} />
-      ) : faviconUrl === null || failedHost === host || failedFaviconHosts.has(host) ? (
-        <GlobeIcon className={MARKDOWN_LINK_FAVICON_CLASS_NAME} />
+      {brandLinkIcon(host) ? (
+        <GitHubIcon className={MARKDOWN_LINK_FAVICON_CLASS_NAME} />
       ) : (
-        <img
-          src={faviconUrl}
-          alt=""
-          loading="lazy"
-          draggable={false}
-          className={cn(MARKDOWN_LINK_FAVICON_CLASS_NAME, "rounded-sm")}
-          onError={() => {
-            failedFaviconHosts.add(host);
-            setFailedHost(host);
-          }}
-        />
+        <GlobeIcon className={MARKDOWN_LINK_FAVICON_CLASS_NAME} />
       )}
     </span>
   );
 });
+// SCIENT-FORK:END
 
 const CHAT_MARKDOWN_MEDIA_MAX_WIDTH_CLASS_NAME = "max-w-[min(100%,30rem)]";
 const CHAT_MARKDOWN_MEDIA_BOUNDS_CLASS_NAME = cn(
@@ -1430,6 +1421,9 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   /** Loaded instead of the failure state when no URL can be signed, such as against a server
       too old to know this resource. Only safe when the client can reach it directly. */
   readonly fallbackSrc?: string | undefined;
+  // SCIENT-FORK:START — shown instead of the failure state, before any `fallbackSrc`
+  readonly failureFallback?: ReactNode | undefined;
+  // SCIENT-FORK:END
   readonly workspaceRoot?: string | undefined;
   readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
 }) {
@@ -1458,6 +1452,11 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     resource._tag === "workspace-file" || resource._tag === "media-file"
       ? resource.threadId
       : undefined;
+  // SCIENT-FORK:START — an unsignable web asset becomes a link card, not a direct fetch
+  if (assetUrl._tag === "Failure" && props.failureFallback !== undefined) {
+    return props.failureFallback;
+  }
+  // SCIENT-FORK:END
   const fallbackSrc = assetUrl._tag === "Failure" ? props.fallbackSrc : undefined;
   const src =
     assetUrl._tag === "Success"
@@ -2714,6 +2713,26 @@ const CHAT_MARKDOWN_COMPONENTS = {
         ? resolveInlineWorkspaceImage({ alt, cwd, src: imageSource.path })
         : null;
     const useScientImageCard = Boolean(node?.properties?.dataScientImageCard);
+    // SCIENT-FORK:START — web images render as a referenced link until the user loads one.
+    // Inside a link the card is the link's content and the link keeps working.
+    const remoteImage =
+      directUri === null || use(ScientRemoteImageLoadedContext)
+        ? null
+        : remoteImageAddress(resolveProtocolRelativeMediaUrl(directUri));
+    const remoteImageReference =
+      remoteImage === null ? null : (
+        <ScientRemoteImageReference
+          address={remoteImage}
+          alt={altText}
+          kind={kind}
+          copyMarkdown={markdownSource}
+          id={props.id}
+          insideLink={use(MarkdownLinkContext)}
+        >
+          <MarkdownImg node={node} alt={alt} src={src} title={title} {...props} />
+        </ScientRemoteImageReference>
+      );
+    // SCIENT-FORK:END
     if (useScientImageCard && image && markdownSource && threadRef && !isStreaming) {
       return (
         <ScientInlineWorkspaceImage
@@ -2759,11 +2778,17 @@ const CHAT_MARKDOWN_COMPONENTS = {
           srcFragment={srcFragment}
           originalUrl={resolveProtocolRelativeMediaUrl(directUri)}
           framed={false}
-          fallbackSrc={githubMediaUrl}
+          // SCIENT-FORK:START — the server proxies GitHub media; the direct fallback is gated
+          fallbackSrc={remoteImageReference === null ? githubMediaUrl : undefined}
+          failureFallback={remoteImageReference ?? undefined}
+          // SCIENT-FORK:END
           onImageExpand={imageExpand}
         />
       );
     }
+    // SCIENT-FORK:START — see the remote-image gate above
+    if (remoteImageReference !== null) return remoteImageReference;
+    // SCIENT-FORK:END
     if (imageSource._tag === "Direct") {
       const mediaSrc = resolveProtocolRelativeMediaUrl(imageSource.uri);
       const originalUrl =
@@ -2841,6 +2866,14 @@ const CHAT_MARKDOWN_COMPONENTS = {
     }
     return <ChatMarkdownImageFallback alt={altText} copyMarkdown={markdownSource} kind={kind} />;
   },
+  // SCIENT-FORK:START — a <picture> source never fetches a web address; its <img> is gated
+  source: function MarkdownSource({ node: _node, ...props }) {
+    const remote =
+      hasRemoteSrcSet(props.srcSet) ||
+      (typeof props.src === "string" && remoteImageAddress(props.src) !== null);
+    return remote ? null : <source {...props} />;
+  },
+  // SCIENT-FORK:END
   div: function MarkdownDiv({ node, children, ...props }) {
     const { onUseArtifactTemplate } = use(ChatMarkdownRendererContext);
 

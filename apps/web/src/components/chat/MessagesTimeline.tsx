@@ -244,6 +244,9 @@ import { useUiStateStore } from "~/uiStateStore";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
 import { ScientChatImageGallery } from "~/scient/images/ScientChatImageGallery";
+// SCIENT-FORK:START — website tool icons never fetch a web favicon
+import { remoteImageAddress } from "~/scient/presentation/remoteImageAddress";
+// SCIENT-FORK:END
 import { SkillChipIcon, SkillInlineText } from "./SkillInlineText";
 import { deriveAgentSpawnSummary } from "./agentSpawnSummary";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
@@ -4196,7 +4199,11 @@ function ToolActivityIconView(props: {
     return <WorkEntryIcon name={props.fallbackName} className={fallbackClassName} />;
   }
   if (props.icon._tag === "website") {
-    const src = toolActivityFaviconUrl(props.icon, resolvedTheme, 32);
+    // SCIENT-FORK:START — only local icon bytes (`data:`, the app's own assets); a web
+    // favicon would tell the site when this conversation was opened.
+    const faviconSrc = toolActivityFaviconUrl(props.icon, resolvedTheme, 32);
+    const src = faviconSrc !== null && remoteImageAddress(faviconSrc) === null ? faviconSrc : null;
+    // SCIENT-FORK:END
     return src ? (
       <ToolActivityImageIcon
         key={src}
