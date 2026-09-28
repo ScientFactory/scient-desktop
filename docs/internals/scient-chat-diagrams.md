@@ -25,10 +25,28 @@ diagram card.
 
 ## Rendering pipeline
 
-The exact-pinned `mermaid` 12.0.0 package is locally bundled and dynamically
-imported only when a settled diagram enters a 400 px viewport margin. The
-initial chat bundle does not import Mermaid. Rendering is serialized because
-Mermaid configuration is process-global. Identical source/appearance renders
+The exact-pinned `mermaid` 12.0.0 package is locally bundled and loaded only
+when a settled diagram enters a 400 px viewport margin. The initial chat bundle
+does not import Mermaid. Chat, Markdown previews and the editor draw in one
+long-lived hidden frame shared with Word export's renderer
+(`diagrams/isolatedMermaid.ts`): its Content Security Policy allows only
+Mermaid's standalone build, inline styles and `data:`/`blob:` images and fonts,
+so every load a diagram names is refused before a request is made, and an
+image Mermaid measures through `new Image()` gets a local stand-in so the draw
+completes. Before each draw the frame mirrors the page's style rules (minus any
+that would load) and its root and body attributes, so text measures exactly as
+it did in the page. The returned SVG then passes through
+`stripSvgExternalResources` (`diagrams/svgExternalResources.ts`), which removes
+outside images, icons, `href`s and CSS loads (escapes decoded, stylesheets
+rewritten through the CSS parser) and leaves an ordinary diagram byte for byte;
+the addresses it removed become the card's one-line "Outside content not
+loaded" note, whose web addresses open in the
+system browser. The PDF document page, which itself has no network access,
+draws in its own page (`renderMermaidDiagram(…, "page")`). The frame's first
+draw costs one load of the standalone build (about 0.6 s in the development
+server against about 0.2 s for the page's first import, measured in the
+Chromium test); later draws cost the same as in the page. Rendering is
+serialized because Mermaid configuration is process-global. Identical source/appearance renders
 are deduplicated in flight and cached in a bounded LRU (100 entries / 20 MiB).
 Scient explicitly retains `layout: dagre`, `look: classic`, and its light/dark
 themes instead of adopting Mermaid 12's new visual defaults. Authors can opt

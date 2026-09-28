@@ -241,7 +241,7 @@ match their captured image.
 
 Mermaid draws into a live document before its SVG can be inspected, and in strict mode it still
 creates what a diagram asks for (an `<img>` in a label, an image shape, a sequence-actor icon, CSS
-`url()`). Word capture therefore draws in a hidden same-origin frame (`wordExport/isolatedMermaid.ts`)
+`url()`). Word capture therefore draws in a hidden same-origin frame (`diagrams/isolatedMermaid.ts`, shared with chat)
 whose Content Security Policy allows only Mermaid's self-contained script, inline styles, and
 `data:`/`blob:` images and fonts; the browser refuses every other load before a request is made, and
 a refused load makes that diagram fall back. The frame loads Mermaid's standalone build only when an
