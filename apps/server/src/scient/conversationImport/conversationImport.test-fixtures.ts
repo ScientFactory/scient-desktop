@@ -16,6 +16,7 @@ import {
   type ConversationImportDestination,
   type EnvironmentSessionPrincipalShape,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -55,7 +56,7 @@ const sha256 = (bytes: Uint8Array) =>
   `sha256:${NodeCrypto.createHash("sha256").update(bytes).digest("hex")}`;
 
 const at = (seconds: number) =>
-  `2026-09-27T10:${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}.000Z`;
+  DateTime.formatIso(DateTime.add(DateTime.makeUnsafe("2026-09-27T10:00:00.000Z"), { seconds }));
 
 export interface ImportFixtureOptions {
   /** Completed turns: one user request and one answer each. */
