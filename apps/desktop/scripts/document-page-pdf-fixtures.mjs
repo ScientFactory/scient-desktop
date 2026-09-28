@@ -317,6 +317,20 @@ function fixtures(png) {
         outlineCount: 31,
       },
     },
+    ...[
+      ["yaml", "---\ntitle: Front matter title\nauthor: FRONT_MATTER_AUTHOR\n---\n"],
+      ["toml", '+++\ntitle = "Front matter title"\nauthor = "FRONT_MATTER_AUTHOR"\n+++\n'],
+    ].map(([kind, frontMatter]) => ({
+      name: `front-matter-${kind}`,
+      title: "Front matter title",
+      markdown: `${frontMatter}\nFRONT_MATTER_BODY opens the document.\n\n## FRONT_MATTER_SECTION\n\nMore text.\n`,
+      expect: {
+        order: ["Front matter title", "FRONT_MATTER_BODY", "FRONT_MATTER_SECTION"],
+        absent: ["FRONT_MATTER_AUTHOR", "author"],
+        outline: ["Front matter title", "FRONT_MATTER_SECTION"],
+        outlineCount: 2,
+      },
+    })),
     {
       name: "long-conversation",
       markdown: conversation,
@@ -480,7 +494,7 @@ function pageInput(fixture) {
     documentKind: fixture.documentKind ?? "workspace-file",
     sourceDigest: sha256(fixture.markdown),
     profile: fixture.profile ?? "document",
-    title: fixture.markdown.split("\n")[0].replace(/^#\s*/u, ""),
+    title: fixture.title ?? fixture.markdown.split("\n")[0].replace(/^#\s*/u, ""),
     language: null,
     direction: "auto",
     createdAt: null,

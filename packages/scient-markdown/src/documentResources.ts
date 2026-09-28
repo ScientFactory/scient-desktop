@@ -9,12 +9,26 @@ import { math } from "micromark-extension-math";
 
 const HTML_IMAGE_SOURCE = /<img\b[^>]*?\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/giu;
 const MAX_TITLE_LENGTH = 512;
+const FRONT_MATTER_KINDS = ["yaml", "toml"] as const;
+
+/**
+ * The rich editor's front matter grammar: a YAML (`---`) or TOML (`+++`)
+ * block at the very start of a file is metadata, not content. Renderers that
+ * parse with unified register both extensions so the block never prints.
+ */
+export const MARKDOWN_FRONT_MATTER_EXTENSIONS = {
+  syntax: frontmatter([...FRONT_MATTER_KINDS]),
+  fromMarkdown: frontmatterFromMarkdown([...FRONT_MATTER_KINDS]),
+};
 
 /** What document export needs to know about one Markdown source before rendering it. */
 export interface MarkdownDocumentInspection {
   /** Image destinations exactly as authored, in document order, without duplicates. */
   readonly imageReferences: ReadonlyArray<string>;
-  /** Plain text of the first level-one heading, used as the document title. */
+  /**
+   * The document title: the front matter's `title`, otherwise the plain text
+   * of the first level-one heading.
+   */
   readonly title: string | null;
   /** Raw HTML reaches the document page only through its sanitizer. */
   readonly hasRawHtml: boolean;
@@ -33,13 +47,55 @@ export function mermaidSourcesInMarkdown(source: string): ReadonlyArray<string> 
 
 function parse(source: string): Root {
   return fromMarkdown(source, {
-    extensions: [frontmatter(["yaml", "toml"]), gfm(), math()],
+    extensions: [MARKDOWN_FRONT_MATTER_EXTENSIONS.syntax, gfm(), math()],
     mdastExtensions: [
-      frontmatterFromMarkdown(["yaml", "toml"]),
+      MARKDOWN_FRONT_MATTER_EXTENSIONS.fromMarkdown,
       gfmFromMarkdown(),
       mathFromMarkdown(),
     ],
   });
+}
+
+function boundedTitle(text: string): string | null {
+  const normalized = text.replace(/\s+/gu, " ").trim();
+  return normalized ? normalized.slice(0, MAX_TITLE_LENGTH) : null;
+}
+
+/** A quoted scalar's text, or null when the quoting is not one this reader understands. */
+function unquote(value: string): string | null {
+  if (value.startsWith('"')) {
+    const quoted = /^"(?:[^"\\]|\\.)*"/u.exec(value)?.[0];
+    if (quoted === undefined) return null;
+    try {
+      return JSON.parse(quoted) as string;
+    } catch {
+      return quoted.slice(1, -1);
+    }
+  }
+  if (value.startsWith("'")) {
+    const quoted = /^'(?:[^']|'')*'/u.exec(value)?.[0];
+    return quoted === undefined ? null : quoted.slice(1, -1).replaceAll("''", "'");
+  }
+  return value.replace(/\s+#.*$/u, "");
+}
+
+/**
+ * The top-level `title` of a YAML or TOML front matter block, when it is a
+ * single-line string. Block scalars, nested keys, and TOML tables are ignored.
+ */
+function frontMatterTitle(kind: string, value: string): string | null {
+  for (const line of value.split(/\r?\n/u)) {
+    if (kind === "toml" && /^\s*\[/u.test(line)) return null;
+    const match = (
+      kind === "yaml" ? /^title[ \t]*:[ \t]*(.*)$/u : /^title[ \t]*=[ \t]*(.*)$/u
+    ).exec(line);
+    if (!match) continue;
+    const raw = match[1]!.trim();
+    if (raw === "" || /^[|>]/u.test(raw)) return null;
+    const text = unquote(raw);
+    return text === null ? null : boundedTitle(text);
+  }
+  return null;
 }
 
 function plainText(node: Nodes): string {
@@ -61,7 +117,12 @@ export function inspectMarkdownDocument(source: string): MarkdownDocumentInspect
   const definitions = new Map<string, string>();
   const references: string[] = [];
   const seen = new Set<string>();
-  let title: string | null = null;
+  // TOML front matter is not in mdast's node map, so the leading node is read structurally.
+  const leading: { readonly type: string; readonly value?: unknown } | undefined = tree.children[0];
+  let title =
+    (leading?.type === "yaml" || leading?.type === "toml") && typeof leading.value === "string"
+      ? frontMatterTitle(leading.type, leading.value)
+      : null;
   let hasRawHtml = false;
   const add = (destination: string | null | undefined) => {
     const trimmed = destination?.trim();
@@ -93,10 +154,7 @@ export function inspectMarkdownDocument(source: string): MarkdownDocumentInspect
         break;
       }
       case "heading":
-        if (title === null && node.depth === 1) {
-          const text = plainText(node).replace(/\s+/gu, " ").trim();
-          if (text) title = text.slice(0, MAX_TITLE_LENGTH);
-        }
+        if (title === null && node.depth === 1) title = boundedTitle(plainText(node));
         break;
     }
     if ("children" in node) node.children.forEach(visit);

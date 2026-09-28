@@ -168,6 +168,24 @@ describe("Markdown PDF preparation", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("titles the capture from front matter and leaves the block to the page", () =>
+    Effect.gen(function* () {
+      const contents = "---\ntitle: Field notes\nauthor: Someone\n---\n\n# Heading\n";
+      const { root, revision } = yield* Effect.promise(() => writeReport(contents));
+      const prepared = yield* prepareMarkdownPdf({
+        cwd: root,
+        relativePath: "notes/report.md",
+        expectedRevision: revision,
+      });
+      expect(prepared.title).toBe("Field notes");
+      const input = decodePageInput(
+        new TextDecoder().decode((yield* readCapturedInput(prepared))!),
+      );
+      expect(input.title).toBe("Field notes");
+      expect(input.markdown).toBe(contents);
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("refuses a file that differs from the editor's saved revision", () =>
     Effect.gen(function* () {
       const { root } = yield* Effect.promise(() => writeReport());

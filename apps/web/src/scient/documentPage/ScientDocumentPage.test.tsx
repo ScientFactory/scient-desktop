@@ -262,6 +262,32 @@ describe("ScientDocumentPage", () => {
     ]);
   });
 
+  it.each([
+    ["YAML", "---\ntitle: Field notes\nauthor: Someone\ntags: [a, b]\n---\n"],
+    ["TOML", '+++\ntitle = "Field notes"\nauthor = "Someone"\n+++\n'],
+  ])("drops %s front matter instead of printing it", async (_kind, frontMatter) => {
+    const { article } = await renderPage(
+      input(`${frontMatter}\nBody paragraph.\n\n## Methods\n\nMore.\n`, {
+        title: "Field notes",
+      }),
+    );
+    expect(article.textContent).not.toMatch(/author|Someone|tags|title/u);
+    expect(article.querySelector("hr")).toBeNull();
+    // The front matter title titles the document; no heading comes from the metadata.
+    expect(
+      [...article.querySelectorAll(":scope > h1, :scope > h2")].map(
+        (heading) => heading.textContent,
+      ),
+    ).toEqual(["Field notes", "Methods"]);
+    expect(article.querySelector("p")?.textContent).toBe("Body paragraph.");
+  });
+
+  it("keeps a thematic break that is not front matter", async () => {
+    const { article } = await renderPage(input("Intro.\n\n---\n\nAfter the break.\n"));
+    expect(article.querySelector("hr")).not.toBeNull();
+    expect(article.textContent).toContain("After the break.");
+  });
+
   it("uses the conversation layout and the resolved text direction", async () => {
     const { article } = await renderPage(
       input("## You · 27 Sep 2026\n\nשלום עולם, זו שאלה ארוכה בעברית.\n", {

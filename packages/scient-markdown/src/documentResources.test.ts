@@ -34,11 +34,26 @@ describe("Markdown document inspection", () => {
     expect(inspection.hasRawHtml).toBe(true);
   });
 
-  it("ignores front matter, math, and documents without a level-one heading", () => {
+  it("ignores math and documents without a level-one heading", () => {
     const inspection = inspectMarkdownDocument(
-      "---\ntitle: ignored\n---\n\n## Second level\n\n$$\n\\int_0^1 x\\,dx\n$$\n",
+      "---\nauthor: Someone\n---\n\n## Second level\n\n$$\n\\int_0^1 x\\,dx\n$$\n",
     );
     expect(inspection).toEqual({ imageReferences: [], title: null, hasRawHtml: false });
+  });
+
+  it("takes the title from YAML or TOML front matter before the first heading", () => {
+    const title = (source: string) => inspectMarkdownDocument(source).title;
+    expect(title("---\ntitle: Field notes  # draft\nauthor: A\n---\n\n# Heading\n")).toBe(
+      "Field notes",
+    );
+    expect(title('---\ntitle: "Quoted \\"study\\""\n---\n')).toBe('Quoted "study"');
+    expect(title("---\ntitle: 'It''s done'\n---\n")).toBe("It's done");
+    expect(title('+++\ntitle = "TOML notes"\n+++\n\n# Heading\n')).toBe("TOML notes");
+    expect(title('+++\n[meta]\ntitle = "nested"\n+++\n\n# Heading\n')).toBe("Heading");
+    // Block scalars, nested keys, and front matter that is not at the start are not titles.
+    expect(title("---\ntitle: |\n  multi\n---\n\n# Heading\n")).toBe("Heading");
+    expect(title("---\nmeta:\n  title: nested\n---\n\n# Heading\n")).toBe("Heading");
+    expect(title("Intro\n\n---\ntitle: late\n---\n\n# Heading\n")).toBe("Heading");
   });
 });
 

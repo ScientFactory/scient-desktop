@@ -31,6 +31,7 @@ import { useScientMathMarkdownText, useScientMathRemarkPlugins } from "../math/s
 import { resolveScientRichFenceKind } from "../presentation/scientRichFenceKind";
 import { scientMarkdownRemarkPlugins } from "../markdown/scientMarkdownProfiles";
 import type { DocumentPageTracker } from "./documentPageReadiness";
+import { remarkDocumentFrontMatter } from "./remarkDocumentFrontMatter";
 
 import "../bidi/scient-bidi.css";
 import "../math/scient-math.css";
@@ -444,7 +445,7 @@ export function ScientDocumentPage(props: ScientDocumentPageProps) {
   const markdown = useScientMathMarkdownText(input.markdown);
   const remarkPlugins = useScientMathRemarkPlugins(
     // A chat bundle writes its hard breaks explicitly, so both parse as documents.
-    useMemo(() => scientMarkdownRemarkPlugins("document"), []),
+    useMemo(() => [remarkDocumentFrontMatter, ...scientMarkdownRemarkPlugins("document")], []),
     input.markdown,
   );
   const direction = useMemo(
