@@ -107,12 +107,14 @@ relocate an already open file automatically.
 
 To save a project Markdown file as a PDF, expand the editor's formatting tools
 and choose **More actions → Export → PDF**. Scient saves your latest edits,
-exports exactly that saved version with its project images, and opens the PDF in
-its reader, where **Save Copy** keeps a copy wherever you like. Missing or
-remote images appear as labelled placeholders and are listed under **Export
-notes** at the end of the PDF. PDF export needs the Scient desktop app; in a
-browser the menu item explains that it is unavailable. An agent can do the same
-for a file you name with an explicit output path.
+exports exactly that saved version with its project images, and asks where to
+save the PDF; choose **Open** on the notice to read it in Scient's reader. Front
+matter at the top of the file is not printed; its `title`, if any, titles the
+PDF. Missing, remote, or unreadable images appear as labelled placeholders and
+are listed under **Export notes** at the end of the PDF. PDF export needs the
+Scient desktop app on macOS or Linux; in a browser the menu item explains that
+it is unavailable, and on Windows the export does. An agent can do the same for a file you name with an explicit
+output path.
 
 In a project conversation, an agent can also turn an existing project HTML file
 into a PDF. Scient builds it with local project assets, opens the generated PDF

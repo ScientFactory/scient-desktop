@@ -12,8 +12,10 @@ portable `.scic` file.
 On the desktop app, Export opens a save dialog. In a browser, the file downloads.
 
 Choose **PDF** to get a readable document with a heading for each speaker and the images inside the
-file. The PDF opens in Scient's PDF reader; use **Save Copy** there to keep a copy. The options
-below apply to PDF too: the work log and reasoning appear as indented blocks under each answer.
+file. Like the other formats, it opens a save dialog; when it is saved, choose **Open** on the
+notice to read it in Scient's PDF reader. The options below apply to PDF too: the work log and
+reasoning appear as indented blocks under each answer, and long ones continue onto the next page.
+An image that cannot be shown prints as a labelled box, listed in the notes at the end of the PDF.
 PDF needs the Scient desktop app; in a browser the option is unavailable and says why.
 
 Choose **Scient (.scic)** when the recipient wants to import and continue the conversation in

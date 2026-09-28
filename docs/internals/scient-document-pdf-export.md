@@ -13,17 +13,28 @@ there is one PDF path, not one per source.
    at a verified revision: the editor saves pending edits first and sends the revision it saved;
    the server refuses a file whose SHA-256 differs. Workspace images resolve against the file's
    directory, must stay inside the project (symlinks included), and must be a supported image
-   type. Each image is measured and then read from a verified open file handle with a hard byte
-   cap: one image may be up to 64 MiB, one export up
-   to 1,024 images and 256 MiB, and destinations that reach the same file (by query, fragment, or
-   symlink) share one copy. Anything else becomes an unavailable asset with a warning. Image
-   destinations are rewritten to `scient-asset:<id>` inside each parsed image's own source span,
-   using the rich editor's Markdown grammar (`@scientfactory/scient-markdown`).
+   type. The Markdown file and each image are measured and then read from a verified open file
+   handle with a hard byte cap: the Markdown file may be up to 8 MiB, one image up to 64 MiB, one
+   export up to 1,024 images and 256 MiB, and destinations that reach the same file (by query,
+   fragment, or symlink) share one copy. A file that changes between the check and the read is
+   refused: the Markdown file fails the export, an image becomes an unavailable asset with a
+   warning. Image destinations are rewritten to `scient-asset:<id>` inside each parsed image's own
+   source span, using the rich editor's Markdown grammar (`@scientfactory/scient-markdown`), which
+   treats a leading YAML or TOML block as front matter; the front matter's `title`, when present,
+   titles the document, before its first level-one heading.
    macOS opens the canonical path with `O_NOFOLLOW_ANY`, rejecting an intermediate symlink
    replacement; Linux checks the opened file descriptor's `/proc/self/fd` target. On Windows,
-   Node does not currently expose a safe handle-bound containment check here, so workspace
-   images are omitted with an explicit warning instead of relying on a raceable path recheck.
-   This Windows limitation must be resolved or expressly accepted before cross-platform release.
+   Node does not currently expose a safe handle-bound containment check here, so a project
+   Markdown file cannot be exported: the export fails with "PDF export of project files is not
+   available on this platform yet" instead of relying on a raceable path recheck. (Workspace images
+   are omitted the same way, with a warning, wherever this read is unavailable.) This Windows
+   limitation must be resolved or expressly accepted before cross-platform release.
+
+   The capture copies an image only when its bytes carry its format's signature (PNG, JPEG, GIF,
+   WebP, AVIF, BMP, or an `<svg` element); a HEIC photo named `.jpg`, a text file named `.png`, or
+   an empty file becomes an unavailable asset with a warning. Each copied image carries its SHA-256
+   in the page input.
+
 2. **Render (desktop).** The capture is exposed through a five-minute signed asset capability.
    The desktop opens the web client's standalone `scient-document.html` entry, served from its
    own app scheme, in a hidden window with a private, non-persistent session. That session can
@@ -34,14 +45,21 @@ there is one PDF path, not one per source.
    digest, block counts, unresolved captured assets, whether fonts, math, diagrams, and images
    finished, and diagnostics split into _fatal_ and _warning_. The desktop prints only when the
    report matches the requested capture exactly and has no fatal diagnostic
-   (`scientDocumentReadinessRejection`, shared with the server).
+   (`scientDocumentReadinessRejection`, shared with the server). When it refuses, the client
+   releases the capture (`documents.releaseDocumentPdf`) instead of leaving it to expire.
 4. **Publish (server).** The server checks the report again, enforces the 64 MiB transport limit
    (`BROWSER_PDF_EXPORT_MAX_BYTES`), resolves a Markdown file's requested path again and requires
    the same canonical file with the captured revision,
    and publishes the bytes as an immutable `browser-export` revision in the generated-document
-   store (`browser-export` structural validation). The PDF opens in Scient's reader, where Save
-   Copy works as for any generated PDF. The capture is removed after publication; captures that
-   never return expire after ten minutes and are swept before each new capture.
+   store (`browser-export` structural validation). The capture is removed after publication;
+   captures that never return expire after ten minutes and are swept when the server starts and
+   before each new capture.
+5. **Delivery (client).** The client saves the published PDF through the same Save dialog as every
+   other export (`documents.saveAssetCopy` with a signed URL of the generated revision; a download
+   in a browser). Cancelling the dialog keeps the export dialog open. The PDF stays in the
+   generated-document store: the success notice's **Open** shows it in Scient's reader for the
+   conversation or project it came from, navigating to that conversation first, so an export
+   started from the sidebar never opens in a thread that is not on screen.
 
 The readiness report and PDF bytes originate from the authenticated desktop client. The server
 checks their structure, claimed capture identity, and saved source revision; it cannot independently
@@ -52,13 +70,19 @@ provenance as proof of rendered-content identity.
 
 An execution failure stops publication: the page did not load or start, its input was missing or
 invalid, it reported a different capture, kind, or revision, a diagram or image did not finish,
-Mermaid itself failed (for example, its code did not load), a captured image failed to load, a
-font the page used failed or did not finish loading, the source changed, the PDF is invalid, or
-it is larger than 64 MiB (the message suggests a shorter document or range, or leaving out the
-work log).
+Mermaid itself failed (for example, its code did not load), a captured image was not served, was
+refused or blocked, or was served with bytes that differ from the capture's digest, a font the
+page used failed or did not finish loading, the source changed, the PDF is invalid, or it is
+larger than 64 MiB (the message suggests a shorter document or range, or leaving out the work
+log).
 
-A known content limitation does not: a missing, unsupported, or undecodable image prints as a
-labelled placeholder, a remote image is not downloaded, a Mermaid diagram with a syntax error
+The browser reports an image it could not fetch and one it could not decode the same way, so when
+a captured image does not display (an error, or a load with no measurable size, such as an SVG
+with only a `viewBox`), the page fetches it once more. Only bytes that were served and match the
+capture's digest are a content limitation.
+
+A known content limitation does not stop publication: a missing, unsupported, or undecodable
+image prints as a labelled placeholder, a remote image is not downloaded, a Mermaid diagram with a syntax error
 prints its source (the full parse error is in the notes), TeX that KaTeX cannot typeset prints as TeX, Plotly and Vega-Lite fences print as source,
 and raw HTML outside GitHub's safe subset is removed. Each becomes a warning returned with the
 result and listed under **Export notes** at the end of the PDF. The page re-renders until those
@@ -76,23 +100,30 @@ single line breaks; the **chat** profile keeps them. A conversation bundle alrea
 breaks, so the page parses both bundle profiles as documents and uses the profile only for the
 conversation layout.
 
+The page drops a leading YAML (`---`) or TOML (`+++`) front matter block with the same grammar
+the capture used, so metadata never prints or becomes a bookmark.
+
 The print stylesheet (`scient-document-page.css`) owns A4 geometry through `@page`, the running
 title header (except on the first page), and `n / N` page numbers in Chromium's page-margin boxes.
-Headings keep with the following content; short code blocks (up to 18 lines), figures, diagrams,
-and table rows stay whole; long code blocks and tables split, and table header rows repeat. Code
-blocks wrap and are printed without syntax colour. Tagged PDF and the document outline are
-enabled; headings become bookmarks.
+It also owns every break rule: the desktop prints the page without the HTML-export pagination
+defaults (`paginationDefaults: false`), which would keep every quote and details block whole.
+Headings and a details block's summary line keep with the following content; short code blocks
+(up to 18 lines), figures, diagrams, images, alerts, table rows, and each export note stay whole;
+long code blocks, tables, quotes, work logs, and reasoning split across pages, and table header
+rows repeat. Code blocks wrap and are printed without syntax colour. Tagged PDF and the document
+outline are enabled; headings become bookmarks.
 
 ## Entry points and availability
 
 - **Markdown editor → More actions → Export ▸ PDF.** Available only in the Scient desktop app.
   A browser client, or a desktop too old to have the document page, shows the item disabled with
-  the reason.
+  the reason. The PDF is saved through the Save dialog; **Open** shows it in the editor's thread.
 - **Thread menu → Export… → PDF.** The dialog's work-log, reasoning, and range options select the
   snapshot; `documents.prepareConversationPdf` builds the conversation's bundle with the
-  conversation package and captures it; the desktop prints it and the PDF opens in the reader. The
-  format is registered in the export format registry and is unavailable, with the reason, without
-  a current Scient desktop.
+  conversation package and captures it; the desktop prints it and the client saves it. The format
+  is registered in the export format registry, whose `produce` saves the file itself and resolves
+  `null` when the user cancels saving; it is unavailable, with the reason, without a current
+  Scient desktop.
 - **`scient_document_export`** (agent tool). Exports an existing project-relative `.md` or
   `.markdown` file to an explicit project-relative `.pdf` path. It uses the same workspace
   authority, output staging, and partial-publication receipt as `scient_pdf_build`, which is
@@ -103,9 +134,12 @@ enabled; headings become bookmarks.
 
 `pnpm --dir apps/desktop test:document-pdf` renders a fixture set through Vite and the real
 desktop renderer in Electron — long code and tables, inline and display math, Mermaid, captured,
-missing, and remote images, mixed Hebrew and English, headings near page ends, a long
-conversation, and a conversation built through the real export path (the conversation package's
-snapshot and bundle, then the server's page-input builder) — and checks the PDFs with PDF.js: page counts, logical text order, bookmarks,
-tagging, repeated table headers, and refusal of a stale, wrong-kind, or invalid capture. It writes
+missing, remote, and undecodable captured images, mixed Hebrew and English, headings near page
+ends, YAML and TOML front matter, a long work log, long reasoning, and a long quotation that must
+start under their message and continue across pages, a long conversation, and a conversation
+built through the real export path (the conversation package's snapshot and bundle, then the
+server's page-input builder) — and checks the PDFs with PDF.js: page counts, logical text order,
+bookmarks, tagging, repeated table headers, and refusal of a stale, wrong-kind, or invalid capture
+and of a captured image the capture does not serve. It writes
 the PDFs to `build/document-pdf-fixtures/` for visual review. Like the pagination check, it needs
 the locked Electron runtime and a graphical session.
