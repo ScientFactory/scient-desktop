@@ -26,6 +26,23 @@ function summary(messages: ReadonlyArray<ParsedMarkdownMessage>) {
   return messages.map((parsed) => ({ n: parsed.n, role: parsed.role, turn: parsed.turn }));
 }
 
+/** A transcript of user messages whose markers carry `numbers`, one per message, in file order. */
+function numberedTranscript(numbers: ReadonlyArray<number>) {
+  return [
+    "---",
+    "scient: conversation",
+    "scient-format: 1",
+    `scient-export: ${EXPORT_VALUE}`,
+    "title: Renumbered",
+    "---",
+    ...numbers.flatMap((n, index) => [
+      `<!-- scient:message export=${EXPORT_VALUE} n=${n} role=user time=2026-09-27T14:00:00.000Z -->`,
+      `body ${index + 1}`,
+      "",
+    ]),
+  ].join("\n");
+}
+
 const OTHER_EXPORT_MARKER =
   "<!-- scient:message export=0123456789ab n=1 role=assistant time=2026-01-01T00:00:00.000Z -->";
 
@@ -299,6 +316,67 @@ describe("Scient conversation Markdown v1", () => {
       ["unknown-role", true],
       ["missing-number", false],
     ]);
+  });
+
+  describe("message numbers", () => {
+    const parse = (numbers: ReadonlyArray<number>) => {
+      const parsed = parseConversationMarkdown(numberedTranscript(numbers));
+      if (parsed.kind !== "conversation") throw new Error("Expected a conversation.");
+      return {
+        bodies: parsed.messages.map((entry) => entry.body),
+        issues: parsed.issues.map((issue) => [
+          issue.kind,
+          issue.excluded,
+          issue.line,
+          issue.detail,
+        ]),
+      };
+    };
+    // Front matter takes lines 1-6; message k's marker is on line 7 + 3 * (k - 1).
+    const markerLine = (k: number) => 7 + 3 * (k - 1);
+
+    it("reports a number lower than the one before it, even after a gap", () => {
+      expect(parse([1, 4, 3])).toEqual({
+        bodies: ["body 1", "body 2"],
+        issues: [
+          ["missing-number", false, markerLine(2), "Messages 2–3 are missing."],
+          ["out-of-order-number", true, markerLine(3), "Message 3 comes after message 4."],
+        ],
+      });
+    });
+
+    it("reports a repeated number as a duplicate", () => {
+      expect(parse([1, 2, 2])).toEqual({
+        bodies: ["body 1", "body 2"],
+        issues: [["duplicate-number", true, markerLine(3), "Message 2 appears twice."]],
+      });
+    });
+
+    it("continues from the last number in order after an out-of-order one", () => {
+      expect(parse([1, 3, 2, 4])).toEqual({
+        bodies: ["body 1", "body 2", "body 4"],
+        issues: [
+          ["missing-number", false, markerLine(2), "Message 2 is missing."],
+          ["out-of-order-number", true, markerLine(3), "Message 2 comes after message 3."],
+        ],
+      });
+    });
+
+    it("never reports a number missing where a damaged marker stood", () => {
+      const parsed = parseConversationMarkdown(
+        numberedTranscript([1, 2, 3]).replace(" n=2 role=user", " n=2 role=user turn=x"),
+      );
+      if (parsed.kind !== "conversation") throw new Error("Expected a conversation.");
+      expect(parsed.messages.map((entry) => entry.body)).toEqual(["body 1", "body 3"]);
+      expect(parsed.issues.map((issue) => issue.kind)).toEqual(["malformed-marker"]);
+    });
+
+    it("keeps every message across a clean gap and only notes it", () => {
+      expect(parse([1, 3])).toEqual({
+        bodies: ["body 1", "body 2"],
+        issues: [["missing-number", false, markerLine(2), "Message 2 is missing."]],
+      });
+    });
   });
 
   it("marks a foreign part marker it keeps as text as excluding nothing", () => {

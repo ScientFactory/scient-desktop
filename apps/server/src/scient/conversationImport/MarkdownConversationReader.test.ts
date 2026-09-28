@@ -252,6 +252,72 @@ describe("Markdown conversation import adapter", () => {
     expect(result.issues.every((issue) => issue.endLine >= issue.startLine)).toBe(true);
   });
 
+  describe("message numbers", () => {
+    /** User messages whose markers carry `numbers`, in file order; marker k is on line 7 + 3(k - 1). */
+    const numbered = (numbers: ReadonlyArray<number>) =>
+      read(
+        [
+          "---",
+          "scient: conversation",
+          "scient-format: 1",
+          `scient-export: ${EXPORT_VALUE}`,
+          "title: Renumbered",
+          "---",
+          ...numbers.flatMap((n, index) => [
+            `<!-- scient:message export=${EXPORT_VALUE} n=${n} role=user time=2026-09-27T14:00:00.000Z -->`,
+            `body ${index + 1}`,
+            "",
+          ]),
+        ].join("\n"),
+      );
+    const summary = (result: ReturnType<typeof read>) => ({
+      texts: result.validated.snapshot.messages.map((message) => message.text),
+      issues: result.issues.map((issue) => [issue.kind, issue.startLine]),
+      skipped: result.validated.skippedSourceRecords,
+    });
+
+    it("leaves out a number lower than the one before it, even after a gap", () => {
+      expect(summary(numbered([1, 4, 3]))).toEqual({
+        texts: ["body 1", "body 2"],
+        issues: [
+          ["missing-number", 10],
+          ["out-of-order-number", 13],
+        ],
+        skipped: 1,
+      });
+    });
+
+    it("leaves out a repeated number", () => {
+      expect(summary(numbered([1, 2, 2]))).toEqual({
+        texts: ["body 1", "body 2"],
+        issues: [["duplicate-number", 13]],
+        skipped: 1,
+      });
+    });
+
+    it("leaves out only the out-of-order message and continues after it", () => {
+      const result = numbered([1, 3, 2, 4]);
+      expect(summary(result)).toEqual({
+        texts: ["body 1", "body 2", "body 4"],
+        issues: [
+          ["missing-number", 10],
+          ["out-of-order-number", 13],
+        ],
+        skipped: 1,
+      });
+      // The affected range runs to the next message imported.
+      expect(result.issues[1]).toMatchObject({ startLine: 13, endLine: 15 });
+    });
+
+    it("imports every message across a clean gap and leaves nothing out", () => {
+      expect(summary(numbered([1, 3]))).toEqual({
+        texts: ["body 1", "body 2"],
+        issues: [["missing-number", 10]],
+        skipped: undefined,
+      });
+    });
+  });
+
   it("keeps every damaged range it leaves out as a skipped-record gap in the imported thread", () => {
     const edited = fixtureMarkdown()
       .replace(`n=2 role=assistant`, `n=2 role=robot`)

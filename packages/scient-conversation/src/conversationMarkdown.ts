@@ -348,14 +348,20 @@ export function parseConversationMarkdown(source: string): ParsedConversationMar
   );
   const messages: ParsedMarkdownMessage[] = [];
   const seen = new Set<number>();
+  // Numbers run from the last one accepted in order. A damaged boundary since
+  // then may have held the next number, so it is not reported missing.
+  let previousNumber = 0;
+  let unnumberedSincePrevious = 0;
   const closedTurns = new Set<number>();
   let currentTurn: number | null = null;
   let markerCursor = 0;
   let nodeCursor = 0;
   for (const [index, marker] of boundaries.entries()) {
     const nextBoundary = boundaries[index + 1]?.start ?? normalized.length;
-    if (marker.type === "invalid") continue;
-    const expected = index + 1;
+    if (marker.type === "invalid") {
+      unnumberedSincePrevious += 1;
+      continue;
+    }
     const nValue = marker.attributes.get("n") ?? "";
     const n =
       /^[1-9]\d*$/u.test(nValue) && Number.isSafeInteger(Number(nValue)) ? Number(nValue) : null;
@@ -378,6 +384,7 @@ export function parseConversationMarkdown(source: string): ParsedConversationMar
         excluded: true,
       });
       clean = false;
+      unnumberedSincePrevious += 1;
     } else if (seen.has(n)) {
       issues.push({
         kind: "duplicate-number",
@@ -386,21 +393,29 @@ export function parseConversationMarkdown(source: string): ParsedConversationMar
         excluded: true,
       });
       clean = false;
-    } else if (n < expected) {
+    } else if (n <= previousNumber) {
       issues.push({
         kind: "out-of-order-number",
         line: marker.line,
-        detail: `Message ${n} is out of order.`,
+        detail: `Message ${n} comes after message ${previousNumber}.`,
         excluded: true,
       });
       clean = false;
-    } else if (n > expected) {
-      issues.push({
-        kind: "missing-number",
-        line: marker.line,
-        detail: `Messages ${expected}–${n - 1} are missing.`,
-        excluded: false,
-      });
+    } else {
+      const firstMissing = previousNumber + 1 + unnumberedSincePrevious;
+      if (n > firstMissing) {
+        issues.push({
+          kind: "missing-number",
+          line: marker.line,
+          detail:
+            n - 1 === firstMissing
+              ? `Message ${firstMissing} is missing.`
+              : `Messages ${firstMissing}–${n - 1} are missing.`,
+          excluded: false,
+        });
+      }
+      previousNumber = n;
+      unnumberedSincePrevious = 0;
     }
     if (role !== "user" && role !== "assistant") {
       issues.push({
