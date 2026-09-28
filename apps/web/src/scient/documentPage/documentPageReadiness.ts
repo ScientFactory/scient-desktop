@@ -16,6 +16,29 @@ const MAX_DIAGNOSTICS = 256;
 const MAX_FATAL_DIAGNOSTICS = 32;
 const MAX_DETAIL_LENGTH = 2_048;
 
+/** What fetching a captured asset again found. */
+export type CapturedAssetCheck = "served" | "unserved" | "mismatch";
+
+async function sha256Digest(bytes: ArrayBuffer): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  return `sha256:${[...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
+async function fetchCapturedAsset(
+  url: string,
+  expected: string | undefined,
+): Promise<CapturedAssetCheck> {
+  try {
+    const response = await fetch(url, { credentials: "omit", cache: "no-store" });
+    if (!response.ok) return "unserved";
+    const bytes = await response.arrayBuffer();
+    if (expected !== undefined && (await sha256Digest(bytes)) !== expected) return "mismatch";
+    return "served";
+  } catch {
+    return "unserved";
+  }
+}
+
 const nextFrame = () =>
   new Promise<void>((resolve) =>
     requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
@@ -35,7 +58,10 @@ export class DocumentPageTracker {
     Extract<ScientDocumentPageDiagnostic, { readonly severity: "warning" }>
   > = [];
   private omittedFatals = 0;
+  private readonly assetChecks = new Map<string, Promise<CapturedAssetCheck>>();
   readonly unresolvedAssets = new Set<string>();
+  /** Captured assets whose served bytes matched their recorded digest. */
+  readonly verifiedAssets = new Set<string>();
 
   /**
    * Every fatal diagnostic first, so no number of warnings can hide one, then
@@ -73,6 +99,40 @@ export class DocumentPageTracker {
     this.jobs.add(job);
     void job.then(() => this.jobs.delete(job));
     return finish;
+  }
+
+  /**
+   * Fetches a captured asset once more and checks it against the digest the
+   * capture recorded, once per asset however often it is shown. The check is
+   * tracked, so readiness waits for it. An asset that was not served (missing,
+   * refused, or blocked) or does not match is fatal: the page is not the
+   * capture it claims to be.
+   */
+  checkCapturedAsset(
+    asset: { readonly id: string; readonly fileName: string; readonly sha256?: string | undefined },
+    url: string,
+  ): Promise<CapturedAssetCheck> {
+    const existing = this.assetChecks.get(asset.id);
+    if (existing) return existing;
+    const finish = this.track();
+    const check = fetchCapturedAsset(url, asset.sha256)
+      .then((result) => {
+        if (result === "served") {
+          if (asset.sha256 !== undefined) this.verifiedAssets.add(asset.id);
+        } else {
+          this.unresolvedAssets.add(asset.id);
+          this.fatal(
+            "resource-unresolved",
+            result === "mismatch"
+              ? `The captured image "${asset.fileName}" does not match the capture.`
+              : `The captured image "${asset.fileName}" could not be loaded.`,
+          );
+        }
+        return result;
+      })
+      .finally(finish);
+    this.assetChecks.set(asset.id, check);
+    return check;
   }
 
   warn(code: ScientDocumentPageWarningCode, detail: string): void {
@@ -210,6 +270,22 @@ export async function collectDocumentPageReadiness(input: {
         `Image "${image.alt || image.src}" did not finish loading.`,
       );
       continue;
+    }
+    const shownAsset = image.dataset.scientAsset
+      ? page.assets.find((candidate) => candidate.id === image.dataset.scientAsset)
+      : undefined;
+    // Every shown captured image with a recorded digest must have been checked
+    // against it, whether or not it decoded.
+    if (
+      shownAsset?.content._tag === "captured" &&
+      shownAsset.content.sha256 !== undefined &&
+      !tracker.verifiedAssets.has(shownAsset.id)
+    ) {
+      tracker.unresolvedAssets.add(shownAsset.id);
+      tracker.fatal(
+        "resource-unresolved",
+        `The captured image "${shownAsset.fileName}" was not checked against the capture.`,
+      );
     }
     if (image.naturalWidth === 0) {
       const assetId = image.dataset.scientAsset;

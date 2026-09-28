@@ -333,7 +333,11 @@ function fixtures(png) {
       name: "images",
       markdown: images,
       assets: [
-        asset("image-0001", "gradient.png", { _tag: "captured", path: "assets/0001.png" }),
+        asset("image-0001", "gradient.png", {
+          _tag: "captured",
+          path: "assets/0001.png",
+          sha256: sha256(png),
+        }),
         asset("image-0002", "missing.png", { _tag: "unavailable", reason: "missing" }),
         // Served, with a PNG signature and the capture's digest, but not decodable.
         asset("image-0003", "corrupt.png", {

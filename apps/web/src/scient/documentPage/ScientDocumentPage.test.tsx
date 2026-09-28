@@ -294,7 +294,7 @@ describe("ScientDocumentPage", () => {
       },
     );
 
-    it("keeps a captured image that loads with a size", async () => {
+    it("checks a captured image that decodes against the capture, and keeps it", async () => {
       const { article, tracker, fetchCapture } = await fail(
         withDigest(capturedDigest),
         async () => new Response(capturedBytes),
@@ -302,8 +302,29 @@ describe("ScientDocumentPage", () => {
         { width: 320, height: 180 },
       );
       expect(article.querySelector("img[data-scient-asset='image-0001']")).not.toBeNull();
-      expect(fetchCapture).not.toHaveBeenCalled();
+      expect(fetchCapture).toHaveBeenCalledOnce();
+      expect([...tracker.verifiedAssets]).toEqual(["image-0001"]);
       expect(tracker.diagnostics).toEqual([]);
+    });
+
+    it("refuses a captured image that decodes but is not the captured bytes", async () => {
+      const { article, tracker } = await fail(
+        withDigest(capturedDigest),
+        async () => new Response(new TextEncoder().encode("a different, decodable image")),
+        "load",
+        { width: 320, height: 180 },
+      );
+      // The image itself displayed; the page still is not the capture.
+      expect(article.querySelector("img[data-scient-asset='image-0001']")).not.toBeNull();
+      expect(tracker.failed).toBe(true);
+      expect(tracker.diagnostics).toEqual([
+        {
+          severity: "fatal",
+          code: "resource-unresolved",
+          detail: 'The captured image "plot.png" does not match the capture.',
+        },
+      ]);
+      expect([...tracker.unresolvedAssets]).toEqual(["image-0001"]);
     });
 
     it.each([

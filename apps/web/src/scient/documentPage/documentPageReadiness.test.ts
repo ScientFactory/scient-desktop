@@ -177,6 +177,55 @@ describe("document page readiness", () => {
     ]);
   });
 
+  it("fails for a shown captured image that was never checked against its digest", async () => {
+    const element = article("<img data-scient-asset='image-0001' alt='plot'>");
+    const image = element.querySelector("img")!;
+    Object.defineProperty(image, "complete", { value: true });
+    Object.defineProperty(image, "naturalWidth", { value: 320 });
+    const withCapturedImage = {
+      ...page,
+      assets: [
+        {
+          id: "image-0001",
+          role: "image",
+          fileName: "plot.png",
+          mediaType: "image/png",
+          content: {
+            _tag: "captured",
+            path: "assets/0001.png",
+            sha256: `sha256:${"c".repeat(64)}`,
+          },
+        },
+      ],
+    } satisfies ScientDocumentPageInput;
+    const unchecked = await collectDocumentPageReadiness({
+      page: withCapturedImage,
+      article: element,
+      tracker: new DocumentPageTracker(),
+      settled: true,
+    });
+    expect(unchecked.status).toBe("failed");
+    expect(unchecked.diagnostics).toEqual([
+      {
+        severity: "fatal",
+        code: "resource-unresolved",
+        detail: 'The captured image "plot.png" was not checked against the capture.',
+      },
+    ]);
+    const checked = new DocumentPageTracker();
+    checked.verifiedAssets.add("image-0001");
+    expect(
+      (
+        await collectDocumentPageReadiness({
+          page: withCapturedImage,
+          article: element,
+          tracker: checked,
+          settled: true,
+        })
+      ).status,
+    ).toBe("ready");
+  });
+
   it("fails when a font the page used could not load, although fonts.ready resolved", async () => {
     Object.defineProperty(document, "fonts", {
       configurable: true,
