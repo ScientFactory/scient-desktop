@@ -27,6 +27,8 @@ const { ConversationExportDialogHost, requestConversationExport } =
   await import("./ConversationExportDialog");
 const { handleConversationExportMenuAction } = await import("./menu");
 const { INCLUDE_CAUTION } = await import("./exportDialog.logic");
+const { buildThreadActionMenuItems } = await import("../../components/threadActionMenu.logic");
+const { toastManager } = await import("../../components/ui/toast");
 
 const threadRef = {
   environmentId: EnvironmentId.make("local"),
@@ -378,5 +380,66 @@ describe("ConversationExportDialog", () => {
     await click(button("Try again")!);
     expect(document.querySelector('[role="alert"]')).toBeNull();
     expect(switches()).toHaveLength(2);
+  });
+});
+
+describe("Copy ▸ Conversation as Markdown", () => {
+  it("copies the default Markdown from the thread menu and confirms it", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    const addToast = vi.spyOn(toastManager, "add");
+    await renderHost();
+    exportConversation.mockResolvedValue({
+      file: null,
+      text: "# Study\n\nHi",
+      warnings: [],
+    });
+    const items = buildThreadActionMenuItems({
+      branch: null,
+      projectFilter: null,
+      isPinned: false,
+      isSettled: false,
+      autoSettleEnabled: true,
+      isSnoozed: false,
+      canSnoozeNow: true,
+      isRegeneratingTitle: false,
+      isRunning: false,
+      supports: {
+        settlement: false,
+        autoSettleOptOut: false,
+        snooze: false,
+        pinning: false,
+        titleRegeneration: false,
+      },
+      snoozePresets: [],
+    });
+    const entry = items
+      .find((item) => item.id === "copy")
+      ?.children?.find((child) => child.label === "Conversation as Markdown");
+    expect(entry).toBeDefined();
+
+    await act(async () => {
+      expect(handleConversationExportMenuAction(entry!.id, threadRef)).toBe(true);
+    });
+    await flush();
+
+    expect(exportConversation).toHaveBeenCalledOnce();
+    expect(exportConversation.mock.calls[0]?.[0]).toBe(threadRef.environmentId);
+    expect(exportConversation.mock.calls[0]?.[1]).toMatchObject({
+      threadId: threadRef.threadId,
+      format: "markdown",
+      delivery: "clipboard",
+      options: {
+        includeWorkLog: false,
+        includeReasoning: false,
+        range: { _tag: "whole" },
+        markdownPackaging: "text",
+      },
+    });
+    expect(writeText).toHaveBeenCalledWith("# Study\n\nHi");
+    expect(addToast).toHaveBeenCalledWith({ type: "success", title: "Markdown copied" });
+    // Copying opens no dialog.
+    expect(dialog()).toBeNull();
+    addToast.mockRestore();
   });
 });
