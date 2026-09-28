@@ -223,6 +223,43 @@ describe("applyScientStructure", () => {
     ]);
   });
 
+  it("closes an open details before a complete sibling in the same raw block", () => {
+    const blocks: Array<PandocNode> = [
+      raw("<details><summary>First</summary>\n"),
+      para(textInlines("First body")),
+      raw("</details>\n<details><summary>Second</summary><p>Second body</p></details>\n"),
+    ];
+    applyScientStructure(blocks, { profile: "document", assets: [] });
+    expect(blocks.map((block) => block.t)).toEqual(["Div", "Div"]);
+    expect(
+      blocks.map((block) =>
+        (block.c as [unknown, Array<PandocNode>])[1].map((child) => inlineText(child.c)),
+      ),
+    ).toEqual([
+      ["First", "First body"],
+      ["Second", "Second body"],
+    ]);
+  });
+
+  it("preserves visible text between a closing tag and the next details", () => {
+    const blocks: Array<PandocNode> = [
+      raw("<details><summary>First</summary>"),
+      para(textInlines("First body")),
+      raw(
+        "</details>Interlude <em>text</em><script>hidden()</script><details><summary>Second</summary><p>Second body</p></details>Tail",
+      ),
+    ];
+    applyScientStructure(blocks, { profile: "document", assets: [] });
+    expect(blocks.map((block) => block.t)).toEqual(["Div", "Para", "Para", "Div", "Para"]);
+    expect(
+      blocks.map((block) =>
+        block.t === "Div"
+          ? (block.c as [unknown, Array<PandocNode>])[1].map((child) => inlineText(child.c))
+          : inlineText(block.c),
+      ),
+    ).toEqual([["First", "First body"], "Interlude", "text", ["Second", "Second body"], "Tail"]);
+  });
+
   it("preserves visible details paragraphs while omitting active HTML", () => {
     const blocks: Array<PandocNode> = [
       raw(

@@ -41,6 +41,20 @@ describe("storage path redaction", () => {
       SCIENT_ASSET_URL_PLACEHOLDER,
     );
     expect(redactScientAssetUrls(`${encodedRelative}%BROKEN`)).toBe(SCIENT_ASSET_URL_PLACEHOLDER);
+    expect(redactScientAssetUrls(`/api%252Fassets%252F${capability}%252Freport.html%BROKEN`)).toBe(
+      SCIENT_ASSET_URL_PLACEHOLDER,
+    );
+    expect(
+      redactScientAssetUrls(
+        `//127.0.0.1:3773/api%252Fassets%252F${capability}%252Freport.html%BROKEN`,
+      ),
+    ).toBe(SCIENT_ASSET_URL_PLACEHOLDER);
+    expect(redactScientAssetUrls(`/%61%70%69%25%32%46assets%2F${capability}/x`)).toBe(
+      SCIENT_ASSET_URL_PLACEHOLDER,
+    );
+    expect(redactScientAssetUrls(`/api%${"25".repeat(20)}2Fassets%2F${capability}/x`)).toBe(
+      SCIENT_ASSET_URL_PLACEHOLDER,
+    );
     expect(redactScientAssetUrls("https://example.org/ordinary/page")).toBe(
       "https://example.org/ordinary/page",
     );

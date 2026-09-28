@@ -15,19 +15,20 @@ const PATH_CANDIDATE_PATTERN = /\/[^\s<>"'`\)\]\}]+/giu;
 
 function assetPath(candidate: string): boolean {
   let decoded = candidate;
-  for (let pass = 0; pass < 3; pass += 1) {
+  for (let pass = 0; pass < 16; pass += 1) {
     if (ASSET_PATH_TEST.test(decoded)) return true;
-    try {
-      const next = decodeURIComponent(decoded);
-      if (next === decoded) break;
-      decoded = next;
-    } catch {
-      // A malformed escape later in the URL must not shield encoded separators.
-      decoded = decoded.replace(/%2f/giu, "/").replace(/%2e/giu, ".");
-      break;
-    }
+    // Decode ASCII escapes independently: one malformed escape elsewhere in a
+    // URL must not shield a bearer path. `%252F` and deeper `%25` nesting
+    // collapse in one pass, while split encodings can need another.
+    const next = decoded.replace(/%(?:25)*([0-9a-f]{2})/giu, (_match, hex: string) =>
+      String.fromCharCode(Number.parseInt(hex, 16)),
+    );
+    if (next === decoded) return false;
+    decoded = next;
   }
-  return ASSET_PATH_TEST.test(decoded);
+  // If an unusually nested candidate still changes after the fixed work
+  // bound, over-redact it rather than export an encoded capability.
+  return true;
 }
 
 /** Asset links contain a signed bearer capability and encoded file claims. */

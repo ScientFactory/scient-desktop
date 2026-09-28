@@ -80,6 +80,7 @@ export function mermaidDiagramAssetId(source: string): string {
 
 const MARKER = /^<!-- scient:(message|part)((?: [a-z-]+=[^\s=]+)*) -->\s*$/u;
 const DETAILS_OPEN = /^<details\b[^>]*>/iu;
+const DETAILS_CLOSE_AT_START = /^<\/details\s*>/iu;
 const DETAILS_BLOCK_TAGS = new Set([
   "blockquote",
   "br",
@@ -340,9 +341,17 @@ export function applyScientStructure(
           }
           continue;
         }
-        const trimmed = html.trim();
-        if (DETAILS_OPEN.test(trimmed)) {
-          const fragment = parseFragment(trimmed, { sourceCodeLocationInfo: true });
+        let remaining = html.trim();
+        let closedDetails = false;
+        let leadingClose = DETAILS_CLOSE_AT_START.exec(remaining);
+        while (leadingClose !== null) {
+          if (stack.length > 0) close();
+          remaining = remaining.slice(leadingClose[0].length).trimStart();
+          closedDetails = true;
+          leadingClose = DETAILS_CLOSE_AT_START.exec(remaining);
+        }
+        if (DETAILS_OPEN.test(remaining) || closedDetails) {
+          const fragment = parseFragment(remaining, { sourceCodeLocationInfo: true });
           // Pandoc can put complete and still-open details siblings in one RawBlock.
           // The parser's end-tag location distinguishes them without counting
           // tag-like text in comments, scripts, or styles.
@@ -360,10 +369,6 @@ export function applyScientStructure(
             }
           }
           pendingPart = null;
-          continue;
-        }
-        if (/^<\/details>\s*$/iu.test(trimmed) && stack.length > 0) {
-          close();
           continue;
         }
       }

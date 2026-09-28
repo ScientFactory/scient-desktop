@@ -155,6 +155,23 @@ describe.skipIf(binary === null)("Word export with the real Pandoc (local integr
     ),
   );
 
+  it.live("keeps both details when Pandoc puts a close and next open in one raw block", () =>
+    withConverter(({ converter, directory }) =>
+      Effect.gen(function* () {
+        const { docx } = yield* convertTo(converter, directory, "details-close-next-open", {
+          bundle: makeBundle({
+            markdown:
+              "<details><summary>First</summary>\n\nFirst body\n\n</details>\n<details><summary>Second</summary><p>Second body</p></details>",
+          }),
+        });
+        const xml = docx.text("word/document.xml");
+        expect(xml).toContain("First body");
+        expect(xml).toContain("Second body");
+        expect(xml).toContain("Second");
+      }),
+    ),
+  );
+
   it.live("converts a nested LaTeX project with an embedded figure and local bibliography", () =>
     withConverter(({ converter, directory }) =>
       Effect.gen(function* () {
