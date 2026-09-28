@@ -60,6 +60,9 @@ const isProcessExited = Schema.is(OmpRpcProcessExitedError);
 const checkedAt = Effect.map(DateTime.now, DateTime.formatIso);
 
 const discoveryMessage = (error: unknown): string => {
+  if (isProtocolError(error) && Schema.isSchemaError(error.cause)) {
+    return "Couldn't load Oh My Pi's model information. Refresh the provider in Settings to try again.";
+  }
   if (isCommandError(error) && error.code === "timeout") {
     return `Oh My Pi did not answer ${error.command} in time.`;
   }
@@ -113,7 +116,16 @@ export const checkOmpProviderStatus = Effect.fn("checkOmpProviderStatus")(functi
         extraArgs: OMP_ISOLATED_ARGS,
         ...(cwd === undefined ? {} : { cwd }),
       });
-      const [models, commands] = yield* Effect.all([client.getModels(), client.getCommands()], {
+      const modelList = client.getModels().pipe(
+        Effect.tapError((error) =>
+          Effect.logWarning("Oh My Pi provider model discovery failed.", {
+            errorType: error._tag,
+            version: client.version,
+            detail: client.redaction.text(error.message).slice(0, 1024),
+          }),
+        ),
+      );
+      const [models, commands] = yield* Effect.all([modelList, client.getCommands()], {
         concurrency: "unbounded",
       });
       return {

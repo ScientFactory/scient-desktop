@@ -56,6 +56,28 @@ describe("OMP v18.2.8 recorded fixtures", () => {
     expect(models.models[0]?.input).toEqual(["text", "image"]);
   });
 
+  it("keeps models with unknown native context capacity without losing image metadata", () => {
+    const { models } = decodeModels({
+      models: [
+        {
+          provider: "native",
+          id: "unknown-capacity",
+          contextWindow: null,
+          input: ["text", "image"],
+        },
+        { provider: "native", id: "known-capacity", contextWindow: 128000, input: ["text"] },
+      ],
+    });
+    expect(models).toHaveLength(2);
+    expect(models[0]?.contextWindow).toBeNull();
+    expect(models[0]?.input).toEqual(["text", "image"]);
+    expect(models[1]?.contextWindow).toBe(128000);
+    expect(() =>
+      decodeModels({ models: [{ provider: "native", id: "bad", contextWindow: "unknown" }] }),
+    ).toThrow();
+    expect(() => decodeModels({ models: [{ provider: "native", contextWindow: null }] })).toThrow();
+  });
+
   it("preserves session settlement separately from foreground idleness", () => {
     expect(
       decodeState({ isStreaming: false, isSettled: false, hasPendingAsyncWork: true }),
