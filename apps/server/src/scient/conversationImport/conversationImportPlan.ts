@@ -403,7 +403,7 @@ function importOmissions(
 ): ReadonlyArray<OrchestrationConversationImportOmission> {
   const omissions: OrchestrationConversationImportOmission[] = [];
   let unavailableAttachments = 0;
-  let skipped = skippedRecords;
+  let skipped = skippedRecords + (input.skippedSourceRecords ?? 0);
   for (const omission of input.omissions) {
     switch (omission._tag) {
       case "work-log-excluded":

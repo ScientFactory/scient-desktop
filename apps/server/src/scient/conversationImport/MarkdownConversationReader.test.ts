@@ -252,6 +252,41 @@ describe("Markdown conversation import adapter", () => {
     expect(result.issues.every((issue) => issue.endLine >= issue.startLine)).toBe(true);
   });
 
+  it("keeps every damaged range it leaves out as a skipped-record gap in the imported thread", () => {
+    const edited = fixtureMarkdown()
+      .replace(`n=2 role=assistant`, `n=2 role=robot`)
+      .replace(`n=4 role=assistant`, `n=5 role=assistant`);
+    const result = read(edited);
+    const ranges = new Set(result.issues.map((issue) => issue.startLine)).size;
+    expect(ranges).toBe(2);
+    expect(result.validated.skippedSourceRecords).toBe(ranges);
+    const ids = decodeImportIds({
+      threadId: "fresh-thread",
+      commandId: "fresh-command",
+      messages: Object.fromEntries(
+        result.validated.snapshot.messages.map((message, index) => [
+          message.id,
+          `fresh-message-${index + 1}`,
+        ]),
+      ),
+      turns: { "turn:markdown-turn-2": "fresh-turn-2", "turn:markdown-turn-3": "fresh-turn-3" },
+      attachments: {},
+      proposedPlans: {},
+      workLog: {},
+      questionAnswers: {},
+    });
+    const command = buildConversationImportCommand({
+      validated: result.validated,
+      ids,
+      destination: destination(),
+      importedAt: "2026-09-28T10:01:00.000Z",
+    });
+    expect(command.origin.omissions).toContainEqual({ _tag: "records-skipped", count: 2 });
+    // The whole file as a document leaves nothing out.
+    expect(read(edited, "document").validated.skippedSourceRecords).toBeUndefined();
+    expect(read(fixtureMarkdown()).validated.skippedSourceRecords).toBeUndefined();
+  });
+
   it("does not import an edited assistant marker as part of the preceding user request", () => {
     const edited = fixtureMarkdown().replace(
       `<!-- scient:message export=${EXPORT_VALUE} n=2 role=assistant`,

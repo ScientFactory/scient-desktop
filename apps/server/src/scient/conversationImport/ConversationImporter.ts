@@ -629,6 +629,12 @@ export const ValidatedConversationImport = Schema.Struct({
   attachments: Schema.Array(StagedConversationImportAttachment),
   omissions: Schema.Array(ConversationImportOmission),
   warnings: Schema.Array(ConversationImportWarning),
+  /**
+   * Parts of the file itself that could not be read and are left out: each
+   * damaged Markdown range the user chose to skip counts as one. The import
+   * reports them with its other skipped records, so the gap stays visible.
+   */
+  skippedSourceRecords: Schema.optionalKey(PositiveInt),
 }).check(
   Schema.makeFilter((input) => checkValidatedConversationImport(input), {
     identifier: "ValidatedConversationImport",

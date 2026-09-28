@@ -196,6 +196,8 @@ export function readMarkdownConversation(input: MarkdownReadInput): MarkdownRead
       detail: "No valid Scient message markers were found.",
     });
   }
+  // An import of the clean messages leaves each damaged range out.
+  const skippedRanges = document ? 0 : new Set(issues.map((issue) => issue.startLine)).size;
   const validated = decodeValidated({
     importId: input.importId,
     package: {
@@ -237,6 +239,7 @@ export function readMarkdownConversation(input: MarkdownReadInput): MarkdownRead
           },
         ]
       : [],
+    ...(skippedRanges > 0 ? { skippedSourceRecords: skippedRanges } : {}),
   });
   return { validated, kind: document ? "document" : "markdown", issues };
 }
