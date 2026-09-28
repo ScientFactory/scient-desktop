@@ -469,12 +469,16 @@ export function buildConversationDocument(input: ConversationDocumentInput): Con
       { plans: [], answers: [], work: [], reasoning: [], workTurns: new Set() },
     ]),
   );
+  const planByEntryId = new Map(snapshot.proposedPlans.map((plan) => [`plan:${plan.id}`, plan]));
+  const reasoningById = new Map<string, ConversationSnapshotV1["reasoning"][number]>(
+    snapshot.reasoning.map((reasoning) => [reasoning.id, reasoning]),
+  );
   let previousMessageId: string | null = null;
   const pending: Entry[] = [];
   const attach = (entry: Entry, ownerId: string) => {
     const owner = attached.get(ownerId)!;
     if (entry.kind === "proposed-plan") {
-      const plan = snapshot.proposedPlans.find((candidate) => `plan:${candidate.id}` === entry.id);
+      const plan = planByEntryId.get(entry.id);
       if (plan) owner.plans.push(plan);
     } else if (entry.kind === "work") {
       if (entry.entry.questionAnswer) owner.answers.push(entry.entry.questionAnswer);
@@ -483,7 +487,7 @@ export function buildConversationDocument(input: ConversationDocumentInput): Con
         if (entry.entry.turnId) owner.workTurns.add(entry.entry.turnId);
       }
     } else if (entry.kind === "message" && entry.message.role === "reasoning") {
-      const reasoning = snapshot.reasoning.find((candidate) => candidate.id === entry.id);
+      const reasoning = reasoningById.get(entry.id);
       if (reasoning) owner.reasoning.push(reasoning);
     }
   };
@@ -500,10 +504,20 @@ export function buildConversationDocument(input: ConversationDocumentInput): Con
     else attach(entry, owner);
   }
 
-  const turnOrdinal = new Map<TurnId, number>();
+  // Each run of a turn's messages gets its own ordinal: the reader requires a
+  // turn's messages to be contiguous, so a turn that returns after another
+  // one continues as a new turn in the file. Turnless messages (prompts and
+  // steering) do not end a run.
+  const turnOrdinalByMessage = new Map<string, number>();
+  let runTurn: TurnId | null = null;
+  let runs = 0;
   for (const message of exported) {
-    if (message.turnId !== null && !turnOrdinal.has(message.turnId))
-      turnOrdinal.set(message.turnId, turnOrdinal.size + 1);
+    if (message.turnId === null) continue;
+    if (message.turnId !== runTurn) {
+      runTurn = message.turnId;
+      runs += 1;
+    }
+    turnOrdinalByMessage.set(message.id, runs);
   }
 
   const sections: string[] = [];
@@ -520,7 +534,7 @@ export function buildConversationDocument(input: ConversationDocumentInput): Con
         n,
         role,
         time: message.createdAt,
-        turn: message.turnId === null ? null : (turnOrdinal.get(message.turnId) ?? null),
+        turn: turnOrdinalByMessage.get(message.id) ?? null,
       })}\n${formatSpeakerHeading({ role, time: message.createdAt, timeZone: input.timeZone })}`,
     ];
 
