@@ -26,6 +26,7 @@ vi.mock("../wordExport/client", () => ({ readPandocTool, installPandocTool }));
 const { ConversationExportDialogHost, requestConversationExport } =
   await import("./ConversationExportDialog");
 const { handleConversationExportMenuAction } = await import("./menu");
+const { ExportUpToHereButton } = await import("./ExportUpToHereButton");
 const { INCLUDE_CAUTION } = await import("./exportDialog.logic");
 
 const threadRef = {
@@ -379,5 +380,48 @@ describe("ConversationExportDialog", () => {
     await click(button("Try again")!);
     expect(document.querySelector('[role="alert"]')).toBeNull();
     expect(switches()).toHaveLength(2);
+  });
+});
+
+describe("Export up to here…", () => {
+  it("picks a format, then opens its dialog ending at that message", async () => {
+    prepareConversationExport.mockResolvedValue({ ...preparation, formats: everyFormat });
+    await act(async () =>
+      root.render(
+        <>
+          <ExportUpToHereButton threadRef={threadRef} messageId={MessageId.make("m1")} />
+          <ConversationExportDialogHost />
+        </>,
+      ),
+    );
+    const trigger = button("Export up to here…")!;
+    await click(trigger);
+    const items = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')];
+    expect(items.map((item) => item.textContent)).toEqual([
+      "Markdown (.md)…",
+      "PDF (.pdf)…",
+      "Word (.docx)…",
+      "Scient file (.scic)…",
+    ]);
+    await click(items[3]!);
+    await flush();
+
+    expect(dialog()?.querySelector('[data-slot="dialog-title"]')?.textContent).toBe(
+      "Export as Scient file",
+    );
+    const upTo = [...document.querySelectorAll<HTMLElement>('[role="radio"]')].find((radio) =>
+      radio.closest("label")?.textContent?.includes("Up to a message…"),
+    );
+    expect(upTo?.getAttribute("aria-checked")).toBe("true");
+    expect(document.querySelector('[aria-label="Last message to include"]')?.textContent).toContain(
+      "1. You: Hi",
+    );
+
+    exportConversation.mockResolvedValue({ file: null, text: null, warnings: [] });
+    await click(button("Save .scic")!);
+    expect(exportConversation.mock.calls[0]?.[1]).toMatchObject({
+      format: "scic",
+      options: { range: { _tag: "through-message", messageId: "m1" } },
+    });
   });
 });

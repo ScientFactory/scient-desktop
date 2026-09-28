@@ -567,6 +567,30 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain('aria-label="Fork conversation from this response"');
   });
 
+  // SCIENT-FORK:START
+  it("offers Export up to here on user and finished assistant messages", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildUserTimelineEntry("Export from here"),
+          buildAssistantTimelineEntry(),
+        ]}
+      />,
+    );
+    const streaming = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[buildAssistantTimelineEntry({ streaming: true })]}
+        runningTurnId={TurnId.make("turn-1")}
+      />,
+    );
+
+    expect(markup.match(/aria-label="Export up to here…"/g)).toHaveLength(2);
+    expect(streaming).not.toContain('aria-label="Export up to here…"');
+  });
+  // SCIENT-FORK:END
+
   it("renders assistant image attachments inline without an empty-response placeholder", () => {
     const entry = buildAssistantTimelineEntry();
     const markup = renderToStaticMarkup(
