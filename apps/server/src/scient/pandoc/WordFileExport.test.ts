@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Builds a synthetic project on disk.
+// @effect-diagnostics nodeBuiltinImport:off preferSchemaOverJson:off -- Builds a synthetic project and serializes its known test fixture.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
@@ -95,10 +95,12 @@ const run = <A, E>(
     NodeFS.writeFileSync(NodePath.join(project, "notes", "data.csv"), "a,b\n");
     const words = options.realConverter
       ? realConverterLayer.pipe(
-          Layer.provide(managedToolLayer({
-            command: { command: binary!, leadingArgs: [] },
-            scratchRoot: NodePath.join(root, "scratch"),
-          })),
+          Layer.provide(
+            managedToolLayer({
+              command: { command: binary!, leadingArgs: [] },
+              scratchRoot: NodePath.join(root, "scratch"),
+            }),
+          ),
           Layer.provideMerge(NodeServices.layer),
         )
       : converterLayer(options.seen ?? [], options.failure ?? null);
@@ -122,71 +124,106 @@ const run = <A, E>(
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
 describe("WordFileExport", () => {
-  it.skipIf(binary === null).live("produces Word from saved Markdown with Mermaid source and local CSL and BibTeX references", () =>
-    run(
-      ({ service, project, revisionOf }) =>
-        Effect.gen(function* () {
-          const notes = NodePath.join(project, "notes");
-          NodeFS.writeFileSync(NodePath.join(notes, "local.json"), JSON.stringify([
-            { id: "json2025", type: "book", title: "JSON Reference", author: [{ family: "Example" }], issued: { "date-parts": [[2025]] } },
-          ]));
-          NodeFS.writeFileSync(NodePath.join(notes, "local.bib"), "@article{bib2024, author={Doe, Jane}, title={BibTeX Reference}, year={2024}}\n");
-          NodeFS.writeFileSync(NodePath.join(notes, "report.md"), [
-            "---",
-            "bibliography:",
-            "  - local.json",
-            "  - local.bib",
-            "references:",
-            "  - id: inline2026",
-            "    type: book",
-            "    title: Inline Reference",
-            "    author:",
-            "      - family: Author",
-            "    issued:",
-            "      date-parts: [[2026]]",
-            "---",
-            "# Report",
-            "See [@json2025], [@bib2024], and [@inline2026].",
-            "",
-            "```mermaid",
-            "flowchart LR",
-            "  A --> B",
-            "```",
-          ].join("\n"));
-          const produced = yield* service.export({ cwd: project, relativePath: "notes/report.md", revision: yield* revisionOf("notes/report.md") });
-          const docx = yield* readDocx(produced.path);
-          const xml = docx.text("word/document.xml");
-          expect(xml).toContain("JSON Reference");
-          expect(xml).toContain("BibTeX Reference");
-          expect(xml).toContain("Inline Reference");
-          expect(xml).toContain("Mermaid diagram source (image unavailable)");
-          expect(xml).toContain("A --&gt; B");
-          expect(xml).not.toContain("[@json2025]");
-          expect(produced.warnings.map((warning) => warning.message).join("\n")).toContain("complete Mermaid source");
-        }),
-      { realConverter: true },
-    ),
-  );
+  if (binary !== null)
+    it.live(
+      "produces Word from saved Markdown with Mermaid source and local CSL and BibTeX references",
+      () =>
+        run(
+          ({ service, project, revisionOf }) =>
+            Effect.gen(function* () {
+              const notes = NodePath.join(project, "notes");
+              NodeFS.writeFileSync(
+                NodePath.join(notes, "local.json"),
+                JSON.stringify([
+                  {
+                    id: "json2025",
+                    type: "book",
+                    title: "JSON Reference",
+                    author: [{ family: "Example" }],
+                    issued: { "date-parts": [[2025]] },
+                  },
+                ]),
+              );
+              NodeFS.writeFileSync(
+                NodePath.join(notes, "local.bib"),
+                "@article{bib2024, author={Doe, Jane}, title={BibTeX Reference}, year={2024}}\n",
+              );
+              NodeFS.writeFileSync(
+                NodePath.join(notes, "report.md"),
+                [
+                  "---",
+                  "bibliography:",
+                  "  - local.json",
+                  "  - local.bib",
+                  "references:",
+                  "  - id: inline2026",
+                  "    type: book",
+                  "    title: Inline Reference",
+                  "    author:",
+                  "      - family: Author",
+                  "    issued:",
+                  "      date-parts: [[2026]]",
+                  "---",
+                  "# Report",
+                  "See [@json2025], [@bib2024], and [@inline2026].",
+                  "",
+                  "```mermaid",
+                  "flowchart LR",
+                  "  A --> B",
+                  "```",
+                ].join("\n"),
+              );
+              const produced = yield* service.export({
+                cwd: project,
+                relativePath: "notes/report.md",
+                revision: yield* revisionOf("notes/report.md"),
+              });
+              const docx = yield* readDocx(produced.path);
+              const xml = docx.text("word/document.xml");
+              expect(xml).toContain("JSON Reference");
+              expect(xml).toContain("BibTeX Reference");
+              expect(xml).toContain("Inline Reference");
+              expect(xml).toContain("Mermaid diagram source (image unavailable)");
+              expect(xml).toContain("A --&gt; B");
+              expect(xml).not.toContain("[@json2025]");
+              expect(produced.warnings.map((warning) => warning.message).join("\n")).toContain(
+                "complete Mermaid source",
+              );
+            }),
+          { realConverter: true },
+        ),
+    );
 
   it.live("passes only local bibliographies and reports inaccessible references", () => {
     const seen: Array<WordConversionInput> = [];
     return run(
       ({ service, project, revisionOf }) =>
         Effect.gen(function* () {
-          NodeFS.writeFileSync(NodePath.join(project, "notes", "report.md"), [
-            "---",
-            "bibliography: [missing.json, ../../outside.bib, https://example.com/remote.bib]",
-            "references:",
-            "  - id: known",
-            "    type: book",
-            "    title: Known reference",
-            "---",
-            "See [@known] and [@unknown].",
-          ].join("\n"));
-          const produced = yield* service.export({ cwd: project, relativePath: "notes/report.md", revision: yield* revisionOf("notes/report.md") });
-          expect(seen[0]?.bundle.citations.map((citation) => citation._tag)).toEqual(["bibliographic"]);
+          NodeFS.writeFileSync(
+            NodePath.join(project, "notes", "report.md"),
+            [
+              "---",
+              "bibliography: [missing.json, ../../outside.bib, https://example.com/remote.bib]",
+              "references:",
+              "  - id: known",
+              "    type: book",
+              "    title: Known reference",
+              "---",
+              "See [@known] and [@unknown].",
+            ].join("\n"),
+          );
+          const produced = yield* service.export({
+            cwd: project,
+            relativePath: "notes/report.md",
+            revision: yield* revisionOf("notes/report.md"),
+          });
+          expect(seen[0]?.bundle.citations.map((citation) => citation._tag)).toEqual([
+            "bibliographic",
+          ]);
           expect(seen[0]?.bibliographySources).toEqual([]);
-          expect(produced.warnings.filter((warning) => warning.code === "resource-unresolved")).toHaveLength(4);
+          expect(
+            produced.warnings.filter((warning) => warning.code === "resource-unresolved"),
+          ).toHaveLength(4);
         }),
       { seen },
     );
