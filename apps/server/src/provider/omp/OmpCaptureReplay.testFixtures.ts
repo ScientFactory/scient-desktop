@@ -88,6 +88,7 @@ const defaultData = (command: Frame): unknown => {
     case "get_state":
       return {
         model: { provider: "scient-stub", id: "stub-model" },
+        thinkingLevel: "off",
         isStreaming: false,
         isCompacting: false,
         sessionId: "replay-session",

@@ -105,8 +105,9 @@ enable them or provide compatible evidence.
   send a new message while background work is pending. With Oh My Pi 18.3.1 or newer, your
   message's turn ends only when Oh My Pi reports that message's own result, so a background run
   that starts at the same moment cannot end it early. If that result never arrives, the turn is
-  marked uncertain after a minute. When a background result reaches Oh My Pi while it answers
-  you, the answer can use it, and the turn shows a "Background result" entry where it arrived.
+  marked uncertain after a minute of idle waiting. An acknowledged message that never starts
+  is bounded the same way; active generation, compaction, and unanswered questions do not count.
+  When a background result reaches Oh My Pi while it answers you, the answer can use it, and the turn shows a "Background result" entry where it arrived.
   Slash commands wait until background work settles, because Oh My Pi would reject some of them
   as busy; Scient says so and sends nothing. The same applies to a model change or command if a
   background run resumes while the message is being prepared.

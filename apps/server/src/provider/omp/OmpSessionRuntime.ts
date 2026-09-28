@@ -590,12 +590,37 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     );
   });
 
+  const waitForPrompt = Effect.gen(function* () {
+    const now = yield* Clock.currentTimeMillis;
+    promptWaitStartedAt ??= now;
+    if (now - promptWaitStartedAt >= OMP_PROMPT_RESULT_WAIT_MILLIS) {
+      yield* publish({
+        type: "warning",
+        message: "Oh My Pi did not report the result of this message.",
+      });
+      yield* applySignal({ type: "unconfirmed" });
+      return;
+    }
+    yield* scheduleDrainRetry;
+  });
+
   const finishIdleState = (state: OmpRpcState) =>
     Effect.gen(function* () {
       yield* sessionInfo(state.sessionFile, state.sessionId);
       if (state.isSettled !== undefined) reportsPromptResults = true;
       const pending = state.isSettled === undefined ? state.hasPendingAsyncWork : !state.isSettled;
       if (pending !== undefined) yield* publish({ type: "background-work", pending });
+      // An acknowledged prompt may never emit agent_start. Only count time
+      // when OMP is idle and no extension is waiting for the user's answer.
+      if (turn.phase === "accepted") {
+        if (state.isStreaming === true || state.isCompacting === true || questions.size > 0) {
+          promptWaitStartedAt = undefined;
+          yield* scheduleDrainRetry;
+        } else {
+          yield* waitForPrompt;
+        }
+        return;
+      }
       const decision = ompDrainRetry(
         drainRetries,
         state.isStreaming === true || state.isCompacting === true,
@@ -603,19 +628,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       if (decision === "confirm") {
         drainRetries = 0;
         if (awaitingOwnPrompt()) {
-          const now = yield* Clock.currentTimeMillis;
-          promptWaitStartedAt ??= now;
-          if (now - promptWaitStartedAt >= OMP_PROMPT_RESULT_WAIT_MILLIS) {
-            yield* publish({
-              type: "warning",
-              message: "Oh My Pi did not report the result of this message.",
-            });
-            yield* applySignal({ type: "unconfirmed" });
-            return;
-          }
-          // The acknowledgement or prompt_result wakes the drain on arrival;
-          // this retry only bounds a prompt that never reports.
-          yield* scheduleDrainRetry;
+          yield* waitForPrompt;
           return;
         }
         yield* applySignal({ type: "drain-idle" });
@@ -635,7 +648,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     });
 
   const confirmIdle = Effect.gen(function* () {
-    if (turn.phase !== "draining") {
+    if (turn.phase !== "draining" && !(turn.phase === "accepted" && turn.requestId !== undefined)) {
       pendingDrainState = undefined;
       return;
     }

@@ -502,7 +502,9 @@ orchestration types. The adapter owns the process and the turn mapping.
   idle with `get_state` (older runtimes use `isTerminal`). Background work may still wake the parent.
   OMP events carry no run id, so a user turn is never decided by an idle session alone: it waits
   for its prompt's acknowledgement and, from 18.3.1, for that prompt's own `prompt_result`
-  (bounded to a minute; a prompt that never reports is uncertain). A prompt OMP handled locally
+  (bounded to a minute of idle waiting; a prompt that never reports is uncertain). The same bound
+  covers acknowledged prompts with no `agent_start`; streaming, compaction, and extension questions
+  suspend that idle wait. A prompt OMP handled locally
   (`agentInvoked: false`) owes no result, and a reported prompt that never started a run settles
   from its status. Prompts are sent with `streamingBehavior: "steer"`, so a message that meets a
   background run Scient has not seen yet is queued into that run instead of being rejected as
