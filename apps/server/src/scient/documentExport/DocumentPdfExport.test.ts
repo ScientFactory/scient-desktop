@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Tests exercise the real project filesystem boundary.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
@@ -365,6 +366,48 @@ describe("Markdown source read", () => {
         ).pipe(Effect.provideService(FileSystem.FileSystem, racingFileSystem), Effect.flip);
         expect(error).toMatchObject({ reason: "source-changed" });
       }).pipe(Effect.provide(layer)),
+    );
+
+    // Without a non-blocking open this would hang on the pipe.
+    it.effect.skipIf(process.platform === "win32")(
+      "refuses a pipe swapped in for the file without blocking on it",
+      () =>
+        Effect.gen(function* () {
+          const contents = "# Report\n\nSaved text.\n";
+          const root = yield* Effect.promise(() =>
+            makeFixtureDirectory(fixtures, "scient-document-pdf-windows-fifo-"),
+          );
+          const filePath = yield* Effect.promise(() =>
+            writeFixtureFile(root, "report.md", contents),
+          );
+          const fileSystem = yield* FileSystem.FileSystem;
+          const racingFileSystem = FileSystem.FileSystem.of({
+            ...fileSystem,
+            stat: (candidate) =>
+              fileSystem.stat(candidate).pipe(
+                Effect.tap(() =>
+                  candidate === filePath
+                    ? Effect.promise(async () => {
+                        await NodeFSP.rm(filePath);
+                        NodeChildProcess.execFileSync("mkfifo", [filePath]);
+                      })
+                    : Effect.void,
+                ),
+              ),
+          });
+          const error = yield* onWindows(
+            readProjectMarkdownFile(
+              root,
+              "report.md",
+              sha256Digest(new TextEncoder().encode(contents)),
+            ),
+          ).pipe(Effect.provideService(FileSystem.FileSystem, racingFileSystem), Effect.flip);
+          expect(error).toMatchObject({
+            reason: "source-changed",
+            detail: "The file changed while exporting. Try again.",
+          });
+        }).pipe(Effect.provide(layer)),
+      10_000,
     );
 
     it.effect("refuses the agent tool's export, which has no saved revision to check", () =>

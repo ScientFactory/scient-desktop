@@ -178,16 +178,31 @@ const readVerifiedWorkspaceFile = (
 
 /**
  * Reads at most `maxBytes` plus one from a path, without binding the open file
- * to the project. Only for a caller that then checks the bytes themselves
- * against a known revision, so a file swapped in by path cannot pass.
+ * to the project. Only for a caller that then requires the bytes to equal a
+ * revision the user already has (the editor's saved file): a file swapped in
+ * by path between the check and the read then either has those same bytes,
+ * so the PDF shows nothing the user did not already have, or other bytes and
+ * is refused. What remains is the open itself, so it cannot hang or reach a
+ * device: it is non-blocking where the platform supports that, must be a
+ * regular file, and must still look like the file the path check saw.
  */
-const readCappedFile = (canonicalPath: string, maxBytes: number) =>
+const readCappedFile = (checked: CheckedFile, maxBytes: number) =>
   Effect.tryPromise({
     try: async (): Promise<VerifiedRead> => {
-      const handle = await NodeFS.promises.open(canonicalPath, NodeFS.constants.O_RDONLY);
+      const handle = await NodeFS.promises.open(
+        checked.canonicalPath,
+        NodeFS.constants.O_RDONLY | (NodeFS.constants.O_NONBLOCK ?? 0),
+      );
       try {
         const info = await handle.stat();
-        if (!info.isFile()) return { _tag: "unreadable" };
+        if (
+          !info.isFile() ||
+          info.dev !== checked.dev ||
+          (checked.ino !== null && info.ino !== checked.ino) ||
+          info.size !== checked.size ||
+          (checked.mtimeMs !== null && Math.trunc(info.mtimeMs) !== checked.mtimeMs)
+        )
+          return { _tag: "unreadable" };
         const buffer = Buffer.allocUnsafe(Math.min(info.size, maxBytes) + 1);
         let length = 0;
         while (length < buffer.byteLength) {
@@ -282,8 +297,9 @@ export const readProjectMarkdownFile = Effect.fn("MarkdownFileBundle.readProject
     // The same handle-bound, byte-capped read as the file's images: the bytes
     // come from the inode that was checked, inside the project, and no more
     // than the cap is ever held.
+    const checked = statIdentity(canonicalPath, info);
     const verified = yield* readVerifiedWorkspaceFile(
-      statIdentity(canonicalPath, info),
+      checked,
       canonicalRoot,
       yield* HostProcessPlatform,
       SCIENT_DOCUMENT_MAX_MARKDOWN_LENGTH,
@@ -296,8 +312,13 @@ export const readProjectMarkdownFile = Effect.fn("MarkdownFileBundle.readProject
           "On this platform, a project file can be exported as PDF only from its editor: Scient cannot otherwise confirm which file it read.",
         );
       }
-      read = yield* readCappedFile(canonicalPath, SCIENT_DOCUMENT_MAX_MARKDOWN_LENGTH);
-      if (read._tag === "bytes" && sha256Digest(read.bytes) !== expectedRevision) {
+      read = yield* readCappedFile(checked, SCIENT_DOCUMENT_MAX_MARKDOWN_LENGTH);
+      // A file that is no longer the one checked, or whose bytes are not the
+      // saved revision, changed during the export.
+      if (
+        read._tag === "unreadable" ||
+        (read._tag === "bytes" && sha256Digest(read.bytes) !== expectedRevision)
+      ) {
         return yield* sourceError("source-changed", MARKDOWN_SOURCE_CHANGED_DETAIL);
       }
     }
