@@ -33,7 +33,7 @@ import { readProjectMarkdownFile } from "./MarkdownFileBundle.ts";
 const DOCUMENT_PDF_PRODUCER_ID = ArtifactProducerId.make("scient.document-pdf");
 
 export const DOCUMENT_PDF_TOO_LARGE_DETAIL =
-  "The PDF is larger than Scient's 64 MiB export limit. Export a shorter document or range, or leave out the work log.";
+  "The PDF is larger than Scient's 64 MiB export limit. Export a shorter document, or for a conversation leave out the work log and reasoning.";
 
 const PAGE_WARNING_CODES: Readonly<
   Record<

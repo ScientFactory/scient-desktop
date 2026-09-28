@@ -272,7 +272,8 @@ Requirements:
   it came from.
 - The existing bounded PDF byte transport is reused: **64 MiB per PDF**
   (`BROWSER_PDF_EXPORT_MAX_BYTES` in `packages/contracts/src/browserPdfExport.ts`). A larger export fails
-  with a clear message suggesting a shorter range or no work log. A streaming transport is added only
+  with a clear message suggesting leaving out the work log and reasoning, or exporting the
+  conversation as Markdown. A streaming transport is added only
   if measured real conversations need more.
 - **Failure versus limitation.** An execution failure stops publication: the render did not finish,
   a required font or the page itself is wrong, the source changed. A known content limitation does

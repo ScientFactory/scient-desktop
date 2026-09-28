@@ -73,8 +73,8 @@ invalid, it reported a different capture, kind, or revision, a diagram or image 
 Mermaid itself failed (for example, its code did not load), a captured image was not served, was
 refused or blocked, or was served with bytes that differ from the capture's digest, a font the
 page used failed or did not finish loading, the source changed, the PDF is invalid, or it is
-larger than 64 MiB (the message suggests a shorter document or range, or leaving out the work
-log).
+larger than 64 MiB (for a conversation, the message suggests leaving out the work log and
+reasoning, or exporting it as Markdown; for a file, a shorter document).
 
 The browser reports an image it could not fetch and one it could not decode the same way, so when
 a captured image does not display (an error, or a load with no measurable size, such as an SVG
@@ -118,8 +118,8 @@ outline are enabled; headings become bookmarks.
 - **Markdown editor → More actions → Export ▸ PDF.** Available only in the Scient desktop app.
   A browser client, or a desktop too old to have the document page, shows the item disabled with
   the reason. The PDF is saved through the Save dialog; **Open** shows it in the editor's thread.
-- **Thread menu → Export… → PDF.** The dialog's work-log, reasoning, and range options select the
-  snapshot; `documents.prepareConversationPdf` builds the conversation's bundle with the
+- **Thread menu → Export → PDF (.pdf)….** The dialog's work-log and reasoning options select the
+  snapshot of the whole conversation; `documents.prepareConversationPdf` builds the conversation's bundle with the
   conversation package and captures it; the desktop prints it and the client saves it. The format
   is registered in the export format registry, whose `produce` saves the file itself and resolves
   `null` when the user cancels saving; it is unavailable, with the reason, without a current

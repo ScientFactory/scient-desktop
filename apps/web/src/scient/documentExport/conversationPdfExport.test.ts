@@ -41,7 +41,7 @@ const request = {
   options: {
     includeWorkLog: true,
     includeReasoning: false,
-    range: { _tag: "through-message", messageId: "m2" },
+    range: { _tag: "whole" },
   },
   timeZone: "Asia/Jerusalem",
 } as unknown as ScientConversationExportRequest;
@@ -127,7 +127,7 @@ describe("conversation PDF export", () => {
     expect(crashed.publish).not.toHaveBeenCalled();
   });
 
-  it("suggests a shorter range or no work log for an over-limit PDF, and publishes nothing", async () => {
+  it("suggests leaving out the work log and reasoning for an over-limit PDF, and publishes nothing", async () => {
     const deps = dependencies({
       render: vi.fn(async () => ({
         _tag: "rejected" as const,
@@ -137,6 +137,10 @@ describe("conversation PDF export", () => {
     });
     await expect(runConversationPdfExport(deps, request)).rejects.toThrow(
       CONVERSATION_PDF_TOO_LARGE_MESSAGE,
+    );
+    // Only choices the export dialog offers are suggested.
+    expect(CONVERSATION_PDF_TOO_LARGE_MESSAGE).toBe(
+      "This conversation is too large for a PDF. Try leaving out the work log and reasoning, or export it as Markdown.",
     );
     expect(deps.publish).not.toHaveBeenCalled();
     expect(deps.release).toHaveBeenCalledWith(expected.captureId);

@@ -9,7 +9,7 @@ import { captureConversationBundle } from "./ConversationPdfCapture.ts";
 
 /**
  * The conversation half of PDF export: the export dialog's options (work log,
- * reasoning, range, time zone) select a snapshot, the conversation package
+ * reasoning, time zone) select a snapshot, the conversation package
  * turns it into a document bundle, and the bundle is captured for the
  * document page. The client then prints the capture on its desktop and
  * publishes it with `documents.publishDocumentPdf`.

@@ -28,14 +28,13 @@ import {
 
 /**
  * Conversation → PDF from the export dialog. The server captures the
- * conversation with the dialog's options (work log, reasoning, range, time
- * zone); this desktop prints the capture; the server publishes it; and the
+ * conversation with the dialog's options (work log, reasoning, time zone); this desktop prints the capture; the server publishes it; and the
  * PDF is saved through the same Save dialog as every other format. The
  * notice's Open shows it in Scient's reader for this conversation.
  */
 
 export const CONVERSATION_PDF_TOO_LARGE_MESSAGE =
-  "The PDF is larger than Scient's 64 MiB export limit. Export a shorter range or leave out the work log.";
+  "This conversation is too large for a PDF. Try leaving out the work log and reasoning, or export it as Markdown.";
 
 export function conversationPdfAvailability(): ConversationExportClientAvailability {
   const availability = documentPdfAvailability();

@@ -166,7 +166,8 @@ export const writeDocumentCapture = Effect.fn("DocumentCapture.write")(function*
   if (bundle.markdown.length > SCIENT_DOCUMENT_MAX_MARKDOWN_LENGTH) {
     return yield* new ScientDocumentPdfExportError({
       reason: "too-large",
-      detail: "The document is too large to export as one PDF. Export a shorter range.",
+      detail:
+        "The document is too large to export as one PDF. Export a shorter document, or for a conversation leave out the work log and reasoning.",
     });
   }
   yield* sweepExpiredDocumentCaptures();
