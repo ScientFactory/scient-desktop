@@ -280,7 +280,7 @@ export const exportScientDocumentForInvocation = Effect.fn("ScientDocumentExport
         ),
         mandatory: flags,
         limit: MAX_TOOL_WARNINGS,
-        omitted: (count) => `…and ${count} more notes, listed at the end of the PDF.`,
+        omitted: (count) => `…and ${count} more notes, not listed here.`,
       });
       return {
         sourcePath: file.relativePath,

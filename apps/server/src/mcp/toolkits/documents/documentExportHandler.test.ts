@@ -236,8 +236,8 @@ describe("scient_document_export", () => {
       expect(result.warnings).toContain("resource-unresolved: 2 web resources were not loaded.");
       expect(result.warnings).toContain("blocked-external-resources");
       // 61 of the 520 are listed; the count is not taken from the export's own summary.
-      expect(result.warnings.at(-1)).toBe("…and 459 more notes, listed at the end of the PDF.");
-      expect(result.warnings.some((warning) => warning.includes("not listed here"))).toBe(false);
+      expect(result.warnings.at(-1)).toBe("…and 459 more notes, not listed here.");
+      expect(result.warnings.filter((warning) => warning.includes("more notes"))).toHaveLength(1);
     }),
   );
 
