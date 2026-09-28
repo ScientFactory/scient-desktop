@@ -1296,7 +1296,9 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain('href="https://example.com"');
-    expect(markup).toContain('src="https://example.com/image.png"');
+    // The web image is a referenced link in user messages too, never an automatic request.
+    expect(markup).toContain('href="https://example.com/image.png"');
+    expect(markup).not.toContain('src="https://example.com/image.png"');
     expect(markup).not.toMatch(/\stitle="(?:link|image) tip"/);
   });
 

@@ -255,9 +255,11 @@ describe("ChatMarkdown workspace images", () => {
       "![remote](https://example.com/badge.svg) ![workspace](.t3/workspace-image.svg)",
     );
 
-    // Two images in one paragraph are badges: neither reserves a slot.
+    // Two images in one paragraph are badges: neither reserves a slot. The web badge is a
+    // referenced link until loaded; the workspace one loads through its signed URL.
     expect(html).not.toContain("aspect-video");
-    expect(html).toContain('src="https://example.com/badge.svg"');
+    expect(html).not.toContain('src="https://example.com/badge.svg"');
+    expect(html).toContain('href="https://example.com/badge.svg"');
     expect(html).toContain('src="https://signed.test/workspace-image.svg"');
     expect(html.match(/<img[^>]*class="[^"]*inline-block![^"]*"/g)).toHaveLength(1);
     expect(html).not.toContain("invisible");
@@ -287,8 +289,8 @@ describe("ChatMarkdown workspace images", () => {
   it("keeps an authored id on a remote image so fragment links resolve", () => {
     const html = render('<img id="diagram" src="https://example.com/diagram.png" alt="diagram">');
 
-    // The sanitizer prefixes authored ids; the loading slot carries it too.
-    expect(html).toContain('<span id="user-content-diagram"');
+    // The sanitizer prefixes authored ids; the link card carries it until the image loads.
+    expect(html).toContain('<span id="user-content-diagram" role="group"');
   });
 
   it("sizes the slot from server-reported dimensions so a portrait image never grows", () => {
@@ -370,7 +372,9 @@ describe("ChatMarkdown workspace images", () => {
       "notes.md",
       '![logo](https://images.test/logo.svg "Remote caption")',
     );
-    expect(remote).toContain(">Remote caption</span>");
+    // A web figure in a file preview is a referenced link until loaded, like chat.
+    expect(remote).not.toContain('src="https://images.test/logo.svg"');
+    expect(remote).toContain('aria-label="Web image: logo"');
   });
 
   it("keeps titles on inline, linked, and table file images out of the figure caption flow", () => {
@@ -459,11 +463,12 @@ describe("ChatMarkdown workspace images", () => {
     expect(loadingBytes).not.toContain('loading="lazy"');
   });
 
-  it("gives a standalone remote image the same frame instead of a bare tag", () => {
+  it("gives a standalone remote image a link card instead of a loading frame", () => {
     const html = render("![remote](https://example.com/shot.png)");
 
-    expect(html).toContain('aria-label="Loading image"');
-    expect(html).toContain("aspect-video");
+    expect(html).toContain('aria-label="Web image: remote"');
+    expect(html).not.toContain('aria-label="Loading image"');
+    expect(html).not.toContain("aspect-video");
   });
 
   it("never passes a workspace source to a raw image when thread context is unavailable", () => {
@@ -485,12 +490,21 @@ describe("ChatMarkdown workspace images", () => {
     expect(html).not.toContain("content://");
   });
 
-  it("keeps remote images directly loadable", () => {
+  it("shows remote images as a referenced link without requesting them", () => {
     const html = render("![remote](https://example.com/image.png)");
 
     expect(testState.resources).toEqual([]);
-    expect(html).toContain('src="https://example.com/image.png"');
-    expect(html).toContain("max-w-[min(100%,30rem)]");
+    expect(html).not.toMatch(/<img[^>]*src="https:\/\/example\.com/);
+    expect(html).toContain('href="https://example.com/image.png"');
+    expect(html).toContain(">Load image</button>");
     expect(html).not.toContain("Image unavailable");
+  });
+
+  it("leaves data and blob sources to the existing image path", () => {
+    const html = render("![inline](data:image/png;base64,iVBORw0KGgo=) ![b](blob:https://x/1)");
+
+    expect(testState.resources).toEqual([]);
+    expect(html).not.toContain("Load image");
+    expect(html).not.toContain('role="group"');
   });
 });

@@ -213,6 +213,13 @@ import {
   ScientPendingWorkspaceImage,
 } from "../scient/images/ScientInlineWorkspaceImage";
 import { ScientDirectImageFigure } from "../scient/images/ScientDirectImageFigure";
+// SCIENT-FORK:START — web images render as a referenced link until the user loads one
+import { hasRemoteSrcSet, remoteImageAddress } from "../scient/presentation/remoteImageAddress";
+import {
+  ScientRemoteImageLoadedContext,
+  ScientRemoteImageReference,
+} from "../scient/presentation/ScientRemoteImageReference";
+// SCIENT-FORK:END
 import {
   inlineWorkspaceImageMarkdownSource,
   inlineWorkspaceImageResource,
@@ -1430,6 +1437,9 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   /** Loaded instead of the failure state when no URL can be signed, such as against a server
       too old to know this resource. Only safe when the client can reach it directly. */
   readonly fallbackSrc?: string | undefined;
+  // SCIENT-FORK:START — shown instead of the failure state, before any `fallbackSrc`
+  readonly failureFallback?: ReactNode | undefined;
+  // SCIENT-FORK:END
   readonly workspaceRoot?: string | undefined;
   readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
 }) {
@@ -1458,6 +1468,11 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     resource._tag === "workspace-file" || resource._tag === "media-file"
       ? resource.threadId
       : undefined;
+  // SCIENT-FORK:START — an unsignable web asset becomes a link card, not a direct fetch
+  if (assetUrl._tag === "Failure" && props.failureFallback !== undefined) {
+    return props.failureFallback;
+  }
+  // SCIENT-FORK:END
   const fallbackSrc = assetUrl._tag === "Failure" ? props.fallbackSrc : undefined;
   const src =
     assetUrl._tag === "Success"
@@ -2714,6 +2729,25 @@ const CHAT_MARKDOWN_COMPONENTS = {
         ? resolveInlineWorkspaceImage({ alt, cwd, src: imageSource.path })
         : null;
     const useScientImageCard = Boolean(node?.properties?.dataScientImageCard);
+    // SCIENT-FORK:START — web images render as a referenced link until the user loads one.
+    // An image inside a link keeps loading as the link's content.
+    const remoteImage =
+      directUri === null || use(MarkdownLinkContext) || use(ScientRemoteImageLoadedContext)
+        ? null
+        : remoteImageAddress(directUri);
+    const remoteImageReference =
+      remoteImage === null ? null : (
+        <ScientRemoteImageReference
+          address={remoteImage}
+          alt={altText}
+          kind={kind}
+          copyMarkdown={markdownSource}
+          id={props.id}
+        >
+          <MarkdownImg node={node} alt={alt} src={src} title={title} {...props} />
+        </ScientRemoteImageReference>
+      );
+    // SCIENT-FORK:END
     if (useScientImageCard && image && markdownSource && threadRef && !isStreaming) {
       return (
         <ScientInlineWorkspaceImage
@@ -2759,11 +2793,17 @@ const CHAT_MARKDOWN_COMPONENTS = {
           srcFragment={srcFragment}
           originalUrl={resolveProtocolRelativeMediaUrl(directUri)}
           framed={false}
-          fallbackSrc={githubMediaUrl}
+          // SCIENT-FORK:START — the server proxies GitHub media; the direct fallback is gated
+          fallbackSrc={remoteImageReference === null ? githubMediaUrl : undefined}
+          failureFallback={remoteImageReference ?? undefined}
+          // SCIENT-FORK:END
           onImageExpand={imageExpand}
         />
       );
     }
+    // SCIENT-FORK:START — see the remote-image gate above
+    if (remoteImageReference !== null) return remoteImageReference;
+    // SCIENT-FORK:END
     if (imageSource._tag === "Direct") {
       const mediaSrc = resolveProtocolRelativeMediaUrl(imageSource.uri);
       const originalUrl =
@@ -2841,6 +2881,11 @@ const CHAT_MARKDOWN_COMPONENTS = {
     }
     return <ChatMarkdownImageFallback alt={altText} copyMarkdown={markdownSource} kind={kind} />;
   },
+  // SCIENT-FORK:START — a <picture> source never fetches a web address; its <img> is gated
+  source: function MarkdownSource({ node: _node, ...props }) {
+    return hasRemoteSrcSet(props.srcSet) ? null : <source {...props} />;
+  },
+  // SCIENT-FORK:END
   div: function MarkdownDiv({ node, children, ...props }) {
     const { onUseArtifactTemplate } = use(ChatMarkdownRendererContext);
 
