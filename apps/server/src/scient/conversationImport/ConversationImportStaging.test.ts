@@ -45,6 +45,7 @@ import {
 import { stagedAttachmentFile } from "../conversationFile/ScicReader.ts";
 import { sha256Digest } from "../conversationFile/ScicWriter.ts";
 import {
+  CONVERSATION_IMPORT_COMPLETION_RETENTION_MS,
   CONVERSATION_IMPORT_MAX_RECORDS,
   CONVERSATION_IMPORT_STAGING_TTL_MS,
   ConversationImporter,
@@ -1132,6 +1133,90 @@ describe("ConversationImportStaging", () => {
       assert.deepStrictEqual(yield* staging.confirm(request, principal), result);
       assert.deepStrictEqual(yield* staging.cancel(importId), { _tag: "already-imported", result });
       assert.strictEqual(fake.imports, 1);
+    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+  );
+
+  it.effect("answers from a commit while the sweep's retried record write is pending", () =>
+    Effect.gen(function* () {
+      resetImporter();
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      let mode: "fail" | "hold" | "write" = "fail";
+      const writing = yield* Deferred.make<void>();
+      const gate = yield* Deferred.make<void>();
+      // The first write of the completion record fails; the sweep's retry waits.
+      const flaky = FileSystem.make({
+        ...fs,
+        rename: (from, to) => {
+          if (!to.includes(`${NodePath.sep}completions${NodePath.sep}`)) return fs.rename(from, to);
+          if (mode === "fail") {
+            return Effect.fail(
+              PlatformError.systemError({
+                _tag: "Unknown",
+                module: "FileSystem",
+                method: "rename",
+                cause: new Error("synthetic: the disk is full"),
+              }),
+            );
+          }
+          if (mode === "hold") {
+            return Deferred.succeed(writing, undefined).pipe(
+              Effect.andThen(Deferred.await(gate)),
+              Effect.andThen(fs.rename(from, to)),
+            );
+          }
+          return fs.rename(from, to);
+        },
+      });
+      const staging = yield* makeStaging().pipe(
+        Effect.provideService(FileSystem.FileSystem, flaky),
+      );
+      const { importId, packageSha256 } = yield* stagedImport(staging);
+      const request = confirmRequest(importId, packageSha256);
+      const result = yield* staging.confirm(request, principal);
+      const record = NodePath.join(stagingRoot(config), "completions", `${importId}.json`);
+      assert.isFalse(NodeFS.existsSync(record));
+      const answersAsCommitted = Effect.gen(function* () {
+        assert.deepStrictEqual(yield* staging.confirm(request, principal), result);
+        assert.deepStrictEqual(yield* staging.cancel(importId), {
+          _tag: "already-imported",
+          result,
+        });
+        assert.strictEqual(yield* reasonOf(staging.preview(importId)), "already-imported");
+      });
+      mode = "hold";
+      const sweeping = yield* Effect.forkChild(staging.sweep);
+      yield* Deferred.await(writing);
+      // The sweep has taken the area for removal; the write has not landed.
+      yield* answersAsCommitted;
+      mode = "write";
+      yield* Deferred.succeed(gate, undefined);
+      yield* Fiber.join(sweeping);
+      assert.isTrue(NodeFS.existsSync(record));
+      assert.isFalse(NodeFS.existsSync(NodePath.join(stagingRoot(config), importId)));
+      yield* answersAsCommitted;
+      assert.strictEqual(fake.imports, 1);
+    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+  );
+
+  it.effect("forgets a committed import only when its retention ends", () =>
+    Effect.gen(function* () {
+      resetImporter();
+      const config = yield* ServerConfig.ServerConfig;
+      const staging = yield* makeStaging();
+      const { importId, packageSha256 } = yield* stagedImport(staging);
+      const request = confirmRequest(importId, packageSha256);
+      const result = yield* staging.confirm(request, principal);
+      yield* TestClock.adjust(CONVERSATION_IMPORT_COMPLETION_RETENTION_MS - 1);
+      yield* staging.sweep;
+      assert.deepStrictEqual(yield* staging.confirm(request, principal), result);
+      yield* TestClock.adjust(1);
+      yield* staging.sweep;
+      assert.isFalse(
+        NodeFS.existsSync(NodePath.join(stagingRoot(config), "completions", `${importId}.json`)),
+      );
+      assert.strictEqual(yield* reasonOf(staging.confirm(request, principal)), "import-not-found");
+      assert.deepStrictEqual(yield* staging.cancel(importId), { _tag: "cancelled" });
     }).pipe(Effect.scoped, Effect.provide(TestLayer)),
   );
 

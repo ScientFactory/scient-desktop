@@ -405,9 +405,14 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
         return Option.none();
       });
 
-    /** Records the commit durably, then removes the area; on failure keeps both for the sweep. */
+    /**
+     * Records the commit: in memory at once, whatever the area's phase, so it
+     * answers from now until retention ends; then durably, then removes the
+     * area. A failed write keeps both for the sweep.
+     */
     const commit = (record: ImportRecord, completion: ConversationImportCompletion) =>
-      persistCompletion(completion).pipe(
+      Effect.sync(() => completions.set(completion.result.importId, completion)).pipe(
+        Effect.andThen(persistCompletion(completion)),
         Effect.flatMap(() => removeArea(record)),
         Effect.catch((cause) =>
           Effect.logWarning("Could not record a committed conversation import yet.", {
@@ -1535,6 +1540,10 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
         ),
       );
       for (const record of leftovers) yield* removeLeftoverPackage(record);
+      // Completions leave memory only when their retention ends.
+      for (const [importId, completion] of completions) {
+        if (!isCurrent(completion, at)) completions.delete(importId);
+      }
       for (const name of yield* fileSystem
         .readDirectory(completionsRoot)
         .pipe(Effect.orElseSucceed(() => []))) {
