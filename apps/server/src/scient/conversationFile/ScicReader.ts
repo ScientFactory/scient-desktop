@@ -23,9 +23,11 @@
  * 4. The whole result against `ValidatedConversationImport`.
  */
 import * as NodeCrypto from "node:crypto";
+import { once as eventOnce } from "node:events";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import type * as NodeStream from "node:stream";
+import * as NodeStreamPromises from "node:stream/promises";
 import * as NodeZlib from "node:zlib";
 
 import {
@@ -104,6 +106,8 @@ export interface ScicReadInput {
   readonly packageBytes: number;
   /** An existing, empty directory; staged attachments are written here, named by their SHA-256. */
   readonly attachmentsDirectory: string;
+  /** Admission reservation from this archive's central directory. */
+  readonly maxExpandedBytes?: number;
 }
 
 /** Where a staged attachment with this digest lives inside the staging directory. */
@@ -261,8 +265,23 @@ async function readEntry(
       ? `${output.target}.${NodeCrypto.randomUUID()}.part`
       : null;
   const sink = temporary === null ? null : NodeFS.createWriteStream(temporary, { flags: "wx" });
+  let sinkError: Error | null = null;
+  sink?.on("error", (error: Error) => {
+    sinkError = error;
+    readable.destroy(error);
+  });
+  const sinkFinished = sink === null ? null : NodeStreamPromises.finished(sink);
+  // The stream can fail while the readable is still being consumed.
+  void sinkFinished?.catch(() => {});
+  const sinkClosed =
+    sink === null
+      ? null
+      : new Promise<void>((resolve) => {
+          sink.once("close", resolve);
+        });
   const abort = () => readable.destroy(new Error("Reading was interrupted."));
   signal.addEventListener("abort", abort, { once: true });
+  if (signal.aborted) abort();
   try {
     try {
       for await (const chunk of readable as AsyncIterable<Buffer>) {
@@ -279,10 +298,12 @@ async function readEntry(
         }
         if (output.keep) chunks.push(chunk);
         if (sink !== null && !sink.write(chunk)) {
-          await new Promise<void>((resume) => sink.once("drain", resume));
+          if (sinkError !== null) throw sinkError;
+          await eventOnce(sink, "drain");
         }
       }
     } catch (cause) {
+      if (sinkError !== null) throw sinkError;
       if (isScicRejection(cause)) throw cause;
       if (signal.aborted) throw cause;
       return reject("corrupt-archive", "An entry is damaged.", name);
@@ -291,16 +312,16 @@ async function readEntry(
       return reject("corrupt-archive", "An entry does not match its checksum.", name);
     }
     if (sink !== null && temporary !== null && !output.keep && output.target !== null) {
-      await new Promise<void>((resume, failure) => {
-        sink.once("error", failure);
-        sink.end(() => resume());
-      });
+      if (sinkError !== null) throw sinkError;
+      sink.end();
+      await sinkFinished;
       await NodeFS.promises.rename(temporary, output.target);
     }
   } finally {
     signal.removeEventListener("abort", abort);
     readable.destroy();
     if (sink !== null && !sink.closed) sink.destroy();
+    if (sinkClosed !== null) await sinkClosed;
     if (temporary !== null) await NodeFS.promises.rm(temporary, { force: true });
   }
   return {
@@ -458,7 +479,15 @@ async function readPackage(
     } catch {
       return reject("corrupt-archive", "The file's directory is damaged.");
     }
-    const archive = new Map(checkStructure(listed).map((entry) => [entry.name, entry]));
+    const checked = checkStructure(listed);
+    if (
+      input.maxExpandedBytes !== undefined &&
+      checked.reduce((total, item) => total + item.entry.uncompressedSize, 0) >
+        input.maxExpandedBytes
+    ) {
+      return reject("package-too-large", "The archive expanded beyond its staging reservation.");
+    }
+    const archive = new Map(checked.map((entry) => [entry.name, entry]));
 
     const mimetype = await readEntry(
       zip,
@@ -706,13 +735,61 @@ async function readPackage(
  * `attachmentsDirectory`. On failure the directory may hold partial output;
  * the caller removes it with the rest of the staging area.
  */
+const readFailure = (cause: unknown) =>
+  isScicRejection(cause)
+    ? cause
+    : new ScicReadError({ detail: "The file could not be read.", cause });
+
+/** Central-directory expansion size, checked before staging writes a single member. */
+export const inspectScicExpandedBytes = (
+  packagePath: string,
+): Effect.Effect<number, ScicRejection | ScicReadError> =>
+  Effect.tryPromise({
+    try: async () => {
+      let zip: Yauzl.ZipFile;
+      try {
+        zip = await openZip(packagePath);
+      } catch {
+        return reject("corrupt-archive", "The file is not a readable ZIP archive.");
+      }
+      try {
+        let listed: ReadonlyArray<Yauzl.Entry>;
+        try {
+          listed = await listEntries(zip);
+        } catch {
+          return reject("corrupt-archive", "The file's directory is damaged.");
+        }
+        const checked = checkStructure(listed);
+        return checked.reduce((total, item) => total + item.entry.uncompressedSize, 0);
+      } finally {
+        zip.close();
+      }
+    },
+    catch: readFailure,
+  });
+
 export const readScicPackage = (
   input: ScicReadInput,
 ): Effect.Effect<ValidatedConversationImport, ScicRejection | ScicReadError> =>
-  Effect.tryPromise({
-    try: (signal) => readPackage(input, signal),
-    catch: (cause) =>
-      isScicRejection(cause)
-        ? cause
-        : new ScicReadError({ detail: "The file could not be read.", cause }),
+  Effect.gen(function* () {
+    let active: Promise<ValidatedConversationImport> | null = null;
+    return yield* Effect.acquireUseRelease(
+      Effect.void,
+      () =>
+        Effect.tryPromise({
+          try: (signal) => {
+            active = readPackage(input, signal);
+            return active;
+          },
+          catch: readFailure,
+        }),
+      () =>
+        Effect.promise(
+          () =>
+            active?.then(
+              () => {},
+              () => {},
+            ) ?? Promise.resolve(),
+        ),
+    );
   });

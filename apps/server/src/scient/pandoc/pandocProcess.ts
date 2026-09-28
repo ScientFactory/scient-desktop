@@ -235,7 +235,9 @@ export const runPandoc = Effect.fn("scient.pandoc.runPandoc")(function* (input: 
         const stdoutChunks: Uint8Array[] = [];
         const stderrChunks: Uint8Array[] = [];
         const outputFile =
-          input.stdoutPath === undefined ? null : NodeFS.createWriteStream(input.stdoutPath);
+          input.stdoutPath === undefined
+            ? null
+            : NodeFS.createWriteStream(input.stdoutPath, { flags: "wx" });
         let stdoutBytes = 0;
         let stderrBytes = 0;
         let stopError: PandocRunError | null = null;
@@ -244,6 +246,7 @@ export const runPandoc = Effect.fn("scient.pandoc.runPandoc")(function* (input: 
         let settled = false;
         let closed = false;
         let finished = false;
+        let killed = false;
         let resolveClosed: () => void = () => {};
         const closedPromise = new Promise<void>((resolveClosedPromise) => {
           resolveClosed = resolveClosedPromise;
@@ -255,6 +258,8 @@ export const runPandoc = Effect.fn("scient.pandoc.runPandoc")(function* (input: 
                 outputFile.once("close", resolveOutputClosed);
               });
         const kill = () => {
+          if (killed) return;
+          killed = true;
           if (child.pid !== undefined && input.platform !== "win32") {
             try {
               process.kill(-child.pid, "SIGKILL");
@@ -268,6 +273,11 @@ export const runPandoc = Effect.fn("scient.pandoc.runPandoc")(function* (input: 
             });
             child.kill("SIGKILL");
           }
+          // A paused stdout pipe can otherwise keep ChildProcess.close pending
+          // after the process itself has exited.
+          child.stdin.destroy();
+          child.stdout.destroy();
+          child.stderr.destroy();
         };
         const stop = (error: PandocRunError) => {
           if (stopError !== null) return;

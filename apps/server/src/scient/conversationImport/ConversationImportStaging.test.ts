@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- the tests inspect staging areas and copied files on disk.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -27,6 +28,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
 import { PDF, PNG, makePackage, zipBytesPromise } from "../conversationFile/scic.test-fixtures.ts";
+import { stagedAttachmentFile } from "../conversationFile/ScicReader.ts";
 import { sha256Digest } from "../conversationFile/ScicWriter.ts";
 import {
   CONVERSATION_IMPORT_STAGING_TTL_MS,
@@ -368,6 +370,22 @@ describe("ConversationImportStaging", () => {
     }).pipe(Effect.scoped, Effect.provide(TestLayer)),
   );
 
+  it.effect("reserves ZIP expansion before staging any attachment bytes", () =>
+    Effect.gen(function* () {
+      resetImporter();
+      const config = yield* ServerConfig.ServerConfig;
+      const files = makePackage().files;
+      const bytes = yield* Effect.promise(() => zipBytesPromise(files));
+      const expandedBytes = files.reduce((total, file) => total + file.bytes.byteLength, 0);
+      const staging = yield* makeStaging({
+        quotaBytes: bytes.byteLength + expandedBytes - 1,
+      });
+      const { importId } = yield* upload(staging, bytes);
+      assert.strictEqual(yield* reasonOf(staging.preview(importId)), "staging-full");
+      assert.isFalse(NodeFS.existsSync(NodePath.join(stagingRoot(config), importId)));
+    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+  );
+
   it.effect("expires idle imports and uploads that never arrive", () =>
     Effect.gen(function* () {
       resetImporter();
@@ -656,6 +674,66 @@ describe("ConversationImportStaging", () => {
       assert.isFalse(NodeFS.existsSync(NodePath.join(stagingRoot(config), importId)));
     }).pipe(Effect.scoped, Effect.provide(TestLayer)),
   );
+
+  if (process.platform !== "win32") {
+    it.effect("waits for an interrupted attachment copy before rollback removes its journal", () =>
+      Effect.gen(function* () {
+        const copies = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-copy-cancel-"));
+        const started = yield* Deferred.make<void>();
+        const destinationPath = NodePath.join(copies, "copied.png");
+        resetImporter({
+          importConversation: (lease) =>
+            Effect.gen(function* () {
+              NodeFS.writeFileSync(NodePath.join(lease.attemptDirectory, "journal.json"), "{}");
+              yield* Deferred.succeed(started, undefined);
+              yield* lease.copyAttachment({ resourceId: "attachment-1", destinationPath }).pipe(
+                Effect.mapError(
+                  () =>
+                    new ConversationImporterError({
+                      reason: "import-failed",
+                      detail: "The copy did not complete.",
+                    }),
+                ),
+              );
+              return yield* new ConversationImporterError({
+                reason: "import-failed",
+                detail: "A cancelled copy must not commit.",
+              });
+            }),
+        });
+        const config = yield* ServerConfig.ServerConfig;
+        const staging = yield* makeStaging();
+        const { importId, packageSha256 } = yield* stagedImport(staging);
+        const staged = stagedAttachmentFile(
+          NodePath.join(stagingRoot(config), importId, "attachments"),
+          sha256Digest(PNG),
+        );
+        NodeFS.unlinkSync(staged);
+        assert.strictEqual(NodeChildProcess.spawnSync("mkfifo", [staged]).status, 0);
+        const confirming = yield* Effect.forkChild(
+          reasonOf(staging.confirm(confirmRequest(importId, packageSha256), principal)),
+        );
+        yield* Deferred.await(started);
+        const writer = NodeFS.createWriteStream(staged);
+        writer.on("error", () => {});
+        yield* Effect.promise(
+          () =>
+            new Promise<void>((resolve, reject) => {
+              writer.once("open", () => resolve());
+              writer.once("error", reject);
+            }),
+        );
+        writer.write(PNG.subarray(0, 8));
+        assert.deepStrictEqual(yield* staging.cancel(importId), { _tag: "cancelled" });
+        assert.strictEqual(yield* Fiber.join(confirming), "cancelled");
+        writer.destroy();
+        assert.isFalse(NodeFS.existsSync(destinationPath));
+        assert.deepStrictEqual(NodeFS.readdirSync(copies), []);
+        assert.isFalse(NodeFS.existsSync(NodePath.join(stagingRoot(config), importId)));
+        NodeFS.rmSync(copies, { recursive: true, force: true });
+      }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+    );
+  }
 
   it.effect("lets a commit win over a cancel that arrives after dispatch", () =>
     Effect.gen(function* () {

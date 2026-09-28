@@ -1,10 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Probes the fake Pandoc's pid and scratch directories on disk.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { describe, expect, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -258,4 +260,28 @@ describe("runPandoc", () => {
       expect(scratchEntries(scratchRoot)).toEqual([]);
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
+
+  if (process.platform !== "win32") {
+    it.live("refuses an existing FIFO output target without waiting for a reader", () =>
+      Effect.gen(function* () {
+        const { directory, scratchRoot, fake, pidFile } = yield* harness;
+        const target = NodePath.join(directory, "blocked.fifo");
+        expect(NodeChildProcess.spawnSync("mkfifo", [target]).status).toBe(0);
+        const started = yield* Clock.currentTimeMillis;
+        const error = yield* runOnce({
+          scratchRoot,
+          pandoc: fake("echo"),
+          stdin: "x".repeat(8 * 1024 * 1024),
+          stdoutPath: target,
+          limits: { ...LIMITS, timeout: "500 millis" },
+        }).pipe(Effect.flip);
+        expect(error.reason).toBe("failed");
+        expect(error.detail).toContain("Writing Pandoc's output failed");
+        expect((yield* Clock.currentTimeMillis) - started).toBeLessThan(3_000);
+        const pid = readPid(pidFile);
+        if (pid !== null) expect(processExists(pid)).toBe(false);
+        expect(scratchEntries(scratchRoot)).toEqual([]);
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    );
+  }
 });

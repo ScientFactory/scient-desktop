@@ -10,8 +10,10 @@
  * Only a confirmed import reaches the importer.
  */
 import * as NodeCrypto from "node:crypto";
+import { once as eventOnce } from "node:events";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
+import * as NodeStreamPromises from "node:stream/promises";
 
 import {
   ATTACHMENT_UPLOAD_URL_TTL_MS,
@@ -54,7 +56,11 @@ import {
 } from "../../auth/utils.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
-import { readScicPackage, stagedAttachmentFile } from "../conversationFile/ScicReader.ts";
+import {
+  inspectScicExpandedBytes,
+  readScicPackage,
+  stagedAttachmentFile,
+} from "../conversationFile/ScicReader.ts";
 import {
   MARKDOWN_IMPORT_MAX_BYTES,
   readMarkdownConversation,
@@ -229,10 +235,13 @@ function directoryIsEmpty(directory: string): boolean {
   }
 }
 
-async function sha256File(path: string): Promise<{ sha256: string; byteLength: number }> {
+async function sha256File(
+  path: string,
+  signal?: AbortSignal,
+): Promise<{ sha256: string; byteLength: number }> {
   const hash = NodeCrypto.createHash("sha256");
   let byteLength = 0;
-  for await (const chunk of NodeFS.createReadStream(path) as AsyncIterable<Buffer>) {
+  for await (const chunk of NodeFS.createReadStream(path, { signal }) as AsyncIterable<Buffer>) {
     hash.update(chunk);
     byteLength += chunk.byteLength;
   }
@@ -240,15 +249,19 @@ async function sha256File(path: string): Promise<{ sha256: string; byteLength: n
 }
 
 /** Copies `source` to `destination` through a temporary file, verifying it on the way. */
-async function copyVerified(input: {
-  readonly source: string;
-  readonly destination: string;
-  readonly sha256: Sha256Digest;
-  readonly byteLength: number;
-}): Promise<"copied" | "present" | "corrupt" | "conflict"> {
+async function copyVerified(
+  input: {
+    readonly source: string;
+    readonly destination: string;
+    readonly sha256: Sha256Digest;
+    readonly byteLength: number;
+  },
+  signal: AbortSignal,
+): Promise<"copied" | "present" | "corrupt" | "conflict"> {
+  if (signal.aborted) throw new Error("Attachment copy was interrupted.");
   const existing = await NodeFS.promises.stat(input.destination).catch(() => null);
   if (existing !== null) {
-    const present = await sha256File(input.destination);
+    const present = await sha256File(input.destination, signal);
     return present.sha256 === input.sha256 && present.byteLength === input.byteLength
       ? "present"
       : "conflict";
@@ -258,23 +271,47 @@ async function copyVerified(input: {
   const hash = NodeCrypto.createHash("sha256");
   let byteLength = 0;
   const sink = NodeFS.createWriteStream(temporary, { flags: "wx" });
+  const source = NodeFS.createReadStream(input.source, { signal });
+  source.on("error", () => {});
+  let sinkError: Error | null = null;
+  sink.on("error", (error: Error) => {
+    sinkError = error;
+    source.destroy(error);
+  });
+  const sinkFinished = NodeStreamPromises.finished(sink);
+  void sinkFinished.catch(() => {});
+  const sinkClosed = new Promise<void>((resolve) => sink.once("close", resolve));
+  const abort = () => {
+    const error = new Error("Attachment copy was interrupted.");
+    source.destroy(error);
+    sink.destroy(error);
+  };
+  signal.addEventListener("abort", abort, { once: true });
+  if (signal.aborted) abort();
   try {
-    for await (const chunk of NodeFS.createReadStream(input.source) as AsyncIterable<Buffer>) {
+    for await (const chunk of source as AsyncIterable<Buffer>) {
       hash.update(chunk);
       byteLength += chunk.byteLength;
-      if (!sink.write(chunk)) await new Promise<void>((resume) => sink.once("drain", resume));
+      if (!sink.write(chunk)) {
+        if (sinkError !== null) throw sinkError;
+        await eventOnce(sink, "drain");
+      }
     }
-    await new Promise<void>((resume, failure) => {
-      sink.once("error", failure);
-      sink.end(() => resume());
-    });
+    if (signal.aborted) throw new Error("Attachment copy was interrupted.");
+    if (sinkError !== null) throw sinkError;
+    sink.end();
+    await sinkFinished;
     if (`sha256:${hash.digest("hex")}` !== input.sha256 || byteLength !== input.byteLength) {
       return "corrupt";
     }
+    if (signal.aborted) throw new Error("Attachment copy was interrupted.");
     await NodeFS.promises.rename(temporary, input.destination);
     return "copied";
   } finally {
+    signal.removeEventListener("abort", abort);
+    source.destroy();
     if (!sink.closed) sink.destroy();
+    await sinkClosed;
     await NodeFS.promises.rm(temporary, { force: true });
   }
 }
@@ -664,12 +701,35 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
                     cause,
                   }),
               });
+            // Reserve the central directory's declared expansion before any
+            // member is extracted. Keep the compressed package reservation
+            // until the package is removed after successful validation.
+            const expandedBytes = yield* inspectScicExpandedBytes(packagePath);
+            yield* locked(
+              Effect.gen(function* () {
+                if (record.cancelRequested || records.get(record.importId) !== record) {
+                  return yield* importError("import-not-found", "This import was cancelled.");
+                }
+                const others = [...records.values()]
+                  .filter((other) => other !== record)
+                  .reduce((total, other) => total + other.reservedBytes, 0);
+                const reservedBytes = uploaded.packageBytes + expandedBytes;
+                if (others + reservedBytes > quotaBytes) {
+                  return yield* importError(
+                    "staging-full",
+                    "There is not enough room for this import right now. Try again later.",
+                  );
+                }
+                record.reservedBytes = reservedBytes;
+              }),
+            );
             const validated = yield* readScicPackage({
               importId: record.importId,
               packagePath,
               packageSha256: uploaded.packageSha256,
               packageBytes: uploaded.packageBytes,
               attachmentsDirectory: attachmentsDirectory(record),
+              maxExpandedBytes: expandedBytes,
             });
             return { validated, kind: "scic" as const, issues: [] };
           }),
@@ -724,6 +784,7 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
                 rejection,
               );
             }
+            if (cause?._tag === "ScientConversationImportError") return cause;
             return new ConversationImportStagingFailure({
               detail: "The file could not be read.",
               cause: read.cause,
@@ -840,20 +901,38 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
               detail: `Attachment ${resourceId} is not staged for this import.`,
             });
           }
-          const copied = yield* Effect.tryPromise({
-            try: () =>
-              copyVerified({
-                source: stagedAttachmentFile(attachmentsDirectory(record), staged.sha256),
-                destination: destinationPath,
-                sha256: staged.sha256,
-                byteLength: staged.byteLength,
+          let active: ReturnType<typeof copyVerified> | null = null;
+          const copied = yield* Effect.acquireUseRelease(
+            Effect.void,
+            () =>
+              Effect.tryPromise({
+                try: (signal) => {
+                  active = copyVerified(
+                    {
+                      source: stagedAttachmentFile(attachmentsDirectory(record), staged.sha256),
+                      destination: destinationPath,
+                      sha256: staged.sha256,
+                      byteLength: staged.byteLength,
+                    },
+                    signal,
+                  );
+                  return active;
+                },
+                catch: () =>
+                  new ConversationImportStagingError({
+                    reason: "io-failed",
+                    detail: `Attachment ${resourceId} could not be copied.`,
+                  }),
               }),
-            catch: (cause) =>
-              new ConversationImportStagingError({
-                reason: "io-failed",
-                detail: `Attachment ${resourceId} could not be copied: ${String(cause)}`,
-              }),
-          });
+            () =>
+              Effect.promise(
+                () =>
+                  active?.then(
+                    () => {},
+                    () => {},
+                  ) ?? Promise.resolve(),
+              ),
+          );
           if (copied === "corrupt") {
             return yield* new ConversationImportStagingError({
               reason: "attachment-corrupt",

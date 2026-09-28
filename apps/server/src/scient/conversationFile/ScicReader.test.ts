@@ -14,7 +14,7 @@ import * as Exit from "effect/Exit";
 import * as yazl from "yazl";
 
 import { conversationContentDigest } from "../conversationImport/ConversationImporter.ts";
-import { readScicPackage, stagedAttachmentFile } from "./ScicReader.ts";
+import { inspectScicExpandedBytes, readScicPackage, stagedAttachmentFile } from "./ScicReader.ts";
 import {
   PDF,
   PNG,
@@ -171,6 +171,53 @@ const expectRejected = Effect.fnUntraced(function* (
 });
 
 const packageZip = (pkg = makePackage()) => zipBytes(pkg.files);
+
+it.effect("reports a staged-file write error without an unhandled stream error", () =>
+  Effect.gen(function* () {
+    const bytes = yield* packageZip();
+    const directory = temporaryDirectory();
+    const packagePath = NodePath.join(directory, "package.scic");
+    const attachmentsDirectory = NodePath.join(directory, "blocked");
+    NodeFS.writeFileSync(packagePath, bytes);
+    NodeFS.writeFileSync(attachmentsDirectory, "not a directory");
+    const error = yield* Effect.flip(
+      readScicPackage({
+        importId: IMPORT_ID,
+        packagePath,
+        packageSha256: sha256Digest(bytes),
+        packageBytes: bytes.byteLength,
+        attachmentsDirectory,
+      }),
+    );
+    expect(error._tag).toBe("ScicReadError");
+  }),
+);
+
+it.effect("refuses expansion beyond the admitted central-directory size", () =>
+  Effect.gen(function* () {
+    const bytes = yield* packageZip();
+    const directory = temporaryDirectory();
+    const packagePath = NodePath.join(directory, "package.scic");
+    const attachmentsDirectory = NodePath.join(directory, "attachments");
+    NodeFS.writeFileSync(packagePath, bytes);
+    NodeFS.mkdirSync(attachmentsDirectory);
+    const expanded = yield* inspectScicExpandedBytes(packagePath);
+    expect(expanded).toBeGreaterThan(1);
+    const error = yield* Effect.flip(
+      readScicPackage({
+        importId: IMPORT_ID,
+        packagePath,
+        packageSha256: sha256Digest(bytes),
+        packageBytes: bytes.byteLength,
+        attachmentsDirectory,
+        maxExpandedBytes: expanded - 1,
+      }),
+    );
+    expect(error._tag).toBe("ScicRejection");
+    if (error._tag === "ScicRejection") expect(error.reason).toBe("package-too-large");
+    expect(NodeFS.readdirSync(attachmentsDirectory)).toEqual([]);
+  }),
+);
 
 function pdfPath(pkg: ScicPackage) {
   const resource = pkg.manifest.resources.find(
