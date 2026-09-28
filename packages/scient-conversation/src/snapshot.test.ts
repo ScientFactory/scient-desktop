@@ -1,6 +1,13 @@
 import { describe, expect, it } from "@effect/vitest";
 import { beforeEach } from "vite-plus/test";
-import { MessageId, ThreadId, TurnId, type ChatAttachment } from "@t3tools/contracts";
+import {
+  ConversationSnapshotV1,
+  MessageId,
+  ThreadId,
+  TurnId,
+  type ChatAttachment,
+} from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 
 import {
   SnapshotRangeError,
@@ -153,6 +160,36 @@ describe("conversation snapshot", () => {
       forkLineage: { originThreadId: ThreadId.make("origin"), baselineAssistantMessageId: null },
     };
     expect(snapshotOf(source).provenance).toEqual({ _tag: "fork", originThreadId: "origin" });
+  });
+
+  it("retains imported source history in a forked snapshot file", () => {
+    const sourceImport = {
+      source: "scic" as const,
+      exportId: "earlier-export",
+      sourceThreadId: "external-thread",
+      packageDigest: `sha256:${"a".repeat(64)}`,
+      sourceFormat: "scient.conversation-file",
+      sourceFormatVersion: 1,
+      importedAt: "2026-09-27T14:00:00.000Z",
+      omissions: [{ _tag: "range-truncated" as const, throughMessageN: 2 }],
+    };
+    const snapshot = snapshotOf({
+      ...thread({ messages: [message({ id: "m1", role: "user", text: "partial history" })] }),
+      forkLineage: {
+        originThreadId: ThreadId.make("imported-origin"),
+        baselineAssistantMessageId: null,
+        sourceImport,
+      },
+    });
+    const snapshotJson = Schema.fromJsonString(ConversationSnapshotV1);
+    const exported = Schema.encodeSync(snapshotJson)(snapshot);
+    const decoded = Schema.decodeSync(snapshotJson)(exported);
+    expect(decoded.provenance).toEqual({
+      _tag: "fork",
+      originThreadId: "imported-origin",
+      sourceImport,
+    });
+    expect(exported).toContain("range-truncated");
   });
 
   it("states warnings that agree with the snapshot's facts", () => {

@@ -238,7 +238,13 @@ export function buildConversationSnapshot(input: {
       model: thread.modelSelection.model,
     },
     provenance: thread.forkLineage
-      ? { _tag: "fork", originThreadId: thread.forkLineage.originThreadId }
+      ? {
+          _tag: "fork",
+          originThreadId: thread.forkLineage.originThreadId,
+          ...(thread.forkLineage.sourceImport === undefined
+            ? {}
+            : { sourceImport: thread.forkLineage.sourceImport }),
+        }
       : thread.conversationImport
         ? {
             _tag: "import",

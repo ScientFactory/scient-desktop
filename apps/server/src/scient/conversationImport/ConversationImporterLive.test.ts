@@ -644,11 +644,30 @@ describe("ConversationImporter", () => {
       withImporter(
         Effect.gen(function* () {
           const fixture = importFixture({ turns: 3, reasoning: true });
-          const { lease } = yield* leaseFor(fixture);
+          const sourceOmission = { _tag: "range-truncated" as const, throughMessageN: 2 };
+          const input: typeof fixture.input = {
+            ...fixture.input,
+            snapshot: {
+              ...fixture.input.snapshot,
+              provenance: {
+                _tag: "import",
+                source: "scic",
+                exportId: "earlier-export",
+                sourceThreadId: "earlier-thread",
+                packageDigest: `sha256:${"a".repeat(64)}`,
+                sourceFormat: "scient.conversation-file",
+                sourceFormatVersion: 1,
+                importedAt: "2026-09-27T09:00:00.000Z",
+                omissions: [sourceOmission],
+              },
+            },
+          };
+          const { lease } = yield* leaseFor({ ...fixture, input });
           const { result } = yield* importOnce(lease);
           const engine = yield* OrchestrationEngineService;
           const sql = yield* SqlClient.SqlClient;
           const before = (yield* readThread(result.threadId))!;
+          assert.deepInclude(before.conversationImport!.omissions, sourceOmission);
           const inherited = before.messages.map((message) => [message.role, message.text]);
           const inheritedTurnIds = new Set(before.messages.map((message) => message.turnId));
           const userId = MessageId.make("post-import-user");
@@ -771,6 +790,23 @@ describe("ConversationImporter", () => {
           );
           assert.isUndefined(fork.conversationImport);
           assert.strictEqual(fork.forkLineage?.originThreadId, result.threadId);
+          assert.deepStrictEqual(fork.forkLineage?.sourceImport, {
+            source: before.conversationImport!.source,
+            exportId: before.conversationImport!.exportId,
+            sourceThreadId: before.conversationImport!.sourceThreadId,
+            packageDigest: before.conversationImport!.packageDigest,
+            sourceFormat: before.conversationImport!.sourceFormat,
+            sourceFormatVersion: before.conversationImport!.sourceFormatVersion,
+            importedAt: before.conversationImport!.importedAt,
+            omissions: before.conversationImport!.omissions,
+          });
+          const forkShell = yield* Effect.flatMap(ProjectionSnapshotQuery, (query) =>
+            query.getThreadShellById(forkId),
+          );
+          assert.deepStrictEqual(
+            Option.getOrThrow(forkShell).forkLineage?.sourceImport,
+            fork.forkLineage?.sourceImport,
+          );
           const [lineage] = yield* sql<{ readonly inherited_turn_ids_json: string }>`
           SELECT inherited_turn_ids_json FROM scient_thread_lineage WHERE thread_id = ${forkId}
         `;
@@ -778,10 +814,14 @@ describe("ConversationImporter", () => {
           const [transfer] = yield* sql<{
             readonly type: string;
             readonly source_thread_id: string | null;
+            readonly origin_json: string | null;
           }>`
-          SELECT type, source_thread_id FROM scient_context_transfers WHERE thread_id = ${forkId}
+          SELECT type, source_thread_id, origin_json
+          FROM scient_context_transfers WHERE thread_id = ${forkId}
         `;
-          assert.deepStrictEqual(transfer, { type: "fork", source_thread_id: result.threadId });
+          assert.strictEqual(transfer?.type, "fork");
+          assert.strictEqual(transfer?.source_thread_id, result.threadId);
+          assert.isNotNull(transfer?.origin_json);
           const delivery = yield* ScientForkContextDelivery;
           assert.isNull(
             yield* delivery.planNativeFork({ threadId: forkId, providerInstanceId: PROVIDER_ID }),
@@ -807,7 +847,78 @@ describe("ConversationImporter", () => {
           if (context.kind !== "deliver") return;
           assert.include(context.contextPreamble, "Question 1");
           assert.include(context.contextPreamble, "Answer 2");
+          assert.include(context.contextPreamble, '"knownSourceOmissions"');
+          assert.include(context.contextPreamble, '"range-truncated"');
           assert.notInclude(context.contextPreamble, "Answer 3");
+          const snapshot = buildConversationSnapshot({
+            thread: fork,
+            snapshotSequence: 1,
+            threadSequence: 1,
+            capturedAt: "2026-09-28T11:01:00.000Z",
+            selection: { workLog: false, reasoning: false, throughMessageId: null },
+            isAttachmentAvailable: () => false,
+          });
+          assert.deepStrictEqual(snapshot.provenance, {
+            _tag: "fork",
+            originThreadId: result.threadId,
+            sourceImport: fork.forkLineage?.sourceImport,
+          });
+          const document = buildConversationDocument({
+            snapshot: { ...snapshot, contentDigest: `sha256:${"a".repeat(64)}` },
+            exportValue: "7f3c9a2e41b8",
+            timeZone: "UTC",
+            resolveAttachment: () => ({ _tag: "unavailable", reason: "missing" }),
+          });
+          assert.deepInclude(document.bundle.warnings, {
+            code: "source-history-incomplete",
+            message:
+              "An earlier transfer stopped at message 2; later source messages may be missing.",
+          });
+          const markdown = writeConversationMarkdown({
+            bundle: document.bundle,
+            exportValue: "7f3c9a2e41b8",
+            exported: "2026-09-28T11:01:00.000Z",
+            packaging: "text",
+          });
+          assert.include(markdown, "earlier transfer stopped at message 2");
+          assert.include(markdown, "forked conversation with imported history (unverified)");
+          const reimportInput: typeof fixture.input = {
+            ...fixture.input,
+            snapshot: { ...snapshot, contentDigest: `sha256:${"a".repeat(64)}` },
+          };
+          const reimportIds = yield* mintConversationImportIds(reimportInput);
+          const reimport = buildConversationImportCommand({
+            validated: reimportInput,
+            ids: reimportIds,
+            destination: destination(),
+            importedAt: "2026-09-28T11:02:00.000Z",
+          });
+          assert.deepInclude(reimport.origin.omissions, sourceOmission);
+
+          yield* engine.dispatch({
+            type: "thread.fork.complete",
+            commandId: CommandId.make("complete-imported-fork-provisioning"),
+            threadId: forkId,
+            checkpointStatus: "unavailable",
+            workspaceStatus: "shared",
+            createdAt: "2026-09-28T11:01:30.000Z",
+          });
+          const secondForkId = ThreadId.make("fork-of-imported-fork");
+          const secondSource = fork.messages.find((message) => message.text === "Answer 2")!;
+          yield* engine.dispatch({
+            type: "thread.fork",
+            commandId: CommandId.make("fork-imported-fork"),
+            originThreadId: forkId,
+            newThreadId: secondForkId,
+            sourceAssistantMessageId: secondSource.id,
+            workspaceMode: "local",
+          });
+          const secondFork = (yield* readThread(secondForkId))!;
+          assert.deepStrictEqual(
+            secondFork.forkLineage?.sourceImport,
+            fork.forkLineage?.sourceImport,
+          );
+          assert.isUndefined(secondFork.conversationImport);
           assert.deepStrictEqual(
             (yield* readThread(result.threadId))!.conversationImport,
             before.conversationImport,

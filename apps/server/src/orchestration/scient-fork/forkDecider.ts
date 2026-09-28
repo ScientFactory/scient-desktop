@@ -257,6 +257,9 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
       `Origin thread '${command.originThreadId}' has no project and cannot be forked.`,
     );
   }
+  const sourceImport = origin.conversationImport
+    ? (({ inheritedTurnIds: _turns, ...source }) => source)(origin.conversationImport)
+    : origin.forkLineage?.sourceImport;
 
   // The new thread id must be free.
   yield* requireThreadAbsent({
@@ -768,6 +771,7 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
       providerMode: "transcript-bootstrap",
       attachmentCopies,
       inheritedTurnIds: [...new Set(importedTurnIds.values())],
+      ...(sourceImport === undefined ? {} : { sourceImport }),
       ...(liveTail === null
         ? {}
         : {

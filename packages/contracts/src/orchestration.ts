@@ -676,23 +676,6 @@ export type OrchestrationForkBoundary = typeof OrchestrationForkBoundary.Type;
 export const isForkBaselineBoundary = (boundary: OrchestrationForkBoundary): boolean =>
   boundary.conversationTurnCount === 0 && boundary.turnId !== null;
 
-/**
- * Narrow fork-lineage marker carried by shell and detail payloads. Replaces
- * the complete `conversationForkBoundaries` array in client-facing state with
- * just the presentation metadata the UI needs: the origin thread and the
- * inherited baseline assistant message. Plain threads expose no marker.
- */
-export const OrchestrationForkLineage = Schema.Struct({
-  originThreadId: ThreadId,
-  baselineAssistantMessageId: Schema.NullOr(MessageId),
-  /**
-   * Server read model only: destination turns holding inherited transcript.
-   * Revert never removes them. Client-facing payloads omit it.
-   */
-  inheritedTurnIds: Schema.optional(Schema.Array(TurnId)),
-});
-export type OrchestrationForkLineage = typeof OrchestrationForkLineage.Type;
-
 /** What an imported conversation's file did not carry, as the thread's import banner lists it. */
 export const OrchestrationConversationImportOmission = Schema.Union([
   Schema.TaggedStruct("work-log-excluded", {}),
@@ -706,11 +689,10 @@ export type OrchestrationConversationImportOmission =
   typeof OrchestrationConversationImportOmission.Type;
 
 /**
- * Marker on a thread created by importing a conversation file. The source
- * identifiers were minted by another installation: they are provenance only,
- * never local ids. Imported history is unverified.
+ * External source identity and known omissions of imported history. The
+ * identifiers came from a package: they are provenance only, never local ids.
  */
-export const OrchestrationConversationImport = Schema.Struct({
+export const OrchestrationConversationImportSource = Schema.Struct({
   source: Schema.Literals(["scic", "markdown"]),
   exportId: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
   sourceThreadId: Schema.NullOr(TrimmedNonEmptyString.check(Schema.isMaxLength(512))),
@@ -719,6 +701,12 @@ export const OrchestrationConversationImport = Schema.Struct({
   sourceFormatVersion: PositiveInt,
   importedAt: IsoDateTime,
   omissions: Schema.Array(OrchestrationConversationImportOmission),
+});
+export type OrchestrationConversationImportSource =
+  typeof OrchestrationConversationImportSource.Type;
+
+export const OrchestrationConversationImport = Schema.Struct({
+  ...OrchestrationConversationImportSource.fields,
   /**
    * Server read model only: turns holding imported history. Revert keeps
    * them, as it keeps a fork's inherited turns. Client-facing payloads omit it.
@@ -726,6 +714,19 @@ export const OrchestrationConversationImport = Schema.Struct({
   inheritedTurnIds: Schema.optional(Schema.Array(TurnId)),
 });
 export type OrchestrationConversationImport = typeof OrchestrationConversationImport.Type;
+
+/** Fork lineage and any external source history retained through the fork. */
+export const OrchestrationForkLineage = Schema.Struct({
+  originThreadId: ThreadId,
+  baselineAssistantMessageId: Schema.NullOr(MessageId),
+  sourceImport: Schema.optional(OrchestrationConversationImportSource),
+  /**
+   * Server read model only: destination turns holding inherited transcript.
+   * Revert never removes them. Client-facing payloads omit it.
+   */
+  inheritedTurnIds: Schema.optional(Schema.Array(TurnId)),
+});
+export type OrchestrationForkLineage = typeof OrchestrationForkLineage.Type;
 
 /**
  * One imported turn. Imported turns are completed history with no provider
@@ -2387,6 +2388,8 @@ export const ThreadForkedPayload = Schema.Struct({
    * Older events omit it: derive it from `copiedBoundaries` and `baselineTurnId`.
    */
   inheritedTurnIds: Schema.optional(Schema.Array(TurnId)),
+  /** External source history carried by a fork of imported history. */
+  sourceImport: Schema.optional(OrchestrationConversationImportSource),
   midTurnCut: Schema.optional(ThreadForkMidTurnCut),
   createdAt: IsoDateTime,
 });

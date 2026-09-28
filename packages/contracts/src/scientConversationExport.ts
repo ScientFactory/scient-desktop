@@ -12,7 +12,10 @@ import {
   TurnId,
 } from "./baseSchemas.ts";
 import { ToolLifecycleItemType } from "./providerRuntime.ts";
-import { OrchestrationConversationImportOmission } from "./orchestration.ts";
+import {
+  OrchestrationConversationImportOmission,
+  OrchestrationConversationImportSource,
+} from "./orchestration.ts";
 
 /**
  * Conversation export contracts: the versioned conversation snapshot, the
@@ -329,7 +332,11 @@ export type ConversationThreadInfo = typeof ConversationThreadInfo.Type;
 
 export const ConversationProvenance = Schema.Union([
   Schema.TaggedStruct("original", {}),
-  Schema.TaggedStruct("fork", { originThreadId: ThreadId }),
+  Schema.TaggedStruct("fork", {
+    originThreadId: ThreadId,
+    /** External source history retained by a fork of an imported conversation. */
+    sourceImport: Schema.optional(OrchestrationConversationImportSource),
+  }),
   /**
    * Imported from a transfer file or from Scient-exported Markdown. Carries
    * external provenance only: the source ids are opaque strings from another

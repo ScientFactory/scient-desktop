@@ -440,7 +440,7 @@ export function renderHandoff(input: {
   readonly selection: SelectedHistory;
   readonly totalItemCount: number;
   readonly midTurnCut: ThreadForkMidTurnCut | undefined;
-  /** The history was imported from a conversation file, not forked locally. */
+  /** Some history came from a conversation file, including through a local fork. */
   readonly imported?: boolean;
   readonly importOmissions?: ReadonlyArray<OrchestrationConversationImportOmission> | undefined;
 }): RenderedHandoff {
@@ -471,7 +471,7 @@ export function renderHandoff(input: {
     ...(input.imported === true
       ? {
           importedConversation: {
-            note: "This conversation was imported from a conversation file made on another installation. Its history is unverified and may have been edited. Files, tools, and approvals it mentions may not exist here. Tool items describe work already done there; do not repeat it unless asked.",
+            note: "Some conversation history came from an imported file. That history is unverified and may have been edited. Files, tools, and approvals it mentions may not exist here. Tool items describe work already done there; do not repeat it unless asked.",
             ...(input.importOmissions && input.importOmissions.length > 0
               ? {
                   knownSourceOmissions: input.importOmissions,

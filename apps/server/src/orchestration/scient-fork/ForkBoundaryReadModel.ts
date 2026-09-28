@@ -203,11 +203,13 @@ export type ProjectionForkLineageRow = typeof ProjectionForkLineageRow.Type;
 
 const threadOriginRows = (sql: SqlClient.SqlClient) => sql`
   SELECT
-    thread_id AS "threadId",
-    forked_from_thread_id AS "originThreadId",
-    baseline_assistant_message_id AS "baselineAssistantMessageId",
-    NULL AS "importOriginJson"
-  FROM scient_thread_lineage
+    lineage.thread_id AS "threadId",
+    lineage.forked_from_thread_id AS "originThreadId",
+    lineage.baseline_assistant_message_id AS "baselineAssistantMessageId",
+    transfer.origin_json AS "importOriginJson"
+  FROM scient_thread_lineage AS lineage
+  LEFT JOIN scient_context_transfers AS transfer
+    ON transfer.thread_id = lineage.thread_id AND transfer.type = 'fork'
   UNION ALL
   SELECT thread_id, NULL, NULL, origin_json
   FROM scient_context_transfers
@@ -215,11 +217,9 @@ const threadOriginRows = (sql: SqlClient.SqlClient) => sql`
 `;
 
 /**
- * SQL queries for the narrow origin markers. The fork marker carries only
- * the origin thread ID and inherited baseline assistant message ID needed
- * for client presentation; it replaces the complete boundary array in
- * shell and detail payloads. The import marker carries the import banner's
- * provenance and omissions.
+ * SQL queries for origin markers. Forks carry local lineage and, when their
+ * history came from an import, that source's external provenance and omissions.
+ * Direct imports carry the import banner's marker separately.
  */
 export function makeForkLineageQueries(sql: SqlClient.SqlClient) {
   return {
@@ -249,9 +249,13 @@ export function toForkLineageMarker(
   if (row === undefined || row.originThreadId === null) {
     return null;
   }
+  const marker = toConversationImportMarker(row.importOriginJson);
+  const sourceImport =
+    marker === null ? undefined : (({ inheritedTurnIds: _turns, ...source }) => source)(marker);
   return {
     originThreadId: row.originThreadId,
     baselineAssistantMessageId: row.baselineAssistantMessageId,
+    ...(sourceImport === undefined ? {} : { sourceImport }),
   };
 }
 
@@ -259,7 +263,8 @@ export function toForkLineageMarker(
 export function importMarkerField(row: ProjectionForkLineageRow | undefined): {
   readonly conversationImport?: OrchestrationConversationImport;
 } {
-  const marker = toConversationImportMarker(row?.importOriginJson);
+  const marker =
+    row?.originThreadId === null ? toConversationImportMarker(row.importOriginJson) : null;
   return marker === null ? {} : { conversationImport: marker };
 }
 

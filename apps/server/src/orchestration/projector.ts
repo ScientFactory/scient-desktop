@@ -963,6 +963,9 @@ export function projectEvent(
                 originThreadId: payload.originThreadId,
                 baselineAssistantMessageId: payload.baselineAssistantMessageId,
                 inheritedTurnIds: inheritedTurnIdsOf(payload),
+                ...(payload.sourceImport === undefined
+                  ? {}
+                  : { sourceImport: payload.sourceImport }),
               },
               latestTurn: {
                 turnId: payload.baselineTurnId,

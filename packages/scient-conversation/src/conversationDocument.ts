@@ -314,7 +314,9 @@ export function buildConversationDocument(input: ConversationDocumentInput): Con
     ...snapshot.warnings.map(warningMessage),
     ...(snapshot.provenance._tag === "import"
       ? (snapshot.provenance.omissions ?? []).map(sourceOmissionWarning)
-      : []),
+      : snapshot.provenance._tag === "fork"
+        ? (snapshot.provenance.sourceImport?.omissions ?? []).map(sourceOmissionWarning)
+        : []),
   ];
   const assets: DocumentAsset[] = [];
   const citations: DocumentCitation[] = [];
@@ -568,7 +570,9 @@ export function buildConversationDocument(input: ConversationDocumentInput): Con
     snapshot.thread.provider,
     snapshot.thread.model,
     snapshot.provenance._tag === "fork"
-      ? "forked conversation"
+      ? snapshot.provenance.sourceImport === undefined
+        ? "forked conversation"
+        : "forked conversation with imported history (unverified)"
       : snapshot.provenance._tag === "import"
         ? `imported from ${snapshot.provenance.source === "scic" ? "a Scient conversation file" : "Markdown"} (unverified)`
         : null,

@@ -434,7 +434,11 @@ function importOmissions(
   // A transfer can itself have been made from a partial imported history.
   // Keep those earlier gaps, even when this sender selected every local item.
   const sourceOmissions =
-    input.snapshot.provenance._tag === "import" ? (input.snapshot.provenance.omissions ?? []) : [];
+    input.snapshot.provenance._tag === "import"
+      ? (input.snapshot.provenance.omissions ?? [])
+      : input.snapshot.provenance._tag === "fork"
+        ? (input.snapshot.provenance.sourceImport?.omissions ?? [])
+        : [];
   const byKind = new Map<string, OrchestrationConversationImportOmission>();
   for (const omission of [...sourceOmissions, ...omissions]) {
     const previous = byKind.get(omission._tag);
