@@ -34,7 +34,7 @@ function fileDrag(
 }
 
 beforeEach(() => {
-  useConversationImportRequests.setState({ nextId: 0, queue: [], replaceable: true });
+  useConversationImportRequests.setState({ nextId: 0, queue: [], replaceable: false });
   onDragChange = vi.fn<(drag: ConversationFileDrag | null) => void>();
   uninstall = installConversationImportDropTarget(window, onDragChange);
   // Stands in for the chat column and composer, which take every file drop.
@@ -112,6 +112,8 @@ describe("app conversation file drop", () => {
 
   it("gives a file dropped on an open import dialog to that dialog", () => {
     requestConversationImport();
+    // The dialog is on screen.
+    useConversationImportRequests.setState({ replaceable: true });
     const first = new File(["a"], "first.scic");
     const second = new File(["b"], "second.scic");
     fileDrag("drop", [first]);
@@ -125,6 +127,17 @@ describe("app conversation file drop", () => {
     expect(queue().map((request) => request.source)).toEqual([
       { _tag: "browser-file", file: second },
       { _tag: "browser-file", file: first },
+    ]);
+  });
+
+  it("queues a dropped file behind a request no dialog is showing yet", () => {
+    const first = new File(["a"], "first.scic");
+    const second = new File(["b"], "second.scic");
+    fileDrag("drop", [first]);
+    fileDrag("drop", [second]);
+    expect(queue().map((request) => request.source)).toEqual([
+      { _tag: "browser-file", file: first },
+      { _tag: "browser-file", file: second },
     ]);
   });
 });

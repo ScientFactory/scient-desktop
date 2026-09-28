@@ -14,9 +14,12 @@ type ConversationImportRequest = {
 export const useConversationImportRequests = create<{
   readonly nextId: number;
   readonly queue: ReadonlyArray<ConversationImportRequest>;
-  /** False while the open dialog commits an import; a file dropped then waits its turn. */
+  /**
+   * True while an import dialog is on screen and not committing an import:
+   * only then does a dropped file replace the first request's file.
+   */
   readonly replaceable: boolean;
-}>(() => ({ nextId: 0, queue: [], replaceable: true }));
+}>(() => ({ nextId: 0, queue: [], replaceable: false }));
 
 /** Queues an import. The first request in the queue is the open dialog. */
 export function requestConversationImport(
@@ -36,11 +39,11 @@ export function replaceConversationImportSource(source: ConversationImportSource
   });
 }
 
-/** A dropped file goes to the open import dialog, or opens one when none is open. */
+/** A dropped file goes to the open import dialog, or waits its turn when none can take it. */
 export function dropConversationImportFile(file: File): void {
   const { queue, replaceable } = useConversationImportRequests.getState();
   const source = { _tag: "browser-file", file } as const;
-  if (queue.length > 0 && replaceable) replaceConversationImportSource(source);
+  if (replaceable && queue.length > 0) replaceConversationImportSource(source);
   else requestConversationImport(source);
 }
 
@@ -49,8 +52,5 @@ export function setConversationImportReplaceable(replaceable: boolean): void {
 }
 
 export function dismissConversationImportRequest(): void {
-  useConversationImportRequests.setState((state) => ({
-    queue: state.queue.slice(1),
-    replaceable: true,
-  }));
+  useConversationImportRequests.setState((state) => ({ queue: state.queue.slice(1) }));
 }
