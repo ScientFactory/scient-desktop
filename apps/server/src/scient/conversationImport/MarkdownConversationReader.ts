@@ -42,6 +42,12 @@ export interface MarkdownReadResult {
   readonly issues: ScientConversationImportPreview["markdownIssues"];
 }
 
+/** A Markdown file Scient refuses to import; `message` is shown to the user. */
+export class MarkdownConversationRejection extends Schema.TaggedError<MarkdownConversationRejection>()(
+  "MarkdownConversationRejection",
+  { message: Schema.String },
+) {}
+
 const decodeSnapshot = Schema.decodeUnknownSync(ConversationSnapshotV1);
 const decodeValidated = Schema.decodeUnknownSync(ValidatedConversationImport);
 
@@ -54,7 +60,14 @@ export function readMarkdownConversation(input: MarkdownReadInput): MarkdownRead
     throw new Error("Markdown file changed during preview.");
   const actual = `sha256:${NodeCrypto.createHash("sha256").update(bytes).digest("hex")}`;
   if (actual !== input.packageSha256) throw new Error("Markdown file changed during preview.");
-  const source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  let source: string;
+  try {
+    source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    throw new MarkdownConversationRejection({
+      message: "This Markdown file is not plain UTF-8 text.",
+    });
+  }
   const parsed = parseConversationMarkdown(source);
   const document = input.mode === "document" || parsed.kind === "document";
   const title =

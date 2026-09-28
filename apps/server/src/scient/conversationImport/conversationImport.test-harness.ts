@@ -24,7 +24,7 @@ import * as ThreadBackgroundLiveness from "../../orchestration/ThreadBackgroundL
 import * as ThreadPlanProgress from "../../orchestration/ThreadPlanProgress.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../../persistence/Layers/Sqlite.ts";
 import { ProjectCloneTracker } from "../../project/ProjectCloneTracker.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
@@ -33,6 +33,8 @@ import * as ConversationImporterLive from "./ConversationImporterLive.ts";
 import { OTHER_PROJECT_ID, PROJECT_ID, PROVIDER_ID } from "./conversationImport.test-fixtures.ts";
 
 export interface ImportTestControls {
+  /** In-memory SQLite by default; `file` uses an on-disk database in the test state directory. */
+  readonly persistence?: "memory" | "file";
   /** Provider instances the server reports, by id; enabled unless listed as false. */
   readonly providers?: ReadonlyMap<string, boolean>;
   readonly clones?: ReadonlyMap<string, ProjectCloneSnapshot["phase"]>;
@@ -47,24 +49,29 @@ export interface ImportTestControls {
   ) => ReturnType<OrchestrationEngineService["Service"]["dispatch"]>;
 }
 
-const orchestrationLayer = Layer.mergeAll(
-  OrchestrationEngineLive.pipe(
-    Layer.provide(OrchestrationProjectionSnapshotQueryLive),
-    Layer.provide(OrchestrationProjectionPipelineLive),
-  ),
-  OrchestrationProjectionSnapshotQueryLive,
-  ScientForkContextDeliveryLive,
-).pipe(
-  Layer.provide(ServerSettingsService.layerTest()),
-  Layer.provideMerge(ThreadBackgroundLiveness.layer),
-  Layer.provide(ThreadPlanProgress.layer),
-  Layer.provide(OrchestrationEventStoreLive),
-  Layer.provideMerge(OrchestrationCommandReceiptRepositoryLive),
-  Layer.provide(RepositoryIdentityResolver.layer),
-  Layer.provideMerge(SqlitePersistenceMemory),
-  Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "scient-import-test-" })),
-  Layer.provideMerge(NodeServices.layer),
-);
+const orchestrationLayer = (persistence: "memory" | "file") =>
+  Layer.mergeAll(
+    OrchestrationEngineLive.pipe(
+      Layer.provide(OrchestrationProjectionSnapshotQueryLive),
+      Layer.provide(OrchestrationProjectionPipelineLive),
+    ),
+    OrchestrationProjectionSnapshotQueryLive,
+    ScientForkContextDeliveryLive,
+  ).pipe(
+    Layer.provide(ServerSettingsService.layerTest()),
+    Layer.provideMerge(ThreadBackgroundLiveness.layer),
+    Layer.provide(ThreadPlanProgress.layer),
+    Layer.provide(OrchestrationEventStoreLive),
+    Layer.provideMerge(OrchestrationCommandReceiptRepositoryLive),
+    Layer.provide(RepositoryIdentityResolver.layer),
+    Layer.provideMerge(
+      persistence === "file"
+        ? SqlitePersistence.layerConfig
+        : SqlitePersistence.SqlitePersistenceMemory,
+    ),
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "scient-import-test-" })),
+    Layer.provideMerge(NodeServices.layer),
+  );
 
 export function importTestLayer(controls: ImportTestControls = {}) {
   const providers = controls.providers ?? new Map([[PROVIDER_ID, true]]);
@@ -106,7 +113,7 @@ export function importTestLayer(controls: ImportTestControls = {}) {
       }),
     ),
   );
-  return importer.pipe(Layer.provideMerge(orchestrationLayer));
+  return importer.pipe(Layer.provideMerge(orchestrationLayer(controls.persistence ?? "memory")));
 }
 
 /** The two destination projects every importer test can use. */

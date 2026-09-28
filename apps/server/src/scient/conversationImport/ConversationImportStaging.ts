@@ -18,6 +18,7 @@ import { waitForWritableDrain } from "../conversationFile/waitForWritableDrain.t
 import {
   ATTACHMENT_UPLOAD_URL_TTL_MS,
   ConversationImportId,
+  ConversationSnapshotV1,
   SCIENT_CONVERSATION_IMPORT_MAX_PACKAGE_BYTES,
   SCIENT_CONVERSATION_IMPORT_UPLOAD_PATH,
   ScientConversationImportError,
@@ -56,18 +57,16 @@ import {
 } from "../../auth/utils.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
-import {
-  inspectScicExpandedBytes,
-  readScicPackage,
-  stagedAttachmentFile,
-} from "../conversationFile/ScicReader.ts";
+import { readScicPackage, stagedAttachmentFile } from "../conversationFile/ScicReader.ts";
 import {
   MARKDOWN_IMPORT_MAX_BYTES,
+  MarkdownConversationRejection,
   readMarkdownConversation,
   type MarkdownReadResult,
 } from "./MarkdownConversationReader.ts";
 import {
   CONVERSATION_IMPORT_COMPLETION_RETENTION_MS,
+  CONVERSATION_IMPORT_MAX_RECORDS,
   CONVERSATION_IMPORT_MAX_LIVE,
   CONVERSATION_IMPORT_STAGING_DIRECTORY,
   CONVERSATION_IMPORT_STAGING_QUOTA_BYTES,
@@ -76,17 +75,21 @@ import {
   ConversationImporter,
   ConversationImporterError,
   ConversationImportStagingError,
+  conversationImportRecordCount,
+  joinValidatedConversationImport,
   sameConversationImportDestination,
   type AbandonedConversationImportAttempt,
   type ConversationImportAttemptBinding,
   type ConversationImportLease,
   type ValidatedConversationImport,
+  type ValidatedConversationImportParts,
 } from "./ConversationImporter.ts";
 
 export const CONVERSATION_IMPORT_UPLOAD_ROUTE_PREFIX = SCIENT_CONVERSATION_IMPORT_UPLOAD_PATH;
 const SIGNING_SECRET_NAME = "asset-access-signing-key";
 const COMPLETIONS_DIRECTORY = "completions";
 const PACKAGE_FILE = "package.scic";
+const SNAPSHOT_FILE = "conversation.json";
 const ATTEMPT_DIRECTORY = "attempt";
 const ATTACHMENTS_DIRECTORY = "attachments";
 const SWEEP_INTERVAL_MS = 60_000;
@@ -137,6 +140,10 @@ const completionJson = Schema.fromJsonString(ConversationImportCompletion);
 const decodeCompletion = Schema.decodeUnknownOption(completionJson);
 const encodeCompletion = Schema.encodeSync(completionJson);
 const isImportId = Schema.is(ConversationImportId);
+const isMarkdownRejection = Schema.is(MarkdownConversationRejection);
+const stagedSnapshotJson = Schema.fromJsonString(ConversationSnapshotV1);
+const encodeStagedSnapshot = Schema.encodeEffect(stagedSnapshotJson);
+const decodeStagedSnapshot = Schema.decodeUnknownExit(stagedSnapshotJson);
 
 export type ConversationImportUploadResult =
   | { readonly ok: true }
@@ -169,15 +176,12 @@ type Phase =
   | {
       readonly _tag: "validating";
       readonly fiber: Fiber.Fiber<void>;
-      readonly result: Deferred.Deferred<
-        ValidatedConversationImport,
-        ConversationImportStagingServiceError
-      >;
+      readonly result: Deferred.Deferred<StagedImport, ConversationImportStagingServiceError>;
     }
-  | { readonly _tag: "ready"; readonly validated: ValidatedConversationImport }
+  | { readonly _tag: "ready"; readonly staged: StagedImport }
   | {
       readonly _tag: "importing";
-      readonly validated: ValidatedConversationImport;
+      readonly staged: StagedImport;
       readonly binding: ConversationImportAttemptBinding;
       readonly attempt: Fiber.Fiber<ConversationImportCompletion, ConversationImporterError>;
       readonly outcome: Deferred.Deferred<ImportOutcome>;
@@ -187,6 +191,19 @@ type Phase =
   /** An attempt that must be settled before the area can go. */
   | { readonly _tag: "abandoned" }
   | { readonly _tag: "removing" };
+
+/**
+ * What a validated import keeps in memory: everything but the snapshot, which
+ * waits on disk (`SNAPSHOT_FILE`, byte for byte as validated) until a confirm
+ * reads it back. Small, whatever the conversation's size.
+ */
+interface StagedImport {
+  readonly parts: ValidatedConversationImportParts;
+  readonly conversation: ScientConversationImportPreview["conversation"];
+  readonly counts: ScientConversationImportPreview["counts"];
+  readonly snapshotSha256: Sha256Digest;
+  readonly snapshotBytes: number;
+}
 
 interface ImportRecord {
   readonly importId: ConversationImportId;
@@ -237,6 +254,9 @@ export class ConversationImportStaging extends Context.Service<
   }
 >()("t3/scient/conversationImport/ConversationImportStaging") {}
 
+const importerError = (reason: ConversationImporterError["reason"], detail: string) =>
+  new ConversationImporterError({ reason, detail });
+
 const importError = (
   reason: ScientConversationImportError["reason"],
   message: string,
@@ -275,7 +295,7 @@ function directoryIsEmpty(directory: string): boolean {
 async function sha256File(
   path: string,
   signal?: AbortSignal,
-): Promise<{ sha256: string; byteLength: number }> {
+): Promise<{ sha256: Sha256Digest; byteLength: number }> {
   const hash = NodeCrypto.createHash("sha256");
   let byteLength = 0;
   for await (const chunk of NodeFS.createReadStream(path, { signal }) as AsyncIterable<Buffer>) {
@@ -370,6 +390,10 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
     const completions = new Map<ConversationImportId, ConversationImportCompletion>();
     const lock = yield* Semaphore.make(1);
     const locked = lock.withPermits(1);
+    // Validating a package and importing one hold a whole snapshot in memory
+    // and expand files into staging. One runs at a time, whatever the number of
+    // imports, so memory and the expansion beyond the quota are one import's.
+    const oneAtATime = (yield* Semaphore.make(1)).withPermits(1);
 
     const failure = (detail: string) => (cause: unknown) =>
       new ConversationImportStagingFailure({ detail, cause });
@@ -378,6 +402,7 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
       NodePath.join(record.directory, ATTEMPT_DIRECTORY);
     const attachmentsDirectory = (record: ImportRecord) =>
       NodePath.join(record.directory, ATTACHMENTS_DIRECTORY);
+    const snapshotPath = (record: ImportRecord) => NodePath.join(record.directory, SNAPSHOT_FILE);
     const completionPath = (importId: ConversationImportId) =>
       NodePath.join(completionsRoot, `${importId}.json`);
 
@@ -815,156 +840,256 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
     // Validation and preview
     // ---------------------------------------------------------------------
 
-    const validate = (
-      record: ImportRecord,
-      uploaded: Extract<Phase, { _tag: "uploaded" }>,
-      result: Deferred.Deferred<ValidatedConversationImport, ConversationImportStagingServiceError>,
-    ) =>
+    /** Validates the uploaded file and stages what an import needs; the snapshot goes to disk. */
+    const stageUpload = (record: ImportRecord, uploaded: Extract<Phase, { _tag: "uploaded" }>) =>
       Effect.gen(function* () {
         const packagePath = NodePath.join(record.directory, PACKAGE_FILE);
-        const read = yield* Effect.exit(
-          Effect.gen(function* () {
-            if (/\.md$/iu.test(record.fileName))
-              return yield* Effect.try({
-                try: () =>
-                  readMarkdownConversation({
-                    importId: record.importId,
-                    path: packagePath,
-                    fileName: record.fileName,
-                    packageSha256: uploaded.packageSha256,
-                    packageBytes: uploaded.packageBytes,
-                    attachmentsDirectory: attachmentsDirectory(record),
-                    mode: record.markdownMode,
-                    receivedAt: DateTime.formatIso(DateTime.makeUnsafe(record.touchedAt)),
-                  }),
-                catch: (cause) =>
-                  new ConversationImportStagingFailure({
+        const isMarkdown = /\.md$/iu.test(record.fileName);
+        let validated: ValidatedConversationImport;
+        let markdownPreview: ImportRecord["markdownPreview"] = null;
+        if (isMarkdown) {
+          const read = yield* Effect.try({
+            try: () =>
+              readMarkdownConversation({
+                importId: record.importId,
+                path: packagePath,
+                fileName: record.fileName,
+                packageSha256: uploaded.packageSha256,
+                packageBytes: uploaded.packageBytes,
+                attachmentsDirectory: attachmentsDirectory(record),
+                mode: record.markdownMode,
+                receivedAt: DateTime.formatIso(DateTime.makeUnsafe(record.touchedAt)),
+              }),
+            catch: (cause) =>
+              isMarkdownRejection(cause)
+                ? importError("package-rejected", cause.message)
+                : new ConversationImportStagingFailure({
                     detail: "The Markdown file could not be read.",
                     cause,
                   }),
-              });
-            // Reserve the central directory's declared expansion before any
-            // member is extracted. Keep the compressed package reservation
-            // until the package is removed after successful validation.
-            const expandedBytes = yield* inspectScicExpandedBytes(packagePath);
-            yield* locked(
-              Effect.gen(function* () {
-                if (record.cancelRequested || records.get(record.importId) !== record) {
-                  return yield* importError("import-not-found", "This import was cancelled.");
-                }
-                const others = [...records.values()]
-                  .filter((other) => other !== record)
-                  .reduce((total, other) => total + other.reservedBytes, 0);
-                const reservedBytes = uploaded.packageBytes + expandedBytes;
-                if (others + reservedBytes > quotaBytes) {
-                  return yield* importError(
-                    "staging-full",
-                    "There is not enough room for this import right now. Try again later.",
-                  );
-                }
-                record.reservedBytes = reservedBytes;
-              }),
-            );
-            const validated = yield* readScicPackage({
-              importId: record.importId,
-              packagePath,
-              packageSha256: uploaded.packageSha256,
-              packageBytes: uploaded.packageBytes,
-              attachmentsDirectory: attachmentsDirectory(record),
-              maxExpandedBytes: expandedBytes,
-            });
-            return { validated, kind: "scic" as const, issues: [] };
-          }),
-        );
-        if (Exit.isSuccess(read)) {
-          // The package is no longer needed; staged attachments are what remain.
-          yield* fileSystem
-            .remove(NodePath.join(record.directory, PACKAGE_FILE), { force: true })
-            .pipe(Effect.ignore);
+          });
+          validated = read.validated;
+          markdownPreview = { kind: read.kind, issues: read.issues };
+          yield* encodeStagedSnapshot(validated.snapshot).pipe(
+            Effect.flatMap((text) => fileSystem.writeFileString(snapshotPath(record), text)),
+            Effect.mapError(failure("Could not stage the conversation.")),
+          );
+        } else {
+          validated = yield* readScicPackage({
+            importId: record.importId,
+            packagePath,
+            packageSha256: uploaded.packageSha256,
+            packageBytes: uploaded.packageBytes,
+            attachmentsDirectory: attachmentsDirectory(record),
+            snapshotPath: snapshotPath(record),
+          });
         }
+        const recordCount = conversationImportRecordCount(validated.snapshot);
+        if (recordCount > CONVERSATION_IMPORT_MAX_RECORDS) {
+          return yield* importError(
+            "package-too-large",
+            `This conversation is too long to import: it has ${recordCount.toLocaleString("en-US")} messages and other items, and Scient imports up to ${CONVERSATION_IMPORT_MAX_RECORDS.toLocaleString("en-US")} at once. ${
+              isMarkdown
+                ? "Import it as a document instead."
+                : "Export it again without the work log, or only up to an earlier message."
+            }`,
+          );
+        }
+        const staged = yield* Effect.tryPromise({
+          try: () => sha256File(snapshotPath(record)),
+          catch: failure("Could not stage the conversation."),
+        });
+        const { snapshot, ...parts } = validated;
+        return {
+          staged: {
+            parts,
+            conversation: snapshot.thread,
+            counts: {
+              messages: snapshot.messages.length,
+              attachments: parts.attachments.length,
+              reasoning: snapshot.reasoning.length,
+              workLogEntries: snapshot.workLog.length,
+              proposedPlans: snapshot.proposedPlans.length,
+              questionAnswers: snapshot.questionAnswers.length,
+            },
+            snapshotSha256: staged.sha256,
+            snapshotBytes: staged.byteLength,
+          } satisfies StagedImport,
+          markdownPreview,
+        };
+      });
+
+    /** Bytes a ready import holds on disk: its snapshot and each distinct staged attachment. */
+    const stagedBytesOf = (staged: StagedImport) =>
+      staged.snapshotBytes +
+      [
+        ...new Map(
+          staged.parts.attachments.map((attachment) => [attachment.sha256, attachment.byteLength]),
+        ).values(),
+      ].reduce((total, bytes) => total + bytes, 0);
+
+    /** Clears a failed validation's output so the kept upload can be validated again. */
+    const clearValidationOutput = (record: ImportRecord) =>
+      fileSystem.remove(attachmentsDirectory(record), { recursive: true, force: true }).pipe(
+        Effect.andThen(fileSystem.makeDirectory(attachmentsDirectory(record), { recursive: true })),
+        Effect.andThen(fileSystem.remove(snapshotPath(record), { force: true })),
+        Effect.as(true),
+        Effect.catch((cause) =>
+          Effect.logWarning("Could not clear a conversation import's validation output.", {
+            cause,
+          }).pipe(Effect.as(false)),
+        ),
+      );
+
+    /**
+     * Validation, in a fiber staging owns. A refused file ends the import; a
+     * failure that may pass on a retry (no room yet, a read error) keeps the
+     * upload, so the next preview validates it again.
+     */
+    const validate = (
+      record: ImportRecord,
+      uploaded: Extract<Phase, { _tag: "uploaded" }>,
+      result: Deferred.Deferred<StagedImport, ConversationImportStagingServiceError>,
+    ) =>
+      Effect.gen(function* () {
+        const read = yield* Effect.exit(oneAtATime(stageUpload(record, uploaded)));
         const at = yield* now;
-        const failed = yield* locked(
-          Effect.gen(function* () {
-            if (record.cancelRequested || records.get(record.importId) !== record) return null;
+        const decided = yield* locked(
+          Effect.sync(() => {
+            if (record.cancelRequested || records.get(record.importId) !== record) {
+              return { _tag: "cancelled" } as const;
+            }
             if (Exit.isSuccess(read)) {
-              const staged = new Map(
-                read.value.validated.attachments.map((attachment) => [
-                  attachment.sha256,
-                  attachment.byteLength,
-                ]),
-              );
-              const stagedBytes = [...staged.values()].reduce((total, bytes) => total + bytes, 0);
+              const stagedBytes = stagedBytesOf(read.value.staged);
               const others = [...records.values()]
                 .filter((other) => other !== record)
                 .reduce((total, other) => total + other.reservedBytes, 0);
               if (others + stagedBytes > quotaBytes) {
-                return importError(
-                  "staging-full",
-                  "There is not enough room for this import right now. Try again later.",
-                );
+                return {
+                  _tag: "retry",
+                  error: importError(
+                    "staging-full",
+                    "There is not enough room for this import right now. Try again later.",
+                  ),
+                } as const;
               }
               record.reservedBytes = stagedBytes;
               record.touchedAt = at;
-              record.markdownPreview =
-                read.value.kind === "scic"
-                  ? null
-                  : {
-                      kind: read.value.kind,
-                      issues: read.value.issues,
-                    };
-              record.phase = { _tag: "ready", validated: read.value.validated };
-              yield* Deferred.succeed(result, read.value.validated);
-              return null;
+              record.markdownPreview = read.value.markdownPreview;
+              record.phase = { _tag: "ready", staged: read.value.staged };
+              return { _tag: "ready", staged: read.value.staged } as const;
             }
             const cause = read.cause.reasons.find((reason) => reason._tag === "Fail")?.error;
             if (cause?._tag === "ScicRejection") {
               const rejection = { reason: cause.reason, entry: cause.entry };
-              return importError("package-rejected", REJECTION_MESSAGES[cause.reason], rejection);
+              return {
+                _tag: "refused",
+                error: importError("package-rejected", REJECTION_MESSAGES[cause.reason], rejection),
+              } as const;
             }
-            if (cause?._tag === "ScientConversationImportError") return cause;
-            return new ConversationImportStagingFailure({
-              detail: "The file could not be read.",
-              cause: read.cause,
-            });
+            if (cause?._tag === "ScientConversationImportError") {
+              return { _tag: "refused", error: cause } as const;
+            }
+            return {
+              _tag: "retry",
+              error: new ConversationImportStagingFailure({
+                detail: "The file could not be read.",
+                cause: read.cause,
+              }),
+            } as const;
           }),
         );
-        if (failed !== null) {
-          yield* removeArea(record);
-          yield* Deferred.fail(result, failed);
+        switch (decided._tag) {
+          case "cancelled":
+            return;
+          case "ready":
+            // The package is no longer needed; the snapshot and attachments are what remain.
+            yield* fileSystem
+              .remove(NodePath.join(record.directory, PACKAGE_FILE), { force: true })
+              .pipe(Effect.ignore);
+            yield* Deferred.succeed(result, decided.staged);
+            return;
+          case "refused":
+            yield* removeArea(record);
+            yield* Deferred.fail(result, decided.error);
+            return;
+          case "retry": {
+            const cleared = yield* clearValidationOutput(record);
+            const next = yield* locked(
+              Effect.sync(() => {
+                if (record.cancelRequested || records.get(record.importId) !== record) {
+                  return "cancelled" as const;
+                }
+                if (!cleared) return "remove" as const;
+                record.phase = uploaded;
+                record.reservedBytes = uploaded.packageBytes;
+                return "kept" as const;
+              }),
+            );
+            if (next === "cancelled") return;
+            if (next === "remove") yield* removeArea(record);
+            yield* Deferred.fail(result, decided.error);
+            return;
+          }
         }
       });
 
     const buildPreview = (
       record: ImportRecord,
-      validated: ValidatedConversationImport,
-    ): ScientConversationImportPreview => {
-      const { snapshot } = validated;
-      return {
-        importId: record.importId,
-        kind: record.markdownPreview?.kind ?? "scic",
-        fileName: record.fileName,
-        package: validated.package,
-        conversation: snapshot.thread,
-        counts: {
-          messages: snapshot.messages.length,
-          attachments: validated.attachments.length,
-          reasoning: snapshot.reasoning.length,
-          workLogEntries: snapshot.workLog.length,
-          proposedPlans: snapshot.proposedPlans.length,
-          questionAnswers: snapshot.questionAnswers.length,
-        },
-        omissions: validated.omissions,
-        warnings: validated.warnings,
-        markdownIssues: record.markdownPreview?.issues ?? [],
-        expiresAt: record.touchedAt + ttlMs,
-      };
-    };
+      staged: StagedImport,
+    ): ScientConversationImportPreview => ({
+      importId: record.importId,
+      kind: record.markdownPreview?.kind ?? "scic",
+      fileName: record.fileName,
+      package: staged.parts.package,
+      conversation: staged.conversation,
+      counts: staged.counts,
+      omissions: staged.parts.omissions,
+      warnings: staged.parts.warnings,
+      markdownIssues: record.markdownPreview?.issues ?? [],
+      expiresAt: record.touchedAt + ttlMs,
+    });
 
-    /** Waits for (or starts) validation; the validated import once it is ready. */
-    const validated = (
+    /**
+     * The validated import, read back from the staged snapshot. Its bytes are
+     * the ones validation checked, so their digest already stands for the
+     * content digest; only the cheaper structural checks run again.
+     */
+    const loadValidated = (record: ImportRecord, staged: StagedImport) =>
+      Effect.gen(function* () {
+        const unreadable = importerError(
+          "import-failed",
+          "The staged conversation could not be read. Cancel this import and open the file again.",
+        );
+        const text = yield* Effect.tryPromise({
+          try: async () => {
+            const bytes = await NodeFS.promises.readFile(snapshotPath(record));
+            const sha256 = `sha256:${NodeCrypto.createHash("sha256").update(bytes).digest("hex")}`;
+            if (bytes.byteLength !== staged.snapshotBytes || sha256 !== staged.snapshotSha256) {
+              throw new Error("The staged snapshot changed.");
+            }
+            return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+          },
+          catch: () => unreadable,
+        });
+        const snapshot = decodeStagedSnapshot(text);
+        const joined =
+          snapshot._tag === "Success"
+            ? joinValidatedConversationImport(
+                staged.parts,
+                snapshot.value,
+                staged.parts.package.contentDigest,
+              )
+            : null;
+        if (joined?._tag !== "valid") return yield* unreadable;
+        return joined.validated;
+      });
+
+    /** Waits for (or starts) validation; the staged import once it is ready. */
+    const stagedImport = (
       importId: ConversationImportId,
     ): Effect.Effect<
-      { readonly record: ImportRecord; readonly validated: ValidatedConversationImport },
+      { readonly record: ImportRecord; readonly staged: StagedImport },
       ConversationImportStagingServiceError
     > =>
       Effect.gen(function* () {
@@ -985,7 +1110,7 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
                 );
               case "uploaded": {
                 const result = yield* Deferred.make<
-                  ValidatedConversationImport,
+                  StagedImport,
                   ConversationImportStagingServiceError
                 >();
                 const fiber = yield* Effect.forkIn(validate(record, phase, result), scope);
@@ -997,7 +1122,7 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
               case "ready":
               case "importing":
                 record.touchedAt = at;
-                return { _tag: "ready", record, validated: phase.validated } as const;
+                return { _tag: "ready", record, staged: phase.staged } as const;
               default:
                 return yield* importError(
                   "import-not-found",
@@ -1006,16 +1131,16 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
             }
           }),
         );
-        if (next._tag === "ready") return { record: next.record, validated: next.validated };
+        if (next._tag === "ready") return { record: next.record, staged: next.staged };
         yield* Deferred.await(next.result);
-        return yield* validated(importId);
+        return yield* stagedImport(importId);
       });
 
     const preview: ConversationImportStaging["Service"]["preview"] = Effect.fn(
       "ConversationImportStaging.preview",
     )(function* (importId) {
-      const ready = yield* validated(importId);
-      return buildPreview(ready.record, ready.validated);
+      const ready = yield* stagedImport(importId);
+      return buildPreview(ready.record, ready.staged);
     });
 
     // ---------------------------------------------------------------------
@@ -1104,7 +1229,7 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
           yield* locked(
             Effect.sync(() => {
               if (record.phase._tag === "importing") {
-                record.phase = { _tag: "ready", validated: record.phase.validated };
+                record.phase = { _tag: "ready", staged: record.phase.staged };
                 record.touchedAt = at;
               }
             }),
@@ -1156,7 +1281,7 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
         return yield* answerFromCompletion(known.phase.completion, request);
       }
       // Validation must have finished; a confirm joins it if it is still running.
-      yield* validated(request.importId);
+      yield* stagedImport(request.importId);
       const at = yield* now;
       const outcome = yield* locked(
         Effect.gen(function* () {
@@ -1180,7 +1305,7 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
               "This import is finishing. Try again shortly.",
             );
           }
-          if (phase.validated.package.packageSha256 !== request.packageSha256) {
+          if (phase.staged.parts.package.packageSha256 !== request.packageSha256) {
             return yield* importError(
               "package-changed",
               "The staged file is not the one that was previewed.",
@@ -1188,28 +1313,34 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
           }
           if (
             record.markdownPreview?.kind === "markdown" &&
-            (phase.validated.snapshot.messages.length === 0 ||
+            (phase.staged.counts.messages === 0 ||
               (record.markdownPreview.issues.length > 0 &&
                 request.acknowledgeMarkdownIssues !== true))
           ) {
             return yield* importError(
               "package-rejected",
-              phase.validated.snapshot.messages.length === 0
+              phase.staged.counts.messages === 0
                 ? "No valid messages were found. Import this file as a document instead."
                 : "Review the damaged marker ranges and explicitly choose to import the clean messages.",
             );
           }
           const outcomeDeferred = yield* Deferred.make<ImportOutcome>();
           const attempt = yield* Effect.forkIn(
-            importer.importConversation(makeLease(record, phase.validated), {
-              destination: request.destination,
-              principal,
-            }),
+            oneAtATime(
+              loadValidated(record, phase.staged).pipe(
+                Effect.flatMap((input) =>
+                  importer.importConversation(makeLease(record, input), {
+                    destination: request.destination,
+                    principal,
+                  }),
+                ),
+              ),
+            ),
             scope,
           );
           record.phase = {
             _tag: "importing",
-            validated: phase.validated,
+            staged: phase.staged,
             binding: { packageSha256: request.packageSha256, destination: request.destination },
             attempt,
             outcome: outcomeDeferred,

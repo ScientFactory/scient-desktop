@@ -21,6 +21,12 @@
  *    snapshot's schema, canonical form, and content digest; resources against
  *    the snapshot; attachment types and the chat attachment media policy.
  * 4. The whole result against `ValidatedConversationImport`.
+ *
+ * Memory: the snapshot entry is read into one buffer of its declared size, and
+ * the snapshot is decoded once. Its canonical form is compared structurally
+ * with the JSON it came from and hashed as it is written, once; nothing
+ * re-encodes the snapshot or builds its canonical text. The caller runs one
+ * read at a time.
  */
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
@@ -41,7 +47,6 @@ import {
   type ConversationImportWarning,
   type Sha256Digest,
 } from "@t3tools/contracts";
-import { canonicalSnapshotContent } from "@scientfactory/conversation";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -50,7 +55,10 @@ import * as Yauzl from "yauzl";
 import {
   conversationContentDigest,
   conversationImportOmissions,
-  ValidatedConversationImport,
+  joinValidatedConversationImport,
+  sameCanonicalJson,
+  ValidatedConversationImportParts,
+  type ValidatedConversationImport,
   type StagedConversationImportAttachment,
 } from "../conversationImport/ConversationImporter.ts";
 import {
@@ -106,8 +114,8 @@ export interface ScicReadInput {
   readonly packageBytes: number;
   /** An existing, empty directory; staged attachments are written here, named by their SHA-256. */
   readonly attachmentsDirectory: string;
-  /** Admission reservation from this archive's central directory. */
-  readonly maxExpandedBytes?: number;
+  /** Where to stage the verified `conversation.json` bytes, when the caller keeps them. */
+  readonly snapshotPath?: string;
 }
 
 /** Where a staged attachment with this digest lives inside the staging directory. */
@@ -267,7 +275,9 @@ async function readEntry(
     return reject("corrupt-archive", "An entry could not be read.", name);
   }
   const hash = NodeCrypto.createHash("sha256");
-  const chunks: Uint8Array[] = [];
+  // A kept entry is copied into one buffer of its declared size as it arrives,
+  // so no chunk outlives its read and nothing is joined afterwards.
+  const kept = output.keep ? Buffer.allocUnsafe(entry.uncompressedSize) : null;
   const head = new Uint8Array(SNIFF_BYTES);
   let headLength = 0;
   let byteLength = 0;
@@ -308,7 +318,7 @@ async function readEntry(
           head.set(take, headLength);
           headLength += take.byteLength;
         }
-        if (output.keep) chunks.push(chunk);
+        kept?.set(chunk, byteLength - chunk.byteLength);
         if (sink !== null && !sink.write(chunk)) {
           if (sinkError !== null) throw sinkError;
           await waitForWritableDrain(sink);
@@ -340,7 +350,7 @@ async function readEntry(
     sha256: `sha256:${hash.digest("hex")}`,
     byteLength,
     head: head.subarray(0, headLength),
-    bytes: output.keep ? Buffer.concat(chunks) : null,
+    bytes: kept,
   };
 }
 
@@ -357,8 +367,7 @@ function parseJson(bytes: Uint8Array): unknown {
 const decodeManifestHeader = Schema.decodeUnknownOption(ScicManifestHeader);
 const decodeManifest = Schema.decodeUnknownOption(ScicManifest);
 const decodeSnapshot = Schema.decodeUnknownOption(ConversationSnapshotV1);
-const encodeSnapshot = Schema.encodeSync(ConversationSnapshotV1);
-const decodeValidated = Schema.decodeUnknownExit(ValidatedConversationImport);
+const decodeValidatedParts = Schema.decodeUnknownExit(ValidatedConversationImportParts);
 
 /** Checks the archive's structure from its central directory, before reading any content. */
 function checkStructure(entries: ReadonlyArray<Yauzl.Entry>): ReadonlyArray<ArchiveEntry> {
@@ -474,6 +483,26 @@ function snapshotAttachmentOccurrences(
   ];
 }
 
+/**
+ * Reads and verifies `conversation.json`, stages its bytes when asked, and
+ * parses it. The bytes and their text go out of scope here, before the
+ * snapshot is decoded.
+ */
+async function readSnapshotJson(
+  zip: Yauzl.ZipFile,
+  archiveEntry: ArchiveEntry,
+  declared: ScicManifestEntry,
+  snapshotPath: string | undefined,
+  signal: AbortSignal,
+): Promise<unknown> {
+  const read = await readEntry(zip, archiveEntry, { keep: true }, signal);
+  checkEntryDigest(read, declared);
+  if (snapshotPath !== undefined) {
+    await NodeFS.promises.writeFile(snapshotPath, read.bytes!, { flag: "wx", signal });
+  }
+  return parseJson(read.bytes!);
+}
+
 async function readPackage(
   input: ScicReadInput,
   signal: AbortSignal,
@@ -497,13 +526,6 @@ async function readPackage(
       return reject("corrupt-archive", "The file's directory is damaged.");
     }
     const checked = checkStructure(listed);
-    if (
-      input.maxExpandedBytes !== undefined &&
-      checked.reduce((total, item) => total + item.entry.uncompressedSize, 0) >
-        input.maxExpandedBytes
-    ) {
-      return reject("package-too-large", "The archive expanded beyond its staging reservation.");
-    }
     const archive = new Map(checked.map((entry) => [entry.name, entry]));
 
     const mimetype = await readEntry(
@@ -548,14 +570,13 @@ async function readPackage(
     const declared = checkDeclaredEntries(manifest, archive);
 
     // The snapshot: schema, canonical form, digest.
-    const snapshotRead = await readEntry(
+    const snapshotJson = await readSnapshotJson(
       zip,
       archive.get(SCIC_SNAPSHOT_ENTRY)!,
-      { keep: true },
+      declared.get(SCIC_SNAPSHOT_ENTRY)!,
+      input.snapshotPath,
       signal,
     );
-    checkEntryDigest(snapshotRead, declared.get(SCIC_SNAPSHOT_ENTRY)!);
-    const snapshotJson = parseJson(snapshotRead.bytes!);
     const decodedSnapshot = decodeSnapshot(snapshotJson);
     if (Option.isNone(decodedSnapshot)) {
       return reject(
@@ -565,12 +586,17 @@ async function readPackage(
       );
     }
     const snapshot = decodedSnapshot.value;
-    const { contentDigest: _rawDigest, ...rawContent } = snapshotJson as Record<string, unknown>;
-    const { contentDigest: _decodedDigest, ...decodedContent } = snapshot;
-    if (
-      canonicalSnapshotContent(rawContent as typeof decodedContent) !==
-      canonicalSnapshotContent(decodedContent)
-    ) {
+    const {
+      captured: _rawCaptured,
+      contentDigest: _rawDigest,
+      ...rawContent
+    } = snapshotJson as Record<string, unknown>;
+    const {
+      captured: _decodedCaptured,
+      contentDigest: _decodedDigest,
+      ...decodedContent
+    } = snapshot;
+    if (!sameCanonicalJson(rawContent, decodedContent)) {
       return newerMinor
         ? reject(
             "unsupported-version",
@@ -583,7 +609,8 @@ async function readPackage(
             SCIC_SNAPSHOT_ENTRY,
           );
     }
-    if (conversationContentDigest(snapshot) !== snapshot.contentDigest) {
+    const computedContentDigest = conversationContentDigest(snapshot);
+    if (computedContentDigest !== snapshot.contentDigest) {
       return reject(
         "snapshot-invalid",
         "The conversation does not match its content digest.",
@@ -724,7 +751,7 @@ async function readPackage(
       ...manifest.warnings.map((warning) => ({ _tag: "export-warning" as const, warning })),
       ...(newerMinor ? [{ _tag: "newer-minor-version" as const, formatVersion }] : []),
     ];
-    const validated = decodeValidated({
+    const parts = decodeValidatedParts({
       importId: input.importId,
       package: {
         format: manifest.format,
@@ -737,65 +764,38 @@ async function readPackage(
         packageSha256: input.packageSha256,
         packageBytes: input.packageBytes,
       },
-      snapshot: encodeSnapshot(snapshot),
       attachments: staged,
       omissions: conversationImportOmissions(snapshot),
       warnings,
     });
-    if (validated._tag === "Failure") {
+    const validated =
+      parts._tag === "Success"
+        ? joinValidatedConversationImport(parts.value, snapshot, computedContentDigest)
+        : null;
+    if (validated?._tag !== "valid") {
       return reject(
         "snapshot-invalid",
         "The conversation's records are inconsistent.",
         SCIC_SNAPSHOT_ENTRY,
       );
     }
-    return validated.value;
+    return validated.validated;
   } finally {
     zip.close();
   }
 }
 
-/**
- * Validates the package at `packagePath` and stages its attachments into
- * `attachmentsDirectory`. On failure the directory may hold partial output;
- * the caller removes it with the rest of the staging area.
- */
 const readFailure = (cause: unknown) =>
   isScicRejection(cause)
     ? cause
     : new ScicReadError({ detail: "The file could not be read.", cause });
 
-/** Central-directory expansion size, checked before staging writes a single member. */
-export const inspectScicExpandedBytes = (
-  packagePath: string,
-): Effect.Effect<number, ScicRejection | ScicReadError> =>
-  Effect.tryPromise({
-    try: async () => {
-      let zip: Yauzl.ZipFile;
-      try {
-        zip = await openZip(packagePath);
-      } catch {
-        return reject("corrupt-archive", "The file is not a readable ZIP archive.");
-      }
-      try {
-        if (zip.entryCount > SCIC_MAX_ENTRIES) {
-          reject("too-many-entries", `The file has more than ${SCIC_MAX_ENTRIES} entries.`);
-        }
-        let listed: ReadonlyArray<Yauzl.Entry>;
-        try {
-          listed = await listEntries(zip);
-        } catch {
-          return reject("corrupt-archive", "The file's directory is damaged.");
-        }
-        const checked = checkStructure(listed);
-        return checked.reduce((total, item) => total + item.entry.uncompressedSize, 0);
-      } finally {
-        zip.close();
-      }
-    },
-    catch: readFailure,
-  });
-
+/**
+ * Validates the package at `packagePath` and stages its attachments into
+ * `attachmentsDirectory` (and `conversation.json` at `snapshotPath`, if
+ * given). On failure these may hold partial output; the caller removes it
+ * with the rest of the staging area.
+ */
 export const readScicPackage = (
   input: ScicReadInput,
 ): Effect.Effect<ValidatedConversationImport, ScicRejection | ScicReadError> =>

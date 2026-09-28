@@ -1,3 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off -- digests are checked against Node's SHA-256.
+import * as NodeCrypto from "node:crypto";
+
+import { canonicalSnapshotContent } from "@scientfactory/conversation";
 import { ConversationSnapshotV1 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "@effect/vitest";
@@ -8,8 +12,11 @@ import {
   conversationContentDigest,
   conversationImportOmissions,
   conversationImportProvenance,
+  joinValidatedConversationImport,
+  sameCanonicalJson,
   sameConversationImportDestination,
   ValidatedConversationImport,
+  ValidatedConversationImportParts,
 } from "./ConversationImporter.ts";
 
 const DIGEST = `sha256:${"a".repeat(64)}`;
@@ -18,6 +25,7 @@ const BYTES_DIGEST = `sha256:${"c".repeat(64)}`;
 const IMPORT_ID = "cimp_0f8e7d6c-5b4a-4938-8271-605f4e3d2c1b";
 
 const decode = Schema.decodeUnknownSync(ValidatedConversationImport);
+const decodeParts = Schema.decodeUnknownSync(ValidatedConversationImportParts);
 const decodeCompletion = Schema.decodeUnknownSync(ConversationImportCompletion);
 const encodeCompletion = Schema.encodeSync(ConversationImportCompletion);
 const decodeBinding = Schema.decodeUnknownSync(ConversationImportAttemptBinding);
@@ -235,6 +243,74 @@ describe("validated conversation import", () => {
           decode({ ...validated, snapshot: altered, omissions: omissionsFor(altered) }),
         ).toThrow(/does not match its content digest/);
       }
+    });
+
+    it("is the SHA-256 of canonicalSnapshotContent, hashed without building that text", () => {
+      const hard = decodeSnapshot(
+        seal({
+          ...snapshot,
+          thread: { ...snapshot.thread, title: 'Quotes " \\ and\ttabs, é, 😀, and a lone \ud800' },
+          messages: [
+            ...snapshot.messages.slice(0, 3),
+            { ...snapshot.messages[3]!, text: `${"long 😀 ".repeat(20_000)}\u2028end` },
+          ],
+        }),
+      );
+      for (const value of [decodeSnapshot(snapshot), hard]) {
+        const { contentDigest: _digest, ...content } = value;
+        const expected = `sha256:${NodeCrypto.createHash("sha256").update(canonicalSnapshotContent(content)).digest("hex")}`;
+        expect(conversationContentDigest(value)).toBe(expected);
+      }
+    });
+
+    it("compares canonical content structurally, as its text would compare", () => {
+      const text = (value: unknown) => canonicalSnapshotContent({ value } as never);
+      const cases: ReadonlyArray<readonly [unknown, unknown]> = [
+        [
+          { a: 1, b: [1, "x", null] },
+          { b: [1, "x", null], a: 1 },
+        ],
+        [{ a: 1, b: undefined }, { a: 1 }],
+        [{ a: 1 }, { a: 1, extra: false }],
+        [
+          [1, undefined],
+          [1, null],
+        ],
+        [
+          [1, 2],
+          [1, 2, 3],
+        ],
+        [{ a: "1" }, { a: 1 }],
+        [{ a: 0 }, { a: -0 }],
+        [{ a: new Uint8Array([1, 2]) }, { a: [1, 2] }],
+        [{ nested: { list: [{ z: 1, y: 2 }] } }, { nested: { list: [{ y: 2, z: 1 }] } }],
+        [{ nested: { list: [{ z: 1 }] } }, { nested: { list: [{ z: 2 }] } }],
+        [null, {}],
+        [[], {}],
+        ["😀", "😀"],
+      ];
+      for (const [left, right] of cases) {
+        expect(sameCanonicalJson(left, right)).toBe(text(left) === text(right));
+      }
+    });
+
+    it("joins a decoded snapshot with its parts, trusting only the digest computed for it", () => {
+      const { snapshot: _snapshot, ...rawParts } = validated;
+      const parts = decodeParts(rawParts);
+      const decoded = decodeSnapshot(snapshot);
+      const joined = joinValidatedConversationImport(parts, decoded, decoded.contentDigest);
+      expect(joined._tag).toBe("valid");
+      // Every other guarantee is still checked.
+      expect(
+        joinValidatedConversationImport(
+          { ...parts, omissions: [] },
+          decoded,
+          decoded.contentDigest,
+        ),
+      ).toMatchObject({ _tag: "invalid", detail: "The omissions do not match the snapshot." });
+      expect(joinValidatedConversationImport(parts, decoded, `sha256:${"d".repeat(64)}`)._tag).toBe(
+        "invalid",
+      );
     });
 
     it("refuses a digest that is well formed but not the content's", () => {

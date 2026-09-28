@@ -31,10 +31,19 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
-import { PDF, PNG, makePackage, zipBytesPromise } from "../conversationFile/scic.test-fixtures.ts";
+import {
+  PDF,
+  PNG,
+  capturedSnapshot,
+  decodeSnapshot,
+  encodeSnapshot,
+  makePackage,
+  zipBytesPromise,
+} from "../conversationFile/scic.test-fixtures.ts";
 import { stagedAttachmentFile } from "../conversationFile/ScicReader.ts";
 import { sha256Digest } from "../conversationFile/ScicWriter.ts";
 import {
+  CONVERSATION_IMPORT_MAX_RECORDS,
   CONVERSATION_IMPORT_STAGING_TTL_MS,
   ConversationImporter,
   ConversationImporterError,
@@ -295,10 +304,10 @@ describe("ConversationImportStaging", () => {
         NodeFS.readdirSync(stagingRoot(config)).toSorted(),
         [importId, "completions"].toSorted(),
       );
-      // The package is gone once validated; its attachments are staged by digest.
+      // The package is gone once validated; its snapshot and attachments (by digest) are staged.
       assert.deepStrictEqual(
         NodeFS.readdirSync(NodePath.join(stagingRoot(config), importId)).toSorted(),
-        ["attachments", "attempt"],
+        ["attachments", "attempt", "conversation.json"],
       );
     }).pipe(Effect.scoped, Effect.provide(TestLayer)),
   );
@@ -582,19 +591,216 @@ describe("ConversationImportStaging", () => {
     }).pipe(Effect.scoped, Effect.provide(TestLayer)),
   );
 
-  it.effect("reserves ZIP expansion before staging any attachment bytes", () =>
+  it.effect(
+    "validates two uploads that fill the quota, one at a time, without counting either's expansion",
+    () =>
+      Effect.gen(function* () {
+        resetImporter();
+        const files = makePackage().files;
+        const bytes = yield* Effect.promise(() => zipBytesPromise(files));
+        const expandedBytes = files.reduce((total, file) => total + file.bytes.byteLength, 0);
+        const snapshotBytes = files.find((file) => file.path === "conversation.json")!.bytes;
+        const stagedBytes = snapshotBytes.byteLength + PNG.byteLength + PDF.byteLength;
+        const quotaBytes = 2 * Math.max(bytes.byteLength, stagedBytes);
+        // Reserving each package's expansion would refuse the first preview.
+        assert.isAbove(2 * bytes.byteLength + expandedBytes, quotaBytes);
+        const staging = yield* makeStaging({ quotaBytes });
+        const first = yield* upload(staging, bytes);
+        const second = yield* upload(staging, bytes);
+        const previews = yield* Effect.all(
+          [staging.preview(first.importId), staging.preview(second.importId)],
+          { concurrency: "unbounded" },
+        );
+        assert.deepStrictEqual(
+          previews.map((preview) => preview.importId),
+          [first.importId, second.importId],
+        );
+      }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+  );
+
+  it.effect("keeps the upload when there is no room yet, and validates it again later", () =>
     Effect.gen(function* () {
       resetImporter();
       const config = yield* ServerConfig.ServerConfig;
-      const files = makePackage().files;
+      // A long, repetitive message: the package is small, the staged snapshot large.
+      const [question, answer] = capturedSnapshot.messages;
+      const files = makePackage({
+        ...capturedSnapshot,
+        messages: [question!, { ...answer!, text: "Here is what I found. ".repeat(10_000) }],
+      }).files;
       const bytes = yield* Effect.promise(() => zipBytesPromise(files));
-      const expandedBytes = files.reduce((total, file) => total + file.bytes.byteLength, 0);
-      const staging = yield* makeStaging({
-        quotaBytes: bytes.byteLength + expandedBytes - 1,
-      });
+      const snapshotBytes = files.find((file) => file.path === "conversation.json")!.bytes;
+      const stagedBytes = snapshotBytes.byteLength + PNG.byteLength + PDF.byteLength;
+      assert.isBelow(2 * bytes.byteLength, stagedBytes);
+      const staging = yield* makeStaging({ quotaBytes: stagedBytes + bytes.byteLength - 1 });
       const { importId } = yield* upload(staging, bytes);
+      const holder = yield* staging.createUpload({
+        fileName: "holder.scic",
+        sizeBytes: bytes.byteLength,
+      });
       assert.strictEqual(yield* reasonOf(staging.preview(importId)), "staging-full");
+      // The upload is kept as it arrived; nothing validation staged is left.
+      const area = NodePath.join(stagingRoot(config), importId);
+      assert.deepStrictEqual(NodeFS.readdirSync(area).toSorted(), [
+        "attachments",
+        "attempt",
+        "package.scic",
+      ]);
+      assert.deepStrictEqual(NodeFS.readdirSync(NodePath.join(area, "attachments")), []);
+      assert.deepStrictEqual(yield* staging.cancel(holder.importId), { _tag: "cancelled" });
+      const preview = yield* staging.preview(importId);
+      assert.strictEqual(preview.counts.messages, 2);
+      assert.isFalse(NodeFS.existsSync(NodePath.join(area, "package.scic")));
+    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+  );
+
+  it.effect("keeps the upload after a read error, and validates it again later", () =>
+    Effect.gen(function* () {
+      resetImporter();
+      const config = yield* ServerConfig.ServerConfig;
+      const staging = yield* makeStaging();
+      const bytes = yield* packageBytes;
+      const { importId } = yield* upload(staging, bytes);
+      const attachments = NodePath.join(stagingRoot(config), importId, "attachments");
+      // Staging an attachment fails: its folder is a file.
+      NodeFS.rmSync(attachments, { recursive: true });
+      NodeFS.writeFileSync(attachments, "not a folder");
+      const error = yield* Effect.flip(staging.preview(importId));
+      assert.strictEqual(error._tag, "ConversationImportStagingFailure");
+      assert.isTrue(NodeFS.statSync(attachments).isDirectory());
+      const preview = yield* staging.preview(importId);
+      assert.strictEqual(preview.package.packageSha256, sha256Digest(bytes));
+    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+  );
+
+  it.effect("refuses, at preview, a conversation with more records than one import writes", () =>
+    Effect.gen(function* () {
+      resetImporter();
+      const config = yield* ServerConfig.ServerConfig;
+      const staging = yield* makeStaging();
+      const messages = Array.from({ length: CONVERSATION_IMPORT_MAX_RECORDS + 1 }, (_, index) => ({
+        n: index + 1,
+        id: `message-${index + 1}`,
+        role: index % 2 === 0 ? "user" : "assistant",
+        turnId: index % 2 === 0 ? null : `turn-${index}`,
+        createdAt: "2026-09-27T14:05:00.000Z",
+        updatedAt: "2026-09-27T14:05:00.000Z",
+        text: `Message ${index + 1}`,
+        attachments: [],
+        references: [],
+      }));
+      const long = makePackage(
+        decodeSnapshot({ ...encodeSnapshot(capturedSnapshot), messages, warnings: [] }),
+        new Map(),
+      );
+      const { importId } = yield* upload(
+        staging,
+        yield* Effect.promise(() => zipBytesPromise(long.files)),
+      );
+      const error = yield* Effect.flip(staging.preview(importId));
+      assert.strictEqual(error._tag, "ScientConversationImportError");
+      if (error._tag === "ScientConversationImportError") {
+        assert.strictEqual(error.reason, "package-too-large");
+        assert.strictEqual(
+          error.message,
+          "This conversation is too long to import: it has 5,001 messages and other items, and Scient imports up to 5,000 at once. Export it again without the work log, or only up to an earlier message.",
+        );
+      }
       assert.isFalse(NodeFS.existsSync(NodePath.join(stagingRoot(config), importId)));
+    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+  );
+
+  it.effect("refuses Markdown that is not UTF-8 text in plain words", () =>
+    Effect.gen(function* () {
+      resetImporter();
+      const config = yield* ServerConfig.ServerConfig;
+      const staging = yield* makeStaging();
+      const bytes = new Uint8Array([0x23, 0x20, 0xff, 0xfe, 0x0a]);
+      const created = yield* staging.createUpload({
+        fileName: "notes.md",
+        sizeBytes: bytes.byteLength,
+      });
+      const claims = yield* staging.validateUploadToken(created.relativeUrl.split("/").at(-1)!);
+      assert(claims !== null);
+      assert.deepStrictEqual(yield* staging.receiveUpload(claims, Stream.make(bytes)), {
+        ok: true,
+      });
+      const error = yield* Effect.flip(staging.preview(created.importId));
+      assert.strictEqual(error._tag, "ScientConversationImportError");
+      if (error._tag === "ScientConversationImportError") {
+        assert.strictEqual(error.reason, "package-rejected");
+        assert.strictEqual(error.message, "This Markdown file is not plain UTF-8 text.");
+      }
+      assert.isFalse(NodeFS.existsSync(NodePath.join(stagingRoot(config), created.importId)));
+    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+  );
+
+  it.effect("keeps a ready import's snapshot on disk and reads it back to import", () =>
+    Effect.gen(function* () {
+      let imported: ReadonlyArray<string> = [];
+      resetImporter({
+        importConversation: (lease, request) => {
+          imported = lease.input.snapshot.messages.map((message) => message.text);
+          return Effect.succeed(completionFor(lease, request));
+        },
+      });
+      const config = yield* ServerConfig.ServerConfig;
+      const staging = yield* makeStaging();
+      const first = yield* stagedImport(staging);
+      const staged = NodePath.join(stagingRoot(config), first.importId, "conversation.json");
+      const files = makePackage().files;
+      assert.deepStrictEqual(
+        new Uint8Array(NodeFS.readFileSync(staged)),
+        files.find((file) => file.path === "conversation.json")!.bytes,
+      );
+      yield* staging.confirm(confirmRequest(first.importId, first.packageSha256), principal);
+      assert.strictEqual(imported.length, 2);
+
+      // A staged snapshot that changed after validation is never imported.
+      const second = yield* stagedImport(staging);
+      const tampered = NodePath.join(stagingRoot(config), second.importId, "conversation.json");
+      NodeFS.writeFileSync(
+        tampered,
+        NodeFS.readFileSync(tampered, "utf8").replace(
+          "Here is what I found.",
+          "Here is a changed.",
+        ),
+      );
+      assert.strictEqual(
+        yield* reasonOf(
+          staging.confirm(confirmRequest(second.importId, second.packageSha256), principal),
+        ),
+        "import-failed",
+      );
+      assert.strictEqual(fake.imports, 1);
+    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+  );
+
+  it.effect("runs validations and imports one at a time", () =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const gate = yield* Deferred.make<void>();
+      resetImporter({
+        importConversation: (lease, request) =>
+          Deferred.succeed(started, undefined).pipe(
+            Effect.andThen(Deferred.await(gate)),
+            Effect.as(completionFor(lease, request)),
+          ),
+      });
+      const staging = yield* makeStaging();
+      const importing = yield* stagedImport(staging);
+      const waiting = yield* upload(staging, yield* packageBytes);
+      const confirming = yield* Effect.forkChild(
+        staging.confirm(confirmRequest(importing.importId, importing.packageSha256), principal),
+      );
+      yield* Deferred.await(started);
+      const previewing = yield* Effect.forkChild(staging.preview(waiting.importId));
+      yield* Effect.yieldNow;
+      yield* Effect.sleep("10 millis").pipe(TestClock.withLive);
+      assert.strictEqual(previewing.pollUnsafe(), undefined);
+      yield* Deferred.succeed(gate, undefined);
+      yield* Fiber.join(confirming);
+      assert.strictEqual((yield* Fiber.join(previewing)).importId, waiting.importId);
     }).pipe(Effect.scoped, Effect.provide(TestLayer)),
   );
 

@@ -16,12 +16,7 @@ import * as Schema from "effect/Schema";
 import * as yazl from "yazl";
 
 import { conversationContentDigest } from "../conversationImport/ConversationImporter.ts";
-import {
-  inspectScicExpandedBytes,
-  readScicPackage,
-  reportedEntryName,
-  stagedAttachmentFile,
-} from "./ScicReader.ts";
+import { readScicPackage, reportedEntryName, stagedAttachmentFile } from "./ScicReader.ts";
 import {
   PDF,
   PNG,
@@ -151,6 +146,7 @@ const read = Effect.fnUntraced(function* (bytes: Uint8Array, directory = tempora
   const packagePath = NodePath.join(directory, "package.scic");
   NodeFS.writeFileSync(packagePath, bytes);
   const attachmentsDirectory = NodePath.join(directory, "attachments");
+  const snapshotPath = NodePath.join(directory, "conversation.json");
   NodeFS.mkdirSync(attachmentsDirectory);
   const exit = yield* Effect.exit(
     readScicPackage({
@@ -159,9 +155,10 @@ const read = Effect.fnUntraced(function* (bytes: Uint8Array, directory = tempora
       packageSha256: sha256Digest(bytes),
       packageBytes: bytes.byteLength,
       attachmentsDirectory,
+      snapshotPath,
     }),
   );
-  return { exit, attachmentsDirectory };
+  return { exit, attachmentsDirectory, snapshotPath };
 });
 
 const expectRejected = Effect.fnUntraced(function* (
@@ -200,32 +197,6 @@ it.effect("reports a staged-file write error without an unhandled stream error",
       }),
     );
     expect(error._tag).toBe("ScicReadError");
-  }),
-);
-
-it.effect("refuses expansion beyond the admitted central-directory size", () =>
-  Effect.gen(function* () {
-    const bytes = yield* packageZip();
-    const directory = temporaryDirectory();
-    const packagePath = NodePath.join(directory, "package.scic");
-    const attachmentsDirectory = NodePath.join(directory, "attachments");
-    NodeFS.writeFileSync(packagePath, bytes);
-    NodeFS.mkdirSync(attachmentsDirectory);
-    const expanded = yield* inspectScicExpandedBytes(packagePath);
-    expect(expanded).toBeGreaterThan(1);
-    const error = yield* Effect.flip(
-      readScicPackage({
-        importId: IMPORT_ID,
-        packagePath,
-        packageSha256: sha256Digest(bytes),
-        packageBytes: bytes.byteLength,
-        attachmentsDirectory,
-        maxExpandedBytes: expanded - 1,
-      }),
-    );
-    expect(error._tag).toBe("ScicRejection");
-    if (error._tag === "ScicRejection") expect(error.reason).toBe("package-too-large");
-    expect(NodeFS.readdirSync(attachmentsDirectory)).toEqual([]);
   }),
 );
 
@@ -368,10 +339,14 @@ describe("the .scic reader", () => {
   it.effect("round-trips a package to an equal snapshot and byte-identical attachments", () =>
     Effect.gen(function* () {
       const pkg = makePackage();
-      const { exit, attachmentsDirectory } = yield* read(yield* zipBytes(pkg.files));
+      const { exit, attachmentsDirectory, snapshotPath } = yield* read(yield* zipBytes(pkg.files));
       if (Exit.isFailure(exit)) throw new Error(String(exit.cause));
       const validated = exit.value;
       expect(encodeSnapshot(validated.snapshot)).toEqual(encodeSnapshot(pkg.snapshot));
+      // The verified conversation.json is staged byte for byte.
+      expect(new Uint8Array(NodeFS.readFileSync(snapshotPath))).toEqual(
+        pkg.files.find((file) => file.path === SCIC_SNAPSHOT_ENTRY)!.bytes,
+      );
       expect(validated.package).toMatchObject({
         exportId: "7f3c9a2e41b8",
         sourceThreadId: "thread-1",
