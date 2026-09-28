@@ -81,6 +81,8 @@ const SAFE_NAME_MAX_CHARS = 100;
 function scicSafeFileName(name: string): string {
   const cleaned = name
     .normalize("NFC")
+    .toLowerCase()
+    .normalize("NFC")
     .replace(/[^\p{L}\p{N}._-]+/gu, "-")
     .replace(/-{2,}/gu, "-")
     .replace(/^[-.]+|[-.]+$/gu, "");
@@ -95,7 +97,7 @@ function scicSafeFileName(name: string): string {
   return stem.length > 0 ? `${stem}${extension}` : `attachment${extension}`;
 }
 
-/** Where an attachment's bytes live: named by their SHA-256, so identical bytes share an entry. */
+/** Where attachment bytes live: the digest and case-stable safe name allow shared entries. */
 export function scicAttachmentPath(sha256: Sha256Digest, name: string): string {
   return `${SCIC_ATTACHMENTS_DIRECTORY}${sha256.slice("sha256:".length)}-${scicSafeFileName(name)}`;
 }

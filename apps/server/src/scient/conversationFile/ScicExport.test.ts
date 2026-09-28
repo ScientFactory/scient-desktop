@@ -35,6 +35,7 @@ import * as ConversationSnapshotService from "../conversationExport/Conversation
 import { PandocWordConverter } from "../pandoc/PandocWordConverter.ts";
 import { readScicPackage } from "./ScicReader.ts";
 import { sha256Digest } from "./ScicWriter.ts";
+import { ScicManifest } from "./scicFormat.ts";
 
 const THREAD = ThreadId.make("thread-1");
 const encodeAttachments = Schema.encodeSync(Schema.fromJsonString(Schema.Array(ChatAttachment)));
@@ -87,7 +88,10 @@ const at = (index: number) =>
   DateTime.formatIso(DateTime.makeUnsafe(Date.parse("2026-09-27T10:00:00.000Z") + index * 1_000));
 
 /** One settled turn: a prompt with an image, a tool call carrying a secret, reasoning, and an answer. */
-const seedThread = Effect.fn("seedThread")(function* () {
+const seedThread = Effect.fn("seedThread")(function* (
+  attachments: ReadonlyArray<ChatAttachment> = [image],
+  bytes: Uint8Array = PNG,
+) {
   const sql = yield* SqlClient.SqlClient;
   const config = yield* ServerConfig.ServerConfig;
   yield* sql`INSERT INTO projection_projects
@@ -101,7 +105,7 @@ const seedThread = Effect.fn("seedThread")(function* () {
   yield* sql`INSERT INTO projection_thread_messages
     (message_id, thread_id, turn_id, role, text, attachments_json, is_streaming, created_at, updated_at)
     VALUES ('user-1', ${THREAD}, NULL, 'user', ${`See ${config.stateDir}/logs/server.log`},
-      ${encodeAttachments([image])}, 0, ${at(1)}, ${at(1)})`;
+      ${encodeAttachments(attachments)}, 0, ${at(1)}, ${at(1)})`;
   yield* sql`INSERT INTO projection_thread_activities
     (activity_id, thread_id, turn_id, tone, kind, summary, payload_json, sequence, created_at)
     VALUES ('activity-1', ${THREAD}, 'turn-1', 'tool', 'tool.completed', 'Ran command',
@@ -129,12 +133,14 @@ const seedThread = Effect.fn("seedThread")(function* () {
 
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const imagePath = resolveAttachmentPath({
-    attachmentsDir: config.attachmentsDir,
-    attachment: image,
-  })!;
-  yield* fileSystem.makeDirectory(path.dirname(imagePath), { recursive: true });
-  yield* fileSystem.writeFile(imagePath, PNG);
+  for (const attachment of attachments) {
+    const imagePath = resolveAttachmentPath({
+      attachmentsDir: config.attachmentsDir,
+      attachment,
+    })!;
+    yield* fileSystem.makeDirectory(path.dirname(imagePath), { recursive: true });
+    yield* fileSystem.writeFile(imagePath, bytes);
+  }
 });
 
 const request = (
@@ -198,6 +204,105 @@ const exportAndRead = (options: Partial<ScientConversationExportRequest["options
   });
 
 describe("exporting a .scic", () => {
+  it.effect("round-trips identical file bytes with distinct declared media types", () =>
+    Effect.gen(function* () {
+      const bytes = new TextEncoder().encode("shared file bytes\n");
+      const files: ReadonlyArray<ChatAttachment> = [
+        {
+          type: "file",
+          id: "thread-1-33333333-3333-4333-8333-333333333333",
+          name: "shared.txt",
+          mimeType: "text/plain",
+          sizeBytes: bytes.byteLength,
+        },
+        {
+          type: "file",
+          id: "thread-1-44444444-4444-4444-8444-444444444444",
+          name: "shared.txt",
+          mimeType: "application/octet-stream",
+          sizeBytes: bytes.byteLength,
+        },
+      ];
+      yield* seedThread(files, bytes);
+      const { entries, read } = yield* exportAndRead();
+      assert(Exit.isSuccess(read), String(Exit.isFailure(read) ? read.cause : ""));
+
+      const manifest = yield* Schema.decodeEffect(Schema.fromJsonString(ScicManifest))(
+        entries.find((entry) => entry.name === "manifest.json")!.text,
+      );
+      const resources = manifest.resources.filter((resource) => resource._tag === "included");
+      assert.strictEqual(resources.length, 2);
+      assert.strictEqual(resources[0]!.name, "shared.txt");
+      assert.strictEqual(resources[1]!.name, "shared.txt");
+      assert.notStrictEqual(resources[0]!.path, resources[1]!.path);
+      const expectedPrefix = `attachments/${sha256Digest(bytes).slice("sha256:".length)}-`;
+      for (const resource of resources) {
+        assert(resource.path.startsWith(expectedPrefix));
+        assert.include(resource.path, "shared.txt");
+        assert(
+          manifest.entries.some(
+            (entry) => entry.path === resource.path && entry.mediaType === resource.mediaType,
+          ),
+        );
+        assert.include(
+          entries.find((entry) => entry.name === "conversation.md")!.text,
+          resource.path,
+        );
+      }
+      assert.deepStrictEqual(
+        entries.filter((entry) => entry.name.startsWith("attachments/")).map((entry) => entry.name),
+        resources.map((resource) => resource.path).toSorted(),
+      );
+      assert.deepStrictEqual(
+        read.value.snapshot.messages[0]?.attachments.map((attachment) => attachment.mimeType),
+        ["text/plain", "application/octet-stream"],
+      );
+      assert.strictEqual(read.value.attachments.length, 2);
+      assert(
+        read.value.attachments.every((attachment) => attachment.sha256 === sha256Digest(bytes)),
+      );
+    }).pipe(Effect.provide(TestLayer)),
+  );
+
+  it.effect("round-trips case-colliding attachment names with identical bytes", () =>
+    Effect.gen(function* () {
+      const otherImage: ChatAttachment = {
+        ...image,
+        id: "thread-1-22222222-2222-4222-8222-222222222222",
+        name: "Figure.png",
+      };
+      yield* seedThread([otherImage, image]);
+      const { entries, read } = yield* exportAndRead();
+      assert(Exit.isSuccess(read), String(Exit.isFailure(read) ? read.cause : ""));
+
+      const expectedPath = `attachments/${sha256Digest(PNG).slice("sha256:".length)}-figure.png`;
+      assert.deepStrictEqual(
+        entries.filter((entry) => entry.name.startsWith("attachments/")).map((entry) => entry.name),
+        [expectedPath],
+      );
+      const manifest = yield* Schema.decodeEffect(Schema.fromJsonString(ScicManifest))(
+        entries.find((entry) => entry.name === "manifest.json")!.text,
+      );
+      assert.deepStrictEqual(
+        manifest.resources.map((resource) => [
+          resource.name,
+          resource._tag === "included" ? resource.path : null,
+        ]),
+        [
+          ["Figure.png", expectedPath],
+          ["figure.png", expectedPath],
+        ],
+      );
+      assert.deepStrictEqual(
+        read.value.snapshot.messages[0]?.attachments.map((attachment) => attachment.name),
+        ["Figure.png", "figure.png"],
+      );
+      assert.strictEqual(read.value.attachments.length, 2);
+      assert(read.value.attachments.every((attachment) => attachment.sha256 === sha256Digest(PNG)));
+      assert.include(entries.find((entry) => entry.name === "conversation.md")!.text, expectedPath);
+    }).pipe(Effect.provide(TestLayer)),
+  );
+
   it.effect("writes a package another Scient validates, without private data", () =>
     Effect.gen(function* () {
       yield* seedThread();

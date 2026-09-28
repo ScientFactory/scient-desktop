@@ -40,6 +40,8 @@ import {
   SCIC_MAX_MANIFEST_BYTES,
   SCIC_MAX_MARKDOWN_BYTES,
   SCIC_MAX_SNAPSHOT_BYTES,
+  SCIC_MAX_ENTRIES,
+  SCIC_MAX_UNCOMPRESSED_BYTES,
   SCIC_MIMETYPE_ENTRY,
   SCIC_SNAPSHOT_ENTRY,
   SCIC_SNAPSHOT_MEDIA_TYPE,
@@ -227,6 +229,44 @@ export function prepareScicPackage(
   const contentDigest = conversationContentDigest(portable);
   const packageSnapshot: ConversationSnapshotV1 = { ...portable, contentDigest };
 
+  // One archive path has one media type. Reuse a path only for resources whose
+  // declared type also matches; prefix a colliding name to keep it readable.
+  const pathsByNameAndType = new Map<string, Map<string, string>>();
+  const occupiedPaths = new Map<string, { readonly path: string; readonly mediaType: string }>();
+  const attachmentPath = (sha256: Sha256Digest, name: string, mediaType: string): string => {
+    const naturalPath = scicAttachmentPath(sha256, name);
+    let byType = pathsByNameAndType.get(naturalPath);
+    if (!byType) {
+      byType = new Map();
+      pathsByNameAndType.set(naturalPath, byType);
+    }
+    const assigned = byType.get(mediaType);
+    if (assigned) return assigned;
+    let path = naturalPath;
+    let suffix = 1;
+    while (true) {
+      const key = path.normalize("NFC").toLowerCase();
+      const occupied = occupiedPaths.get(key);
+      if (!occupied || occupied.mediaType === mediaType) {
+        const selected = occupied?.path ?? path;
+        if (!occupied) occupiedPaths.set(key, { path, mediaType });
+        byType.set(mediaType, selected);
+        return selected;
+      }
+      path = scicAttachmentPath(sha256, `${suffix}-${name}`);
+      suffix += 1;
+    }
+  };
+  for (const resource of resources.values()) {
+    if (resource.content._tag === "included") {
+      attachmentPath(
+        resource.content.sha256,
+        input.redact(resource.attachment.name),
+        resource.attachment.mimeType,
+      );
+    }
+  }
+
   const includedById = new Map<string, Extract<Resource["content"], { _tag: "included" }>>();
   for (const resource of resources.values()) {
     if (resource.content._tag === "included") includedById.set(resource.id, resource.content);
@@ -249,7 +289,10 @@ export function prepareScicPackage(
     ...document.bundle,
     assets: document.bundle.assets.map((asset) =>
       asset.content._tag === "bytes"
-        ? { ...asset, packagePath: scicAttachmentPath(asset.content.sha256, asset.fileName) }
+        ? {
+            ...asset,
+            packagePath: attachmentPath(asset.content.sha256, asset.fileName, asset.mediaType),
+          }
         : asset,
     ),
   };
@@ -291,28 +334,31 @@ export function prepareScicPackage(
   const manifestResources: ScicManifestResource[] = [];
   for (const resource of resources.values()) {
     const { attachment, content } = resource;
+    const name = input.redact(attachment.name);
     if (content._tag === "unavailable") {
       manifestResources.push({
         _tag: "unavailable",
         id: resource.id,
-        name: attachment.name,
+        name,
         reason: content.reason,
       });
       continue;
     }
-    const path = scicAttachmentPath(content.sha256, attachment.name);
-    attachmentFiles.set(path, {
-      path,
-      bytes: content.bytes,
-      sha256: content.sha256,
-      mediaType: attachment.mimeType,
-      compress: attachment.kind !== "image" && canCompress(content.bytes),
-    });
+    const path = attachmentPath(content.sha256, name, attachment.mimeType);
+    if (!attachmentFiles.has(path)) {
+      attachmentFiles.set(path, {
+        path,
+        bytes: content.bytes,
+        sha256: content.sha256,
+        mediaType: attachment.mimeType,
+        compress: attachment.kind !== "image" && canCompress(content.bytes),
+      });
+    }
     manifestResources.push({
       _tag: "included",
       id: resource.id,
       path,
-      name: attachment.name,
+      name,
       kind: attachment.kind === "image" ? "image" : "file",
       mediaType: attachment.mimeType,
       byteLength: content.bytes.byteLength,
@@ -322,6 +368,9 @@ export function prepareScicPackage(
   const orderedAttachments = [...attachmentFiles.values()].toSorted((left, right) =>
     left.path < right.path ? -1 : left.path > right.path ? 1 : 0,
   );
+  if (orderedAttachments.length + 4 > SCIC_MAX_ENTRIES) {
+    return { _tag: "too-large", entry: SCIC_MANIFEST_ENTRY };
+  }
 
   const entries: ScicManifestEntry[] = [
     {
@@ -357,6 +406,15 @@ export function prepareScicPackage(
   };
   const manifestBytes = encoder.encode(JSON.stringify(manifest));
   if (manifestBytes.byteLength > SCIC_MAX_MANIFEST_BYTES) {
+    return { _tag: "too-large", entry: SCIC_MANIFEST_ENTRY };
+  }
+  const expandedBytes =
+    SCIC_MEDIA_TYPE.length +
+    manifestBytes.byteLength +
+    snapshotBytes.byteLength +
+    markdownBytes.byteLength +
+    orderedAttachments.reduce((total, file) => total + file.bytes.byteLength, 0);
+  if (expandedBytes > SCIC_MAX_UNCOMPRESSED_BYTES) {
     return { _tag: "too-large", entry: SCIC_MANIFEST_ENTRY };
   }
 
