@@ -353,6 +353,12 @@ const SCIENT_PAGE = {
   footer: 709,
 } as const;
 
+/** The portrait page's text area in points, for sizes given as a share of it. */
+export const SCIENT_TEXT_AREA_POINTS = {
+  width: (SCIENT_PAGE.width - 2 * SCIENT_PAGE.margin) / 20,
+  height: (SCIENT_PAGE.height - 2 * SCIENT_PAGE.margin) / 20,
+} as const;
+
 /** A section's page setup; Pandoc takes the document's last section from the reference. */
 export function sectionPropertiesXml(input: {
   readonly landscape: boolean;

@@ -221,7 +221,7 @@ describe.skipIf(binary === null)("Word export with the real Pandoc (local integr
             "\\graphicspath{{figures/}}",
             "\\begin{document}",
             "\\input{chapters/intro}",
-            "\\includegraphics{plot}",
+            "\\includegraphics[width=0.5\\textwidth]{plot}",
             "\\bibliography{refs}",
             "\\end{document}",
           ].join("\n"),
@@ -249,6 +249,9 @@ describe.skipIf(binary === null)("Word export with the real Pandoc (local integr
           [...output.docx.entries.keys()].filter((name) => name.startsWith("word/media/")),
         ).toHaveLength(1);
         expect(output.result.summary.embeddedImages).toBe(1);
+        // The source's width survives: half the text width, not the 2-pixel PNG's own size.
+        const extent = /<wp:extent cx="(\d+)"/u.exec(xml);
+        expect(Number(extent?.[1])).toBeGreaterThan(2_000_000);
       }),
     ),
   );

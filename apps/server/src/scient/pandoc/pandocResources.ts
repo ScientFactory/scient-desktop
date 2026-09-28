@@ -42,6 +42,7 @@ import {
   type PandocDocument,
   type PandocNode,
 } from "./pandocAst.ts";
+import { SCIENT_TEXT_AREA_POINTS } from "./scientReferenceDocument.ts";
 import {
   WORD_IMAGE_MAX_BYTES,
   WORD_IMAGE_TOTAL_BYTES,
@@ -248,6 +249,29 @@ function collectNodes(value: unknown, kind: string, found: Array<PandocNode>): v
   if (!Predicate.isObject(value)) return;
   if (isPandocNode(value) && value.t === kind) found.push(value);
   for (const child of Object.values(value)) collectNodes(child, kind, found);
+}
+
+/** A length Pandoc's Word writer reads from an image's `width` or `height`. */
+const IMAGE_DIMENSION = /^\d+(?:\.\d+)?(?:px|cm|mm|in|inch|pt|pc|em)?$/u;
+const IMAGE_PERCENT = /^(\d+(?:\.\d+)?)%$/u;
+
+/**
+ * The size the source gave an image; the rest of its attributes are dropped.
+ * Pandoc's Word writer ignores percentages, and a LaTeX `width=0.5\textwidth`
+ * arrives as `width="50%"`, so a share of the text area becomes points.
+ */
+function imageSizeAttributes(value: unknown): Array<readonly [string, string]> {
+  const pairs = Array.isArray(value) && Array.isArray(value[2]) ? (value[2] as Array<unknown>) : [];
+  return pairs.flatMap((pair): Array<readonly [string, string]> => {
+    if (!Array.isArray(pair)) return [];
+    const [key, dimension] = pair as Array<unknown>;
+    if ((key !== "width" && key !== "height") || !Predicate.isString(dimension)) return [];
+    if (IMAGE_DIMENSION.test(dimension)) return [[key, dimension]];
+    const percent = IMAGE_PERCENT.exec(dimension);
+    if (percent === null) return [];
+    const share = Math.min(Number(percent[1]), 100) / 100;
+    return [[key, `${(SCIENT_TEXT_AREA_POINTS[key] * share).toFixed(1)}pt`]];
+  });
 }
 
 function isKeptLinkTarget(url: string): boolean {
@@ -459,7 +483,7 @@ export const securePandocDocument = Effect.fn("scient.pandoc.securePandocDocumen
   let placeholders = 0;
   const imageWarnings: Array<string> = [];
   for (const image of images) {
-    const [, alt, target] = Array.isArray(image.c) ? image.c : [];
+    const [imageAttr, alt, target] = Array.isArray(image.c) ? image.c : [];
     const url = Array.isArray(target) && Predicate.isString(target[0]) ? target[0] : "";
     const label =
       inlineText(alt).trim().slice(0, 120) ||
@@ -493,7 +517,7 @@ export const securePandocDocument = Effect.fn("scient.pandoc.securePandocDocumen
     embeddedImages += 1;
     const title = Array.isArray(target) && Predicate.isString(target[1]) ? target[1] : "";
     image.c = [
-      attr(),
+      attr([], imageSizeAttributes(imageAttr)),
       Array.isArray(alt) ? alt : [],
       [
         `data:${resolved.mediaType};base64,${Buffer.from(resolved.bytes).toString("base64")}`,
