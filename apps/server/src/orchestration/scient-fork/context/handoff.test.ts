@@ -19,7 +19,12 @@ import {
   handoffBudget,
   handoffTokenCap,
 } from "./handoffBudget.ts";
-import { buildHandoffItems, renderHandoff, selectHistory } from "./handoffHistory.ts";
+import {
+  buildHandoffItems,
+  importedHistoryKind,
+  renderHandoff,
+  selectHistory,
+} from "./handoffHistory.ts";
 import { nativeThreadKey } from "./nativeThreadKey.ts";
 
 const message = (
@@ -209,12 +214,79 @@ describe("selectHistory", () => {
       }),
       totalItemCount: 0,
       midTurnCut: undefined,
-      imported: true,
+      imported: "conversation",
       importOmissions: [{ _tag: "range-truncated", throughMessageN: 4 }],
     });
     expect(rendered.preamble).toContain('"knownSourceOmissions"');
     expect(rendered.preamble).toContain('"throughMessageN":4');
     expect(rendered.preamble).toContain("cannot be recovered");
+  });
+
+  it("describes a shared document as the user's material, not an edited transcript", () => {
+    const render = (imported: "conversation" | "document") =>
+      renderHandoff({
+        threadId: "imported-thread",
+        title: "notes.md",
+        selection: selectHistory({
+          items: [],
+          budget: 1_000,
+          currentAttachments: [],
+          midTurnCut: undefined,
+        }),
+        totalItemCount: 0,
+        midTurnCut: undefined,
+        imported,
+        importOmissions: [],
+      }).preamble;
+    const document = render("document");
+    expect(document).toContain('"importedDocument"');
+    expect(document).toContain("not a transcript of an earlier conversation");
+    expect(document).not.toContain("may have been edited");
+    expect(document).not.toContain("Tool items describe work already done there");
+    expect(render("conversation")).toContain("may have been edited");
+  });
+
+  it("tells a document import, directly or through a fork, from a conversation import", () => {
+    const source = (sourceFormat: string) => ({
+      source: "markdown" as const,
+      exportId: "0123456789abcdef",
+      sourceThreadId: null,
+      packageDigest: `sha256:${"a".repeat(64)}`,
+      sourceFormat,
+      sourceFormatVersion: 1,
+      importedAt: "2026-09-28T10:00:00.000Z",
+      omissions: [],
+    });
+    const document = source("scient-markdown-document");
+    const transcript = source("scient-conversation-markdown");
+    expect(
+      importedHistoryKind({
+        transferType: "import",
+        conversationImport: document,
+        sourceImport: undefined,
+      }),
+    ).toBe("document");
+    expect(
+      importedHistoryKind({
+        transferType: "fork",
+        conversationImport: null,
+        sourceImport: document,
+      }),
+    ).toBe("document");
+    expect(
+      importedHistoryKind({
+        transferType: "import",
+        conversationImport: transcript,
+        sourceImport: undefined,
+      }),
+    ).toBe("conversation");
+    expect(
+      importedHistoryKind({
+        transferType: "fork",
+        conversationImport: null,
+        sourceImport: undefined,
+      }),
+    ).toBeUndefined();
   });
 
   const conversation = Array.from({ length: 20 }, (_, index) =>

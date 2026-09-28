@@ -63,7 +63,12 @@ import {
   handoffTokenCap,
   type ModelContextUsage,
 } from "./context/handoffBudget.ts";
-import { buildHandoffItems, renderHandoff, selectHistory } from "./context/handoffHistory.ts";
+import {
+  buildHandoffItems,
+  importedHistoryKind,
+  renderHandoff,
+  selectHistory,
+} from "./context/handoffHistory.ts";
 
 export class ScientForkContextError extends Schema.TaggedError<ScientForkContextError>()(
   "ScientForkContextError",
@@ -524,6 +529,14 @@ const make = Effect.gen(function* () {
         nativeUsedTokens: holdsTurns ? (ownUsage?.usedTokens ?? 0) : 0,
       }),
     );
+    const imported = importedHistoryKind({
+      transferType: transfer.type,
+      conversationImport: input.thread.conversationImport,
+      sourceImport: input.thread.forkLineage?.sourceImport,
+    });
+    const importOmissions =
+      input.thread.forkLineage?.sourceImport?.omissions ??
+      input.thread.conversationImport?.omissions;
     // The purpose and coverage header travel too: charge them before items.
     const headerTokens = estimateTokens(
       renderHandoff({
@@ -537,10 +550,8 @@ const make = Effect.gen(function* () {
         },
         totalItemCount: items.length,
         midTurnCut,
-        imported: transfer.type === "import" || input.thread.forkLineage?.sourceImport != null,
-        importOmissions:
-          input.thread.forkLineage?.sourceImport?.omissions ??
-          input.thread.conversationImport?.omissions,
+        imported,
+        importOmissions,
       }).preamble,
     );
     const selection = selectHistory({
@@ -555,10 +566,8 @@ const make = Effect.gen(function* () {
       selection,
       totalItemCount: items.length,
       midTurnCut,
-      imported: transfer.type === "import" || input.thread.forkLineage?.sourceImport != null,
-      importOmissions:
-        input.thread.forkLineage?.sourceImport?.omissions ??
-        input.thread.conversationImport?.omissions,
+      imported,
+      importOmissions,
     });
     const renderedTokens =
       estimateTokens(rendered.preamble) + attachmentTokenAllowance(selection.reattached);
