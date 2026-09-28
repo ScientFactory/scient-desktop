@@ -26,7 +26,6 @@ vi.mock("../wordExport/client", () => ({ readPandocTool, installPandocTool }));
 const { ConversationExportDialogHost, requestConversationExport } =
   await import("./ConversationExportDialog");
 const { handleConversationExportMenuAction } = await import("./menu");
-const { ExportUpToHereButton } = await import("./ExportUpToHereButton");
 const { INCLUDE_CAUTION } = await import("./exportDialog.logic");
 
 const threadRef = {
@@ -119,7 +118,7 @@ async function renderHost() {
 }
 
 async function open(format: ConversationExportFormat = "markdown") {
-  await act(async () => requestConversationExport(threadRef, { format }));
+  await act(async () => requestConversationExport(threadRef, format));
   await flush();
 }
 
@@ -303,20 +302,18 @@ describe("ConversationExportDialog", () => {
     // Escape closes only the card, not the dialog under it.
     expect(dialog()).not.toBeNull();
 
-    const range = button("About Range")!;
-    await activateByKeyboard(range);
-    expect(document.body.textContent).toContain(
-      "Exports from the start of the conversation through the message you choose.",
-    );
+    const card = "Equations stay editable.";
+    await activateByKeyboard(about);
+    expect(document.body.textContent).toContain(card);
     await pressKey(document.querySelector<HTMLElement>('[data-slot="popover-popup"]')!, "Escape");
     await flush();
-    expect(document.body.textContent).not.toContain("Exports from the start of the conversation");
-    expect(document.activeElement).toBe(range);
+    expect(document.body.textContent).not.toContain(card);
+    expect(document.activeElement).toBe(about);
     // A second press of the trigger closes an open card.
-    await click(range);
-    expect(document.body.textContent).toContain("Exports from the start of the conversation");
-    await click(range);
-    expect(document.body.textContent).not.toContain("Exports from the start of the conversation");
+    await click(about);
+    expect(document.body.textContent).toContain(card);
+    await click(about);
+    expect(document.body.textContent).not.toContain(card);
   });
 
   it("shows the Pandoc requirement for Word, with no Save, and continues once installed", async () => {
@@ -349,6 +346,7 @@ describe("ConversationExportDialog", () => {
     expect(prepareConversationWordDiagrams).toHaveBeenCalledOnce();
     expect(exportConversation.mock.calls[0]?.[1]).toMatchObject({
       format: "docx",
+      options: { range: { _tag: "whole" } },
       diagramCapture: { sourceDigest: `sha256:${"a".repeat(64)}`, diagrams: [] },
     });
   });
@@ -380,48 +378,5 @@ describe("ConversationExportDialog", () => {
     await click(button("Try again")!);
     expect(document.querySelector('[role="alert"]')).toBeNull();
     expect(switches()).toHaveLength(2);
-  });
-});
-
-describe("Export up to here…", () => {
-  it("picks a format, then opens its dialog ending at that message", async () => {
-    prepareConversationExport.mockResolvedValue({ ...preparation, formats: everyFormat });
-    await act(async () =>
-      root.render(
-        <>
-          <ExportUpToHereButton threadRef={threadRef} messageId={MessageId.make("m1")} />
-          <ConversationExportDialogHost />
-        </>,
-      ),
-    );
-    const trigger = button("Export up to here…")!;
-    await click(trigger);
-    const items = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')];
-    expect(items.map((item) => item.textContent)).toEqual([
-      "Markdown (.md)…",
-      "PDF (.pdf)…",
-      "Word (.docx)…",
-      "Scient file (.scic)…",
-    ]);
-    await click(items[3]!);
-    await flush();
-
-    expect(dialog()?.querySelector('[data-slot="dialog-title"]')?.textContent).toBe(
-      "Export as Scient file",
-    );
-    const upTo = [...document.querySelectorAll<HTMLElement>('[role="radio"]')].find((radio) =>
-      radio.closest("label")?.textContent?.includes("Up to a message…"),
-    );
-    expect(upTo?.getAttribute("aria-checked")).toBe("true");
-    expect(document.querySelector('[aria-label="Last message to include"]')?.textContent).toContain(
-      "1. You: Hi",
-    );
-
-    exportConversation.mockResolvedValue({ file: null, text: null, warnings: [] });
-    await click(button("Save .scic")!);
-    expect(exportConversation.mock.calls[0]?.[1]).toMatchObject({
-      format: "scic",
-      options: { range: { _tag: "through-message", messageId: "m1" } },
-    });
   });
 });

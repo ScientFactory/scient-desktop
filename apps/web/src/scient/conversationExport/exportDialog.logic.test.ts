@@ -2,7 +2,6 @@ import { MessageId, ThreadId, type ScientConversationExportPreparation } from "@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  MESSAGE_NOT_EXPORTABLE_WARNING,
   RUNNING_TURN_WARNING,
   buildExportRequest,
   copyMarkdownRequest,
@@ -47,7 +46,6 @@ const preparation: ScientConversationExportPreparation = {
   ],
 };
 const registrations = registeredConversationExportFormats();
-const markdown = { format: "markdown", throughMessageId: null } as const;
 
 describe("export dialog", () => {
   it("registers Markdown, PDF, Word, and Scient file in menu order", () => {
@@ -111,52 +109,23 @@ describe("export dialog", () => {
     ).toEqual({ available: true });
   });
 
-  it("starts with the requested format, work log and reasoning off, and the whole conversation", () => {
-    expect(initialExportDialogState(preparation, registrations, markdown)).toEqual({
+  it("starts with the requested format and work log and reasoning off", () => {
+    expect(initialExportDialogState(registrations, "markdown")).toEqual({
       format: "markdown",
       variant: "text",
       includeWorkLog: false,
       includeReasoning: false,
-      range: "whole",
-      throughMessageId: "m2",
     });
-    expect(
-      initialExportDialogState(preparation, registrations, {
-        format: "scic",
-        throughMessageId: null,
-      }),
-    ).toMatchObject({ format: "scic", variant: null, range: "whole" });
-  });
-
-  it("preselects the message an export was started from", () => {
-    expect(
-      initialExportDialogState(preparation, registrations, {
-        format: "pdf",
-        throughMessageId: MessageId.make("m1"),
-      }),
-    ).toMatchObject({ format: "pdf", range: "through-message", throughMessageId: "m1" });
-  });
-
-  it("leaves a message the export cannot end at unselected, and says so", () => {
-    const state = initialExportDialogState(preparation, registrations, {
-      format: "markdown",
-      throughMessageId: MessageId.make("running"),
+    expect(initialExportDialogState(registrations, "scic")).toEqual({
+      format: "scic",
+      variant: null,
+      includeWorkLog: false,
+      includeReasoning: false,
     });
-    expect(state).toMatchObject({ range: "through-message", throughMessageId: null });
-    expect(exportDialogWarnings(state, preparation)).toEqual([MESSAGE_NOT_EXPORTABLE_WARNING]);
-    expect(
-      buildExportRequest({
-        threadId: preparation.threadId,
-        state,
-        preparation,
-        registrations,
-        timeZone: null,
-      }),
-    ).toBeNull();
   });
 
   it("offers text or zip only when the conversation has attachments", () => {
-    const state = initialExportDialogState(preparation, registrations, markdown);
+    const state = initialExportDialogState(registrations, "markdown");
     expect(offeredVariant(state, preparation, registrations)).toBeNull();
     const withAttachments = { ...preparation, attachmentCount: 2 };
     expect(
@@ -166,39 +135,33 @@ describe("export dialog", () => {
 
   it("names the saved file type on the primary button", () => {
     const withAttachments = { ...preparation, attachmentCount: 2 };
-    const state = initialExportDialogState(withAttachments, registrations, markdown);
+    const state = initialExportDialogState(registrations, "markdown");
     expect(exportSaveLabel(state, preparation, registrations)).toBe("Save .md");
     expect(exportSaveLabel(state, withAttachments, registrations)).toBe("Save .md");
     expect(
       exportSaveLabel({ ...state, variant: "with-attachments" }, withAttachments, registrations),
     ).toBe("Save .zip");
     const labels = (["pdf", "docx", "scic"] as const).map((format) =>
-      exportSaveLabel(
-        initialExportDialogState(preparation, registrations, { format, throughMessageId: null }),
-        preparation,
-        registrations,
-      ),
+      exportSaveLabel(initialExportDialogState(registrations, format), preparation, registrations),
     );
     expect(labels).toEqual(["Save PDF", "Save .docx", "Save .scic"]);
   });
 
   it("shows the caution only while the work log or reasoning is included", () => {
-    const state = initialExportDialogState(preparation, registrations, markdown);
+    const state = initialExportDialogState(registrations, "markdown");
     expect(showsIncludeCaution(state)).toBe(false);
     expect(showsIncludeCaution({ ...state, includeWorkLog: true })).toBe(true);
     expect(showsIncludeCaution({ ...state, includeReasoning: true })).toBe(true);
-    expect(exportDialogWarnings({ ...state, includeReasoning: true }, preparation)).toEqual([]);
-    expect(exportDialogWarnings(state, { ...preparation, runningTurnOmitted: true })).toEqual([
+    expect(exportDialogWarnings(preparation)).toEqual([]);
+    expect(exportDialogWarnings({ ...preparation, runningTurnOmitted: true })).toEqual([
       RUNNING_TURN_WARNING,
     ]);
   });
 
   it("builds the request from the choices", () => {
     const state = {
-      ...initialExportDialogState(preparation, registrations, markdown),
+      ...initialExportDialogState(registrations, "markdown"),
       includeWorkLog: true,
-      range: "through-message" as const,
-      throughMessageId: MessageId.make("m1"),
       variant: "with-attachments",
     };
     expect(
@@ -217,17 +180,14 @@ describe("export dialog", () => {
       options: {
         includeWorkLog: true,
         includeReasoning: false,
-        range: { _tag: "through-message", messageId: "m1" },
+        range: { _tag: "whole" },
         markdownPackaging: "with-attachments",
       },
     });
     expect(
       buildExportRequest({
         threadId: ThreadId.make("t1"),
-        state: initialExportDialogState(preparation, registrations, {
-          format: "scic",
-          throughMessageId: null,
-        }),
+        state: initialExportDialogState(registrations, "scic"),
         preparation,
         registrations,
         timeZone: null,

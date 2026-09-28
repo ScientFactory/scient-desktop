@@ -1,10 +1,10 @@
 import type {
-  MessageId,
+  ConversationExportFormat,
   ScientConversationExportPreparation,
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import { TriangleAlertIcon } from "lucide-react";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useState } from "react";
 import { create } from "zustand";
 
 import { Button } from "../../components/ui/button";
@@ -19,13 +19,6 @@ import {
 } from "../../components/ui/dialog";
 import { Label } from "../../components/ui/label";
 import { Radio, RadioGroup } from "../../components/ui/radio-group";
-import {
-  Select,
-  SelectItem,
-  SelectPopup,
-  SelectTrigger,
-  SelectValue,
-} from "../../components/ui/select";
 import { Switch } from "../../components/ui/switch";
 import { toastManager } from "../../components/ui/toast";
 import {
@@ -41,10 +34,8 @@ import {
   exportFormatAvailability,
   exportSaveLabel,
   initialExportDialogState,
-  messageChoiceLabel,
   offeredVariant,
   showsIncludeCaution,
-  type ExportDialogRequest,
   type ExportDialogState,
 } from "./exportDialog.logic";
 import {
@@ -60,10 +51,9 @@ import {
 } from "./formatRegistry";
 import "./formats";
 
-const RANGE_ABOUT = "Exports from the start of the conversation through the message you choose.";
-
-interface OpenRequest extends ExportDialogRequest {
+interface OpenRequest {
   readonly threadRef: ScopedThreadRef;
+  readonly format: ConversationExportFormat;
 }
 
 const useRequest = create<{ request: OpenRequest | null; key: number }>(() => ({
@@ -71,26 +61,12 @@ const useRequest = create<{ request: OpenRequest | null; key: number }>(() => ({
   key: 0,
 }));
 
-/**
- * Opens the export dialog for one conversation, preset to a format and, from a
- * message's "Export up to here…", to end at that message. Every opening starts
- * from default options.
- */
+/** Opens the export dialog for one conversation in one format. Every opening starts from default options. */
 export function requestConversationExport(
   threadRef: ScopedThreadRef,
-  options: {
-    readonly format: ExportDialogRequest["format"];
-    readonly throughMessageId?: MessageId | null;
-  },
+  format: ConversationExportFormat,
 ): void {
-  useRequest.setState((state) => ({
-    request: {
-      threadRef,
-      format: options.format,
-      throughMessageId: options.throughMessageId ?? null,
-    },
-    key: state.key + 1,
-  }));
+  useRequest.setState((state) => ({ request: { threadRef, format }, key: state.key + 1 }));
 }
 
 function closeRequest() {
@@ -124,7 +100,7 @@ function ConversationExportDialog({ request }: { readonly request: OpenRequest }
       (preparation) => {
         if (cancelled) return;
         setLoading({ _tag: "ready", preparation });
-        setState(initialExportDialogState(preparation, registrations, request));
+        setState(initialExportDialogState(registrations, request.format));
       },
       (cause: unknown) => {
         if (!cancelled) setLoading({ _tag: "failed", message: exportErrorMessage(cause) });
@@ -258,7 +234,7 @@ function ConversationExportDialog({ request }: { readonly request: OpenRequest }
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => requestConversationExport(threadRef, request)}
+                onClick={() => requestConversationExport(threadRef, request.format)}
               >
                 Try again
               </Button>
@@ -324,9 +300,8 @@ export function ConversationExportForm(props: {
   readonly onChange: (state: ExportDialogState) => void;
 }) {
   const { preparation, registrations, state, disabled, onChange } = props;
-  const id = useId();
   const variant = offeredVariant(state, preparation, registrations);
-  const warnings = exportDialogWarnings(state, preparation);
+  const warnings = exportDialogWarnings(preparation);
   const update = (patch: Partial<ExportDialogState>) => onChange({ ...state, ...patch });
 
   return (
@@ -370,58 +345,6 @@ export function ConversationExportForm(props: {
             <TriangleAlertIcon aria-hidden className="mt-px size-3.5 shrink-0" />
             {INCLUDE_CAUTION}
           </p>
-        ) : null}
-      </div>
-
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center gap-1">
-          <span id={`${id}-range`} className="text-sm font-medium">
-            Range
-          </span>
-          <ExportInfoButton label="About Range">{RANGE_ABOUT}</ExportInfoButton>
-        </div>
-        <RadioGroup
-          aria-labelledby={`${id}-range`}
-          value={state.range}
-          disabled={disabled}
-          onValueChange={(value) =>
-            update({ range: value === "through-message" ? "through-message" : "whole" })
-          }
-        >
-          <Label>
-            <Radio value="whole" />
-            Whole conversation
-          </Label>
-          <Label>
-            <Radio value="through-message" disabled={preparation.messages.length === 0} />
-            Up to a message…
-          </Label>
-        </RadioGroup>
-        {state.range === "through-message" ? (
-          <Select
-            value={state.throughMessageId}
-            items={Object.fromEntries(
-              preparation.messages.map((choice) => [choice.messageId, messageChoiceLabel(choice)]),
-            )}
-            disabled={disabled}
-            onValueChange={(value) => {
-              const choice = preparation.messages.find(
-                (candidate) => candidate.messageId === value,
-              );
-              if (choice) update({ throughMessageId: choice.messageId });
-            }}
-          >
-            <SelectTrigger aria-label="Last message to include" className="min-w-0">
-              <SelectValue placeholder="Choose a message" />
-            </SelectTrigger>
-            <SelectPopup>
-              {preparation.messages.map((choice) => (
-                <SelectItem key={choice.messageId} value={choice.messageId}>
-                  {messageChoiceLabel(choice)}
-                </SelectItem>
-              ))}
-            </SelectPopup>
-          </Select>
         ) : null}
       </div>
 

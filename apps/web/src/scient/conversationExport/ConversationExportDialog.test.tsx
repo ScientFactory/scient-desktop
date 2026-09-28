@@ -38,10 +38,7 @@ function render(overrides: Partial<ScientConversationExportPreparation> = {}, st
       preparation={prepared}
       registrations={registrations}
       state={{
-        ...initialExportDialogState(prepared, registrations, {
-          format: "markdown",
-          throughMessageId: null,
-        }),
+        ...initialExportDialogState(registrations, "markdown"),
         ...state,
       }}
       disabled={false}
@@ -51,15 +48,13 @@ function render(overrides: Partial<ScientConversationExportPreparation> = {}, st
 }
 
 describe("ConversationExportForm", () => {
-  it("renders keyboard-operable controls with work log and reasoning off and no format switcher", () => {
+  it("renders keyboard-operable controls with work log and reasoning off, and no format or range choice", () => {
     const markup = render();
     expect(markup).not.toContain("aria-pressed");
     expect(markup.match(/role="switch"/g)).toHaveLength(2);
     expect(markup.match(/aria-checked="false"/g)?.length).toBeGreaterThanOrEqual(2);
-    expect(markup).toContain('role="radiogroup"');
-    expect(markup).toContain("Whole conversation");
-    expect(markup).toContain("Up to a message…");
-    expect(markup).toContain('aria-label="About Range"');
+    expect(markup).not.toContain('role="radiogroup"');
+    expect(markup).not.toContain("Whole conversation");
     expect(markup).not.toContain("With attachments (.zip)");
     expect(markup).not.toContain(INCLUDE_CAUTION);
   });

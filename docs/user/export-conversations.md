@@ -13,9 +13,6 @@ portable `.scic` file.
 For Markdown, Word, and Scient files, Save opens a save dialog on the desktop app; in a browser, the
 file downloads. The ⓘ button next to the dialog's title says what the format is for.
 
-To export only the start of a conversation, hover a message and choose **Export up to here…**, then
-the format. The dialog opens with that message selected as the last one to include.
-
 To put the conversation on the clipboard instead, choose **Copy ▸ Conversation as Markdown** in the
 thread's menu. It copies the whole conversation as text-only Markdown, without the work log or
 reasoning.
@@ -35,7 +32,7 @@ Scient. A Word or PDF file is for reading and editing, not for restoring a conve
 
 ## What the file contains
 
-The export contains the whole conversation as it is saved on the server, including messages the
+Every export covers the whole conversation as it is saved on the server, including messages the
 chat view has not loaded yet. Each message appears under a heading with the speaker and the time.
 Line breaks appear where chat shows them.
 
@@ -48,9 +45,6 @@ If a response is still being written, that turn is left out and the file says so
 
 Both are off each time you open the dialog. While either is on, the dialog reminds you that the
 export may include file paths, commands, and their output, so check the file before you share it.
-
-- **Range** exports the **Whole conversation**, or **Up to a message…**: from the start of the
-  conversation through the message you choose.
 
 When the conversation has images or attachments, the Markdown dialog offers **Text only (.md)**,
 which lists attachments by name, or **With attachments (.zip)**, which keeps the files next to the

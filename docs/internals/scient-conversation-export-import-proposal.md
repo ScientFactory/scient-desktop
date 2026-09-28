@@ -767,8 +767,6 @@ thread and a lineage row. An import has neither, so the model is extended explic
   entry is always enabled; a format this host cannot produce says why inside its dialog.
 - Thread menu → **Copy ▸ Conversation as Markdown** copies the whole conversation as text-only
   Markdown with the default options (no work log, no reasoning) and confirms with a toast.
-- A user or finished assistant message's hover actions → **Export up to here…** opens a small format
-  menu with the same four entries, then the dialog with that message selected as the range's end.
 - Markdown editor → More menu → **Export ▸ PDF / Word**.
 - LaTeX workspace → **Export ▸ Word** (and Markdown, if it passes qualification).
 - **File ▸ Import…**, drag and drop onto Scient, or double-click a `.scic` file. Accepts `.scic` and
@@ -791,17 +789,13 @@ switcher. The Markdown dialog:
 │           [ ] Reasoning — the thinking shown in chat            │
 │           ⚠ May include file paths, commands and their output.  │
 │                                                                 │
-│  Range ⓘ  (•) Whole conversation                                │
-│           ( ) Up to a message…   [ 12. Assistant: … ▾ ]         │
-│                                                                 │
 │  ⚠ The current turn is still running; it will be left out.      │
 │                                        [ Cancel ]  [ Save .md ] │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 - The ⓘ next to the title opens a one- or two-sentence card about the format (accessible name
-  "About <format> export"). The Range ⓘ explains that the export runs from the start of the
-  conversation through the chosen message. Info buttons are used only where a choice needs one.
+  "About <format> export"). Info buttons are used only where a choice needs one.
 - The Markdown packaging choice appears only when the conversation has images or attachments.
 - The primary button names what is saved: **Save .md** / **Save .zip**, **Save PDF**,
   **Save .docx**, **Save .scic**. There is no Copy button; copying lives in the thread menu.
@@ -811,8 +805,8 @@ switcher. The Markdown dialog:
   export runs. Once Pandoc is installed the normal options appear, with no Pandoc mention. When Pandoc
   cannot run on this computer, the dialog gives the reason and has no Save button. Any other format
   this host cannot produce (PDF without a current Scient desktop) shows its reason and no Save button.
-- A message chosen through **Export up to here…** that the export cannot end at (it belongs to the
-  running turn) is left unselected with a warning, so Save waits until the user picks another.
+- Every export covers the whole conversation. Exporting up to a chosen message is deferred; the
+  export request and snapshot already support it.
 - Changing any option clears the last error. "Preparing the conversation…" and "Exporting…" are
   announced as status text.
 - Warnings are one line each, and the same warnings are included in the exported file.

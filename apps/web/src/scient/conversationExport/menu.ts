@@ -50,6 +50,6 @@ export function handleConversationExportMenuAction(
     (entry) => entry.format === format,
   );
   if (registration === undefined) return false;
-  requestConversationExport(threadRef, { format: registration.format });
+  requestConversationExport(threadRef, registration.format);
   return true;
 }

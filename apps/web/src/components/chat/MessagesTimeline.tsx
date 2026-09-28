@@ -204,9 +204,6 @@ import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ScientForkMessageButton } from "./scient-fork/ScientForkMessageButton";
-// SCIENT-FORK:START
-import { ExportUpToHereButton } from "../../scient/conversationExport/ExportUpToHereButton";
-// SCIENT-FORK:END
 import { WorktreeSetupCard } from "./WorktreeSetupCard";
 import {
   ContextChipPopover as UserMessageContextPopover,
@@ -2150,11 +2147,6 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             {typeof revertTurnCount === "number" && (
               <RevertUserMessageButton turnCount={revertTurnCount} messageId={row.message.id} />
             )}
-            {/* SCIENT-FORK:START */}
-            {ctx.threadRef ? (
-              <ExportUpToHereButton threadRef={ctx.threadRef} messageId={row.message.id} />
-            ) : null}
-            {/* SCIENT-FORK:END */}
             {resolvedContext.text && (
               <MessageCopyButton
                 // Structured paste needs the canonical links to retain their positions.
@@ -2413,11 +2405,6 @@ function AssistantMessageMeta({
       {canForkConversation === true && ctx.onForkAssistantMessage ? (
         <ScientForkMessageButton onFork={() => ctx.onForkAssistantMessage?.(message.id)} />
       ) : null}
-      {/* SCIENT-FORK:START */}
-      {!message.streaming && ctx.threadRef ? (
-        <ExportUpToHereButton threadRef={ctx.threadRef} messageId={message.id} />
-      ) : null}
-      {/* SCIENT-FORK:END */}
       {!message.streaming && (
         <Tooltip>
           <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
