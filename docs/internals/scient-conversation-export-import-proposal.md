@@ -783,9 +783,19 @@ thread and a lineage row. An import has neither, so the model is extended explic
   Markdown with the default options (no work log, no reasoning) and confirms with a toast.
 - Markdown editor → More menu → **Export ▸ PDF / Word**.
 - LaTeX workspace → **Export ▸ Word** (and Markdown, if it passes qualification).
-- **File ▸ Import…**, drag and drop onto Scient, or double-click a `.scic` file. Accepts `.scic` and
-  `.md`; the preview says which kind of import it will be (faithful copy, text only, or "start a conversation
-  with this document").
+- **File ▸ Import Conversation…** (and the sidebar's **Import conversation**), drag and drop onto
+  Scient, or double-click a `.scic` file. Accepts `.scic` and `.md`; the preview says which kind of
+  import it will be (faithful copy, text only, or "start a conversation with this document").
+- One dropped `.scic` imports wherever it lands, ahead of the chat column's and composer's
+  attachment drop and the sidebar rows' drop: the import drop target listens in the capture phase.
+  Other files keep their owners, so a `.md` dropped on the chat still attaches; one dropped where
+  nothing else takes it is imported. Browsers hide a dragged file's name until the drop, so the
+  "Drop to import conversation" overlay is judged by the reported media type: shown outright for
+  the `.scic` type, and with "Other files attach as usual" for a single file of unknown type
+  (what macOS and most systems report for `.scic`). A drop on an open import dialog replaces its
+  file, except while an import is committing, when it waits its turn.
+- While first-run setup (`/welcome`) is showing, requests from every entry point are queued with a
+  short notice and the dialog opens once setup is finished, like the other startup dialogs.
 
 ### The export dialog
 
@@ -878,8 +888,62 @@ colours, full-width text — not chat bubbles. Detailed styling rules are a late
 
 ### Import
 
-Preview → choose project and provider/model → import. The imported thread shows where it came from,
-what was omitted, and that the next message starts a fresh session.
+A file is sent and checked as soon as it arrives (drop, picker, or OS open); there is no separate
+preview step. The dialog shows upload progress and then "Checking the file…" as status text, and
+Cancel or Esc during either aborts the transfer and calls `cancel`, which releases the staged
+import. Changing the file or the destination environment does the same and starts again.
+
+- **Destination environment.** Listed by name through the same labelling as the branch toolbar
+  (the local environment is "This device"), this device first; the row is hidden when only one
+  environment is known. Availability is config membership and a live connection: a known
+  environment keeps its cached config while disconnected, so its connection phase decides, and
+  an environment that is not connected is listed but cannot be chosen. The first connected
+  option is used only until a file is sent or the user picks one; from then the destination is
+  fixed. If it disappears (removed or disabled), or its connection drops at any stage, the
+  transfer is aborted, the staged import is cancelled as a best effort (unconfirmed imports also
+  expire on the server), and the dialog asks for another destination. After a dropped
+  connection it offers **Try again** once that destination reconnects; reconnecting alone never
+  resends. The file is never sent to a destination the user did not choose.
+- **Preview.** Server validation facts only, never message text: kind, pluralized counts, the
+  source provider and model by display name, what the sender left out, and notes from the file.
+  A plain Markdown document is titled "Start a conversation from this document" and confirmed
+  with **Start conversation**; damaged transcript markers read "Some messages couldn't be read"
+  and need a tick before the readable messages import, or can be re-staged as a document.
+- **Project and model.** Chosen with the shared `Select`; the model defaults to what a new thread
+  in that project would use (project default, then environment default, then the provider's own
+  default) and is left for the user to choose when that model is not ready, never the first entry.
+- **Permissions.** Imports always start with `runtimeMode: "approval-required"` (owner decision:
+  unverified history starts supervised); the dialog states this in one line only when the
+  project's default mode differs.
+- **Failures.** A rejected file shows the server's message. Reason codes, entry paths and
+  connection details are never shown; such a message falls back to plain text per reason. An
+  OS-opened file is streamed by the desktop, which answers `declined` when the user declines its
+  "Send conversation file?" prompt and `cancelled` when the renderer stopped the upload; both
+  close the dialog without an error. `rejected` (the server refused the bytes) and the other
+  desktop failures read as plain sentences. Cancel or Esc during such an upload first asks the
+  desktop to stop it (`cancelOpenedConversationFileUpload`, where available), then calls
+  `cancel`; an attempt cancelled while waiting behind an earlier stream never starts its upload.
+- **Confirming.** Once the confirm is sent, the server may commit the import whatever happens to
+  the connection (it runs the commit in its own scope), so the dialog keeps the staged import and
+  its destination until the outcome is known and never cancels it. If the answer does not
+  arrive, or the connection drops, the dialog says so ("Lost the connection while importing.
+  Scient will check whether the import finished when the connection returns.") without the
+  destination picker, and on reconnect re-sends the identical confirm. The server answers a
+  repeated confirm idempotently: the committed result (the dialog then finishes as usual), the
+  running attempt's outcome, or an error meaning nothing was imported. After such an error
+  **Try again** confirms the same staged import; only when the server no longer has it
+  (`import-not-found`, `cancelled`) does Try again send the file again. `already-imported` for the
+  dialog's own import means it committed (to a destination other than this confirm's); the
+  dialog then asks `cancel`, which answers a committed import with its result, and finishes with
+  that thread, never sending the file again. The dialog calls preview only before confirming.
+  Closing after a confirm that answered "not imported" still cancels the staged import, and if
+  that cancel finds it committed after all, a toast says so.
+- **Queueing.** A dropped file replaces the file of an import dialog only while one is on screen
+  and not committing; otherwise, including during first-run setup, it waits its turn.
+
+On success a toast says the next message continues the conversation with the chosen model, and
+Scient opens the new thread. The imported thread shows where it came from ("Imported —
+unverified"), what was omitted, and that the next message starts a fresh session.
 
 ### Agent access
 

@@ -36,7 +36,7 @@ describe("conversation import provenance notice", () => {
       }),
     );
     expect(markup).toContain('data-conversation-import-provenance="unverified"');
-    expect(markup).toContain("Imported · unverified");
+    expect(markup).toContain("Imported — unverified");
     expect(markup).toContain("1 omission");
   });
 });

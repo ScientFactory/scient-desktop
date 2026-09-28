@@ -5,29 +5,39 @@ import type {
   ScientConversationImportPreview,
 } from "@t3tools/contracts";
 
+import { pluralize, providerDisplayName } from "./importDialog.logic";
+
+const SKIPPED_RECORD_NAMES = {
+  activity: ["work log entry", "work log entries"],
+  "question-answer": ["answered question", "answered questions"],
+  context: ["context reference", "context references"],
+} as const;
+
 function snapshotWarningLabel(warning: ConversationSnapshotWarning): string {
   const messageLocation =
     "messageN" in warning && warning.messageN !== null ? ` in message ${warning.messageN}` : "";
   switch (warning._tag) {
     case "running-turn-omitted":
-      return "A turn still running at export was left out.";
+      return "A reply that was still being written was left out.";
     case "attachment-unavailable":
-      return `Attachment “${warning.name}”${messageLocation} was unavailable.`;
+      return `Attachment “${warning.name}”${messageLocation} wasn't available.`;
     case "attachment-unsupported":
-      return `Attachment “${warning.name}”${messageLocation} was unsupported.`;
-    case "records-skipped":
-      return `${warning.count} ${warning.kind} ${
-        warning.count === 1 ? "record was" : "records were"
-      } skipped.`;
+      return `Attachment “${warning.name}”${messageLocation} isn't supported.`;
+    case "records-skipped": {
+      const [one, many] = SKIPPED_RECORD_NAMES[warning.kind];
+      return `${pluralize(warning.count, one, many)} couldn't be read and ${
+        warning.count === 1 ? "was" : "were"
+      } left out.`;
+    }
   }
 }
 
 function omissionLabel(omission: ConversationImportOmission): string {
   switch (omission._tag) {
     case "work-log-excluded":
-      return "The sender excluded the work log.";
+      return "The work log was left out when the file was made.";
     case "reasoning-excluded":
-      return "The sender excluded reasoning.";
+      return "Reasoning was left out when the file was made.";
     case "range-truncated":
       return `Messages after message ${omission.throughMessageN} were left out.`;
     case "snapshot-warning":
@@ -41,53 +51,81 @@ function warningLabel(warning: ConversationImportWarning): string {
       return warning.warning.message;
     case "newer-minor-version":
       return (
-        `This file uses format version ${warning.formatVersion.major}.${warning.formatVersion.minor}; ` +
-        "fields unknown to this Scient version were ignored."
+        "A newer version of Scient made this file. " +
+        "Anything this version doesn't recognise was skipped."
       );
   }
+}
+
+/** Keys lines by their text; a repeated line is keyed by which repeat it is. */
+function keyedLines(lines: ReadonlyArray<string>) {
+  const seen = new Map<string, number>();
+  return lines.map((text) => {
+    const repeat = (seen.get(text) ?? 0) + 1;
+    seen.set(text, repeat);
+    return { key: `${repeat}:${text}`, text };
+  });
+}
+
+const KIND_DESCRIPTION: Record<ScientConversationImportPreview["kind"], string> = {
+  scic: "A Scient conversation file with its messages and included attachments.",
+  markdown: "A Scient Markdown export: message text only. Files it mentions aren't included.",
+  document: "A Markdown document. It's attached to a new conversation, not turned into messages.",
+};
+
+/** "12 messages · 2 attachments · from Codex · GPT-5"; null for a plain document. */
+function previewSummary(
+  preview: ScientConversationImportPreview,
+  sourceModelName: string | null,
+): string | null {
+  if (preview.kind === "document") return null;
+  const { messages, attachments } = preview.counts;
+  const provider = preview.conversation.provider;
+  return [
+    pluralize(messages, "message", "messages"),
+    attachments === 0 ? "no attachments" : pluralize(attachments, "attachment", "attachments"),
+    provider ? `from ${providerDisplayName(provider)}` : null,
+    sourceModelName,
+  ]
+    .filter((part) => part !== null)
+    .join(" · ");
 }
 
 /** Server validation facts only; no imported message body is rendered before confirmation. */
 export function ConversationImportPreviewDetails({
   preview,
+  sourceModelName = preview.conversation.model,
 }: {
   readonly preview: ScientConversationImportPreview;
+  /** The source model as the destination names it; defaults to the name in the file. */
+  readonly sourceModelName?: string | null;
 }) {
+  const summary = previewSummary(preview, sourceModelName);
   return (
     <div className="space-y-3 text-sm">
       <p className="font-medium">{preview.conversation.title}</p>
-      <p>
-        {preview.kind === "scic"
-          ? "Scient conversation file: structured conversation and included attachments."
-          : preview.kind === "markdown"
-            ? "Scient Markdown transcript: message text only; referenced files do not transfer."
-            : "Ordinary Markdown: starts a conversation with the document attached, not a reconstructed transcript."}
-      </p>
-      <p>
-        {preview.counts.messages} messages · {preview.counts.attachments} attachments
-        {preview.conversation.provider ? ` · from ${preview.conversation.provider}` : ""}
-        {preview.conversation.model ? ` · ${preview.conversation.model}` : ""}
-      </p>
+      <p>{KIND_DESCRIPTION[preview.kind]}</p>
+      {summary !== null ? <p>{summary}</p> : null}
       <p className="text-muted-foreground">
-        The sender's identity is not verified. Pending actions, provider sessions and workspace
-        files do not transfer.
+        Scient can't confirm who made this file. Pending approvals, agent sessions and workspace
+        files never transfer.
       </p>
       {preview.omissions.length > 0 ? (
-        <section aria-label="Content not included" className="rounded-md border p-3">
-          <p className="font-medium">Content not included</p>
+        <section aria-label="Not included" className="rounded-md border p-3">
+          <p className="font-medium">Not included</p>
           <ul className="mt-1 list-inside list-disc space-y-1">
-            {preview.omissions.map((omission, index) => (
-              <li key={index}>{omissionLabel(omission)}</li>
+            {keyedLines(preview.omissions.map(omissionLabel)).map((line) => (
+              <li key={line.key}>{line.text}</li>
             ))}
           </ul>
         </section>
       ) : null}
       {preview.warnings.length > 0 ? (
-        <section aria-label="Import warnings" className="rounded-md border p-3" role="alert">
-          <p className="font-medium">Import warnings</p>
+        <section aria-label="Notes from the file" className="rounded-md border p-3" role="alert">
+          <p className="font-medium">Notes from the file</p>
           <ul className="mt-1 list-inside list-disc space-y-1">
-            {preview.warnings.map((warning, index) => (
-              <li key={index}>{warningLabel(warning)}</li>
+            {keyedLines(preview.warnings.map(warningLabel)).map((line) => (
+              <li key={line.key}>{line.text}</li>
             ))}
           </ul>
         </section>

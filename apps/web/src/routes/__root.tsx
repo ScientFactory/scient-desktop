@@ -182,9 +182,9 @@ function RootRouteView() {
           <GlassAppearanceSync />
           <FontAppearanceSync />
           <CustomSnoozeDialogHost />
-          {/* SCIENT-FORK: conversation export dialog. */}
+          {/* SCIENT-FORK: conversation export dialog; imports wait for setup to finish. */}
           <ConversationExportDialogHost />
-          <ConversationImportDialogHost />
+          <ConversationImportDialogHost suspended />
           <CommandPalette>
             <AppSidebarLayout>
               <Outlet />
