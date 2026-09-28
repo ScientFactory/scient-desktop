@@ -49,14 +49,20 @@ function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
+/** Characters that can continue a path segment: letters, digits, and URL-safe punctuation. */
+const PATH_CONTINUATION = String.raw`\p{L}\p{N}\p{M}._~!$&'()+,;=@%\-`;
+/** Trailing punctuation that ends a path when nothing that continues a segment follows it. */
+const TRAILING_PUNCTUATION = String.raw`.,;:)\]!'_`;
+
 /**
- * Where a root ends: at a path separator, the end of the text, whitespace, a
- * quote, or closing punctuation (`)`, `]`, `>`, `,`, `;`, `:`, `.`) that is
- * itself followed by whitespace or the end. So `/data` matches in `/data/x`,
- * "(see /data)", and "in /data." but not in `/database`, `/data.bak`,
- * `/data!archive`, or `/data(backup)/x`.
+ * Where a root ends: at a path separator, at the end of the text, before a
+ * character that cannot continue a path segment (space, `*`, `<`, a backtick,
+ * a double quote, …), or before a run of trailing punctuation that nothing
+ * continuing a segment follows. So `/data` matches in `/data/x`, `**\/data**`,
+ * `<code>/data</code>`, "(see /data),", and "in /data." but not in
+ * `/database`, `/data.bak`, `/data!archive`, or `/data(backup)/x`.
  */
-const ROOT_END = "(?=[\\\\/]|$|[\\s\"'`“”‘’«»]|[)\\]>,;:.]+(?:\\s|$))";
+const ROOT_END = String.raw`(?=[\\/]|$|[^${PATH_CONTINUATION}]|[${TRAILING_PUNCTUATION}]+(?![${PATH_CONTINUATION}]))`;
 
 /**
  * A matcher for each root that accepts either separator, so `C:\Users\a` and

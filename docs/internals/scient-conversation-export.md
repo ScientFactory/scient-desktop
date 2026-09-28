@@ -182,9 +182,10 @@ excerpts of message text and should be treated as conversation content.
 - **Clipboard delivery** returns text-only Markdown inline, up to 8 MiB of text.
 - Scient's own state and base directories (as configured and as resolved) are replaced with
   `«scient-data»` in the snapshot's text before any writer escapes it, with either path separator,
-  in any case, and only where the root's path ends: at a separator, the end, whitespace, a quote,
-  or closing punctuation followed by whitespace or the end (`/data` in `/data/x` and "(see
-  /data)", not in `/database`, `/data.bak`, or `/data(backup)/x`).
+  in any case, and only where the root's path ends: before a separator, the end, a character that
+  cannot continue a path segment (so `**/data**` and `<code>/data</code>` are redacted), or trailing
+  punctuation that nothing continuing a segment follows ("(see /data)," and "in /data."), never
+  inside a longer name (`/database`, `/data.bak`, `/data!archive`, `/data(backup)/x`).
 - The client saves a file with the shared Save Copy path: the native save dialog in desktop
   (`apps/desktop/src/scient/documentArtifacts/AssetCopy.ts`) and a download in a browser.
 
