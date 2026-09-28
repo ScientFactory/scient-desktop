@@ -11,7 +11,8 @@
  *   `resource-path`);
  * - drops every `RawBlock` and `RawInline` (an HTML `<br>` becomes a line break);
  * - resolves every `Image` itself: bundle assets by id, `data:` URIs only when
- *   the bytes are an image, relative paths only inside the allowlisted roots
+ *   the bytes are an image, captured relative paths for workspace-file export,
+ *   or live relative paths only inside the allowlisted roots for other callers
  *   (lexically and after `realpath`), regular files under the size cap whose
  *   magic bytes are an image; no URL scheme, absolute, drive, or UNC path is
  *   ever read. Anything else becomes a visible placeholder in the
@@ -41,6 +42,11 @@ import {
   type PandocDocument,
   type PandocNode,
 } from "./pandocAst.ts";
+import {
+  WORD_IMAGE_MAX_BYTES,
+  WORD_IMAGE_TOTAL_BYTES,
+  type CapturedWorkspaceImage,
+} from "./wordImageSnapshot.ts";
 
 /** Metadata keys that make citeproc or the writer open files or URLs. */
 const FILE_READING_METADATA_KEYS = [
@@ -55,8 +61,6 @@ const FILE_READING_METADATA_KEYS = [
 const KEPT_METADATA_KEYS = new Set(["title", "subtitle", "author", "date", "abstract"]);
 
 export const PLACEHOLDER_STYLE = "Scient Placeholder";
-const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
-const MAX_TOTAL_IMAGE_BYTES = 200 * 1024 * 1024;
 /** Per-image warnings beyond this collapse into one summary line. */
 const MAX_IMAGE_WARNINGS = 20;
 
@@ -139,7 +143,9 @@ type ImageRefusal =
   | "pdf-figure"
   | "svg-external-reference"
   | "too-large"
-  | "budget-exceeded";
+  | "budget-exceeded"
+  | "changed-during-capture"
+  | "not-in-snapshot";
 
 const REFUSAL_TEXT: Record<ImageRefusal, string> = {
   missing: "file not found",
@@ -155,6 +161,8 @@ const REFUSAL_TEXT: Record<ImageRefusal, string> = {
   "svg-external-reference": "the SVG refers to outside resources",
   "too-large": "larger than 25 MB",
   "budget-exceeded": "the export's image size limit was reached",
+  "changed-during-capture": "the file changed while its bytes were being captured",
+  "not-in-snapshot": "this image was not in the source snapshot; save and retry",
 };
 
 /** Loads the PNG rendering that stands in for an SVG, when there is one. */
@@ -171,6 +179,8 @@ type ImageResolution =
 
 export interface ImageResourceOptions {
   readonly assets: ReadonlyArray<DocumentAsset>;
+  /** An exact project-image capture; when present, workspace files are never reopened. */
+  readonly imageSnapshot?: ReadonlyMap<string, CapturedWorkspaceImage>;
   /** Relative image paths resolve against `baseDirectory`, only inside `allowRoots`. */
   readonly files: {
     readonly baseDirectory: string;
@@ -283,8 +293,8 @@ export const securePandocDocument = Effect.fn("scient.pandoc.securePandocDocumen
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const warnings: Array<DocumentWarning> = [];
-  const maxImageBytes = options.maxImageBytes ?? MAX_IMAGE_BYTES;
-  const maxTotalImageBytes = options.maxTotalImageBytes ?? MAX_TOTAL_IMAGE_BYTES;
+  const maxImageBytes = options.maxImageBytes ?? WORD_IMAGE_MAX_BYTES;
+  const maxTotalImageBytes = options.maxTotalImageBytes ?? WORD_IMAGE_TOTAL_BYTES;
 
   // 1. Metadata.
   for (const key of Object.keys(document.meta)) {
@@ -414,6 +424,16 @@ export const securePandocDocument = Effect.fn("scient.pandoc.securePandocDocumen
         return { ok: false, refusal: "absolute-path" };
       }
       const files = options.files;
+      if (options.imageSnapshot !== undefined) {
+        const captured = options.imageSnapshot.get(url);
+        if (captured === undefined) return { ok: false, refusal: "not-in-snapshot" };
+        if (!captured.ok) return { ok: false, refusal: captured.refusal };
+        return asImage(
+          captured.bytes,
+          "not-an-image",
+          captured.png === null ? null : () => Effect.succeed(captured.png),
+        );
+      }
       if (files === null || relative.length === 0) return { ok: false, refusal: "missing" };
       const candidate = path.join(files.baseDirectory, relative);
       const read = yield* readAllowedFile(candidate);

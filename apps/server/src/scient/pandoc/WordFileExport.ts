@@ -4,8 +4,9 @@
  * An isolated adapter until the shared project-Markdown capture (conversation
  * export PR 2) produces document bundles: it reads the saved file through the
  * workspace file system, refuses when the file on disk is not the revision the
- * editor showed, and builds a `document`-profile bundle whose relative images
- * the converter resolves itself, only inside the project root. YAML CSL
+ * editor showed, and builds a `document`-profile bundle with bounded local
+ * image bytes captured before conversion. The converter cannot reopen project
+ * images; unmatched Pandoc image URLs become visible placeholders. YAML CSL
  * references and allowlisted local bibliographies travel with the bundle.
  *
  * The Word file goes to the same temporary export location as conversation
@@ -20,6 +21,7 @@ import {
   type ScientWordDiagramPlan,
 } from "@t3tools/contracts";
 import { exportFileName } from "@scientfactory/conversation";
+import { inspectMarkdownDocument } from "@scientfactory/scient-markdown";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -38,6 +40,7 @@ import { PandocWordConverter, type WordConversionFailureReason } from "./PandocW
 import { LatexPreparationError, prepareLatexProject } from "./latexProjectPreparation.ts";
 import { citationsFromCslJson, markdownReferenceDeclarations } from "./markdownWordReferences.ts";
 import { capturedWordDiagramAssets, planWordDiagrams } from "./wordDiagramCapture.ts";
+import { captureWordImages } from "./wordImageSnapshot.ts";
 
 const MARKDOWN_FILE = /\.(?:md|markdown|mdown|mkd)$/iu;
 const isLatexPreparationError = Schema.is(LatexPreparationError);
@@ -210,6 +213,21 @@ const make = Effect.gen(function* () {
             message: cause instanceof Error ? cause.message : "The diagram capture is invalid.",
           }),
       });
+      const imageSnapshot = yield* captureWordImages(
+        inspectMarkdownDocument(read.contents).imageReferences,
+        { baseDirectory: path.dirname(target.absolutePath), allowRoots: [root] },
+      ).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+        Effect.mapError(
+          () =>
+            new ScientWordExportError({
+              reason: "too-large",
+              message: "This document names too many images for one Word export.",
+            }),
+        ),
+      );
+      yield* readSavedMarkdown(request);
       const exportId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
       const fileName = exportFileName(title, ".docx");
       const reserved = yield* files.reserve({ exportId, fileName });
@@ -217,6 +235,7 @@ const make = Effect.gen(function* () {
         .convert({
           bundle: { ...bundle, assets: [...bundle.assets, ...diagrams] },
           bibliographySources,
+          imageSnapshot,
           outputPath: reserved.path,
           files: { baseDirectory: path.dirname(target.absolutePath), allowRoots: [root] },
         })
@@ -289,6 +308,29 @@ const make = Effect.gen(function* () {
           }),
       ),
     );
+    const imageSnapshot = yield* captureWordImages(prepared.imageReferences, {
+      baseDirectory: prepared.baseDirectory,
+      allowRoots: [prepared.baseDirectory],
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+      Effect.mapError(
+        () =>
+          new ScientWordExportError({
+            reason: "too-large",
+            message: "This document names too many images for one Word export.",
+          }),
+      ),
+    );
+    const current = yield* workspaceFiles
+      .readFile({ cwd: root, relativePath: source.relativePath })
+      .pipe(Effect.mapError(unreadable));
+    if (current.truncated || current.revision !== shown.revision) {
+      return yield* reject(
+        "file-changed",
+        "The file changed on disk. Save and reopen it before exporting.",
+      );
+    }
     const sourceReal = yield* fileSystem
       .realPath(source.absolutePath)
       .pipe(Effect.mapError(unreadable));
@@ -310,7 +352,7 @@ const make = Effect.gen(function* () {
         source: {
           _tag: "workspace-file",
           cwd: root,
-          relativePath: document.relativePath,
+          relativePath: source.relativePath,
           revision: shown.revision,
         },
       },
@@ -325,6 +367,7 @@ const make = Effect.gen(function* () {
       .convert({
         bundle,
         latex: prepared,
+        imageSnapshot,
         outputPath: reserved.path,
         files: { baseDirectory: prepared.baseDirectory, allowRoots: [prepared.baseDirectory] },
       })

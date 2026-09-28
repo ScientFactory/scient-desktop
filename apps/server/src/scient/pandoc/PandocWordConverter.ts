@@ -53,6 +53,7 @@ import {
 import { securePandocDocument } from "./pandocResources.ts";
 import { scientReferenceDocument } from "./scientReferenceDocument.ts";
 import type { PreparedLatexProject } from "./latexProjectPreparation.ts";
+import type { CapturedWorkspaceImage } from "./wordImageSnapshot.ts";
 
 /**
  * Scient's document and chat profiles, read with CommonMark plus exactly the
@@ -121,11 +122,13 @@ export interface WordConversionInput {
   readonly latex?: PreparedLatexProject;
   /** Where the Word file lands; written as `<outputPath>.partial` and renamed. */
   readonly outputPath: string;
-  /** For bundles that name workspace images by relative path. */
+  /** For callers without an image snapshot that resolve relative files during conversion. */
   readonly files?: {
     readonly baseDirectory: string;
     readonly allowRoots: ReadonlyArray<string>;
   } | null;
+  /** Exact workspace image bytes captured with the source before conversion. */
+  readonly imageSnapshot?: ReadonlyMap<string, CapturedWorkspaceImage>;
   /** A CSL style for the bibliography; Pandoc's built-in Chicago author-date otherwise. */
   readonly cslStyle?: string | null;
   /** Saved, project-allowlisted BibTeX bytes; Pandoc reads them from stdin. */
@@ -340,7 +343,8 @@ const make = Effect.gen(function* () {
         const citations = applyCitations(document.blocks, bibliography);
         const security = yield* securePandocDocument(document, {
           assets: input.bundle.assets,
-          files: input.files ?? null,
+          files: input.imageSnapshot === undefined ? (input.files ?? null) : null,
+          ...(input.imageSnapshot === undefined ? {} : { imageSnapshot: input.imageSnapshot }),
         });
         const direction = applyDirection(document, input.bundle.metadata.direction);
         if (input.bundle.metadata.language !== null) {

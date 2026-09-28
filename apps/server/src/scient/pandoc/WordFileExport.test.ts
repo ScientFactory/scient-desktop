@@ -28,6 +28,7 @@ import {
   pandocBinaryForTests,
   readDocx,
   PNG_BYTES,
+  PNG_BYTES_ALT,
 } from "./pandocTestSupport.ts";
 
 const binary = pandocBinaryForTests();
@@ -35,6 +36,7 @@ const binary = pandocBinaryForTests();
 const converterLayer = (
   seen: Array<WordConversionInput>,
   failure: WordConversionFailureReason | null = null,
+  beforeConvert?: (input: WordConversionInput) => void,
 ) =>
   Layer.effect(
     PandocWordConverter,
@@ -44,6 +46,7 @@ const converterLayer = (
         availability: Effect.succeed({ available: true, reason: null, installable: false }),
         convert: (input) =>
           Effect.gen(function* () {
+            beforeConvert?.(input);
             seen.push(input);
             if (failure !== null) {
               return yield* new WordConversionError({ reason: failure, message: "Word said no." });
@@ -86,6 +89,7 @@ const run = <A, E>(
     readonly seen?: Array<WordConversionInput>;
     readonly failure?: WordConversionFailureReason;
     readonly realConverter?: boolean;
+    readonly beforeConvert?: (input: WordConversionInput) => void;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -108,7 +112,7 @@ const run = <A, E>(
           ),
           Layer.provideMerge(NodeServices.layer),
         )
-      : converterLayer(options.seen ?? [], options.failure ?? null);
+      : converterLayer(options.seen ?? [], options.failure ?? null, options.beforeConvert);
     const layer = wordFileExportLayer.pipe(
       Layer.provide(ConversationExportFiles.layer),
       Layer.provide(words),
@@ -341,8 +345,9 @@ describe("WordFileExport", () => {
         Effect.gen(function* () {
           NodeFS.writeFileSync(
             NodePath.join(project, "notes", "main.tex"),
-            "\\begin{document}\\input{section}\\end{document}",
+            "\\begin{document}\\input{section}\\includegraphics{plot.png}\\end{document}",
           );
+          NodeFS.writeFileSync(NodePath.join(project, "notes", "plot.png"), PNG_BYTES);
           NodeFS.writeFileSync(NodePath.join(project, "notes", "section.tex"), "A nested section.");
           NodeFS.writeFileSync(NodePath.join(project, "notes", "unrelated.tex"), "Unrelated.");
           const revision = yield* revisionOf("notes/main.tex");
@@ -354,6 +359,9 @@ describe("WordFileExport", () => {
           });
           expect(produced.fileName).toBe("main.docx");
           expect(seen[0]?.latex?.source).toContain("A nested section.");
+          const figure = seen[0]?.imageSnapshot?.get("plot.png");
+          expect(figure?.ok).toBe(true);
+          if (figure?.ok) expect(figure.bytes).toEqual(PNG_BYTES);
           expect(NodeFS.realpathSync(seen[0]!.files!.allowRoots[0]!)).toBe(
             NodeFS.realpathSync(NodePath.join(project, "notes")),
           );
@@ -412,6 +420,42 @@ describe("WordFileExport", () => {
       { seen },
     );
   });
+
+  it.live(
+    "captures Markdown and image bytes before conversion and keeps the source revision honest",
+    () => {
+      const seen: Array<WordConversionInput> = [];
+      let sourcePath = "";
+      let imagePath = "";
+      return run(
+        ({ service, project, revisionOf }) =>
+          Effect.gen(function* () {
+            sourcePath = NodePath.join(project, "notes", "report.md");
+            imagePath = NodePath.join(project, "notes", "plot.png");
+            NodeFS.writeFileSync(imagePath, PNG_BYTES);
+            const revision = yield* revisionOf("notes/report.md");
+            yield* service.export({ cwd: project, relativePath: "notes/report.md", revision });
+            expect(seen[0]?.bundle.markdown).toContain("![plot](plot.png)");
+            const captured = seen[0]?.imageSnapshot?.get("plot.png");
+            expect(captured?.ok).toBe(true);
+            if (captured?.ok) expect(captured.bytes).toEqual(PNG_BYTES);
+            expect(NodeFS.readFileSync(imagePath)).toEqual(Buffer.from(PNG_BYTES_ALT));
+            const changed = yield* service
+              .export({ cwd: project, relativePath: "notes/report.md", revision })
+              .pipe(Effect.flip);
+            expect(changed._tag === "ScientWordExportError" && changed.reason).toBe("file-changed");
+            expect(NodeFS.readFileSync(sourcePath, "utf8")).toContain("Changed after capture");
+          }),
+        {
+          seen,
+          beforeConvert: () => {
+            NodeFS.writeFileSync(imagePath, PNG_BYTES_ALT);
+            NodeFS.writeFileSync(sourcePath, "# Changed after capture\n\n![plot](plot.png)\n");
+          },
+        },
+      );
+    },
+  );
 
   it.live("refuses a file that changed since the editor showed it", () =>
     run(({ service, project }) =>

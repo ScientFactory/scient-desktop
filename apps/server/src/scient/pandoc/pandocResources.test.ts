@@ -16,6 +16,7 @@ import {
   type ImageResourceOptions,
 } from "./pandocResources.ts";
 import { PNG_BYTES, PNG_BYTES_ALT, SVG_BYTES, bytesAsset } from "./pandocTestSupport.ts";
+import { captureWordImages } from "./wordImageSnapshot.ts";
 
 const serialize = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -79,6 +80,100 @@ describe("sniffMediaType", () => {
 });
 
 describe("securePandocDocument", () => {
+  it.effect(
+    "uses captured image bytes after a workspace edit and never reads an uncaptured path",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const project = yield* fs.makeTempDirectoryScoped({ prefix: "scient-word-snapshot-" });
+        const imagePath = NodePath.join(project, "plot.png");
+        NodeFS.writeFileSync(imagePath, PNG_BYTES);
+        const imageSnapshot = yield* captureWordImages(["plot.png"], {
+          baseDirectory: project,
+          allowRoots: [project],
+        });
+        NodeFS.writeFileSync(imagePath, PNG_BYTES_ALT);
+        NodeFS.writeFileSync(NodePath.join(project, "later.png"), PNG_BYTES_ALT);
+        const document = doc([para([image("plot.png")]), para([image("later.png")])]);
+        const report = yield* securePandocDocument(document, {
+          assets: [],
+          files: { baseDirectory: project, allowRoots: [project] },
+          imageSnapshot,
+        });
+        expect(imageUrl(firstInline(document)).startsWith("data:image/png;base64,")).toBe(true);
+        expect(imageUrl(firstInline(document))).toBe(
+          `data:image/png;base64,${Buffer.from(PNG_BYTES).toString("base64")}`,
+        );
+        expect(firstInline(document, 1).t).toBe("Span");
+        expect(report.embeddedImages).toBe(1);
+        expect(report.placeholders).toBe(1);
+        expect(report.warnings.map((warning) => warning.message).join("\n")).toContain(
+          "not in the source snapshot; save and retry",
+        );
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("bounds image capture and refuses paths outside the allowed root", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "scient-word-image-limits-" });
+      const project = NodePath.join(directory, "project");
+      NodeFS.mkdirSync(project);
+      NodeFS.writeFileSync(NodePath.join(directory, "outside.png"), PNG_BYTES);
+      NodeFS.writeFileSync(NodePath.join(project, "large.png"), Buffer.alloc(25 * 1024 * 1024 + 1));
+      const captured = yield* captureWordImages(["../outside.png", "large.png"], {
+        baseDirectory: project,
+        allowRoots: [project],
+      });
+      expect(captured.get("../outside.png")).toEqual({
+        ok: false,
+        refusal: "outside-allowlist",
+      });
+      expect(captured.get("large.png")).toEqual({ ok: false, refusal: "too-large" });
+      const excessive = yield* captureWordImages(
+        Array.from({ length: 257 }, (_, index) => `figure-${index}.png`),
+        { baseDirectory: project, allowRoots: [project] },
+      ).pipe(Effect.flip);
+      expect(excessive._tag).toBe("WordImageSnapshotError");
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("refuses an intermediate symlink swapped after path resolution", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "scient-word-path-race-" });
+      const project = NodePath.join(directory, "project");
+      const figures = NodePath.join(project, "figures");
+      const outside = NodePath.join(directory, "outside");
+      NodeFS.mkdirSync(figures, { recursive: true });
+      NodeFS.mkdirSync(outside);
+      NodeFS.writeFileSync(NodePath.join(figures, "plot.png"), PNG_BYTES);
+      NodeFS.writeFileSync(NodePath.join(outside, "plot.png"), PNG_BYTES_ALT);
+      const candidate = NodePath.join(figures, "plot.png");
+      const swapping = {
+        ...fs,
+        realPath: (file: string) =>
+          fs.realPath(file).pipe(
+            Effect.tap(() =>
+              Effect.sync(() => {
+                if (file !== candidate) return;
+                NodeFS.renameSync(figures, NodePath.join(project, "original"));
+                NodeFS.symlinkSync(outside, figures);
+              }),
+            ),
+          ),
+      };
+      const captured = yield* captureWordImages(["figures/plot.png"], {
+        baseDirectory: project,
+        allowRoots: [project],
+      }).pipe(Effect.provideService(FileSystem.FileSystem, swapping));
+      expect(captured.get("figures/plot.png")).toEqual({
+        ok: false,
+        refusal: "changed-during-capture",
+      });
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.effect("keeps presentational metadata and deletes every file-reading key", () =>
     Effect.gen(function* () {
       const meta: PandocDocument["meta"] = {

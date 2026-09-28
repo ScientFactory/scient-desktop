@@ -104,6 +104,7 @@ export interface PreparedLatexProject {
   readonly source: string;
   readonly baseDirectory: string;
   readonly files: ReadonlyArray<string>;
+  readonly imageReferences: ReadonlyArray<string>;
   readonly bibliography: ReadonlyArray<{ readonly contents: string }>;
   readonly warnings: ReadonlyArray<DocumentWarning>;
 }
@@ -138,6 +139,7 @@ export const prepareLatexProject = Effect.fn("scient.pandoc.prepareLatexProject"
   const bibliography: Array<{ contents: string }> = [];
   const graphicPaths = [""];
   const files = new Set<string>();
+  const imageReferences = new Set<string>();
   let totalBytes = 0;
   let bibliographyBytes = 0;
   let macroCount = 0;
@@ -281,6 +283,7 @@ export const prepareLatexProject = Effect.fn("scient.pandoc.prepareLatexProject"
               .relative(baseDirectory, resolved.lexical)
               .split(path.sep)
               .join("/");
+            imageReferences.add(relative);
             edits.push({ start: argumentOffset, end: arg.end, text: `{${relative}}` });
           } else {
             warn(
@@ -333,6 +336,7 @@ export const prepareLatexProject = Effect.fn("scient.pandoc.prepareLatexProject"
     source,
     baseDirectory,
     files: [...files],
+    imageReferences: [...imageReferences],
     bibliography,
     warnings,
   } satisfies PreparedLatexProject;
