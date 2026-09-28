@@ -395,7 +395,8 @@ describe("ConversationExportService", () => {
       const normalize = (text: string) =>
         text
           .replace(/export=[a-f0-9]+/gu, "export=V")
-          .replace(/scient-export: [a-f0-9]+/u, "scient-export: V")
+          // YAML quotes a hex export id when it would otherwise parse as a number.
+          .replace(/scient-export: "?[a-f0-9]+"?/u, "scient-export: V")
           .replace(/exported: \S+/u, "exported: T");
       assert.notStrictEqual(first, second);
       assert.strictEqual(normalize(second), normalize(first));
