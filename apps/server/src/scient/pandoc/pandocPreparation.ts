@@ -31,6 +31,7 @@ import {
   type DocumentWarning,
 } from "@t3tools/contracts";
 import * as Predicate from "effect/Predicate";
+import { parseFragment, type DefaultTreeAdapterMap } from "parse5";
 
 import {
   attr,
@@ -81,6 +82,31 @@ const MARKER = /^<!-- scient:(message|part)((?: [a-z-]+=[^\s=]+)*) -->\s*$/u;
 const DETAILS_OPEN = /^<details\b[^>]*>/iu;
 const DETAILS_CLOSE = /<\/details>\s*$/iu;
 const SUMMARY = /<summary\b[^>]*>([\s\S]*?)<\/summary>/iu;
+const DETAILS_BLOCK_TAGS = new Set([
+  "blockquote",
+  "br",
+  "dd",
+  "div",
+  "dl",
+  "dt",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "li",
+  "ol",
+  "p",
+  "pre",
+  "section",
+  "table",
+  "td",
+  "th",
+  "tr",
+  "ul",
+]);
+const DETAILS_OMIT_TAGS = new Set(["iframe", "object", "script", "style", "svg", "template"]);
 const ALERT_KINDS = new Set(["note", "tip", "important", "warning", "caution"]);
 /** Tables this wide get proportional columns; narrower ones fit as Pandoc lays them out. */
 const WIDE_TABLE_COLUMNS = 6;
@@ -108,6 +134,43 @@ function decodeHtmlText(html: string): string {
       )[lower]!;
     })
     .trim();
+}
+
+/** Retains visible text inside a raw HTML details node as safe Word paragraphs. */
+function detailsBodyBlocks(html: string): Array<PandocNode> {
+  type HtmlNode = DefaultTreeAdapterMap["node"];
+  const fragment = parseFragment(html);
+  const details = fragment.childNodes.find(
+    (node) => "tagName" in node && node.tagName.toLowerCase() === "details",
+  );
+  if (details === undefined || !("childNodes" in details)) return [];
+  const paragraphs: Array<PandocNode> = [];
+  let pending = "";
+  const flush = () => {
+    const text = pending.replace(/\s+/gu, " ").trim();
+    if (text) paragraphs.push(para(textInlines(text)));
+    pending = "";
+  };
+  const queue: Array<{ node: HtmlNode; closing: boolean }> = details.childNodes
+    .filter((node) => !("tagName" in node && node.tagName.toLowerCase() === "summary"))
+    .toReversed()
+    .map((node) => ({ node, closing: false }));
+  while (queue.length > 0) {
+    const { node, closing } = queue.pop()!;
+    if (node.nodeName === "#text" && "value" in node) {
+      pending += node.value;
+      continue;
+    }
+    if (!("tagName" in node) || !("childNodes" in node)) continue;
+    const tag = node.tagName.toLowerCase();
+    if (DETAILS_OMIT_TAGS.has(tag)) continue;
+    if (DETAILS_BLOCK_TAGS.has(tag)) flush();
+    if (closing) continue;
+    queue.push({ node, closing: true });
+    for (const child of node.childNodes.toReversed()) queue.push({ node: child, closing: false });
+  }
+  flush();
+  return paragraphs;
 }
 
 function rawHtml(block: PandocNode): string | null {
@@ -284,7 +347,7 @@ export function applyScientStructure(
           stack.push({
             kind: pendingPart,
             summary: decodeHtmlText(SUMMARY.exec(trimmed)?.[1] ?? ""),
-            blocks: [],
+            blocks: detailsBodyBlocks(trimmed),
           });
           pendingPart = null;
           if (DETAILS_CLOSE.test(trimmed)) close();

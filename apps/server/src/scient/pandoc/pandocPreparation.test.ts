@@ -140,6 +140,31 @@ describe("applyScientStructure", () => {
     expect(outer.map((block) => block.t)).toEqual(["Para", "Div", "Para"]);
   });
 
+  it("keeps the body of a complete raw HTML details block", () => {
+    const blocks: Array<PandocNode> = [
+      raw("<details><summary>Result</summary><p>Important finding</p></details>"),
+    ];
+    applyScientStructure(blocks, { profile: "document", assets: [] });
+    expect(blocks).toHaveLength(1);
+    const children = (blocks[0]!.c as [unknown, Array<PandocNode>])[1];
+    expect(children.map((block) => inlineText(block.c))).toEqual(["Result", "Important finding"]);
+  });
+
+  it("preserves visible details paragraphs while omitting active HTML", () => {
+    const blocks: Array<PandocNode> = [
+      raw(
+        "<details><summary>Result</summary><p>Important <em>finding</em></p><script>hidden()</script><p>Next step</p></details>",
+      ),
+    ];
+    applyScientStructure(blocks, { profile: "document", assets: [] });
+    const children = (blocks[0]!.c as [unknown, Array<PandocNode>])[1];
+    expect(children.map((block) => inlineText(block.c))).toEqual([
+      "Result",
+      "Important finding",
+      "Next step",
+    ]);
+  });
+
   it("maps alerts and task lists explicitly", () => {
     const blocks: Array<PandocNode> = [
       div(attr(["warning"]), [

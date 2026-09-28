@@ -2,7 +2,9 @@ import { describe, expect, it } from "@effect/vitest";
 import { beforeEach } from "vite-plus/test";
 
 import {
+  SCIENT_ASSET_URL_PLACEHOLDER,
   STORAGE_PATH_PLACEHOLDER,
+  redactScientAssetUrls,
   redactSnapshotStoragePaths,
   redactStoragePaths,
 } from "./storagePaths.ts";
@@ -21,6 +23,27 @@ const POSIX_ROOT = "/Users/alice_name/*scient*/userdata";
 const WINDOWS_ROOT = "C:\\Users\\bob_smith\\AppData\\Roaming\\Scient";
 
 describe("storage path redaction", () => {
+  it("removes signed Scient asset capabilities even without configured storage roots", () => {
+    const capability = "eyJwYXRoIjoiL1VzZXJzL2FsaWNlL3NlY3JldCJ9.signature";
+    const absolute = `http://127.0.0.1:3773/api/assets/${capability}/report.html`;
+    const relative = `/api/assets/${capability}/report.html`;
+    expect(redactScientAssetUrls(`Open ${absolute} and ${relative}`)).toBe(
+      `Open ${SCIENT_ASSET_URL_PLACEHOLDER} and ${SCIENT_ASSET_URL_PLACEHOLDER}`,
+    );
+    expect(
+      redactScientAssetUrls(`https://scient.example/api%2Fassets%2F${capability}%2Freport.html`),
+    ).toBe(SCIENT_ASSET_URL_PLACEHOLDER);
+    expect(redactScientAssetUrls("https://example.org/ordinary/page")).toBe(
+      "https://example.org/ordinary/page",
+    );
+    const snapshot = snapshotOf(
+      thread({ messages: [message({ id: "m1", role: "user", text: absolute })] }),
+    );
+    expect(redactSnapshotStoragePaths(snapshot, []).messages[0]?.text).toBe(
+      SCIENT_ASSET_URL_PLACEHOLDER,
+    );
+  });
+
   it("finds a root with either separator and Windows case", () => {
     expect(redactStoragePaths(`${POSIX_ROOT}/logs/a.log`, [POSIX_ROOT])).toBe(
       `${STORAGE_PATH_PLACEHOLDER}/logs/a.log`,

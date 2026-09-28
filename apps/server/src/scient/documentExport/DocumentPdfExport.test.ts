@@ -9,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
@@ -207,6 +208,42 @@ describe("Markdown PDF preparation", () => {
 });
 
 describe("Markdown image budget", () => {
+  const bundleWithImageChangedAfterStat = (
+    change: (imagePath: string) => Promise<void>,
+    budget: { maxImageBytes: number; maxTotalBytes: number; maxImages: number },
+  ) =>
+    Effect.gen(function* () {
+      const root = yield* Effect.promise(() =>
+        makeFixtureDirectory(fixtures, "scient-document-pdf-image-race-"),
+      );
+      const imagePath = yield* Effect.promise(async () => {
+        await writeFixtureFile(root, "report.md", "![Image](image.png)\n");
+        return writeFixtureFile(root, "image.png", PNG);
+      });
+      const file = yield* readProjectMarkdownFile(root, "report.md");
+      const fileSystem = yield* FileSystem.FileSystem;
+      let changed = false;
+      const racingFileSystem = FileSystem.FileSystem.of({
+        ...fileSystem,
+        stat: (candidate) =>
+          fileSystem.stat(candidate).pipe(
+            Effect.tap(() =>
+              candidate === imagePath && !changed
+                ? Effect.promise(() => {
+                    changed = true;
+                    return change(imagePath);
+                  })
+                : Effect.void,
+            ),
+          ),
+      });
+      const bundle = yield* buildMarkdownFileBundle({ workspaceRoot: root, file, budget }).pipe(
+        Effect.provideService(FileSystem.FileSystem, racingFileSystem),
+      );
+      expect(changed).toBe(true);
+      return bundle;
+    });
+
   const bundleFor = (
     markdown: string,
     budget: { maxImageBytes: number; maxTotalBytes: number; maxImages: number },
@@ -263,6 +300,37 @@ describe("Markdown image budget", () => {
         maxImages: 10,
       });
       expect(single.assets[0]?.content).toEqual({ _tag: "unavailable", reason: "too-large" });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("refuses an image that grows beyond the per-image or aggregate limit after stat", () =>
+    Effect.gen(function* () {
+      for (const [maxImageBytes, maxTotalBytes] of [
+        [PNG.byteLength + 1, 1_000],
+        [1_000, PNG.byteLength + 1],
+      ] as const) {
+        const bundle = yield* bundleWithImageChangedAfterStat(
+          (imagePath) => NodeFSP.appendFile(imagePath, new Uint8Array(16)),
+          { maxImageBytes, maxTotalBytes, maxImages: 10 },
+        );
+        expect(bundle.assets[0]?.content).toEqual({ _tag: "unavailable", reason: "unreadable" });
+        expect(bundle.warnings).toHaveLength(1);
+      }
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("refuses a same-size replacement between path stat and fd open", () =>
+    Effect.gen(function* () {
+      const bundle = yield* bundleWithImageChangedAfterStat(
+        async (imagePath) => {
+          const replacement = `${imagePath}.replacement`;
+          await NodeFSP.writeFile(replacement, new Uint8Array(PNG.byteLength).fill(0x42));
+          await NodeFSP.rename(replacement, imagePath);
+        },
+        { maxImageBytes: 1_000, maxTotalBytes: 1_000, maxImages: 10 },
+      );
+      expect(bundle.assets[0]?.content).toEqual({ _tag: "unavailable", reason: "unreadable" });
+      expect(bundle.warnings).toHaveLength(1);
     }).pipe(Effect.provide(layer)),
   );
 });

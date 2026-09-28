@@ -9,6 +9,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 
 import { PandocManagedTool } from "./PandocManagedTool.ts";
+import { decodePandocDocument, inlineText, toPandocDocument } from "./pandocAst.ts";
 import type { PandocCommand } from "./pandocProcess.ts";
 import {
   MAX_WORD_SOURCE_BYTES,
@@ -156,6 +157,53 @@ describe("PandocWordConverter", () => {
           ),
       );
       expect(outcomes).toHaveLength(4);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("includes writer-pass warnings in the Word document's conversion notes", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "scient-word-writer-note-" });
+      const fake = fakePandoc(NodePath.join(directory, "pid"));
+      return yield* run(withCommand(fake("warn-writer")), ({ converter, directory }) =>
+        Effect.gen(function* () {
+          const outputPath = NodePath.join(directory, "writer-note.docx");
+          const result = yield* converter.convert({
+            bundle: makeBundle({ markdown: "Body" }),
+            outputPath,
+          });
+          const document = toPandocDocument(
+            yield* decodePandocDocument(NodeFS.readFileSync(outputPath, "utf8")),
+          );
+          expect(inlineText(document.blocks)).toContain("Conversion notes");
+          expect(inlineText(document.blocks).match(/Conversion notes/gu)).toHaveLength(1);
+          expect(inlineText(document.blocks)).toContain("Pandoc reported: Writer pass note.");
+          expect(result.warnings.map((warning) => warning.message)).toContain(
+            "Pandoc reported: Writer pass note.",
+          );
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("does not save a Word file when writer warnings change on the bounded retry", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "scient-word-changing-note-" });
+      const pidFile = NodePath.join(directory, "pid");
+      const fake = fakePandoc(pidFile);
+      return yield* run(withCommand(fake("warn-writer-changing")), ({ converter, directory }) =>
+        Effect.gen(function* () {
+          const outputPath = NodePath.join(directory, "changing-note.docx");
+          const error = yield* converter
+            .convert({ bundle: makeBundle({ markdown: "Body" }), outputPath })
+            .pipe(Effect.flip);
+          expect(error.reason).toBe("failed");
+          expect(NodeFS.existsSync(outputPath)).toBe(false);
+          expect(NodeFS.existsSync(`${outputPath}.partial`)).toBe(false);
+          expect(NodeFS.readFileSync(`${pidFile}.count`, "utf8")).toBe("2");
+        }),
+      );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 });

@@ -374,11 +374,7 @@ const make = Effect.gen(function* () {
           ...direction.warnings,
           ...pandocWarnings(read.warnings),
         ];
-        document.blocks.push(
-          ...conversionNotesBlocks([...unlistedBundleWarnings, ...conversionWarnings]),
-        );
-        // Scient's own page layout, added after the security pass removed the document's raw nodes.
-        const landscapeTables = landscapeWideTables(document.blocks, direction.rtlDocument);
+        const preparedBlocks = [...document.blocks];
 
         // 3. Write: only the files named below are readable inside the sandbox.
         const args = ["--sandbox", "-f", "json", "-t", "docx", "--reference-doc=reference.docx"];
@@ -409,31 +405,53 @@ const make = Effect.gen(function* () {
             args.push(`--bibliography=${name}`);
           }
         }
-        const written = yield* run(
-          args,
-          new TextEncoder().encode(yield* encodeJson(document).pipe(Effect.orDie)),
-          writeLimits,
-          partialPath,
-        );
-        yield* fileSystem.rename(partialPath, input.outputPath);
-
-        return {
-          byteLength: written.stdoutBytes,
-          warnings: [
-            ...input.bundle.warnings,
-            ...conversionWarnings,
-            ...pandocWarnings(written.warnings),
-          ],
-          summary: {
-            embeddedImages: security.embeddedImages,
-            placeholders: security.placeholders,
-            workLogBlocks: structure.workLogBlocks,
-            reasoningBlocks: structure.reasoningBlocks,
-            citedReferences: cited.length,
-            rtlDocument: direction.rtlDocument,
-            landscapeTables,
-          },
-        } satisfies WordConversionResult;
+        const notes = [...unlistedBundleWarnings, ...conversionWarnings];
+        const writerWarnings: Array<DocumentWarning> = [];
+        // The writer reports warnings only after producing bytes. Rebuild once with those notes.
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          document.blocks = [...preparedBlocks, ...conversionNotesBlocks(notes)];
+          // Scient's own page layout runs after the security pass removed source raw nodes.
+          const landscapeTables = landscapeWideTables(document.blocks, direction.rtlDocument);
+          const written = yield* run(
+            args,
+            new TextEncoder().encode(yield* encodeJson(document).pipe(Effect.orDie)),
+            writeLimits,
+            partialPath,
+          );
+          const newlyReported = pandocWarnings(written.warnings).filter(
+            (warning) => !notes.some((note) => note.message === warning.message),
+          );
+          if (newlyReported.length === 0) {
+            yield* fileSystem.rename(partialPath, input.outputPath);
+            return {
+              byteLength: written.stdoutBytes,
+              warnings: [...input.bundle.warnings, ...conversionWarnings, ...writerWarnings],
+              summary: {
+                embeddedImages: security.embeddedImages,
+                placeholders: security.placeholders,
+                workLogBlocks: structure.workLogBlocks,
+                reasoningBlocks: structure.reasoningBlocks,
+                citedReferences: cited.length,
+                rtlDocument: direction.rtlDocument,
+                landscapeTables,
+              },
+            } satisfies WordConversionResult;
+          }
+          if (attempt === 1) {
+            return yield* new WordConversionError({
+              reason: "failed",
+              message:
+                "Pandoc reported new warnings while writing the Word file. No file was saved.",
+            });
+          }
+          writerWarnings.push(...newlyReported);
+          notes.push(...newlyReported);
+          yield* fileSystem.remove(partialPath, { force: true });
+        }
+        return yield* new WordConversionError({
+          reason: "failed",
+          message: "Pandoc could not finish the Word file.",
+        });
       }),
     ).pipe(
       Effect.catchTag("PlatformError", (cause) =>

@@ -21,6 +21,7 @@ import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 
 import { boundText, type TextBounds } from "./boundedText.ts";
 import { escapeMarkdownText } from "./markdownAst.ts";
+import { redactScientAssetUrls } from "./storagePaths.ts";
 
 const CONTEXT_TEXT_BOUNDS: TextBounds = {
   headLines: 60,
@@ -119,8 +120,8 @@ function projectRecord(
       return {
         _tag: "page-element",
         ...base,
-        pageUrl: record.pageUrl,
-        pageTitle: record.pageTitle,
+        pageUrl: redactScientAssetUrls(record.pageUrl),
+        pageTitle: record.pageTitle === null ? null : redactScientAssetUrls(record.pageTitle),
         tagName: record.tagName,
         selector: record.selector,
       };
@@ -128,8 +129,8 @@ function projectRecord(
       return {
         _tag: "preview-annotation",
         ...base,
-        pageUrl: record.pageUrl,
-        pageTitle: record.pageTitle,
+        pageUrl: redactScientAssetUrls(record.pageUrl),
+        pageTitle: record.pageTitle === null ? null : redactScientAssetUrls(record.pageTitle),
         comment: boundText(record.comment, CONTEXT_TEXT_BOUNDS),
         targetSummary: record.targetSummary,
       };

@@ -7,6 +7,25 @@
 import type { ConversationSnapshotV1 } from "@t3tools/contracts";
 
 export const STORAGE_PATH_PLACEHOLDER = "«scient-data»";
+export const SCIENT_ASSET_URL_PLACEHOLDER = "«scient-protected-asset»";
+
+const WEB_URL_PATTERN = /\bhttps?:\/\/[^\s<>"'`\)\]\}]+/giu;
+const ASSET_PATH_TEST = /\/api\/assets\/[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?:\/|$)/iu;
+const RELATIVE_ASSET_PATTERN =
+  /\/api\/assets\/[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?:\/[^\s<>"'`\)\]\}]*)?/giu;
+
+/** Asset links contain a signed bearer capability and encoded file claims. */
+export function redactScientAssetUrls(text: string): string {
+  const withoutAbsoluteUrls = text.replace(WEB_URL_PATTERN, (candidate) => {
+    try {
+      const path = decodeURIComponent(new URL(candidate).pathname);
+      return ASSET_PATH_TEST.test(path) ? SCIENT_ASSET_URL_PLACEHOLDER : candidate;
+    } catch {
+      return candidate;
+    }
+  });
+  return withoutAbsoluteUrls.replace(RELATIVE_ASSET_PATTERN, SCIENT_ASSET_URL_PLACEHOLDER);
+}
 
 function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
@@ -31,7 +50,7 @@ function rootPatterns(roots: ReadonlyArray<string>): ReadonlyArray<RegExp> {
 }
 
 export function redactStoragePaths(text: string, roots: ReadonlyArray<string>): string {
-  let result = text;
+  let result = redactScientAssetUrls(text);
   for (const pattern of rootPatterns(roots))
     result = result.replace(pattern, STORAGE_PATH_PLACEHOLDER);
   return result;
@@ -39,7 +58,7 @@ export function redactStoragePaths(text: string, roots: ReadonlyArray<string>): 
 
 function redactValue(value: unknown, patterns: ReadonlyArray<RegExp>): unknown {
   if (typeof value === "string") {
-    let result = value;
+    let result = redactScientAssetUrls(value);
     for (const pattern of patterns) result = result.replace(pattern, STORAGE_PATH_PLACEHOLDER);
     return result;
   }
@@ -62,7 +81,6 @@ export function redactSnapshotStoragePaths(
   roots: ReadonlyArray<string>,
 ): ConversationSnapshotV1 {
   const patterns = rootPatterns(roots);
-  if (patterns.length === 0) return snapshot;
   const { captured, contentDigest, ...content } = snapshot;
   return {
     ...(redactValue(content, patterns) as Omit<

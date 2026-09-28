@@ -97,6 +97,21 @@ const largeBundle = () =>
   });
 
 describe.skipIf(binary === null)("Word export with the real Pandoc (local integration)", () => {
+  it.live("keeps text inside a complete raw HTML details block in the Word file", () =>
+    withConverter(({ converter, directory }) =>
+      Effect.gen(function* () {
+        const { docx } = yield* convertTo(converter, directory, "details-body", {
+          bundle: makeBundle({
+            markdown: "<details><summary>Result</summary><p>Important finding</p></details>",
+          }),
+        });
+        const xml = docx.text("word/document.xml");
+        expect(xml).toContain("Result");
+        expect(xml).toContain("Important finding");
+      }),
+    ),
+  );
+
   it.live("converts a nested LaTeX project with an embedded figure and local bibliography", () =>
     withConverter(({ converter, directory }) =>
       Effect.gen(function* () {

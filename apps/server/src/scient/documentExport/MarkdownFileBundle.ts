@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Image reads use an open fd with a hard byte cap.
+import * as NodeFS from "node:fs";
+
 import {
   inspectMarkdownDocument,
   resolveMarkdownDocumentRelativePath,
@@ -156,6 +159,9 @@ type LocatedImage =
       readonly fileName: string;
       readonly mediaType: string;
       readonly size: number;
+      readonly dev: number;
+      readonly ino: number | null;
+      readonly mtimeMs: number | null;
     }
   | {
       readonly _tag: "unavailable";
@@ -215,8 +221,73 @@ const locateWorkspaceImage = Effect.fn("MarkdownFileBundle.locateWorkspaceImage"
     fileName,
     mediaType,
     size: Number(info.value.size),
+    dev: info.value.dev,
+    ino: Option.isSome(info.value.ino) ? info.value.ino.value : null,
+    mtimeMs: Option.isSome(info.value.mtime) ? info.value.mtime.value.getTime() : null,
   } satisfies LocatedImage;
 });
+
+type ImageRead =
+  | { readonly _tag: "bytes"; readonly bytes: Uint8Array }
+  | { readonly _tag: "too-large"; readonly limit: "image" | "total" }
+  | { readonly _tag: "unreadable" };
+
+/** Reads at most the remaining budget plus one byte, from the same verified inode. */
+const readLocatedImage = (
+  located: Extract<LocatedImage, { readonly _tag: "located" }>,
+  imageLimit: number,
+  totalLimit: number,
+) =>
+  Effect.tryPromise({
+    try: async (): Promise<ImageRead> => {
+      const handle = await NodeFS.promises.open(
+        located.canonicalPath,
+        NodeFS.constants.O_RDONLY | (NodeFS.constants.O_NOFOLLOW ?? 0),
+      );
+      try {
+        const before = await handle.stat();
+        if (
+          !before.isFile() ||
+          before.dev !== located.dev ||
+          (located.ino !== null && before.ino !== located.ino) ||
+          before.size !== located.size ||
+          (located.mtimeMs !== null && Math.trunc(before.mtimeMs) !== located.mtimeMs)
+        )
+          return { _tag: "unreadable" };
+        const limit = Math.min(imageLimit, totalLimit);
+        const buffer = Buffer.allocUnsafe(Math.min(before.size, limit) + 1);
+        let length = 0;
+        while (length < buffer.byteLength) {
+          const { bytesRead } = await handle.read(buffer, length, buffer.byteLength - length, null);
+          if (bytesRead === 0) break;
+          length += bytesRead;
+        }
+        if (length > imageLimit) return { _tag: "too-large", limit: "image" };
+        if (length > totalLimit) return { _tag: "too-large", limit: "total" };
+        const after = await handle.stat();
+        const current = await NodeFS.promises.lstat(located.canonicalPath);
+        if (
+          !current.isFile() ||
+          current.dev !== before.dev ||
+          current.ino !== before.ino ||
+          after.dev !== before.dev ||
+          after.ino !== before.ino ||
+          after.size !== before.size ||
+          after.mtimeMs !== before.mtimeMs ||
+          after.ctimeMs !== before.ctimeMs ||
+          current.size !== before.size ||
+          current.mtimeMs !== before.mtimeMs ||
+          current.ctimeMs !== before.ctimeMs ||
+          length !== before.size
+        )
+          return { _tag: "unreadable" };
+        return { _tag: "bytes", bytes: new Uint8Array(buffer.subarray(0, length)) };
+      } finally {
+        await handle.close();
+      }
+    },
+    catch: () => ({ _tag: "unreadable" }) as ImageRead,
+  }).pipe(Effect.orElseSucceed(() => ({ _tag: "unreadable" }) as const));
 
 /** How much image data one Markdown export may hold; fixed in production, smaller in tests. */
 export interface MarkdownImageBudget {
@@ -249,7 +320,6 @@ export const buildMarkdownFileBundle = Effect.fn("MarkdownFileBundle.build")(fun
     catch: () => sourceError("invalid-source", "The Markdown file is not valid UTF-8 text."),
   });
   const inspection = inspectMarkdownDocument(markdown);
-  const fileSystem = yield* FileSystem.FileSystem;
   const budget = input.budget ?? MARKDOWN_IMAGE_BUDGET;
   const warnings: DocumentWarning[] = [];
   const assets: DocumentAsset[] = [];
@@ -326,20 +396,26 @@ export const buildMarkdownFileBundle = Effect.fn("MarkdownFileBundle.build")(fun
       );
       continue;
     }
-    const bytes = yield* fileSystem.readFile(located.canonicalPath).pipe(Effect.option);
-    // A file that grew after it was measured is held to the same budget.
-    if (Option.isSome(bytes) && heldBytes + bytes.value.byteLength > budget.maxTotalBytes) {
+    const read = yield* readLocatedImage(
+      located,
+      Math.max(0, Math.min(MAX_IMAGE_BYTES, budget.maxImageBytes)),
+      Math.max(0, Math.min(DOCUMENT_CAPTURE_MAX_ASSET_BYTES, budget.maxTotalBytes - heldBytes)),
+    );
+    if (read._tag === "too-large") {
       assetIdsByFile.set(
         located.canonicalPath,
         addAsset(destination, located.fileName, {
           _tag: "unavailable",
           reason: "too-large",
-          message: `Image "${destination}" was not included because the document's images exceed the export size limit.`,
+          message:
+            read.limit === "image"
+              ? `Image "${destination}" is larger than the per-image export limit and was not included.`
+              : `Image "${destination}" was not included because the document's images exceed the export size limit.`,
         }),
       );
       continue;
     }
-    if (Option.isNone(bytes)) {
+    if (read._tag === "unreadable") {
       assetIdsByFile.set(
         located.canonicalPath,
         addAsset(destination, located.fileName, {
@@ -350,13 +426,13 @@ export const buildMarkdownFileBundle = Effect.fn("MarkdownFileBundle.build")(fun
       );
       continue;
     }
-    heldBytes += bytes.value.byteLength;
+    heldBytes += read.bytes.byteLength;
     heldImages += 1;
     assetIdsByFile.set(
       located.canonicalPath,
       addAsset(destination, located.fileName, {
         _tag: "bytes",
-        bytes: bytes.value,
+        bytes: read.bytes,
         mediaType: located.mediaType,
       }),
     );
