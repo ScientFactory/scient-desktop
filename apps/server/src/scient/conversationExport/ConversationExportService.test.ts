@@ -1,10 +1,13 @@
 // @effect-diagnostics nodeBuiltinImport:off -- The test reads produced ZIP archives with yauzl.
+import * as NodeCrypto from "node:crypto";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
   ChatAttachment,
   EnvironmentFilePath,
   MessageId,
+  SCIENT_CONVERSATION_EXPORT_MAX_ASSET_BYTES,
   ScientDocumentPageInput,
   ThreadId,
   type DocumentBundle,
@@ -164,6 +167,58 @@ const exportLayer = (prefix: string, word: WordMode = { _tag: "unavailable" }) =
   );
 const TestLayer = exportLayer("scient-convexport-");
 
+type FileAccess = { readonly op: "exists" | "stat" | "stream"; readonly path: string };
+
+/** The real file system, recording which paths the export service stats and streams. */
+const recordingFileSystem = (accesses: Array<FileAccess>) =>
+  Layer.effect(
+    FileSystem.FileSystem,
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      return FileSystem.FileSystem.of({
+        ...fileSystem,
+        exists: (path) => {
+          accesses.push({ op: "exists", path });
+          return fileSystem.exists(path);
+        },
+        stat: (path) => {
+          accesses.push({ op: "stat", path });
+          return fileSystem.stat(path);
+        },
+        stream: (path, options) => {
+          accesses.push({ op: "stream", path });
+          return fileSystem.stream(path, options);
+        },
+      });
+    }),
+  ).pipe(Layer.provide(NodeServices.layer));
+
+const recordingLayer = (accesses: Array<FileAccess>) =>
+  ConversationExportService.layer.pipe(
+    Layer.provideMerge(wordLayer({ _tag: "converts", seen: [] })),
+    Layer.provideMerge(ConversationSnapshotService.layer),
+    Layer.provideMerge(ConversationExportFiles.layer),
+    Layer.provideMerge(QueryLive),
+    Layer.provideMerge(SqlitePersistenceMemory),
+    Layer.provideMerge(
+      ServerConfig.layerTest(process.cwd(), { prefix: "scient-convexport-reads-" }),
+    ),
+    Layer.provideMerge(recordingFileSystem(accesses)),
+    Layer.provideMerge(NodeServices.layer),
+  );
+
+/** Writes `bytes` where the attachment store keeps `attachment`, and returns that path. */
+const storeAttachment = (attachment: ChatAttachment, bytes: Uint8Array) =>
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const stored = resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment })!;
+    yield* fileSystem.makeDirectory(path.dirname(stored), { recursive: true });
+    yield* fileSystem.writeFile(stored, bytes);
+    return stored;
+  });
+
 const AssetConfigLive = ServerConfig.layerTest(process.cwd(), {
   prefix: "scient-convexport-asset-",
 });
@@ -193,6 +248,9 @@ const seedThread = Effect.fn("seedThread")(function* (input: {
   readonly running?: boolean;
   readonly firstUserText?: string;
   readonly attachments?: ReadonlyArray<ChatAttachment>;
+  /** Every prompt gets its own stored attachment, and every turn a reasoning message. */
+  readonly attachmentPerPrompt?: boolean;
+  readonly reasoning?: boolean;
 }) {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`INSERT INTO projection_projects
@@ -209,8 +267,20 @@ const seedThread = Effect.fn("seedThread")(function* (input: {
     const turnId = `turn-${pair}`;
     const userText =
       pair === 1 && input.firstUserText !== undefined ? input.firstUserText : `Question ${pair}`;
-    const attachments =
-      pair === 1 && input.attachments ? encodeAttachments(input.attachments) : null;
+    const own: ReadonlyArray<ChatAttachment> = input.attachmentPerPrompt
+      ? [
+          {
+            type: "file",
+            id: `thread-1-00000000-0000-4000-8000-${String(pair).padStart(12, "0")}`,
+            name: `data ${pair}.csv`,
+            mimeType: "text/csv",
+            sizeBytes: 3,
+          },
+        ]
+      : [];
+    for (const attachment of own) yield* storeAttachment(attachment, new Uint8Array([97, 44, 98]));
+    const listed = [...(pair === 1 ? (input.attachments ?? []) : []), ...own];
+    const attachments = listed.length > 0 ? encodeAttachments(listed) : null;
     const userAt = at(clock);
     yield* sql`INSERT INTO projection_thread_messages
       (message_id, thread_id, turn_id, role, text, attachments_json, is_streaming, created_at, updated_at)
@@ -227,6 +297,13 @@ const seedThread = Effect.fn("seedThread")(function* (input: {
             title: "Ran command",
             data: { item: { command: `echo ${activity}` }, token: "sk-hidden" },
           })}, ${activity}, ${at(clock)})`;
+      clock += 1;
+    }
+    if (input.reasoning) {
+      yield* sql`INSERT INTO projection_thread_messages
+        (message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at)
+        VALUES (${`reasoning-${pair}`}, ${THREAD}, ${turnId}, 'reasoning', ${`Thinking ${pair}`},
+          0, ${at(clock)}, ${at(clock)})`;
       clock += 1;
     }
     const isRunning = input.running === true && pair === input.pairs;
@@ -336,11 +413,18 @@ describe("ConversationExportService", () => {
     );
   it.effect("exports a 2,100-message thread completely from the server snapshot", () =>
     Effect.gen(function* () {
-      yield* seedThread({ pairs: 1_050, activitiesPerTurn: 1 });
+      yield* seedThread({
+        pairs: 1_050,
+        activitiesPerTurn: 3,
+        reasoning: true,
+        attachmentPerPrompt: true,
+      });
       const service = yield* ConversationExportService.ConversationExportService;
       const preparation = yield* service.prepare(THREAD);
       assert.strictEqual(preparation.messageCount, 2_100);
-      assert.strictEqual(preparation.workLogEntryCount, 1_050);
+      assert.strictEqual(preparation.workLogEntryCount, 3_150);
+      assert.strictEqual(preparation.reasoningCount, 1_050);
+      assert.strictEqual(preparation.attachmentCount, 1_050);
       assert.deepStrictEqual(preparation.formats, [
         { format: "markdown", available: true, unavailableReason: null },
         { format: "pdf", available: true, unavailableReason: null },
@@ -352,7 +436,9 @@ describe("ConversationExportService", () => {
         },
       ]);
 
-      const { produced, text } = yield* produceText(request({}, { includeWorkLog: true }));
+      const { produced, text } = yield* produceText(
+        request({}, { includeWorkLog: true, includeReasoning: true }),
+      );
       assert.strictEqual(produced.messageCount, 2_100);
       const parsed = parseConversationMarkdown(text);
       assert(parsed.kind === "conversation");
@@ -364,7 +450,20 @@ describe("ConversationExportService", () => {
           .length,
         1_050,
       );
-      assert.include(text, "echo 1050");
+      assert.strictEqual(
+        parsed.messages.filter((message) => message.parts.some((part) => part.kind === "reasoning"))
+          .length,
+        1_050,
+      );
+      assert.strictEqual(
+        parsed.messages.filter((message) =>
+          message.parts.some((part) => part.kind === "attachments"),
+        ).length,
+        1_050,
+      );
+      assert.include(text, "Work log · 3 steps");
+      assert.include(text, "- data 1050.csv · text/csv, 3 B");
+      assert.include(text, "echo 3150");
       assert.notInclude(text, "sk-hidden");
       assert.notInclude(text, "provider-session-secret");
       assert.notInclude(text, "provider-thread-secret");
@@ -442,6 +541,132 @@ describe("ConversationExportService", () => {
     }).pipe(Effect.provide(TestLayer)),
   );
 
+  const fileAccesses: Array<FileAccess> = [];
+  it.effect("reads attachment bytes only for formats that embed them", () =>
+    Effect.gen(function* () {
+      const stored = yield* storeAttachment(image, new Uint8Array([137, 80, 78, 71]));
+      yield* seedThread({ pairs: 1, attachments: [image] });
+      const service = yield* ConversationExportService.ConversationExportService;
+      const accessesDuring = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        Effect.gen(function* () {
+          fileAccesses.length = 0;
+          const result = yield* effect;
+          return {
+            result,
+            ops: fileAccesses
+              .filter((access) => access.path === stored && access.op !== "exists")
+              .map((access) => access.op),
+          };
+        });
+
+      const text = yield* accessesDuring(produceText(request()));
+      assert.deepStrictEqual(text.ops, []);
+      assert.include(text.result.text, "- figure.png · image/png, 4 B");
+      const copied = yield* accessesDuring(produceText(request({ delivery: "clipboard" })));
+      assert.deepStrictEqual(copied.ops, []);
+      assert.include(copied.result.text, "- figure.png · image/png, 4 B");
+      const plan = yield* accessesDuring(service.prepareWordDiagrams(request({ format: "docx" })));
+      assert.deepStrictEqual(plan.ops, []);
+
+      // A `.zip` checks the file's size and streams it into the archive itself.
+      const zipped = yield* accessesDuring(
+        service.produce(request({}, { markdownPackaging: "with-attachments" })),
+      );
+      assert.deepStrictEqual(zipped.ops, ["stat"]);
+      assert(zipped.result.output._tag === "file");
+      const entries = yield* Effect.promise(() =>
+        readZip((zipped.result.output as { readonly path: string }).path),
+      );
+      assert.deepStrictEqual([...entries.get("attachments/01-figure.png")!], [137, 80, 78, 71]);
+
+      // Word and PDF embed the bytes.
+      const word = yield* accessesDuring(service.produce(request({ format: "docx" })));
+      assert.deepStrictEqual(word.ops, ["stat", "stream"]);
+      const pdf = yield* accessesDuring(service.document(request({ format: "pdf" })));
+      assert.deepStrictEqual(pdf.ops, ["stat", "stream"]);
+    }).pipe(Effect.provide(recordingLayer(fileAccesses))),
+  );
+
+  const rangeAccesses: Array<FileAccess> = [];
+  it.effect("refuses part of a conversation on every export path", () =>
+    Effect.gen(function* () {
+      const stored = yield* storeAttachment(image, new Uint8Array([137, 80, 78, 71]));
+      yield* seedThread({ pairs: 2, attachments: [image] });
+      const service = yield* ConversationExportService.ConversationExportService;
+      const partial = (
+        format: ScientConversationExportRequest["format"],
+        overrides: Partial<ScientConversationExportRequest> = {},
+        options: Partial<ScientConversationExportRequest["options"]> = {},
+      ) =>
+        request(
+          { format, ...overrides },
+          { range: { _tag: "through-message", messageId: MessageId.make("user-2") }, ...options },
+        );
+      const refusal = <A>(
+        effect: Effect.Effect<A, ConversationExportService.ConversationExportServiceError>,
+      ) =>
+        effect.pipe(
+          Effect.flip,
+          Effect.map((error): { readonly reason: string | null; readonly message: string } =>
+            error._tag === "ScientConversationExportError"
+              ? { reason: error.reason, message: error.message }
+              : { reason: error._tag, message: "" },
+          ),
+        );
+      const expected = {
+        reason: "range-unavailable",
+        message: "Exporting part of a conversation is not available yet.",
+      };
+      rangeAccesses.length = 0;
+      for (const refused of [
+        refusal(service.produce(partial("markdown"))),
+        refusal(service.produce(partial("markdown", { delivery: "clipboard" }))),
+        refusal(
+          service.produce(partial("markdown", {}, { markdownPackaging: "with-attachments" })),
+        ),
+        refusal(service.produce(partial("scic"))),
+        refusal(service.produce(partial("docx"))),
+        refusal(service.prepareWordDiagrams(partial("docx"))),
+        refusal(service.document(partial("pdf"))),
+      ]) {
+        assert.deepStrictEqual(yield* refused, expected);
+      }
+      // Refused before anything is captured or read.
+      assert.deepStrictEqual(
+        rangeAccesses.filter((access) => access.path === stored),
+        [],
+      );
+      assert.strictEqual((yield* service.produce(request())).messageCount, 4);
+    }).pipe(Effect.provide(recordingLayer(rangeAccesses))),
+  );
+
+  it.effect("reports an attachment over the export's budget as too large to include", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const stored = yield* storeAttachment(image, new Uint8Array([137, 80, 78, 71]));
+      // A sparse file larger than the budget: never read, only measured.
+      yield* fileSystem.truncate(stored, SCIENT_CONVERSATION_EXPORT_MAX_ASSET_BYTES + 1);
+      yield* seedThread({ pairs: 1, attachments: [image] });
+      const service = yield* ConversationExportService.ConversationExportService;
+      const produced = yield* service.produce(
+        request({}, { markdownPackaging: "with-attachments" }),
+      );
+      assert.include(
+        produced.warnings.map((warning) => warning.message),
+        "Attachment “figure.png” is too large to include and is listed by name only.",
+      );
+      assert(produced.output._tag === "file");
+      const entries = yield* Effect.promise(() =>
+        readZip((produced.output as { readonly path: string }).path),
+      );
+      assert.deepStrictEqual([...entries.keys()], ["Long study results.md"]);
+      assert.include(
+        entries.get("Long study results.md")!.toString("utf8"),
+        "- figure.png · unavailable",
+      );
+    }).pipe(Effect.provide(TestLayer)),
+  );
+
   it.effect("returns clipboard text and never publishes Scient storage paths", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
@@ -510,7 +735,7 @@ describe("ConversationExportService", () => {
         yield* reasonOf(
           request({}, { range: { _tag: "through-message", messageId: MessageId.make("nope") } }),
         ),
-        "message-not-found",
+        "range-unavailable",
       );
       assert.strictEqual(
         yield* reasonOf(request({ threadId: ThreadId.make("missing") })),
@@ -522,14 +747,6 @@ describe("ConversationExportService", () => {
         ),
         "delivery-unsupported",
       );
-      const ranged = yield* produceText(
-        request(
-          {},
-          { range: { _tag: "through-message", messageId: MessageId.make("assistant-1") } },
-        ),
-      );
-      assert.strictEqual(ranged.produced.messageCount, 2);
-      assert.notInclude(ranged.text, "Question 2");
     }).pipe(Effect.provide(TestLayer)),
   );
 });
@@ -561,6 +778,71 @@ describe("ConversationExportFiles", () => {
         }),
       );
     }).pipe(
+      Effect.provide(
+        ServerConfig.layerTest(process.cwd(), { prefix: "scient-convexport-files-" }).pipe(
+          Layer.provideMerge(NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.live("streams archive files and refuses one that changed since the export checked it", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-zip-source-" });
+      const source = path.join(directory, "data.bin");
+      const bytes = new TextEncoder().encode("attachment bytes");
+      yield* fileSystem.writeFile(source, bytes);
+      const digest =
+        `sha256:${NodeCrypto.createHash("sha256").update(bytes).digest("hex")}` as const;
+      const files = yield* ConversationExportFiles.make();
+      const written = yield* files.write({
+        exportId: "export-streamed",
+        fileName: "Chat.zip",
+        content: {
+          _tag: "zip",
+          modifiedAt: "2026-09-28T09:12:00.000Z",
+          entries: [
+            { path: "Chat.md", bytes: new TextEncoder().encode("# Chat\n") },
+            {
+              path: "attachments/01-data.bin",
+              file: { path: source, byteLength: bytes.byteLength, sha256: digest },
+            },
+          ],
+        },
+      });
+      const entries = yield* Effect.promise(() => readZip(written.path));
+      assert.strictEqual(
+        entries.get("attachments/01-data.bin")!.toString("utf8"),
+        "attachment bytes",
+      );
+
+      for (const file of [
+        { path: source, byteLength: bytes.byteLength + 1, sha256: null },
+        { path: source, byteLength: bytes.byteLength, sha256: `sha256:${"0".repeat(64)}` as const },
+        { path: path.join(directory, "missing.bin"), byteLength: 1, sha256: null },
+      ]) {
+        const exit = yield* Effect.exit(
+          files.write({
+            exportId: "export-changed",
+            fileName: "Changed.zip",
+            content: {
+              _tag: "zip",
+              modifiedAt: "2026-09-28T09:12:00.000Z",
+              entries: [{ path: "attachments/01-data.bin", file }],
+            },
+          }),
+        );
+        assert.isTrue(Exit.isFailure(exit));
+        assert.isFalse(
+          yield* fileSystem.exists(
+            path.join(path.dirname(path.dirname(written.path)), "export-changed", "Changed.zip"),
+          ),
+        );
+      }
+    }).pipe(
+      Effect.scoped,
       Effect.provide(
         ServerConfig.layerTest(process.cwd(), { prefix: "scient-convexport-files-" }).pipe(
           Layer.provideMerge(NodeServices.layer),
@@ -787,16 +1069,14 @@ describe("conversation PDF preparation", () => {
       );
       assert.notInclude(withoutWorkLog.markdown, "echo 1050");
 
-      const ranged = yield* readCapturedPageInput(
-        (yield* prepareConversationPdf(
-          request(
-            { format: "pdf" },
-            { range: { _tag: "through-message", messageId: MessageId.make("assistant-2") } },
-          ),
-        )).inputRelativeUrl,
-      );
-      assert.include(ranged.markdown, "Answer 2");
-      assert.notInclude(ranged.markdown, "Question 3");
+      const ranged = yield* prepareConversationPdf(
+        request(
+          { format: "pdf" },
+          { range: { _tag: "through-message", messageId: MessageId.make("assistant-2") } },
+        ),
+      ).pipe(Effect.flip);
+      assert(ranged._tag === "ScientConversationExportError");
+      assert.strictEqual(ranged.reason, "range-unavailable");
     }).pipe(Effect.provide(PdfTestLayer)),
   );
 

@@ -84,6 +84,42 @@ export function boundText(text: string, bounds: TextBounds): ConversationBounded
   };
 }
 
+const encoder = new TextEncoder();
+
+/**
+ * The longest prefix of whole code points that fits in `maxBytes` UTF-8 bytes
+ * and, when given, `maxCodePoints` code points. Never splits a surrogate pair.
+ */
+export function truncateUtf8(
+  text: string,
+  maxBytes: number,
+  maxCodePoints = Number.POSITIVE_INFINITY,
+): string {
+  let result = "";
+  let bytes = 0;
+  let count = 0;
+  for (const codePoint of text) {
+    const size = encoder.encode(codePoint).byteLength;
+    if (bytes + size > maxBytes || count + 1 > maxCodePoints) break;
+    result += codePoint;
+    bytes += size;
+    count += 1;
+  }
+  return result;
+}
+
+const WARNING_VALUE_MAX_CODE_POINTS = 200;
+
+/**
+ * A value quoted inside a warning (a name, an alt text), on one line and short
+ * enough that the warning always fits `DocumentWarning.message`.
+ */
+export function warningValue(text: string): string {
+  const line = text.replace(/\s+/gu, " ").trim();
+  const cut = truncateUtf8(line, Number.POSITIVE_INFINITY, WARNING_VALUE_MAX_CODE_POINTS);
+  return cut === line ? line : `${cut.trimEnd()}…`;
+}
+
 /** Keeps the first `max` items and reports how many were left out. */
 export function boundItems<A>(
   items: ReadonlyArray<A>,

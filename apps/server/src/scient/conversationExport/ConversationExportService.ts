@@ -13,8 +13,10 @@ import {
   SCIENT_CONVERSATION_EXPORT_EXCERPT_MAX_CHARS,
   SCIENT_CONVERSATION_EXPORT_MAX_ASSET_BYTES,
   ScientConversationExportError,
+  type ConversationAttachment,
   type ConversationExportFormat,
   type ConversationExportFormatCapability,
+  type DocumentAssetUnavailableReason,
   type DocumentBundle,
   type ConversationSnapshotV1,
   type DocumentWarning,
@@ -31,6 +33,7 @@ import {
   redactSnapshotStoragePaths,
   redactStoragePaths,
   writeConversationMarkdown,
+  type ExternalAttachmentContent,
   type ResolvedAttachmentContent,
 } from "@scientfactory/conversation";
 import * as Context from "effect/Context";
@@ -44,7 +47,8 @@ import * as Stream from "effect/Stream";
 
 import packageJson from "../../../package.json" with { type: "json" };
 import * as ServerConfig from "../../config.ts";
-import { prepareScicPackage } from "../conversationFile/ScicWriter.ts";
+import { prepareScicPackage, type ScicAttachmentFile } from "../conversationFile/ScicWriter.ts";
+import { SNIFF_BYTES } from "../conversationFile/scicFormat.ts";
 import {
   DOCX_MEDIA_TYPE,
   PandocWordConverter,
@@ -52,8 +56,10 @@ import {
 } from "../pandoc/PandocWordConverter.ts";
 import { capturedWordDiagramAssets, planWordDiagrams } from "../pandoc/wordDiagramCapture.ts";
 import {
+  ConversationExportFileError,
   ConversationExportFiles,
-  type ConversationExportFileError,
+  inspectAttachmentFile,
+  type PackageEntry,
 } from "./ConversationExportFiles.ts";
 import {
   ConversationSnapshotService,
@@ -160,6 +166,16 @@ function snapshotAttachmentIds(snapshot: ConversationSnapshotV1): ReadonlyArray<
 const reject = (reason: ScientConversationExportError["reason"], message: string) =>
   Effect.fail(new ScientConversationExportError({ reason, message }));
 
+const nothingToExport = reject(
+  "nothing-to-export",
+  "This conversation has no completed messages yet.",
+);
+
+type UnavailableAttachment = {
+  readonly _tag: "unavailable";
+  readonly reason: DocumentAssetUnavailableReason;
+};
+
 const make = Effect.gen(function* () {
   const snapshots = yield* ConversationSnapshotService;
   const files = yield* ConversationExportFiles;
@@ -238,89 +254,173 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Captures the snapshot for the request's options, redacts Scient's storage
-   * locations from its structured text, and builds its document.
+   * Captures the snapshot for the request's options and redacts Scient's
+   * storage locations from its structured text before any writer escapes it.
    */
-  const buildDocument = Effect.fn("ConversationExportService.buildDocument")(function* (
+  const captureRequest = Effect.fn("ConversationExportService.captureRequest")(function* (
     request: ScientConversationExportRequest,
   ) {
+    // Every export path captures through here, so this is where partial
+    // ranges are refused. The snapshot's range selection stays for later, but
+    // it cuts records by creation time, and a plan, reasoning block, or message
+    // created before the chosen message and updated after it keeps its
+    // creation time while carrying the later content. That must be solved
+    // before ranges are accepted again.
+    if (request.options.range._tag !== "whole") {
+      return yield* reject(
+        "range-unavailable",
+        "Exporting part of a conversation is not available yet.",
+      );
+    }
     const captured = yield* capture({
       threadId: request.threadId,
       selection: {
         workLog: request.options.includeWorkLog,
         reasoning: request.options.includeReasoning,
-        throughMessageId:
-          request.options.range._tag === "through-message" ? request.options.range.messageId : null,
+        throughMessageId: null,
       },
     });
+    const exportValue = Encoding.encodeHex(yield* crypto.randomBytes(6).pipe(Effect.orDie));
+    return {
+      snapshot: redactSnapshotStoragePaths(captured.snapshot, storageRoots),
+      attachmentFiles: captured.attachmentFiles,
+      exportValue,
+    };
+  });
 
-    const attachmentFiles = captured.attachmentFiles;
-    // Redact structured text before any writer escapes it.
-    const snapshot = redactSnapshotStoragePaths(captured.snapshot, storageRoots);
+  /**
+   * Resolves the snapshot's attachment files within the export's byte budget.
+   * Only attachments the selected snapshot holds are looked at and charged, in
+   * the order they appear, so an excluded tail cannot use up the budget. `read`
+   * receives a regular file that fits and returns what the writer needs.
+   */
+  const resolveAttachments = <A extends { readonly byteLength: number }>(
+    snapshot: ConversationSnapshotV1,
+    attachmentFiles: ReadonlyMap<string, string>,
+    read: (
+      path: string,
+      remaining: number,
+      size: number,
+    ) => Effect.Effect<A | Exclude<DocumentAssetUnavailableReason, "missing">>,
+  ) =>
+    Effect.gen(function* () {
+      const resolved = new Map<string, A | UnavailableAttachment>();
+      let totalBytes = 0;
+      for (const localId of snapshotAttachmentIds(snapshot)) {
+        const path = attachmentFiles.get(localId);
+        if (path === undefined) continue;
+        const remaining = SCIENT_CONVERSATION_EXPORT_MAX_ASSET_BYTES - totalBytes;
+        const fileInfo = yield* fileSystem.stat(path).pipe(Effect.option);
+        if (fileInfo._tag === "None" || fileInfo.value.type !== "File") {
+          resolved.set(localId, { _tag: "unavailable", reason: "unreadable" });
+          continue;
+        }
+        if (fileInfo.value.size > remaining) {
+          resolved.set(localId, { _tag: "unavailable", reason: "too-large" });
+          continue;
+        }
+        const result = yield* read(path, remaining, Number(fileInfo.value.size));
+        if (typeof result === "string") {
+          resolved.set(localId, { _tag: "unavailable", reason: result });
+          continue;
+        }
+        totalBytes += result.byteLength;
+        resolved.set(localId, result);
+      }
+      return resolved;
+    });
 
-    // Read attachment bytes once, bounded in total; the document is pure. Only
-    // attachments the selected snapshot holds are read and charged, in the
-    // order they appear, so an excluded tail cannot use up the budget.
-    const resolved = new Map<string, ResolvedAttachmentContent>();
-    let totalBytes = 0;
-    for (const localId of snapshotAttachmentIds(snapshot)) {
-      const path = attachmentFiles.get(localId);
-      if (path === undefined) continue;
-      const remaining = SCIENT_CONVERSATION_EXPORT_MAX_ASSET_BYTES - totalBytes;
-      const fileInfo = yield* fileSystem.stat(path).pipe(Effect.option);
-      if (fileInfo._tag === "None" || fileInfo.value.type !== "File") {
-        resolved.set(localId, { _tag: "unavailable", reason: "unreadable" });
-        continue;
-      }
-      if (fileInfo.value.size > remaining) {
-        resolved.set(localId, { _tag: "unavailable", reason: "too-large" });
-        continue;
-      }
+  /** Reads attachments into memory, for writers that embed their bytes (PDF, Word). */
+  const readAttachmentBytes = (path: string, remaining: number) =>
+    Effect.gen(function* () {
       // Bound the actual read too: the file could grow between stat and read.
       const bytes = yield* fileSystem.stream(path, { bytesToRead: remaining + 1 }).pipe(
         Stream.runCollect,
         Effect.map((chunks) => Buffer.concat(chunks)),
         Effect.option,
       );
-      if (bytes._tag === "None") {
-        resolved.set(localId, { _tag: "unavailable", reason: "unreadable" });
-        continue;
-      }
-      if (bytes.value.byteLength > remaining) {
-        resolved.set(localId, { _tag: "unavailable", reason: "too-large" });
-        continue;
-      }
-      totalBytes += bytes.value.byteLength;
+      if (bytes._tag === "None") return "unreadable" as const;
+      if (bytes.value.byteLength > remaining) return "too-large" as const;
       const digest = yield* crypto.digest("SHA-256", bytes.value).pipe(Effect.option);
-      resolved.set(
-        localId,
-        digest._tag === "None"
-          ? { _tag: "unavailable", reason: "unreadable" }
-          : {
-              _tag: "bytes",
-              bytes: bytes.value,
-              sha256: `sha256:${Encoding.encodeHex(digest.value)}`,
-            },
-      );
-    }
+      if (digest._tag === "None") return "unreadable" as const;
+      return {
+        _tag: "bytes" as const,
+        bytes: bytes.value,
+        byteLength: bytes.value.byteLength,
+        sha256: `sha256:${Encoding.encodeHex(digest.value)}` as Sha256Digest,
+      };
+    });
 
-    const exportValue = Encoding.encodeHex(yield* crypto.randomBytes(6).pipe(Effect.orDie));
+  /** A file a package streams when it is written; its size was checked against the budget. */
+  const packageAttachmentFile = (path: string, _remaining: number, size: number) =>
+    Effect.succeed({ _tag: "file" as const, path, byteLength: size });
+
+  /** Hashes a file a conversation file streams, holding only its first bytes. */
+  const inspectAttachment = (path: string, remaining: number) =>
+    Effect.tryPromise(() => inspectAttachmentFile(path, remaining, SNIFF_BYTES)).pipe(
+      Effect.map((inspected) =>
+        inspected === null
+          ? ("too-large" as const)
+          : ({ _tag: "file", path, ...inspected } satisfies ScicAttachmentFile),
+      ),
+      Effect.orElseSucceed(() => "unreadable" as const),
+    );
+
+  /**
+   * The document for writers that list attachments without their bytes: text
+   * Markdown, Copy, and the Word diagram plan use the recorded sizes and never
+   * open an attachment file.
+   */
+  const listedDocument = (
+    snapshot: ConversationSnapshotV1,
+    exportValue: string,
+    request: ScientConversationExportRequest,
+    resolve: (
+      attachment: ConversationAttachment,
+    ) => ResolvedAttachmentContent | ExternalAttachmentContent = (attachment) => ({
+      _tag: "external",
+      byteLength: attachment.sizeBytes,
+      sha256: null,
+    }),
+  ) =>
+    Effect.gen(function* () {
+      const document = buildConversationDocument({
+        snapshot,
+        exportValue,
+        timeZone: request.timeZone ?? "UTC",
+        resolveAttachment: resolve,
+      });
+      if (document.messageCount === 0) return yield* nothingToExport;
+      return document;
+    });
+
+  /** The document with attachment bytes in memory, for PDF and Word. */
+  const embeddedDocument = Effect.fn("ConversationExportService.embeddedDocument")(function* (
+    request: ScientConversationExportRequest,
+  ) {
+    const { snapshot, attachmentFiles, exportValue } = yield* captureRequest(request);
+    const resolved = yield* resolveAttachments(snapshot, attachmentFiles, readAttachmentBytes);
     const document = buildConversationDocument({
       snapshot,
       exportValue,
       timeZone: request.timeZone ?? "UTC",
-      resolveAttachment: (attachment) =>
-        resolved.get(attachment.localId) ?? { _tag: "unavailable", reason: "missing" },
+      resolveAttachment: (attachment): ResolvedAttachmentContent => {
+        const content = resolved.get(attachment.localId);
+        return content === undefined
+          ? { _tag: "unavailable", reason: "missing" }
+          : content._tag === "bytes"
+            ? { _tag: "bytes", bytes: content.bytes, sha256: content.sha256 }
+            : content;
+      },
     });
-    if (document.messageCount === 0) {
-      return yield* reject("nothing-to-export", "This conversation has no completed messages yet.");
-    }
-    return { snapshot, resolved, document: { ...document, exportValue } };
+    if (document.messageCount === 0) return yield* nothingToExport;
+    return { snapshot, document };
   });
 
   const prepareWordDiagrams: ConversationExportService["Service"]["prepareWordDiagrams"] =
     Effect.fn("ConversationExportService.prepareWordDiagrams")(function* (request) {
-      const { snapshot, document } = yield* buildDocument(request);
+      const { snapshot, exportValue } = yield* captureRequest(request);
+      const document = yield* listedDocument(snapshot, exportValue, request);
       return yield* Effect.try({
         try: () =>
           planWordDiagrams(
@@ -335,6 +435,205 @@ const make = Effect.gen(function* () {
           }),
       });
     });
+
+  const redactWarnings = (warnings: ReadonlyArray<DocumentWarning>) =>
+    warnings.map((warning) => ({
+      ...warning,
+      message: redactStoragePaths(warning.message, storageRoots),
+    }));
+
+  const produceScic = Effect.fn("ConversationExportService.produceScic")(function* (
+    request: ScientConversationExportRequest,
+    exportId: string,
+    exported: string,
+  ) {
+    const { snapshot, attachmentFiles, exportValue } = yield* captureRequest(request);
+    const attachments = yield* resolveAttachments(snapshot, attachmentFiles, inspectAttachment);
+    const prepared = prepareScicPackage({
+      snapshot,
+      attachments,
+      exportValue,
+      exportedAt: exported,
+      exporter: { name: "Scient", version: packageJson.version },
+      timeZone: request.timeZone ?? "UTC",
+      redact: (text) => redactStoragePaths(text, storageRoots),
+    });
+    if (prepared._tag === "nothing-to-export") return yield* nothingToExport;
+    if (prepared._tag === "too-large") {
+      return yield* reject(
+        "too-large",
+        "This conversation is too large for a Scient conversation file. Leave out the work log and reasoning, or export it as Markdown.",
+      );
+    }
+    if (prepared._tag === "invalid-package") {
+      // Never hand out a file the reader would refuse.
+      return yield* new ConversationExportFileError({
+        cause: new Error(`The conversation file failed its own check: ${prepared.detail}`),
+      });
+    }
+    const fileName = exportFileName(snapshot.thread.title, SCIC_FILE_EXTENSION);
+    const written = yield* files.write({
+      exportId,
+      fileName,
+      content: { _tag: "zip", modifiedAt: exported, entries: prepared.value.files },
+    });
+    return {
+      exportId,
+      format: request.format,
+      contentDigest: prepared.value.contentDigest,
+      messageCount: prepared.value.messageCount,
+      warnings: prepared.value.warnings,
+      output: {
+        _tag: "file",
+        path: written.path,
+        fileName,
+        mediaType: SCIC_MEDIA_TYPE,
+        byteLength: written.byteLength,
+      },
+    } satisfies ProducedExport;
+  });
+
+  const produceWord = Effect.fn("ConversationExportService.produceWord")(function* (
+    request: ScientConversationExportRequest,
+    exportId: string,
+  ) {
+    const { snapshot, document } = yield* embeddedDocument(request);
+    const wordMarkdown = redactStoragePaths(document.bundle.markdown, storageRoots);
+    const diagrams = yield* Effect.try({
+      try: () =>
+        capturedWordDiagramAssets(
+          { ...document.bundle, markdown: wordMarkdown },
+          snapshot.contentDigest,
+          request.diagramCapture,
+        ),
+      catch: (cause) =>
+        new ScientConversationExportError({
+          reason: "conversion-failed",
+          message: cause instanceof Error ? cause.message : "The diagram capture is invalid.",
+        }),
+    });
+    const fileName = exportFileName(snapshot.thread.title, ".docx");
+    const target = yield* files.reserve({ exportId, fileName });
+    const converted = yield* words
+      .convert({
+        bundle: {
+          ...document.bundle,
+          markdown: wordMarkdown,
+          assets: [...document.bundle.assets, ...diagrams],
+        },
+        outputPath: target.path,
+      })
+      .pipe(
+        Effect.catchTag("WordConversionError", (error) =>
+          reject(WORD_FAILURE_REASON[error.reason], error.message),
+        ),
+      );
+    return {
+      exportId,
+      format: request.format,
+      contentDigest: snapshot.contentDigest,
+      messageCount: document.messageCount,
+      warnings: redactWarnings(converted.warnings),
+      output: {
+        _tag: "file",
+        path: target.path,
+        fileName,
+        mediaType: DOCX_MEDIA_TYPE,
+        byteLength: converted.byteLength,
+      },
+    } satisfies ProducedExport;
+  });
+
+  const produceMarkdown = Effect.fn("ConversationExportService.produceMarkdown")(function* (
+    request: ScientConversationExportRequest,
+    exportId: string,
+    exported: string,
+  ) {
+    const packaging = request.options.markdownPackaging ?? "text";
+    const { snapshot, attachmentFiles, exportValue } = yield* captureRequest(request);
+    // A text export lists attachments; a `.zip` streams each file into the
+    // archive when it is written, so neither holds attachment bytes.
+    const packageFiles =
+      packaging === "with-attachments"
+        ? yield* resolveAttachments(snapshot, attachmentFiles, packageAttachmentFile)
+        : new Map<string, never>();
+    const document = yield* listedDocument(
+      snapshot,
+      exportValue,
+      request,
+      packaging === "with-attachments"
+        ? (attachment) => {
+            const content = packageFiles.get(attachment.localId);
+            return content === undefined
+              ? { _tag: "unavailable", reason: "missing" }
+              : content._tag === "file"
+                ? { _tag: "external", byteLength: content.byteLength, sha256: null }
+                : content;
+          }
+        : undefined,
+    );
+    const markdown = redactStoragePaths(
+      writeConversationMarkdown({ bundle: document.bundle, exportValue, exported, packaging }),
+      storageRoots,
+    );
+    const base = {
+      exportId,
+      format: request.format,
+      contentDigest: snapshot.contentDigest,
+      messageCount: document.messageCount,
+      warnings: redactWarnings(document.bundle.warnings),
+    };
+
+    if (request.delivery === "clipboard") {
+      if (markdown.length > SCIENT_CONVERSATION_EXPORT_CLIPBOARD_MAX_CHARS) {
+        return yield* reject(
+          "too-large",
+          "This conversation is too long to copy. Save it as a file instead.",
+        );
+      }
+      return { ...base, output: { _tag: "text", text: markdown } } satisfies ProducedExport;
+    }
+
+    const fileName = exportFileName(snapshot.thread.title, packaging === "text" ? ".md" : ".zip");
+    const markdownName = exportFileName(snapshot.thread.title, ".md");
+    const entries = packagedAssets(document.bundle).flatMap((asset): PackageEntry[] => {
+      if ("bytes" in asset) return [{ path: asset.path, bytes: asset.bytes }];
+      const content = packageFiles.get(asset.localId);
+      return content?._tag === "file"
+        ? [
+            {
+              path: asset.path,
+              file: { path: content.path, byteLength: content.byteLength, sha256: null },
+            },
+          ]
+        : [];
+    });
+    const written = yield* files.write({
+      exportId,
+      fileName,
+      content:
+        packaging === "text"
+          ? { _tag: "text", text: markdown }
+          : {
+              _tag: "zip",
+              modifiedAt: exported,
+              entries: [
+                { path: markdownName, bytes: new TextEncoder().encode(markdown) },
+                ...entries,
+              ],
+            },
+    });
+    return {
+      ...base,
+      output: {
+        _tag: "file",
+        path: written.path,
+        fileName,
+        mediaType: packaging === "text" ? MARKDOWN_MEDIA_TYPE : ZIP_MEDIA_TYPE,
+        byteLength: written.byteLength,
+      },
+    } satisfies ProducedExport;
+  });
 
   const produce: ConversationExportService["Service"]["produce"] = Effect.fn(
     "ConversationExportService.produce",
@@ -359,160 +658,23 @@ const make = Effect.gen(function* () {
     ) {
       return yield* reject("delivery-unsupported", "Only text-only Markdown can be copied.");
     }
-    const { snapshot, resolved, document } = yield* buildDocument(request);
-    const exportValue = document.exportValue;
     const exportId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
     const exported = DateTime.formatIso(yield* DateTime.now);
-    if (request.format === "scic") {
-      const prepared = prepareScicPackage({
-        snapshot,
-        attachments: resolved,
-        exportValue,
-        exportedAt: exported,
-        exporter: { name: "Scient", version: packageJson.version },
-        timeZone: request.timeZone ?? "UTC",
-        redact: (text) => redactStoragePaths(text, storageRoots),
-      });
-      if (prepared._tag === "nothing-to-export") {
-        return yield* reject(
-          "nothing-to-export",
-          "This conversation has no completed messages yet.",
-        );
-      }
-      if (prepared._tag === "too-large") {
-        return yield* reject(
-          "too-large",
-          "This conversation is too large for a Scient conversation file. Export a shorter range or leave out the work log.",
-        );
-      }
-      const fileName = exportFileName(snapshot.thread.title, SCIC_FILE_EXTENSION);
-      const written = yield* files.write({
-        exportId,
-        fileName,
-        content: { _tag: "zip", modifiedAt: exported, entries: prepared.value.files },
-      });
-      return {
-        exportId,
-        format: request.format,
-        contentDigest: prepared.value.contentDigest,
-        messageCount: prepared.value.messageCount,
-        warnings: prepared.value.warnings,
-        output: {
-          _tag: "file",
-          path: written.path,
-          fileName,
-          mediaType: SCIC_MEDIA_TYPE,
-          byteLength: written.byteLength,
-        },
-      };
+    switch (request.format) {
+      case "scic":
+        return yield* produceScic(request, exportId, exported);
+      case "docx":
+        return yield* produceWord(request, exportId);
+      default:
+        return yield* produceMarkdown(request, exportId, exported);
     }
-    const markdown = redactStoragePaths(
-      writeConversationMarkdown({ bundle: document.bundle, exportValue, exported, packaging }),
-      storageRoots,
-    );
-    const warnings = document.bundle.warnings.map((warning) => ({
-      ...warning,
-      message: redactStoragePaths(warning.message, storageRoots),
-    }));
-    const base = {
-      exportId,
-      format: request.format,
-      contentDigest: snapshot.contentDigest,
-      messageCount: document.messageCount,
-      warnings,
-    };
-
-    if (request.format === "docx") {
-      const wordMarkdown = redactStoragePaths(document.bundle.markdown, storageRoots);
-      const diagrams = yield* Effect.try({
-        try: () =>
-          capturedWordDiagramAssets(
-            { ...document.bundle, markdown: wordMarkdown },
-            snapshot.contentDigest,
-            request.diagramCapture,
-          ),
-        catch: (cause) =>
-          new ScientConversationExportError({
-            reason: "conversion-failed",
-            message: cause instanceof Error ? cause.message : "The diagram capture is invalid.",
-          }),
-      });
-      const fileName = exportFileName(snapshot.thread.title, ".docx");
-      const target = yield* files.reserve({ exportId, fileName });
-      const converted = yield* words
-        .convert({
-          bundle: {
-            ...document.bundle,
-            markdown: wordMarkdown,
-            assets: [...document.bundle.assets, ...diagrams],
-          },
-          outputPath: target.path,
-        })
-        .pipe(
-          Effect.catchTag("WordConversionError", (error) =>
-            reject(WORD_FAILURE_REASON[error.reason], error.message),
-          ),
-        );
-      return {
-        ...base,
-        warnings: converted.warnings.map((warning) => ({
-          ...warning,
-          message: redactStoragePaths(warning.message, storageRoots),
-        })),
-        output: {
-          _tag: "file",
-          path: target.path,
-          fileName,
-          mediaType: DOCX_MEDIA_TYPE,
-          byteLength: converted.byteLength,
-        },
-      };
-    }
-
-    if (request.delivery === "clipboard") {
-      if (markdown.length > SCIENT_CONVERSATION_EXPORT_CLIPBOARD_MAX_CHARS) {
-        return yield* reject(
-          "too-large",
-          "This conversation is too long to copy. Save it as a file instead.",
-        );
-      }
-      return { ...base, output: { _tag: "text", text: markdown } };
-    }
-
-    const fileName = exportFileName(snapshot.thread.title, packaging === "text" ? ".md" : ".zip");
-    const markdownName = exportFileName(snapshot.thread.title, ".md");
-    const written = yield* files.write({
-      exportId,
-      fileName,
-      content:
-        packaging === "text"
-          ? { _tag: "text", text: markdown }
-          : {
-              _tag: "zip",
-              modifiedAt: exported,
-              entries: [
-                { path: markdownName, bytes: new TextEncoder().encode(markdown) },
-                ...packagedAssets(document.bundle),
-              ],
-            },
-    });
-    return {
-      ...base,
-      output: {
-        _tag: "file",
-        path: written.path,
-        fileName,
-        mediaType: packaging === "text" ? MARKDOWN_MEDIA_TYPE : ZIP_MEDIA_TYPE,
-        byteLength: written.byteLength,
-      },
-    };
   });
 
   const document: ConversationExportService["Service"]["document"] = Effect.fn(
     "ConversationExportService.document",
   )(function* (request) {
-    const built = yield* buildDocument(request);
-    const bundle = built.document.bundle;
+    const { document: built } = yield* embeddedDocument(request);
+    const bundle = built.bundle;
     // The snapshot was redacted before the bundle was built; this second pass
     // covers text the bundle adds, as the Markdown writer's output pass does.
     return {
@@ -523,12 +685,9 @@ const make = Effect.gen(function* () {
           title: redactStoragePaths(bundle.metadata.title, storageRoots),
         },
         markdown: redactStoragePaths(bundle.markdown, storageRoots),
-        warnings: bundle.warnings.map((warning) => ({
-          ...warning,
-          message: redactStoragePaths(warning.message, storageRoots),
-        })),
+        warnings: redactWarnings(bundle.warnings),
       },
-      messageCount: built.document.messageCount,
+      messageCount: built.messageCount,
     };
   });
 

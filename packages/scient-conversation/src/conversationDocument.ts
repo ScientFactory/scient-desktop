@@ -49,6 +49,8 @@ import {
   visitNodes,
   type SourceEdit,
 } from "./markdownAst.ts";
+import { truncateUtf8, warningValue } from "./boundedText.ts";
+import { scanHtmlStartTags } from "./htmlTags.ts";
 import { writeMessageBody } from "./messageBody.ts";
 import {
   deriveTerminalAssistantMessageIds,
@@ -62,17 +64,44 @@ export type ResolvedAttachmentContent =
   | { readonly _tag: "bytes"; readonly bytes: Uint8Array; readonly sha256: Sha256Digest }
   | { readonly _tag: "unavailable"; readonly reason: DocumentAssetUnavailableReason };
 
-export interface ConversationDocumentInput {
+/**
+ * An available attachment whose bytes stay outside the bundle: a text-only
+ * export lists it by name and size without reading it, and a packaging writer
+ * copies it into the package itself. `sha256` is set when that writer needs it.
+ */
+export interface ExternalAttachmentContent {
+  readonly _tag: "external";
+  readonly byteLength: number;
+  readonly sha256: Sha256Digest | null;
+}
+
+/** A bundle asset; an `external` one names the attachment a packaging writer copies. */
+export type ConversationDocumentAsset = Omit<DocumentAsset, "content"> & {
+  readonly content:
+    | DocumentAsset["content"]
+    | {
+        readonly _tag: "external";
+        readonly localId: string;
+        readonly sha256: Sha256Digest | null;
+      };
+};
+
+/** A document bundle whose assets may keep their bytes outside it. */
+export type ConversationDocumentBundle = Omit<DocumentBundle, "assets"> & {
+  readonly assets: ReadonlyArray<ConversationDocumentAsset>;
+};
+
+export interface ConversationDocumentInput<Content = ResolvedAttachmentContent> {
   readonly snapshot: ConversationSnapshotV1;
   /** The per-export value every structure marker carries. */
   readonly exportValue: string;
   /** IANA zone for speaker headings; UTC when unknown. */
   readonly timeZone: string;
-  readonly resolveAttachment: (attachment: ConversationAttachment) => ResolvedAttachmentContent;
+  readonly resolveAttachment: (attachment: ConversationAttachment) => Content;
 }
 
-export interface ConversationDocument {
-  readonly bundle: DocumentBundle;
+export interface ConversationDocument<Bundle = DocumentBundle> {
+  readonly bundle: Bundle;
   /** Messages written into the document, which the Markdown markers number. */
   readonly messageCount: number;
 }
@@ -112,6 +141,10 @@ function formatBytes(bytes: number): string {
   return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
 }
 
+/** Longest package file name, so `attachments/NN-<name>` stays within every file system's limit. */
+const PACKAGE_NAME_MAX_BYTES = 160;
+
+/** A package file name: letters, digits, `.`, `_`, `-`, cut on code points and bounded in bytes. */
 function safeFileName(name: string): string {
   const cleaned = name
     .normalize("NFC")
@@ -119,8 +152,15 @@ function safeFileName(name: string): string {
     .replace(/-{2,}/gu, "-")
     .replace(/^[-.]+|[-.]+$/gu, "");
   const extensionIndex = cleaned.lastIndexOf(".");
-  const extension = extensionIndex > 0 ? cleaned.slice(extensionIndex).slice(0, 16) : "";
-  const stem = (extensionIndex > 0 ? cleaned.slice(0, extensionIndex) : cleaned).slice(0, 80);
+  const extension =
+    extensionIndex > 0
+      ? truncateUtf8(cleaned.slice(extensionIndex), 64, 16).replace(/[-.]+$/u, "")
+      : "";
+  const stem = truncateUtf8(
+    extensionIndex > 0 ? cleaned.slice(0, extensionIndex) : cleaned,
+    PACKAGE_NAME_MAX_BYTES - new TextEncoder().encode(extension).byteLength,
+    80,
+  ).replace(/[-.]+$/u, "");
   return `${stem || "attachment"}${extension}`;
 }
 
@@ -144,7 +184,19 @@ function quote(text: string): string {
     .join("\n");
 }
 
-function warningMessage(warning: ConversationSnapshotWarning): DocumentWarning {
+/**
+ * A snapshot warning as the file states it. `fileNumber` maps a snapshot
+ * message number to the number the file shows, or null for a message the file
+ * leaves out (system messages, answers folded into their question).
+ */
+function warningMessage(
+  warning: ConversationSnapshotWarning,
+  fileNumber: (snapshotN: number) => number | null,
+): DocumentWarning {
+  const where = (messageN: number | null) => {
+    const n = messageN === null ? null : fileNumber(messageN);
+    return n === null ? "" : ` in message ${n}`;
+  };
   switch (warning._tag) {
     case "running-turn-omitted":
       return {
@@ -154,12 +206,12 @@ function warningMessage(warning: ConversationSnapshotWarning): DocumentWarning {
     case "attachment-unavailable":
       return {
         code: "attachment-unavailable",
-        message: `Attachment “${warning.name}”${warning.messageN === null ? "" : ` in message ${warning.messageN}`} was unavailable and is listed by name only.`,
+        message: `Attachment “${warningValue(warning.name)}”${where(warning.messageN)} was unavailable and is listed by name only.`,
       };
     case "attachment-unsupported":
       return {
         code: "attachment-unsupported",
-        message: `Attachment “${warning.name}”${warning.messageN === null ? "" : ` in message ${warning.messageN}`} has a type Scient cannot display; it is included as a file.`,
+        message: `Attachment “${warningValue(warning.name)}”${where(warning.messageN)} has a type Scient cannot display; it is included as a file.`,
       };
     case "records-skipped": {
       const what =
@@ -293,9 +345,17 @@ function details(summary: string, body: string): string {
 
 /**
  * Builds the document bundle. Deterministic for a given snapshot, export
- * value, zone, and resolved attachment content.
+ * value, zone, and resolved attachment content. With attachment bytes only,
+ * the bundle is a `DocumentBundle` any readable writer takes; with `external`
+ * content it is for the Markdown and conversation-file writers.
  */
-export function buildConversationDocument(input: ConversationDocumentInput): ConversationDocument {
+export function buildConversationDocument(input: ConversationDocumentInput): ConversationDocument;
+export function buildConversationDocument(
+  input: ConversationDocumentInput<ResolvedAttachmentContent | ExternalAttachmentContent>,
+): ConversationDocument<ConversationDocumentBundle>;
+export function buildConversationDocument(
+  input: ConversationDocumentInput<ResolvedAttachmentContent | ExternalAttachmentContent>,
+): ConversationDocument<ConversationDocumentBundle> {
   const { snapshot, exportValue } = input;
   const answeredRequestIds = new Set(snapshot.questionAnswers.map((answer) => answer.id));
   // Chat shows a folded question answer instead of its "async-answer" message.
@@ -309,40 +369,83 @@ export function buildConversationDocument(input: ConversationDocumentInput): Con
       ),
   );
 
+  // Warnings name messages by the numbers the file shows. An answer's
+  // attachments are reported once, with the answer, not again for the
+  // folded message that carried them.
+  const fileNumberBySnapshotN = new Map(exported.map((message, index) => [message.n, index + 1]));
+  const foldedAnswerNumbers = new Set(
+    snapshot.messages
+      .filter(
+        (message) =>
+          message.id.startsWith("async-answer:") &&
+          answeredRequestIds.has(message.id.slice("async-answer:".length)),
+      )
+      .map((message) => message.n),
+  );
+  const unavailableAnswerNames = new Set(
+    snapshot.questionAnswers.flatMap((answer) =>
+      answer.items.flatMap((item) =>
+        item.attachments
+          .filter((attachment) => !attachment.available)
+          .map((attachment) => attachment.name),
+      ),
+    ),
+  );
+  const snapshotWarnings = snapshot.warnings.filter(
+    (warning) =>
+      !(
+        (warning._tag === "attachment-unavailable" || warning._tag === "attachment-unsupported") &&
+        warning.messageN !== null &&
+        foldedAnswerNumbers.has(warning.messageN) &&
+        unavailableAnswerNames.has(warning.name)
+      ),
+  );
   const warnings: DocumentWarning[] = [
     ...sensitiveContentWarning(snapshot.selection),
-    ...snapshot.warnings.map(warningMessage),
+    ...snapshotWarnings.map((warning) =>
+      warningMessage(warning, (n) => fileNumberBySnapshotN.get(n) ?? null),
+    ),
     ...(snapshot.provenance._tag === "import"
       ? (snapshot.provenance.omissions ?? []).map(sourceOmissionWarning)
       : snapshot.provenance._tag === "fork"
         ? (snapshot.provenance.sourceImport?.omissions ?? []).map(sourceOmissionWarning)
         : []),
   ];
-  const assets: DocumentAsset[] = [];
+  const assets: ConversationDocumentAsset[] = [];
   const citations: DocumentCitation[] = [];
   const assetIdByLocalId = new Map<string, string>();
 
-  const registerAsset = (attachment: ConversationAttachment, id: string): DocumentAsset => {
+  const registerAsset = (
+    attachment: ConversationAttachment,
+    id: string,
+  ): ConversationDocumentAsset => {
     const content = attachment.available
       ? input.resolveAttachment(attachment)
       : ({ _tag: "unavailable", reason: "missing" } as const);
     if (attachment.available && content._tag === "unavailable") {
       warnings.push({
         code: "attachment-unavailable",
-        message: `Attachment “${attachment.name}” could not be read and is listed by name only.`,
+        message: `Attachment “${warningValue(attachment.name)}” ${content.reason === "too-large" ? "is too large to include" : "could not be read"} and is listed by name only.`,
       });
     }
-    const asset: DocumentAsset = {
+    const asset: ConversationDocumentAsset = {
       id,
       role: attachment.kind === "image" ? "image" : "attachment",
       fileName: attachment.name,
       mediaType: attachment.mimeType,
-      byteLength: content._tag === "bytes" ? content.bytes.byteLength : attachment.sizeBytes,
+      byteLength:
+        content._tag === "bytes"
+          ? content.bytes.byteLength
+          : content._tag === "external"
+            ? content.byteLength
+            : attachment.sizeBytes,
       packagePath: `attachments/${String(assets.length + 1).padStart(2, "0")}-${safeFileName(attachment.name)}`,
       content:
         content._tag === "bytes"
           ? { _tag: "bytes", bytes: content.bytes, sha256: content.sha256 }
-          : { _tag: "unavailable", reason: content.reason },
+          : content._tag === "external"
+            ? { _tag: "external", localId: attachment.localId, sha256: content.sha256 }
+            : { _tag: "unavailable", reason: content.reason },
     };
     assets.push(asset);
     assetIdByLocalId.set(attachment.localId, id);
@@ -412,12 +515,16 @@ export function buildConversationDocument(input: ConversationDocumentInput): Con
       { plans: [], answers: [], work: [], reasoning: [], workTurns: new Set() },
     ]),
   );
+  const planByEntryId = new Map(snapshot.proposedPlans.map((plan) => [`plan:${plan.id}`, plan]));
+  const reasoningById = new Map<string, ConversationSnapshotV1["reasoning"][number]>(
+    snapshot.reasoning.map((reasoning) => [reasoning.id, reasoning]),
+  );
   let previousMessageId: string | null = null;
   const pending: Entry[] = [];
   const attach = (entry: Entry, ownerId: string) => {
     const owner = attached.get(ownerId)!;
     if (entry.kind === "proposed-plan") {
-      const plan = snapshot.proposedPlans.find((candidate) => `plan:${candidate.id}` === entry.id);
+      const plan = planByEntryId.get(entry.id);
       if (plan) owner.plans.push(plan);
     } else if (entry.kind === "work") {
       if (entry.entry.questionAnswer) owner.answers.push(entry.entry.questionAnswer);
@@ -426,7 +533,7 @@ export function buildConversationDocument(input: ConversationDocumentInput): Con
         if (entry.entry.turnId) owner.workTurns.add(entry.entry.turnId);
       }
     } else if (entry.kind === "message" && entry.message.role === "reasoning") {
-      const reasoning = snapshot.reasoning.find((candidate) => candidate.id === entry.id);
+      const reasoning = reasoningById.get(entry.id);
       if (reasoning) owner.reasoning.push(reasoning);
     }
   };
@@ -443,10 +550,20 @@ export function buildConversationDocument(input: ConversationDocumentInput): Con
     else attach(entry, owner);
   }
 
-  const turnOrdinal = new Map<TurnId, number>();
+  // Each run of a turn's messages gets its own ordinal: the reader requires a
+  // turn's messages to be contiguous, so a turn that returns after another
+  // one continues as a new turn in the file. Turnless messages (prompts and
+  // steering) do not end a run.
+  const turnOrdinalByMessage = new Map<string, number>();
+  let runTurn: TurnId | null = null;
+  let runs = 0;
   for (const message of exported) {
-    if (message.turnId !== null && !turnOrdinal.has(message.turnId))
-      turnOrdinal.set(message.turnId, turnOrdinal.size + 1);
+    if (message.turnId === null) continue;
+    if (message.turnId !== runTurn) {
+      runTurn = message.turnId;
+      runs += 1;
+    }
+    turnOrdinalByMessage.set(message.id, runs);
   }
 
   const sections: string[] = [];
@@ -463,7 +580,7 @@ export function buildConversationDocument(input: ConversationDocumentInput): Con
         n,
         role,
         time: message.createdAt,
-        turn: message.turnId === null ? null : (turnOrdinal.get(message.turnId) ?? null),
+        turn: turnOrdinalByMessage.get(message.id) ?? null,
       })}\n${formatSpeakerHeading({ role, time: message.createdAt, timeZone: input.timeZone })}`,
     ];
 
@@ -474,7 +591,7 @@ export function buildConversationDocument(input: ConversationDocumentInput): Con
     const unresolvedImage = (alt: string) =>
       warnings.push({
         code: "resource-unresolved",
-        message: `Image “${alt || "untitled"}” in message ${n} refers to a file on the original computer and is not included.`,
+        message: `Image “${warningValue(alt) || "untitled"}” in message ${n} refers to a file on the original computer and is not included.`,
       });
     const bodySource = replaceLocalImages(
       renderReferences(message, {
@@ -483,6 +600,7 @@ export function buildConversationDocument(input: ConversationDocumentInput): Con
         contextDetails,
       }),
       unresolvedImage,
+      role === "assistant",
     );
     const text =
       bodySource.trim().length === 0 &&
@@ -512,7 +630,7 @@ export function buildConversationDocument(input: ConversationDocumentInput): Con
       blocks.push(part("context", `**Context**\n\n${contextDetails.join("\n")}`));
     }
     for (const [planIndex, plan] of owner.plans.entries()) {
-      const planBody = writeMessageBody(replaceLocalImages(plan.markdown, unresolvedImage), {
+      const planBody = writeMessageBody(replaceLocalImages(plan.markdown, unresolvedImage, true), {
         namespace: `${namespace}p${planIndex + 1}-`,
         preserveLineBreaks: false,
         rawHtml: "render",
@@ -554,7 +672,7 @@ export function buildConversationDocument(input: ConversationDocumentInput): Con
     if (owner.reasoning.length > 0) {
       const bodies = owner.reasoning.map(
         (reasoning, reasoningIndex) =>
-          writeMessageBody(replaceLocalImages(reasoning.text, unresolvedImage), {
+          writeMessageBody(replaceLocalImages(reasoning.text, unresolvedImage, true), {
             namespace: `${namespace}r${reasoningIndex + 1}-`,
             preserveLineBreaks: true,
             rawHtml: "render",
@@ -577,12 +695,18 @@ export function buildConversationDocument(input: ConversationDocumentInput): Con
         ? `imported from ${snapshot.provenance.source === "scic" ? "a Scient conversation file" : "Markdown"} (unverified)`
         : null,
   ].filter((value): value is string => value !== null);
+  // Two attachments with one name in one message would say the same thing twice.
+  const notes = [
+    ...new Map(
+      warnings.map((warning) => [`${warning.code}\n${warning.message}`, warning]),
+    ).values(),
+  ];
   const preamble = [
     `# ${escapeMarkdownText(snapshot.thread.title)}`,
     `*Exported from Scient · ${metadata.map(escapeMarkdownText).join(" · ")}*`,
-    ...(warnings.length > 0
+    ...(notes.length > 0
       ? [
-          `**Export notes**\n\n${warnings.map((warning) => `- ${escapeMarkdownText(warning.message)}`).join("\n")}`,
+          `**Export notes**\n\n${notes.map((warning) => `- ${escapeMarkdownText(warning.message)}`).join("\n")}`,
         ]
       : []),
   ];
@@ -605,7 +729,7 @@ export function buildConversationDocument(input: ConversationDocumentInput): Con
       },
       assets,
       citations,
-      warnings,
+      warnings: notes,
     },
     messageCount: exported.length,
   };
@@ -613,13 +737,44 @@ export function buildConversationDocument(input: ConversationDocumentInput): Con
 
 const REMOTE_IMAGE_URL = /^(?:https?:|data:image\/|\/\/)/iu;
 
+function isLocalImageUrl(url: string): boolean {
+  return (
+    url.trim().length > 0 &&
+    !url.startsWith(DOCUMENT_ASSET_URL_PREFIX) &&
+    !REMOTE_IMAGE_URL.test(url)
+  );
+}
+
+function decodeHtmlEntities(text: string): string {
+  return text.replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos|#39);/giu, (entity, name: string) => {
+    const lower = name.toLowerCase();
+    if (lower.startsWith("#")) {
+      const code = lower.startsWith("#x")
+        ? Number.parseInt(lower.slice(2), 16)
+        : Number.parseInt(lower.slice(1), 10);
+      return Number.isInteger(code) &&
+        code > 0 &&
+        code <= 0x10ffff &&
+        (code < 0xd800 || code > 0xdfff)
+        ? String.fromCodePoint(code)
+        : entity;
+    }
+    return { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" }[lower] ?? entity;
+  });
+}
+
 /**
  * Images a message points at by a path on the original computer (for example
- * `![Plot](./figures/plot.png)`) cannot travel with the export. Each becomes a
- * labelled placeholder and reports itself; remote and bundle images stay.
+ * `![Plot](./figures/plot.png)`, or `<img src="./plot.png">` where raw HTML is
+ * rendered) cannot travel with the export. Each becomes a labelled placeholder
+ * and reports itself; remote and bundle images stay.
  */
-function replaceLocalImages(source: string, onUnresolved: (alt: string) => void): string {
-  if (!source.includes("![")) return source;
+function replaceLocalImages(
+  source: string,
+  onUnresolved: (alt: string) => void,
+  rendersHtml: boolean,
+): string {
+  if (!source.includes("![") && !(rendersHtml && /<img/iu.test(source))) return source;
   const root = parseMarkdown(source);
   const definitions = new Map<string, string>();
   visitNodes(root, (node) => {
@@ -627,18 +782,32 @@ function replaceLocalImages(source: string, onUnresolved: (alt: string) => void)
   });
   const edits: SourceEdit[] = [];
   visitNodes(root, (node) => {
+    if (node.type === "html") {
+      if (!rendersHtml) return;
+      const range = nodeRange(node);
+      if (!range) return;
+      const html = source.slice(range.start, range.end);
+      for (const tag of scanHtmlStartTags(html)) {
+        const src = tag.attributes.get("src");
+        if (tag.name !== "img" || src === undefined) continue;
+        if (!isLocalImageUrl(decodeHtmlEntities(src))) continue;
+        const alt = decodeHtmlEntities(tag.attributes.get("alt") ?? "");
+        onUnresolved(alt);
+        edits.push({
+          start: range.start + tag.start,
+          end: range.start + tag.end,
+          text: `<em>[Image not included${alt ? `: ${escapeHtmlText(alt)}` : ""}]</em>`,
+        });
+      }
+      return;
+    }
     const url =
       node.type === "image"
         ? node.url
         : node.type === "imageReference"
           ? definitions.get(node.identifier)
           : undefined;
-    if (
-      url === undefined ||
-      url.startsWith(DOCUMENT_ASSET_URL_PREFIX) ||
-      REMOTE_IMAGE_URL.test(url)
-    )
-      return;
+    if (url === undefined || !isLocalImageUrl(url)) return;
     const range = nodeRange(node);
     if (!range) return;
     const alt = "alt" in node ? (node.alt ?? "") : "";
@@ -652,7 +821,7 @@ function replaceLocalImages(source: string, onUnresolved: (alt: string) => void)
   return applyEdits(source, edits);
 }
 
-function assetListItem(asset: DocumentAsset): string {
+function assetListItem(asset: ConversationDocumentAsset): string {
   const name = escapeMarkdownText(asset.fileName);
   if (asset.content._tag === "unavailable") return `- ${name} · unavailable`;
   const link = `${asset.role === "image" ? "!" : ""}[${name}](${DOCUMENT_ASSET_URL_PREFIX}${asset.id})`;

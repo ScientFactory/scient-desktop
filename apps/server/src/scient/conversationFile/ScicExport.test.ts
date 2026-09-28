@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import {
   ChatAttachment,
   SCIC_MEDIA_TYPE,
@@ -34,12 +35,34 @@ import * as ConversationExportService from "../conversationExport/ConversationEx
 import * as ConversationSnapshotService from "../conversationExport/ConversationSnapshotService.ts";
 import { PandocWordConverter } from "../pandoc/PandocWordConverter.ts";
 import { readScicPackage } from "./ScicReader.ts";
-import { sha256Digest } from "./ScicWriter.ts";
-import { ScicManifest } from "./scicFormat.ts";
+import { prepareScicPackage, sha256Digest } from "./ScicWriter.ts";
+import { ScicManifest, scicAttachmentPathDigest } from "./scicFormat.ts";
+import {
+  PNG as FIXTURE_PNG,
+  attachment as snapshotAttachment,
+  capturedSnapshot,
+  generatedNames,
+  zipBytesPromise,
+} from "./scic.test-fixtures.ts";
+
+// Lets a test stand in for a package over the format's limits, which takes
+// hundreds of megabytes to reach for real.
+const scicWriter = vi.hoisted(() => ({ tooLarge: false }));
+vi.mock("./ScicWriter.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./ScicWriter.ts")>();
+  return {
+    ...actual,
+    prepareScicPackage: ((input: Parameters<typeof actual.prepareScicPackage>[0]) =>
+      scicWriter.tooLarge
+        ? { _tag: "too-large", entry: "conversation.json" }
+        : actual.prepareScicPackage(input)) as typeof actual.prepareScicPackage,
+  };
+});
 
 const THREAD = ThreadId.make("thread-1");
 const encodeAttachments = Schema.encodeSync(Schema.fromJsonString(Schema.Array(ChatAttachment)));
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const decodeManifestJson = Schema.decodeEffect(Schema.fromJsonString(ScicManifest));
 const PNG = new Uint8Array([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
 ]);
@@ -203,6 +226,195 @@ const exportAndRead = (options: Partial<ScientConversationExportRequest["options
     return { produced, entries, read };
   });
 
+/** Validates prepared package files with the reader, as another Scient would. */
+const readPrepared = (files: Parameters<typeof zipBytesPromise>[0]) =>
+  Effect.gen(function* () {
+    const bytes = yield* Effect.promise(() => zipBytesPromise(files));
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-scic-names-"));
+    const packagePath = NodePath.join(root, "package.scic");
+    NodeFS.writeFileSync(packagePath, bytes);
+    NodeFS.mkdirSync(NodePath.join(root, "attachments"));
+    const read = yield* Effect.exit(
+      readScicPackage({
+        importId: "cimp_0f8e7d6c-5b4a-4938-8271-605f4e3d2c1b" as ConversationImportId,
+        packagePath,
+        packageSha256: sha256Digest(bytes),
+        packageBytes: bytes.byteLength,
+        attachmentsDirectory: NodePath.join(root, "attachments"),
+      }),
+    );
+    NodeFS.rmSync(root, { recursive: true, force: true });
+    return read;
+  });
+
+const preparePackage = (
+  snapshot: typeof capturedSnapshot,
+  redact: (text: string) => string = (text) => text,
+) =>
+  prepareScicPackage({
+    snapshot,
+    attachments: new Map(
+      snapshot.messages.flatMap((message) =>
+        message.attachments.map(
+          (entry) =>
+            [
+              entry.localId,
+              { _tag: "bytes" as const, bytes: FIXTURE_PNG, sha256: sha256Digest(FIXTURE_PNG) },
+            ] as const,
+        ),
+      ),
+    ),
+    exportValue: "7f3c9a2e41b8",
+    exportedAt: "2026-09-28T09:12:00.000Z",
+    exporter: { name: "Scient", version: "0.7.0" },
+    timeZone: "UTC",
+    redact,
+  });
+
+describe("naming .scic attachments", () => {
+  it.effect("writes names the reader accepts for any Unicode attachment name", () =>
+    Effect.gen(function* () {
+      const names = generatedNames(120);
+      const [first, second] = capturedSnapshot.messages;
+      const snapshot = {
+        ...capturedSnapshot,
+        messages: [
+          {
+            ...first!,
+            text: "Generated names",
+            references: [],
+            attachments: names.map((name, index) =>
+              snapshotAttachment(
+                `thread-1-generated-${index}`,
+                "image",
+                name,
+                "image/png",
+                FIXTURE_PNG.byteLength,
+              ),
+            ),
+          },
+          second!,
+        ],
+        warnings: [],
+      };
+      const prepared = preparePackage(snapshot);
+      assert(prepared._tag === "ok", prepared._tag);
+      for (const resource of prepared.value.manifest.resources) {
+        assert(resource._tag === "included");
+        assert.isTrue(resource.path.isWellFormed());
+        assert.strictEqual(scicAttachmentPathDigest(resource.path), resource.sha256);
+        assert.isAtMost(new TextEncoder().encode(resource.path.split("/")[1]!).byteLength, 255);
+      }
+      const read = yield* readPrepared(prepared.value.files);
+      assert(Exit.isSuccess(read), String(Exit.isFailure(read) ? read.cause : ""));
+      assert.strictEqual(read.value.snapshot.messages[0]!.attachments.length, names.length);
+    }),
+  );
+
+  it.effect("splits a turn that returns after another turn so the package imports", () =>
+    Effect.gen(function* () {
+      const [user, assistant] = capturedSnapshot.messages;
+      const at = (minute: number) => `2026-09-27T14:${String(minute).padStart(2, "0")}:00.000Z`;
+      const reply = (n: number, turnId: string, text: string, minute: number) => ({
+        ...assistant!,
+        n,
+        id: `message-${n}` as never,
+        turnId: turnId as never,
+        text,
+        createdAt: at(minute),
+        updatedAt: at(minute),
+      });
+      const snapshot = {
+        ...capturedSnapshot,
+        selection: { workLog: false, reasoning: true, throughMessageId: null },
+        messages: [
+          {
+            ...user!,
+            text: "Start",
+            attachments: [],
+            references: [],
+            createdAt: at(1),
+            updatedAt: at(1),
+          },
+          reply(2, "turn-1", "First", 2),
+          reply(3, "turn-2", "Other", 3),
+          reply(4, "turn-1", "Back", 4),
+        ],
+        reasoning: [
+          {
+            id: "reasoning-1" as never,
+            turnId: "turn-1" as never,
+            createdAt: at(2),
+            updatedAt: at(2),
+            text: "Early",
+          },
+          {
+            id: "reasoning-2" as never,
+            turnId: "turn-1" as never,
+            createdAt: at(5),
+            updatedAt: at(5),
+            text: "Late",
+          },
+        ],
+        questionAnswers: [
+          {
+            id: "request-1",
+            turnId: "turn-1" as never,
+            createdAt: at(4),
+            items: [{ question: "Which?", answer: "This", attachments: [] }],
+          },
+        ],
+        warnings: [],
+      };
+      const prepared = preparePackage(snapshot);
+      assert(prepared._tag === "ok", prepared._tag);
+      const read = yield* readPrepared(prepared.value.files);
+      assert(Exit.isSuccess(read), String(Exit.isFailure(read) ? read.cause : ""));
+      const imported = read.value.snapshot;
+      assert.deepStrictEqual(
+        imported.messages.map((message): string | null => message.turnId),
+        [null, "turn-1", "turn-2", "turn-1~2"],
+      );
+      assert.deepStrictEqual(
+        imported.reasoning.map((reasoning): string | null => reasoning.turnId),
+        ["turn-1", "turn-1~2"],
+      );
+      assert.deepStrictEqual(
+        imported.questionAnswers.map((answer): string | null => answer.turnId),
+        ["turn-1~2"],
+      );
+    }),
+  );
+
+  it("runs the reader's full conversation validation before writing", () => {
+    // Reasoning present although it was not selected: the importer refuses it.
+    const prepared = preparePackage({
+      ...capturedSnapshot,
+      reasoning: [
+        {
+          id: "reasoning-1" as never,
+          turnId: "turn-1" as never,
+          createdAt: "2026-09-27T14:05:30.000Z",
+          updatedAt: "2026-09-27T14:05:30.000Z",
+          text: "Unselected",
+        },
+      ],
+    });
+    assert.deepStrictEqual(prepared, {
+      _tag: "invalid-package",
+      detail: "The conversation does not pass import validation.",
+    });
+  });
+
+  it("refuses to hand out a package its own reader would reject", () => {
+    // A redaction that makes an attachment name longer than a manifest name may be.
+    const prepared = preparePackage(capturedSnapshot, (text) =>
+      text.replaceAll("figure", "f".repeat(300)),
+    );
+    assert.strictEqual(prepared._tag, "invalid-package");
+  });
+});
+
 describe("exporting a .scic", () => {
   it.effect("round-trips identical file bytes with distinct declared media types", () =>
     Effect.gen(function* () {
@@ -227,7 +439,7 @@ describe("exporting a .scic", () => {
       const { entries, read } = yield* exportAndRead();
       assert(Exit.isSuccess(read), String(Exit.isFailure(read) ? read.cause : ""));
 
-      const manifest = yield* Schema.decodeEffect(Schema.fromJsonString(ScicManifest))(
+      const manifest = yield* decodeManifestJson(
         entries.find((entry) => entry.name === "manifest.json")!.text,
       );
       const resources = manifest.resources.filter((resource) => resource._tag === "included");
@@ -280,7 +492,7 @@ describe("exporting a .scic", () => {
         entries.filter((entry) => entry.name.startsWith("attachments/")).map((entry) => entry.name),
         [expectedPath],
       );
-      const manifest = yield* Schema.decodeEffect(Schema.fromJsonString(ScicManifest))(
+      const manifest = yield* decodeManifestJson(
         entries.find((entry) => entry.name === "manifest.json")!.text,
       );
       assert.deepStrictEqual(
@@ -357,6 +569,23 @@ describe("exporting a .scic", () => {
       assert.deepStrictEqual(read.value.omissions, []);
       // Even when selected, the tool's raw payload never travels.
       assert.notInclude(entries.map((entry) => entry.text).join("\n"), "sk-hidden");
+    }).pipe(Effect.provide(TestLayer)),
+  );
+
+  it.effect("suggests what the dialog offers when the file would be too large", () =>
+    Effect.gen(function* () {
+      yield* seedThread();
+      const service = yield* ConversationExportService.ConversationExportService;
+      scicWriter.tooLarge = true;
+      const error = yield* service
+        .produce(request())
+        .pipe(Effect.flip, Effect.ensuring(Effect.sync(() => (scicWriter.tooLarge = false))));
+      assert(error._tag === "ScientConversationExportError");
+      assert.strictEqual(error.reason, "too-large");
+      assert.strictEqual(
+        error.message,
+        "This conversation is too large for a Scient conversation file. Leave out the work log and reasoning, or export it as Markdown.",
+      );
     }).pipe(Effect.provide(TestLayer)),
   );
 

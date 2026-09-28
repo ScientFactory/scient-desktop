@@ -7,17 +7,18 @@
  * timeline is never consulted.
  */
 import {
-  ChatAttachment,
+  type ChatAttachment,
   type ConversationSnapshotSelection,
   type ConversationSnapshotV1,
   type MessageId,
-  type OrchestrationThread,
   type ThreadId,
 } from "@t3tools/contracts";
 import {
   SnapshotRangeError,
   buildConversationSnapshot,
   canonicalSnapshotContent,
+  selectConversationContent,
+  selectedConversationAttachments,
 } from "@scientfactory/conversation";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -53,25 +54,6 @@ export type ConversationSnapshotError =
   | ConversationThreadNotFoundError
   | ConversationRangeError
   | ConversationSnapshotReadError;
-
-const isChatAttachment = Schema.is(ChatAttachment);
-
-/** Every attachment a snapshot can reference: message attachments and answer attachments. */
-function recordedAttachments(thread: OrchestrationThread): ReadonlyArray<ChatAttachment> {
-  const answerAttachments = thread.activities.flatMap((activity) => {
-    if (activity.kind !== "user-input.answer-submitted") return [];
-    const byQuestion =
-      typeof activity.payload === "object" && activity.payload !== null
-        ? (activity.payload as { readonly attachmentsByQuestionId?: unknown })
-            .attachmentsByQuestionId
-        : undefined;
-    if (typeof byQuestion !== "object" || byQuestion === null) return [];
-    return Object.values(byQuestion).flatMap((value: unknown) =>
-      Array.isArray(value) ? value.filter(isChatAttachment) : [],
-    );
-  });
-  return [...thread.messages.flatMap((message) => message.attachments ?? []), ...answerAttachments];
-}
 
 export interface CapturedConversation {
   readonly snapshot: ConversationSnapshotV1;
@@ -125,16 +107,25 @@ const make = Effect.gen(function* () {
     if (Option.isNone(thread) || thread.value.deletedAt !== null) {
       return yield* new ConversationThreadNotFoundError({ threadId: input.threadId });
     }
+    const rangeError = (cause: unknown) =>
+      cause instanceof SnapshotRangeError
+        ? new ConversationRangeError({ messageId: cause.messageId as MessageId })
+        : new ConversationSnapshotReadError({ cause });
+    const content = yield* Effect.try({
+      try: () => selectConversationContent(thread.value, input.selection.throughMessageId),
+      catch: rangeError,
+    });
     // Outside the transaction: attachment files are immutable once recorded.
+    // Only the selection's attachments are looked up.
     const attachmentFiles = new Map<string, string>();
-    for (const attachment of recordedAttachments(thread.value)) {
+    for (const attachment of selectedConversationAttachments(content)) {
       const path = locate(attachment);
       if (path === null || attachmentFiles.has(attachment.id)) continue;
       const exists = yield* fileSystem.exists(path).pipe(Effect.orElseSucceed(() => false));
       if (exists) attachmentFiles.set(attachment.id, path);
     }
     const capturedAt = DateTime.formatIso(yield* DateTime.now);
-    const content = yield* Effect.try({
+    const snapshotContent = yield* Effect.try({
       try: () =>
         buildConversationSnapshot({
           thread: thread.value,
@@ -142,18 +133,16 @@ const make = Effect.gen(function* () {
           threadSequence: watermark[0]?.threadSequence ?? 0,
           capturedAt,
           selection: input.selection,
+          content,
           isAttachmentAvailable: (attachment) => attachmentFiles.has(attachment.id),
         }),
-      catch: (cause) =>
-        cause instanceof SnapshotRangeError
-          ? new ConversationRangeError({ messageId: cause.messageId as MessageId })
-          : new ConversationSnapshotReadError({ cause }),
+      catch: rangeError,
     });
     const digest = yield* crypto
-      .digest("SHA-256", new TextEncoder().encode(canonicalSnapshotContent(content)))
+      .digest("SHA-256", new TextEncoder().encode(canonicalSnapshotContent(snapshotContent)))
       .pipe(Effect.mapError((cause) => new ConversationSnapshotReadError({ cause })));
     return {
-      snapshot: { ...content, contentDigest: `sha256:${Encoding.encodeHex(digest)}` },
+      snapshot: { ...snapshotContent, contentDigest: `sha256:${Encoding.encodeHex(digest)}` },
       attachmentFiles,
     };
   });

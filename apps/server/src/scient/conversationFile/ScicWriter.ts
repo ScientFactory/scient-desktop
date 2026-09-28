@@ -20,6 +20,7 @@ import {
   SCIC_MEDIA_TYPE,
   type ConversationAttachment,
   type ConversationImportResourceId,
+  TurnId,
   type ConversationSnapshotV1,
   type ConversationSnapshotWarning,
   type DocumentWarning,
@@ -27,11 +28,19 @@ import {
 } from "@t3tools/contracts";
 import {
   buildConversationDocument,
+  warningValue,
   writeConversationMarkdown,
+  type ExternalAttachmentContent,
   type ResolvedAttachmentContent,
 } from "@scientfactory/conversation";
+import * as Exit from "effect/Exit";
+import * as Schema from "effect/Schema";
 
-import { conversationContentDigest } from "../conversationImport/ConversationImporter.ts";
+import {
+  ValidatedConversationImport,
+  conversationContentDigest,
+  conversationImportOmissions,
+} from "../conversationImport/ConversationImporter.ts";
 import {
   SCIC_COMPRESSION_RATIO_FLOOR_BYTES,
   SCIC_MANIFEST_ENTRY,
@@ -46,22 +55,36 @@ import {
   SCIC_SNAPSHOT_ENTRY,
   SCIC_SNAPSHOT_MEDIA_TYPE,
   SNIFF_BYTES,
+  ScicManifest,
   contradictsDeclaredType,
   scicAttachmentPath,
+  scicAttachmentPathDigest,
   withinAttachmentPolicy,
-  type ScicManifest,
   type ScicManifestEntry,
   type ScicManifestResource,
   type ScicUnavailableReason,
 } from "./scicFormat.ts";
 
-/** Attachment bytes read at capture, or why they could not be, by local attachment ID. */
-export type ScicAttachmentBytes = ResolvedAttachmentContent;
+/**
+ * An attachment file checked at capture but not read into memory: the
+ * archive streams it and fails if it no longer matches its size and digest.
+ */
+export interface ScicAttachmentFile {
+  readonly _tag: "file";
+  readonly path: string;
+  readonly byteLength: number;
+  readonly sha256: Sha256Digest;
+  /** The file's first bytes, for checking its declared media type. */
+  readonly head: Uint8Array;
+}
 
-export interface ScicPackageInput {
+/** Attachment content found at capture, or why there is none, by local attachment ID. */
+export type ScicAttachmentBytes = ResolvedAttachmentContent | ScicAttachmentFile;
+
+export interface ScicPackageInput<Attachment extends ScicAttachmentBytes = ScicAttachmentBytes> {
   readonly snapshot: ConversationSnapshotV1;
-  /** Attachments whose bytes were read; an available attachment missing here is `missing`. */
-  readonly attachments: ReadonlyMap<string, ScicAttachmentBytes>;
+  /** Attachments found at capture; an available attachment missing here is `missing`. */
+  readonly attachments: ReadonlyMap<string, Attachment>;
   /** The export's marker value; also the manifest's export ID. */
   readonly exportValue: string;
   readonly exportedAt: string;
@@ -78,9 +101,20 @@ export interface ScicPackageFile {
   readonly compress: boolean;
 }
 
-export interface ScicPackage {
+/** An attachment entry copied from its file when the archive is written. */
+export interface ScicStreamedFile {
+  readonly path: string;
+  readonly file: {
+    readonly path: string;
+    readonly byteLength: number;
+    readonly sha256: Sha256Digest;
+  };
+  readonly compress: boolean;
+}
+
+export interface ScicPackage<File = ScicPackageFile> {
   /** In archive order: `mimetype` first, then the manifest, documents, and attachments. */
-  readonly files: ReadonlyArray<ScicPackageFile>;
+  readonly files: ReadonlyArray<File>;
   readonly manifest: ScicManifest;
   readonly snapshot: ConversationSnapshotV1;
   readonly contentDigest: Sha256Digest;
@@ -90,13 +124,15 @@ export interface ScicPackage {
 
 export type ScicPackageFailure =
   | { readonly _tag: "nothing-to-export" }
-  | { readonly _tag: "too-large"; readonly entry: string };
+  | { readonly _tag: "too-large"; readonly entry: string }
+  /** The writer's own package would fail the reader's checks: a defect in the writer. */
+  | { readonly _tag: "invalid-package"; readonly detail: string };
 
 const encoder = new TextEncoder();
 
 /** Above this size, deflation could make a valid entry fail the reader's ratio limit. */
-function canCompress(bytes: Uint8Array): boolean {
-  return bytes.byteLength <= SCIC_COMPRESSION_RATIO_FLOOR_BYTES;
+function canCompress(byteLength: number): boolean {
+  return byteLength <= SCIC_COMPRESSION_RATIO_FLOOR_BYTES;
 }
 
 export function sha256Digest(bytes: Uint8Array): Sha256Digest {
@@ -114,11 +150,20 @@ function redactStrings<A>(value: A, redact: (text: string) => string): A {
   return value;
 }
 
+interface IncludedContent {
+  readonly _tag: "included";
+  readonly byteLength: number;
+  readonly sha256: Sha256Digest;
+  readonly source:
+    | { readonly _tag: "bytes"; readonly bytes: Uint8Array }
+    | { readonly _tag: "file"; readonly path: string };
+}
+
 interface Resource {
   readonly id: ConversationImportResourceId;
   readonly attachment: ConversationAttachment;
   readonly content:
-    | { readonly _tag: "included"; readonly bytes: Uint8Array; readonly sha256: Sha256Digest }
+    | IncludedContent
     | { readonly _tag: "unavailable"; readonly reason: ScicUnavailableReason };
 }
 
@@ -129,27 +174,205 @@ function resolveResource(
   if (!attachment.available || read === undefined)
     return { _tag: "unavailable", reason: "missing" };
   if (read._tag === "unavailable") return { _tag: "unavailable", reason: read.reason };
+  const byteLength = read._tag === "bytes" ? read.bytes.byteLength : read.byteLength;
+  const head = read._tag === "bytes" ? read.bytes : read.head;
   const acceptable =
-    withinAttachmentPolicy({
-      kind: attachment.kind,
-      mediaType: attachment.mimeType,
-      byteLength: read.bytes.byteLength,
-    }) && !contradictsDeclaredType(attachment.mimeType, read.bytes.subarray(0, SNIFF_BYTES));
+    withinAttachmentPolicy({ kind: attachment.kind, mediaType: attachment.mimeType, byteLength }) &&
+    !contradictsDeclaredType(attachment.mimeType, head.subarray(0, SNIFF_BYTES));
   return acceptable
-    ? { _tag: "included", bytes: read.bytes, sha256: read.sha256 }
+    ? {
+        _tag: "included",
+        byteLength,
+        sha256: read.sha256,
+        source:
+          read._tag === "bytes"
+            ? { _tag: "bytes", bytes: read.bytes }
+            : { _tag: "file", path: read.path },
+      }
     : { _tag: "unavailable", reason: "unsupported" };
 }
 
 const UNAVAILABLE_NOTES: Record<Exclude<ScicUnavailableReason, "missing">, string> = {
   unreadable: "could not be read",
   unsupported: "is not a type or size Scient can import",
-  "too-large": "did not fit within the export's attachment limit",
+  "too-large": "is too large to include",
 };
 
-/** Makes the captured snapshot portable, then assembles every package entry. */
+/**
+ * The importer maps each source turn to one local turn and so requires a
+ * turn's messages to form one run (steering prompts, which have no turn, may
+ * sit inside it). A turn whose messages return after another turn therefore
+ * continues as a new turn, `<turnId>~2`, `~3`, …, and every other record of
+ * that turn joins the run it was recorded in: the latest run that had started
+ * by its time, or the first.
+ */
+function splitReappearingTurns(snapshot: ConversationSnapshotV1): ConversationSnapshotV1 {
+  const taken = new Set<string>(
+    [
+      ...snapshot.messages,
+      ...snapshot.reasoning,
+      ...snapshot.workLog,
+      ...snapshot.proposedPlans,
+      ...snapshot.questionAnswers,
+    ].flatMap((record) => (record.turnId === null ? [] : [record.turnId])),
+  );
+  if (snapshot.omittedRunningTurn) taken.add(snapshot.omittedRunningTurn.turnId);
+  const runs = new Map<string, Array<{ readonly start: string; readonly turnId: TurnId }>>();
+  let current: TurnId | null = null;
+  let split = false;
+  const messages = snapshot.messages.map((message) => {
+    if (message.turnId === null) return message;
+    let turnRuns = runs.get(message.turnId);
+    if (turnRuns === undefined) {
+      turnRuns = [{ start: message.createdAt, turnId: message.turnId }];
+      runs.set(message.turnId, turnRuns);
+    } else if (message.turnId !== current) {
+      let ordinal = turnRuns.length + 1;
+      while (taken.has(`${message.turnId}~${ordinal}`)) ordinal += 1;
+      const turnId = TurnId.make(`${message.turnId}~${ordinal}`);
+      taken.add(turnId);
+      turnRuns.push({ start: message.createdAt, turnId });
+      split = true;
+    }
+    current = message.turnId;
+    return { ...message, turnId: turnRuns.at(-1)!.turnId };
+  });
+  if (!split) return snapshot;
+  const runTurn = (turnId: TurnId | null, createdAt: string): TurnId | null => {
+    const turnRuns = turnId === null ? undefined : runs.get(turnId);
+    if (turnRuns === undefined) return turnId;
+    let chosen = turnRuns[0]!;
+    for (const run of turnRuns) if (run.start <= createdAt) chosen = run;
+    return chosen.turnId;
+  };
+  const withRunTurn = <A extends { readonly turnId: TurnId | null; readonly createdAt: string }>(
+    record: A,
+  ): A => ({ ...record, turnId: runTurn(record.turnId, record.createdAt) });
+  return {
+    ...snapshot,
+    messages,
+    reasoning: snapshot.reasoning.map(withRunTurn),
+    workLog: snapshot.workLog.map(withRunTurn),
+    proposedPlans: snapshot.proposedPlans.map(withRunTurn),
+    questionAnswers: snapshot.questionAnswers.map(withRunTurn),
+  };
+}
+
+const decodeManifest = Schema.decodeUnknownExit(ScicManifest);
+
+/**
+ * The reader's manifest and path rules, applied by the writer to its own
+ * manifest before anything is written: it decodes as a `ScicManifest`, every
+ * entry path is distinct regardless of case, and every attachment path is one
+ * the reader accepts for its digest. Null when the package passes.
+ */
+function checkOwnManifest(manifestText: string): string | null {
+  const decoded = decodeManifest(JSON.parse(manifestText));
+  if (Exit.isFailure(decoded)) return "The manifest does not decode.";
+  const folded = new Set<string>();
+  for (const path of [
+    SCIC_MIMETYPE_ENTRY,
+    SCIC_MANIFEST_ENTRY,
+    ...decoded.value.entries.map((entry) => entry.path),
+  ]) {
+    const key = path.normalize("NFC").toLowerCase();
+    if (folded.has(key)) return "Two entries share a path.";
+    folded.add(key);
+  }
+  for (const entry of decoded.value.entries) {
+    if (entry.path === SCIC_SNAPSHOT_ENTRY || entry.path === SCIC_MARKDOWN_ENTRY) continue;
+    if (scicAttachmentPathDigest(entry.path) !== entry.sha256) {
+      return "An attachment path is not one the reader accepts.";
+    }
+  }
+  for (const resource of decoded.value.resources) {
+    if (resource._tag === "included" && scicAttachmentPathDigest(resource.path) !== resource.sha256)
+      return "A resource path is not one the reader accepts.";
+  }
+  return null;
+}
+
+const decodeValidated = Schema.decodeUnknownExit(ValidatedConversationImport);
+/** Stand-ins for what only a receiver knows; validation does not depend on them. */
+const SELF_CHECK_IMPORT_ID = "cimp_00000000-0000-4000-8000-000000000000";
+const SELF_CHECK_PACKAGE_SHA256 = `sha256:${"0".repeat(64)}`;
+const SELF_CHECK_PACKAGE_BYTES = 1;
+
+/**
+ * The reader's validation of the conversation, applied by the writer to its
+ * own `conversation.json` and manifest: the decoded snapshot, its staged
+ * attachments, omissions, and warnings must form a `ValidatedConversationImport`.
+ * Null when they do.
+ */
+function checkOwnSnapshot(input: {
+  readonly manifest: ScicManifest;
+  readonly snapshotText: string;
+  readonly packageSnapshot: ConversationSnapshotV1;
+}): string | null {
+  const pastedText = new Map(
+    [
+      ...input.packageSnapshot.messages.flatMap((message) => message.attachments),
+      ...input.packageSnapshot.questionAnswers.flatMap((answer) =>
+        answer.items.flatMap((item) => item.attachments),
+      ),
+    ].map((attachment) => [attachment.localId, attachment.pastedText]),
+  );
+  const validated = decodeValidated({
+    importId: SELF_CHECK_IMPORT_ID,
+    package: {
+      format: input.manifest.format,
+      formatVersion: input.manifest.formatVersion,
+      exporter: input.manifest.exporter,
+      exportId: input.manifest.exportId,
+      exportedAt: input.manifest.exportedAt,
+      sourceThreadId: input.manifest.sourceThreadId,
+      contentDigest: input.manifest.contentDigest,
+      packageSha256: SELF_CHECK_PACKAGE_SHA256,
+      packageBytes: SELF_CHECK_PACKAGE_BYTES,
+    },
+    snapshot: JSON.parse(input.snapshotText),
+    attachments: input.manifest.resources.flatMap((resource) =>
+      resource._tag === "included"
+        ? [
+            {
+              resourceId: resource.id,
+              kind: resource.kind,
+              name: resource.name,
+              mediaType: resource.mediaType,
+              byteLength: resource.byteLength,
+              sha256: resource.sha256,
+              pastedText: pastedText.get(resource.id) ?? false,
+            },
+          ]
+        : [],
+    ),
+    omissions: conversationImportOmissions(input.packageSnapshot),
+    warnings: input.manifest.warnings.map((warning) => ({
+      _tag: "export-warning" as const,
+      warning,
+    })),
+  });
+  return Exit.isFailure(validated) ? "The conversation does not pass import validation." : null;
+}
+
+/**
+ * Makes the captured snapshot portable, then assembles every package entry.
+ * Attachments given as bytes become in-memory entries; attachment files are
+ * streamed when the archive is written.
+ */
+export function prepareScicPackage(
+  input: ScicPackageInput<ResolvedAttachmentContent>,
+): { readonly _tag: "ok"; readonly value: ScicPackage } | ScicPackageFailure;
 export function prepareScicPackage(
   input: ScicPackageInput,
-): { readonly _tag: "ok"; readonly value: ScicPackage } | ScicPackageFailure {
+):
+  | { readonly _tag: "ok"; readonly value: ScicPackage<ScicPackageFile | ScicStreamedFile> }
+  | ScicPackageFailure;
+export function prepareScicPackage(
+  input: ScicPackageInput,
+):
+  | { readonly _tag: "ok"; readonly value: ScicPackage<ScicPackageFile | ScicStreamedFile> }
+  | ScicPackageFailure {
   const { snapshot } = input;
 
   // Resources in order of first appearance: message attachments, then answers.
@@ -183,9 +406,7 @@ export function prepareScicPackage(
       localId: resource.id,
       available: resource.content._tag === "included",
       sizeBytes:
-        resource.content._tag === "included"
-          ? resource.content.bytes.byteLength
-          : attachment.sizeBytes,
+        resource.content._tag === "included" ? resource.content.byteLength : attachment.sizeBytes,
     };
   };
 
@@ -203,10 +424,11 @@ export function prepareScicPackage(
     ...snapshot.warnings.filter((warning) => warning._tag === "records-skipped"),
   ];
 
+  const contiguous = splitReappearingTurns(snapshot);
   const portable = redactStrings(
     {
-      ...snapshot,
-      messages: snapshot.messages.map((message) => ({
+      ...contiguous,
+      messages: contiguous.messages.map((message) => ({
         ...message,
         attachments: message.attachments.map(portableAttachment),
         references: message.references.map((reference) =>
@@ -215,7 +437,7 @@ export function prepareScicPackage(
             : reference,
         ),
       })),
-      questionAnswers: snapshot.questionAnswers.map((answer) => ({
+      questionAnswers: contiguous.questionAnswers.map((answer) => ({
         ...answer,
         items: answer.items.map((item) => ({
           ...item,
@@ -267,18 +489,19 @@ export function prepareScicPackage(
     }
   }
 
-  const includedById = new Map<string, Extract<Resource["content"], { _tag: "included" }>>();
+  const includedById = new Map<string, IncludedContent>();
   for (const resource of resources.values()) {
     if (resource.content._tag === "included") includedById.set(resource.id, resource.content);
   }
+  // The readable copy only links to attachment files; it never needs their bytes.
   const document = buildConversationDocument({
     snapshot: packageSnapshot,
     exportValue: input.exportValue,
     timeZone: input.timeZone,
-    resolveAttachment: (attachment): ResolvedAttachmentContent => {
+    resolveAttachment: (attachment): ResolvedAttachmentContent | ExternalAttachmentContent => {
       const included = includedById.get(attachment.localId);
       return included
-        ? { _tag: "bytes", bytes: included.bytes, sha256: included.sha256 }
+        ? { _tag: "external", byteLength: included.byteLength, sha256: included.sha256 }
         : { _tag: "unavailable", reason: "missing" };
     },
   });
@@ -288,7 +511,7 @@ export function prepareScicPackage(
   const bundle = {
     ...document.bundle,
     assets: document.bundle.assets.map((asset) =>
-      asset.content._tag === "bytes"
+      asset.content._tag !== "unavailable" && asset.content.sha256 !== null
         ? {
             ...asset,
             packagePath: attachmentPath(asset.content.sha256, asset.fileName, asset.mediaType),
@@ -311,14 +534,15 @@ export function prepareScicPackage(
         ? [
             {
               code: "attachment-unavailable",
-              message: `Attachment “${resource.attachment.name}” ${UNAVAILABLE_NOTES[resource.content.reason]} and is listed by name only.`,
+              message: `Attachment “${warningValue(resource.attachment.name)}” ${UNAVAILABLE_NOTES[resource.content.reason]} and is listed by name only.`,
             },
           ]
         : [],
     ),
   ].map((warning) => ({ ...warning, message: input.redact(warning.message) }));
 
-  const snapshotBytes = encoder.encode(JSON.stringify(packageSnapshot));
+  const snapshotText = JSON.stringify(packageSnapshot);
+  const snapshotBytes = encoder.encode(snapshotText);
   if (snapshotBytes.byteLength > SCIC_MAX_SNAPSHOT_BYTES) {
     return { _tag: "too-large", entry: SCIC_SNAPSHOT_ENTRY };
   }
@@ -329,7 +553,11 @@ export function prepareScicPackage(
 
   const attachmentFiles = new Map<
     string,
-    ScicPackageFile & { readonly sha256: Sha256Digest; readonly mediaType: string }
+    (ScicPackageFile | ScicStreamedFile) & {
+      readonly byteLength: number;
+      readonly sha256: Sha256Digest;
+      readonly mediaType: string;
+    }
   >();
   const manifestResources: ScicManifestResource[] = [];
   for (const resource of resources.values()) {
@@ -346,12 +574,22 @@ export function prepareScicPackage(
     }
     const path = attachmentPath(content.sha256, name, attachment.mimeType);
     if (!attachmentFiles.has(path)) {
+      const compress = attachment.kind !== "image" && canCompress(content.byteLength);
       attachmentFiles.set(path, {
         path,
-        bytes: content.bytes,
+        byteLength: content.byteLength,
         sha256: content.sha256,
         mediaType: attachment.mimeType,
-        compress: attachment.kind !== "image" && canCompress(content.bytes),
+        compress,
+        ...(content.source._tag === "bytes"
+          ? { bytes: content.source.bytes }
+          : {
+              file: {
+                path: content.source.path,
+                byteLength: content.byteLength,
+                sha256: content.sha256,
+              },
+            }),
       });
     }
     manifestResources.push({
@@ -361,7 +599,7 @@ export function prepareScicPackage(
       name,
       kind: attachment.kind === "image" ? "image" : "file",
       mediaType: attachment.mimeType,
-      byteLength: content.bytes.byteLength,
+      byteLength: content.byteLength,
       sha256: content.sha256,
     });
   }
@@ -388,7 +626,7 @@ export function prepareScicPackage(
     ...orderedAttachments.map((file) => ({
       path: file.path,
       mediaType: file.mediaType,
-      byteLength: file.bytes.byteLength,
+      byteLength: file.byteLength,
       sha256: file.sha256,
     })),
   ];
@@ -404,16 +642,20 @@ export function prepareScicPackage(
     resources: manifestResources,
     warnings: exportWarnings,
   };
-  const manifestBytes = encoder.encode(JSON.stringify(manifest));
+  const manifestText = JSON.stringify(manifest);
+  const manifestBytes = encoder.encode(manifestText);
   if (manifestBytes.byteLength > SCIC_MAX_MANIFEST_BYTES) {
     return { _tag: "too-large", entry: SCIC_MANIFEST_ENTRY };
   }
+  const invalid =
+    checkOwnManifest(manifestText) ?? checkOwnSnapshot({ manifest, snapshotText, packageSnapshot });
+  if (invalid !== null) return { _tag: "invalid-package", detail: invalid };
   const expandedBytes =
     SCIC_MEDIA_TYPE.length +
     manifestBytes.byteLength +
     snapshotBytes.byteLength +
     markdownBytes.byteLength +
-    orderedAttachments.reduce((total, file) => total + file.bytes.byteLength, 0);
+    orderedAttachments.reduce((total, file) => total + file.byteLength, 0);
   if (expandedBytes > SCIC_MAX_UNCOMPRESSED_BYTES) {
     return { _tag: "too-large", entry: SCIC_MANIFEST_ENTRY };
   }
@@ -426,19 +668,23 @@ export function prepareScicPackage(
         {
           path: SCIC_MANIFEST_ENTRY,
           bytes: manifestBytes,
-          compress: canCompress(manifestBytes),
+          compress: canCompress(manifestBytes.byteLength),
         },
         {
           path: SCIC_SNAPSHOT_ENTRY,
           bytes: snapshotBytes,
-          compress: canCompress(snapshotBytes),
+          compress: canCompress(snapshotBytes.byteLength),
         },
         {
           path: SCIC_MARKDOWN_ENTRY,
           bytes: markdownBytes,
-          compress: canCompress(markdownBytes),
+          compress: canCompress(markdownBytes.byteLength),
         },
-        ...orderedAttachments.map(({ path, bytes, compress }) => ({ path, bytes, compress })),
+        ...orderedAttachments.map((file): ScicPackageFile | ScicStreamedFile =>
+          "bytes" in file
+            ? { path: file.path, bytes: file.bytes, compress: file.compress }
+            : { path: file.path, file: file.file, compress: file.compress },
+        ),
       ],
       manifest,
       snapshot: packageSnapshot,

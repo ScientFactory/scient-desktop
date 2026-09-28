@@ -817,6 +817,14 @@ switcher. The Markdown dialog:
 - Changing any option clears the last error. "Preparing the conversation…" and "Exporting…" are
   announced as status text.
 - Warnings are one line each, and the same warnings are included in the exported file.
+- **Up to selected message** exports exactly that message and everything before it, nothing after:
+  ending at a prompt leaves out the work, reasoning, plans, and answers that followed it; ending at
+  an answer keeps its turn's work log, reasoning, plans, and questions and answers recorded up to
+  that answer; ending at a steering message leaves out the rest of the turn it interrupted.
+  Attachments of messages and answers after it are neither listed nor read. The bound is applied
+  once, to the snapshot, so every format carries the same content. This range is on hold: the
+  server refuses it and the dialog exports the whole conversation, until records updated after the
+  chosen message are also bounded.
 
 ### Work log and reasoning
 
