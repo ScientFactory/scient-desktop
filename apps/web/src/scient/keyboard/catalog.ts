@@ -1,9 +1,9 @@
-import { WRITING_COMMANDS, SOURCE_COMMANDS, TABLE_COMMANDS } from "./writingCommands";
+import { WRITING_COMMANDS, TABLE_COMMANDS } from "./writingCommands";
 import { MATH_COMMANDS } from "../math/input/catalog";
 import { defaultMathBindings } from "../math/input/keymap";
 import { SHORTCUTS } from "../markdownEditor/shortcutDefinitions";
 
-export type KeyboardScope = "markdown" | "math" | "pdf" | "latex" | "source" | "table";
+export type KeyboardScope = "markdown" | "math" | "pdf" | "latex" | "table";
 export interface SurfaceCommand {
   readonly id: string;
   readonly label: string;
@@ -58,19 +58,13 @@ export function surfaceCommands(mac: boolean): readonly SurfaceCommand[] {
       "math.matrix." + action,
       "Matrix: " +
         action.replace(/([A-Z])/gu, " $1").toLowerCase() +
-        (/^(copy|swap)/u.test(action) ? " (Source / Markdown)" : ""),
+        (/^(copy|swap)/u.test(action) ? " (Markdown)" : ""),
     );
   const commands: readonly SurfaceCommand[] = [
     ...WRITING_COMMANDS.map(([id, label, defaultKeys]) => ({
       id: "latex." + id,
       label,
       scope: "latex" as const,
-      defaultKeys,
-    })),
-    ...SOURCE_COMMANDS.map(([id, label, defaultKeys]) => ({
-      id: "source." + id,
-      label,
-      scope: "source" as const,
       defaultKeys,
     })),
     ...TABLE_COMMANDS.map(([id, label, defaultKeys]) => ({
@@ -120,5 +114,5 @@ export function scopesOverlap(a: KeyboardScope, b: KeyboardScope) {
   if (a === b) return true;
   if (a === "pdf" || b === "pdf" || a === "table" || b === "table") return false;
   if (a === "math" || b === "math") return true;
-  return (a === "latex" && b === "source") || (a === "source" && b === "latex");
+  return false;
 }

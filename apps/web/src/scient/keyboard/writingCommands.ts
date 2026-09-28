@@ -17,18 +17,6 @@ export const WRITING_COMMANDS = [
   ["shortcuts", "Shortcuts and reference", ["alt+o k"]],
 ] as const;
 
-export const SOURCE_COMMANDS = [
-  ["find", "Find / replace", ["mod+f", "mod+h"]],
-  ["gotoLine", "Go to line", ["mod+shift+l"]],
-  ["comment", "Toggle comment", ["mod+/"]],
-  ["indent", "Indent selection", ["mod+shift+f"]],
-  ["definition", "Go to definition", ["f12"]],
-  ["pdf", "Find selection in PDF", ["mod+shift+j"]],
-  ["build", "Update PDF after saving", ["mod+enter"]],
-  ["fold", "Fold all", ["alt+o f"]],
-  ["unfold", "Unfold all", ["alt+o u"]],
-] as const;
-
 export const TABLE_COMMANDS = [
   ["addRow", "Table: add row below", ["alt+t r a"]],
   ["deleteRow", "Table: delete row", ["alt+t r d"]],

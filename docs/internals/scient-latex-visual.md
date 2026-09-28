@@ -78,27 +78,12 @@ settings; incompatible switches and custom classes stay protected.
 
 ### Source code editing
 
-`LatexSourceEditor` owns a CodeMirror view for Source and Split. Source and Visual
-still publish to the same file save coordinator. Acknowledged source leaves the
-editor untouched; real external replacements map selection and discard obsolete
-undo history. In-memory state preserves source selection, scroll, folds, and undo
-across view switches when the source has not changed. CRLF documents keep their
-line separator. The shared math tools use a CodeMirror adapter and retain their
-keyboard preferences, with source completion and snippet navigation taking priority.
-
-A bounded lexical index powers sections, environments, labels, and literal macro
-completion. It masks comments and verbatim regions; it does not expand TeX or claim
-to validate arbitrary macros. Linked source and bibliography reads go through the
-existing environment file reader, capped at 40 files and 2 million source characters.
-File paths are resolved against the compiling root, except explicit subfiles roots.
-Refresh is available for changes in linked files. The math command catalog remains
-bundled locally; no language server or remote editing service is introduced.
-
-Compiler diagnostics decorate only the current source generation. Source-to-PDF
-navigation uses the actual cursor line/column and the existing SyncTeX authority.
-Double-click in source selects words. Optional source auto-build waits for saved
-input and 1.5 seconds of inactivity; its default is off. Manual keyboard requests
-wait for the same save barrier. Failed builds retain the existing last good PDF.
+Source uses the inherited `EditableFileEditor` from the shared file surface. Its
+edits and the Visual editor publish to the same revision-checked save coordinator.
+Split places Source on the left and PDF or Visual on the right. The last selected
+right-side view is stored locally, including selections made in a standalone view;
+PDF is the default. A source-line double-click in Source + PDF uses the existing
+SyncTeX authority with an unknown column. Failed builds retain the last good PDF.
 
 ### Source and editing
 
@@ -151,7 +136,7 @@ Only explicit rebuild requests (including agent tools) start TeX. Existing
 root resolution, cancellation, bounded compile stabilization, immutable
 artifacts and PDF navigation remain owned by the existing build/reader path.
 
-Visual uses browser-rendered paper with CSS pagination; PDF and Split use the
+Visual uses browser-rendered paper with CSS pagination; PDF and Split with PDF use the
 actual PDF with navigation. Supported tables and selected scientific structures
 have structured editors. Browser output remains approximate: a successful build
 does not make the browser execute arbitrary macros or guarantee compiler-identical
@@ -266,8 +251,7 @@ as source-only blocks. Simple templates do not establish arbitrary-paper coverag
 
 Export freshness reuses the revision-scoped dependency hashes in the build evidence.
 There is no second visual revision manifest or PDF-overlay interaction host. The
-Write editor loads lazily; the Source editor may load the symbol catalog for its own
-command completions, but does not load MathLive.
+Write editor loads lazily; Source uses the shared file editor and does not load MathLive.
 
 ## Adapter direction
 

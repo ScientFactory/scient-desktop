@@ -112,15 +112,7 @@ export function validateKeyboardPreferences(
     overrides[command] = keys.map((key) => {
       if (typeof key !== "string") throw new Error("Shortcut keys must be text.");
       validateKeys(key);
-      if (
-        reservedEditingKeys(key, mac) &&
-        !(
-          command === "source.build" &&
-          ["mod+enter", "ctrl+enter", "meta+enter"].includes(
-            normalizeKeys(key, mac).replace(mac ? "meta+" : "ctrl+", "mod+"),
-          )
-        )
-      )
+      if (reservedEditingKeys(key, mac))
         throw new Error(
           "This shortcut is reserved for native editing, clipboard, save, or undo. Choose another shortcut.",
         );
@@ -160,7 +152,22 @@ export function importKeyboardPreferences(
   mac = isMacKeyboard(),
 ): KeyboardPreferences {
   if (text.length > 1000000) throw new Error("Shortcut file is too large.");
-  const value: unknown = JSON.parse(text);
+  const parsed: unknown = JSON.parse(text);
+  const value =
+    parsed &&
+    typeof parsed === "object" &&
+    !Array.isArray(parsed) &&
+    "overrides" in parsed &&
+    parsed.overrides &&
+    typeof parsed.overrides === "object" &&
+    !Array.isArray(parsed.overrides)
+      ? {
+          ...parsed,
+          overrides: Object.fromEntries(
+            Object.entries(parsed.overrides).filter(([command]) => !command.startsWith("source.")),
+          ),
+        }
+      : parsed;
   if (!Array.isArray(value)) {
     // New default groups must not invalidate previously accepted custom keys.
     // Preserve old overrides and disable only newly conflicting inherited keys.

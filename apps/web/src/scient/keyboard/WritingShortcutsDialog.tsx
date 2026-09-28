@@ -54,7 +54,6 @@ export function WritingShortcutsDialog({
                   ["latex", "Write"],
                   ["math", "Math"],
                   ["table", "Tables"],
-                  ["source", "Source"],
                   ["markdown", "Markdown"],
                   ["pdf", "PDF"],
                 ] as const

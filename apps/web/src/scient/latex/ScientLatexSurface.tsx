@@ -28,9 +28,10 @@ import {
   useMemo,
   useRef,
   useState,
+  type MouseEvent,
 } from "react";
 
-import { LatexSourceEditor, type LatexSourceSession } from "./LatexSourceEditor";
+import { EditableFileEditor } from "~/components/files/FilePreviewPanel";
 import { useFileSaveCoordinator } from "~/components/files/useFileSaveCoordinator";
 import {
   setProjectFileQueryData,
@@ -75,6 +76,8 @@ import {
   LATEX_PREVIEW_MODE_LABELS,
   LATEX_PREVIEW_MODE_STORAGE_KEY,
   LATEX_PREVIEW_MODES,
+  LATEX_SPLIT_PREVIEW_STORAGE_KEY,
+  LATEX_SPLIT_PREVIEWS,
   LATEX_SPLIT_KEYBOARD_STEP,
   LATEX_SPLIT_RATIO_STORAGE_KEY,
   LATEX_TOOLCHAIN_MISSING_HINT,
@@ -84,9 +87,11 @@ import {
   latexDiagnosticRows,
   latexStatusStripModel,
   normalizeLatexPreviewMode,
+  normalizeLatexSplitPreview,
   normalizeLatexSplitFraction,
   type LatexViewerState,
   type ScientLatexPreviewMode,
+  type ScientLatexSplitPreview,
 } from "./scientLatexSurfaceModel";
 import { checkpointVisualDraft, confirmVisualDraft, discardVisualDraft } from "./visualDrafts";
 import { useLatexSourceIdentity } from "./visualPdfPublication";
@@ -239,6 +244,18 @@ function initialPreviewMode(): ScientLatexPreviewMode {
   } catch (error) {
     console.error(error);
     return normalizeLatexPreviewMode(null);
+  }
+}
+
+function initialSplitPreview(): ScientLatexSplitPreview {
+  try {
+    const stored = getLocalStorageItem(LATEX_SPLIT_PREVIEW_STORAGE_KEY, Schema.String);
+    if (stored !== null) return normalizeLatexSplitPreview(stored);
+    const previousView = getLocalStorageItem(LATEX_PREVIEW_MODE_STORAGE_KEY, Schema.String);
+    return previousView === "visual" ? "visual" : "pdf";
+  } catch (error) {
+    console.error(error);
+    return "pdf";
   }
 }
 
@@ -415,11 +432,21 @@ interface SourceSyncPosition {
   readonly column: number;
 }
 
+function sourcePositionFromPointerEvent(event: MouseEvent<HTMLElement>): SourceSyncPosition | null {
+  for (const candidate of event.nativeEvent.composedPath()) {
+    if (!(candidate instanceof HTMLElement)) continue;
+    const raw = candidate.dataset.line;
+    if (raw === undefined) continue;
+    const line = Number(raw);
+    if (!Number.isSafeInteger(line) || line < 1) return null;
+    return { line, column: 0 };
+  }
+  return null;
+}
+
 export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   const savePdfCopy = usePdfSaveCopy(props.environmentId);
   const [exportingPdf, setExportingPdf] = useState(false);
-  const sourceSession = useRef<LatexSourceSession | null>(null);
-  const [sourceBuildRequested, setSourceBuildRequested] = useState(false);
   const visualDraftKey = `${props.environmentId}\0${props.cwd}\0${props.relativePath}`;
   const [manualRootSelection, setManualRootSelection] = useState<{
     readonly environmentId: EnvironmentId;
@@ -476,6 +503,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   const [preferredMode, setPreferredMode] = useState(
     () => props.latexPresentationRequest?.mode ?? initialPreviewMode(),
   );
+  const [splitPreview, setSplitPreview] = useState(initialSplitPreview);
   const [splitFraction, setSplitFraction] = useState(initialSplitFraction);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [visualAwaitingSave, setVisualAwaitingSave] = useState(false);
@@ -504,6 +532,10 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
     if (request === null) return;
     finishVisualEditingRef.current?.();
     setPreferredMode(request.mode);
+    if (request.mode === "visual") {
+      setSplitPreview("visual");
+      persist(LATEX_SPLIT_PREVIEW_STORAGE_KEY, "visual", Schema.String);
+    }
     setHandledRevealRequestId(props.revealRequestId);
     props.onLatexPresentationRequestHandled(props.relativePath, request);
   }, [
@@ -622,13 +654,23 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   });
   const handleContentsChange = useCallback(
     (contents: string) => {
+      if (visualPendingSourceRef.current !== null && visualPendingSourceRef.current !== contents) {
+        checkpointVisualDraft(
+          visualDraftKey,
+          contents,
+          visualPendingSourceRef.current,
+          contents,
+          visualPendingBaseRevisionRef.current ?? visualConfirmedRevisionRef.current,
+        );
+        visualPendingSourceRef.current = contents;
+      }
       visualAwaitingSaveRef.current = true;
       setVisualAwaitingSave(true);
       sourceRef.current = contents;
       setProjectFileQueryData(props.environmentId, props.cwd, props.relativePath, contents);
       coordinator.change(contents);
     },
-    [coordinator, props.environmentId, props.cwd, props.relativePath],
+    [coordinator, props.environmentId, props.cwd, props.relativePath, visualDraftKey],
   );
   const handleVisualEdit = useCallback(
     (expected: string, next: string) => {
@@ -689,9 +731,19 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
       setPreferredMode(next);
       setHandledRevealRequestId(revealRequestId);
       persist(LATEX_PREVIEW_MODE_STORAGE_KEY, next, Schema.String);
+      if (next === "pdf" || next === "visual") {
+        setSplitPreview(next);
+        persist(LATEX_SPLIT_PREVIEW_STORAGE_KEY, next, Schema.String);
+      }
     },
     [revealRequestId],
   );
+
+  const selectSplitPreview = useCallback((next: ScientLatexSplitPreview) => {
+    finishVisualEditingRef.current?.();
+    setSplitPreview(next);
+    persist(LATEX_SPLIT_PREVIEW_STORAGE_KEY, next, Schema.String);
+  }, []);
 
   const commitSplitFraction = useCallback((fraction: number) => {
     setSplitFraction(fraction);
@@ -705,24 +757,6 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
     keyboardStep: LATEX_SPLIT_KEYBOARD_STEP,
     onCommit: commitSplitFraction,
   });
-
-  useEffect(() => {
-    if (!sourceBuildRequested) return;
-    if (saveError || props.saveResolution || target === null) {
-      setSourceBuildRequested(false);
-      return;
-    }
-    if (visualAwaitingSave || !status.canRebuild) return;
-    setSourceBuildRequested(false);
-    requestLatexRebuild(target, { reprobeToolchain: true });
-  }, [
-    sourceBuildRequested,
-    visualAwaitingSave,
-    saveError,
-    props.saveResolution,
-    target,
-    status.canRebuild,
-  ]);
 
   const diagnostics = build.snapshot?.diagnostics ?? NO_DIAGNOSTICS;
   const diagnosticRows = useMemo(() => latexDiagnosticRows(diagnostics), [diagnostics]);
@@ -845,11 +879,20 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
       descriptor?._tag === "generated-pdf"
         ? {
             forwardTarget: forwardSyncTarget,
-            ...(mode === "pdf" || mode === "split" ? { onInverseSearch: handleInverseSync } : {}),
+            ...(mode === "pdf" || (mode === "split" && splitPreview === "pdf")
+              ? { onInverseSearch: handleInverseSync }
+              : {}),
             onPageChange: handlePdfPageChange,
           }
         : undefined,
-    [descriptor?._tag, forwardSyncTarget, handleInverseSync, handlePdfPageChange, mode],
+    [
+      descriptor?._tag,
+      forwardSyncTarget,
+      handleInverseSync,
+      handlePdfPageChange,
+      mode,
+      splitPreview,
+    ],
   );
   // Keyed by artifact, never by revision: a rebuild of the same document swaps
   // the reader's asset URL, and the reader keeps page and zoom across that.
@@ -862,6 +905,8 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   const compiledFrom = latexCompiledFromPath(build.snapshot?.rootRelativePath, props.relativePath);
   const showEditor = mode === "source" || mode === "split";
   const showViewer = mode === "pdf" || mode === "split";
+  const showVisual = mode === "visual" || (mode === "split" && splitPreview === "visual");
+  const showRightPane = showViewer || showVisual;
 
   const [documentToolsHost, setDocumentToolsHost] = useState<HTMLDivElement | null>(null);
 
@@ -880,18 +925,19 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
             {props.relativePath.split(/[\\/]/u).at(-1)}
           </strong>
         </ScientTooltip>
-        <select
-          className="scient-latex-view-select"
-          aria-label="Document view"
-          value={mode}
-          onChange={(event) => selectMode(event.target.value as ScientLatexPreviewMode)}
-        >
+        <div className="scient-latex-modes" role="group" aria-label="Document view">
           {LATEX_PREVIEW_MODES.map((candidate) => (
-            <option key={candidate} value={candidate}>
+            <button
+              key={candidate}
+              type="button"
+              className="scient-latex-mode-button"
+              aria-pressed={mode === candidate}
+              onClick={() => selectMode(candidate)}
+            >
               {LATEX_PREVIEW_MODE_LABELS[candidate]}
-            </option>
+            </button>
           ))}
-        </select>
+        </div>
         <div className="scient-latex-status">
           {mode === "visual" && !saveError && !props.saveResolution ? (
             <span className="scient-latex-save-state" aria-label="File save status">
@@ -1030,6 +1076,21 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
               Cancel
             </button>
           ) : null}
+          {mode === "split" ? (
+            <div className="scient-latex-modes" role="group" aria-label="Split right pane view">
+              {LATEX_SPLIT_PREVIEWS.map((candidate) => (
+                <button
+                  key={candidate}
+                  type="button"
+                  className="scient-latex-mode-button"
+                  aria-pressed={splitPreview === candidate}
+                  onClick={() => selectSplitPreview(candidate)}
+                >
+                  {LATEX_PREVIEW_MODE_LABELS[candidate]}
+                </button>
+              ))}
+            </div>
+          ) : null}
           <button
             type="button"
             className="scient-latex-action"
@@ -1137,90 +1198,62 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
       ) : null}
 
       <div className="scient-latex-content" ref={containerRef}>
-        {mode === "visual" ? (
-          <Suspense fallback={<div className="scient-latex-empty">Opening Write view?</div>}>
-            <LatexVisualEditor
-              rootRelativePath={resolvedRootRelativePath}
-              rootSource={rootSource}
-              key={visualDraftKey}
-              source={props.contents}
-              documentToolsHost={documentToolsHost}
-              onLocalDraftChange={setHasLocalVisualDraft}
-              draftKey={visualDraftKey}
-              fileRevision={props.revision}
-              environmentId={props.environmentId}
-              cwd={props.cwd}
-              relativePath={props.relativePath}
-              disabled={props.truncated || props.saveResolution !== null}
-              onEdit={handleVisualEdit}
-              onEditingChange={handleVisualEditingChange}
-              onOpenSource={() => selectMode("source")}
-              registerFinishEditing={registerFinishVisualEditing}
-            />
-          </Suspense>
-        ) : null}
         {showEditor ? (
-          <div
-            ref={primaryPaneRef}
-            className={cn("scient-latex-pane", mode === "split" ? "scient-latex-pane-sized" : null)}
+          <ScientTooltip
+            content={
+              mode === "split" && splitPreview === "pdf"
+                ? "In Split, double-click a source line to find it in the PDF"
+                : "LaTeX source"
+            }
           >
-            {props.truncated ? (
-              <LatexReadOnlyHalf
-                cwd={props.cwd}
-                relativePath={props.relativePath}
-                contents={props.contents}
-                resolvedTheme={props.resolvedTheme}
-                wordWrap={props.wordWrap}
-                onPostRender={props.onPostRender}
-              />
-            ) : (
-              <LatexSourceEditor
-                environmentId={props.environmentId}
-                cwd={props.cwd}
-                relativePath={props.relativePath}
-                rootPath={target?.relativePath ?? props.relativePath}
-                contents={props.contents}
-                resolvedTheme={props.resolvedTheme}
-                wordWrap={props.wordWrap}
-                revealLine={props.revealLine}
-                revealRequestId={props.revealRequestId}
-                disabled={props.saveResolution !== null}
-                session={sourceSession}
-                onContentsChange={handleContentsChange}
-                saveStatus={
-                  saveError
-                    ? "Save failed"
-                    : props.saveResolution
-                      ? "Resolve save conflict"
-                      : visualAwaitingSave
-                        ? "Saving..."
-                        : "Saved"
-                }
-                diagnostics={diagnostics}
-                diagnosticsCurrent={!status.stale && !visualAwaitingSave}
-                canBuild={
-                  target !== null &&
-                  status.canRebuild &&
-                  saveError === null &&
-                  props.saveResolution === null
-                }
-                onBuild={() => setSourceBuildRequested(true)}
-                onShowDiagnostics={() => setDiagnosticsOpen(true)}
-                onForwardSync={(position) => {
-                  if (mode !== "split") selectMode("split");
-                  handleForwardSync(position);
-                }}
-                onOpenFile={(path, line) => {
-                  const root = target?.relativePath ?? props.latexRootRelativePath;
-                  onOpenFileSource(path, line, root ? { latexRootRelativePath: root } : {});
-                }}
-              />
-            )}
-          </div>
+            <div
+              ref={primaryPaneRef}
+              className={cn(
+                "scient-latex-pane",
+                mode === "split" ? "scient-latex-pane-sized" : null,
+              )}
+              onDoubleClickCapture={(event) => {
+                if (mode !== "split" || splitPreview !== "pdf") return;
+                const position = sourcePositionFromPointerEvent(event);
+                if (position !== null) handleForwardSync(position);
+              }}
+            >
+              {props.truncated ? (
+                <LatexReadOnlyHalf
+                  cwd={props.cwd}
+                  relativePath={props.relativePath}
+                  contents={props.contents}
+                  resolvedTheme={props.resolvedTheme}
+                  wordWrap={props.wordWrap}
+                  onPostRender={props.onPostRender}
+                />
+              ) : (
+                <EditableFileEditor
+                  environmentId={props.environmentId}
+                  cwd={props.cwd}
+                  relativePath={props.relativePath}
+                  composerDraftTarget={props.composerDraftTarget}
+                  contents={props.contents}
+                  revision={props.revision}
+                  resolvedTheme={props.resolvedTheme}
+                  wordWrap={props.wordWrap}
+                  revealRequestId={props.revealRequestId}
+                  onPostRender={props.onPostRender}
+                  onContentsChange={handleContentsChange}
+                  editingBlocked={props.saveResolution !== null}
+                />
+              )}
+            </div>
+          </ScientTooltip>
         ) : null}
 
-        {showViewer ? (
-          <div className="scient-latex-viewer-shell">
+        {showRightPane ? (
+          <div
+            className={cn(
+              "scient-latex-viewer-shell",
+              mode !== "split" && "scient-latex-viewer-shell-solo",
+            )}
+          >
             {showEditor ? (
               <ResizeSeparator
                 className="absolute inset-y-0 -start-1"
@@ -1232,18 +1265,41 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
                 {...separatorHandlers}
               />
             ) : null}
-            <LatexViewerPane
-              descriptor={descriptor}
-              readerKey={readerKey}
-              viewer={status.viewer}
-              toolchainMissing={status.toolchainMissing}
-              failureLine={status.firstDiagnosticLine ?? build.snapshot?.failureSummary ?? null}
-              canInstallManaged={build.canInstallManaged}
-              managedInstall={build.managedInstall}
-              installRequesting={build.installRequesting}
-              onInstall={handleInstallToolchain}
-              {...(syncNavigation === undefined ? {} : { syncNavigation })}
-            />
+            {showVisual ? (
+              <Suspense fallback={<div className="scient-latex-empty">Opening Visual view…</div>}>
+                <LatexVisualEditor
+                  rootRelativePath={resolvedRootRelativePath}
+                  rootSource={rootSource}
+                  key={visualDraftKey}
+                  source={props.contents}
+                  documentToolsHost={documentToolsHost}
+                  onLocalDraftChange={setHasLocalVisualDraft}
+                  draftKey={visualDraftKey}
+                  fileRevision={props.revision}
+                  environmentId={props.environmentId}
+                  cwd={props.cwd}
+                  relativePath={props.relativePath}
+                  disabled={props.truncated || props.saveResolution !== null}
+                  onEdit={handleVisualEdit}
+                  onEditingChange={handleVisualEditingChange}
+                  onOpenSource={() => selectMode("source")}
+                  registerFinishEditing={registerFinishVisualEditing}
+                />
+              </Suspense>
+            ) : (
+              <LatexViewerPane
+                descriptor={descriptor}
+                readerKey={readerKey}
+                viewer={status.viewer}
+                toolchainMissing={status.toolchainMissing}
+                failureLine={status.firstDiagnosticLine ?? build.snapshot?.failureSummary ?? null}
+                canInstallManaged={build.canInstallManaged}
+                managedInstall={build.managedInstall}
+                installRequesting={build.installRequesting}
+                onInstall={handleInstallToolchain}
+                {...(syncNavigation === undefined ? {} : { syncNavigation })}
+              />
+            )}
           </div>
         ) : null}
       </div>

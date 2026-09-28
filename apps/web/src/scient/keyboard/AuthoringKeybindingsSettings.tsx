@@ -322,7 +322,7 @@ export function AuthoringKeybindingsSettings({
                     <SettingsRow
                       className={MATH_OPTION_ROW_CLASS}
                       title="Sequence timeout"
-                      description="Applies to Write, Source, Tables, Markdown, Math, and PDF shortcuts."
+                      description="Applies to Write, Tables, Markdown, Math, and PDF shortcuts."
                       control={
                         <Select
                           value={String(snapshot.preferences.sequenceTimeoutMs)}
@@ -393,7 +393,7 @@ export function AuthoringKeybindingsSettings({
                   const imported = importKeyboardPreferences(text);
                   if (
                     window.confirm(
-                      "Replace Write, Source, Tables, Markdown, Math, and PDF shortcuts, custom math actions, and math behavior with this file? Application keybindings will not change.",
+                      "Replace Write, Tables, Markdown, Math, and PDF shortcuts, custom math actions, and math behavior with this file? Application keybindings will not change.",
                     )
                   )
                     save(imported, expected);
@@ -444,8 +444,8 @@ export function AuthoringKeybindingsSettings({
                 <div className="space-y-1">
                   <p className="text-sm font-medium">Restore defaults?</p>
                   <p className="text-xs text-muted-foreground">
-                    Reset Write, Source, Tables, Markdown, Math, and PDF shortcuts and Math input
-                    settings, and remove custom math actions. General shortcuts stay unchanged.
+                    Reset Write, Tables, Markdown, Math, and PDF shortcuts and Math input settings,
+                    and remove custom math actions. General shortcuts stay unchanged.
                   </p>
                 </div>
                 <div className="flex justify-end gap-1">

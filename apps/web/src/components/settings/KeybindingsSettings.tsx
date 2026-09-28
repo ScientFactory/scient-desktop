@@ -1631,12 +1631,6 @@ export function KeybindingsSettingsPanel() {
                     icon: <FileTextIcon className="size-6 shrink-0" />,
                   },
                   {
-                    id: "source" as const,
-                    label: "Source",
-                    detail: `${authoringCounts.source} commands`,
-                    icon: <FileJsonIcon className="size-6 shrink-0" />,
-                  },
-                  {
                     id: "table" as const,
                     label: "Tables",
                     detail: `${authoringCounts.table} commands`,

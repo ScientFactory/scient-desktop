@@ -88,22 +88,15 @@ On Windows/Linux, press **Alt+M**, release it, then the remaining keys:
 
 Mac also supports Ctrl+M as the sequence prefix. Ctrl/Cmd+M inserts inline math;
 Ctrl/Cmd+Shift+M inserts display math. In an existing visual equation, these change
-its type. Operating-system reservations still apply. Matrix copy/swap actions
-remain Source/Markdown actions; their names identify this limitation.
+its type. Operating-system reservations still apply. Matrix copy/swap actions remain Markdown math actions.
 
-Write and Source share formatting, heading, list, insertion, outline, and shortcut
-settings. For example, Alt+P then 1/2/3 chooses a section level, and Alt+P then B/N
-chooses a bullet/numbered list. Source inserts LaTeX templates; Write invokes its
-structured editor actions. Ctrl/Cmd+B and I format text. Inside a visual equation,
-math commands operate on the mathematical selection. Table shortcuts only act
-while a table cell has focus: Alt+T then R,A adds a row, and C,A adds a column.
-The matching D sequences remove a row or column while keeping at least one.
-
-The source editor exposes find/replace, comments, indentation, definition
-navigation, PDF navigation, and rebuild as configurable actions. Ctrl+Space in
-Source retains CodeMirror completion. Normal editing and IME input remain native.
-New defaults do not displace older custom bindings: inherited keys that conflict
-with an existing saved customization are disabled during migration.
+Write has configurable formatting, heading, list, insertion, and outline
+shortcuts. For example, Alt+P then 1/2/3 chooses a section level, and Alt+P
+then B/N chooses a bullet/numbered list. Ctrl/Cmd+B and I format text. Inside
+a visual equation, math commands operate on the mathematical selection. Table
+shortcuts act while a table cell has focus: Alt+T then R,A adds a row, and C,A
+adds a column. The matching D sequences remove a row or column while keeping
+at least one. Source uses Scient's ordinary file editor shortcuts.
 
 ### Your own math actions
 

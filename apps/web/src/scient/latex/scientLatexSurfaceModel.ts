@@ -20,17 +20,26 @@ import { isActiveLatexInstall } from "./latexToolchainSetupModel";
  * `t3code.*` key or be mistaken for one when a profile is inspected.
  */
 export const LATEX_PREVIEW_MODE_STORAGE_KEY = "scient.latexPreviewMode";
+export const LATEX_SPLIT_PREVIEW_STORAGE_KEY = "scient.latexSplitPreview";
 export const LATEX_SPLIT_RATIO_STORAGE_KEY = "scient.latexSplitRatio";
 
 export const LATEX_PREVIEW_MODES = ["source", "split", "visual", "pdf"] as const;
 export type ScientLatexPreviewMode = (typeof LATEX_PREVIEW_MODES)[number];
 
 export const LATEX_PREVIEW_MODE_LABELS: Readonly<Record<ScientLatexPreviewMode, string>> = {
-  source: "LaTeX source",
-  split: "Source + PDF",
-  visual: "Write",
-  pdf: "PDF preview",
+  source: "Source",
+  split: "Split",
+  visual: "Visual",
+  pdf: "PDF",
 };
+
+export const LATEX_SPLIT_PREVIEWS = ["pdf", "visual"] as const;
+export type ScientLatexSplitPreview = (typeof LATEX_SPLIT_PREVIEWS)[number];
+export function normalizeLatexSplitPreview(
+  value: string | null | undefined,
+): ScientLatexSplitPreview {
+  return value === "visual" ? "visual" : "pdf";
+}
 
 export const DEFAULT_LATEX_PREVIEW_MODE: ScientLatexPreviewMode = "visual";
 export const DEFAULT_LATEX_SPLIT_FRACTION = 0.5;

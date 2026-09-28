@@ -27,7 +27,6 @@ const sections = {
   latex: "Write",
   math: "Mathematics",
   table: "Tables in Write",
-  source: "LaTeX source",
   markdown: "Markdown",
   pdf: "PDF reader",
 } as const;
@@ -96,7 +95,7 @@ export function ShortcutReference({
       : "";
     return `<!doctype html><html><head><meta charset="utf-8"><base href="${escape(document.baseURI)}"><title>Scient shortcut reference</title><style>${katexCss}</style><style>
       @page{size:A4;margin:16mm}*{box-sizing:border-box}body{font:12px/1.5 system-ui,sans-serif;color:#171717;background:white;max-width:850px;margin:24px auto;padding:0 24px}h1{font-size:25px;margin-bottom:4px}h2{font-size:17px;margin:24px 0 8px;break-after:avoid}p{color:#555}table{width:100%;border-collapse:collapse;table-layout:fixed}th,td{text-align:left;vertical-align:top;padding:7px 9px;border-bottom:1px solid #ddd}th{background:#f2f3f5}thead{display:table-header-group}tr{break-inside:avoid}td:first-child{width:56%}.keys{font-family:ui-monospace,monospace;white-space:normal}.formula{margin-top:5px;font-size:13px}.muted{color:#777}@media print{body{max-width:none;margin:0;padding:0}h2{break-after:avoid}}
-      </style></head><body><h1>Scient shortcut reference</h1><p>${escape(new Date().toLocaleDateString())} · ${mac ? "Mac" : "Windows / Linux"} · ${snapshot.preferences.mathPreset === "lyx" ? "LyX-style math" : "Minimal math"}</p><p>Successive keys are shown with arrows. Release the prefix keys before the next key. Escape cancels a sequence. Commands apply to the focused editor; table commands apply in table cells. Source also supports the Write text commands. In source, Ctrl+Space opens code completion. Matrix copy/swap actions are available in Source and Markdown. Custom bindings replace defaults.</p>${groups}${general}<h2>Native editing</h2><p>Arrow keys move the caret; Shift extends a selection. Tab moves through math placeholders. Undo, redo, clipboard, and text selection remain owned by the editor. Operating-system shortcuts can take precedence.</p></body></html>`;
+      </style></head><body><h1>Scient shortcut reference</h1><p>${escape(new Date().toLocaleDateString())} · ${mac ? "Mac" : "Windows / Linux"} · ${snapshot.preferences.mathPreset === "lyx" ? "LyX-style math" : "Minimal math"}</p><p>Successive keys are shown with arrows. Release the prefix keys before the next key. Escape cancels a sequence. Commands apply to the focused editor; table commands apply in table cells. Custom bindings replace defaults.</p>${groups}${general}<h2>Native editing</h2><p>Arrow keys move the caret; Shift extends a selection. Tab moves through math placeholders. Undo, redo, clipboard, and text selection remain owned by the editor. Operating-system shortcuts can take precedence.</p></body></html>`;
   }, [snapshot, all, appBindings]);
   return (
     <>

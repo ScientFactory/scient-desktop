@@ -2,8 +2,10 @@
 
 Use the LaTeX workspace to write a paper, report, thesis, or other scientific
 document while seeing the compiled PDF beside its source. Opening a `.tex` file
-offers Write, LaTeX source, Source + PDF, and PDF preview in the view selector. Switch
-between them, and drag the divider in split view to resize either side.
+offers Source, Split, Visual, and PDF across the top. Split places Source on the
+left and your last chosen PDF or Visual view on the right. PDF is the initial
+right-side choice. Use the PDF/Visual selector beside Update PDF to
+change it, and drag the divider to resize either side.
 
 ## Start a document
 
@@ -125,7 +127,7 @@ actions. Warnings do not insert a banner above the writing page or move it.
 
 Writing view uses browser layout with locally bundled math fonts. It is always
 approximate: page breaks, floats, numbering, references, package output and
-arbitrary macro expansion require TeX. Choose Update PDF, then PDF preview or Source + PDF to
+arbitrary macro expansion require TeX. Choose Update PDF, then PDF or Split with PDF to
 inspect exact output. A successful build never means the browser canvas is
 pixel-identical to that PDF. Compile errors preserve the last successful PDF.
 The canvas reads safe document-class, paper, base-font, `geometry`, paragraph
@@ -223,52 +225,15 @@ copyable source, never automatically written over a newer file.
 
 ## Edit LaTeX source
 
-LaTeX source and Source + PDF use a dedicated code editor. Its compact toolbar
-contains Outline, Find, Bold, Italic, Comment, Insert, Math, Find in PDF, and editor
-options. The bottom bar shows the cursor position and save state, with a text-size
-control. Source display preferences do not change the document or PDF typography.
-
-- Type a backslash for command and environment suggestions. Ctrl+Space also opens
-  suggestions on Mac. Completions include the bundled math symbol catalog and
-  literal custom commands defined in the document and linked files.
-- Inside `\cite{}`, `\ref{}`, `\input{}`, or `\includegraphics{}`, suggestions use
-  linked bibliography entries, labels, and project filenames. Use **Refresh linked
-  references** after changing another file. Macro-generated paths are not evaluated.
-- Tab accepts a suggestion or advances through a snippet's empty entry fields.
-  Enter after a standalone `\begin{...}` supplies an indented body and matching
-  `\end{...}` when it is missing. Braces, brackets, and parentheses pair automatically.
-- Fold sections and environments in the gutter, or use Fold/Unfold all in editor
-  options. Outline filters section titles and reveals folded destinations.
-- Ctrl/Cmd+F opens find/replace with case, whole-word, and regular-expression
-  options. Ctrl/Cmd+Shift+L goes to a line. Ctrl/Cmd+/ comments selected lines.
-  Alt+drag selects a rectangle; Ctrl/Cmd+D adds the next occurrence as another cursor.
-- F12 or Ctrl/Cmd+click follows a literal include or a reference label. Filename
-  suggestions follow the compiling root's directory, with `subfiles` support.
-- Editor options control line wrapping, line numbers, suggestions, system
-  spellcheck, and optional automatic PDF updates. System spellcheck depends on
-  the host's installed dictionaries; it is not a TeX-aware grammar checker.
-
-Compiler errors and warnings for the current file appear in the gutter when they
-belong to the current source. Build messages opens the full list. Editing invalidates
-old marks. Source edits keep native selection, composition, multiple cursors, and
-undo; save acknowledgements do not rebuild the editor. Unchanged source sessions
-keep selection, folding, scroll, and history when switching views.
-
-## Math insertion
-
-The source editor's **Ω** toolbar provides shared math symbols, fractions, roots,
-and matrices. Its shortcuts and completion behavior are configured in
-**Settings → Shortcuts → Math**, alongside Markdown math.
-See [math authoring](./math-in-chat.md#authoring-math) for defaults and source-safety
-limitations. These controls change LaTeX source; PDF read mode does not insert math.
+Source and the left side of Split use the same file editor as other source files
+in Scient. Edit the `.tex` file directly there. Its contents are shared with
+Visual; selecting another view does not create another document. In Split with
+PDF selected, double-click a source line to locate it in the compiled PDF.
 
 ## Build and review
 
-Choose **Update PDF** or press Ctrl/Cmd+Enter in Source. The shortcut waits for
-pending saves. Builds are manual by default. **Auto update PDF after saving**,
-in source editor options, requests a build after 1.5 seconds of saved editing
-inactivity. It coalesces typing and waits for the current build and save queue;
-opening a document does not itself request a build.
+Choose **Update PDF** to build after the current source has been saved.
+Builds are manual; opening a document does not itself request a build.
 **Review** lists repeated labels, references missing from the current file, and
 common unfinished placeholders. References may belong to included files; this
 review does not replace compiling the complete document. **Export PDF** saves a

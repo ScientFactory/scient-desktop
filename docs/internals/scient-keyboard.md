@@ -83,24 +83,23 @@ cannot be reassigned as authoring actions.
 
 ## Write integration
 
-`writingCommands.ts` owns common writing, source, and table action identities.
-Write and Source both claim the writing scope; Math overlaps either, while
-Markdown, PDF, and visual table cells retain disjoint document owners. Capture
-adapters exclude nested fields they do not own. Sequence feedback stays in the
-existing chrome or a screen-reader status; it never becomes editable paper content.
-Settings in the writing dialog reuse `AuthoringKeybindingsSettings`, including
-conflict checks against the document environment's application bindings.
+`writingCommands.ts` owns Write and table action identities. Source uses
+Scient's ordinary file editor. Math overlaps Write, while Markdown, PDF, and
+visual table cells retain their document owners. Capture adapters exclude nested
+fields they do not own. Sequence feedback stays in the existing chrome or a
+screen-reader status; it never becomes editable paper content. Settings in the
+writing dialog reuse `AuthoringKeybindingsSettings`, including conflict checks
+against the document environment's application bindings.
 
 MathLive executes shared math commands against its current mathematical selection.
 Template slots are translated to its insertion placeholders, and structural matrix
 commands use its public command API. These edits continue through the existing
-visual source guard and history. Publication uses MathLive's `latex-without-placeholders`
-format; acknowledgment compares that projection without resetting live slots or the caret.
-Source uses CodeMirror transactions and its shared
-math controller. The equation-source popover shares the math sequence matcher and
-edit functions while retaining its guarded local draft. Fixed source mappings for configurable commands and fixed Write
-bold/italic mappings do not reactivate disabled user bindings. Matrix copy/swap
-remains limited to the source-based adapters and is labeled accordingly.
+visual source guard and history. Publication uses MathLive's
+`latex-without-placeholders` format; acknowledgment compares that projection
+without resetting live slots or the caret. The equation-source popover shares
+the math sequence matcher and edit functions while retaining its guarded local
+draft. Fixed Write bold/italic mappings do not reactivate disabled user bindings.
+Matrix copy/swap remains limited to the Markdown math adapter.
 
 The v1 profile accepts additive `customMath` expressions and `writingPresetVersion`.
 Custom actions are expressions with explicit `${selection}` and `${cursor}`
