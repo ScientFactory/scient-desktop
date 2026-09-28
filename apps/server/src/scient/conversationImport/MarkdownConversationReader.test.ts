@@ -157,6 +157,47 @@ describe("Markdown conversation import adapter", () => {
     expect(result.validated.snapshot.questionAnswers).toEqual([]);
   });
 
+  it("preserves visible terminal context text when a conversation Markdown export is imported", () => {
+    const snapshot = {
+      ...capturedSnapshot,
+      messages: [
+        {
+          ...capturedSnapshot.messages[0]!,
+          text: "Please inspect [these lines](scient-ref:r2).",
+          attachments: [],
+          references: [
+            {
+              _tag: "terminal" as const,
+              id: "r2",
+              label: "these lines",
+              terminal: "terminal-1",
+              lineStart: 10,
+              lineEnd: 11,
+              text: { text: "critical stack trace", omittedLines: 0, omittedChars: 0 },
+            },
+          ],
+        },
+      ],
+    };
+    const document = buildConversationDocument({
+      snapshot,
+      exportValue: EXPORT_VALUE,
+      timeZone: "UTC",
+      resolveAttachment: () => ({ _tag: "unavailable", reason: "missing" }),
+    });
+    const markdown = writeConversationMarkdown({
+      bundle: document.bundle,
+      exportValue: EXPORT_VALUE,
+      exported: "2026-09-28T09:12:00.000Z",
+      packaging: "text",
+    });
+    expect(markdown).toContain("kind=context");
+    const imported = read(markdown);
+    expect(imported.validated.snapshot.messages[0]?.text).toContain("critical stack trace");
+    expect(imported.validated.snapshot.messages[0]?.text).toContain("**Context**");
+    expect(imported.validated.snapshot.messages[0]?.references).toEqual([]);
+  });
+
   it("feeds the existing command with fresh local IDs and Markdown provenance", () => {
     const validated = read(fixtureMarkdown()).validated;
     const ids = decodeImportIds({
@@ -209,6 +250,21 @@ describe("Markdown conversation import adapter", () => {
     expect(result.issues.map((issue) => issue.kind)).toContain("unknown-role");
     expect(result.issues.map((issue) => issue.kind)).toContain("missing-number");
     expect(result.issues.every((issue) => issue.endLine >= issue.startLine)).toBe(true);
+  });
+
+  it("does not import an edited assistant marker as part of the preceding user request", () => {
+    const edited = fixtureMarkdown().replace(
+      `<!-- scient:message export=${EXPORT_VALUE} n=2 role=assistant`,
+      "<!-- scient:message export=0123456789ab n=2 role=assistant",
+    );
+    const result = read(edited);
+    expect(result.validated.snapshot.messages.map((message) => message.text)).toEqual([
+      "Question 1",
+      "Question 2",
+      "Answer 2",
+    ]);
+    expect(result.issues.map((issue) => issue.kind)).toContain("foreign-marker");
+    expect(result.validated.snapshot.messages[0]?.text).not.toContain("Answer 1");
   });
 
   it("round trips literal markers, quoted exports, speaker headings, and reused labels", () => {

@@ -315,6 +315,24 @@ describe("Scient conversation Markdown v1", () => {
     expect(reopened.issues.map((issue) => issue.kind)).toContain("out-of-order-turn");
   });
 
+  it("does not assign an assistant response to the preceding user when its export token is edited", () => {
+    const { markdown } = roundTrip([
+      message({ id: "m1", role: "user", text: "my request" }),
+      message({ id: "m2", role: "assistant", text: "assistant-only answer", turnId: "t1" }),
+      message({ id: "m3", role: "user", text: "follow-up" }),
+    ]);
+    const edited = markdown.replace(
+      `<!-- scient:message export=${EXPORT_VALUE} n=2 role=assistant`,
+      "<!-- scient:message export=0123456789ab n=2 role=assistant",
+    );
+    const parsed = parseConversationMarkdown(edited);
+    if (parsed.kind !== "conversation") throw new Error("Expected a conversation.");
+    expect(parsed.messages.map((entry) => entry.n)).toEqual([1, 3]);
+    expect(parsed.messages[0]?.body).toBe("my request");
+    expect(parsed.messages[1]?.body).toBe("follow-up");
+    expect(parsed.issues.map((issue) => issue.kind)).toContain("foreign-marker");
+  });
+
   it("never reads a document without Scient front matter as a transcript", () => {
     expect(
       parseConversationMarkdown(

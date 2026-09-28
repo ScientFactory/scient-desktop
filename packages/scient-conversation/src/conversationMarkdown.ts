@@ -305,8 +305,18 @@ export function parseConversationMarkdown(source: string): ParsedConversationMar
       issues.push({
         kind: "foreign-marker",
         line,
-        detail: "A marker from another export was treated as text.",
+        detail:
+          match[1] === "message"
+            ? "A message marker from another export stopped the preceding message; its content was excluded."
+            : "A marker from another export was treated as text.",
       });
+      // An edited message marker must not let the following speaker heading
+      // and response become part of the preceding clean message. Writer output
+      // escapes literal marker text inside messages, so an unescaped top-level
+      // foreign message marker is an unsafe transcript boundary.
+      if (match[1] === "message") {
+        markers.push({ type: "invalid", attributes, start: range.start, end: range.end, line });
+      }
       continue;
     }
     if (duplicateAttribute) {
