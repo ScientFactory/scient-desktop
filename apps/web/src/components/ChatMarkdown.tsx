@@ -2718,7 +2718,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
     const remoteImage =
       directUri === null || use(ScientRemoteImageLoadedContext)
         ? null
-        : remoteImageAddress(directUri);
+        : remoteImageAddress(resolveProtocolRelativeMediaUrl(directUri));
     const remoteImageReference =
       remoteImage === null ? null : (
         <ScientRemoteImageReference
@@ -2868,7 +2868,10 @@ const CHAT_MARKDOWN_COMPONENTS = {
   },
   // SCIENT-FORK:START — a <picture> source never fetches a web address; its <img> is gated
   source: function MarkdownSource({ node: _node, ...props }) {
-    return hasRemoteSrcSet(props.srcSet) ? null : <source {...props} />;
+    const remote =
+      hasRemoteSrcSet(props.srcSet) ||
+      (typeof props.src === "string" && remoteImageAddress(props.src) !== null);
+    return remote ? null : <source {...props} />;
   },
   // SCIENT-FORK:END
   div: function MarkdownDiv({ node, children, ...props }) {

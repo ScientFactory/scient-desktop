@@ -11,8 +11,14 @@ destinations retain React Markdown's inherited image behavior. The host
 integration is one `img` renderer in `ChatMarkdown.tsx`; resolution,
 presentation, actions, and tests live under `apps/web/src/scient/images`.
 
-Remote sources (`http:`, `https:`, protocol-relative, not on the app's own
-origin) never reach an `<img>`, `<video>`, or `<source>` on render. The same
+Remote sources never reach an `<img>`, `<video>`, or `<source>` on render.
+`remoteImageAddress` resolves each source against the document base with the
+URL parser, as the browser does, so backslash and network-path forms, tab- or
+newline-split schemes, and case are judged by where they lead. A source is
+local only when it is `data:` or `blob:`, on the app's own scheme and host, or
+(in the desktop app) on its private app scheme; anything else, including a
+source the parser rejects, is remote. `srcset` is split into candidates by the
+HTML srcset rules and a `<source>` is dropped when any candidate is remote. The same
 renderer returns `ScientRemoteImageReference`
 (`apps/web/src/scient/presentation/`), a link card whose **Load image** button
 mounts the ordinary chat media under `ScientRemoteImageLoadedContext` for that

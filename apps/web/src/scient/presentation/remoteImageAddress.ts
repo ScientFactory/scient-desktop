@@ -1,11 +1,6 @@
-import { resolveProtocolRelativeMediaUrl } from "~/components/media/mediaContent";
-
-const REMOTE_SOURCE_PATTERN = /^(?:https?:|\/\/)/iu;
-const REMOTE_SRCSET_PATTERN = /(?:https?:|\/\/)/iu;
-
 /** A web address chat would fetch an image or video from. */
 export interface RemoteImageAddress {
-  /** The address the renderer would request; protocol-relative sources are resolved. */
+  /** The address the renderer would request, resolved the way the browser resolves it. */
   readonly url: string;
   /** The server that would receive the request, as the user should see it. */
   readonly host: string;
@@ -13,41 +8,107 @@ export interface RemoteImageAddress {
   readonly label: string;
 }
 
-function currentOrigin(): string | null {
-  return typeof window === "undefined" ? null : (window.location?.origin ?? null);
+/** Where relative sources resolve from and which origin is the app's own. */
+export interface ImageAddressContext {
+  /** The document's base URL; relative and network-path sources resolve against it. */
+  readonly baseUrl: string | null;
+  /** The app page's own URL; its scheme and host are what Scient itself serves. */
+  readonly appUrl: string | null;
+}
+
+/** Schemes whose bytes are already in the renderer, so loading them contacts no server. */
+const LOCAL_SCHEMES = new Set(["data:", "blob:"]);
+const WEB_SCHEMES = new Set(["http:", "https:"]);
+
+function currentContext(): ImageAddressContext {
+  return {
+    baseUrl: typeof document === "undefined" ? null : (document.baseURI ?? null),
+    appUrl: typeof window === "undefined" ? null : (window.location?.href ?? null),
+  };
+}
+
+function parseUrl(value: string, base?: string | null): URL | null {
+  try {
+    return base ? new URL(value, base) : new URL(value);
+  } catch {
+    return null;
+  }
 }
 
 /**
- * Whether an authored image source would make the renderer contact another server, and if
- * so where. `http:`, `https:`, and protocol-relative sources are remote. Everything else is
- * not: `data:` and `blob:` bytes, workspace and attachment paths (which load through signed
- * environment URLs), and addresses on the app's own origin, which Scient itself serves.
+ * Whether the renderer would contact a server other than Scient to load `source`, and if so
+ * which. The source is resolved exactly as the browser resolves an image URL, so tabs and
+ * newlines inside a scheme, uppercase schemes, backslashes, and network-path forms such as
+ * `//host` or `/\host` are judged by where they actually lead.
  *
- * An address the URL parser rejects is still remote: it is shown verbatim instead of guessed at.
+ * Local: `data:` and `blob:` bytes, the app's own scheme and host, and (in the desktop app) any
+ * address on its private app scheme, which its protocol handler answers. Everything else is
+ * remote, including an address the URL parser rejects, which is shown verbatim.
  */
 export function remoteImageAddress(
   source: string,
-  appOrigin: string | null = currentOrigin(),
+  context: ImageAddressContext = currentContext(),
 ): RemoteImageAddress | null {
-  if (!REMOTE_SOURCE_PATTERN.test(source)) return null;
-  const url = resolveProtocolRelativeMediaUrl(source);
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return { url, host: source, label: source };
+  const resolved = parseUrl(source, context.baseUrl);
+  if (resolved === null) return { url: source, host: source, label: source };
+  if (LOCAL_SCHEMES.has(resolved.protocol)) return null;
+  const app = context.appUrl === null ? null : parseUrl(context.appUrl);
+  if (app !== null && resolved.protocol === app.protocol) {
+    if (resolved.host === app.host || !WEB_SCHEMES.has(app.protocol)) return null;
   }
-  if (appOrigin !== null && parsed.origin === appOrigin) return null;
-  const path = parsed.pathname === "/" ? "" : parsed.pathname;
-  const host = parsed.host || source;
-  return { url: parsed.href, host, label: `${parsed.host}${path}` || source };
+  const host = resolved.host || source;
+  const path = resolved.pathname === "/" ? "" : resolved.pathname;
+  return { url: resolved.href, host, label: resolved.host ? `${resolved.host}${path}` : source };
+}
+
+const ASCII_WHITESPACE = /[\t\n\f\r ]/u;
+
+/**
+ * The candidate URLs of a `srcset` attribute, following the HTML "parse a srcset attribute"
+ * rules: a URL runs to the next whitespace, trailing commas end it without descriptors, and
+ * otherwise its descriptors run to the next comma outside parentheses.
+ */
+export function srcSetCandidateUrls(srcSet: string): string[] {
+  const urls: string[] = [];
+  let position = 0;
+  while (position < srcSet.length) {
+    while (position < srcSet.length && /[\t\n\f\r ,]/u.test(srcSet[position]!)) position += 1;
+    if (position >= srcSet.length) break;
+    const start = position;
+    while (position < srcSet.length && !ASCII_WHITESPACE.test(srcSet[position]!)) position += 1;
+    let url = srcSet.slice(start, position);
+    if (url.endsWith(",")) {
+      url = url.replace(/,+$/u, "");
+    } else {
+      let inParens = false;
+      while (position < srcSet.length) {
+        const character = srcSet[position]!;
+        position += 1;
+        if (inParens) {
+          if (character === ")") inParens = false;
+        } else if (character === "(") {
+          inParens = true;
+        } else if (character === ",") {
+          break;
+        }
+      }
+    }
+    urls.push(url);
+  }
+  return urls;
 }
 
 /**
- * Whether a `<picture>` source candidate list names any web address. Commas can appear inside
- * candidate URLs, so this looks for a remote scheme anywhere rather than parsing candidates; a
- * dropped source only leaves the picture's own `<img>`, which is gated separately.
+ * Whether any candidate in a `<picture>` source's `srcset` would reach another server. The
+ * whole source is dropped when one does, leaving the picture's own `<img>`, which is gated
+ * separately.
  */
-export function hasRemoteSrcSet(srcSet: string | undefined): boolean {
-  return srcSet !== undefined && REMOTE_SRCSET_PATTERN.test(srcSet);
+export function hasRemoteSrcSet(
+  srcSet: string | undefined,
+  context: ImageAddressContext = currentContext(),
+): boolean {
+  if (srcSet === undefined) return false;
+  return srcSetCandidateUrls(srcSet).some(
+    (candidate) => remoteImageAddress(candidate, context) !== null,
+  );
 }

