@@ -509,6 +509,10 @@ orchestration types. The adapter owns the process and the turn mapping.
 - At startup the adapter pins the session to `OMP_KNOWN_EVENT_TYPES` with `set_event_filter` on
   18.3.1 and newer, so new event kinds can neither break nor flood a conversation. 18.2.x answers
   that unknown command without an id, so the filter is not sent there.
+- Model-discovery failures stay in redacted server diagnostics rather than the conversation
+  timeline. Text turns can continue without the catalog. Image attachments retry discovery when
+  support is unconfirmed, and report an actionable error if support remains unknown or the model
+  explicitly excludes images; missing capability metadata is not treated as lack of support.
 - Images are planned against the outbound frame limit OMP advertises in `ready.maxFrameBytes`
   (1 MiB on 18.x), because OMP reads inbound commands unchunked. Images that fit with the message
   go inline; the rest, up to `PROVIDER_SEND_TURN_MAX_IMAGE_BYTES` (10 MB), are listed in the

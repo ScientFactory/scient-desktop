@@ -1094,7 +1094,7 @@ describe("Oh My Pi adapter against a scripted client", () => {
           ),
         })
         .pipe(Effect.flip);
-      expect(rejected.message).toMatch(/does not advertise image/);
+      expect(rejected.message).toMatch(/does not support images/);
       yield* textAdapter.stopAll();
       NodeFS.rmSync(root, { recursive: true, force: true });
     }).pipe(Effect.provide(NodeServices.layer)),
