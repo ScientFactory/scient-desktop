@@ -749,6 +749,12 @@ thread and a lineage row. An import has neither, so the model is extended explic
   `NOT NULL`) becomes nullable, and is null for imports. External IDs never masquerade as local thread
   IDs.
 - **External identity lives only in provenance:** the package's export ID, source thread ID, and digest.
+- **Imported IDs keep the source order.** Records keep their source timestamps, and history is read
+  back by timestamp, then ID. So the IDs of imported messages, reasoning, activities, plans, and turns
+  are one random prefix per import followed by a zero-padded number in history order; records that
+  share a timestamp read back, continue, and re-export in the order the file lists them. A folded
+  answer's message keeps the `async-answer:` form, so at an exactly shared timestamp it sorts before
+  other imported messages.
 - **Transfer type decides which operations are valid.** Fork-only paths — usage fallback to the source
   thread, native-fork planning (which joins lineage) — do not apply to `type = 'import'`.
 - **Inherited-turn semantics are generalized, not bypassed.** #376 records a fork's inherited turns in

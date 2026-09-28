@@ -675,6 +675,130 @@ describe("ConversationImporter", () => {
   );
 
   it.effect(
+    "keeps the source order of records that share a timestamp through history, continuation, and re-export",
+    () =>
+      withImporter(
+        Effect.gen(function* () {
+          // Everything of one kind shares one timestamp, so only the ids order it.
+          const fixture = importFixture({ turns: 4, workLog: true, workLogPerTurn: 2 });
+          const source = fixture.input.snapshot;
+          const tied = "2026-09-27T10:00:10.000Z";
+          const input: typeof fixture.input = {
+            ...fixture.input,
+            snapshot: {
+              ...source,
+              messages: source.messages.map((message) => ({
+                ...message,
+                createdAt: tied,
+                updatedAt: tied,
+              })),
+              workLog: source.workLog.map((entry, index) =>
+                entry._tag === "tool"
+                  ? { ...entry, createdAt: "2026-09-27T10:00:11.000Z", title: `Step ${index + 1}` }
+                  : entry,
+              ),
+              proposedPlans: [1, 2, 3, 4].map((index) => ({
+                ...source.proposedPlans[0]!,
+                id: `src-plan-${index}`,
+                markdown: `${index}. Plan ${index}`,
+              })),
+            },
+          };
+          const messageTexts = source.messages.map((message) => message.text);
+          const stepTitles = input.snapshot.workLog.map((_, index) => `Step ${index + 1}`);
+          const inOrder = (text: string, expected: ReadonlyArray<string>) => {
+            const positions = expected.map((value) => text.indexOf(value));
+            assert.notInclude(positions, -1);
+            assert.deepStrictEqual(
+              positions,
+              positions.toSorted((left, right) => left - right),
+            );
+          };
+
+          const { lease } = yield* leaseFor({ ...fixture, input });
+          const { result } = yield* importOnce(lease);
+          const inherited = (yield* readThread(result.threadId))!;
+          assert.deepStrictEqual(
+            inherited.messages.map((message) => message.text),
+            messageTexts,
+          );
+          assert.deepStrictEqual(
+            inherited.activities.map((activity) => activity.summary),
+            stepTitles,
+          );
+          assert.deepStrictEqual(
+            inherited.proposedPlans.map((plan) => plan.planMarkdown),
+            ["1. Plan 1", "2. Plan 2", "3. Plan 3", "4. Plan 4"],
+          );
+
+          const engine = yield* OrchestrationEngineService;
+          const continuationId = MessageId.make("tied-continuation-user");
+          yield* engine.dispatch({
+            type: "thread.turn.start",
+            commandId: CommandId.make("start-tied-continuation"),
+            threadId: result.threadId,
+            message: { messageId: continuationId, role: "user", text: "Go on", attachments: [] },
+            runtimeMode: "approval-required",
+            interactionMode: "default",
+            createdAt: "2026-09-28T11:00:00.000Z",
+          });
+          const continuing = (yield* readThread(result.threadId))!;
+          const current = continuing.messages.find((message) => message.id === continuationId)!;
+          const prepared = yield* Effect.flatMap(ScientForkContextDelivery, (delivery) =>
+            delivery.prepareTurn({
+              thread: continuing,
+              message: current,
+              userText: current.text,
+              attachments: [],
+              nativeThreadKey: null,
+              sessionRunning: false,
+            }),
+          );
+          assert.strictEqual(prepared.kind, "deliver");
+          if (prepared.kind !== "deliver") return;
+          inOrder(prepared.contextPreamble, [...messageTexts, ...stepTitles]);
+          inOrder(prepared.contextPreamble, ["Plan 1", "Plan 2", "Plan 3", "Plan 4"]);
+
+          const snapshot = buildConversationSnapshot({
+            thread: (yield* readThread(result.threadId))!,
+            snapshotSequence: 1,
+            threadSequence: 1,
+            capturedAt: "2026-09-28T11:01:00.000Z",
+            selection: { workLog: true, reasoning: false, throughMessageId: null },
+            isAttachmentAvailable: () => false,
+          });
+          assert.deepStrictEqual(
+            snapshot.messages.map((message) => message.text),
+            [...messageTexts, "Go on"],
+          );
+          assert.deepStrictEqual(
+            snapshot.workLog.map((entry) => (entry._tag === "tool" ? entry.title : null)),
+            stepTitles,
+          );
+          const markdown = writeConversationMarkdown({
+            bundle: buildConversationDocument({
+              snapshot: { ...snapshot, contentDigest: `sha256:${"a".repeat(64)}` },
+              exportValue: "7f3c9a2e41b8",
+              timeZone: "UTC",
+              resolveAttachment: () => ({ _tag: "unavailable", reason: "missing" }),
+            }).bundle,
+            exportValue: "7f3c9a2e41b8",
+            exported: "2026-09-28T11:01:00.000Z",
+            packaging: "text",
+          });
+          const parsed = parseConversationMarkdown(markdown);
+          assert.strictEqual(parsed.kind, "conversation");
+          if (parsed.kind === "conversation") {
+            assert.deepStrictEqual(
+              parsed.messages.map((message) => message.body),
+              [...messageTexts, "Go on"],
+            );
+          }
+        }),
+      ),
+  );
+
+  it.effect(
     "delivers retained history to continuation and re-delivers after a provider switch",
     () =>
       withImporter(
