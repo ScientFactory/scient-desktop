@@ -69,6 +69,41 @@ describe("pandocToolView", () => {
     expect(view.actionLabel).toBe("Try again");
   });
 
+  it("offers a reinstall when the installed Pandoc could not be started", () => {
+    const view = pandocToolView({
+      status: status({ reinstallRequired: true }),
+      requesting: false,
+      error: null,
+    });
+    expect(view).toMatchObject({
+      kind: "reinstall",
+      actionLabel: "Reinstall Pandoc (40 MB)",
+      busy: false,
+    });
+    expect(view.detail).toBe("Pandoc could not be started. Reinstall it to export to Word.");
+    // While the reinstall runs, and if it fails, the usual progress and retry show.
+    expect(
+      pandocToolView({ status: status({ reinstallRequired: true }), requesting: true, error: null })
+        .kind,
+    ).toBe("installing");
+    expect(
+      pandocToolView({
+        status: status({
+          reinstallRequired: true,
+          install: {
+            state: "failed",
+            bytesReceived: null,
+            totalBytes: null,
+            failureReason: "download-failed",
+            updatedAtEpochMs: 4,
+          },
+        }),
+        requesting: false,
+        error: null,
+      }).actionLabel,
+    ).toBe("Try again");
+  });
+
   it("says when Word export cannot run here, and when it is ready", () => {
     expect(
       pandocToolView({

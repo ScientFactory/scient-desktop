@@ -134,6 +134,8 @@ export function pandocBinaryForTests(): string | null {
 export function managedToolLayer(input: {
   readonly command: PandocCommand | null;
   readonly scratchRoot: string;
+  /** Records the commands a conversion reported as unstartable. */
+  readonly discarded?: Array<PandocCommand>;
 }) {
   return Layer.succeed(
     PandocManagedTool,
@@ -155,6 +157,10 @@ export function managedToolLayer(input: {
         },
       }),
       command: Effect.succeed(input.command),
+      discardUnstartable: (command) =>
+        Effect.sync(() => {
+          input.discarded?.push(command);
+        }),
       scratchRoot: input.scratchRoot,
     }),
   );

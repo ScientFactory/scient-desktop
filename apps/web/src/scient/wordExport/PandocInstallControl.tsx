@@ -10,13 +10,12 @@ export function PandocInstallStatus(props: {
 }) {
   const { view, act } = props.controller;
   if (view.kind === "ready" && props.showReady !== true) return null;
+  const problem = view.kind === "failed" || view.kind === "reinstall";
   return (
     <div className="flex flex-wrap items-center gap-2">
       <p
-        className={
-          view.kind === "failed" ? "text-destructive text-xs" : "text-muted-foreground text-xs"
-        }
-        role={view.kind === "failed" ? "alert" : "status"}
+        className={problem ? "text-destructive text-xs" : "text-muted-foreground text-xs"}
+        role={problem ? "alert" : "status"}
       >
         {view.detail}
       </p>

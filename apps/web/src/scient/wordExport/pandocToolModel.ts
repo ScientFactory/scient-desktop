@@ -13,6 +13,8 @@ export type PandocToolViewKind =
   | "loading"
   | "ready"
   | "offer"
+  /** Pandoc was installed but could not be started; installing again replaces it. */
+  | "reinstall"
   | "installing"
   | "failed"
   | "unavailable";
@@ -108,6 +110,14 @@ export function pandocToolView(input: {
       kind: "failed",
       detail: FAILURE_DETAIL[status.install.failureReason],
       actionLabel: "Try again",
+      busy: false,
+    };
+  }
+  if (status.reinstallRequired === true) {
+    return {
+      kind: "reinstall",
+      detail: "Pandoc could not be started. Reinstall it to export to Word.",
+      actionLabel: `Reinstall Pandoc${size}`,
       busy: false,
     };
   }

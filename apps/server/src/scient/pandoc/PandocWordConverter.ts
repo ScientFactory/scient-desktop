@@ -224,7 +224,7 @@ function runFailure(error: PandocRunError): WordConversionError {
     case "spawn-failed":
       return new WordConversionError({
         reason: "unavailable",
-        message: "Scient could not start Pandoc. Install it again from Settings.",
+        message: "Pandoc could not be started. Reinstall Pandoc, then export again.",
       });
     case "failed":
       return new WordConversionError({
@@ -256,7 +256,10 @@ const make = Effect.gen(function* () {
       }
       return {
         available: false,
-        reason: `Word export needs Pandoc (${formatMegabytes(status.downloadBytes ?? 0)} download).`,
+        reason:
+          status.reinstallRequired === true
+            ? "Pandoc could not be started. Reinstall it to export to Word."
+            : `Word export needs Pandoc (${formatMegabytes(status.downloadBytes ?? 0)} download).`,
         installable: true,
       };
     }),
@@ -305,7 +308,12 @@ const make = Effect.gen(function* () {
             platform,
             hostEnvironment,
             ...(stdoutPath === undefined ? {} : { stdoutPath }),
-          }).pipe(Effect.mapError(runFailure));
+          }).pipe(
+            Effect.tapError((error) =>
+              error.reason === "spawn-failed" ? tool.discardUnstartable(pandoc) : Effect.void,
+            ),
+            Effect.mapError(runFailure),
+          );
 
         // 1. Read. Tabs stay as written, as Scient's Markdown parser reads them
         // (and so Mermaid fences keep the identity their captured image has).

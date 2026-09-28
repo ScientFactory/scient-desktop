@@ -231,6 +231,38 @@ describe.skipIf(HOST_PLATFORM === "win32")("PandocManagedTool", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
+  it.live("stops using an install that cannot start and offers to reinstall it", () =>
+    Effect.gen(function* () {
+      const server = yield* startArtifactServer();
+      const harness = yield* makeHarness({ manifest: manifestFor({ url: server.handle.url }) });
+      yield* Effect.gen(function* () {
+        const tool = yield* PandocManagedTool;
+        yield* tool.install;
+        yield* awaitInstall(tool);
+        const broken = yield* tool.command;
+        expect(broken).not.toBeNull();
+
+        // A command this install does not run is not a reason to discard it.
+        yield* tool.discardUnstartable({ command: "/elsewhere/pandoc", leadingArgs: [] });
+        expect((yield* tool.status).installed).toBe(true);
+
+        yield* tool.discardUnstartable(broken!);
+        const discarded = yield* tool.status;
+        expect(discarded.installed).toBe(false);
+        expect(discarded.reinstallRequired).toBe(true);
+        expect(yield* tool.command).toBeNull();
+        expect(NodeFS.existsSync(harness.paths.statePath)).toBe(false);
+
+        yield* tool.install;
+        const reinstalled = yield* awaitInstall(tool);
+        expect(reinstalled.install.state).toBe("ready");
+        expect(reinstalled.installed).toBe(true);
+        expect(reinstalled.reinstallRequired).toBeUndefined();
+        expect((yield* tool.command)?.command).not.toBe(broken!.command);
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.live("rejects a download whose digest is not the pinned one, before unpacking", () =>
     Effect.gen(function* () {
       const server = yield* startArtifactServer();

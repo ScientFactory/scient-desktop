@@ -60,6 +60,11 @@ export const ScientPandocToolStatus = Schema.Struct({
   /** Size of the download an install fetches, for the install prompt. */
   downloadBytes: Schema.NullOr(Schema.Number),
   install: ScientPandocInstallState,
+  /**
+   * The installed Pandoc could not be started, so the server stopped using it;
+   * installing again replaces it. Absent from servers that predate it.
+   */
+  reinstallRequired: Schema.optionalKey(Schema.Boolean),
 });
 export type ScientPandocToolStatus = typeof ScientPandocToolStatus.Type;
 

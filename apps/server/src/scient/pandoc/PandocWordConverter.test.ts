@@ -137,6 +137,66 @@ describe("PandocWordConverter", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
+  it.live("reports an installed Pandoc that cannot start so it can be reinstalled", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "scient-word-unstartable-" });
+      const missing = { command: NodePath.join(directory, "missing", "pandoc"), leadingArgs: [] };
+      const discarded: Array<PandocCommand> = [];
+      yield* run(
+        (scratchRoot) => managedToolLayer({ command: missing, scratchRoot, discarded }),
+        ({ converter, directory: outputDirectory }) =>
+          Effect.gen(function* () {
+            const error = yield* converter
+              .convert({
+                bundle: makeBundle({ markdown: "Body" }),
+                outputPath: NodePath.join(outputDirectory, "out.docx"),
+              })
+              .pipe(Effect.flip);
+            expect(error.reason).toBe("unavailable");
+            expect(error.message).toContain("Reinstall Pandoc");
+          }),
+      );
+      expect(discarded).toEqual([missing]);
+      yield* run(
+        (scratchRoot) =>
+          Layer.succeed(
+            PandocManagedTool,
+            PandocManagedTool.of({
+              canInstall: true,
+              install: Effect.die("not used"),
+              status: Effect.succeed({
+                version: "3.11",
+                installed: false,
+                canInstall: true,
+                unavailableReason: null,
+                downloadBytes: 41_832_712,
+                reinstallRequired: true,
+                install: {
+                  state: "idle",
+                  bytesReceived: null,
+                  totalBytes: null,
+                  failureReason: null,
+                  updatedAtEpochMs: 0,
+                },
+              }),
+              command: Effect.succeed(null),
+              discardUnstartable: () => Effect.void,
+              scratchRoot,
+            }),
+          ),
+        ({ converter }) =>
+          Effect.gen(function* () {
+            expect(yield* converter.availability).toEqual({
+              available: false,
+              reason: "Pandoc could not be started. Reinstall it to export to Word.",
+              installable: true,
+            });
+          }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it("reads Scient's profiles with CommonMark and only the profiles' extensions", () => {
     expect(SCIENT_PANDOC_READER.startsWith("commonmark_x-")).toBe(true);
     for (const off of ["attributes", "raw_attribute", "fenced_divs", "smart", "subscript"]) {
@@ -188,6 +248,7 @@ describe("PandocWordConverter", () => {
               },
             }),
             command: Effect.succeed(null),
+            discardUnstartable: () => Effect.void,
             scratchRoot,
           }),
         ),
