@@ -17,13 +17,19 @@
  *    the run's scratch directory under a fixed name first.
  *
  * Each pass is a separate Pandoc process with a fresh environment, a heap
- * limit, a timeout, and an output limit (`pandocProcess.ts`). The Word file is
+ * limit, a timeout, and an output limit (`pandocProcess.ts`), and the whole
+ * conversion shares one time budget ({@link SCIENT_WORD_CONVERSION_TIMEOUT_MS}),
+ * which clients outwait. The Word file is
  * streamed to `<output>.partial` and renamed into place only when Pandoc
  * succeeded; interruption kills Pandoc and removes the partial file and the
  * scratch directory. Pandoc's options are Scient's alone: no filters, no
  * `--pdf-engine`, no user-supplied flags.
  */
-import type { DocumentBundle, DocumentWarning } from "@t3tools/contracts";
+import {
+  SCIENT_WORD_CONVERSION_TIMEOUT_MS,
+  type DocumentBundle,
+  type DocumentWarning,
+} from "@t3tools/contracts";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -91,7 +97,7 @@ const WORD_READ_LIMITS: PandocLimits = {
   maxStdoutBytes: 256 * 1024 * 1024,
 };
 const WORD_WRITE_LIMITS: PandocLimits = {
-  timeout: "3 minutes",
+  timeout: "2 minutes",
   maxHeapMb: 1024,
   maxStdoutBytes: 512 * 1024 * 1024,
 };
@@ -137,7 +143,12 @@ export interface WordConversionInput {
     readonly contents: string;
   }>;
   /** Overrides for tests of the limits. */
-  readonly limits?: { readonly read?: PandocLimits; readonly write?: PandocLimits };
+  readonly limits?: {
+    readonly read?: PandocLimits;
+    readonly write?: PandocLimits;
+    /** The whole conversion's budget; {@link SCIENT_WORD_CONVERSION_TIMEOUT_MS} otherwise. */
+    readonly totalMs?: number;
+  };
 }
 
 export interface WordConversionResult {
@@ -173,6 +184,12 @@ export class PandocWordConverter extends Context.Service<
   }
 >()("t3/scient/pandoc/PandocWordConverter") {}
 
+const conversionTimeout = () =>
+  new WordConversionError({
+    reason: "timeout",
+    message: "Converting to Word took too long and was stopped. Export a shorter range.",
+  });
+
 function formatMegabytes(bytes: number): string {
   return `${Math.round(bytes / (1024 * 1024))} MB`;
 }
@@ -192,10 +209,7 @@ function runFailure(error: PandocRunError): WordConversionError {
           "The Word file would be larger than Word export allows. Export a shorter range or fewer images.",
       });
     case "timeout":
-      return new WordConversionError({
-        reason: "timeout",
-        message: "Converting to Word took too long and was stopped. Export a shorter range.",
-      });
+      return conversionTimeout();
     case "parse-error":
       return new WordConversionError({
         reason: "failed",
@@ -457,6 +471,11 @@ const make = Effect.gen(function* () {
         });
       }),
     ).pipe(
+      // Interrupting the conversion kills its Pandoc and removes its scratch.
+      Effect.timeoutOrElse({
+        duration: input.limits?.totalMs ?? SCIENT_WORD_CONVERSION_TIMEOUT_MS,
+        orElse: () => Effect.fail(conversionTimeout()),
+      }),
       Effect.catchTag("PlatformError", (cause) =>
         Effect.logWarning("scient pandoc word conversion file error", { cause }).pipe(
           Effect.andThen(

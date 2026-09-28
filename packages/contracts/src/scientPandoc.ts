@@ -63,6 +63,13 @@ export const ScientPandocToolStatus = Schema.Struct({
 });
 export type ScientPandocToolStatus = typeof ScientPandocToolStatus.Type;
 
+/**
+ * The longest one Word conversion may run on the server, across all of its
+ * Pandoc passes. Clients wait longer than this for an export that includes a
+ * conversion, so the server's own timeout is what the user sees.
+ */
+export const SCIENT_WORD_CONVERSION_TIMEOUT_MS = 120_000;
+
 // ---------------------------------------------------------------------------
 // Project Markdown file → Word
 // ---------------------------------------------------------------------------

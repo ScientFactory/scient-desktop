@@ -1,6 +1,10 @@
 import * as Effect from "effect/Effect";
 
-import type { ScientWordFileExportRequest, ScientWordLatexExportRequest } from "@t3tools/contracts";
+import {
+  SCIENT_WORD_CONVERSION_TIMEOUT_MS,
+  type ScientWordFileExportRequest,
+  type ScientWordLatexExportRequest,
+} from "@t3tools/contracts";
 
 import type { PreparedConnection } from "../connection/model.ts";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
@@ -15,8 +19,12 @@ import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
  */
 
 const TOOL_TIMEOUT_MS = 30_000;
-// Reading the file, two Pandoc passes, and writing the result, in one request.
-const EXPORT_TIMEOUT_MS = 360_000;
+/**
+ * One request reads the file and its images, converts it, and returns the
+ * result. The server stops a conversion at its own limit and says why; this
+ * leaves two minutes on top for the reading and the transfer.
+ */
+export const WORD_EXPORT_TIMEOUT_MS = SCIENT_WORD_CONVERSION_TIMEOUT_MS + 120_000;
 
 export const getEnvironmentWordExportTool = Effect.fn(
   "clientRuntime.state.getEnvironmentWordExportTool",
@@ -68,7 +76,7 @@ export const exportEnvironmentWordFile = Effect.fn("clientRuntime.state.exportEn
       remoteAuthorization,
       method: "POST",
       url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/word-export/v1/file"),
-      timeoutMs: EXPORT_TIMEOUT_MS,
+      timeoutMs: WORD_EXPORT_TIMEOUT_MS,
       group: "scientWordExport",
       request: ({ client, headers }) => client.exportFile({ headers, payload: input.request }),
     });
@@ -111,7 +119,7 @@ export const exportEnvironmentWordLatex = Effect.fn(
     remoteAuthorization,
     method: "POST",
     url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/word-export/v1/latex"),
-    timeoutMs: EXPORT_TIMEOUT_MS,
+    timeoutMs: WORD_EXPORT_TIMEOUT_MS,
     group: "scientWordExport",
     request: ({ client, headers }) => client.exportLatex({ headers, payload: input.request }),
   });

@@ -17,7 +17,13 @@ import {
   SCIENT_PANDOC_READER,
   layer,
 } from "./PandocWordConverter.ts";
-import { fakePandoc, makeBundle, managedToolLayer } from "./pandocTestSupport.ts";
+import {
+  fakePandoc,
+  makeBundle,
+  managedToolLayer,
+  processExists,
+  readPid,
+} from "./pandocTestSupport.ts";
 
 const run = <A, E>(
   toolLayer: (scratchRoot: string) => Layer.Layer<PandocManagedTool>,
@@ -97,6 +103,37 @@ describe("PandocWordConverter", () => {
       expect(reads[0]).toContain(SCIENT_PANDOC_READER);
       expect(reads[1]).toContain("latex");
       expect(reads[1]).not.toContain("--preserve-tabs");
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("stops a conversion that outlasts its total budget and leaves nothing behind", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const pidDirectory = yield* fs.makeTempDirectoryScoped({ prefix: "scient-word-budget-" });
+      const pidFile = NodePath.join(pidDirectory, "pid");
+      const fake = fakePandoc(pidFile);
+      yield* run(withCommand(fake("sleep")), ({ converter, directory, scratchRoot }) =>
+        Effect.gen(function* () {
+          const outputPath = NodePath.join(directory, "slow.docx");
+          const error = yield* converter
+            .convert({
+              bundle: makeBundle({ markdown: "Body" }),
+              outputPath,
+              limits: {
+                read: { timeout: "30 seconds", maxHeapMb: 64, maxStdoutBytes: 1024 },
+                totalMs: 500,
+              },
+            })
+            .pipe(Effect.flip);
+          expect(error.reason).toBe("timeout");
+          expect(NodeFS.existsSync(outputPath)).toBe(false);
+          expect(NodeFS.existsSync(`${outputPath}.partial`)).toBe(false);
+          expect(NodeFS.readdirSync(scratchRoot)).toEqual([]);
+          const pid = readPid(pidFile);
+          expect(pid).not.toBeNull();
+          expect(processExists(pid!)).toBe(false);
+        }),
+      );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
