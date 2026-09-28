@@ -1533,7 +1533,7 @@ describe("Oh My Pi session ownership", () => {
           ),
         })
         .pipe(Effect.flip);
-      expect(rejected.message).toMatch(/does not advertise image/);
+      expect(rejected.message).toMatch(/does not support images/);
       expect(calls).toEqual([]);
       yield* adapter.stopAll();
       NodeFS.rmSync(root, { recursive: true, force: true });

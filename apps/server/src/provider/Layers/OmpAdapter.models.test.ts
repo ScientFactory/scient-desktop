@@ -15,6 +15,7 @@ import { createModelSelection } from "@t3tools/shared/model";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Logger from "effect/Logger";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -63,6 +64,8 @@ const makeFakeOmp = (input: {
   /** Registered only when the bridge's refreshModels runs. */
   readonly lateModels?: ReadonlyArray<FakeModel>;
   readonly maxFrameBytes?: number;
+  readonly modelsError?: string;
+  readonly modelsResponse?: unknown;
   /** What OMP really applies per `provider/id`, when it differs from the advertised efforts. */
   readonly clamp?: Readonly<Record<string, Readonly<Record<string, string>>>>;
   readonly setModelError?: (provider: string, modelId: string) => string | undefined;
@@ -75,6 +78,8 @@ const makeFakeOmp = (input: {
   let finish: Effect.Effect<void> = Effect.void;
   const state = {
     models: [...input.models],
+    modelsError: input.modelsError,
+    modelsResponse: input.modelsResponse,
     model: { provider: input.initial.provider, id: input.initial.id },
     thinkingLevel: input.initial.level ?? "off",
     log: [] as Array<string>,
@@ -139,9 +144,11 @@ const makeFakeOmp = (input: {
             });
           }
           case "get_available_models":
-            return respond(frame, {
-              models: state.models,
-            });
+            return respond(
+              frame,
+              state.modelsResponse ?? { models: state.models },
+              state.modelsError,
+            );
           case "get_available_commands":
             return respond(frame, { commands: [{ name: "help", source: "builtin" }] });
           case "set_model": {
@@ -785,6 +792,97 @@ describe("Oh My Pi image attachments", () => {
       .split("\n")
       .filter((line) => line.startsWith('"') && line.includes("attachments"))
       .map((line) => JSON.parse(line) as string);
+
+  for (const failure of ["command", "decode"] as const) {
+    it.effect(
+      `keeps ${failure} discovery failures out of text turns, with safe diagnostics`,
+      () => {
+        const messages: Array<unknown> = [];
+        const logger = Logger.make(({ message }) => messages.push(message));
+        const fake = makeFakeOmp({
+          models: [vision],
+          initial: { provider: "vendor", id: "vision" },
+          ...(failure === "command"
+            ? { modelsError: "Rejected Bearer synthetic-secret-123" }
+            : {
+                modelsResponse: { models: [{ ...vision, input: { private: "catalog-secret" } }] },
+              }),
+        });
+        return withAdapter(
+          "catalog-error-text",
+          fake,
+          ({ adapter, threadId, events, awaitCompletion }) =>
+            Effect.gen(function* () {
+              const turn = yield* adapter.sendTurn({ threadId, input: "Hello" });
+              yield* fake.finish();
+              yield* awaitCompletion(turn.turnId);
+              expect(fake.state.prompts).toHaveLength(1);
+              expect(warnings(events)).toEqual([]);
+              const log = encodeJson(messages);
+              expect(log).toContain("Oh My Pi model discovery failed.");
+              expect(log).toContain("get_available_models");
+              expect(log).toContain(
+                failure === "command" ? "OmpRpcCommandError" : "OmpRpcProtocolError",
+              );
+              if (failure === "decode") expect(log).toContain("models.0.input");
+              expect(log).not.toContain("synthetic-secret-123");
+              expect(log).not.toContain("catalog-secret");
+            }),
+        ).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
+      },
+    );
+  }
+
+  it.effect("retries discovery for images and recovers after a startup failure", () => {
+    const fake = makeFakeOmp({
+      models: [vision],
+      initial: { provider: "vendor", id: "vision" },
+      modelsError: "Catalog temporarily unavailable",
+    });
+    return withAdapter("catalog-recovery", fake, ({ root, adapter, threadId, events }) =>
+      Effect.gen(function* () {
+        const input = { threadId, input: "Describe", attachments: [writeImage(root, "image", 20)] };
+        const error = yield* adapter.sendTurn(input).pipe(Effect.flip);
+        expect(error.message).toContain("Couldn't verify image support");
+        expect(error.message).not.toContain("Catalog temporarily unavailable");
+        expect(fake.state.prompts).toHaveLength(0);
+        fake.state.modelsError = undefined;
+        yield* adapter.sendTurn(input);
+        expect(fake.state.prompts).toHaveLength(1);
+        expect(fake.state.prompts[0]?.frame.images).toHaveLength(1);
+        expect(warnings(events)).toEqual([]);
+      }),
+    );
+  });
+
+  for (const input of [undefined, ["text"]] as const) {
+    it.effect(
+      `distinguishes ${input === undefined ? "unknown" : "unsupported"} image capability`,
+      () => {
+        const fake = makeFakeOmp({
+          models: [{ provider: "vendor", id: "plain", ...(input ? { input } : {}) }],
+          initial: { provider: "vendor", id: "plain" },
+        });
+        return withAdapter("image-capability", fake, ({ root, adapter, threadId }) =>
+          Effect.gen(function* () {
+            const error = yield* adapter
+              .sendTurn({
+                threadId,
+                input: "Describe",
+                attachments: [writeImage(root, "image", 20)],
+              })
+              .pipe(Effect.flip);
+            expect(error.message).toContain(
+              input === undefined ? "Couldn't verify image support" : "does not support images",
+            );
+            expect(fake.state.prompts).toHaveLength(0);
+            yield* adapter.sendTurn({ threadId, input: "Text still works" });
+            expect(fake.state.prompts).toHaveLength(1);
+          }),
+        );
+      },
+    );
+  }
 
   it.effect("sends a small image inline and a 900 KB image as an attached file", () => {
     const fake = makeFakeOmp({ models: [vision], initial: { provider: "vendor", id: "vision" } });

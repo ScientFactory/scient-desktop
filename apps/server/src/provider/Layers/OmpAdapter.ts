@@ -28,6 +28,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import * as SchemaIssue from "effect/SchemaIssue";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -267,7 +268,7 @@ interface SessionContext {
   readonly threadLock: Semaphore.Semaphore;
   readonly toolItems: Map<string, RuntimeItemId>;
   readonly knownModels: Set<string>;
-  readonly imageModels: Set<string>;
+  readonly imageSupport: Map<string, boolean>;
   /** Reasoning levels each known model lists (from `thinking.efforts`). */
   readonly modelLevels: Map<string, ReadonlyArray<string>>;
   readonly subagentSeen: Set<string>;
@@ -1265,14 +1266,44 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     beginClose(ctx, reason).pipe(Effect.andThen(Deferred.await(ctx.closeDone)));
 
   const recordKnownModels = (ctx: SessionContext, models: ReadonlyArray<OmpRpcModel>) => {
+    ctx.imageSupport.clear();
     for (const model of models) {
       const slug = encodeOmpModelSlug(model.provider, model.id);
       if (!slug) continue;
       ctx.knownModels.add(slug);
-      if (ompModelSupportsImages(model)) ctx.imageModels.add(slug);
+      if (model.input !== undefined) ctx.imageSupport.set(slug, ompModelSupportsImages(model));
       ctx.modelLevels.set(slug, ompModelThinkingLevels(model));
     }
   };
+
+  // Discovery is optional for text turns. Keep failures in server diagnostics;
+  // only a request that needs these capabilities should surface an error.
+  const refreshKnownModels = (ctx: SessionContext, client: SessionClient) =>
+    client.getModels().pipe(
+      Effect.tap((models) => Effect.sync(() => recordKnownModels(ctx, models.models))),
+      Effect.tapError((cause) => {
+        const fields =
+          cause._tag === "OmpRpcProtocolError" && Schema.isSchemaError(cause.cause)
+            ? SchemaIssue.makeFormatterStandardSchemaV1({
+                leafHook: (issue) => issue._tag,
+                checkHook: () => "InvalidValue",
+              })(cause.cause.issue)
+                .issues.slice(0, 10)
+                .map((issue) => (issue.path ?? []).map(String).join("."))
+            : [];
+        return Effect.logWarning("Oh My Pi model discovery failed.", {
+          threadId: ctx.session.threadId,
+          command: "get_available_models",
+          errorType: cause._tag,
+          ...(cause._tag === "OmpRpcCommandError" && cause.code
+            ? { errorCode: ctx.redaction.text(cause.code).slice(0, 128) }
+            : {}),
+          version: client.version,
+          detail: ctx.redaction.text(cause.message).slice(0, 1024),
+          fields,
+        });
+      }),
+    );
 
   /**
    * A level must be one the model lists. "off" is always accepted: OMP lists
@@ -1322,8 +1353,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       );
       if (first._tag === "Success") return;
       yield* refresh;
-      const models = yield* client.getModels().pipe(Effect.option);
-      if (models._tag === "Some") recordKnownModels(ctx, models.value.models);
+      yield* refreshKnownModels(ctx, client).pipe(Effect.option);
       yield* client
         .setModel(provider, modelId)
         .pipe(Effect.mapError((cause) => commandFailed(ctx, "set_model", cause)));
@@ -1368,8 +1398,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         ctx.requestedModel = effective === slug ? undefined : { requested: slug, effective };
         ctx.session = { ...ctx.session, model: effective, updatedAt: yield* now };
         if (!ctx.modelLevels.has(effective)) {
-          const models = yield* ctx.handles.client.getModels().pipe(Effect.option);
-          if (models._tag === "Some") recordKnownModels(ctx, models.value.models);
+          yield* refreshKnownModels(ctx, ctx.handles.client).pipe(Effect.option);
         }
       }
       const level = change.level;
@@ -1507,7 +1536,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
             activeAssistantItemId: undefined,
             toolItems: new Map(),
             knownModels: new Set(),
-            imageModels: new Set(),
+            imageSupport: new Map(),
             modelLevels: new Map(),
             subagentSeen: new Set(),
             openSubagents: new Map(),
@@ -1788,20 +1817,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
               ctx.session = { ...ctx.session, model: initialModel };
             }
             if (state.thinkingLevel) ctx.thinkingLevel = state.thinkingLevel;
-            const models = yield* client.getModels().pipe(Effect.option);
-            if (models._tag === "Some") {
-              recordKnownModels(ctx, models.value.models);
-            } else {
-              const base = yield* eventBase(ctx);
-              yield* offer({
-                type: "runtime.warning",
-                ...base,
-                payload: {
-                  message:
-                    "Oh My Pi did not report model capabilities; image inputs may be rejected.",
-                },
-              });
-            }
+            yield* refreshKnownModels(ctx, client).pipe(Effect.option);
             yield* refreshCursor(ctx, state.sessionFile, state.sessionId);
             const commands = yield* client.getCommands().pipe(Effect.option);
             if (commands._tag === "Some") runtime.replaceCatalog(commands.value.commands);
@@ -2045,31 +2061,32 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
                   : undefined;
               })()
             : ctx.model;
-          if (
-            input.attachments?.some((attachment) => attachment.type === "image") &&
-            requestedModel &&
-            (!ctx.knownModels.has(requestedModel) || !ctx.imageModels.has(requestedModel))
-          ) {
-            const discovered = yield* ctx.handles.client
-              .getModels()
-              .pipe(Effect.mapError((cause) => commandFailed(ctx, "get_models", cause)));
-            for (const model of discovered.models) {
-              const slug = encodeOmpModelSlug(model.provider, model.id);
-              if (!slug) continue;
-              ctx.knownModels.add(slug);
-              if (ompModelSupportsImages(model)) ctx.imageModels.add(slug);
+          if (input.attachments?.some((attachment) => attachment.type === "image")) {
+            if (!requestedModel || ctx.imageSupport.get(requestedModel) !== true) {
+              yield* refreshKnownModels(ctx, ctx.handles.client).pipe(
+                Effect.mapError(() =>
+                  validation(
+                    "sendTurn",
+                    "Couldn't verify image support for the selected Oh My Pi model. Try again or send the message without images.",
+                  ),
+                ),
+              );
             }
-          }
-          if (
-            input.attachments?.some((attachment) => attachment.type === "image") &&
-            (!requestedModel ||
-              !ctx.knownModels.has(requestedModel) ||
-              !ctx.imageModels.has(requestedModel))
-          ) {
-            return yield* validation(
-              "sendTurn",
-              "The selected Oh My Pi model does not advertise image input support.",
-            );
+            const supportsImages = requestedModel
+              ? ctx.imageSupport.get(requestedModel)
+              : undefined;
+            if (supportsImages === undefined) {
+              return yield* validation(
+                "sendTurn",
+                "Couldn't verify image support for the selected Oh My Pi model. Try again or send the message without images.",
+              );
+            }
+            if (!supportsImages) {
+              return yield* validation(
+                "sendTurn",
+                "The selected Oh My Pi model does not support images. Choose an image-capable model or send the message without images.",
+              );
+            }
           }
           const imageAttachments: Array<OmpImageAttachment> = [];
           const filePaths: Array<string> = [];
