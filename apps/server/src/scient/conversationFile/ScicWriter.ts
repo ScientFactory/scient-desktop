@@ -30,6 +30,8 @@ import {
   writeConversationMarkdown,
   type ResolvedAttachmentContent,
 } from "@scientfactory/conversation";
+import * as Exit from "effect/Exit";
+import * as Schema from "effect/Schema";
 
 import { conversationContentDigest } from "../conversationImport/ConversationImporter.ts";
 import {
@@ -46,10 +48,11 @@ import {
   SCIC_SNAPSHOT_ENTRY,
   SCIC_SNAPSHOT_MEDIA_TYPE,
   SNIFF_BYTES,
+  ScicManifest,
   contradictsDeclaredType,
   scicAttachmentPath,
+  scicAttachmentPathDigest,
   withinAttachmentPolicy,
-  type ScicManifest,
   type ScicManifestEntry,
   type ScicManifestResource,
   type ScicUnavailableReason,
@@ -90,7 +93,9 @@ export interface ScicPackage {
 
 export type ScicPackageFailure =
   | { readonly _tag: "nothing-to-export" }
-  | { readonly _tag: "too-large"; readonly entry: string };
+  | { readonly _tag: "too-large"; readonly entry: string }
+  /** The writer's own package would fail the reader's checks: a defect in the writer. */
+  | { readonly _tag: "invalid-package"; readonly detail: string };
 
 const encoder = new TextEncoder();
 
@@ -145,6 +150,40 @@ const UNAVAILABLE_NOTES: Record<Exclude<ScicUnavailableReason, "missing">, strin
   unsupported: "is not a type or size Scient can import",
   "too-large": "did not fit within the export's attachment limit",
 };
+
+const decodeManifest = Schema.decodeUnknownExit(ScicManifest);
+
+/**
+ * The reader's manifest and path rules, applied by the writer to its own
+ * manifest before anything is written: it decodes as a `ScicManifest`, every
+ * entry path is distinct regardless of case, and every attachment path is one
+ * the reader accepts for its digest. Null when the package passes.
+ */
+function checkOwnManifest(manifestText: string): string | null {
+  const decoded = decodeManifest(JSON.parse(manifestText));
+  if (Exit.isFailure(decoded)) return "The manifest does not decode.";
+  const folded = new Set<string>();
+  for (const path of [
+    SCIC_MIMETYPE_ENTRY,
+    SCIC_MANIFEST_ENTRY,
+    ...decoded.value.entries.map((entry) => entry.path),
+  ]) {
+    const key = path.normalize("NFC").toLowerCase();
+    if (folded.has(key)) return "Two entries share a path.";
+    folded.add(key);
+  }
+  for (const entry of decoded.value.entries) {
+    if (entry.path === SCIC_SNAPSHOT_ENTRY || entry.path === SCIC_MARKDOWN_ENTRY) continue;
+    if (scicAttachmentPathDigest(entry.path) !== entry.sha256) {
+      return "An attachment path is not one the reader accepts.";
+    }
+  }
+  for (const resource of decoded.value.resources) {
+    if (resource._tag === "included" && scicAttachmentPathDigest(resource.path) !== resource.sha256)
+      return "A resource path is not one the reader accepts.";
+  }
+  return null;
+}
 
 /** Makes the captured snapshot portable, then assembles every package entry. */
 export function prepareScicPackage(
@@ -404,10 +443,13 @@ export function prepareScicPackage(
     resources: manifestResources,
     warnings: exportWarnings,
   };
-  const manifestBytes = encoder.encode(JSON.stringify(manifest));
+  const manifestText = JSON.stringify(manifest);
+  const manifestBytes = encoder.encode(manifestText);
   if (manifestBytes.byteLength > SCIC_MAX_MANIFEST_BYTES) {
     return { _tag: "too-large", entry: SCIC_MANIFEST_ENTRY };
   }
+  const invalid = checkOwnManifest(manifestText);
+  if (invalid !== null) return { _tag: "invalid-package", detail: invalid };
   const expandedBytes =
     SCIC_MEDIA_TYPE.length +
     manifestBytes.byteLength +

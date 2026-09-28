@@ -51,10 +51,7 @@ import {
   type WordConversionFailureReason,
 } from "../pandoc/PandocWordConverter.ts";
 import { capturedWordDiagramAssets, planWordDiagrams } from "../pandoc/wordDiagramCapture.ts";
-import {
-  ConversationExportFiles,
-  type ConversationExportFileError,
-} from "./ConversationExportFiles.ts";
+import { ConversationExportFileError, ConversationExportFiles } from "./ConversationExportFiles.ts";
 import {
   ConversationSnapshotService,
   type ConversationSnapshotReadError,
@@ -384,6 +381,12 @@ const make = Effect.gen(function* () {
           "too-large",
           "This conversation is too large for a Scient conversation file. Export a shorter range or leave out the work log.",
         );
+      }
+      if (prepared._tag === "invalid-package") {
+        // Never hand out a file the reader would refuse.
+        return yield* new ConversationExportFileError({
+          cause: new Error(`The conversation file failed its own check: ${prepared.detail}`),
+        });
       }
       const fileName = exportFileName(snapshot.thread.title, SCIC_FILE_EXTENSION);
       const written = yield* files.write({

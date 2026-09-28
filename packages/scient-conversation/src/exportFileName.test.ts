@@ -21,4 +21,15 @@ describe("export file names", () => {
     expect(bytes(emoji)).toBeLessThanOrEqual(EXPORT_FILE_NAME_MAX_BYTES);
     expect(Array.from(emoji.slice(0, -3)).every((character) => character === "🧪")).toBe(true);
   });
+
+  it("avoids Windows device names and trailing dots or spaces", () => {
+    for (const title of ["CON", "prn", "Aux", "NUL", "com1", "LPT9", "con.backup", "NUL . notes"]) {
+      const name = exportFileName(title, ".md");
+      expect(name.startsWith("_")).toBe(true);
+    }
+    expect(exportFileName("Console log", ".md")).toBe("Console log.md");
+    expect(exportFileName("COM10", ".md")).toBe("COM10.md");
+    const padded = exportFileName(`${"a".repeat(194)}. .b`, ".md");
+    expect(padded).toBe(`${"a".repeat(194)}.md`);
+  });
 });

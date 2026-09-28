@@ -9,6 +9,7 @@ import {
   DIGEST,
   activity,
   exportMarkdown,
+  generatedNames,
   message,
   resetClock,
   snapshotOf,
@@ -135,6 +136,30 @@ describe("conversation document", () => {
     expect(packagedAssets(packaged.document.bundle).map((asset) => asset.path)).toEqual([
       "attachments/01-figure-1.png",
     ]);
+  });
+
+  it("names packaged attachments safely for any Unicode name", () => {
+    const names = generatedNames(300);
+    const attachments = names.map((name, index): ChatAttachment => ({
+      type: "file",
+      id: `thread-1-generated-${index}`,
+      name,
+      mimeType: "application/octet-stream",
+      sizeBytes: 1,
+    }));
+    const snapshot = snapshotOf(
+      thread({ messages: [message({ id: "m1", role: "user", text: "Files", attachments })] }),
+    );
+    const packaged = exportMarkdown(snapshot, { packaging: "with-attachments" });
+    const paths = packagedAssets(packaged.document.bundle).map((asset) => asset.path);
+    expect(paths).toHaveLength(names.length);
+    for (const path of paths) {
+      expect(path.isWellFormed()).toBe(true);
+      expect(path).toMatch(/^attachments\/\d{2,}-[\p{L}\p{N}._-]+$/u);
+      expect(path.endsWith(".")).toBe(false);
+      expect(new TextEncoder().encode(path.split("/")[1]!).byteLength).toBeLessThanOrEqual(255);
+      expect(packaged.markdown).toContain(`(${path.split("/").map(encodeURIComponent).join("/")})`);
+    }
   });
 
   it("renders inline references readably and records file-excerpt citations", () => {

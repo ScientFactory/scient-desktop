@@ -34,12 +34,20 @@ import * as ConversationExportService from "../conversationExport/ConversationEx
 import * as ConversationSnapshotService from "../conversationExport/ConversationSnapshotService.ts";
 import { PandocWordConverter } from "../pandoc/PandocWordConverter.ts";
 import { readScicPackage } from "./ScicReader.ts";
-import { sha256Digest } from "./ScicWriter.ts";
-import { ScicManifest } from "./scicFormat.ts";
+import { prepareScicPackage, sha256Digest } from "./ScicWriter.ts";
+import { ScicManifest, scicAttachmentPathDigest } from "./scicFormat.ts";
+import {
+  PNG as FIXTURE_PNG,
+  attachment as snapshotAttachment,
+  capturedSnapshot,
+  generatedNames,
+  zipBytesPromise,
+} from "./scic.test-fixtures.ts";
 
 const THREAD = ThreadId.make("thread-1");
 const encodeAttachments = Schema.encodeSync(Schema.fromJsonString(Schema.Array(ChatAttachment)));
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const decodeManifestJson = Schema.decodeEffect(Schema.fromJsonString(ScicManifest));
 const PNG = new Uint8Array([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
 ]);
@@ -203,6 +211,100 @@ const exportAndRead = (options: Partial<ScientConversationExportRequest["options
     return { produced, entries, read };
   });
 
+/** Validates prepared package files with the reader, as another Scient would. */
+const readPrepared = (files: Parameters<typeof zipBytesPromise>[0]) =>
+  Effect.gen(function* () {
+    const bytes = yield* Effect.promise(() => zipBytesPromise(files));
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-scic-names-"));
+    const packagePath = NodePath.join(root, "package.scic");
+    NodeFS.writeFileSync(packagePath, bytes);
+    NodeFS.mkdirSync(NodePath.join(root, "attachments"));
+    const read = yield* Effect.exit(
+      readScicPackage({
+        importId: "cimp_0f8e7d6c-5b4a-4938-8271-605f4e3d2c1b" as ConversationImportId,
+        packagePath,
+        packageSha256: sha256Digest(bytes),
+        packageBytes: bytes.byteLength,
+        attachmentsDirectory: NodePath.join(root, "attachments"),
+      }),
+    );
+    NodeFS.rmSync(root, { recursive: true, force: true });
+    return read;
+  });
+
+const preparePackage = (
+  snapshot: typeof capturedSnapshot,
+  redact: (text: string) => string = (text) => text,
+) =>
+  prepareScicPackage({
+    snapshot,
+    attachments: new Map(
+      snapshot.messages.flatMap((message) =>
+        message.attachments.map(
+          (entry) =>
+            [
+              entry.localId,
+              { _tag: "bytes" as const, bytes: FIXTURE_PNG, sha256: sha256Digest(FIXTURE_PNG) },
+            ] as const,
+        ),
+      ),
+    ),
+    exportValue: "7f3c9a2e41b8",
+    exportedAt: "2026-09-28T09:12:00.000Z",
+    exporter: { name: "Scient", version: "0.7.0" },
+    timeZone: "UTC",
+    redact,
+  });
+
+describe("naming .scic attachments", () => {
+  it.effect("writes names the reader accepts for any Unicode attachment name", () =>
+    Effect.gen(function* () {
+      const names = generatedNames(120);
+      const [first, second] = capturedSnapshot.messages;
+      const snapshot = {
+        ...capturedSnapshot,
+        messages: [
+          {
+            ...first!,
+            text: "Generated names",
+            references: [],
+            attachments: names.map((name, index) =>
+              snapshotAttachment(
+                `thread-1-generated-${index}`,
+                "image",
+                name,
+                "image/png",
+                FIXTURE_PNG.byteLength,
+              ),
+            ),
+          },
+          second!,
+        ],
+        warnings: [],
+      };
+      const prepared = preparePackage(snapshot);
+      assert(prepared._tag === "ok", prepared._tag);
+      for (const resource of prepared.value.manifest.resources) {
+        assert(resource._tag === "included");
+        assert.isTrue(resource.path.isWellFormed());
+        assert.strictEqual(scicAttachmentPathDigest(resource.path), resource.sha256);
+        assert.isAtMost(new TextEncoder().encode(resource.path.split("/")[1]!).byteLength, 255);
+      }
+      const read = yield* readPrepared(prepared.value.files);
+      assert(Exit.isSuccess(read), String(Exit.isFailure(read) ? read.cause : ""));
+      assert.strictEqual(read.value.snapshot.messages[0]!.attachments.length, names.length);
+    }),
+  );
+
+  it("refuses to hand out a package its own reader would reject", () => {
+    // A redaction that makes an attachment name longer than a manifest name may be.
+    const prepared = preparePackage(capturedSnapshot, (text) =>
+      text.replaceAll("figure", "f".repeat(300)),
+    );
+    assert.strictEqual(prepared._tag, "invalid-package");
+  });
+});
+
 describe("exporting a .scic", () => {
   it.effect("round-trips identical file bytes with distinct declared media types", () =>
     Effect.gen(function* () {
@@ -227,7 +329,7 @@ describe("exporting a .scic", () => {
       const { entries, read } = yield* exportAndRead();
       assert(Exit.isSuccess(read), String(Exit.isFailure(read) ? read.cause : ""));
 
-      const manifest = yield* Schema.decodeEffect(Schema.fromJsonString(ScicManifest))(
+      const manifest = yield* decodeManifestJson(
         entries.find((entry) => entry.name === "manifest.json")!.text,
       );
       const resources = manifest.resources.filter((resource) => resource._tag === "included");
@@ -280,7 +382,7 @@ describe("exporting a .scic", () => {
         entries.filter((entry) => entry.name.startsWith("attachments/")).map((entry) => entry.name),
         [expectedPath],
       );
-      const manifest = yield* Schema.decodeEffect(Schema.fromJsonString(ScicManifest))(
+      const manifest = yield* decodeManifestJson(
         entries.find((entry) => entry.name === "manifest.json")!.text,
       );
       assert.deepStrictEqual(

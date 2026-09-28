@@ -33,6 +33,7 @@ import {
   TrimmedNonEmptyString,
   type ConversationAttachmentKind,
 } from "@t3tools/contracts";
+import { truncateUtf8 } from "@scientfactory/conversation";
 import * as Schema from "effect/Schema";
 
 export const SCIC_MIMETYPE_ENTRY = "mimetype";
@@ -75,9 +76,19 @@ export const SCIC_COMPRESSION_RATIO_FLOOR_BYTES = 1024 * 1024;
 // Paths
 // ---------------------------------------------------------------------------
 
-const SAFE_NAME_MAX_CHARS = 100;
+/** The reader's limit, in code points, on the name after an attachment path's digest. */
+const SAFE_NAME_MAX_CODE_POINTS = 100;
+/** Keeps `attachments/<sha256>-<name>`'s last segment within every file system's 255 bytes. */
+const SAFE_NAME_MAX_BYTES = 180;
+const EXTENSION_MAX_CODE_POINTS = 12;
 
-/** A file name segment every file system accepts: letters, digits, `.`, `_`, `-`. */
+const utf8Length = (text: string) => new TextEncoder().encode(text).byteLength;
+
+/**
+ * A file name segment every file system accepts: letters, digits, `.`, `_`,
+ * `-`, cut on code points so it never holds half a surrogate pair, and
+ * bounded both in code points (as the reader requires) and in bytes.
+ */
 function scicSafeFileName(name: string): string {
   const cleaned = name
     .normalize("NFC")
@@ -88,12 +99,15 @@ function scicSafeFileName(name: string): string {
     .replace(/^[-.]+|[-.]+$/gu, "");
   const extensionIndex = cleaned.lastIndexOf(".");
   const extension =
-    extensionIndex > 0 && cleaned.length - extensionIndex <= 12
+    extensionIndex > 0 &&
+    Array.from(cleaned.slice(extensionIndex)).length <= EXTENSION_MAX_CODE_POINTS
       ? cleaned.slice(extensionIndex)
       : "";
-  const stem = (extension ? cleaned.slice(0, extensionIndex) : cleaned)
-    .slice(0, SAFE_NAME_MAX_CHARS - extension.length)
-    .replace(/[-.]+$/gu, "");
+  const stem = truncateUtf8(
+    extension ? cleaned.slice(0, extensionIndex) : cleaned,
+    SAFE_NAME_MAX_BYTES - utf8Length(extension),
+    SAFE_NAME_MAX_CODE_POINTS - Array.from(extension).length,
+  ).replace(/[-.]+$/gu, "");
   return stem.length > 0 ? `${stem}${extension}` : `attachment${extension}`;
 }
 

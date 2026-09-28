@@ -20,8 +20,12 @@ import {
   type SourceEdit,
 } from "./markdownAst.ts";
 
+/** A relative link to a package file; a lone surrogate never makes encoding throw. */
 function encodePackagePath(path: string): string {
-  return path.split("/").map(encodeURIComponent).join("/");
+  return path
+    .split("/")
+    .map((segment) => encodeURIComponent(segment.toWellFormed()))
+    .join("/");
 }
 
 /** Resolves `scient-asset:` destinations for the chosen packaging. */

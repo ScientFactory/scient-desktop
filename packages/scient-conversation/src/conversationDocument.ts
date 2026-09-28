@@ -49,6 +49,7 @@ import {
   visitNodes,
   type SourceEdit,
 } from "./markdownAst.ts";
+import { truncateUtf8 } from "./boundedText.ts";
 import { writeMessageBody } from "./messageBody.ts";
 import {
   deriveTerminalAssistantMessageIds,
@@ -112,6 +113,10 @@ function formatBytes(bytes: number): string {
   return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
 }
 
+/** Longest package file name, so `attachments/NN-<name>` stays within every file system's limit. */
+const PACKAGE_NAME_MAX_BYTES = 160;
+
+/** A package file name: letters, digits, `.`, `_`, `-`, cut on code points and bounded in bytes. */
 function safeFileName(name: string): string {
   const cleaned = name
     .normalize("NFC")
@@ -119,8 +124,15 @@ function safeFileName(name: string): string {
     .replace(/-{2,}/gu, "-")
     .replace(/^[-.]+|[-.]+$/gu, "");
   const extensionIndex = cleaned.lastIndexOf(".");
-  const extension = extensionIndex > 0 ? cleaned.slice(extensionIndex).slice(0, 16) : "";
-  const stem = (extensionIndex > 0 ? cleaned.slice(0, extensionIndex) : cleaned).slice(0, 80);
+  const extension =
+    extensionIndex > 0
+      ? truncateUtf8(cleaned.slice(extensionIndex), 64, 16).replace(/[-.]+$/u, "")
+      : "";
+  const stem = truncateUtf8(
+    extensionIndex > 0 ? cleaned.slice(0, extensionIndex) : cleaned,
+    PACKAGE_NAME_MAX_BYTES - new TextEncoder().encode(extension).byteLength,
+    80,
+  ).replace(/[-.]+$/u, "");
   return `${stem || "attachment"}${extension}`;
 }
 
