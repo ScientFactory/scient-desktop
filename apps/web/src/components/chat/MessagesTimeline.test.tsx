@@ -1524,6 +1524,48 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Compacted context 899K → 19K tokens");
   });
 
+  it("draws website tool icons locally instead of fetching a web favicon", () => {
+    const websiteEntry = (id: string, toolIcon: { pageUrl: string; faviconUrl?: string }) => ({
+      id: `entry-${id}`,
+      kind: "work" as const,
+      createdAt: "2026-03-17T19:12:28.000Z",
+      entry: {
+        id: `work-${id}`,
+        createdAt: "2026-03-17T19:12:28.000Z",
+        label: `Opened page ${id}`,
+        tone: "tool" as const,
+        toolIcon: { _tag: "website" as const, ...toolIcon },
+      },
+    });
+    const render = (entry: ReturnType<typeof websiteEntry>) =>
+      renderToStaticMarkup(<MessagesTimeline {...buildProps()} timelineEntries={[entry]} />);
+
+    // A page's /favicon.ico, a provider-supplied web favicon, and GitHub's hosted assets.
+    for (const markup of [
+      render(websiteEntry("plain", { pageUrl: "https://example.org/report" })),
+      render(
+        websiteEntry("explicit", {
+          pageUrl: "https://example.org/report",
+          faviconUrl: "https://cdn.example.org/icon.png",
+        }),
+      ),
+      render(websiteEntry("github", { pageUrl: "https://github.com/pingdotgg/t3code" })),
+    ]) {
+      expect(markup).toContain("Opened page");
+      expect(markup).not.toMatch(/<img[^>]*src="(?:https?:)?\/\//u);
+      expect(markup).not.toContain('rel="preload"');
+    }
+    // Icon bytes the provider already delivered still draw.
+    expect(
+      render(
+        websiteEntry("inline", {
+          pageUrl: "https://example.org/report",
+          faviconUrl: "data:image/png;base64,iVBORw0KGgo=",
+        }),
+      ),
+    ).toContain('src="data:image/png;base64,iVBORw0KGgo="');
+  });
+
   it("summarizes changed files in one line", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
