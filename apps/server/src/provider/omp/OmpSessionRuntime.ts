@@ -1,3 +1,4 @@
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
@@ -26,11 +27,11 @@ import { classifyOmpTurnOutcome, clipOmpErrorMessage } from "./OmpTurnOutcome.ts
 
 const OMP_DRAIN_RETRY_LIMIT = 20;
 /**
- * Idle confirmations a user turn waits for its own prompt_result (OMP 18.3.1+)
+ * How long an idle user turn waits for its own prompt_result (OMP 18.3.1+)
  * before its outcome is reported as uncertain. OMP reports every accepted
  * prompt, so this bounds only a prompt that never reports.
  */
-const OMP_PROMPT_RESULT_WAIT_LIMIT = 240;
+const OMP_PROMPT_RESULT_WAIT_MILLIS = 60_000;
 const OMP_INBOX_CAPACITY = 256;
 /** Prompt ids of settled turns, so their late prompt_result cannot touch a newer turn. */
 const OMP_SETTLED_PROMPT_MEMORY = 16;
@@ -403,9 +404,10 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
    * marks yields and settlement. Learned from the first such frame.
    */
   let reportsPromptResults = false;
-  /** The open user turn's own prompt_result arrived. */
+  /** The open user turn's own prompt_result arrived, or none is owed. */
   let promptReported = false;
-  let promptWaitRetries = 0;
+  /** When the idle turn began waiting for its prompt_result. */
+  let promptWaitStartedAt: number | undefined;
   let eventSequence = 0;
   /** Agent runs are numbered at agent_start; OMP events carry no run id. */
   let runSequence = 0;
@@ -544,12 +546,13 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       activeAssistantHasDelta = false;
       assistantMessageSeen = false;
       drainRetries = 0;
-      drainRetryPending = false;
+      // A retry already scheduled stays the only one: it rechecks whichever
+      // turn is draining when it fires.
       pendingDrainState = undefined;
       failureDetail = undefined;
       commandRejected = false;
       promptReported = false;
-      promptWaitRetries = 0;
+      promptWaitStartedAt = undefined;
       evidence = {};
       pendingOutcomes = [];
       yield* applySignal({
@@ -600,7 +603,9 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       if (decision === "confirm") {
         drainRetries = 0;
         if (awaitingOwnPrompt()) {
-          if (promptWaitRetries >= OMP_PROMPT_RESULT_WAIT_LIMIT) {
+          const now = yield* Clock.currentTimeMillis;
+          promptWaitStartedAt ??= now;
+          if (now - promptWaitStartedAt >= OMP_PROMPT_RESULT_WAIT_MILLIS) {
             yield* publish({
               type: "warning",
               message: "Oh My Pi did not report the result of this message.",
@@ -610,7 +615,6 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
           }
           // The acknowledgement or prompt_result wakes the drain on arrival;
           // this retry only bounds a prompt that never reports.
-          promptWaitRetries += 1;
           yield* scheduleDrainRetry;
           return;
         }
@@ -862,6 +866,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
             type: "prompt-result",
             ...(promptId ? { requestId: promptId } : {}),
             agentInvoked: event.agentInvoked,
+            ...(event.status !== undefined ? { reported: true } : {}),
           });
         }
         return;
@@ -1195,6 +1200,9 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
             requestId: item.requestId,
             ...(item.agentInvoked === undefined ? {} : { agentInvoked: item.agentInvoked }),
           });
+          // A prompt OMP handled locally is never reported. If this turn took
+          // in a racing background run, the idle session decides it.
+          if (item.agentInvoked === false) promptReported = true;
           const held = pendingOutcomes;
           pendingOutcomes = [];
           for (const notification of held) yield* interpretNotification(notification);

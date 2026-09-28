@@ -32,7 +32,13 @@ export type OmpTurnSignal =
   | { readonly type: "prompt-failed"; readonly requestId: string }
   /** This turn's prompt command was rejected before OMP accepted it. */
   | { readonly type: "command-failed" }
-  | { readonly type: "prompt-result"; readonly requestId?: string; readonly agentInvoked: boolean }
+  | {
+      readonly type: "prompt-result";
+      readonly requestId?: string;
+      readonly agentInvoked: boolean;
+      /** OMP 18.3.1+ reported this prompt's outcome (`prompt_result.status`). */
+      readonly reported?: boolean;
+    }
   | { readonly type: "steer-accepted" }
   | { readonly type: "agent-start"; readonly runId?: number }
   | { readonly type: "agent-end"; readonly terminal: boolean; readonly runId?: number }
@@ -103,6 +109,11 @@ export const reduceOmpTurn = (state: OmpTurnState, signal: OmpTurnSignal): OmpTu
         return { state };
       }
       if (!signal.agentInvoked && !state.sawAgent) return settle(state, "terminal", "local");
+      // OMP reports a prompt after its run ends, so a reported prompt with no
+      // run never ran (an abort that won the race, a preflight denial).
+      // Nothing else would settle it; the reported status decides it.
+      if (signal.reported === true && !state.sawAgent)
+        return settle(state, "terminal", "completed");
       return { state };
     case "steer-accepted":
       return { state };

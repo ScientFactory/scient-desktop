@@ -14,11 +14,14 @@ import {
 import { createModelSelection } from "@t3tools/shared/model";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Logger from "effect/Logger";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { makeOmpRpcClient } from "effect-omp-rpc/client";
 
 import { classifyTurnDispatchFailure, markTurnDispatchAttempted } from "../turnDispatchPhase.ts";
@@ -70,6 +73,10 @@ const makeFakeOmp = (input: {
   readonly clamp?: Readonly<Record<string, Readonly<Record<string, string>>>>;
   readonly setModelError?: (provider: string, modelId: string) => string | undefined;
   readonly setThinkingLevelError?: (level: string) => string | undefined;
+  /** Frames OMP writes before answering a command, such as a racing wake-up. */
+  readonly beforeReply?: (frame: Frame) => ReadonlyArray<Record<string, unknown>>;
+  /** Holds a command's answer until the returned effect completes. */
+  readonly holdReply?: (frame: Frame) => Effect.Effect<void>;
   /** OMP selects another model than the one requested (a fallback). */
   readonly substitute?: Readonly<
     Record<string, { readonly provider: string; readonly id: string }>
@@ -212,8 +219,18 @@ const makeFakeOmp = (input: {
               .decode(bytes)
               .split("\n")
               .filter((text) => text.trim().length > 0),
-            (text) =>
-              Queue.offer(stdout, reply(decodeJson(text) as Frame, Buffer.byteLength(text) + 1)),
+            (text) => {
+              const frame = decodeJson(text) as Frame;
+              const answer = reply(frame, Buffer.byteLength(text) + 1);
+              return Effect.forEach(
+                (input.beforeReply?.(frame) ?? []).map(line),
+                (bytes) => Queue.offer(stdout, bytes),
+                { discard: true },
+              ).pipe(
+                Effect.andThen(input.holdReply?.(frame) ?? Effect.void),
+                Effect.andThen(Queue.offer(stdout, answer)),
+              );
+            },
             { discard: true },
           ),
       });
@@ -628,21 +645,86 @@ describe("Oh My Pi selection restore", () => {
 });
 
 describe("Oh My Pi fork context", () => {
-  it.effect("sends a message while native background work is pending", () => {
+  it.effect("sends messages but not commands while native background work is pending", () => {
     const fake = makeFakeOmp({
       models: [{ provider: "vendor", id: "a" }],
       initial: { provider: "vendor", id: "a" },
     });
-    return withAdapter("pending-native-work", fake, ({ adapter, threadId }) =>
+    return withAdapter("pending-native-work", fake, ({ adapter, threadId, awaitCompletion }) =>
       Effect.gen(function* () {
         fake.state.pendingAsyncWork = true;
+        const first = yield* adapter.sendTurn({ threadId, input: "Start the job" });
+        yield* fake.finish();
+        yield* awaitCompletion(first.turnId);
+        // The idle check reported pending work. OMP runs some commands as a
+        // prompt that a streaming wake-up would reject, so commands wait.
+        const refused = yield* adapter.sendTurn({ threadId, input: "/help" }).pipe(Effect.flip);
+        expect(refused.message).toContain("commands wait until background work settles");
+        markTurnDispatchAttempted(refused);
+        expect(classifyTurnDispatchFailure(Cause.fail(refused))).toBe("notSent");
         yield* adapter.sendTurn({ threadId, input: "New request" });
         // A background run Scient has not seen yet may be streaming: OMP
         // queues the message into it rather than rejecting it as busy.
         expect(fake.state.prompts.map((prompt) => prompt.frame)).toMatchObject([
+          { type: "prompt", message: "Start the job", streamingBehavior: "steer" },
           { type: "prompt", message: "New request", streamingBehavior: "steer" },
         ]);
       }),
+    );
+  });
+
+  it.effect("a wake-up during a model change refuses the message and restores the model", () => {
+    let woke = false;
+    const continued = Deferred.makeUnsafe<void>();
+    const fake = makeFakeOmp({
+      models: [
+        { provider: "vendor", id: "a" },
+        { provider: "vendor", id: "b" },
+      ],
+      initial: { provider: "vendor", id: "a" },
+      // A background job wakes OMP while Scient selects the new model, and
+      // Scient sees that run before it admits the message.
+      beforeReply: (frame) => {
+        if (frame.type !== "set_model" || frame.modelId !== "b" || woke) return [];
+        woke = true;
+        return [{ type: "agent_start" }];
+      },
+      holdReply: (frame) =>
+        frame.type === "set_model" && frame.modelId === "b"
+          ? Deferred.await(continued)
+          : Effect.void,
+    });
+    return withAdapter(
+      "wake-during-selection",
+      fake,
+      ({ adapter, threadId, awaitCompletion, events }) =>
+        Effect.gen(function* () {
+          const first = yield* adapter.sendTurn({ threadId, input: "one" });
+          yield* fake.finish();
+          yield* awaitCompletion(first.turnId);
+          const sending = yield* adapter
+            .sendTurn({ threadId, input: "two", modelSelection: selection("vendor/b") })
+            .pipe(Effect.flip, Effect.forkChild);
+          for (
+            let attempt = 0;
+            attempt < 200 &&
+            !events.some((event) => event.type === "turn.started" && event.turnId !== first.turnId);
+            attempt++
+          ) {
+            yield* Effect.sleep("10 millis").pipe(TestClock.withLive);
+          }
+          yield* Deferred.succeed(continued, undefined);
+          const refused = yield* Fiber.join(sending);
+          expect(refused.message).toContain("resumed background work");
+          markTurnDispatchAttempted(refused);
+          expect(classifyTurnDispatchFailure(Cause.fail(refused))).toBe("notSent");
+          // Nothing reached the continuation, and the previous model is back.
+          expect(fake.state.prompts.map((prompt) => prompt.frame.message)).toEqual(["one"]);
+          expect(fake.state.log.filter((entry) => entry.startsWith("set_model"))).toEqual([
+            "set_model vendor/b",
+            "set_model vendor/a",
+          ]);
+        }),
     );
   });
 

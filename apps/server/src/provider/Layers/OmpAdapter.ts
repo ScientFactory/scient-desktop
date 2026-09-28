@@ -1995,6 +1995,17 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           if (!steering && ctx.session.status === "running") {
             return yield* validation("sendTurn", "Wait for the current Oh My Pi turn to finish.");
           }
+          // Messages may be sent while background work can wake. A native
+          // command may not: OMP runs some commands as a prompt that a wake-up
+          // already streaming would reject as busy.
+          if (!steering && decision === "allowed" && ctx.backgroundPending) {
+            const failure = validation(
+              "sendTurn",
+              "Oh My Pi commands wait until background work settles. Stop that work or send the command once it finishes; nothing was sent.",
+            );
+            markTurnDispatchNotSent(failure);
+            return yield* failure;
+          }
           if (decision === "allowed" && input.attachments && input.attachments.length > 0) {
             return yield* validation(
               "sendTurn",
@@ -2252,6 +2263,19 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           // arrives; OMP then queues the prompt into that run instead of
           // rejecting it as busy, and still reports the prompt's own result.
           const admitted = yield* ctx.handles.runtime.begin(yield* uuid);
+          if (admitted.steering && !steering) {
+            // A wake-up Scient saw during preparation now owns the run. A
+            // selection change or a command must not apply to that run.
+            if (modelChange || levelChange || decision === "allowed") {
+              yield* restoreSelection;
+              const failure = validation(
+                "sendTurn",
+                "Oh My Pi resumed background work while this message was being prepared. Wait for that work to finish before changing the model or sending a command; nothing was sent.",
+              );
+              markTurnDispatchNotSent(failure);
+              return yield* failure;
+            }
+          }
           steering = admitted.steering;
           const turnId = TurnId.make(admitted.turnId);
           const response = yield* (

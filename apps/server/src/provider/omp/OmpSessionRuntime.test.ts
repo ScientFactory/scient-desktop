@@ -884,6 +884,45 @@ describe("Oh My Pi autonomous continuation ownership", () => {
     }),
   );
 
+  it.effect("a local command that took in a racing wake-up settles once idle", () =>
+    Effect.gen(function* () {
+      const h = yield* wireHarness();
+      yield* h.runtime.begin("command");
+      // The wake-up runs before OMP acknowledges the command, which it
+      // handles locally: no prompt_result follows an agentInvoked:false.
+      yield* h.wire.send(
+        { type: "agent_start" },
+        assistantEnd({ content: [{ type: "text", text: "Background result read." }] }),
+        { type: "agent_end", messages: [], yielded: true },
+      );
+      yield* h.settleFrames;
+      yield* h.runtime.accepted("command-prompt", false);
+      expect(yield* h.outcome).toMatchObject({ outcome: "completed", requestId: "command-prompt" });
+      yield* Scope.close(h.scope, Exit.void);
+    }),
+  );
+
+  it.effect("a reported prompt that never started a run settles from its status", () =>
+    Effect.gen(function* () {
+      const h = yield* wireHarness();
+      yield* h.runtime.begin("never-ran");
+      yield* h.runtime.accepted("never-ran-prompt", true);
+      // An abort won the race before dispatch: OMP reports it with no run.
+      yield* h.wire.send({
+        type: "prompt_result",
+        id: "never-ran-prompt",
+        agentInvoked: true,
+        status: "aborted",
+      });
+      expect(yield* h.outcome).toMatchObject({
+        outcome: "failed",
+        stopReason: "abort",
+        requestId: "never-ran-prompt",
+      });
+      yield* Scope.close(h.scope, Exit.void);
+    }),
+  );
+
   it.effect("a release without prompt results settles a user turn once it is acknowledged", () =>
     Effect.gen(function* () {
       const h = yield* wireHarness();
@@ -1040,7 +1079,7 @@ it.effect("a message whose prompt_result never arrives settles as uncertain", ()
     // Every idle recheck waits a quarter second; the wait is bounded.
     for (let step = 0; step < 300; step++) {
       yield* TestClock.adjust("250 millis");
-      for (let hop = 0; hop < 10; hop++) yield* Effect.yieldNow;
+      for (let hop = 0; hop < 20; hop++) yield* Effect.yieldNow;
     }
     expect(yield* Fiber.join(fiber)).toMatchObject({ outcome: "unknown" });
     yield* Scope.close(h.scope, Exit.void);
