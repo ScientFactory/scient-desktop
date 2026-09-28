@@ -170,11 +170,30 @@ export const mintConversationImportIds = Effect.fn("mintConversationImportIds")(
   const threadSegment = toSafeThreadAttachmentSegment(threadId);
   if (threadSegment === null) return yield* Effect.die(new Error("Unsafe thread id."));
   const assignment = assignTurns(input);
+  const questionAnswers: Record<string, { activityId: EventId; requestId: ApprovalRequestId }> =
+    Object.create(null);
+  for (const answer of input.snapshot.questionAnswers) {
+    questionAnswers[answer.id] = {
+      activityId: EventId.make(yield* uuid),
+      requestId: ApprovalRequestId.make(yield* uuid),
+    };
+  }
   // External IDs are strings, including names such as "__proto__". Never use a
   // prototype-bearing object as a lookup table for untrusted package IDs.
   const messages: Record<string, MessageId> = Object.create(null);
   for (const record of [...input.snapshot.messages, ...input.snapshot.reasoning]) {
-    messages[record.id] = MessageId.make(yield* uuid);
+    const answeredRequestId =
+      record.id.startsWith("async-answer:") && "role" in record && record.role === "user"
+        ? record.id.slice("async-answer:".length)
+        : null;
+    const answerIds =
+      answeredRequestId !== null && Object.hasOwn(questionAnswers, answeredRequestId)
+        ? questionAnswers[answeredRequestId]
+        : undefined;
+    messages[record.id] =
+      answerIds === undefined
+        ? MessageId.make(yield* uuid)
+        : MessageId.make(`async-answer:${answerIds.requestId}`);
   }
   const turns: Record<string, TurnId> = Object.create(null);
   for (const key of assignment.keys) turns[key] = TurnId.make(yield* uuid);
@@ -186,14 +205,6 @@ export const mintConversationImportIds = Effect.fn("mintConversationImportIds")(
   for (const plan of input.snapshot.proposedPlans) proposedPlans[plan.id] = `plan:${yield* uuid}`;
   const workLog: Record<string, EventId> = Object.create(null);
   for (const entry of input.snapshot.workLog) workLog[entry.id] = EventId.make(yield* uuid);
-  const questionAnswers: Record<string, { activityId: EventId; requestId: ApprovalRequestId }> =
-    Object.create(null);
-  for (const answer of input.snapshot.questionAnswers) {
-    questionAnswers[answer.id] = {
-      activityId: EventId.make(yield* uuid),
-      requestId: ApprovalRequestId.make(yield* uuid),
-    };
-  }
   return {
     threadId,
     commandId: CommandId.make(`server:conversation-import:${yield* uuid}`),

@@ -11,6 +11,12 @@ import {
   TurnId,
   type OrchestrationThread,
 } from "@t3tools/contracts";
+import {
+  buildConversationDocument,
+  buildConversationSnapshot,
+  parseConversationMarkdown,
+  writeConversationMarkdown,
+} from "@scientfactory/conversation";
 import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -352,6 +358,184 @@ describe("ConversationImporter", () => {
           journal.attachments.map((attachment) => attachment.path).toSorted(),
           [...copied].toSorted(),
         );
+      }),
+    ),
+  );
+
+  it.effect("keeps async answers folded through import, continuation, and re-export", () =>
+    withImporter(
+      Effect.gen(function* () {
+        const fixture = importFixture({ turns: 1 });
+        const source = fixture.input.snapshot;
+        const sourceRequestId = "source-request";
+        const answerText = "Blue";
+        const input: typeof fixture.input = {
+          ...fixture.input,
+          snapshot: {
+            ...source,
+            messages: [
+              source.messages[0]!,
+              {
+                ...source.messages[0]!,
+                n: 2,
+                id: MessageId.make(`async-answer:${sourceRequestId}`),
+                text: answerText,
+                createdAt: "2026-09-27T10:00:14.000Z",
+                updatedAt: "2026-09-27T10:00:14.000Z",
+              },
+              { ...source.messages[1]!, n: 3 },
+            ],
+            questionAnswers: [
+              {
+                id: sourceRequestId,
+                turnId: source.messages[1]!.turnId,
+                createdAt: "2026-09-27T10:00:14.000Z",
+                items: [{ question: "Which color?", answer: answerText, attachments: [] }],
+              },
+            ],
+          },
+        };
+        const ids = yield* mintConversationImportIds(input);
+        const localRequestId = ids.questionAnswers[sourceRequestId]!.requestId;
+        assert.notStrictEqual(localRequestId, sourceRequestId);
+        assert.strictEqual(
+          ids.messages[`async-answer:${sourceRequestId}`],
+          `async-answer:${localRequestId}`,
+        );
+        const command = buildConversationImportCommand({
+          validated: input,
+          ids,
+          destination: destination(),
+          importedAt: "2026-09-28T10:00:00.000Z",
+        });
+        assert.strictEqual(command.messages[1]!.messageId, `async-answer:${localRequestId}`);
+
+        const { lease } = yield* leaseFor({ ...fixture, input });
+        const { result } = yield* importOnce(lease);
+        const engine = yield* OrchestrationEngineService;
+        const inherited = (yield* readThread(result.threadId))!;
+        const importedRequestId = (
+          inherited.activities.find((activity) => activity.kind === "user-input.answer-submitted")
+            ?.payload as { readonly requestId: string }
+        ).requestId;
+        assert.notStrictEqual(importedRequestId, sourceRequestId);
+        assert.include(
+          inherited.messages.map((message) => message.id),
+          `async-answer:${importedRequestId}`,
+        );
+        const continuationId = MessageId.make("async-answer-continuation-user");
+        const assistantId = MessageId.make("async-answer-continuation-assistant");
+        yield* engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("start-async-answer-continuation"),
+          threadId: result.threadId,
+          message: { messageId: continuationId, role: "user", text: "Continue", attachments: [] },
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          createdAt: "2026-09-28T11:00:00.000Z",
+        });
+        const continuing = (yield* readThread(result.threadId))!;
+        const current = continuing.messages.find((message) => message.id === continuationId)!;
+        const delivery = yield* ScientForkContextDelivery;
+        const prepared = yield* delivery.prepareTurn({
+          thread: continuing,
+          message: current,
+          userText: current.text,
+          attachments: [],
+          nativeThreadKey: null,
+          sessionRunning: false,
+        });
+        assert.strictEqual(prepared.kind, "deliver");
+        if (prepared.kind === "deliver") assert.include(prepared.contextPreamble, answerText);
+
+        const continuedTurnId = TurnId.make("async-answer-continued-turn");
+        yield* engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("session-async-answer-continuation"),
+          threadId: result.threadId,
+          session: {
+            threadId: result.threadId,
+            status: "running",
+            providerName: "codex",
+            providerInstanceId: PROVIDER_ID,
+            runtimeMode: "approval-required",
+            activeTurnId: continuedTurnId,
+            lastError: null,
+            updatedAt: "2026-09-28T11:00:01.000Z",
+          },
+          createdAt: "2026-09-28T11:00:01.000Z",
+        });
+        yield* engine.dispatch({
+          type: "thread.message.assistant.complete",
+          commandId: CommandId.make("answer-async-answer-continuation"),
+          threadId: result.threadId,
+          messageId: assistantId,
+          text: "Continued",
+          turnId: continuedTurnId,
+          createdAt: "2026-09-28T11:00:01.000Z",
+        });
+        yield* engine.dispatch({
+          type: "thread.turn.diff.complete",
+          commandId: CommandId.make("complete-async-answer-continuation"),
+          threadId: result.threadId,
+          turnId: continuedTurnId,
+          completedAt: "2026-09-28T11:00:02.000Z",
+          checkpointRef: CheckpointRef.make(`refs/t3/checkpoints/${result.threadId}/turn/1`),
+          status: "ready",
+          files: [],
+          assistantMessageId: assistantId,
+          checkpointTurnCount: 1,
+          createdAt: "2026-09-28T11:00:02.000Z",
+        });
+        yield* engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("finish-async-answer-continuation"),
+          threadId: result.threadId,
+          session: {
+            threadId: result.threadId,
+            status: "ready",
+            providerName: "codex",
+            providerInstanceId: PROVIDER_ID,
+            runtimeMode: "approval-required",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: "2026-09-28T11:00:02.000Z",
+          },
+          createdAt: "2026-09-28T11:00:02.000Z",
+        });
+        const snapshot = buildConversationSnapshot({
+          thread: (yield* readThread(result.threadId))!,
+          snapshotSequence: 1,
+          threadSequence: 1,
+          capturedAt: "2026-09-28T11:01:00.000Z",
+          selection: { workLog: false, reasoning: false, throughMessageId: null },
+          isAttachmentAvailable: () => false,
+        });
+        assert.deepStrictEqual(
+          snapshot.questionAnswers.map((answer) => answer.id),
+          [importedRequestId],
+        );
+        const document = buildConversationDocument({
+          snapshot: { ...snapshot, contentDigest: `sha256:${"a".repeat(64)}` },
+          exportValue: "7f3c9a2e41b8",
+          timeZone: "UTC",
+          resolveAttachment: () => ({ _tag: "unavailable", reason: "missing" }),
+        });
+        const markdown = writeConversationMarkdown({
+          bundle: document.bundle,
+          exportValue: "7f3c9a2e41b8",
+          exported: "2026-09-28T11:01:00.000Z",
+          packaging: "text",
+        });
+        const parsed = parseConversationMarkdown(markdown);
+        assert.strictEqual(parsed.kind, "conversation");
+        if (parsed.kind === "conversation") {
+          assert.deepStrictEqual(
+            parsed.messages.map((message) => message.body),
+            ["Question 1", "Answer 1", "Continue", "Continued"],
+          );
+        }
+        assert.strictEqual(markdown.split("**A:** Blue").length - 1, 1);
       }),
     ),
   );
