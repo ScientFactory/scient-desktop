@@ -46,17 +46,44 @@ name and noted in the file.
 
 ## Import and continue
 
-In Scient, use **File → Import Conversation…** (or open a `.scic` file with the desktop app), select
-the file, and choose **Preview**. Review the messages, attachments, omissions, and warnings before
-choosing a destination project and a ready provider/model. **Import and continue** creates a new
-local thread. Your next message starts a fresh provider session; the file does not carry over the
-sender's credentials, running agent, tool permissions, or approval decisions. Importing into a
-different project does not automatically transfer the sender's workspace files.
+Open a conversation file in any of these ways:
 
-You can also import a `.md` file. Scient conversation Markdown has a header and message markers;
-if any markers are damaged, the preview identifies them and requires you to acknowledge that only
-clean messages will be imported. An ordinary Markdown document is added to a new conversation as
-a document, not impersonated as a transcript.
+- **File → Import Conversation…** in the desktop app, or **Import conversation** in the sidebar,
+  then drop the file on the dialog or choose it.
+- Drag one `.scic` file anywhere onto the Scient window, including the chat and the message box.
+  While you drag it, Scient shows **Drop to import conversation**. Other files dropped on the chat
+  are still attached to your message, and so is a Markdown file; a Markdown file dropped
+  elsewhere opens for import.
+- Open a `.scic` file with the desktop app, for example by double-clicking it. During first-time
+  setup, the file waits and opens for import when setup is finished.
+
+Scient sends the file to the destination and checks it straight away; the dialog shows its
+progress, and **Cancel** or Esc stops it at any point before you import. If you have more than
+one connected environment, choose where the conversation goes under **Destination**; this device
+is chosen first. Dropping another file on the open dialog checks that file instead.
+
+The check shows what is in the file without showing its messages: how many messages and
+attachments it has, which provider and model it came from, what was left out when it was made
+(such as the work log or reasoning), and any notes about it. Nothing is added until you choose
+**Import**. Choose the project and the model for your next message; Scient suggests the model
+new conversations in that project use. **Import** creates a new, separate conversation there,
+marked **Imported — unverified**, because anyone can edit a conversation file. Your next message
+starts a fresh session with the model you chose. The file never carries the sender's
+credentials, running agent, tool permissions, approval decisions, or workspace files, so
+importing into a different project does not bring the sender's files with it.
+
+Imported conversations start in Supervised mode, which asks before commands and file changes.
+The dialog says so when your usual mode is different.
+
+If the desktop app asks whether to send the file to another computer and you choose **Cancel**,
+the import stops without an error.
+
+You can also import a `.md` file. A Markdown file exported by Scient comes back as a
+conversation with its messages as text. If some of its message markers are damaged, the dialog
+says **Some messages couldn't be read**: tick the box to import the messages Scient could read,
+or start a conversation with the whole file instead. Any other Markdown file is attached to a new
+conversation as a document, not turned into messages; the dialog then offers
+**Start conversation**.
 
 ## Using Markdown later
 

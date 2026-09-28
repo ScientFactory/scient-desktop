@@ -765,9 +765,19 @@ thread and a lineage row. An import has neither, so the model is extended explic
 - Thread menu → **Export…** opens the export dialog for that conversation.
 - Markdown editor → More menu → **Export ▸ PDF / Word**.
 - LaTeX workspace → **Export ▸ Word** (and Markdown, if it passes qualification).
-- **File ▸ Import…**, drag and drop onto Scient, or double-click a `.scic` file. Accepts `.scic` and
-  `.md`; the preview says which kind of import it will be (faithful copy, text only, or "start a conversation
-  with this document").
+- **File ▸ Import Conversation…** (and the sidebar's **Import conversation**), drag and drop onto
+  Scient, or double-click a `.scic` file. Accepts `.scic` and `.md`; the preview says which kind of
+  import it will be (faithful copy, text only, or "start a conversation with this document").
+- One dropped `.scic` imports wherever it lands, ahead of the chat column's and composer's
+  attachment drop and the sidebar rows' drop: the import drop target listens in the capture phase.
+  Other files keep their owners, so a `.md` dropped on the chat still attaches; one dropped where
+  nothing else takes it is imported. Browsers hide a dragged file's name until the drop, so the
+  "Drop to import conversation" overlay is judged by the reported media type: shown outright for
+  the `.scic` type, and with "Other files attach as usual" for a single file of unknown type
+  (what macOS and most systems report for `.scic`). A drop on an open import dialog replaces its
+  file, except while an import is committing, when it waits its turn.
+- While first-run setup (`/welcome`) is showing, requests from every entry point are queued with a
+  short notice and the dialog opens once setup is finished, like the other startup dialogs.
 
 ### The export dialog
 
@@ -843,8 +853,35 @@ colours, full-width text — not chat bubbles. Detailed styling rules are a late
 
 ### Import
 
-Preview → choose project and provider/model → import. The imported thread shows where it came from,
-what was omitted, and that the next message starts a fresh session.
+A file is sent and checked as soon as it arrives (drop, picker, or OS open); there is no separate
+preview step. The dialog shows upload progress and then "Checking the file…" as status text, and
+Cancel or Esc during either aborts the transfer and calls `cancel`, which releases the staged
+import. Changing the file or the destination environment does the same and starts again.
+
+- **Destination environment.** Listed by name through the same labelling as the branch toolbar
+  (the local environment is "This device"), this device first; the row is hidden when only one
+  environment is connected.
+- **Preview.** Server validation facts only, never message text: kind, pluralized counts, the
+  source provider and model by display name, what the sender left out, and notes from the file.
+  A plain Markdown document is titled "Start a conversation from this document" and confirmed
+  with **Start conversation**; damaged transcript markers read "Some messages couldn't be read"
+  and need a tick before the readable messages import, or can be re-staged as a document.
+- **Project and model.** Chosen with the shared `Select`; the model defaults to what a new thread
+  in that project would use (project default, then environment default, then the provider's own
+  default) and is left for the user to choose when that model is not ready, never the first entry.
+- **Permissions.** Imports always start with `runtimeMode: "approval-required"` (owner decision:
+  unverified history starts supervised); the dialog states this in one line only when the
+  project's default mode differs.
+- **Failures.** A rejected file shows the server's message. Reason codes, entry paths and
+  connection details are never shown; such a message falls back to plain text per reason. The
+  desktop answers `rejected` when the user declines its "Send conversation file?" prompt, which
+  closes the dialog without an error. The desktop gives the same answer when the server refuses
+  the streamed bytes, so that rarer case also closes quietly until the desktop result tells the
+  two apart. Its other failures read as plain sentences.
+
+On success a toast says the next message continues the conversation with the chosen model, and
+Scient opens the new thread. The imported thread shows where it came from ("Imported —
+unverified"), what was omitted, and that the next message starts a fresh session.
 
 ### Agent access
 
