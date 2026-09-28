@@ -123,23 +123,48 @@ function projectSettings(config: ServerConfig, project: ImportProject) {
 }
 
 /**
- * The model a new thread in `project` would start with: the project's
- * default, else the environment's, else the provider's own default. Null when
- * that model is not ready here; the person then chooses one.
+ * The model a new thread in `project` would start with, and whether it is
+ * ready here: the project's default, else the environment's; only when
+ * neither is set, the first ready provider's own default. A set default that
+ * is not ready is never replaced by another provider's model: the person
+ * chooses one.
  */
+function intendedImportModel(
+  config: ServerConfig | undefined,
+  project: ImportProject | null,
+  groups: ReadonlyArray<ImportModelGroup>,
+): { readonly selection: ModelSelection; readonly ready: boolean } | null {
+  if (config === undefined || project === null) return null;
+  const configured = projectSettings(config, project).defaultModelSelection ?? null;
+  const selection = configured ?? resolveDefaultProviderModelSelection(config.providers, undefined);
+  if (selection === null) return null;
+  const key = importModelKey(selection);
+  return {
+    selection,
+    ready: groups.some((group) => group.models.some((model) => model.key === key)),
+  };
+}
+
+/** The intended model's key when it is ready here; null leaves the choice to the person. */
 export function defaultImportModelKey(
   config: ServerConfig | undefined,
   project: ImportProject | null,
   groups: ReadonlyArray<ImportModelGroup>,
 ): string | null {
-  if (config === undefined || project === null) return null;
-  const selection = resolveDefaultProviderModelSelection(
-    config.providers,
-    projectSettings(config, project).defaultModelSelection,
-  );
-  if (selection === null) return null;
-  const key = importModelKey(selection);
-  return groups.some((group) => group.models.some((model) => model.key === key)) ? key : null;
+  const intended = intendedImportModel(config, project, groups);
+  return intended?.ready === true ? importModelKey(intended.selection) : null;
+}
+
+/** A short hint when the default model is set but not ready here, so none is chosen. */
+export function unavailableDefaultModelHint(
+  config: ServerConfig | undefined,
+  project: ImportProject | null,
+  groups: ReadonlyArray<ImportModelGroup>,
+): string | null {
+  const intended = intendedImportModel(config, project, groups);
+  if (intended === null || intended.ready || groups.length === 0) return null;
+  const name = selectedModelName(config, intended.selection) ?? intended.selection.model;
+  return `Your default model, ${name}, isn't available here. Choose a model.`;
 }
 
 /** A line saying imports start supervised, when new threads here would not. */

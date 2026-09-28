@@ -22,6 +22,7 @@ import {
   modelDisplayName,
   providerDisplayName,
   selectedModelName,
+  unavailableDefaultModelHint,
 } from "./importDialog.logic";
 
 function testProvider(
@@ -122,6 +123,34 @@ describe("destination model", () => {
     ).toBe("codex/gpt-5-mini");
     expect(defaultImportModelKey(config, project, groups)).toBe("claudeAgent/claude-opus");
     expect(defaultImportModelKey(config, null, groups)).toBeNull();
+  });
+
+  it("leaves the model unset, with a hint, when the default is not ready here", () => {
+    const offlineClaude = testProvider(
+      "claudeAgent",
+      "claudeAgent",
+      [{ slug: "claude-opus", name: "Claude Opus", isDefault: true }],
+      "error",
+    );
+    const unavailable = testConfig([codex, offlineClaude], {
+      defaultModelSelection: {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-opus",
+      },
+    });
+    const readyGroups = importModelGroups(unavailable);
+    // Codex is ready, but it is not what a new thread here would use.
+    expect(readyGroups.map((group) => group.label)).toEqual(["Codex"]);
+    expect(defaultImportModelKey(unavailable, project, readyGroups)).toBeNull();
+    expect(unavailableDefaultModelHint(unavailable, project, readyGroups)).toBe(
+      "Your default model, Claude Opus, isn't available here. Choose a model.",
+    );
+    // A default that is ready needs no hint; with no default set, the first
+    // ready provider's own default is what a new thread would use.
+    expect(unavailableDefaultModelHint(config, project, groups)).toBeNull();
+    const unset = testConfig([codex, claude]);
+    expect(defaultImportModelKey(unset, project, importModelGroups(unset))).toBe("codex/gpt-5");
+    expect(unavailableDefaultModelHint(unset, project, importModelGroups(unset))).toBeNull();
   });
 
   it("says imports start supervised only when new threads here would not", () => {

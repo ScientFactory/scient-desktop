@@ -42,6 +42,7 @@ const state = vi.hoisted(() => ({
   environmentIds: [] as EnvironmentId[],
   offline: [] as EnvironmentId[],
   runtimeMode: "approval-required" as string,
+  projectModel: "codex/gpt-5-mini",
 }));
 const connected = vi.hoisted(() => ({ listeners: new Set<() => void>() }));
 function setConnectedEnvironments(ids: EnvironmentId[]) {
@@ -85,7 +86,10 @@ vi.mock("../../state/entities", () => ({
       id: ProjectId.make("project-1"),
       environmentId: local,
       title: "Field study",
-      defaultModelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-mini" },
+      defaultModelSelection: {
+        instanceId: ProviderInstanceId.make(state.projectModel.split("/")[0]!),
+        model: state.projectModel.split("/")[1]!,
+      },
     },
   ],
   // Connected environments are a subscription, as the real atom is.
@@ -188,6 +192,7 @@ beforeEach(() => {
   state.environmentIds = [local];
   state.offline = [];
   state.runtimeMode = "approval-required";
+  state.projectModel = "codex/gpt-5-mini";
   useConversationImportRequests.setState({ nextId: 0, queue: [], replaceable: false });
   for (const mock of [
     createConversationImportUpload,
@@ -354,6 +359,45 @@ describe("ConversationImportDialog", () => {
     expect(navigate).toHaveBeenCalledOnce();
     expect(dialog()).toBeNull();
     expect(cancelConversationImport).not.toHaveBeenCalled();
+  });
+
+  it("leaves the model to the person when the project's default is not available here", async () => {
+    // Claude is the project's default, but only Codex is ready on this environment.
+    state.projectModel = "claudeAgent/claude-opus";
+    await openWith(scic());
+
+    const trigger = dialog()!.querySelector<HTMLElement>(
+      '[data-slot="select-trigger"][aria-labelledby$="-model"]',
+    )!;
+    expect(trigger.textContent).toContain("Choose a model");
+    expect(dialog()?.textContent).toContain(
+      "Your default model, claude-opus, isn't available here. Choose a model.",
+    );
+    expect(button("Import")?.disabled).toBe(true);
+    await act(async () => button("Import")!.click());
+    expect(confirmConversationImport).not.toHaveBeenCalled();
+
+    await act(async () => trigger.click());
+    const item = [...document.querySelectorAll<HTMLElement>('[data-slot="select-item"]')].find(
+      (candidate) => candidate.textContent === "GPT-5",
+    );
+    await act(async () => {
+      item!.click();
+      await Promise.resolve();
+    });
+    await flush();
+    expect(dialog()?.textContent).not.toContain("isn't available here");
+    expect(button("Import")?.disabled).toBe(false);
+    await act(async () => button("Import")!.click());
+    await flush();
+    expect(confirmConversationImport).toHaveBeenCalledWith(
+      local,
+      expect.objectContaining({
+        destination: expect.objectContaining({
+          modelSelection: { instanceId: "codex", model: "gpt-5" },
+        }),
+      }),
+    );
   });
 
   it("names destination environments instead of showing their IDs", async () => {
