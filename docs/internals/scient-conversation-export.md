@@ -193,16 +193,20 @@ path from the client or fetches a remote resource for this step. Diagram IDs has
 Pandoc reads it (carriage returns dropped; the read pass keeps tabs), so CRLF and tab-indented fences
 match their captured image.
 
-Mermaid draws into the live page before its SVG can be inspected, so the browser refuses, before
-rendering, any diagram whose draw could load a resource (`wordExport/diagramSafety.ts`): label markup
-that loads a URL or carries attributes, CSS fetch functions (`url()`, `image-set()`, `@import`, also
-when CSS-escaped) in styles or settings, image shapes, sequence-actor icons, and configuration keys
-outside the theme, layout, and per-diagram options. Configuration is checked as Mermaid itself parsed
-it from front matter and `%%{init}%%`. The renderer's fallback copy after a syntax error is checked the
-same way, and the rasteriser inspects the SVG again before drawing. Math, URLs written as text, and
-theme directives render. Any diagram that is refused, fails to render or encode, or exceeds the PNG
-budget is captured as `render-failed`: Word shows its labeled Mermaid source with a warning, and the
-export continues. A server-only Word caller that supplies no capture retains the same fallback.
+Mermaid draws into a live document before its SVG can be inspected, and in strict mode it still
+creates what a diagram asks for (an `<img>` in a label, an image shape, a sequence-actor icon, CSS
+`url()`). Word capture therefore draws in a hidden same-origin frame (`wordExport/isolatedMermaid.ts`)
+whose Content Security Policy allows only Mermaid's self-contained script, inline styles, and
+`data:`/`blob:` images and fonts; the browser refuses every other load before a request is made, and
+a refused load makes that diagram fall back. The frame loads Mermaid's standalone build only when an
+export has diagrams, and draws with the settings chat uses (`mermaidRenderConfig`). As a second layer,
+`wordExport/diagramSafety.ts` refuses, before drawing, styling statements (`style`, `classDef`,
+`linkStyle`, `cssClass`) with CSS fetch functions and configuration outside the theme, layout, and
+per-diagram options, read as Mermaid parsed it from front matter and `%%{init}%%`; label text is not
+inspected. The rasteriser inspects the SVG again before drawing. Any diagram that is refused, needed
+an outside resource, fails to render or encode, or exceeds the PNG budget is captured as
+`render-failed`: Word shows its labeled Mermaid source with a warning, and the export continues. A
+server-only Word caller that supplies no capture retains the same fallback.
 The two Word export POST routes cap request bodies at 12 MiB before JSON parsing; the PNG budget is
 2 MiB per diagram and 8 MiB in total. An oversized chunked request may have its connection reset
 by the Node HTTP adapter as it stops reading the body.

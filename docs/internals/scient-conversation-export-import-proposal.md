@@ -202,9 +202,9 @@ type DocumentBundle = {
 Preparation keeps source forms and adds derived assets rather than replacing one with the other:
 
 - **Mermaid** stays as a fenced block for Markdown output; its rendered image is added as an asset
-  for Word. The browser renders it only when drawing it cannot fetch anything (math, URLs as text,
-  and theme settings are fine); otherwise, or when rendering fails, Word shows the labelled source
-  with a warning and the export continues.
+  for Word. The browser renders it in a frame that cannot fetch anything; a diagram that needs an
+  outside resource, or fails to render, appears in Word as its labelled source with a warning, and
+  the export continues.
 - **Math** stays as TeX, so the PDF page renders it with KaTeX and Pandoc can produce editable Word
   equations.
 - **Images and attachments** are resolved to bundle assets with explicit paths; references that only
