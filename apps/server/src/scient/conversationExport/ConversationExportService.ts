@@ -451,7 +451,7 @@ const make = Effect.gen(function* () {
     if (prepared._tag === "too-large") {
       return yield* reject(
         "too-large",
-        "This conversation is too large for a Scient conversation file. Export a shorter range or leave out the work log.",
+        "This conversation is too large for a Scient conversation file. Leave out the work log and reasoning, or export it as Markdown.",
       );
     }
     if (prepared._tag === "invalid-package") {

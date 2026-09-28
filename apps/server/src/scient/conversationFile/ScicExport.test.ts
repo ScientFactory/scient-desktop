@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import {
   ChatAttachment,
   SCIC_MEDIA_TYPE,
@@ -43,6 +44,20 @@ import {
   generatedNames,
   zipBytesPromise,
 } from "./scic.test-fixtures.ts";
+
+// Lets a test stand in for a package over the format's limits, which takes
+// hundreds of megabytes to reach for real.
+const scicWriter = vi.hoisted(() => ({ tooLarge: false }));
+vi.mock("./ScicWriter.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./ScicWriter.ts")>();
+  return {
+    ...actual,
+    prepareScicPackage: ((input: Parameters<typeof actual.prepareScicPackage>[0]) =>
+      scicWriter.tooLarge
+        ? { _tag: "too-large", entry: "conversation.json" }
+        : actual.prepareScicPackage(input)) as typeof actual.prepareScicPackage,
+  };
+});
 
 const THREAD = ThreadId.make("thread-1");
 const encodeAttachments = Schema.encodeSync(Schema.fromJsonString(Schema.Array(ChatAttachment)));
@@ -459,6 +474,23 @@ describe("exporting a .scic", () => {
       assert.deepStrictEqual(read.value.omissions, []);
       // Even when selected, the tool's raw payload never travels.
       assert.notInclude(entries.map((entry) => entry.text).join("\n"), "sk-hidden");
+    }).pipe(Effect.provide(TestLayer)),
+  );
+
+  it.effect("suggests what the dialog offers when the file would be too large", () =>
+    Effect.gen(function* () {
+      yield* seedThread();
+      const service = yield* ConversationExportService.ConversationExportService;
+      scicWriter.tooLarge = true;
+      const error = yield* service
+        .produce(request())
+        .pipe(Effect.flip, Effect.ensuring(Effect.sync(() => (scicWriter.tooLarge = false))));
+      assert(error._tag === "ScientConversationExportError");
+      assert.strictEqual(error.reason, "too-large");
+      assert.strictEqual(
+        error.message,
+        "This conversation is too large for a Scient conversation file. Leave out the work log and reasoning, or export it as Markdown.",
+      );
     }).pipe(Effect.provide(TestLayer)),
   );
 
