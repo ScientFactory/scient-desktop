@@ -29,10 +29,12 @@ content it read could hide private data in an image address. Instead, chat,
 plans, and read-only Markdown previews show a small link card with the image's
 description and shortened address; hover to see the full address, click it to
 open it in your browser, or choose **Load image** to show that image in place.
-Loading lasts while the message stays on screen and is not saved. Images inside
-a link, project and attached files, and pull request media that Scient fetches
-through your GitHub sign-in are shown as before. Images in the editable
-Markdown document view still load directly.
+Loading lasts while the message stays on screen and is not saved. A web image
+inside a link shows the same card, and the link still opens its own address.
+Project and attached files, and pull request media that Scient fetches through
+your GitHub sign-in, are shown as before. Images in the editable Markdown
+document view still load directly. For the same reason, links in chat show a
+generic globe (or the GitHub mark) instead of downloading each site's icon.
 
 In an agent's response, select an inline or loaded web image to open a larger preview. Keyboard
 users can focus the image and press Enter or Space. An image that is itself a

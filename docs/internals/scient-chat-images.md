@@ -16,13 +16,17 @@ origin) never reach an `<img>`, `<video>`, or `<source>` on render. The same
 renderer returns `ScientRemoteImageReference`
 (`apps/web/src/scient/presentation/`), a link card whose **Load image** button
 mounts the ordinary chat media under `ScientRemoteImageLoadedContext` for that
-mounted view only; `<picture>` sources with a remote `srcset` are dropped. An
-image inside a link is left to the link. GitHub media in pull request bodies
+mounted view only; `<picture>` sources with a remote `srcset` are dropped. Inside
+a link the card renders the address as text, so the surrounding link stays the
+only link, and its button prevents the click from following the link. GitHub media in pull request bodies
 still loads through the authenticated `github-media` asset; when that asset
 cannot be signed, the card replaces the former direct fallback. Per-site
 allowances and a stored copy of loaded images would plug into the card's
 permission hook. The rich Markdown editor (`scient/markdownEditor`) has its
-own image node view and does not use this gate.
+own image node view and does not use this gate. For the same reason chat link
+icons are drawn locally (globe, or the bundled GitHub mark) instead of from a
+favicon service, and website tool-activity icons render only local bytes
+(`data:` or same-origin) instead of a page's `/favicon.ico` or a hosted asset.
 
 The source Markdown and project file remain canonical. The card derives a
 rooted `workspace-file` resource from `cwd + relativePath`, retaining the
