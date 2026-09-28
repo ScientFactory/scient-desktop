@@ -116,6 +116,64 @@ describe("Oh My Pi provider status", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  for (const contextWindow of [null, "invalid"] as const) {
+    it.effect(
+      `handles native context capacity ${String(contextWindow)} through the real RPC client`,
+      () =>
+        Effect.gen(function* () {
+          const result = yield* checkOmpProviderStatus(settings, {}, () =>
+            Effect.gen(function* () {
+              const wire = yield* makeOmpScriptedWire((command) =>
+                command.type === "get_available_models"
+                  ? {
+                      type: "response",
+                      id: command.id,
+                      command: command.type,
+                      success: true,
+                      data: {
+                        models: [
+                          {
+                            provider: "native",
+                            id: "unknown",
+                            contextWindow,
+                            input: ["text", "image"],
+                          },
+                          {
+                            provider: "native",
+                            id: "known",
+                            contextWindow: 128000,
+                            input: ["text"],
+                          },
+                        ],
+                      },
+                    }
+                  : undefined,
+              );
+              const client = yield* makeOmpRpcClient(wire.io);
+              return {
+                ...client,
+                version: "18.2.8",
+                shutdown: Effect.succeed({ code: 0, forced: false, stderrTail: "" }),
+                redaction: makeOmpRedaction(undefined, []),
+              };
+            }),
+          );
+          if (contextWindow === null) {
+            expect(result.status).toBe("ready");
+            expect(result.message).toBeUndefined();
+            expect(result.models.map((model) => model.slug)).toEqual([
+              "native/unknown",
+              "native/known",
+            ]);
+          } else {
+            expect(result.status).toBe("error");
+            expect(result.message).toContain("Refresh the provider in Settings");
+            expect(result.message).not.toContain("RPC");
+          }
+        }).pipe(Effect.provide(NodeServices.layer)),
+    );
+  }
+
   it.effect("preserves custom-model readiness reported by the process wrapper", () =>
     Effect.gen(function* () {
       const result = yield* checkOmpProviderStatus(settings, {}, () =>

@@ -2385,7 +2385,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           const capacity = models.find(
             (model) => model.provider === selected.provider && model.id === selected.modelId,
           )?.contextWindow;
-          return capacity !== undefined && Number.isFinite(capacity) && capacity > 0
+          return typeof capacity === "number" && Number.isFinite(capacity) && capacity > 0
             ? capacity
             : undefined;
         }).pipe(Effect.orElseSucceed(() => undefined)),

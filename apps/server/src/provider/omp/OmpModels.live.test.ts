@@ -39,15 +39,34 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi model discovery", () => {
               XAI_API_KEY: "synthetic-catalog-key",
             },
           });
+          const extensionPath = NodePath.join(root, "unknown-context.mjs");
+          // A non-finite capacity survives registration and serializes to the same
+          // null field returned by native discovered-model caches.
+          NodeFS.writeFileSync(
+            extensionPath,
+            `export default (pi) => {
+          pi.registerProvider("scient_catalog_test", {
+            baseUrl: "http://127.0.0.1:9", api: "openai-completions", apiKey: "synthetic-key",
+            models: [{ id: "unknown-context", name: "Unknown context", contextWindow: Number.NaN,
+              maxTokens: 4096, reasoning: false, input: ["text", "image"],
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }],
+          });
+        };`,
+          );
           const client = yield* makeOmpRpcProcess({
             command: ompQualifyBinary!,
             cwd: root,
             env: environment,
-            extraArgs: OMP_ISOLATED_ARGS,
+            extraArgs: [...OMP_ISOLATED_ARGS, "--extension", extensionPath],
           });
           yield* client.ready;
           const { models } = yield* client.getModels();
           expect(models.length).toBeGreaterThan(100);
+          expect(models.find((model) => model.provider === "scient_catalog_test")).toMatchObject({
+            id: "unknown-context",
+            contextWindow: null,
+            input: ["text", "image"],
+          });
           expect(models.some((model) => model.input?.includes("image"))).toBe(true);
           expect(
             models.some((model) => model.input?.includes("text") && !model.input.includes("image")),

@@ -513,6 +513,8 @@ orchestration types. The adapter owns the process and the turn mapping.
   timeline. Text turns can continue without the catalog. Image attachments retry discovery when
   support is unconfirmed, and report an actionable error if support remains unknown or the model
   explicitly excludes images; missing capability metadata is not treated as lack of support.
+  Native `contextWindow: null` means unknown capacity, not an invalid model list; fork budgeting
+  receives no capacity override for that model.
 - Images are planned against the outbound frame limit OMP advertises in `ready.maxFrameBytes`
   (1 MiB on 18.x), because OMP reads inbound commands unchunked. Images that fit with the message
   go inline; the rest, up to `PROVIDER_SEND_TURN_MAX_IMAGE_BYTES` (10 MB), are listed in the

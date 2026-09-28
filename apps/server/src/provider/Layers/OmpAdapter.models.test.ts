@@ -33,7 +33,7 @@ interface FakeModel {
   readonly provider: string;
   readonly id: string;
   readonly reasoning?: boolean;
-  readonly contextWindow?: number;
+  readonly contextWindow?: number | null;
   readonly input?: ReadonlyArray<string>;
   readonly thinking?: {
     readonly mode?: string;
@@ -883,6 +883,30 @@ describe("Oh My Pi image attachments", () => {
       },
     );
   }
+
+  it.effect("keeps image support when the native context window is unknown", () => {
+    const fake = makeFakeOmp({
+      models: [{ ...vision, contextWindow: null }],
+      initial: { provider: "vendor", id: "vision" },
+    });
+    return withAdapter("null-context-image", fake, ({ root, adapter, threadId, events }) =>
+      Effect.gen(function* () {
+        yield* adapter.sendTurn({
+          threadId,
+          input: "Describe",
+          attachments: [writeImage(root, "image", 20)],
+        });
+        expect(fake.state.prompts[0]?.frame.images).toHaveLength(1);
+        expect(
+          yield* adapter.getModelContextWindow({
+            threadId,
+            modelSelection: selection("vendor/vision"),
+          }),
+        ).toBeUndefined();
+        expect(warnings(events)).toEqual([]);
+      }),
+    );
+  });
 
   it.effect("sends a small image inline and a 900 KB image as an attached file", () => {
     const fake = makeFakeOmp({ models: [vision], initial: { provider: "vendor", id: "vision" } });
