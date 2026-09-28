@@ -323,6 +323,70 @@ describe("ConversationImportStaging", () => {
     }).pipe(Effect.scoped, Effect.provide(TestLayer)),
   );
 
+  it.effect(
+    "removes a partial upload and releases its reservation when receiving is interrupted",
+    () =>
+      Effect.gen(function* () {
+        resetImporter();
+        const config = yield* ServerConfig.ServerConfig;
+        const staging = yield* makeStaging({ quotaBytes: 16, maxLive: 1 });
+        const created = yield* staging.createUpload({ fileName: "first.scic", sizeBytes: 16 });
+        const claims = yield* staging.validateUploadToken(created.relativeUrl.split("/").at(-1)!);
+        assert(claims !== null);
+        const started = yield* Deferred.make<void>();
+        const gate = yield* Deferred.make<void>();
+        const body = Stream.make(new Uint8Array(8)).pipe(
+          Stream.concat(
+            Stream.fromEffect(
+              Effect.gen(function* () {
+                yield* Deferred.succeed(started, undefined);
+                yield* Deferred.await(gate);
+                return new Uint8Array(8);
+              }),
+            ),
+          ),
+        );
+        const receiving = yield* Effect.forkChild(staging.receiveUpload(claims, body));
+        yield* Deferred.await(started);
+        const area = NodePath.join(stagingRoot(config), created.importId);
+        assert.isTrue(NodeFS.readdirSync(area).some((name) => name.endsWith(".part")));
+        yield* Fiber.interrupt(receiving);
+        assert.isFalse(NodeFS.existsSync(area));
+        assert.strictEqual(yield* reasonOf(staging.preview(created.importId)), "import-not-found");
+        yield* staging.createUpload({ fileName: "second.scic", sizeBytes: 16 });
+      }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+  );
+
+  it.effect("expires a stalled receive and releases its reservation", () =>
+    Effect.gen(function* () {
+      resetImporter();
+      const config = yield* ServerConfig.ServerConfig;
+      const staging = yield* makeStaging({ quotaBytes: 16, maxLive: 1 });
+      const created = yield* staging.createUpload({ fileName: "first.scic", sizeBytes: 16 });
+      const claims = yield* staging.validateUploadToken(created.relativeUrl.split("/").at(-1)!);
+      assert(claims !== null);
+      const started = yield* Deferred.make<void>();
+      const gate = yield* Deferred.make<void>();
+      const body = Stream.make(new Uint8Array(8)).pipe(
+        Stream.concat(
+          Stream.fromEffect(
+            Effect.gen(function* () {
+              yield* Deferred.succeed(started, undefined);
+              yield* Deferred.await(gate);
+              return new Uint8Array(8);
+            }),
+          ),
+        ),
+      );
+      const receiving = yield* Effect.forkChild(staging.receiveUpload(claims, body));
+      yield* Deferred.await(started);
+      yield* TestClock.adjust("11 minutes");
+      assert.strictEqual((yield* Fiber.join(receiving)).ok, false);
+      assert.isFalse(NodeFS.existsSync(NodePath.join(stagingRoot(config), created.importId)));
+      yield* staging.createUpload({ fileName: "second.scic", sizeBytes: 16 });
+    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+  );
+
   it.effect("rejects an invalid package with its reason and removes it", () =>
     Effect.gen(function* () {
       resetImporter();

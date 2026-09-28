@@ -597,76 +597,106 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
     const receiveUpload: ConversationImportStaging["Service"]["receiveUpload"] = Effect.fn(
       "ConversationImportStaging.receiveUpload",
     )(function* (claims, body) {
-      const record = yield* locked(
-        Effect.sync(() => {
-          const found = records.get(claims.importId);
-          // Single use: only an import still waiting for its bytes accepts them.
-          if (
-            !found ||
-            found.cancelRequested ||
-            found.phase._tag !== "awaiting-upload" ||
-            found.reservedBytes !== claims.sizeBytes
-          ) {
-            return null;
+      return yield* Effect.uninterruptibleMask((restore) =>
+        Effect.gen(function* () {
+          const uploading = { _tag: "uploading" } as const;
+          const record = yield* locked(
+            Effect.sync(() => {
+              const found = records.get(claims.importId);
+              // Single use: only an import still waiting for its bytes accepts them.
+              if (
+                !found ||
+                found.cancelRequested ||
+                found.phase._tag !== "awaiting-upload" ||
+                found.reservedBytes !== claims.sizeBytes
+              ) {
+                return null;
+              }
+              found.phase = uploading;
+              return found;
+            }),
+          );
+          if (record === null) {
+            return {
+              ok: false,
+              status: 409,
+              detail: "This upload is no longer accepted.",
+            } as const;
           }
-          found.phase = { _tag: "uploading" };
-          return found;
+          return yield* restore(
+            Effect.gen(function* () {
+              const target = NodePath.join(record.directory, PACKAGE_FILE);
+              const part = `${target}.${NodeCrypto.randomUUID()}.part`;
+              const hash = NodeCrypto.createHash("sha256");
+              let received = 0;
+              const stored = yield* Stream.run(
+                body.pipe(
+                  Stream.takeWhile((chunk) => {
+                    received += chunk.byteLength;
+                    return received <= claims.sizeBytes;
+                  }),
+                  Stream.tap((chunk) => Effect.sync(() => hash.update(chunk))),
+                ),
+                fileSystem.sink(part),
+              ).pipe(
+                Effect.flatMap(() =>
+                  received === claims.sizeBytes
+                    ? fileSystem.rename(part, target).pipe(Effect.as(true))
+                    : Effect.succeed(false),
+                ),
+                Effect.catch((cause) =>
+                  Effect.logWarning("A conversation import upload failed.", { cause }).pipe(
+                    Effect.as(false),
+                  ),
+                ),
+                Effect.timeoutOption(ATTACHMENT_UPLOAD_URL_TTL_MS),
+                Effect.map(Option.getOrElse(() => false)),
+                Effect.ensuring(fileSystem.remove(part, { force: true }).pipe(Effect.ignore)),
+              );
+              const at = yield* now;
+              const accepted = yield* locked(
+                Effect.sync(() => {
+                  if (
+                    !stored ||
+                    record.cancelRequested ||
+                    records.get(record.importId) !== record
+                  ) {
+                    return false;
+                  }
+                  record.phase = {
+                    _tag: "uploaded",
+                    packageSha256: `sha256:${hash.digest("hex")}`,
+                    packageBytes: received,
+                  };
+                  record.touchedAt = at;
+                  return true;
+                }),
+              );
+              if (accepted) return { ok: true } as const;
+              // A failed or cancelled upload ends the import; the client starts again.
+              return stored
+                ? ({ ok: false, status: 409, detail: "This import was cancelled." } as const)
+                : ({
+                    ok: false,
+                    status: 400,
+                    detail: `The upload must be exactly ${claims.sizeBytes} bytes.`,
+                  } as const);
+            }),
+          ).pipe(
+            Effect.ensuring(
+              locked(
+                Effect.sync(() => {
+                  if (records.get(record.importId) !== record || record.phase !== uploading) {
+                    return false;
+                  }
+                  record.phase = { _tag: "removing" };
+                  return true;
+                }),
+              ).pipe(Effect.flatMap((owned) => (owned ? removeArea(record) : Effect.void))),
+            ),
+          );
         }),
       );
-      if (record === null) {
-        return { ok: false, status: 409, detail: "This upload is no longer accepted." } as const;
-      }
-      const target = NodePath.join(record.directory, PACKAGE_FILE);
-      const part = `${target}.${NodeCrypto.randomUUID()}.part`;
-      const hash = NodeCrypto.createHash("sha256");
-      let received = 0;
-      const stored = yield* Stream.run(
-        body.pipe(
-          Stream.takeWhile((chunk) => {
-            received += chunk.byteLength;
-            return received <= claims.sizeBytes;
-          }),
-          Stream.tap((chunk) => Effect.sync(() => hash.update(chunk))),
-        ),
-        fileSystem.sink(part),
-      ).pipe(
-        Effect.flatMap(() =>
-          received === claims.sizeBytes
-            ? fileSystem.rename(part, target).pipe(Effect.as(true))
-            : Effect.succeed(false),
-        ),
-        Effect.catch((cause) =>
-          Effect.logWarning("A conversation import upload failed.", { cause }).pipe(
-            Effect.as(false),
-          ),
-        ),
-        Effect.ensuring(fileSystem.remove(part, { force: true }).pipe(Effect.ignore)),
-      );
-      const at = yield* now;
-      const accepted = yield* locked(
-        Effect.sync(() => {
-          if (!stored || record.cancelRequested || records.get(record.importId) !== record) {
-            return false;
-          }
-          record.phase = {
-            _tag: "uploaded",
-            packageSha256: `sha256:${hash.digest("hex")}`,
-            packageBytes: received,
-          };
-          record.touchedAt = at;
-          return true;
-        }),
-      );
-      if (accepted) return { ok: true } as const;
-      // A failed or cancelled upload ends the import; the client starts again.
-      if (records.get(record.importId) === record) yield* removeArea(record);
-      return stored
-        ? ({ ok: false, status: 409, detail: "This import was cancelled." } as const)
-        : ({
-            ok: false,
-            status: 400,
-            detail: `The upload must be exactly ${claims.sizeBytes} bytes.`,
-          } as const);
     });
 
     // ---------------------------------------------------------------------
