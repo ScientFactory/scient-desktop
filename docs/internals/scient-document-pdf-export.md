@@ -32,10 +32,15 @@ there is one PDF path, not one per source.
 4. **Publish (server).** The server checks the report again, enforces the 64 MiB transport limit
    (`BROWSER_PDF_EXPORT_MAX_BYTES`), resolves a Markdown file's requested path again and requires
    the same canonical file with the captured revision,
-   and publishes the bytes as an immutable `controlled-render` revision in the generated-document
+   and publishes the bytes as an immutable `browser-export` revision in the generated-document
    store (`browser-export` structural validation). The PDF opens in Scient's reader, where Save
    Copy works as for any generated PDF. The capture is removed after publication; captures that
    never return expire after ten minutes and are swept before each new capture.
+
+The readiness report and PDF bytes originate from the authenticated desktop client. The server
+checks their structure, claimed capture identity, and saved source revision; it cannot independently
+attest that the PDF's visible content matches the source. Consumers must not use `browser-export`
+provenance as proof of rendered-content identity.
 
 ## Failure versus limitation
 

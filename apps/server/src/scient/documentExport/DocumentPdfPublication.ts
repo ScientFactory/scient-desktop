@@ -152,7 +152,7 @@ export const beginDocumentPdfProduction = (record: DocumentCaptureRecord) =>
       .pipe(Effect.mapError(storeErrorToExportError));
   });
 
-/** Publishes validated bytes as an immutable controlled-render revision. */
+/** Publishes an authenticated client's rendered bytes, without claiming server attestation. */
 export const publishDocumentPdfBytes = Effect.fn("DocumentPdfPublication.publishBytes")(function* (
   record: DocumentCaptureRecord,
   handle: GeneratedDocumentStore.GeneratedDocumentProductionHandle,
@@ -164,7 +164,7 @@ export const publishDocumentPdfBytes = Effect.fn("DocumentPdfPublication.publish
       ...handle,
       bytes,
       title: record.title || "Document",
-      provenanceKind: "controlled-render",
+      provenanceKind: "browser-export",
       validationProfile: "browser-export",
     })
     .pipe(

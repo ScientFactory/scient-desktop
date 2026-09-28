@@ -312,7 +312,7 @@ describe("document PDF publication", () => {
       expect(store.publishPdf).toHaveBeenCalledWith(
         expect.objectContaining({
           title: "Quarterly report",
-          provenanceKind: "controlled-render",
+          provenanceKind: "browser-export",
           validationProfile: "browser-export",
         }),
       );
