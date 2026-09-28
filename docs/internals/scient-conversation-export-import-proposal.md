@@ -931,7 +931,9 @@ import. Changing the file or the destination environment does the same and start
   default) and is left for the user to choose when that model is not ready, never the first entry.
 - **Permissions.** Imports always start with `runtimeMode: "approval-required"` (owner decision:
   unverified history starts supervised); the dialog states this in one line only when the
-  project's default mode differs.
+  project's default mode differs. The server enforces it: a confirm asking for another mode is not
+  refused, but the thread starts supervised and the committed destination reports
+  `approval-required`.
 - **Failures.** A rejected file shows the server's message. Reason codes, entry paths and
   connection details are never shown; such a message falls back to plain text per reason. An
   OS-opened file is streamed by the desktop, which answers `declined` when the user declines its

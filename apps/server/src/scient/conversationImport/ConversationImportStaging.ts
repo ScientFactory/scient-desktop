@@ -76,6 +76,7 @@ import {
   ConversationImportStagingError,
   conversationImportRecordCount,
   joinValidatedConversationImport,
+  conversationImportDestination,
   sameConversationImportDestination,
   type AbandonedConversationImportAttempt,
   type ConversationImportAttemptBinding,
@@ -1287,7 +1288,11 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
 
     const confirm: ConversationImportStaging["Service"]["confirm"] = Effect.fn(
       "ConversationImportStaging.confirm",
-    )(function* (request, principal) {
+    )(function* (requested, principal) {
+      const request = {
+        ...requested,
+        destination: conversationImportDestination(requested.destination),
+      };
       // A retried confirm (its first answer lost) hears the committed result,
       // never "not found", so the client does not import the file twice.
       return yield* withCompletion(

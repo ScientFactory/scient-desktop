@@ -987,6 +987,33 @@ describe("ConversationImportStaging", () => {
     }).pipe(Effect.scoped, Effect.provide(TestLayer)),
   );
 
+  it.effect("starts every import supervised, whatever mode the confirm asks for", () =>
+    Effect.gen(function* () {
+      const requested: string[] = [];
+      resetImporter({
+        importConversation: (lease, request) => {
+          requested.push(request.destination.runtimeMode);
+          return Effect.succeed(completionFor(lease, request));
+        },
+      });
+      const staging = yield* makeStaging();
+      const { importId, packageSha256 } = yield* stagedImport(staging);
+      const fullAccess = confirmRequest(importId, packageSha256, {
+        destination: { ...destination, runtimeMode: "full-access" },
+      });
+      const result = yield* staging.confirm(fullAccess, principal);
+      assert.deepStrictEqual(requested, ["approval-required"]);
+      assert.strictEqual(result.destination.runtimeMode, "approval-required");
+      // Repeating the confirm, either way, answers with the same import.
+      assert.deepStrictEqual(yield* staging.confirm(fullAccess, principal), result);
+      assert.deepStrictEqual(
+        yield* staging.confirm(confirmRequest(importId, packageSha256), principal),
+        result,
+      );
+      assert.strictEqual(fake.imports, 1);
+    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+  );
+
   it.effect("imports once and answers repeated confirms from the committed binding", () =>
     Effect.gen(function* () {
       const copies = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-copies-"));

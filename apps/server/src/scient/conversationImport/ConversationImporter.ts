@@ -163,6 +163,7 @@ import {
   type ConversationAttachment,
   type ConversationProvenance,
   type EnvironmentSessionPrincipalShape,
+  type RuntimeMode,
 } from "@t3tools/contracts";
 import { stableStringify } from "@t3tools/shared/relaySigning";
 
@@ -724,6 +725,25 @@ export const ConversationImportCompletion = Schema.Struct({
 export type ConversationImportCompletion = typeof ConversationImportCompletion.Type;
 
 const encodeDestination = Schema.encodeSync(ConversationImportDestination);
+
+/**
+ * Every imported thread starts supervised, asking before commands and file
+ * changes: its history came from elsewhere and is unverified.
+ */
+export const CONVERSATION_IMPORT_RUNTIME_MODE = "approval-required" satisfies RuntimeMode;
+
+/**
+ * The destination an import is made to: the one requested, starting
+ * supervised. Another requested runtime mode is ignored, not refused; the
+ * committed destination reports the mode the thread really has.
+ */
+export function conversationImportDestination(
+  destination: ConversationImportDestination,
+): ConversationImportDestination {
+  return destination.runtimeMode === CONVERSATION_IMPORT_RUNTIME_MODE
+    ? destination
+    : { ...destination, runtimeMode: CONVERSATION_IMPORT_RUNTIME_MODE };
+}
 
 export function sameConversationImportDestination(
   left: ConversationImportDestination,

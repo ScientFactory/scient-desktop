@@ -45,6 +45,7 @@ import * as Schema from "effect/Schema";
 
 import { attachmentFileExtension, toSafeThreadAttachmentSegment } from "../../attachmentStore.ts";
 import {
+  CONVERSATION_IMPORT_RUNTIME_MODE,
   conversationImportProvenance,
   type ValidatedConversationImport,
 } from "./ConversationImporter.ts";
@@ -760,7 +761,7 @@ export function buildConversationImportCommand(input: {
     projectId: destination.projectId,
     title: snapshot.thread.title,
     modelSelection: destination.modelSelection,
-    runtimeMode: destination.runtimeMode,
+    runtimeMode: CONVERSATION_IMPORT_RUNTIME_MODE,
     interactionMode: destination.interactionMode,
     messages,
     proposedPlans,

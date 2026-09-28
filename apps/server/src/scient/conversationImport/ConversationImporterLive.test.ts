@@ -350,6 +350,28 @@ describe("ConversationImporter", () => {
     ),
   );
 
+  it.effect("starts the imported thread supervised even when full access is requested", () =>
+    withImporter(
+      Effect.gen(function* () {
+        const { lease } = yield* leaseFor(importFixture({ turns: 1 }));
+        const completion = yield* importOnce(lease, importRequest({ runtimeMode: "full-access" }));
+        assert.strictEqual(completion.result.destination.runtimeMode, "approval-required");
+        const thread = (yield* readThread(completion.result.threadId))!;
+        assert.strictEqual(thread.runtimeMode, "approval-required");
+        const journal = yield* journalOf(lease.attemptDirectory);
+        assert.strictEqual(journal.binding.destination.runtimeMode, "approval-required");
+        // The command itself never carries another mode, whatever destination it is given.
+        const command = buildConversationImportCommand({
+          validated: lease.input,
+          ids: journal.ids,
+          destination: destination({ runtimeMode: "full-access" }),
+          importedAt: journal.importedAt,
+        });
+        assert.strictEqual(command.runtimeMode, "approval-required");
+      }),
+    ),
+  );
+
   it.effect("imports a package as a new independent thread with fresh ids", () =>
     withImporter(
       Effect.gen(function* () {

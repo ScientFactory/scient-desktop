@@ -48,6 +48,7 @@ import {
   ConversationImporter,
   ConversationImporterError,
   ConversationImportSettleError,
+  conversationImportDestination,
   sameConversationImportDestination,
   type ConversationImportCompletion,
   type ConversationImportLease,
@@ -284,9 +285,13 @@ const make = Effect.gen(function* () {
 
   const importConversation: ConversationImporter["Service"]["importConversation"] = (
     lease,
-    request,
-  ) =>
-    withAttemptLock(
+    requested,
+  ) => {
+    const request = {
+      ...requested,
+      destination: conversationImportDestination(requested.destination),
+    };
+    return withAttemptLock(
       lease.importId,
       Effect.gen(function* () {
         let kept = yield* provide(readConversationImportJournal(lease.attemptDirectory)).pipe(
@@ -336,6 +341,7 @@ const make = Effect.gen(function* () {
         return yield* commit(lease, journal);
       }),
     );
+  };
 
   const settleAttempt: ConversationImporter["Service"]["settleAttempt"] = (attempt) =>
     withAttemptLock(
