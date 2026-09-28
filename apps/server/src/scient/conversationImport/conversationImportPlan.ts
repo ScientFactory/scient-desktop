@@ -430,7 +430,18 @@ function importOmissions(
   skippedRecords: number,
 ): ReadonlyArray<OrchestrationConversationImportOmission> {
   const omissions: OrchestrationConversationImportOmission[] = [];
-  let unavailableAttachments = 0;
+  // Each unavailable attachment once, although an answer and its folded
+  // message both list it (and so both carry a warning for it).
+  const unavailableAttachments = new Set(
+    [
+      ...input.snapshot.messages.flatMap((message) => message.attachments),
+      ...input.snapshot.questionAnswers.flatMap((answer) =>
+        answer.items.flatMap((item) => item.attachments),
+      ),
+    ]
+      .filter((attachment) => !attachment.available)
+      .map((attachment) => attachment.localId),
+  ).size;
   let skipped = skippedRecords + (input.skippedSourceRecords ?? 0);
   for (const omission of input.omissions) {
     switch (omission._tag) {
@@ -446,7 +457,7 @@ function importOmissions(
             break;
           case "attachment-unavailable":
           case "attachment-unsupported":
-            unavailableAttachments += 1;
+            // Counted from the attachments themselves, above.
             break;
           case "records-skipped":
             skipped += omission.warning.count;

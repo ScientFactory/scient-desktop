@@ -207,6 +207,65 @@ describe("ConversationImporter", () => {
     ),
   );
 
+  it.effect("counts an unavailable answer attachment once, not again on its folded message", () =>
+    withImporter(
+      Effect.gen(function* () {
+        const fixture = importFixture({ turns: 1, attachments: true });
+        const source = fixture.input.snapshot;
+        const gone = {
+          localId: "attachment-4",
+          kind: "file" as const,
+          name: "gone.csv",
+          mimeType: "text/csv",
+          sizeBytes: 10,
+          pastedText: false,
+          available: false,
+        };
+        const answer = source.questionAnswers[0]!;
+        const warnings = [
+          ...source.warnings,
+          { _tag: "attachment-unavailable" as const, name: "gone.csv", messageN: 2 },
+          { _tag: "attachment-unavailable" as const, name: "gone.csv", messageN: null },
+        ];
+        const input: typeof fixture.input = {
+          ...fixture.input,
+          snapshot: {
+            ...source,
+            messages: [
+              source.messages[0]!,
+              {
+                ...source.messages[0]!,
+                n: 2,
+                id: MessageId.make(`async-answer:${answer.id}`),
+                text: "This one",
+                attachments: [gone],
+                references: [],
+                createdAt: answer.createdAt,
+                updatedAt: answer.createdAt,
+              },
+              { ...source.messages[1]!, n: 3 },
+            ],
+            questionAnswers: [{ ...answer, items: [{ ...answer.items[0]!, attachments: [gone] }] }],
+            warnings,
+          },
+          omissions: [
+            ...fixture.input.omissions.filter((omission) => omission._tag !== "snapshot-warning"),
+            ...warnings.map((warning) => ({ _tag: "snapshot-warning" as const, warning })),
+          ],
+        };
+        const ids = yield* mintConversationImportIds(input);
+        const command = buildConversationImportCommand({
+          validated: input,
+          ids,
+          destination: destination(),
+          importedAt: "2026-09-28T10:00:00.000Z",
+        });
+        // missing.pdf and gone.csv: two attachments, three warnings.
+        assert.deepInclude(command.origin.omissions, { _tag: "attachments-unavailable", count: 2 });
+      }),
+    ),
+  );
+
   it.effect("files a prompt whose turn has no reply under that turn, not the next one", () =>
     withImporter(
       Effect.gen(function* () {
