@@ -10,6 +10,7 @@ import {
   listenForOpenedConversationFiles,
   makeOpenedPathRelay,
   registerOpenedConversationFile,
+  releaseOpenedConversationFileFor,
   remoteUploadApprovalOptions,
   takeOpenedConversationFileList,
   uploadOpenedConversationFileTo,
@@ -22,6 +23,9 @@ const remoteUrl = `https://remote.example.com${route}`;
 const lanUrl = `http://192.168.1.20:3773${route}`;
 const tailscaleIpUrl = `http://100.84.12.7:3773${route}`;
 const directories: string[] = [];
+let attempts = 0;
+/** Each upload call is its own attempt. */
+const nextAttemptId = () => `attempt-${++attempts}`;
 
 afterEach(() => {
   for (const directory of directories.splice(0)) {
@@ -117,7 +121,7 @@ describe("OS-opened conversation file upload retry", () => {
     };
     expect(
       await uploadOpenedConversationFileTo(
-        { token: file.token, url: lanUrl },
+        { token: file.token, attemptId: nextAttemptId(), url: lanUrl },
         permitted,
         approveRemote,
         fetchImpl,
@@ -126,7 +130,11 @@ describe("OS-opened conversation file upload retry", () => {
     expect(requests).toBe(0);
     expect(
       await uploadOpenedConversationFileTo(
-        { token: file.token, url: lanUrl.replace("payload.signature", "fresh.signature") },
+        {
+          token: file.token,
+          attemptId: nextAttemptId(),
+          url: lanUrl.replace("payload.signature", "fresh.signature"),
+        },
         permitted,
         approveRemote,
         fetchImpl,
@@ -156,7 +164,7 @@ describe("OS-opened conversation file upload retry", () => {
     };
     const upload = (url: string) =>
       uploadOpenedConversationFileTo(
-        { token: file.token, url },
+        { token: file.token, attemptId: nextAttemptId(), url },
         permitted,
         approveRemote,
         fetchImpl,
@@ -202,7 +210,12 @@ describe("OS-opened conversation file upload retry", () => {
       return new Response(null, { status: 204 });
     };
     const upload = (token: string, url: string) =>
-      uploadOpenedConversationFileTo({ token, url }, permitted, approveRemote, fetchImpl);
+      uploadOpenedConversationFileTo(
+        { token, attemptId: nextAttemptId(), url },
+        permitted,
+        approveRemote,
+        fetchImpl,
+      );
 
     expect(await upload(first.token, remoteUrl)).toEqual({ _tag: "uploaded" });
     expect(
@@ -230,7 +243,11 @@ describe("OS-opened conversation file upload retry", () => {
       await blocked;
       return new Response(null, { status: 204 });
     };
-    const request = { token: file.token, url: `http://127.0.0.1:31234${route}` };
+    const request = {
+      token: file.token,
+      attemptId: nextAttemptId(),
+      url: `http://127.0.0.1:31234${route}`,
+    };
     const approveRemote = async () => false;
     const first = uploadOpenedConversationFileTo(request, permitted, approveRemote, fetchImpl);
     await started;
@@ -252,7 +269,7 @@ describe("OS-opened conversation file upload retry", () => {
       throw new Error("redirect refused");
     };
     const result = await uploadOpenedConversationFileTo(
-      { token: file.token, url: `http://127.0.0.1:31234${route}` },
+      { token: file.token, attemptId: nextAttemptId(), url: `http://127.0.0.1:31234${route}` },
       permitted,
       async () => {
         throw new Error("Managed backend should not request approval.");
@@ -277,7 +294,7 @@ describe("OS-opened conversation file upload outcomes", () => {
     };
     expect(
       await uploadOpenedConversationFileTo(
-        { token: file.token, url: remoteUrl },
+        { token: file.token, attemptId: nextAttemptId(), url: remoteUrl },
         permitted,
         async () => false,
         fetchImpl,
@@ -286,7 +303,7 @@ describe("OS-opened conversation file upload outcomes", () => {
     expect(requests).toBe(0);
     expect(
       await uploadOpenedConversationFileTo(
-        { token: file.token, url: managedUrl },
+        { token: file.token, attemptId: nextAttemptId(), url: managedUrl },
         managed,
         async () => false,
         fetchImpl,
@@ -295,81 +312,135 @@ describe("OS-opened conversation file upload outcomes", () => {
     expect(requests).toBe(1);
   });
 
-  it("stops the request and the file read when an upload is cancelled midway", async () => {
-    const file = await openedFile("large.scic", new Uint8Array(4 * 1024 * 1024));
+  /** A fetch that reads the first chunk, then waits for its signal to abort. */
+  function abortableFetch() {
     let firstChunk: () => void = () => undefined;
     const started = new Promise<void>((resolve) => {
       firstChunk = resolve;
     });
-    let signal: AbortSignal | undefined;
-    let readAfterCancel: "failed" | "continued" | null = null;
+    const state: {
+      signal: AbortSignal | undefined;
+      readAfterCancel: "failed" | "continued" | null;
+    } = { signal: undefined, readAfterCancel: null };
     const fetchImpl: typeof fetch = async (_input, init) => {
-      signal = init?.signal ?? undefined;
+      state.signal = init?.signal ?? undefined;
       const body = init?.body as ReadableStream<Uint8Array> | undefined;
       if (body === undefined) throw new Error("The upload has no body.");
       const reader = body.getReader();
       await reader.read();
       firstChunk();
-      await new Promise((resolve) => signal?.addEventListener("abort", resolve, { once: true }));
-      readAfterCancel = await reader.read().then(
+      await new Promise((resolve) =>
+        state.signal?.addEventListener("abort", resolve, { once: true }),
+      );
+      state.readAfterCancel = await reader.read().then(
         () => "continued" as const,
         () => "failed" as const,
       );
       throw new DOMException("The upload was aborted.", "AbortError");
     };
+    return { fetchImpl, started, state };
+  }
+
+  const countingFetch = () => {
+    const sent: string[] = [];
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      sent.push(await new Response(init?.body).text());
+      return new Response(null, { status: 204 });
+    };
+    return { fetchImpl, sent };
+  };
+
+  it("stops the request and the file read when an attempt is cancelled midway, then sends a new attempt", async () => {
+    const file = await openedFile("large.scic", new Uint8Array(4 * 1024 * 1024));
+    const { fetchImpl, started, state } = abortableFetch();
     const uploading = uploadOpenedConversationFileTo(
-      { token: file.token, url: managedUrl },
+      { token: file.token, attemptId: "attempt-a", url: managedUrl },
       managed,
       async () => false,
       fetchImpl,
     );
     await started;
-    cancelOpenedConversationFileUploadFor(file.token);
+    cancelOpenedConversationFileUploadFor({ token: file.token, attemptId: "attempt-a" });
     expect(await uploading).toEqual({ _tag: "failed", reason: "cancelled" });
-    expect(signal?.aborted).toBe(true);
+    expect(state.signal?.aborted).toBe(true);
     // The file stream was closed under the request's body.
-    expect(readAfterCancel).toBe("failed");
-  });
+    expect(state.readAfterCancel).toBe("failed");
 
-  it("sends nothing for an upload cancelled before it started", async () => {
-    const file = await openedFile();
-    let requests = 0;
-    const fetchImpl: typeof fetch = async () => {
-      requests += 1;
-      return new Response(null, { status: 204 });
-    };
-    cancelOpenedConversationFileUploadFor(file.token);
+    // A new destination or "Try again" is a new attempt on the same file.
+    const retry = countingFetch();
     expect(
       await uploadOpenedConversationFileTo(
-        { token: file.token, url: managedUrl },
+        { token: file.token, attemptId: "attempt-b", url: managedUrl },
+        managed,
+        async () => false,
+        retry.fetchImpl,
+      ),
+    ).toEqual({ _tag: "uploaded" });
+    expect(retry.sent).toHaveLength(1);
+    expect(retry.sent[0]).toHaveLength(4 * 1024 * 1024);
+  });
+
+  it("sends nothing for an attempt cancelled before it started, and still sends the next", async () => {
+    const file = await openedFile();
+    const { fetchImpl, sent } = countingFetch();
+    cancelOpenedConversationFileUploadFor({ token: file.token, attemptId: "attempt-a" });
+    const upload = (attemptId: string) =>
+      uploadOpenedConversationFileTo(
+        { token: file.token, attemptId, url: managedUrl },
         managed,
         async () => true,
         fetchImpl,
-      ),
-    ).toEqual({ _tag: "failed", reason: "cancelled" });
-    expect(requests).toBe(0);
+      );
+    expect(await upload("attempt-a")).toEqual({ _tag: "failed", reason: "cancelled" });
+    expect(sent).toHaveLength(0);
+    expect(await upload("attempt-b")).toEqual({ _tag: "uploaded" });
+    expect(sent).toEqual(["portable conversation"]);
     // An unknown token is ignored.
-    cancelOpenedConversationFileUploadFor("unknown-token");
+    cancelOpenedConversationFileUploadFor({ token: "unknown-token", attemptId: "attempt-a" });
   });
 
-  it("sends nothing when the import is cancelled while the send is awaiting approval", async () => {
+  it("sends nothing when the attempt is cancelled while the send is awaiting approval", async () => {
     const file = await openedFile();
-    let requests = 0;
-    const fetchImpl: typeof fetch = async () => {
-      requests += 1;
-      return new Response(null, { status: 204 });
-    };
+    const { fetchImpl, sent } = countingFetch();
     const result = await uploadOpenedConversationFileTo(
-      { token: file.token, url: remoteUrl },
+      { token: file.token, attemptId: "attempt-a", url: remoteUrl },
       permitted,
       async () => {
-        cancelOpenedConversationFileUploadFor(file.token);
+        cancelOpenedConversationFileUploadFor({ token: file.token, attemptId: "attempt-a" });
         return true;
       },
       fetchImpl,
     );
     expect(result).toEqual({ _tag: "failed", reason: "cancelled" });
-    expect(requests).toBe(0);
+    expect(sent).toHaveLength(0);
+  });
+
+  it("forgets a released file: an upload in progress stops and later ones fail", async () => {
+    const file = await openedFile("large.scic", new Uint8Array(4 * 1024 * 1024));
+    const { fetchImpl, started, state } = abortableFetch();
+    const uploading = uploadOpenedConversationFileTo(
+      { token: file.token, attemptId: "attempt-a", url: managedUrl },
+      managed,
+      async () => false,
+      fetchImpl,
+    );
+    await started;
+    releaseOpenedConversationFileFor(file.token);
+    expect(await uploading).toEqual({ _tag: "failed", reason: "cancelled" });
+    expect(state.signal?.aborted).toBe(true);
+
+    const later = countingFetch();
+    expect(
+      await uploadOpenedConversationFileTo(
+        { token: file.token, attemptId: "attempt-b", url: managedUrl },
+        managed,
+        async () => false,
+        later.fetchImpl,
+      ),
+    ).toEqual({ _tag: "failed", reason: "file-unavailable" });
+    expect(later.sent).toHaveLength(0);
+    // Releasing again, or an unknown token, is ignored.
+    releaseOpenedConversationFileFor(file.token);
   });
 });
 

@@ -135,6 +135,7 @@ export const CONVERSATION_FILES_OPENED_CHANNEL = "scient:conversation-import:ope
 export const UPLOAD_OPENED_CONVERSATION_FILE_CHANNEL = "scient:conversation-import:upload-opened";
 export const CANCEL_OPENED_CONVERSATION_FILE_UPLOAD_CHANNEL =
   "scient:conversation-import:cancel-upload-opened";
+export const RELEASE_OPENED_CONVERSATION_FILE_CHANNEL = "scient:conversation-import:release-opened";
 // SCIENT-FORK:END
 export const MAC_PERMISSION_HELPER_CHANNEL = "desktop:mac-permission-helper";
 

@@ -924,11 +924,15 @@ import. Changing the file or the destination environment does the same and start
 - **Failures.** A rejected file shows the server's message. Reason codes, entry paths and
   connection details are never shown; such a message falls back to plain text per reason. An
   OS-opened file is streamed by the desktop, which answers `declined` when the user declines its
-  "Send conversation file?" prompt and `cancelled` when the renderer stopped the upload; both
+  "Send conversation file?" prompt and `cancelled` when the renderer stopped that upload; both
   close the dialog without an error. `rejected` (the server refused the bytes) and the other
-  desktop failures read as plain sentences. Cancel or Esc during such an upload first asks the
-  desktop to stop it (`cancelOpenedConversationFileUpload`, where available), then calls
-  `cancel`; an attempt cancelled while waiting behind an earlier stream never starts its upload.
+  desktop failures read as plain sentences. Each upload of an opened file is one attempt with its
+  own `attemptId`. Changing the destination, "Try again", Cancel or Esc during such an upload
+  first asks the desktop to stop that attempt (`cancelOpenedConversationFileUpload`, where
+  available), then calls `cancel`; the attempt ends, or never starts if it was still waiting, and
+  a later attempt sends the same file again. Closing the dialog, or replacing its file, gives the
+  opened file up (`releaseOpenedConversationFile`): the desktop stops any upload of it and forgets
+  its token.
 - **Confirming.** Once the confirm is sent, the server may commit the import whatever happens to
   the connection (it runs the commit in its own scope), so the dialog keeps the staged import and
   its destination until the outcome is known and never cancels it. If the answer does not

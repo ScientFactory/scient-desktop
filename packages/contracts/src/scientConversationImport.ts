@@ -393,9 +393,14 @@ export const DesktopOpenedConversationFile = Schema.Struct({
 });
 export type DesktopOpenedConversationFile = typeof DesktopOpenedConversationFile.Type;
 
-/** Asks the desktop to stream an opened file to a signed import upload URL. */
+/**
+ * Asks the desktop to stream an opened file to a signed import upload URL.
+ * Each attempt names itself with a fresh `attemptId`, so cancelling one
+ * attempt never stops a later attempt on the same file.
+ */
 export const DesktopConversationFileUploadRequest = Schema.Struct({
   token: ShortText(64),
+  attemptId: ShortText(64),
   /** Absolute upload URL; the desktop only posts to the import upload route. */
   url: ShortText(8_192),
 });
@@ -415,7 +420,10 @@ export const DesktopConversationFileUploadResult = Schema.Union([
       "rejected",
       /** The user declined to send the file to that server; nothing was sent. */
       "declined",
-      /** The upload was cancelled (`cancelOpenedConversationFileUpload`); the request was stopped. */
+      /**
+       * This attempt was cancelled (`cancelOpenedConversationFileUpload`); the
+       * request was stopped, or never sent.
+       */
       "cancelled",
     ]),
   }),
@@ -423,11 +431,22 @@ export const DesktopConversationFileUploadResult = Schema.Union([
 export type DesktopConversationFileUploadResult = typeof DesktopConversationFileUploadResult.Type;
 
 /**
- * Stops an opened file's upload, or keeps it from starting: every later
- * upload of this token ends `cancelled` without sending anything.
+ * Stops one upload attempt, or keeps it from starting: that attempt ends
+ * `cancelled` without sending anything. Other attempts on the file proceed.
  */
 export const DesktopConversationFileUploadCancelRequest = Schema.Struct({
   token: ShortText(64),
+  attemptId: ShortText(64),
 });
 export type DesktopConversationFileUploadCancelRequest =
   typeof DesktopConversationFileUploadCancelRequest.Type;
+
+/**
+ * Gives up an opened file: an upload in progress is stopped, and the token is
+ * forgotten, so every later upload of it fails `file-unavailable`.
+ */
+export const DesktopConversationFileReleaseRequest = Schema.Struct({
+  token: ShortText(64),
+});
+export type DesktopConversationFileReleaseRequest =
+  typeof DesktopConversationFileReleaseRequest.Type;

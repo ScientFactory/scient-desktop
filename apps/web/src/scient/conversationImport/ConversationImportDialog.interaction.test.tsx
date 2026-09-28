@@ -242,11 +242,67 @@ async function openWith(file: File, suspended = false) {
 
 const scic = () => new File(["archive"], "field-notes.scic");
 const opened = { token: "token-1", fileName: "field-notes.scic", sizeBytes: 7 };
+const opened2 = { token: "token-2", fileName: "more-notes.scic", sizeBytes: 7 };
 const dialog = () => document.querySelector<HTMLElement>('[role="dialog"]');
 const button = (label: string) =>
   [...document.querySelectorAll("button")].find((candidate) => candidate.textContent === label);
 const alerts = () =>
   [...document.querySelectorAll('[role="alert"]')].map((element) => element.textContent);
+
+/**
+ * A desktop that keeps the real contract: each upload is an attempt; a cancel
+ * stops that attempt only (or keeps it from starting); a release forgets the
+ * file. Uploads wait until settled or cancelled while `holding`.
+ */
+function fakeDesktop() {
+  type Request = { readonly token: string; readonly attemptId: string; readonly url: string };
+  const cancelledResult = { _tag: "failed", reason: "cancelled" } as const;
+  const released = new Set<string>();
+  const cancelled = new Set<string>();
+  const inFlight = new Map<string, (result: unknown) => void>();
+  const desktop = {
+    holding: true,
+    uploads: [] as Request[],
+    bridge: {
+      uploadOpenedConversationFile: vi.fn(async (request: Request) => {
+        desktop.uploads.push(request);
+        if (released.has(request.token)) return { _tag: "failed", reason: "file-unavailable" };
+        if (cancelled.delete(request.attemptId)) return cancelledResult;
+        if (!desktop.holding) return { _tag: "uploaded" };
+        return new Promise((resolve) => inFlight.set(request.attemptId, resolve));
+      }),
+      cancelOpenedConversationFileUpload: vi.fn(
+        async (request: { readonly token: string; readonly attemptId: string }) => {
+          const settle = inFlight.get(request.attemptId);
+          if (settle === undefined) cancelled.add(request.attemptId);
+          inFlight.delete(request.attemptId);
+          settle?.(cancelledResult);
+        },
+      ),
+      releaseOpenedConversationFile: vi.fn(async (request: { readonly token: string }) => {
+        released.add(request.token);
+        for (const settle of inFlight.values()) settle(cancelledResult);
+        inFlight.clear();
+      }),
+    },
+  };
+  Object.assign(window, { desktopBridge: desktop.bridge });
+  return desktop;
+}
+
+async function chooseDestination(label: string) {
+  const trigger = dialog()!.querySelector<HTMLElement>('[data-slot="select-trigger"]')!;
+  await act(async () => trigger.click());
+  const item = [...document.querySelectorAll<HTMLElement>('[data-slot="select-item"]')].find(
+    (candidate) => candidate.textContent === label,
+  );
+  expect(item, label).toBeDefined();
+  await act(async () => {
+    item!.click();
+    await Promise.resolve();
+  });
+  await flush();
+}
 
 async function pressKey(target: HTMLElement, key: string) {
   await act(async () => {
@@ -446,7 +502,7 @@ describe("ConversationImportDialog", () => {
     const calls: string[] = [];
     let settle: (result: unknown) => void = () => {};
     const uploadOpenedConversationFile = vi.fn(
-      () =>
+      (_request: { readonly token: string; readonly attemptId: string }) =>
         new Promise((resolve) => {
           settle = resolve;
         }),
@@ -469,11 +525,105 @@ describe("ConversationImportDialog", () => {
 
     await act(async () => button("Cancel")!.click());
     await flush();
-    expect(cancelOpenedConversationFileUpload).toHaveBeenCalledWith({ token: "token-1" });
+    expect(cancelOpenedConversationFileUpload).toHaveBeenCalledWith({
+      token: "token-1",
+      attemptId: uploadOpenedConversationFile.mock.calls[0]![0].attemptId,
+    });
     expect(cancelConversationImport).toHaveBeenCalledWith(local, importId);
     expect(calls).toEqual(["desktop", "server"]);
     expect(dialog()).toBeNull();
     expect(toastAdd).not.toHaveBeenCalled();
+  });
+
+  it("sends an opened file again when the destination changes during its upload", async () => {
+    state.environmentIds = [local, remote];
+    const desktop = fakeDesktop();
+    await act(async () => root.render(<ConversationImportDialogHost />));
+    await act(async () => requestConversationImport({ _tag: "desktop-file", file: opened }));
+    await flush();
+    expect(desktop.uploads).toHaveLength(1);
+    expect(document.querySelector('[role="status"]')?.textContent).toBe("Sending the file…");
+
+    desktop.holding = false;
+    await chooseDestination("Lab workstation");
+
+    const [first, second] = desktop.uploads;
+    expect(desktop.uploads).toHaveLength(2);
+    expect(desktop.bridge.cancelOpenedConversationFileUpload).toHaveBeenCalledWith({
+      token: "token-1",
+      attemptId: first!.attemptId,
+    });
+    expect(cancelConversationImport).toHaveBeenCalledWith(local, importId);
+    expect(second!.token).toBe("token-1");
+    expect(second!.attemptId).not.toBe(first!.attemptId);
+    expect(createConversationImportUpload).toHaveBeenLastCalledWith(
+      remote,
+      "field-notes.scic",
+      7,
+      undefined,
+    );
+    expect(previewConversationImport).toHaveBeenCalledWith(remote, secondImportId);
+    expect(dialog()?.textContent).toContain("1 message · 2 attachments");
+    // Checked there; only the destination's missing project remains.
+    expect(alerts()).toEqual(["Add a project on Lab workstation before importing."]);
+    expect(desktop.bridge.releaseOpenedConversationFile).not.toHaveBeenCalled();
+  });
+
+  it("sends an opened file again on Try again after the connection comes back", async () => {
+    const desktop = fakeDesktop();
+    await act(async () => root.render(<ConversationImportDialogHost />));
+    await act(async () => requestConversationImport({ _tag: "desktop-file", file: opened }));
+    await flush();
+    expect(desktop.uploads).toHaveLength(1);
+
+    await act(async () => setOffline([local]));
+    await flush();
+    expect(desktop.bridge.cancelOpenedConversationFileUpload).toHaveBeenCalledOnce();
+    expect(alerts()).toEqual([
+      "Lost the connection to that destination. Choose another or try again.",
+    ]);
+
+    desktop.holding = false;
+    await act(async () => setOffline([]));
+    await flush();
+    expect(desktop.uploads).toHaveLength(1);
+    await act(async () => button("Try again")!.click());
+    await flush();
+
+    expect(desktop.uploads).toHaveLength(2);
+    expect(desktop.uploads[1]!.attemptId).not.toBe(desktop.uploads[0]!.attemptId);
+    expect(previewConversationImport).toHaveBeenCalledWith(local, secondImportId);
+    expect(dialog()).not.toBeNull();
+    expect(alerts()).toEqual([]);
+    expect(button("Import")?.disabled).toBe(false);
+  });
+
+  it("gives up an opened file when its dialog closes or another file replaces it", async () => {
+    const desktop = fakeDesktop();
+    desktop.holding = false;
+    await act(async () => root.render(<ConversationImportDialogHost />));
+    await act(async () => requestConversationImport({ _tag: "desktop-file", file: opened }));
+    await flush();
+    expect(button("Import")?.disabled).toBe(false);
+    expect(desktop.bridge.releaseOpenedConversationFile).not.toHaveBeenCalled();
+
+    await act(async () => dropConversationImportFile(scic()));
+    await flush();
+    expect(desktop.bridge.releaseOpenedConversationFile).toHaveBeenCalledWith({
+      token: "token-1",
+    });
+
+    await act(async () => requestConversationImport({ _tag: "desktop-file", file: opened2 }));
+    await act(async () => button("Cancel")!.click());
+    await flush();
+    // The next queued file opens; closing it gives it up too.
+    expect(desktop.bridge.releaseOpenedConversationFile).toHaveBeenCalledTimes(1);
+    await act(async () => button("Cancel")!.click());
+    await flush();
+    expect(desktop.bridge.releaseOpenedConversationFile).toHaveBeenLastCalledWith({
+      token: "token-2",
+    });
+    expect(dialog()).toBeNull();
   });
 
   it("never starts a queued desktop upload once its attempt is cancelled", async () => {

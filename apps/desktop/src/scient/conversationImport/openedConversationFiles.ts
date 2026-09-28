@@ -7,8 +7,11 @@
  * The main process keeps each file's path to itself and gives the renderer an
  * opaque token, its name, and its size. The renderer admits the upload on its
  * server, then asks the main process to stream the file to the signed upload
- * URL, which must be the import upload route, and can cancel that upload. The
- * same preview then opens as for a file picked in the app.
+ * URL, which must be the import upload route. Each upload is one attempt, named
+ * by the renderer; cancelling it stops only that attempt, so a new destination
+ * or a retry can send the file again. Releasing the file (the import dialog
+ * closed) forgets the token. The same preview then opens as for a file picked
+ * in the app.
  *
  * macOS delivers the `open-file` of a launch (a double-click while Scient is
  * closed) before startup has built its services, so `captureConversationFileOpens`
@@ -22,6 +25,7 @@ import * as NodePath from "node:path";
 import * as NodeStream from "node:stream";
 
 import {
+  DesktopConversationFileReleaseRequest,
   DesktopConversationFileUploadCancelRequest,
   DesktopConversationFileUploadRequest,
   DesktopConversationFileUploadResult,
@@ -43,6 +47,7 @@ import { makeIpcMethod } from "../../ipc/DesktopIpc.ts";
 import {
   CANCEL_OPENED_CONVERSATION_FILE_UPLOAD_CHANNEL,
   CONVERSATION_FILES_OPENED_CHANNEL,
+  RELEASE_OPENED_CONVERSATION_FILE_CHANNEL,
   TAKE_OPENED_CONVERSATION_FILES_CHANNEL,
   UPLOAD_OPENED_CONVERSATION_FILE_CHANNEL,
 } from "../../ipc/channels.ts";
@@ -50,6 +55,8 @@ import {
 /** Files waiting for the renderer at once; the oldest is dropped beyond this. */
 const MAX_PENDING_CONVERSATION_FILES = 8;
 const TAKEN_FILE_LIFETIME_MS = 30 * 60_000;
+/** Cancelled attempts remembered per file; the oldest is forgotten beyond this. */
+const MAX_CANCELLED_ATTEMPTS = 32;
 
 interface OpenedFile extends DesktopOpenedConversationFile {
   readonly path: string;
@@ -58,10 +65,10 @@ interface OpenedFile extends DesktopOpenedConversationFile {
 interface TakenFile extends OpenedFile {
   readonly expiresAt: number;
   readonly approvedOrigins: Set<string>;
-  /** Aborts the upload in progress; null when none is. */
-  upload: AbortController | null;
-  /** The renderer cancelled this file's import: nothing more is sent. */
-  cancelled: boolean;
+  /** The upload attempt in progress; null when none is. */
+  upload: { readonly attemptId: string; readonly controller: AbortController } | null;
+  /** Attempts cancelled before they started: they send nothing when they arrive. */
+  readonly cancelledAttempts: Set<string>;
 }
 
 /** Opened but not yet taken by the renderer. */
@@ -124,7 +131,7 @@ export function takeOpenedConversationFileList(): ReadonlyArray<DesktopOpenedCon
       expiresAt: performance.now() + TAKEN_FILE_LIFETIME_MS,
       approvedOrigins: new Set(),
       upload: null,
-      cancelled: false,
+      cancelledAttempts: new Set(),
     });
   }
   return files.map(({ token, fileName, sizeBytes }) => ({ token, fileName, sizeBytes }));
@@ -189,7 +196,10 @@ export function remoteUploadApprovalOptions(
   };
 }
 
-/** Streams a taken file to its signed upload URL, retaining it for a fresh-URL retry. */
+/**
+ * Streams a taken file to its signed upload URL as one attempt, retaining the
+ * file for a later attempt with a fresh URL.
+ */
 export async function uploadOpenedConversationFileTo(
   request: DesktopConversationFileUploadRequest,
   allowedOrigins: ReadonlySet<string>,
@@ -202,12 +212,13 @@ export async function uploadOpenedConversationFileTo(
     taken.delete(request.token);
     return { _tag: "failed", reason: "file-unavailable" };
   }
-  if (file.cancelled) return { _tag: "failed", reason: "cancelled" };
+  if (file.cancelledAttempts.delete(request.attemptId))
+    return { _tag: "failed", reason: "cancelled" };
   if (file.upload !== null) return { _tag: "failed", reason: "file-unavailable" };
   const target = uploadTarget(request.url, allowedOrigins);
   if (target === null) return { _tag: "failed", reason: "invalid-url" };
   const upload = new AbortController();
-  file.upload = upload;
+  file.upload = { attemptId: request.attemptId, controller: upload };
   const cancelled = { _tag: "failed", reason: "cancelled" } as const;
   try {
     const stat = await NodeFS.promises.stat(file.path).catch(() => null);
@@ -252,15 +263,38 @@ export async function uploadOpenedConversationFileTo(
 }
 
 /**
- * Cancels an opened file's import: an upload in progress is aborted (request
- * and file read), and every later upload of the token ends `cancelled`
- * without sending anything. An unknown token is ignored.
+ * Cancels one upload attempt: in progress, it is aborted (request and file
+ * read); not yet started, it ends `cancelled` without sending anything when
+ * it arrives. Other attempts on the file are unaffected. An unknown token is
+ * ignored.
  */
-export function cancelOpenedConversationFileUploadFor(token: string): void {
+export function cancelOpenedConversationFileUploadFor(request: {
+  readonly token: string;
+  readonly attemptId: string;
+}): void {
+  const file = taken.get(request.token);
+  if (!file) return;
+  if (file.upload?.attemptId === request.attemptId) {
+    file.upload.controller.abort();
+    return;
+  }
+  file.cancelledAttempts.add(request.attemptId);
+  if (file.cancelledAttempts.size > MAX_CANCELLED_ATTEMPTS) {
+    const oldest = file.cancelledAttempts.values().next().value;
+    if (oldest !== undefined) file.cancelledAttempts.delete(oldest);
+  }
+}
+
+/**
+ * Gives up an opened file: an upload in progress is aborted, and the token is
+ * forgotten, so later uploads of it fail `file-unavailable`. An unknown token
+ * is ignored.
+ */
+export function releaseOpenedConversationFileFor(token: string): void {
   const file = taken.get(token);
   if (!file) return;
-  file.cancelled = true;
-  file.upload?.abort();
+  taken.delete(token);
+  file.upload?.controller.abort();
 }
 
 /** Tells the renderer that files are waiting, and brings Scient forward. */
@@ -369,7 +403,14 @@ export const cancelOpenedConversationFileUpload = makeIpcMethod({
   channel: CANCEL_OPENED_CONVERSATION_FILE_UPLOAD_CHANNEL,
   payload: DesktopConversationFileUploadCancelRequest,
   result: Schema.Void,
-  handler: (request) => Effect.sync(() => cancelOpenedConversationFileUploadFor(request.token)),
+  handler: (request) => Effect.sync(() => cancelOpenedConversationFileUploadFor(request)),
+});
+
+export const releaseOpenedConversationFile = makeIpcMethod({
+  channel: RELEASE_OPENED_CONVERSATION_FILE_CHANNEL,
+  payload: DesktopConversationFileReleaseRequest,
+  result: Schema.Void,
+  handler: (request) => Effect.sync(() => releaseOpenedConversationFileFor(request.token)),
 });
 
 export const uploadOpenedConversationFile = makeIpcMethod({

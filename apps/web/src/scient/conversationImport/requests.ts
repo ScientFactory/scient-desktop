@@ -31,12 +31,25 @@ export function requestConversationImport(
   }));
 }
 
+/**
+ * Gives up a file the operating system opened with Scient once no dialog will
+ * send it again: the desktop stops any upload of it and forgets it.
+ */
+function releaseSource(source: ConversationImportSource | undefined): void {
+  if (source?._tag !== "desktop-file") return;
+  void Promise.resolve(
+    window.desktopBridge?.releaseOpenedConversationFile?.({ token: source.file.token }),
+  ).catch(() => undefined);
+}
+
 /** Gives the open dialog another file; it discards the file it was checking. */
 export function replaceConversationImportSource(source: ConversationImportSource): void {
+  const replaced = useConversationImportRequests.getState().queue[0]?.source;
   useConversationImportRequests.setState((state) => {
     const [open, ...waiting] = state.queue;
     return open === undefined ? state : { queue: [{ ...open, source }, ...waiting] };
   });
+  if (replaced !== source) releaseSource(replaced);
 }
 
 /** A dropped file goes to the open import dialog, or waits its turn when none can take it. */
@@ -51,6 +64,9 @@ export function setConversationImportReplaceable(replaceable: boolean): void {
   useConversationImportRequests.setState({ replaceable });
 }
 
+/** Closes the open dialog; the next queued request opens. */
 export function dismissConversationImportRequest(): void {
+  const dismissed = useConversationImportRequests.getState().queue[0]?.source;
   useConversationImportRequests.setState((state) => ({ queue: state.queue.slice(1) }));
+  releaseSource(dismissed);
 }
