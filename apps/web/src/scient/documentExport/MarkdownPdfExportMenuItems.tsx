@@ -5,7 +5,6 @@ import { useCallback, useRef } from "react";
 
 import { MenuSub, MenuSubPopup, MenuSubTrigger } from "~/components/ui/menu";
 import { toastManager } from "~/components/ui/toast";
-import { useRightPanelStore } from "~/rightPanelStore";
 import { useEnvironmentHttpBaseUrl } from "~/state/environments";
 import { scientDocumentPdfEnvironment } from "~/state/scientDocumentPdf";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -13,8 +12,13 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { beginScientUiOperation } from "../analytics/client";
 import type { MarkdownPersistenceLease } from "../markdownEditor/persistence/markdownPersistenceRegistry";
 import { DockCommandItem } from "../markdownEditor/ui/dockChrome";
-import { scientGeneratedPdfSurface } from "../rightPanel/surfaces";
 import { documentPdfAvailability, renderDocumentPagePdf } from "./documentPagePdf";
+import {
+  deliverDocumentPdf,
+  openDocumentPdf,
+  releaseDocumentPdfCapture,
+  saveDocumentPdfCopy,
+} from "./documentPdfDelivery";
 import { runMarkdownPdfExport, summarizeDocumentWarnings } from "./markdownPdfExport";
 
 export interface MarkdownPdfExportTarget {
@@ -25,7 +29,10 @@ export interface MarkdownPdfExportTarget {
   readonly persistence: MarkdownPersistenceLease;
 }
 
-/** Exports the saved file and opens the PDF in Scient's reader, where Save Copy lives. */
+/**
+ * Exports the saved file and saves the PDF through the same Save dialog as
+ * every other export; the notice's Open shows it in Scient's reader.
+ */
 function useMarkdownPdfExport(target: MarkdownPdfExportTarget) {
   const httpBaseUrl = useEnvironmentHttpBaseUrl(target.environmentId);
   const prepare = useAtomCommand(scientDocumentPdfEnvironment.prepareMarkdown, {
@@ -80,24 +87,38 @@ function useMarkdownPdfExport(target: MarkdownPdfExportTarget) {
             if (result._tag === "Failure") throw squashAtomCommandFailure(result);
             return result.value;
           },
+          release: (captureId) => releaseDocumentPdfCapture(target.environmentId, captureId),
         },
         target,
       );
-      if (published.source._tag === "generated-pdf") {
-        useRightPanelStore
-          .getState()
-          .openScient(target.threadRef, scientGeneratedPdfSurface(published.source));
-      }
       toastManager.close(toastId);
-      toastManager.add(
-        published.warnings.length > 0
-          ? {
-              type: "warning",
-              title: "PDF exported with notes",
-              description: summarizeDocumentWarnings(published.warnings),
-            }
-          : { type: "success", title: "PDF exported", data: { compact: true } },
+      const delivery = await deliverDocumentPdf(
+        { saveCopy: (pdf) => saveDocumentPdfCopy(target.environmentId, pdf) },
+        published,
       );
+      if (delivery._tag === "delivered") {
+        const open = {
+          actionProps: {
+            children: "Open",
+            onClick: () => openDocumentPdf(target.threadRef, published),
+          },
+        };
+        toastManager.add(
+          published.warnings.length > 0
+            ? {
+                type: "warning",
+                title: `${delivery.title} with notes`,
+                description: summarizeDocumentWarnings(published.warnings),
+                ...open,
+              }
+            : {
+                type: "success",
+                title: delivery.title,
+                description: delivery.description,
+                ...open,
+              },
+        );
+      }
       finish("completed");
     } catch (error) {
       toastManager.close(toastId);

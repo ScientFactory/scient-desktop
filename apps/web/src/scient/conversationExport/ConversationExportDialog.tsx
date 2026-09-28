@@ -5,6 +5,7 @@ import type {
   ScientConversationExportPreparation,
   ScopedThreadRef,
 } from "@t3tools/contracts";
+import { useNavigate } from "@tanstack/react-router";
 import { TriangleAlertIcon } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { create } from "zustand";
@@ -31,6 +32,7 @@ import {
 import { Switch } from "../../components/ui/switch";
 import { toastManager } from "../../components/ui/toast";
 import { Toggle, ToggleGroup } from "../../components/ui/toggle-group";
+import { buildThreadRouteParams } from "../../threadRoutes";
 import {
   exportConversation,
   prepareConversationExport,
@@ -99,6 +101,7 @@ type Loading =
   | { readonly _tag: "ready"; readonly preparation: ScientConversationExportPreparation };
 
 function ConversationExportDialog({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
+  const navigate = useNavigate();
   const [loading, setLoading] = useState<Loading>({ _tag: "loading" });
   const [state, setState] = useState<ExportDialogState | null>(null);
   const [busy, setBusy] = useState<ScientConversationExportDelivery | null>(null);
@@ -162,14 +165,41 @@ function ConversationExportDialog({ threadRef }: { readonly threadRef: ScopedThr
       const registration = selectedRegistration(state, registrations);
       if (registration?.produce && delivery === "file") {
         const produced = await registration.produce({ threadRef, request });
+        // Save cancelled: the dialog stays open, as for every other format.
+        if (produced === null) return;
+        const open = produced.open;
+        const openAction =
+          open === undefined
+            ? {}
+            : {
+                actionProps: {
+                  children: "Open",
+                  onClick: () => {
+                    // The conversation may not be the one on screen (a sidebar export).
+                    open();
+                    void navigate({
+                      to: "/$environmentId/$threadId",
+                      params: buildThreadRouteParams(threadRef),
+                    });
+                  },
+                },
+              };
         toastManager.add(
           produced.warnings.length > 0
             ? {
                 type: "warning",
                 title: `${produced.title} with notes`,
                 description: produced.warnings.map((warning) => warning.message).join("\n"),
+                ...openAction,
               }
-            : { type: "success", title: produced.title },
+            : {
+                type: "success",
+                title: produced.title,
+                ...(produced.description === undefined
+                  ? {}
+                  : { description: produced.description }),
+                ...openAction,
+              },
         );
         closeRequest();
         return;

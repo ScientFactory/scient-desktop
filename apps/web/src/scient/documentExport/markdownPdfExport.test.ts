@@ -46,6 +46,7 @@ function dependencies(
     prepare: vi.fn(async () => prepared),
     render: vi.fn(async () => ({ _tag: "rendered" as const, result: renderResult })),
     publish: vi.fn(async () => published),
+    release: vi.fn(async () => undefined),
     ...overrides,
   };
 }
@@ -119,6 +120,9 @@ describe("Markdown PDF export", () => {
     );
     expect(refused.publish).not.toHaveBeenCalled();
     expect(tooLarge.publish).not.toHaveBeenCalled();
+    // Neither capture will be published, so neither waits out its expiry.
+    expect(refused.release).toHaveBeenCalledWith(expected.captureId);
+    expect(tooLarge.release).toHaveBeenCalledWith(expected.captureId);
   });
 
   it("summarizes warnings briefly", () => {

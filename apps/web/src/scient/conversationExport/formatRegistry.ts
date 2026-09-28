@@ -39,13 +39,14 @@ export interface ConversationExportFormatRegistration {
    */
   readonly clientAvailability?: () => ConversationExportClientAvailability;
   /**
-   * Produces the export on this client instead of through the server's export
-   * request, and presents the result itself.
+   * Produces and saves the export on this client instead of through the
+   * server's export request. Resolves `null` when the user cancelled saving,
+   * which leaves the dialog open as for any other format.
    */
   readonly produce?: (input: {
     readonly threadRef: ScopedThreadRef;
     readonly request: ScientConversationExportRequest;
-  }) => Promise<ConversationExportProduced>;
+  }) => Promise<ConversationExportProduced | null>;
   /** Shown when the user can install a missing converter, such as Pandoc. */
   readonly UnavailableAction?: ComponentType<{
     readonly environmentId: EnvironmentId;
@@ -59,7 +60,14 @@ export type ConversationExportClientAvailability =
 
 export interface ConversationExportProduced {
   readonly title: string;
+  /** Where the file went, such as the saved path. */
+  readonly description?: string;
   readonly warnings: ReadonlyArray<DocumentWarning>;
+  /**
+   * Shows the produced document in Scient. The dialog offers it as the
+   * notice's Open action and shows the conversation first.
+   */
+  readonly open?: () => void;
 }
 
 const registrations: ConversationExportFormatRegistration[] = [];

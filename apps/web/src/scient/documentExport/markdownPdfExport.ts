@@ -34,6 +34,10 @@ export interface MarkdownPdfExportDependencies {
     request: ScientDocumentPageRenderRequest,
   ) => Promise<ScientDocumentPageRenderOutcome>;
   readonly publish: (input: ScientDocumentPdfPublishInput) => Promise<ScientDocumentPdfPublished>;
+  /** Frees a capture that will not be published; failures are ignored, the capture expires. */
+  readonly release: (
+    captureId: ScientDocumentPdfPrepared["expected"]["captureId"],
+  ) => Promise<void>;
 }
 
 export const MARKDOWN_PDF_TOO_LARGE_MESSAGE =
@@ -70,23 +74,32 @@ export async function runMarkdownPdfExport(
 
 /**
  * The steps every document PDF shares once the server has captured it: print
- * the captured page on this desktop, then publish exactly that capture.
+ * the captured page on this desktop, then publish exactly that capture. A
+ * capture that is not printed is released; publication removes it otherwise.
  */
 export async function printAndPublishDocumentPdf(
-  dependencies: Pick<MarkdownPdfExportDependencies, "render" | "publish">,
+  dependencies: Pick<MarkdownPdfExportDependencies, "render" | "publish" | "release">,
   prepared: ScientDocumentPdfPrepared,
   tooLargeMessage: string,
 ): Promise<ScientDocumentPdfPublished> {
-  const outcome = await dependencies.render({
-    inputRelativeUrl: prepared.inputRelativeUrl,
-    expected: prepared.expected,
-  });
+  const { captureId } = prepared.expected;
+  let outcome: Awaited<ReturnType<MarkdownPdfExportDependencies["render"]>>;
+  try {
+    outcome = await dependencies.render({
+      inputRelativeUrl: prepared.inputRelativeUrl,
+      expected: prepared.expected,
+    });
+  } catch (cause) {
+    await dependencies.release(captureId).catch(() => undefined);
+    throw cause;
+  }
   if (outcome._tag === "rejected") {
+    await dependencies.release(captureId).catch(() => undefined);
     throw new MarkdownPdfExportError(
       outcome.reason === "too-large" ? tooLargeMessage : outcome.detail,
     );
   }
-  return dependencies.publish({ captureId: prepared.expected.captureId, render: outcome.result });
+  return dependencies.publish({ captureId, render: outcome.result });
 }
 
 /** A short, readable summary of an export's limitations for a notice. */
