@@ -223,8 +223,8 @@ document page, and the client prints and publishes it as described in
   handle-bound reader as PDF (`documentExport/verifiedWorkspaceRead.ts`): a file or folder swapped
   for a link after its path check is refused, never read. On Windows, where no read can be bound
   to the checked file, a LaTeX export reads only the file open in the editor, at its saved
-  revision, and is refused if it needs any other project file; a Markdown file's images are read
-  by path and rechecked there. Pandoc availability is
+  revision, and is refused if it needs any other project file; a Markdown file's project images
+  are left out there with a note, as PDF leaves them out, and the rest of the file converts. Pandoc availability is
   explicit and first use requires installation; a missing tool is not silently replaced with a
   lower-fidelity converter. Unsupported content is reported as warnings.
 - **Markdown import.** Scient-marked Markdown v1 can reconstruct the readable message transcript

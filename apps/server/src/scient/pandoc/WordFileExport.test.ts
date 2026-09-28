@@ -412,7 +412,7 @@ describe("WordFileExport", () => {
     );
   });
   it.live(
-    "on Windows exports a single open LaTeX file, refuses other project files, and keeps Markdown images",
+    "on Windows exports a single open LaTeX file, refuses other project files, and leaves Markdown images out",
     () => {
       const seen: Array<WordConversionInput> = [];
       return run(
@@ -453,9 +453,12 @@ describe("WordFileExport", () => {
                 revision: yield* revisionOf("notes/report.md"),
               })
               .pipe(Effect.provideService(HostProcessPlatform, "win32"));
-            const image = seen[1]?.imageSnapshot?.get("plot.png");
-            expect(image?.ok).toBe(true);
-            if (image?.ok) expect(image.bytes).toEqual(PNG_BYTES);
+            // The Markdown file still exports; its image is left out, as in PDF on Windows.
+            expect(seen[1]?.bundle.markdown).toContain("# Report");
+            expect(seen[1]?.imageSnapshot?.get("plot.png")).toEqual({
+              ok: false,
+              refusal: "unverifiable-platform",
+            });
           }),
         { seen },
       );
