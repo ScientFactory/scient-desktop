@@ -369,10 +369,12 @@ describe("Markdown source read", () => {
     );
 
     // Without a non-blocking open this would hang on the pipe.
-    it.effect.skipIf(process.platform === "win32")(
+    it.effect(
       "refuses a pipe swapped in for the file without blocking on it",
       () =>
         Effect.gen(function* () {
+          // mkfifo exists only on the POSIX hosts that run this test.
+          if ((yield* HostProcessPlatform) === "win32") return;
           const contents = "# Report\n\nSaved text.\n";
           const root = yield* Effect.promise(() =>
             makeFixtureDirectory(fixtures, "scient-document-pdf-windows-fifo-"),
