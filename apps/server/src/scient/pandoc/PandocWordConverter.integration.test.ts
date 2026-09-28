@@ -40,6 +40,7 @@ import {
   readDocx,
 } from "./pandocTestSupport.ts";
 import { prepareLatexProject } from "./latexProjectPreparation.ts";
+import { planWordDiagrams } from "./wordDiagramCapture.ts";
 
 const binary = pandocBinaryForTests();
 const artifactDirectory = process.env.SCIENT_PANDOC_FIXTURE_OUT?.trim() || null;
@@ -97,6 +98,40 @@ const largeBundle = () =>
   });
 
 describe.skipIf(binary === null)("Word export with the real Pandoc (local integration)", () => {
+  it.live("embeds the captured image of CRLF and tab-indented Mermaid fences", () =>
+    withConverter(({ converter, directory }) =>
+      Effect.gen(function* () {
+        const markdown = [
+          "```mermaid",
+          "flowchart LR",
+          "\tA --> B",
+          "```",
+          "",
+          "- item",
+          "",
+          "  ```mermaid",
+          "  flowchart TD",
+          "  \tC\t-->\tD",
+          "  ```",
+          "",
+        ].join("\r\n");
+        const assets = planWordDiagrams(markdown, `sha256:${"a".repeat(64)}`).diagrams.map(
+          ({ id }) => bytesAsset({ id, bytes: PNG_BYTES, role: "rendered-diagram" }),
+        );
+        expect(assets).toHaveLength(2);
+        const { result, docx } = yield* convertTo(converter, directory, "mermaid-crlf-tabs", {
+          bundle: makeBundle({ markdown, assets }),
+        });
+        const xml = docx.text("word/document.xml");
+        expect(xml).not.toContain("Mermaid diagram source (image unavailable)");
+        expect(count(xml, /<pic:pic\b/gu)).toBe(2);
+        expect(result.warnings.map((warning) => warning.message).join("\n")).not.toContain(
+          "no rendered image",
+        );
+      }),
+    ),
+  );
+
   it.live("keeps text inside a complete raw HTML details block in the Word file", () =>
     withConverter(({ converter, directory }) =>
       Effect.gen(function* () {
@@ -186,7 +221,7 @@ describe.skipIf(binary === null)("Word export with the real Pandoc (local integr
             "\\graphicspath{{figures/}}",
             "\\begin{document}",
             "\\input{chapters/intro}",
-            "\\includegraphics{plot}",
+            "\\includegraphics[width=0.5\\textwidth]{plot}",
             "\\bibliography{refs}",
             "\\end{document}",
           ].join("\n"),
@@ -214,6 +249,9 @@ describe.skipIf(binary === null)("Word export with the real Pandoc (local integr
           [...output.docx.entries.keys()].filter((name) => name.startsWith("word/media/")),
         ).toHaveLength(1);
         expect(output.result.summary.embeddedImages).toBe(1);
+        // The source's width survives: half the text width, not the 2-pixel PNG's own size.
+        const extent = /<wp:extent cx="(\d+)"/u.exec(xml);
+        expect(Number(extent?.[1])).toBeGreaterThan(2_000_000);
       }),
     ),
   );
@@ -222,8 +260,9 @@ describe.skipIf(binary === null)("Word export with the real Pandoc (local integr
     () =>
       withConverter(({ converter, directory }) =>
         Effect.gen(function* () {
-          const paper = NodePath.join(directory, "paper");
-          NodeFS.mkdirSync(paper);
+          const project = NodePath.join(directory, "project");
+          const paper = NodePath.join(project, "paper");
+          NodeFS.mkdirSync(paper, { recursive: true });
           NodeFS.writeFileSync(NodePath.join(directory, "secret.tex"), "FAKE-SECRET-TEX");
           NodeFS.writeFileSync(
             NodePath.join(directory, "secret.bib"),
@@ -233,21 +272,21 @@ describe.skipIf(binary === null)("Word export with the real Pandoc (local integr
             NodePath.join(paper, "main.tex"),
             [
               "\\documentclass{article}\\begin{document}",
-              "\\input{../secret}",
-              "\\bibliography{../secret}",
+              "\\input{../../secret}",
+              "\\bibliography{../../secret}",
               "\\nocite{*}",
               "Safe text.\\end{document}",
             ].join("\n"),
           );
-          const latex = yield* prepareLatexProject(NodePath.join(paper, "main.tex"), directory);
+          const latex = yield* prepareLatexProject(NodePath.join(paper, "main.tex"), project);
           const output = yield* convertTo(converter, directory, "latex-secure", {
             bundle: makeBundle({ markdown: "" }),
             latex,
-            files: { baseDirectory: paper, allowRoots: [paper] },
+            files: { baseDirectory: paper, allowRoots: [project] },
           });
           const xml = output.docx.text("word/document.xml");
           expect(xml).toContain("Safe text");
-          expect(xml).toContain("Unresolved include");
+          expect(xml).toContain("Include outside the project folder");
           expect(xml).not.toContain("FAKE-SECRET-TEX");
           expect(xml).not.toContain("FAKE-SECRET-BIB");
         }),

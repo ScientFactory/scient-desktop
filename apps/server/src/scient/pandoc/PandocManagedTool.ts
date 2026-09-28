@@ -16,6 +16,11 @@
  * install clears whatever staging it left behind, so installing again always
  * recovers.
  *
+ * An installed Pandoc that later cannot be started (its files were removed or
+ * damaged) is reported by the conversion that tried to run it; its state file
+ * is removed so status stops calling it installed, and clients offer to
+ * reinstall until an install succeeds.
+ *
  * macOS: Node's download carries no quarantine attribute and `tar` adds none,
  * so Scient does not strip or assume anything about Gatekeeper; the upstream
  * binary is Developer ID signed with the hardened runtime.
@@ -74,6 +79,11 @@ export class PandocManagedTool extends Context.Service<
     readonly install: Effect.Effect<ScientPandocToolStatus>;
     /** How to run the installed Pandoc, or `null` when it is not installed. */
     readonly command: Effect.Effect<PandocCommand | null>;
+    /**
+     * A conversion could not start `command`: stop using that install and
+     * offer a reinstall. Ignored when a newer install has replaced it.
+     */
+    readonly discardUnstartable: (command: PandocCommand) => Effect.Effect<void>;
     /** Parent of every conversion's private scratch directory. */
     readonly scratchRoot: string;
   }
@@ -144,6 +154,8 @@ export const make = Effect.gen(function* () {
     updatedAtEpochMs: startedAt,
   });
   const startGate = yield* Semaphore.make(1);
+  /** The executable a conversion could not start, until an install replaces it. */
+  const unstartableRef = yield* Ref.make<string | null>(null);
 
   // Scratch directories are removed by their conversion's scope; one only
   // survives a process that died mid-conversion. Sweep those, leaving recent
@@ -183,18 +195,29 @@ export const make = Effect.gen(function* () {
   const phase = (next: ScientPandocInstallState["state"]) =>
     publish((current) => ({ ...current, state: next, failureReason: null }));
 
+  /** The recorded install, unless a conversion found that it does not start. */
+  const currentInstall = Effect.gen(function* () {
+    const installed = yield* readManagedPandocInstall().pipe(Effect.provideContext(installContext));
+    const unstartable = yield* Ref.get(unstartableRef);
+    return installed !== null && installed.executable === unstartable ? null : installed;
+  });
+
   const toolStatus = (install: ScientPandocInstallState) =>
-    readManagedPandocInstall().pipe(
-      Effect.provideContext(installContext),
-      Effect.map((installed): ScientPandocToolStatus => ({
+    Effect.gen(function* () {
+      const installed = yield* currentInstall;
+      const reinstallRequired = installed === null && (yield* Ref.get(unstartableRef)) !== null;
+      return {
         version: manifest.version,
+        license: manifest.license,
+        sourceUrl: manifest.sourceUrl,
         installed: installed !== null,
         canInstall: asset !== null,
         unavailableReason: lookup.supported ? null : lookup.message,
         downloadBytes: asset?.sizeBytes ?? null,
         install,
-      })),
-    );
+        ...(reinstallRequired ? { reinstallRequired: true } : {}),
+      } satisfies ScientPandocToolStatus;
+    });
 
   const openArtifact = (url: string) =>
     Effect.gen(function* () {
@@ -496,12 +519,16 @@ export const make = Effect.gen(function* () {
       Effect.timeoutOption(INSTALL_TIMEOUT),
       Effect.flatMap((finished) =>
         Option.isSome(finished)
-          ? publish(() => ({
-              state: "ready",
-              bytesReceived: null,
-              totalBytes: null,
-              failureReason: null,
-            }))
+          ? Ref.set(unstartableRef, null).pipe(
+              Effect.andThen(
+                publish(() => ({
+                  state: "ready",
+                  bytesReceived: null,
+                  totalBytes: null,
+                  failureReason: null,
+                })),
+              ),
+            )
           : failInstall("install-failed", "Installing Pandoc took too long and was stopped."),
       ),
       Effect.catch((cause) =>
@@ -559,18 +586,36 @@ export const make = Effect.gen(function* () {
     }),
   );
 
-  const command = readManagedPandocInstall().pipe(
-    Effect.provideContext(installContext),
+  const command = currentInstall.pipe(
     Effect.map((installed): PandocCommand | null =>
       installed === null ? null : { command: installed.executable, leadingArgs: [] },
     ),
   );
+
+  // Under the start gate so no install begins meanwhile; a running install
+  // replaces the record itself, so it is left to finish.
+  const discardUnstartable: PandocManagedTool["Service"]["discardUnstartable"] = (unstartable) =>
+    startGate.withPermits(1)(
+      Effect.gen(function* () {
+        if (ACTIVE_PHASES.has((yield* Ref.get(stateRef)).state)) return;
+        const installed = yield* currentInstall;
+        if (installed === null || installed.executable !== unstartable.command) return;
+        yield* Ref.set(unstartableRef, installed.executable);
+        yield* Effect.logWarning("scient pandoc could not be started; its install was discarded", {
+          root: installed.record.root,
+        });
+        // The state file is the install's commit point; without it the next
+        // start of this server does not try the broken install either.
+        yield* fileSystem.remove(paths.statePath, { force: true }).pipe(Effect.ignoreCause());
+      }),
+    );
 
   return PandocManagedTool.of({
     canInstall: asset !== null,
     status: Ref.get(stateRef).pipe(Effect.flatMap(toolStatus)),
     install,
     command,
+    discardUnstartable,
     scratchRoot: paths.scratchRoot,
   });
 });

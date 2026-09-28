@@ -345,11 +345,25 @@ describe("WordFileExport", () => {
         Effect.gen(function* () {
           NodeFS.writeFileSync(
             NodePath.join(project, "notes", "main.tex"),
-            "\\begin{document}\\input{section}\\includegraphics{plot.png}\\end{document}",
+            [
+              "\\begin{document}",
+              "\\input{section}",
+              "\\includegraphics{plot.png}",
+              "\\input{../shared/methods}",
+              "\\includegraphics{../figures/shared.png}",
+              "\\input{../../outside}",
+              "\\end{document}",
+            ].join(""),
           );
           NodeFS.writeFileSync(NodePath.join(project, "notes", "plot.png"), PNG_BYTES);
           NodeFS.writeFileSync(NodePath.join(project, "notes", "section.tex"), "A nested section.");
           NodeFS.writeFileSync(NodePath.join(project, "notes", "unrelated.tex"), "Unrelated.");
+          // Elsewhere in the same project, and outside it.
+          NodeFS.mkdirSync(NodePath.join(project, "shared"));
+          NodeFS.writeFileSync(NodePath.join(project, "shared", "methods.tex"), "Shared methods.");
+          NodeFS.mkdirSync(NodePath.join(project, "figures"));
+          NodeFS.writeFileSync(NodePath.join(project, "figures", "shared.png"), PNG_BYTES_ALT);
+          NodeFS.writeFileSync(NodePath.join(project, "..", "outside.tex"), "FAKE-SECRET-OUTSIDE");
           const revision = yield* revisionOf("notes/main.tex");
           const produced = yield* service.exportLatex({
             cwd: project,
@@ -359,11 +373,17 @@ describe("WordFileExport", () => {
           });
           expect(produced.fileName).toBe("main.docx");
           expect(seen[0]?.latex?.source).toContain("A nested section.");
+          expect(seen[0]?.latex?.source).toContain("Shared methods.");
+          expect(seen[0]?.latex?.source).toContain("[Include outside the project folder]");
+          expect(seen[0]?.latex?.source).not.toContain("FAKE-SECRET-OUTSIDE");
           const figure = seen[0]?.imageSnapshot?.get("plot.png");
           expect(figure?.ok).toBe(true);
           if (figure?.ok) expect(figure.bytes).toEqual(PNG_BYTES);
+          const shared = seen[0]?.imageSnapshot?.get("../figures/shared.png");
+          expect(shared?.ok).toBe(true);
+          if (shared?.ok) expect(shared.bytes).toEqual(PNG_BYTES_ALT);
           expect(NodeFS.realpathSync(seen[0]!.files!.allowRoots[0]!)).toBe(
-            NodeFS.realpathSync(NodePath.join(project, "notes")),
+            NodeFS.realpathSync(project),
           );
           const changed = yield* service
             .exportLatex({

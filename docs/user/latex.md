@@ -32,14 +32,19 @@ visual quality matters.
 Save the source, choose the document root in the LaTeX toolbar if Scient has not
 found one, then select **Export ▸ Word**. Scient converts the selected LaTeX
 document to a `.docx` file; the first export offers to install Pandoc if it is
-not yet available. The export uses the root file and literal `\input`,
-`\include`, and `\subfile` references inside the root document's directory.
-Local bibliography files and common image formats are included when available.
+not yet available. The export uses the root file and its literal `\input`,
+`\include`, and `\subfile` references. As in LaTeX, these resolve from the root
+file's folder, and they may point anywhere inside the same project: for example,
+`paper/main.tex` can include `../shared/methods.tex`. Local bibliography files
+and common image formats are included the same way, and a figure keeps the
+width or height the source gave it.
 
-Missing, computed, or out-of-project includes and figures become visible
-placeholders with conversion notes. PDF and EPS figures are not rasterized for
-Word. Equation numbering, references, layout commands, and some custom macros
-may change during conversion; review the saved Word document before sharing it.
+Files outside the project folder, including links that lead outside it, are
+never read: they become placeholders marked "outside the project folder", with a
+conversion note. Missing or computed includes and figures also become visible
+placeholders. PDF and EPS figures are not rasterized for Word. Equation
+numbering, references, layout commands, and some custom macros may change
+during conversion; review the saved Word document before sharing it.
 
 ## Move between source and PDF
 

@@ -13,6 +13,8 @@ export type PandocToolViewKind =
   | "loading"
   | "ready"
   | "offer"
+  /** Pandoc was installed but could not be started; installing again replaces it. */
+  | "reinstall"
   | "installing"
   | "failed"
   | "unavailable";
@@ -62,6 +64,21 @@ function installingDetail(install: ScientPandocInstallState): string {
   }
 }
 
+/** "Pandoc 3.11 · GPL-2.0-or-later", with the release's source when the server names it. */
+export function pandocReleaseNotice(status: ScientPandocToolStatus | null): {
+  readonly release: string;
+  readonly label: string;
+  readonly sourceUrl: string | null;
+} | null {
+  if (status === null) return null;
+  const release = `Pandoc ${status.version}`;
+  return {
+    release,
+    label: status.license === undefined ? release : `${release} · ${status.license}`,
+    sourceUrl: status.sourceUrl ?? null,
+  };
+}
+
 export function pandocToolView(input: {
   readonly status: ScientPandocToolStatus | null;
   /** This client asked for an install and has not been answered yet. */
@@ -108,6 +125,14 @@ export function pandocToolView(input: {
       kind: "failed",
       detail: FAILURE_DETAIL[status.install.failureReason],
       actionLabel: "Try again",
+      busy: false,
+    };
+  }
+  if (status.reinstallRequired === true) {
+    return {
+      kind: "reinstall",
+      detail: "Pandoc could not be started. Reinstall it to export to Word.",
+      actionLabel: `Reinstall Pandoc${size}`,
       busy: false,
     };
   }

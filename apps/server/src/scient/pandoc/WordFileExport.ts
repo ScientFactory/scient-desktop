@@ -308,9 +308,10 @@ const make = Effect.gen(function* () {
           }),
       ),
     );
+    // Figures resolve from the root file's folder, anywhere inside the project.
     const imageSnapshot = yield* captureWordImages(prepared.imageReferences, {
       baseDirectory: prepared.baseDirectory,
-      allowRoots: [prepared.baseDirectory],
+      allowRoots: [root],
     }).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
@@ -369,7 +370,7 @@ const make = Effect.gen(function* () {
         latex: prepared,
         imageSnapshot,
         outputPath: reserved.path,
-        files: { baseDirectory: prepared.baseDirectory, allowRoots: [prepared.baseDirectory] },
+        files: { baseDirectory: prepared.baseDirectory, allowRoots: [root] },
       })
       .pipe(
         Effect.catchTag("WordConversionError", (error) =>

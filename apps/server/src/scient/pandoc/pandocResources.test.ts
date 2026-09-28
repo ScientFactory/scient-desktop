@@ -108,7 +108,7 @@ describe("securePandocDocument", () => {
         expect(report.embeddedImages).toBe(1);
         expect(report.placeholders).toBe(1);
         expect(report.warnings.map((warning) => warning.message).join("\n")).toContain(
-          "not in the source snapshot; save and retry",
+          "not found in the project folder",
         );
       }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
@@ -298,6 +298,43 @@ describe("securePandocDocument", () => {
     }),
   );
 
+  it.effect("keeps an embedded image's width and height and drops its other attributes", () =>
+    Effect.gen(function* () {
+      const sized = (pairs: ReadonlyArray<readonly [string, string]>): PandocNode => ({
+        t: "Image",
+        c: [["figure-1", ["wide"], pairs], [str("figure")], ["scient-asset:photo", "Title"]],
+      });
+      const document = doc([
+        para([
+          sized([
+            ["width", "50%"],
+            ["height", "3.5cm"],
+            ["style", "border: 1px"],
+          ]),
+        ]),
+        para([
+          sized([
+            ["width", "calc(100% - 1px)"],
+            ["height", "120"],
+          ]),
+        ]),
+      ]);
+      yield* secure(document, { assets: [bytesAsset({ id: "photo", bytes: PNG_BYTES })] });
+      const attributes = (index: number) => (firstInline(document, index).c as Array<unknown>)[0];
+      // Word ignores percentages, so a share of the 453.5 pt text width becomes points.
+      expect(attributes(0)).toEqual([
+        "",
+        [],
+        [
+          ["width", "226.8pt"],
+          ["height", "3.5cm"],
+        ],
+      ]);
+      expect(attributes(1)).toEqual(["", [], [["height", "120"]]]);
+      expect(((firstInline(document, 0).c as Array<unknown>)[2] as Array<string>)[1]).toBe("Title");
+    }),
+  );
+
   it.effect("swaps an SVG asset for its PNG rendering and reports one without", () =>
     Effect.gen(function* () {
       const document = doc([para([image("scient-asset:svg")]), para([image("scient-asset:lone")])]);
@@ -346,7 +383,7 @@ describe("securePandocDocument", () => {
           "figures/vector.svg",
           `data:image/png;base64,${Buffer.from(PNG_BYTES_ALT).toString("base64")}`,
         ],
-        ["../home/notes.txt", "outside the document"],
+        ["../home/notes.txt", "outside the project folder"],
         [NodePath.join(home, "notes.txt"), "absolute paths"],
         ["C:\\Users\\someone\\notes.txt", "absolute paths"],
         ["\\\\server\\share\\x.png", "absolute paths"],

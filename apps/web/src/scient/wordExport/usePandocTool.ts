@@ -14,8 +14,14 @@ function errorMessage(cause: unknown, fallback: string): string {
 export interface PandocToolController {
   readonly status: ScientPandocToolStatus | null;
   readonly view: PandocToolView;
-  /** Starts the install, or retries reading the status when it could not be read. */
+  /** Starts the install or reinstall, or retries reading the status when it could not be read. */
   readonly act: () => void;
+  /**
+   * Reads the status again. Call it after a Word export fails: the server
+   * may have found that its Pandoc does not start, which turns the view into
+   * the reinstall offer.
+   */
+  readonly refresh: () => void;
 }
 
 /**
@@ -81,5 +87,7 @@ export function usePandocTool(
     );
   }, [accept, environmentId, error, read, requesting, status]);
 
-  return { status, view: pandocToolView({ status, requesting, error }), act };
+  const refresh = useCallback(() => void read(), [read]);
+
+  return { status, view: pandocToolView({ status, requesting, error }), act, refresh };
 }

@@ -56,6 +56,25 @@ describe("Word export contracts", () => {
     ).toThrow();
   });
 
+  it("reads the reinstall flag when present and accepts servers that omit it", () => {
+    const status = {
+      version: "3.11",
+      installed: false,
+      canInstall: true,
+      unavailableReason: null,
+      downloadBytes: 41_832_712,
+      install: {
+        state: "idle",
+        bytesReceived: null,
+        totalBytes: null,
+        failureReason: null,
+        updatedAtEpochMs: 1,
+      },
+    };
+    expect(decodeToolStatus(status).reinstallRequired).toBeUndefined();
+    expect(decodeToolStatus({ ...status, reinstallRequired: true }).reinstallRequired).toBe(true);
+  });
+
   it("requires the editor's revision to export a project file", () => {
     expect(() =>
       decodeFileRequest({

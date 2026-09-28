@@ -2,11 +2,13 @@
  * Expands a downloaded Pandoc archive into a directory with the system `tar`.
  *
  * The macOS and Windows releases are zip files and the Linux release is a
- * gzipped tarball. bsdtar (macOS `tar`, and `%SystemRoot%\System32\tar.exe` on
- * Windows 10+) reads zip files, and GNU tar reads the Linux tarball, so no
- * archive dependency is needed. On Windows the unpacker is pinned to the system
- * bsdtar by absolute path, as the LaTeX installer is, because a GNU tar placed
- * on PATH by Git for Windows or MSYS2 cannot read zip files.
+ * gzipped tarball. bsdtar (macOS `/usr/bin/tar`, and
+ * `%SystemRoot%\System32\tar.exe` on Windows 10+) reads zip files, and GNU tar
+ * reads the Linux tarball, so no archive dependency is needed. Where the
+ * archive is a zip the unpacker is pinned to the system bsdtar by absolute
+ * path, as the LaTeX installer is on Windows, because a GNU tar earlier on PATH
+ * (Homebrew's on macOS, Git for Windows' or MSYS2's on Windows) cannot read zip
+ * files.
  *
  * The archive has already passed its pinned digest check when this runs.
  */
@@ -56,12 +58,23 @@ function pandocUnpackArguments(input: PandocArchiveUnpackInput): ReadonlyArray<s
   return ["-x", "-f", input.archivePath, "-C", input.destination];
 }
 
-const make = Effect.gen(function* () {
+/** The `tar` that reads this platform's Pandoc release; see the module comment. */
+export function pandocTarCommand(
+  platform: NodeJS.Platform,
+  environment: NodeJS.ProcessEnv,
+): string {
+  if (platform === "win32") return windowsSystemTarPath(environment);
+  if (platform === "darwin") return "/usr/bin/tar";
+  return "tar";
+}
+
+export const make = Effect.gen(function* () {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const fileSystem = yield* FileSystem.FileSystem;
   const platform = yield* HostProcessPlatform;
   const environment = yield* HostProcessEnvironment;
-  const command = platform === "win32" ? windowsSystemTarPath(environment) : "tar";
+  const command = pandocTarCommand(platform, environment);
+  const pinned = command !== "tar";
   const unavailable = () =>
     new PandocArchiveUnpackError({
       reason: "unpacker-unavailable",
@@ -70,7 +83,7 @@ const make = Effect.gen(function* () {
 
   const unpack: PandocArchiveUnpacker["Service"]["unpack"] = (input) =>
     Effect.gen(function* () {
-      if (platform === "win32") {
+      if (pinned) {
         const present = yield* fileSystem.exists(command).pipe(Effect.orElseSucceed(() => false));
         if (!present) return yield* unavailable();
       }

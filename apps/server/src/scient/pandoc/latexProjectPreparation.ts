@@ -1,4 +1,12 @@
-/** Bounded structural preparation before Pandoc's sandboxed LaTeX reader. */
+/**
+ * Bounded structural preparation before Pandoc's sandboxed LaTeX reader.
+ *
+ * Includes, figures, and bibliographies resolve relative to the root `.tex`
+ * file's folder, as LaTeX resolves them, and are read only when they are
+ * inside the Scient project the document belongs to, both as written and
+ * after symbolic links are followed. Anything else becomes a visible
+ * placeholder and a note.
+ */
 import { parse } from "@unified-latex/unified-latex-util-parse";
 import type { DocumentWarning } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -114,6 +122,9 @@ export class LatexPreparationError extends Schema.TaggedError<LatexPreparationEr
   { message: Schema.String },
 ) {}
 
+/** Why a named file was not read. */
+type Unresolved = "outside-project" | "unavailable";
+
 export const prepareLatexProject = Effect.fn("scient.pandoc.prepareLatexProject")(function* (
   rootFile: string,
   workspaceRoot: string,
@@ -155,18 +166,30 @@ export const prepareLatexProject = Effect.fn("scient.pandoc.prepareLatexProject"
   };
   const resolve = (target: string, directory: string, extensions: ReadonlyArray<string>) =>
     Effect.gen(function* () {
-      if (!SAFE_TARGET.test(target) || path.isAbsolute(target) || /^[A-Za-z]:/u.test(target))
-        return null;
+      if (!SAFE_TARGET.test(target)) return { ok: false, reason: "unavailable" } as const;
+      if (path.isAbsolute(target) || /^[A-Za-z]:/u.test(target)) {
+        return { ok: false, reason: "outside-project" } as const;
+      }
+      let reason: Unresolved = "unavailable";
       for (const ext of extensions) {
         const name = ext && !target.toLowerCase().endsWith(ext) ? `${target}${ext}` : target;
         const candidate = path.resolve(directory, name);
-        if (!inside(path, root, candidate)) continue;
+        if (!inside(path, workspace, candidate)) {
+          reason = "outside-project";
+          continue;
+        }
         const real = yield* fs.realPath(candidate).pipe(Effect.orElseSucceed(() => null));
-        if (real === null || !inside(path, realRoot, real)) continue;
+        if (real === null) continue;
+        if (!inside(path, realWorkspace, real)) {
+          reason = "outside-project";
+          continue;
+        }
         const stat = yield* fs.stat(real).pipe(Effect.orElseSucceed(() => null));
-        if (stat?.type === "File") return { real, lexical: candidate, size: Number(stat.size) };
+        if (stat?.type === "File") {
+          return { ok: true, real, lexical: candidate, size: Number(stat.size) } as const;
+        }
       }
-      return null;
+      return { ok: false, reason } as const;
     });
 
   const flatten = (
@@ -243,8 +266,13 @@ export const prepareLatexProject = Effect.fn("scient.pandoc.prepareLatexProject"
               .map((part) => part.trim())
               .slice(0, 16)) {
               const result = yield* resolve(target, baseDirectory, [".bib", ""]);
-              if (
-                result &&
+              if (!result.ok) {
+                warn(
+                  result.reason === "outside-project"
+                    ? "A bibliography outside the project folder was omitted."
+                    : "A bibliography that could not be found was omitted.",
+                );
+              } else if (
                 result.size <= MAX_BIB_BYTES &&
                 bibliography.length < 16 &&
                 bibliographyBytes + result.size <= MAX_BIB_BYTES
@@ -255,7 +283,7 @@ export const prepareLatexProject = Effect.fn("scient.pandoc.prepareLatexProject"
                   bibliography.push({ contents });
                   bibliographyBytes += bytes;
                 } else warn("A bibliography changed or exceeded the 4 MB limit and was omitted.");
-              } else warn("A bibliography outside the project, missing, or over 4 MB was omitted.");
+              } else warn("A bibliography over the 4 MB or 16-file limit was omitted.");
             }
             edits.push({ start: macro.start, end: arg.end, text: "" });
           } else {
@@ -266,7 +294,11 @@ export const prepareLatexProject = Effect.fn("scient.pandoc.prepareLatexProject"
         }
         if (macro.name === "includegraphics") {
           const target = arg?.text.trim() ?? "";
-          let resolved: { real: string; lexical: string; size: number } | null = null;
+          let resolved: Effect.Success<ReturnType<typeof resolve>> = {
+            ok: false,
+            reason: "unavailable",
+          };
+          let outside = false;
           for (const directory of graphicPaths) {
             resolved = yield* resolve(target, path.resolve(baseDirectory, directory), [
               "",
@@ -276,18 +308,28 @@ export const prepareLatexProject = Effect.fn("scient.pandoc.prepareLatexProject"
               ".gif",
               ".svg",
             ]);
-            if (resolved) break;
+            if (resolved.ok) break;
+            outside ||= resolved.reason === "outside-project";
           }
-          if (arg && resolved && resolved.size <= 25 * 1024 * 1024) {
+          if (arg && resolved.ok && resolved.size <= 25 * 1024 * 1024) {
             const relative = path
               .relative(baseDirectory, resolved.lexical)
               .split(path.sep)
               .join("/");
             imageReferences.add(relative);
             edits.push({ start: argumentOffset, end: arg.end, text: `{${relative}}` });
+          } else if (outside) {
+            warn(
+              "A LaTeX figure outside the project folder was left out; a placeholder was inserted.",
+            );
+            edits.push({
+              start: macro.start,
+              end: arg?.end ?? macro.end,
+              text: "\\emph{[Figure outside the project folder]}",
+            });
           } else {
             warn(
-              "A LaTeX figure was unavailable or outside the project; a placeholder was inserted.",
+              "A LaTeX figure was missing, too large, or not named literally; a placeholder was inserted.",
             );
             edits.push({
               start: macro.start,
@@ -305,10 +347,17 @@ export const prepareLatexProject = Effect.fn("scient.pandoc.prepareLatexProject"
           const bare = /^[ \t]*[^\s\\{}%]+/u.exec(source.slice(end));
           if (bare) end += bare[0].length;
         }
-        if (!resolved) {
+        if (!resolved.ok && resolved.reason === "outside-project") {
           warn(
-            "A LaTeX include was missing, nonliteral, or outside the project; a placeholder was inserted.",
+            "A LaTeX include outside the project folder was left out; a placeholder was inserted.",
           );
+          edits.push({
+            start: macro.start,
+            end,
+            text: "\\emph{[Include outside the project folder]}",
+          });
+        } else if (!resolved.ok) {
+          warn("A LaTeX include was missing or not named literally; a placeholder was inserted.");
           edits.push({ start: macro.start, end, text: "\\emph{[Unresolved include]}" });
         } else {
           const nested = yield* flatten(
@@ -327,7 +376,7 @@ export const prepareLatexProject = Effect.fn("scient.pandoc.prepareLatexProject"
     });
 
   const resolvedRoot = yield* resolve(path.relative(root, rootFile), root, [""]);
-  if (!resolvedRoot)
+  if (!resolvedRoot.ok)
     return yield* new LatexPreparationError({
       message: "The selected LaTeX root is outside the project or unreadable.",
     });

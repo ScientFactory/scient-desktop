@@ -202,7 +202,9 @@ type DocumentBundle = {
 Preparation keeps source forms and adds derived assets rather than replacing one with the other:
 
 - **Mermaid** stays as a fenced block for Markdown output; its rendered image is added as an asset
-  for Word.
+  for Word. The browser renders it in a frame that cannot fetch anything; a diagram that needs an
+  outside resource, or fails to render, appears in Word as its labelled source with a warning, and
+  the export continues.
 - **Math** stays as TeX, so the PDF page renders it with KaTeX and Pandoc can produce editable Word
   equations.
 - **Images and attachments** are resolved to bundle assets with explicit paths; references that only
@@ -328,6 +330,9 @@ or paid for:
   exchanging document files through a command-line interface is the standard arrangement.
 - **If Scient downloads Pandoc on first use** from the official release, as it does TinyTeX, Scient
   does not ship Pandoc in its installer; it still records the notice and the matching source link.
+  The licence list carries Pandoc's `COPYRIGHT` and GPL text for the pinned release, and Settings ▸
+  Word export shows "Pandoc 3.11 · GPL-2.0-or-later · Source code", linking that release's exact
+  source archive.
 - **Release gate:** before the first release that installs Pandoc, a qualified licensing review of the
   exact delivery arrangement and a written source-delivery plan (which release, where its source is
   offered, how notices reach the user).

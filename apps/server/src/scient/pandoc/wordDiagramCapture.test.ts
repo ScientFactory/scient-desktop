@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 
+import { mermaidDiagramAssetId } from "./pandocPreparation.ts";
 import { makeBundle, PNG_BYTES } from "./pandocTestSupport.ts";
 import { capturedWordDiagramAssets, planWordDiagrams } from "./wordDiagramCapture.ts";
 
@@ -23,6 +24,26 @@ describe("Word diagram capture", () => {
     expect(assets).toHaveLength(1);
     expect(assets[0]?.role).toBe("rendered-diagram");
     expect(assets[0]?.content._tag).toBe("bytes");
+  });
+
+  it("names CRLF and tab-indented fences the way the Pandoc read pass returns them", () => {
+    const crlf = ["```mermaid", "flowchart LR", "\tA --> B", "```", ""].join("\r\n");
+    const plan = planWordDiagrams(crlf, digest);
+    expect(plan.diagrams).toHaveLength(1);
+    // Pandoc strips carriage returns and, with --preserve-tabs, keeps the tab.
+    expect(plan.diagrams[0]!.id).toBe(mermaidDiagramAssetId("flowchart LR\n\tA --> B"));
+    const assets = capturedWordDiagramAssets(makeBundle({ markdown: crlf }), digest, {
+      sourceDigest: digest,
+      diagrams: [
+        {
+          id: plan.diagrams[0]!.id,
+          result: { _tag: "png", base64: Buffer.from(PNG_BYTES).toString("base64") },
+        },
+      ],
+    });
+    expect(assets.map((asset) => asset.id)).toEqual([
+      mermaidDiagramAssetId("flowchart LR\n\tA --> B"),
+    ]);
   });
 
   it("retains source fallback for callers without a capture and for actual render failures", () => {
