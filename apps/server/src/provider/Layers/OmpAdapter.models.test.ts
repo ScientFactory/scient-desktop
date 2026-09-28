@@ -69,6 +69,7 @@ const makeFakeOmp = (input: {
   readonly maxFrameBytes?: number;
   readonly modelsError?: string;
   readonly modelsResponse?: unknown;
+  readonly reportThinkingLevel?: () => boolean;
   /** What OMP really applies per `provider/id`, when it differs from the advertised efforts. */
   readonly clamp?: Readonly<Record<string, Readonly<Record<string, string>>>>;
   readonly setModelError?: (provider: string, modelId: string) => string | undefined;
@@ -158,7 +159,9 @@ const makeFakeOmp = (input: {
             NodeFS.writeFileSync(sessionFile, "{}\n");
             return respond(frame, {
               model: state.model,
-              thinkingLevel: state.thinkingLevel,
+              ...(input.reportThinkingLevel?.() === false
+                ? {}
+                : { thinkingLevel: state.thinkingLevel }),
               sessionFile,
               sessionId: "models-session",
               isStreaming: false,
@@ -599,6 +602,47 @@ describe("Oh My Pi model and reasoning selection", () => {
 });
 
 describe("Oh My Pi selection restore", () => {
+  for (const recoverable of [true, false]) {
+    it.effect(
+      `an initially unknown reasoning level ${recoverable ? "is refreshed before rollback" : "prevents selection mutation"}`,
+      () => {
+        let reportLevel = false;
+        const fake = makeFakeOmp({
+          models: [
+            reasoning("vendor", "a", ["low", "high"], "low"),
+            reasoning("vendor", "b", ["low", "high"], "high"),
+          ],
+          initial: { provider: "vendor", id: "a", level: "high" },
+          reportThinkingLevel: () => reportLevel,
+          setThinkingLevelError: (level) =>
+            level === "low" ? "Thinking level refused" : undefined,
+        });
+        return withAdapter(`unknown-level-${recoverable}`, fake, ({ adapter, threadId }) =>
+          Effect.gen(function* () {
+            reportLevel = recoverable;
+            const failed = yield* adapter
+              .sendTurn({ threadId, input: "x", modelSelection: selection("vendor/b", "low") })
+              .pipe(Effect.flip);
+            expect(failed.message).toContain(
+              recoverable ? "Thinking level refused" : "current reasoning level",
+            );
+            expect(fake.state.model).toEqual({ provider: "vendor", id: "a" });
+            expect(fake.state.thinkingLevel).toBe("high");
+            expect(fake.state.prompts).toHaveLength(0);
+            if (!recoverable) {
+              expect(fake.state.log).toEqual([]);
+              markTurnDispatchAttempted(failed);
+              expect(classifyTurnDispatchFailure(Cause.fail(failed))).toBe("notSent");
+              // An unavailable level must not block ordinary messages.
+              yield* adapter.sendTurn({ threadId, input: "unchanged selection" });
+              expect(fake.state.prompts).toHaveLength(1);
+            }
+          }),
+        );
+      },
+    );
+  }
+
   it.effect("R2-F3 a refused restore keeps OMP's real model, so the next send re-selects", () => {
     let refuseRestore = true;
     const fake = makeFakeOmp({

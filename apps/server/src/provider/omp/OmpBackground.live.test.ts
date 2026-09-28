@@ -48,6 +48,7 @@ describe.runIf(ompQualifyBinary)("real OMP background continuation", () => {
             const pidFile = NodePath.join(root, "job-pid");
             const doneFile = NodePath.join(root, "job-done");
             let calls = 0;
+            const requests: Array<string> = [];
             // The message's reply is held until the job has finished, so its
             // result reaches OMP while that reply's run is still open.
             let openAnswer: () => void = () => {};
@@ -55,8 +56,13 @@ describe.runIf(ompQualifyBinary)("real OMP background continuation", () => {
               openAnswer = resolve;
             });
             const server = NodeHttp.createServer((request, response) => {
-              request.resume();
+              let body = "";
+              request.setEncoding("utf8");
+              request.on("data", (chunk: string) => {
+                body += chunk;
+              });
               request.on("end", () => {
+                requests.push(body);
                 calls++;
                 const delta = (value: unknown, finish: string | null = null) =>
                   response.write(
@@ -227,21 +233,21 @@ describe.runIf(ompQualifyBinary)("real OMP background continuation", () => {
               expect((yield* adapter.listSessions())[0]?.activeTurnId).toBe(first.turnId);
               expect(events.some((event) => event.type === "turn.completed")).toBe(false);
             }
-            if (mode === "message" && !reportsSettlement) {
-              // Before 18.3.1 the first turn stays open across the pause, so
-              // a message steers it; there is no pending-work state to test.
-              yield* adapter.stopAll();
-              return;
-            }
             if (mode === "message") {
               const second = yield* adapter.sendTurn({ threadId, input: "What is the answer?" });
-              expect(second.turnId).not.toBe(first.turnId);
+              if (reportsSettlement) expect(second.turnId).not.toBe(first.turnId);
+              else {
+                // 18.2.8 keeps the first turn open: the message must steer it.
+                expect(second.turnId).toBe(first.turnId);
+                NodeFS.writeFileSync(releaseFile, "done");
+              }
               // The stub's request handler counts calls.
               for (let attempt = 0; attempt < 200; attempt++) {
                 if (calls >= 3) break;
                 yield* Effect.sleep("50 millis").pipe(TestClock.withLive);
               }
               expect(calls).toBe(3);
+              expect(requests[2]).toContain("What is the answer?");
               NodeFS.writeFileSync(releaseFile, "done");
               // OMP's shell can outlive the job, so the job marks its own end.
               for (let attempt = 0; attempt < 200 && !NodeFS.existsSync(doneFile); attempt++) {

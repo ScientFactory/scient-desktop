@@ -2246,6 +2246,25 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
               mimeType: image.mimeType,
             });
           }
+          // Read the native selection before mutating it: a model switch can
+          // reset reasoning even when no level was explicitly requested.
+          if (modelChange || levelChange) {
+            const state = yield* readState(ctx).pipe(
+              Effect.tapError((failure) => Effect.sync(() => markTurnDispatchNotSent(failure))),
+            );
+            if (state.model && ompThinkingLevel(state.thinkingLevel) === undefined) {
+              const failure = validation(
+                "sendTurn",
+                "Oh My Pi did not report its current reasoning level. Retry the model change, or send with the current selection; nothing was sent.",
+              );
+              markTurnDispatchNotSent(failure);
+              return yield* failure;
+            }
+            ctx.model = state.model
+              ? encodeOmpModelSlug(state.model.provider, state.model.id)
+              : undefined;
+            ctx.thinkingLevel = state.thinkingLevel;
+          }
           // Validation passed: apply the selection. A later failure restores
           // the previous model and level.
           const restoreSelection =
