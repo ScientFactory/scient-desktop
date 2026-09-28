@@ -197,9 +197,12 @@ document page, and the client prints and publishes it as described in
 ## Other export and conversion paths
 
 - **Portable `.scic`.** The server writes a versioned ZIP with a canonical conversation snapshot,
-  Markdown reading copy, manifest, and included attachments. Before writing, the writer decodes
-  its own manifest and checks every entry path with the reader's rules; a package that would fail
-  them is an internal error, never a file handed to the user. A receiver previews and validates
+  Markdown reading copy, manifest, and included attachments. A turn whose messages return after
+  another turn continues as a new turn (`<turnId>~2`, …) in the package, with its other records
+  joining the run they were recorded in, because the importer requires each turn to be contiguous.
+  Before writing, the writer decodes its own manifest, checks every entry path with the reader's
+  rules, and runs the reader's conversation validation (`ValidatedConversationImport`); a package
+  that would fail them is an internal error, never a file handed to the user. A receiver previews and validates
   structure, digests, size bounds, and omissions before choosing a local project and provider.
   Confirmation creates a new independent thread with fresh local IDs and explicit import
   provenance. Provider sessions, pending actions, credentials, and workspace files do not transfer;

@@ -311,6 +311,101 @@ describe("naming .scic attachments", () => {
     }),
   );
 
+  it.effect("splits a turn that returns after another turn so the package imports", () =>
+    Effect.gen(function* () {
+      const [user, assistant] = capturedSnapshot.messages;
+      const at = (minute: number) => `2026-09-27T14:${String(minute).padStart(2, "0")}:00.000Z`;
+      const reply = (n: number, turnId: string, text: string, minute: number) => ({
+        ...assistant!,
+        n,
+        id: `message-${n}` as never,
+        turnId: turnId as never,
+        text,
+        createdAt: at(minute),
+        updatedAt: at(minute),
+      });
+      const snapshot = {
+        ...capturedSnapshot,
+        selection: { workLog: false, reasoning: true, throughMessageId: null },
+        messages: [
+          {
+            ...user!,
+            text: "Start",
+            attachments: [],
+            references: [],
+            createdAt: at(1),
+            updatedAt: at(1),
+          },
+          reply(2, "turn-1", "First", 2),
+          reply(3, "turn-2", "Other", 3),
+          reply(4, "turn-1", "Back", 4),
+        ],
+        reasoning: [
+          {
+            id: "reasoning-1" as never,
+            turnId: "turn-1" as never,
+            createdAt: at(2),
+            updatedAt: at(2),
+            text: "Early",
+          },
+          {
+            id: "reasoning-2" as never,
+            turnId: "turn-1" as never,
+            createdAt: at(5),
+            updatedAt: at(5),
+            text: "Late",
+          },
+        ],
+        questionAnswers: [
+          {
+            id: "request-1",
+            turnId: "turn-1" as never,
+            createdAt: at(4),
+            items: [{ question: "Which?", answer: "This", attachments: [] }],
+          },
+        ],
+        warnings: [],
+      };
+      const prepared = preparePackage(snapshot);
+      assert(prepared._tag === "ok", prepared._tag);
+      const read = yield* readPrepared(prepared.value.files);
+      assert(Exit.isSuccess(read), String(Exit.isFailure(read) ? read.cause : ""));
+      const imported = read.value.snapshot;
+      assert.deepStrictEqual(
+        imported.messages.map((message): string | null => message.turnId),
+        [null, "turn-1", "turn-2", "turn-1~2"],
+      );
+      assert.deepStrictEqual(
+        imported.reasoning.map((reasoning): string | null => reasoning.turnId),
+        ["turn-1", "turn-1~2"],
+      );
+      assert.deepStrictEqual(
+        imported.questionAnswers.map((answer): string | null => answer.turnId),
+        ["turn-1~2"],
+      );
+    }),
+  );
+
+  it("runs the reader's full conversation validation before writing", () => {
+    // Reasoning present although it was not selected: the importer refuses it.
+    const prepared = preparePackage({
+      ...capturedSnapshot,
+      reasoning: [
+        {
+          id: "reasoning-1" as never,
+          turnId: "turn-1" as never,
+          createdAt: "2026-09-27T14:05:30.000Z",
+          updatedAt: "2026-09-27T14:05:30.000Z",
+          text: "Unselected",
+        },
+      ],
+    });
+    assert.deepStrictEqual(prepared, {
+      _tag: "invalid-package",
+      detail: "The conversation does not pass import validation.",
+    });
+  });
+
   it("refuses to hand out a package its own reader would reject", () => {
     // A redaction that makes an attachment name longer than a manifest name may be.
     const prepared = preparePackage(capturedSnapshot, (text) =>

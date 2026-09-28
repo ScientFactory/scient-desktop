@@ -20,6 +20,7 @@ import {
   SCIC_MEDIA_TYPE,
   type ConversationAttachment,
   type ConversationImportResourceId,
+  TurnId,
   type ConversationSnapshotV1,
   type ConversationSnapshotWarning,
   type DocumentWarning,
@@ -35,7 +36,11 @@ import {
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 
-import { conversationContentDigest } from "../conversationImport/ConversationImporter.ts";
+import {
+  ValidatedConversationImport,
+  conversationContentDigest,
+  conversationImportOmissions,
+} from "../conversationImport/ConversationImporter.ts";
 import {
   SCIC_COMPRESSION_RATIO_FLOOR_BYTES,
   SCIC_MANIFEST_ENTRY,
@@ -193,6 +198,66 @@ const UNAVAILABLE_NOTES: Record<Exclude<ScicUnavailableReason, "missing">, strin
   "too-large": "is too large to include",
 };
 
+/**
+ * The importer maps each source turn to one local turn and so requires a
+ * turn's messages to form one run (steering prompts, which have no turn, may
+ * sit inside it). A turn whose messages return after another turn therefore
+ * continues as a new turn, `<turnId>~2`, `~3`, …, and every other record of
+ * that turn joins the run it was recorded in: the latest run that had started
+ * by its time, or the first.
+ */
+function splitReappearingTurns(snapshot: ConversationSnapshotV1): ConversationSnapshotV1 {
+  const taken = new Set<string>(
+    [
+      ...snapshot.messages,
+      ...snapshot.reasoning,
+      ...snapshot.workLog,
+      ...snapshot.proposedPlans,
+      ...snapshot.questionAnswers,
+    ].flatMap((record) => (record.turnId === null ? [] : [record.turnId])),
+  );
+  if (snapshot.omittedRunningTurn) taken.add(snapshot.omittedRunningTurn.turnId);
+  const runs = new Map<string, Array<{ readonly start: string; readonly turnId: TurnId }>>();
+  let current: TurnId | null = null;
+  let split = false;
+  const messages = snapshot.messages.map((message) => {
+    if (message.turnId === null) return message;
+    let turnRuns = runs.get(message.turnId);
+    if (turnRuns === undefined) {
+      turnRuns = [{ start: message.createdAt, turnId: message.turnId }];
+      runs.set(message.turnId, turnRuns);
+    } else if (message.turnId !== current) {
+      let ordinal = turnRuns.length + 1;
+      while (taken.has(`${message.turnId}~${ordinal}`)) ordinal += 1;
+      const turnId = TurnId.make(`${message.turnId}~${ordinal}`);
+      taken.add(turnId);
+      turnRuns.push({ start: message.createdAt, turnId });
+      split = true;
+    }
+    current = message.turnId;
+    return { ...message, turnId: turnRuns.at(-1)!.turnId };
+  });
+  if (!split) return snapshot;
+  const runTurn = (turnId: TurnId | null, createdAt: string): TurnId | null => {
+    const turnRuns = turnId === null ? undefined : runs.get(turnId);
+    if (turnRuns === undefined) return turnId;
+    let chosen = turnRuns[0]!;
+    for (const run of turnRuns) if (run.start <= createdAt) chosen = run;
+    return chosen.turnId;
+  };
+  const withRunTurn = <A extends { readonly turnId: TurnId | null; readonly createdAt: string }>(
+    record: A,
+  ): A => ({ ...record, turnId: runTurn(record.turnId, record.createdAt) });
+  return {
+    ...snapshot,
+    messages,
+    reasoning: snapshot.reasoning.map(withRunTurn),
+    workLog: snapshot.workLog.map(withRunTurn),
+    proposedPlans: snapshot.proposedPlans.map(withRunTurn),
+    questionAnswers: snapshot.questionAnswers.map(withRunTurn),
+  };
+}
+
 const decodeManifest = Schema.decodeUnknownExit(ScicManifest);
 
 /**
@@ -225,6 +290,69 @@ function checkOwnManifest(manifestText: string): string | null {
       return "A resource path is not one the reader accepts.";
   }
   return null;
+}
+
+const decodeValidated = Schema.decodeUnknownExit(ValidatedConversationImport);
+/** Stand-ins for what only a receiver knows; validation does not depend on them. */
+const SELF_CHECK_IMPORT_ID = "cimp_00000000-0000-4000-8000-000000000000";
+const SELF_CHECK_PACKAGE_SHA256 = `sha256:${"0".repeat(64)}`;
+const SELF_CHECK_PACKAGE_BYTES = 1;
+
+/**
+ * The reader's validation of the conversation, applied by the writer to its
+ * own `conversation.json` and manifest: the decoded snapshot, its staged
+ * attachments, omissions, and warnings must form a `ValidatedConversationImport`.
+ * Null when they do.
+ */
+function checkOwnSnapshot(input: {
+  readonly manifest: ScicManifest;
+  readonly snapshotText: string;
+  readonly packageSnapshot: ConversationSnapshotV1;
+}): string | null {
+  const pastedText = new Map(
+    [
+      ...input.packageSnapshot.messages.flatMap((message) => message.attachments),
+      ...input.packageSnapshot.questionAnswers.flatMap((answer) =>
+        answer.items.flatMap((item) => item.attachments),
+      ),
+    ].map((attachment) => [attachment.localId, attachment.pastedText]),
+  );
+  const validated = decodeValidated({
+    importId: SELF_CHECK_IMPORT_ID,
+    package: {
+      format: input.manifest.format,
+      formatVersion: input.manifest.formatVersion,
+      exporter: input.manifest.exporter,
+      exportId: input.manifest.exportId,
+      exportedAt: input.manifest.exportedAt,
+      sourceThreadId: input.manifest.sourceThreadId,
+      contentDigest: input.manifest.contentDigest,
+      packageSha256: SELF_CHECK_PACKAGE_SHA256,
+      packageBytes: SELF_CHECK_PACKAGE_BYTES,
+    },
+    snapshot: JSON.parse(input.snapshotText),
+    attachments: input.manifest.resources.flatMap((resource) =>
+      resource._tag === "included"
+        ? [
+            {
+              resourceId: resource.id,
+              kind: resource.kind,
+              name: resource.name,
+              mediaType: resource.mediaType,
+              byteLength: resource.byteLength,
+              sha256: resource.sha256,
+              pastedText: pastedText.get(resource.id) ?? false,
+            },
+          ]
+        : [],
+    ),
+    omissions: conversationImportOmissions(input.packageSnapshot),
+    warnings: input.manifest.warnings.map((warning) => ({
+      _tag: "export-warning" as const,
+      warning,
+    })),
+  });
+  return Exit.isFailure(validated) ? "The conversation does not pass import validation." : null;
 }
 
 /**
@@ -296,10 +424,11 @@ export function prepareScicPackage(
     ...snapshot.warnings.filter((warning) => warning._tag === "records-skipped"),
   ];
 
+  const contiguous = splitReappearingTurns(snapshot);
   const portable = redactStrings(
     {
-      ...snapshot,
-      messages: snapshot.messages.map((message) => ({
+      ...contiguous,
+      messages: contiguous.messages.map((message) => ({
         ...message,
         attachments: message.attachments.map(portableAttachment),
         references: message.references.map((reference) =>
@@ -308,7 +437,7 @@ export function prepareScicPackage(
             : reference,
         ),
       })),
-      questionAnswers: snapshot.questionAnswers.map((answer) => ({
+      questionAnswers: contiguous.questionAnswers.map((answer) => ({
         ...answer,
         items: answer.items.map((item) => ({
           ...item,
@@ -412,7 +541,8 @@ export function prepareScicPackage(
     ),
   ].map((warning) => ({ ...warning, message: input.redact(warning.message) }));
 
-  const snapshotBytes = encoder.encode(JSON.stringify(packageSnapshot));
+  const snapshotText = JSON.stringify(packageSnapshot);
+  const snapshotBytes = encoder.encode(snapshotText);
   if (snapshotBytes.byteLength > SCIC_MAX_SNAPSHOT_BYTES) {
     return { _tag: "too-large", entry: SCIC_SNAPSHOT_ENTRY };
   }
@@ -517,7 +647,8 @@ export function prepareScicPackage(
   if (manifestBytes.byteLength > SCIC_MAX_MANIFEST_BYTES) {
     return { _tag: "too-large", entry: SCIC_MANIFEST_ENTRY };
   }
-  const invalid = checkOwnManifest(manifestText);
+  const invalid =
+    checkOwnManifest(manifestText) ?? checkOwnSnapshot({ manifest, snapshotText, packageSnapshot });
   if (invalid !== null) return { _tag: "invalid-package", detail: invalid };
   const expandedBytes =
     SCIC_MEDIA_TYPE.length +
