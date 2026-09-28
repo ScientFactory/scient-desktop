@@ -7,6 +7,11 @@
  * (`mintConversationImportIds`), recorded in the attempt journal, and reused
  * on retry, so a resumed attempt dispatches exactly the same history.
  *
+ * Order: records keep their source timestamps, and history is read back by
+ * timestamp, then id. So the ids of messages, reasoning, activities, plans,
+ * and turns sort in source order: one random prefix per attempt, then a
+ * zero-padded number in history order (`orderedIds`).
+ *
  * Turns: every message, reasoning item, plan, answer, and work-log entry of a
  * source turn lands in one new local turn. User messages are stored with no
  * turn (turn starts and mid-turn steering alike), so each one joins the turn
@@ -25,6 +30,7 @@ import {
   type ChatAttachment,
   type ConversationAttachment,
   type ConversationImportDestination,
+  type ConversationQuestionAnswer,
   type ConversationWorkLogEntry,
   type OrchestrationCommand,
   type OrchestrationConversationImportOmission,
@@ -179,6 +185,78 @@ function assignTurns(input: ValidatedConversationImport): TurnAssignment {
 
 const uuid = Crypto.Crypto.pipe(Effect.flatMap((crypto) => crypto.randomUUIDv4));
 
+/**
+ * Records in history order: by timestamp, then as listed. The sort is stable,
+ * so records that share a timestamp keep their source order.
+ */
+function inHistoryOrder<T extends { readonly createdAt: string }>(
+  records: ReadonlyArray<T>,
+): ReadonlyArray<T> {
+  return records.toSorted((left, right) => left.createdAt.localeCompare(right.createdAt));
+}
+
+/** Transcript messages and reasoning, in the order the import command writes them. */
+function transcriptOrder({ snapshot }: ValidatedConversationImport) {
+  return inHistoryOrder([
+    ...snapshot.messages.map((message) => ({
+      kind: "message" as const,
+      id: message.id,
+      message,
+      createdAt: message.createdAt,
+    })),
+    ...snapshot.reasoning.map((reasoning) => ({
+      kind: "reasoning" as const,
+      id: reasoning.id,
+      reasoning,
+      createdAt: reasoning.createdAt,
+    })),
+  ]);
+}
+
+/** Answers and work-log entries, in the order the import command writes them as activities. */
+function activityOrder({ snapshot }: ValidatedConversationImport) {
+  return inHistoryOrder([
+    ...snapshot.questionAnswers.map((answer) => ({
+      kind: "answer" as const,
+      answer,
+      createdAt: answer.createdAt,
+    })),
+    ...snapshot.workLog.map((entry) => ({
+      kind: "work-log" as const,
+      entry,
+      createdAt: entry.createdAt,
+    })),
+  ]);
+}
+
+/**
+ * The external ID of the message each answer folds, by answer ID. A file names
+ * a folded answer's user message `async-answer:<answer id>`, as Scient names a
+ * live one; the imported answer names that message's local ID instead.
+ */
+function foldedAnswerMessages({ snapshot }: ValidatedConversationImport): Map<string, string> {
+  const answerIds = new Set(snapshot.questionAnswers.map((answer) => answer.id));
+  const folded = new Map<string, string>();
+  for (const message of snapshot.messages) {
+    if (message.role !== "user" || !message.id.startsWith("async-answer:")) continue;
+    const answerId = message.id.slice("async-answer:".length);
+    if (answerIds.has(answerId) && !folded.has(answerId)) folded.set(answerId, message.id);
+  }
+  return folded;
+}
+
+/**
+ * Ids that sort in the order they are minted: `imp-<attempt uuid>-<number>`,
+ * the number zero-padded to one width for the whole attempt. Unique across
+ * every kind of record, so no two tables share an id.
+ */
+const orderedIds = Effect.fn("orderedIds")(function* (count: number) {
+  const prefix = `imp-${yield* uuid}`;
+  const width = Math.max(6, String(count).length);
+  let next = 0;
+  return () => `${prefix}-${String(next++).padStart(width, "0")}`;
+});
+
 function attachmentId(
   threadSegment: string,
   id: string,
@@ -194,45 +272,48 @@ function attachmentId(
 export const mintConversationImportIds = Effect.fn("mintConversationImportIds")(function* (
   input: ValidatedConversationImport,
 ) {
+  const { snapshot } = input;
   const threadId = ThreadId.make(yield* uuid);
   const threadSegment = toSafeThreadAttachmentSegment(threadId);
   if (threadSegment === null) return yield* Effect.die(new Error("Unsafe thread id."));
   const assignment = assignTurns(input);
-  const questionAnswers: Record<string, { activityId: EventId; requestId: ApprovalRequestId }> =
-    Object.create(null);
-  for (const answer of input.snapshot.questionAnswers) {
-    questionAnswers[answer.id] = {
-      activityId: EventId.make(yield* uuid),
-      requestId: ApprovalRequestId.make(yield* uuid),
-    };
-  }
+  const transcript = transcriptOrder(input);
+  const activities = activityOrder(input);
+  const answers = inHistoryOrder(snapshot.questionAnswers);
+  const plans = inHistoryOrder(snapshot.proposedPlans);
+  const nextId = yield* orderedIds(
+    transcript.length + activities.length + answers.length + plans.length + assignment.keys.length,
+  );
+
   // External IDs are strings, including names such as "__proto__". Never use a
   // prototype-bearing object as a lookup table for untrusted package IDs.
-  const messages: Record<string, MessageId> = Object.create(null);
-  for (const record of [...input.snapshot.messages, ...input.snapshot.reasoning]) {
-    const answeredRequestId =
-      record.id.startsWith("async-answer:") && "role" in record && record.role === "user"
-        ? record.id.slice("async-answer:".length)
-        : null;
-    const answerIds =
-      answeredRequestId !== null && Object.hasOwn(questionAnswers, answeredRequestId)
-        ? questionAnswers[answeredRequestId]
-        : undefined;
-    messages[record.id] =
-      answerIds === undefined
-        ? MessageId.make(yield* uuid)
-        : MessageId.make(`async-answer:${answerIds.requestId}`);
+  const activityIds: Record<string, EventId> = Object.create(null);
+  const workLog: Record<string, EventId> = Object.create(null);
+  for (const activity of activities) {
+    const id = EventId.make(nextId());
+    if (activity.kind === "answer") activityIds[activity.answer.id] = id;
+    else workLog[activity.entry.id] = id;
   }
+  const questionAnswers: Record<string, { activityId: EventId; requestId: ApprovalRequestId }> =
+    Object.create(null);
+  for (const answer of answers) {
+    questionAnswers[answer.id] = {
+      activityId: activityIds[answer.id]!,
+      requestId: ApprovalRequestId.make(nextId()),
+    };
+  }
+  // Every message, a folded answer's too, sorts in source order; the answer
+  // names its message (`foldedAnswerMessages`).
+  const messages: Record<string, MessageId> = Object.create(null);
+  for (const record of transcript) messages[record.id] = MessageId.make(nextId());
   const turns: Record<string, TurnId> = Object.create(null);
-  for (const key of assignment.keys) turns[key] = TurnId.make(yield* uuid);
+  for (const key of assignment.keys) turns[key] = TurnId.make(nextId());
+  const proposedPlans: Record<string, string> = Object.create(null);
+  for (const plan of plans) proposedPlans[plan.id] = `plan:${nextId()}`;
   const attachments: Record<string, string> = Object.create(null);
   for (const attachment of input.attachments) {
     attachments[attachment.resourceId] = attachmentId(threadSegment, yield* uuid, attachment);
   }
-  const proposedPlans: Record<string, string> = Object.create(null);
-  for (const plan of input.snapshot.proposedPlans) proposedPlans[plan.id] = `plan:${yield* uuid}`;
-  const workLog: Record<string, EventId> = Object.create(null);
-  for (const entry of input.snapshot.workLog) workLog[entry.id] = EventId.make(yield* uuid);
   return {
     threadId,
     commandId: CommandId.make(`server:conversation-import:${yield* uuid}`),
@@ -539,13 +620,22 @@ export function buildConversationImportCommand(input: {
       return published === undefined ? [] : [published];
     });
 
-  type PlannedMessage = ThreadConversationImportCommand["messages"][number];
-  const timeline: Array<{ readonly order: number; readonly message: PlannedMessage }> = [];
-  for (const message of snapshot.messages) {
-    const attachments = chatAttachments(message.attachments);
-    timeline.push({
-      order: timeline.length,
-      message: {
+  const messages: ThreadConversationImportCommand["messages"] = transcriptOrder(validated).map(
+    (record) => {
+      if (record.kind === "reasoning") {
+        const { reasoning } = record;
+        return {
+          messageId: ids.messages[reasoning.id]!,
+          role: "reasoning",
+          text: reasoning.text,
+          turnId: localTurn(assignment.byMessageId.get(reasoning.id)),
+          createdAt: reasoning.createdAt,
+          updatedAt: reasoning.updatedAt,
+        };
+      }
+      const { message } = record;
+      const attachments = chatAttachments(message.attachments);
+      return {
         messageId: ids.messages[message.id]!,
         role: message.role,
         text: importedMessageMarkdown(message),
@@ -553,32 +643,13 @@ export function buildConversationImportCommand(input: {
         turnId: localTurn(assignment.byMessageId.get(message.id)),
         createdAt: message.createdAt,
         updatedAt: message.updatedAt,
-      },
-    });
-  }
-  for (const reasoning of snapshot.reasoning) {
-    timeline.push({
-      order: timeline.length,
-      message: {
-        messageId: ids.messages[reasoning.id]!,
-        role: "reasoning",
-        text: reasoning.text,
-        turnId: localTurn(assignment.byMessageId.get(reasoning.id)),
-        createdAt: reasoning.createdAt,
-        updatedAt: reasoning.updatedAt,
-      },
-    });
-  }
-  const messages = timeline
-    .toSorted(
-      (left, right) =>
-        left.message.createdAt.localeCompare(right.message.createdAt) || left.order - right.order,
-    )
-    .map(({ message }) => message);
+      };
+    },
+  );
 
   let skippedRecords = 0;
   const proposedPlans: OrchestrationProposedPlan[] = [];
-  for (const plan of snapshot.proposedPlans) {
+  for (const plan of inHistoryOrder(snapshot.proposedPlans)) {
     const markdown = plan.markdown.trim();
     if (markdown.length === 0) {
       skippedRecords += 1;
@@ -595,9 +666,11 @@ export function buildConversationImportCommand(input: {
     });
   }
 
-  const activities: OrchestrationThreadActivity[] = [];
-  for (const answer of snapshot.questionAnswers) {
+  const foldedMessages = foldedAnswerMessages(validated);
+  const answerActivity = (answer: ConversationQuestionAnswer): OrchestrationThreadActivity => {
     const answerIds = ids.questionAnswers[answer.id]!;
+    const foldedMessage = foldedMessages.get(answer.id);
+    const messageId = foldedMessage === undefined ? undefined : ids.messages[foldedMessage];
     const questionTextById: Record<string, string> = {};
     const answers: Record<string, string> = {};
     const attachmentsByQuestionId: Record<string, ReadonlyArray<ChatAttachment>> = {};
@@ -610,7 +683,7 @@ export function buildConversationImportCommand(input: {
     const names = Object.values(attachmentsByQuestionId)
       .flat()
       .map((attachment) => attachment.name);
-    activities.push({
+    return {
       id: answerIds.activityId,
       tone: "info",
       kind: "user-input.answer-submitted",
@@ -619,19 +692,22 @@ export function buildConversationImportCommand(input: {
       createdAt: answer.createdAt,
       payload: {
         requestId: answerIds.requestId,
+        ...(messageId === undefined ? {} : { messageId }),
         answers,
         questionTextById,
         attachmentsByQuestionId,
         ...(names.length > 0 ? { detail: names.join("\n") } : {}),
       },
-    });
-  }
-  for (const entry of snapshot.workLog) {
-    activities.push(workLogActivity(entry, ids.workLog[entry.id]!, sourceTurn(entry.turnId)));
-  }
-  activities.sort(
-    (left, right) =>
-      left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
+    };
+  };
+  const activities = activityOrder(validated).map((record) =>
+    record.kind === "answer"
+      ? answerActivity(record.answer)
+      : workLogActivity(
+          record.entry,
+          ids.workLog[record.entry.id]!,
+          sourceTurn(record.entry.turnId),
+        ),
   );
 
   // Turns with a response become completed turn rows, named by their request.

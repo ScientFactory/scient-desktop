@@ -410,8 +410,23 @@ export const UserInputAttachmentAnswerPayload = Schema.Struct({
   questionTextById: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   answers: ProviderUserInputAnswers,
   attachmentsByQuestionId: UserInputAttachments,
+  // SCIENT-FORK:START — imported history names the message that carries an answer.
+  /**
+   * The user message that carries this answer, when it is not
+   * `async-answer:<requestId>`: imported history gives every message an ID
+   * that sorts in its source order, so the answer names its message instead.
+   */
+  messageId: Schema.optional(MessageId),
+  // SCIENT-FORK:END
 });
 export type UserInputAttachmentAnswerPayload = typeof UserInputAttachmentAnswerPayload.Type;
+
+// SCIENT-FORK:START — imported history names the message that carries an answer.
+/** The ID of the user message chat folds into this submitted answer. */
+export function questionAnswerMessageId(answer: UserInputAttachmentAnswerPayload): string {
+  return answer.messageId ?? `async-answer:${answer.requestId}`;
+}
+// SCIENT-FORK:END
 // SCIENT-FORK:START — the Scient thread queue stores upload-shaped
 // attachments so a queued item dispatches through thread.turn.start
 // unchanged. Export the wire schema instead of duplicating it.

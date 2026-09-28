@@ -5,7 +5,11 @@ import {
   requestKindFromRequestType,
   type PendingApproval,
 } from "@t3tools/client-runtime/pending-requests";
-import { UserInputAttachmentAnswerPayload, isToolLifecycleItemType } from "@t3tools/contracts";
+import {
+  UserInputAttachmentAnswerPayload,
+  isToolLifecycleItemType,
+  questionAnswerMessageId,
+} from "@t3tools/contracts";
 import type {
   OrchestrationLatestTurn,
   OrchestrationThread,
@@ -2421,10 +2425,13 @@ export function buildThreadFeed(
       oldestLoadedMessageCreatedAt === null || entry.createdAt >= oldestLoadedMessageCreatedAt,
   );
   const foldedAnswerMessageIds = new Set(
-    activityEntries.flatMap((entry) =>
-      entry.activity.workEntry.questionAnswer
-        ? [`async-answer:${entry.activity.workEntry.questionAnswer.requestId}`]
-        : [],
+    activityEntries.flatMap(
+      (entry) =>
+        // SCIENT-FORK:START — imported answers name their message.
+        entry.activity.workEntry.questionAnswer
+          ? [questionAnswerMessageId(entry.activity.workEntry.questionAnswer)]
+          : [],
+      // SCIENT-FORK:END
     ),
   );
   const entries = Arr.sortWith(

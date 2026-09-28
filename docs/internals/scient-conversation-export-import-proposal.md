@@ -581,6 +581,10 @@ Rules:
 - **Malformed or edited markers** (unknown export value, missing or duplicate numbers, out-of-order
   numbers, unknown role) are shown in the preview with the affected range. The user can import the
   messages that parsed cleanly or import the whole file as a document. There is no automatic fallback.
+  Each message number is checked against the number of the last message imported: a number no higher
+  than it is out of order (or a duplicate) and its message is left out; a number that skips ahead is a
+  gap, noted without leaving anything out. A message left out for another reason (role, time, marker)
+  never moves that baseline, but still stands for a number, so the next one is not reported missing.
 - A file without Scient's front matter is never parsed as a transcript; it is treated as a document
   ("start a conversation with this document").
 - Imported Markdown history is labelled **"Imported from Markdown — unverified"** on the thread,
@@ -753,6 +757,15 @@ thread and a lineage row. An import has neither, so the model is extended explic
   `NOT NULL`) becomes nullable, and is null for imports. External IDs never masquerade as local thread
   IDs.
 - **External identity lives only in provenance:** the package's export ID, source thread ID, and digest.
+- **Imported IDs keep the source order.** Records keep their source timestamps, and history is read
+  back by timestamp, then ID. So the IDs of imported messages, reasoning, activities, plans, and turns
+  are one random prefix per import followed by a zero-padded number in history order; records that
+  share a timestamp read back, continue, and re-export in the order the file lists them.
+- **A folded answer names its message.** Scient names a live answer's user message
+  `async-answer:<request ID>`, and a file names it the same way. An imported folded answer's message
+  gets an ordered ID like any other, so the imported answer names it (`messageId` on its
+  `user-input.answer-submitted` payload); chat folds that message, a fork names its own copy, and
+  export writes it back as `async-answer:<request ID>`.
 - **Transfer type decides which operations are valid.** Fork-only paths — usage fallback to the source
   thread, native-fork planning (which joins lineage) — do not apply to `type = 'import'`.
 - **Inherited-turn semantics are generalized, not bypassed.** #376 records a fork's inherited turns in
@@ -922,11 +935,15 @@ import. Changing the file or the destination environment does the same and start
 - **Failures.** A rejected file shows the server's message. Reason codes, entry paths and
   connection details are never shown; such a message falls back to plain text per reason. An
   OS-opened file is streamed by the desktop, which answers `declined` when the user declines its
-  "Send conversation file?" prompt and `cancelled` when the renderer stopped the upload; both
+  "Send conversation file?" prompt and `cancelled` when the renderer stopped that upload; both
   close the dialog without an error. `rejected` (the server refused the bytes) and the other
-  desktop failures read as plain sentences. Cancel or Esc during such an upload first asks the
-  desktop to stop it (`cancelOpenedConversationFileUpload`, where available), then calls
-  `cancel`; an attempt cancelled while waiting behind an earlier stream never starts its upload.
+  desktop failures read as plain sentences. Each upload of an opened file is one attempt with its
+  own `attemptId`. Changing the destination, "Try again", Cancel or Esc during such an upload
+  first asks the desktop to stop that attempt (`cancelOpenedConversationFileUpload`, where
+  available), then calls `cancel`; the attempt ends, or never starts if it was still waiting, and
+  a later attempt sends the same file again. Closing the dialog, or replacing its file, gives the
+  opened file up (`releaseOpenedConversationFile`): the desktop stops any upload of it and forgets
+  its token.
 - **Confirming.** Once the confirm is sent, the server may commit the import whatever happens to
   the connection (it runs the commit in its own scope), so the dialog keeps the staged import and
   its destination until the outcome is known and never cancels it. If the answer does not

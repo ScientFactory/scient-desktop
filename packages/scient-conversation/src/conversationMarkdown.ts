@@ -348,14 +348,21 @@ export function parseConversationMarkdown(source: string): ParsedConversationMar
   );
   const messages: ParsedMarkdownMessage[] = [];
   const seen = new Set<number>();
+  // Numbers run from the last message accepted. A damaged boundary since then
+  // (a broken marker, or a message left out for another reason) may have held
+  // the next number, so that number is not reported missing.
+  let previousNumber = 0;
+  let damagedSincePrevious = 0;
   const closedTurns = new Set<number>();
   let currentTurn: number | null = null;
   let markerCursor = 0;
   let nodeCursor = 0;
   for (const [index, marker] of boundaries.entries()) {
     const nextBoundary = boundaries[index + 1]?.start ?? normalized.length;
-    if (marker.type === "invalid") continue;
-    const expected = index + 1;
+    if (marker.type === "invalid") {
+      damagedSincePrevious += 1;
+      continue;
+    }
     const nValue = marker.attributes.get("n") ?? "";
     const n =
       /^[1-9]\d*$/u.test(nValue) && Number.isSafeInteger(Number(nValue)) ? Number(nValue) : null;
@@ -363,6 +370,9 @@ export function parseConversationMarkdown(source: string): ParsedConversationMar
     const time = marker.attributes.get("time") ?? "";
     const turnValue = marker.attributes.get("turn");
     let clean = true;
+    // Past the last accepted number, or unreadable: a left-out message then
+    // stands where a later number would be.
+    let holdsNumber = false;
     if (
       n === null ||
       (turnValue !== undefined &&
@@ -378,6 +388,7 @@ export function parseConversationMarkdown(source: string): ParsedConversationMar
         excluded: true,
       });
       clean = false;
+      holdsNumber = true;
     } else if (seen.has(n)) {
       issues.push({
         kind: "duplicate-number",
@@ -386,21 +397,28 @@ export function parseConversationMarkdown(source: string): ParsedConversationMar
         excluded: true,
       });
       clean = false;
-    } else if (n < expected) {
+    } else if (n <= previousNumber) {
       issues.push({
         kind: "out-of-order-number",
         line: marker.line,
-        detail: `Message ${n} is out of order.`,
+        detail: `Message ${n} comes after message ${previousNumber}.`,
         excluded: true,
       });
       clean = false;
-    } else if (n > expected) {
-      issues.push({
-        kind: "missing-number",
-        line: marker.line,
-        detail: `Messages ${expected}–${n - 1} are missing.`,
-        excluded: false,
-      });
+    } else {
+      const firstMissing = previousNumber + 1 + damagedSincePrevious;
+      if (n > firstMissing) {
+        issues.push({
+          kind: "missing-number",
+          line: marker.line,
+          detail:
+            n - 1 === firstMissing
+              ? `Message ${firstMissing} is missing.`
+              : `Messages ${firstMissing}–${n - 1} are missing.`,
+          excluded: false,
+        });
+      }
+      holdsNumber = true;
     }
     if (role !== "user" && role !== "assistant") {
       issues.push({
@@ -425,7 +443,10 @@ export function parseConversationMarkdown(source: string): ParsedConversationMar
       clean = false;
     }
     if (n !== null) seen.add(n);
-    if (!clean || n === null || (role !== "user" && role !== "assistant")) continue;
+    if (!clean || n === null || (role !== "user" && role !== "assistant")) {
+      if (holdsNumber) damagedSincePrevious += 1;
+      continue;
+    }
     const turn = turnValue === undefined ? null : Number(turnValue);
     if (turn !== null && turn !== currentTurn) {
       if (currentTurn !== null) closedTurns.add(currentTurn);
@@ -436,10 +457,13 @@ export function parseConversationMarkdown(source: string): ParsedConversationMar
           detail: `Turn ${turn} reappears after another turn.`,
           excluded: true,
         });
+        damagedSincePrevious += 1;
         continue;
       }
       currentTurn = turn;
     }
+    previousNumber = n;
+    damagedSincePrevious = 0;
 
     // Both lists follow source order. Walk each marker and Markdown node once,
     // even for a long imported conversation with thousands of messages.

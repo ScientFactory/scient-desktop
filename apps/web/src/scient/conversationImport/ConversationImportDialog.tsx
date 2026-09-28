@@ -31,7 +31,7 @@ import {
   SelectValue,
 } from "../../components/ui/select";
 import { toastManager } from "../../components/ui/toast";
-import { cn } from "../../lib/utils";
+import { cn, randomUUID } from "../../lib/utils";
 import { useProjects, useServerConfigs } from "../../state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { buildThreadRouteParams } from "../../threadRoutes";
@@ -349,19 +349,20 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
     stagedRef.current = staged;
     const stopped = () => controller.signal.aborted;
     const setStage = (stage: Stage) => setProgress({ attempt, stage });
-    // Set while the desktop streams this attempt's file; a cancel stops it first.
-    let desktopToken: string | null = null;
+    // Set while the desktop streams this attempt's file; a cancel stops that
+    // attempt first, and a later attempt can still send the same file.
+    let desktopAttempt: { readonly token: string; readonly attemptId: string } | null = null;
     const release = () => {
       if (staged.confirming) return;
       const importId = staged.importId;
       staged.importId = null;
       if (importId === null) return;
-      const token = desktopToken;
-      desktopToken = null;
+      const sending = desktopAttempt;
+      desktopAttempt = null;
       const stopDesktop =
-        token === null
+        sending === null
           ? Promise.resolve()
-          : Promise.resolve(window.desktopBridge?.cancelOpenedConversationFileUpload?.({ token }));
+          : Promise.resolve(window.desktopBridge?.cancelOpenedConversationFileUpload?.(sending));
       void stopDesktop
         .catch(() => undefined)
         .then(() => cancelConversationImport(staged.environmentId, importId))
@@ -401,15 +402,15 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
           // A cancelled attempt never starts its queued upload.
           const sending = desktopUploadRef.current.then(() => {
             if (stopped()) return null;
-            desktopToken = source.file.token;
+            desktopAttempt = { token: source.file.token, attemptId: randomUUID() };
             return window.desktopBridge?.uploadOpenedConversationFile?.({
-              token: source.file.token,
+              ...desktopAttempt,
               url: upload.url,
             });
           });
           desktopUploadRef.current = sending.catch(() => undefined);
           const result = await sending;
-          desktopToken = null;
+          desktopAttempt = null;
           if (stopped() || result === null) return;
           const outcome = desktopUploadOutcome(result);
           if (outcome instanceof ConversationImportNotice) throw outcome;

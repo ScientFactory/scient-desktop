@@ -532,30 +532,36 @@ describe("ConversationImporter", () => {
         const ids = yield* mintConversationImportIds(input);
         const localRequestId = ids.questionAnswers[sourceRequestId]!.requestId;
         assert.notStrictEqual(localRequestId, sourceRequestId);
-        assert.strictEqual(
-          ids.messages[`async-answer:${sourceRequestId}`],
-          `async-answer:${localRequestId}`,
-        );
+        const localMessageId = ids.messages[`async-answer:${sourceRequestId}`]!;
+        assert.isFalse(localMessageId.startsWith("async-answer:"));
         const command = buildConversationImportCommand({
           validated: input,
           ids,
           destination: destination(),
           importedAt: "2026-09-28T10:00:00.000Z",
         });
-        assert.strictEqual(command.messages[1]!.messageId, `async-answer:${localRequestId}`);
+        assert.strictEqual(command.messages[1]!.messageId, localMessageId);
+        // The answer names the message it folds.
+        assert.strictEqual(
+          (
+            command.activities.find((activity) => activity.kind === "user-input.answer-submitted")!
+              .payload as { readonly messageId?: string }
+          ).messageId,
+          localMessageId,
+        );
 
         const { lease } = yield* leaseFor({ ...fixture, input });
         const { result } = yield* importOnce(lease);
         const engine = yield* OrchestrationEngineService;
         const inherited = (yield* readThread(result.threadId))!;
-        const importedRequestId = (
-          inherited.activities.find((activity) => activity.kind === "user-input.answer-submitted")
-            ?.payload as { readonly requestId: string }
-        ).requestId;
+        const importedAnswer = inherited.activities.find(
+          (activity) => activity.kind === "user-input.answer-submitted",
+        )!.payload as { readonly requestId: string; readonly messageId: string };
+        const importedRequestId = importedAnswer.requestId;
         assert.notStrictEqual(importedRequestId, sourceRequestId);
         assert.include(
           inherited.messages.map((message) => message.id),
-          `async-answer:${importedRequestId}`,
+          importedAnswer.messageId,
         );
         const continuationId = MessageId.make("async-answer-continuation-user");
         const assistantId = MessageId.make("async-answer-continuation-assistant");
@@ -672,6 +678,321 @@ describe("ConversationImporter", () => {
         assert.strictEqual(markdown.split("**A:** Blue").length - 1, 1);
       }),
     ),
+  );
+
+  it.effect(
+    "keeps a folded answer after an ordinary message at the same time, and keeps it folded",
+    () =>
+      withImporter(
+        Effect.gen(function* () {
+          const fixture = importFixture({ turns: 1 });
+          const source = fixture.input.snapshot;
+          const tied = "2026-09-27T10:00:14.000Z";
+          const input: typeof fixture.input = {
+            ...fixture.input,
+            snapshot: {
+              ...source,
+              messages: [
+                source.messages[0]!,
+                { ...source.messages[1]!, createdAt: tied, updatedAt: tied },
+                {
+                  ...source.messages[0]!,
+                  n: 3,
+                  id: MessageId.make("async-answer:source-request"),
+                  text: "Blue",
+                  createdAt: tied,
+                  updatedAt: tied,
+                },
+              ],
+              questionAnswers: [
+                {
+                  id: "source-request",
+                  turnId: source.messages[1]!.turnId,
+                  createdAt: tied,
+                  items: [{ question: "Which color?", answer: "Blue", attachments: [] }],
+                },
+              ],
+            },
+          };
+
+          const { lease } = yield* leaseFor({ ...fixture, input });
+          const { result } = yield* importOnce(lease);
+          const inherited = (yield* readThread(result.threadId))!;
+          assert.deepStrictEqual(
+            inherited.messages.map((message) => message.text),
+            ["Question 1", "Answer 1", "Blue"],
+          );
+          // The answer names the message it folds; its id sorts like any other.
+          const answer = inherited.activities.find(
+            (activity) => activity.kind === "user-input.answer-submitted",
+          )!;
+          const folded = inherited.messages[2]!;
+          assert.strictEqual((answer.payload as { messageId?: string }).messageId, folded.id);
+          assert.isFalse(folded.id.startsWith("async-answer:"));
+
+          const engine = yield* OrchestrationEngineService;
+          const continuationId = MessageId.make("folded-tie-continuation-user");
+          yield* engine.dispatch({
+            type: "thread.turn.start",
+            commandId: CommandId.make("start-folded-tie-continuation"),
+            threadId: result.threadId,
+            message: { messageId: continuationId, role: "user", text: "Go on", attachments: [] },
+            runtimeMode: "approval-required",
+            interactionMode: "default",
+            createdAt: "2026-09-28T11:00:00.000Z",
+          });
+          const continuing = (yield* readThread(result.threadId))!;
+          const current = continuing.messages.find((message) => message.id === continuationId)!;
+          const prepared = yield* Effect.flatMap(ScientForkContextDelivery, (delivery) =>
+            delivery.prepareTurn({
+              thread: continuing,
+              message: current,
+              userText: current.text,
+              attachments: [],
+              nativeThreadKey: null,
+              sessionRunning: false,
+            }),
+          );
+          assert.strictEqual(prepared.kind, "deliver");
+          if (prepared.kind !== "deliver") return;
+          const answerAt = prepared.contextPreamble.indexOf('"Answer 1"');
+          const blueAt = prepared.contextPreamble.search(/"text":\s*"Blue"/u);
+          assert.isAbove(answerAt, -1);
+          assert.isAbove(blueAt, answerAt);
+
+          const snapshot = buildConversationSnapshot({
+            thread: (yield* readThread(result.threadId))!,
+            snapshotSequence: 1,
+            threadSequence: 1,
+            capturedAt: "2026-09-28T11:01:00.000Z",
+            selection: { workLog: false, reasoning: false, throughMessageId: null },
+            isAttachmentAvailable: () => false,
+          });
+          const requestId = (answer.payload as { requestId: string }).requestId;
+          // Files keep naming a folded answer's message after its answer.
+          assert.deepStrictEqual(
+            snapshot.messages.map((message) => [message.text, message.id.startsWith("async-")]),
+            [
+              ["Question 1", false],
+              ["Answer 1", false],
+              ["Blue", true],
+              ["Go on", false],
+            ],
+          );
+          assert.strictEqual(snapshot.messages[2]!.id, `async-answer:${requestId}`);
+          const markdown = writeConversationMarkdown({
+            bundle: buildConversationDocument({
+              snapshot: { ...snapshot, contentDigest: `sha256:${"a".repeat(64)}` },
+              exportValue: "7f3c9a2e41b8",
+              timeZone: "UTC",
+              resolveAttachment: () => ({ _tag: "unavailable", reason: "missing" }),
+            }).bundle,
+            exportValue: "7f3c9a2e41b8",
+            exported: "2026-09-28T11:01:00.000Z",
+            packaging: "text",
+          });
+          const parsed = parseConversationMarkdown(markdown);
+          assert.strictEqual(parsed.kind, "conversation");
+          if (parsed.kind === "conversation") {
+            assert.deepStrictEqual(
+              parsed.messages.map((message) => message.body),
+              ["Question 1", "Answer 1", "Go on"],
+            );
+          }
+          assert.strictEqual(markdown.split("**A:** Blue").length - 1, 1);
+          assert.isAbove(markdown.indexOf("**A:** Blue"), markdown.indexOf("Answer 1"));
+        }),
+      ),
+  );
+
+  it.effect("a fork of an imported folded answer names the fork's copy of its message", () =>
+    withImporter(
+      Effect.gen(function* () {
+        const fixture = importFixture({ turns: 2 });
+        const source = fixture.input.snapshot;
+        const answeredAt = source.messages[1]!.createdAt;
+        const input: typeof fixture.input = {
+          ...fixture.input,
+          snapshot: {
+            ...source,
+            messages: [
+              source.messages[0]!,
+              source.messages[1]!,
+              {
+                ...source.messages[0]!,
+                id: MessageId.make("async-answer:source-request"),
+                text: "Blue",
+                createdAt: answeredAt,
+                updatedAt: answeredAt,
+              },
+              source.messages[2]!,
+              source.messages[3]!,
+            ].map((message, index) => ({ ...message, n: index + 1 })),
+            questionAnswers: [
+              {
+                id: "source-request",
+                turnId: source.messages[1]!.turnId,
+                createdAt: answeredAt,
+                items: [{ question: "Which color?", answer: "Blue", attachments: [] }],
+              },
+            ],
+          },
+        };
+        const { lease } = yield* leaseFor({ ...fixture, input });
+        const { result } = yield* importOnce(lease);
+        const imported = (yield* readThread(result.threadId))!;
+        const forkId = ThreadId.make("fork-of-folded-answer");
+        yield* Effect.flatMap(OrchestrationEngineService, (engine) =>
+          engine.dispatch({
+            type: "thread.fork",
+            commandId: CommandId.make("fork-folded-answer"),
+            originThreadId: result.threadId,
+            newThreadId: forkId,
+            sourceAssistantMessageId: imported.messages.find(
+              (message) => message.text === "Answer 2",
+            )!.id,
+            workspaceMode: "local",
+          }),
+        );
+        const fork = (yield* readThread(forkId))!;
+        const answer = fork.activities.find(
+          (activity) => activity.kind === "user-input.answer-submitted",
+        )!;
+        const folded = fork.messages.find((message) => message.text === "Blue")!;
+        assert.notInclude(
+          imported.messages.map((message) => message.id),
+          folded.id,
+        );
+        assert.strictEqual(
+          (answer.payload as { readonly messageId?: string }).messageId,
+          folded.id,
+        );
+      }),
+    ),
+  );
+
+  it.effect(
+    "keeps the source order of records that share a timestamp through history, continuation, and re-export",
+    () =>
+      withImporter(
+        Effect.gen(function* () {
+          // Everything of one kind shares one timestamp, so only the ids order it.
+          const fixture = importFixture({ turns: 4, workLog: true, workLogPerTurn: 2 });
+          const source = fixture.input.snapshot;
+          const tied = "2026-09-27T10:00:10.000Z";
+          const input: typeof fixture.input = {
+            ...fixture.input,
+            snapshot: {
+              ...source,
+              messages: source.messages.map((message) => ({
+                ...message,
+                createdAt: tied,
+                updatedAt: tied,
+              })),
+              workLog: source.workLog.map((entry, index) =>
+                entry._tag === "tool"
+                  ? { ...entry, createdAt: "2026-09-27T10:00:11.000Z", title: `Step ${index + 1}` }
+                  : entry,
+              ),
+              proposedPlans: [1, 2, 3, 4].map((index) => ({
+                ...source.proposedPlans[0]!,
+                id: `src-plan-${index}`,
+                markdown: `${index}. Plan ${index}`,
+              })),
+            },
+          };
+          const messageTexts = source.messages.map((message) => message.text);
+          const stepTitles = input.snapshot.workLog.map((_, index) => `Step ${index + 1}`);
+          const inOrder = (text: string, expected: ReadonlyArray<string>) => {
+            const positions = expected.map((value) => text.indexOf(value));
+            assert.notInclude(positions, -1);
+            assert.deepStrictEqual(
+              positions,
+              positions.toSorted((left, right) => left - right),
+            );
+          };
+
+          const { lease } = yield* leaseFor({ ...fixture, input });
+          const { result } = yield* importOnce(lease);
+          const inherited = (yield* readThread(result.threadId))!;
+          assert.deepStrictEqual(
+            inherited.messages.map((message) => message.text),
+            messageTexts,
+          );
+          assert.deepStrictEqual(
+            inherited.activities.map((activity) => activity.summary),
+            stepTitles,
+          );
+          assert.deepStrictEqual(
+            inherited.proposedPlans.map((plan) => plan.planMarkdown),
+            ["1. Plan 1", "2. Plan 2", "3. Plan 3", "4. Plan 4"],
+          );
+
+          const engine = yield* OrchestrationEngineService;
+          const continuationId = MessageId.make("tied-continuation-user");
+          yield* engine.dispatch({
+            type: "thread.turn.start",
+            commandId: CommandId.make("start-tied-continuation"),
+            threadId: result.threadId,
+            message: { messageId: continuationId, role: "user", text: "Go on", attachments: [] },
+            runtimeMode: "approval-required",
+            interactionMode: "default",
+            createdAt: "2026-09-28T11:00:00.000Z",
+          });
+          const continuing = (yield* readThread(result.threadId))!;
+          const current = continuing.messages.find((message) => message.id === continuationId)!;
+          const prepared = yield* Effect.flatMap(ScientForkContextDelivery, (delivery) =>
+            delivery.prepareTurn({
+              thread: continuing,
+              message: current,
+              userText: current.text,
+              attachments: [],
+              nativeThreadKey: null,
+              sessionRunning: false,
+            }),
+          );
+          assert.strictEqual(prepared.kind, "deliver");
+          if (prepared.kind !== "deliver") return;
+          inOrder(prepared.contextPreamble, [...messageTexts, ...stepTitles]);
+          inOrder(prepared.contextPreamble, ["Plan 1", "Plan 2", "Plan 3", "Plan 4"]);
+
+          const snapshot = buildConversationSnapshot({
+            thread: (yield* readThread(result.threadId))!,
+            snapshotSequence: 1,
+            threadSequence: 1,
+            capturedAt: "2026-09-28T11:01:00.000Z",
+            selection: { workLog: true, reasoning: false, throughMessageId: null },
+            isAttachmentAvailable: () => false,
+          });
+          assert.deepStrictEqual(
+            snapshot.messages.map((message) => message.text),
+            [...messageTexts, "Go on"],
+          );
+          assert.deepStrictEqual(
+            snapshot.workLog.map((entry) => (entry._tag === "tool" ? entry.title : null)),
+            stepTitles,
+          );
+          const markdown = writeConversationMarkdown({
+            bundle: buildConversationDocument({
+              snapshot: { ...snapshot, contentDigest: `sha256:${"a".repeat(64)}` },
+              exportValue: "7f3c9a2e41b8",
+              timeZone: "UTC",
+              resolveAttachment: () => ({ _tag: "unavailable", reason: "missing" }),
+            }).bundle,
+            exportValue: "7f3c9a2e41b8",
+            exported: "2026-09-28T11:01:00.000Z",
+            packaging: "text",
+          });
+          const parsed = parseConversationMarkdown(markdown);
+          assert.strictEqual(parsed.kind, "conversation");
+          if (parsed.kind === "conversation") {
+            assert.deepStrictEqual(
+              parsed.messages.map((message) => message.body),
+              [...messageTexts, "Go on"],
+            );
+          }
+        }),
+      ),
   );
 
   it.effect(
