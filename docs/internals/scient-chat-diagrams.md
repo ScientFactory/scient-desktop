@@ -33,12 +33,21 @@ long-lived hidden frame shared with Word export's renderer
 Mermaid's standalone build, inline styles and `data:`/`blob:` images and fonts,
 so every load a diagram names is refused before a request is made, and an
 image Mermaid measures through `new Image()` gets a local stand-in so the draw
-completes. Before each draw the frame mirrors the page's style rules (minus any
-that would load) and its root and body attributes, so text measures exactly as
-it did in the page. The returned SVG then passes through
+completes. Before each draw the frame mirrors the page's root and body
+attributes and, whenever the page's set of stylesheets has changed (KaTeX's
+stylesheet arrives lazily, for example), its style rules minus any that would
+load. Font faces whose sources are the app's own bundled files are kept with
+absolute sources, the chat frame's policy allows fonts only from the app's own
+origin (`font-src 'self' data:`), and each face the page has already loaded is
+loaded in the frame too, so text, including math labels, measures exactly as it
+did in the page. The returned SVG then passes through
 `stripSvgExternalResources` (`diagrams/svgExternalResources.ts`), which removes
-outside images, icons, `href`s and CSS loads (escapes decoded, stylesheets
-rewritten through the CSS parser) and leaves an ordinary diagram byte for byte;
+outside images, icons, `href`s, animations that set a link, and CSS loads,
+wherever they appear: in stylesheets (rewritten through the CSS parser), in
+`style`, and in any other attribute whose value loads like CSS (`mask`,
+`filter`, `clip-path`, `fill`, `stroke`, markers, `cursor`, or one the browser
+does not know), with escapes decoded; only `#fragment`, `data:` and `blob:`
+targets stay. An ordinary diagram comes back byte for byte;
 the addresses it removed become the card's one-line "Outside content not
 loaded" note, whose web addresses open in the
 system browser. The PDF document page, which itself has no network access,

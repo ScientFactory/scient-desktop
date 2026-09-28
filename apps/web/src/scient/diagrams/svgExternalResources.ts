@@ -42,6 +42,18 @@ const ALWAYS_REMOVED = new Set([
   "script",
 ]);
 
+/** SVG animation elements, which can set any attribute, including a link, while the SVG shows. */
+const ANIMATION_ELEMENTS = new Set([
+  "animate",
+  "animatecolor",
+  "animatemotion",
+  "animatetransform",
+  "discard",
+  "set",
+]);
+/** The values an animation sets. */
+const ANIMATION_VALUE_ATTRIBUTES = ["from", "to", "by", "values"];
+
 /** The bytes are already here, or the reference stays inside the SVG. */
 const isLocalAddress = (address: string) => /^\s*(?:#|data:|blob:)/iu.test(address);
 
@@ -49,7 +61,8 @@ const isLocalAddress = (address: string) => /^\s*(?:#|data:|blob:)/iu.test(addre
 function cssAddresses(css: string): { addresses: string[]; unresolved: boolean } {
   const text = decodeCssEscapes(css);
   const addresses: string[] = [];
-  for (const match of text.matchAll(/url\(\s*(?:"([^"]*)"|'([^']*)'|([^)\s]*))\s*\)/giu)) {
+  // A `url(` left unclosed at the end still loads, so the closing parenthesis is optional.
+  for (const match of text.matchAll(/url\(\s*(?:"([^"]*)"?|'([^']*)'?|([^)\s]*))/giu)) {
     addresses.push(match[1] ?? match[2] ?? match[3] ?? "");
   }
   const imageFunction = /(?:image-set|image|cross-fade|src)\(([^)]*)\)/giu;
@@ -130,8 +143,10 @@ function elementAddresses(element: Element): string[] {
 /**
  * A rendered diagram with everything that would load from outside it removed, and the
  * addresses it named. Images, icons, and styles that point elsewhere are dropped (a picture
- * drawn from `data:` stays); the rest of the markup is left exactly as Mermaid drew it, so
- * an ordinary diagram comes back unchanged.
+ * drawn from `data:` stays), and so is any attribute whose value names an outside resource
+ * the way CSS does (`mask="url(…)"`, `fill`, `filter`, `cursor`, or one the browser does not
+ * know); the rest of the markup is left exactly as Mermaid drew it, so an ordinary diagram
+ * comes back unchanged.
  */
 export function stripSvgExternalResources(svg: string): {
   readonly svg: string;
@@ -157,6 +172,17 @@ export function stripSvgExternalResources(svg: string): {
       element.remove();
       changed = true;
       continue;
+    } else if (ANIMATION_ELEMENTS.has(name)) {
+      const target = (element.getAttribute("attributeName") ?? "").trim().toLowerCase();
+      if (/(?:^|:)(?:href|src)$/u.test(target)) {
+        for (const valueAttribute of ANIMATION_VALUE_ATTRIBUTES) {
+          const value = element.getAttribute(valueAttribute);
+          if (value) blocked.push(...value.split(";").map((part) => part.trim()));
+        }
+        element.remove();
+        changed = true;
+        continue;
+      }
     }
     for (const attribute of Array.from(element.attributes)) {
       const attributeName = attribute.localName.toLowerCase();
@@ -170,9 +196,14 @@ export function stripSvgExternalResources(svg: string): {
         if (!attributeName.startsWith("on")) blocked.push(value);
         element.removeAttributeNode(attribute);
         changed = true;
-      } else if (attributeName === "style" && externalCss(value, [])) {
+      } else if (attributeName === "style") {
+        if (!externalCss(value, [])) continue;
         const style = (element as HTMLElement | SVGElement).style;
         if (!style || !stripDeclarations(style, blocked)) element.removeAttribute("style");
+        changed = true;
+      } else if (externalCss(value, blocked)) {
+        // A presentation attribute (or any other) whose value loads like CSS.
+        element.removeAttributeNode(attribute);
         changed = true;
       }
     }
@@ -185,6 +216,8 @@ export function stripSvgExternalResources(svg: string): {
   }
   return {
     svg: changed ? template.innerHTML : svg,
-    blocked: [...new Set(blocked.filter((address) => address.length > 0))],
+    blocked: [
+      ...new Set(blocked.filter((address) => address.length > 0 && !isLocalAddress(address))),
+    ],
   };
 }

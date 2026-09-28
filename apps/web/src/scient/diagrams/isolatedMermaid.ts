@@ -17,12 +17,18 @@
 import type { MermaidConfig } from "mermaid";
 import mermaidScriptUrl from "mermaid/dist/mermaid.min.js?url";
 
+import { remoteImageAddress } from "../presentation/remoteImageAddress";
 import { fetchesInCss } from "./cssResources";
 import { mermaidRenderConfig, type MermaidTheme } from "./mermaidRuntime";
 
-/** What the frame may load. Mermaid's script is the only request it can make. */
-const ISOLATED_MERMAID_POLICY =
-  "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:";
+/**
+ * What the frame may load: Mermaid's script and, when it measures like the page, the app's
+ * own bundled fonts. Nothing may come from another origin.
+ */
+function isolatedMermaidPolicy(appFonts: boolean): string {
+  const fonts = appFonts ? "'self' data:" : "data:";
+  return `default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src data: blob:; font-src ${fonts}`;
+}
 
 const LOAD_TIMEOUT_MS = 30_000;
 /** Refusals are reported in a task after the load that caused them; this lets them arrive. */
@@ -81,12 +87,38 @@ function asPageError(cause: unknown): Error {
   return new Error(message);
 }
 
+const CSS_URL = /url\(\s*(?:"([^"]*)"|'([^']*)'|([^)\s]*))\s*\)/giu;
+
 /**
- * A rule's text without anything that would load a resource. Group rules (`@layer`,
- * `@media`, nested style rules) keep their safe children, so one font face or background
- * image does not take a whole layer with it.
+ * A bundled font face with its sources made absolute, so the frame loads the same file; null
+ * when any source is not the app's own (another origin must never be contacted).
+ */
+function appFontFaceText(rule: CSSFontFaceRule): string | null {
+  const base = rule.parentStyleSheet?.href ?? document.baseURI;
+  const context = { baseUrl: base, appUrl: window.location.href };
+  let foreign = false;
+  const text = rule.cssText.replace(CSS_URL, (_match, double, single, bare) => {
+    const source = String(double ?? single ?? bare ?? "");
+    if (remoteImageAddress(source, context) !== null) foreign = true;
+    try {
+      return `url("${new URL(source, base).href.replaceAll('"', "%22")}")`;
+    } catch {
+      foreign = true;
+      return "none";
+    }
+  });
+  // Anything else that loads (`@import` cannot appear here, but `src()` could).
+  const rest = text.replace(CSS_URL, "");
+  return foreign || fetchesInCss(rest) ? null : text;
+}
+
+/**
+ * A rule's text without anything that would load a resource, except the app's own fonts.
+ * Group rules (`@layer`, `@media`, nested style rules) keep their safe children, so one
+ * background image does not take a whole layer with it.
  */
 function safeRuleText(rule: CSSRule): string | null {
+  if (rule instanceof CSSFontFaceRule) return appFontFaceText(rule);
   const children = "cssRules" in rule ? (rule as CSSGroupingRule).cssRules : null;
   if (children === null || children.length === 0) {
     return fetchesInCss(rule.cssText) ? null : rule.cssText;
@@ -119,6 +151,47 @@ function pageStyleText(): string {
     }
   }
   return rules.join("\n");
+}
+
+const styleOwnerIds = new WeakMap<object, number>();
+let nextStyleOwnerId = 0;
+
+/** Changes when a stylesheet is added, removed, replaced, or gains or loses rules. */
+function pageStyleSignature(): string {
+  return Array.from(document.styleSheets, (sheet) => {
+    const owner = sheet.ownerNode ?? sheet;
+    let id = styleOwnerIds.get(owner);
+    if (id === undefined) {
+      nextStyleOwnerId += 1;
+      id = nextStyleOwnerId;
+      styleOwnerIds.set(owner, id);
+    }
+    let rules = -1;
+    try {
+      rules = sheet.cssRules.length;
+    } catch {
+      // A cross-origin sheet: its rules cannot be read or mirrored.
+    }
+    return `${id}:${sheet.href ?? ""}:${rules}`;
+  }).join("|");
+}
+
+const fontKey = (face: FontFace) =>
+  [face.family, face.style, face.weight, face.stretch, face.unicodeRange].join("|");
+
+/** Loads, in the frame, each font face the page has already loaded, so text measures alike. */
+async function mirrorLoadedFonts(frameDocument: Document): Promise<void> {
+  const loaded = new Set<string>();
+  document.fonts.forEach((face) => {
+    if (face.status === "loaded") loaded.add(fontKey(face));
+  });
+  const pending: Promise<unknown>[] = [];
+  frameDocument.fonts.forEach((face) => {
+    if (face.status === "unloaded" && loaded.has(fontKey(face))) {
+      pending.push(face.load().catch(() => undefined));
+    }
+  });
+  if (pending.length > 0) await Promise.all(pending);
 }
 
 function mirrorAttributes(source: Element, target: Element): void {
@@ -172,7 +245,7 @@ export async function openIsolatedMermaid(
   const scriptUrl = new URL(mermaidScriptUrl, document.baseURI).href;
   frame.srcdoc = [
     "<!doctype html><html><head>",
-    `<meta http-equiv="Content-Security-Policy" content="${ISOLATED_MERMAID_POLICY}">`,
+    `<meta http-equiv="Content-Security-Policy" content="${isolatedMermaidPolicy(options.measureLikePage === true)}">`,
     `<script src="${escapeAttribute(scriptUrl)}"></script>`,
     "</head><body></body></html>",
   ].join("");
@@ -212,15 +285,20 @@ export async function openIsolatedMermaid(
     frameDocument.addEventListener("securitypolicyviolation", recordRefusal);
     substituteMeasuredImages(frameWindow, recordRefusal);
 
-    let pageStyle: HTMLStyleElement | null = null;
-    const measureLikePage = () => {
-      if (pageStyle === null) {
-        pageStyle = frameDocument.createElement("style");
+    const pageStyle = frameDocument.createElement("style");
+    let pageStyleVersion: string | null = null;
+    const measureLikePage = async () => {
+      const signature = pageStyleSignature();
+      if (signature !== pageStyleVersion) {
         pageStyle.textContent = pageStyleText();
-        frameDocument.head.append(pageStyle);
+        if (!pageStyle.isConnected) frameDocument.head.append(pageStyle);
+        pageStyleVersion = signature;
       }
       mirrorAttributes(document.documentElement, frameDocument.documentElement);
       mirrorAttributes(document.body, frameDocument.body);
+      // Apply the styles now, so the frame's font set lists their faces.
+      frameWindow.getComputedStyle(frameDocument.body).getPropertyValue("font-family");
+      await mirrorLoadedFonts(frameDocument);
     };
 
     let initializedTheme: MermaidTheme | null = null;
@@ -245,7 +323,7 @@ export async function openIsolatedMermaid(
           mermaid.initialize(mermaidRenderConfig(theme));
           initializedTheme = theme;
         }
-        if (options.measureLikePage) measureLikePage();
+        if (options.measureLikePage) await measureLikePage();
         const before = refused;
         sequence += 1;
         try {

@@ -91,6 +91,36 @@ const FETCHING = [
   },
 ];
 
+/** SVG presentation attributes (and one unknown attribute) that load like CSS, in a label. */
+const ATTRIBUTE_LOADS = [
+  "mask",
+  "filter",
+  "clip-path",
+  "fill",
+  "stroke",
+  "marker-start",
+  "marker-mid",
+  "marker-end",
+  "cursor",
+  "data-unknown",
+].map((attribute) => ({
+  name: `${attribute} attribute`,
+  source: `flowchart LR\nA["<svg width='10' height='10'><path d='M0 0 L5 5 L10 0' ${attribute}='url(/${PROBE}/${attribute}.png)'/></svg>"] --> B`,
+  address: `/${PROBE}/${attribute}.png`,
+}));
+const HTML_ATTRIBUTE_LOADS = [
+  {
+    name: "HTML background attribute",
+    source: `flowchart LR\nA["<table background='/${PROBE}/table.png'><tr><td>x</td></tr></table>"] --> B`,
+    address: `/${PROBE}/table.png`,
+  },
+  {
+    name: "escaped mask attribute",
+    source: `flowchart LR\nA["<svg width='10' height='10'><rect width='10' height='10' mask='u\\72l(/${PROBE}/escaped.png)'/></svg>"] --> B`,
+    address: `/${PROBE}/escaped.png`,
+  },
+];
+
 /** Ordinary diagrams across the common types, including math and theme directives. */
 const ORDINARY = [
   "flowchart TD\nA[Start] --> B{Is it?}\nB -->|Yes| C[OK]\nB -->|No| D[Try again with a longer label]",
@@ -172,6 +202,59 @@ describe("chat diagrams draw with no network access", () => {
     },
   );
 
+  it.each([...ATTRIBUTE_LOADS, ...HTML_ATTRIBUTE_LOADS])(
+    "drops a $name, names it, and requests nothing in the frame or the page",
+    async ({ source, address }) => {
+      // What Mermaid itself kept, before Scient strips it.
+      const raw = await (await sharedIsolatedMermaid()).render(source, { awaitRefusals: false });
+      const rendered = await renderMermaidDiagram(source, "light");
+      expect(rendered.svg).toContain("<svg");
+      expect(rendered.svg).not.toContain(PROBE);
+      if (raw.svg.includes(PROBE)) {
+        expect(rendered.blocked?.some((blocked) => blocked.includes(address))).toBe(true);
+      }
+      const shown = document.createElement("div");
+      shown.innerHTML = rendered.svg;
+      document.body.append(shown);
+      await settle();
+      shown.remove();
+      expect(await allProbeRequests()).toEqual([]);
+    },
+  );
+
+  it("keeps Mermaid's own presentation attributes that load from outside for the check", async () => {
+    // The attack the check exists for: Mermaid keeps a label's inline SVG attributes.
+    const raw = await (
+      await sharedIsolatedMermaid()
+    ).render(ATTRIBUTE_LOADS[0]!.source, {
+      awaitRefusals: false,
+    });
+    expect(raw.svg).toContain(`mask="url(/${PROBE}/mask.png)"`);
+  });
+
+  it("requests nothing once a card showing every kind of outside load is displayed", async () => {
+    host = document.createElement("div");
+    host.style.width = "720px";
+    document.body.append(host);
+    root = createRoot(host);
+    const labels = [...ATTRIBUTE_LOADS, ...HTML_ATTRIBUTE_LOADS]
+      .map(
+        ({ source }, index) =>
+          `N${index}${source.slice(source.indexOf("["), source.lastIndexOf("]") + 1)}`,
+      )
+      .join("\n");
+    const source = `flowchart TD\n${labels}\nX["<img src='/${PROBE}/card.png'>"]`;
+    root.render(
+      <MermaidDiagramCard source={source} language="mermaid" title={null} theme="light" />,
+    );
+    await expect
+      .poll(() => host!.querySelector(".scient-mermaid-inline svg") !== null, { timeout: 20_000 })
+      .toBe(true);
+    expect(host.querySelector('[role="note"]')?.textContent).toContain(`/${PROBE}/card.png`);
+    await settle();
+    expect(await allProbeRequests()).toEqual([]);
+  });
+
   it("shows the card with a note that links each blocked web address", async () => {
     host = document.createElement("div");
     host.style.width = "720px";
@@ -204,6 +287,58 @@ describe("chat diagrams draw with no network access", () => {
       }
     },
   );
+
+  it("mirrors math styles and bundled fonts loaded after the frame opened", async () => {
+    // The frame is open and has drawn; KaTeX's stylesheet and fonts arrive only now, as in chat.
+    await renderMermaidDiagram("flowchart LR\nBefore --> Math", "light");
+    const { renderScientTexToHtml } = await import("../math/katexRuntime");
+    const math = document.createElement("div");
+    math.innerHTML = renderScientTexToHtml("\\frac{a}{b} + \\beta", false) ?? "";
+    document.body.append(math);
+    await document.fonts.ready;
+    await expect
+      .poll(() => [...document.fonts].some((face) => face.status === "loaded"), {
+        timeout: 10_000,
+      })
+      .toBe(true);
+    for (const theme of ["light", "dark"] as const) {
+      const source =
+        'flowchart LR\nA["$$\\int_0^1 x^2\\,dx$$ and $$\\sqrt{2}$$"] --> B["$$\\alpha$$"]';
+      const isolated = await renderMermaidDiagram(source, theme);
+      const page = await renderMermaidDiagram(source, theme, "page");
+      expect(withoutIds(isolated.svg), theme).toBe(withoutIds(page.svg));
+    }
+    const frameWindow = (await sharedIsolatedMermaid()).window;
+    const frameFaces = [...frameWindow.document.fonts].map((face) => face.family);
+    expect(frameFaces.some((family) => family.includes("KaTeX"))).toBe(true);
+    math.remove();
+  });
+
+  it("lets the frame load only the app's own fonts, never another origin's", async () => {
+    const frame = await sharedIsolatedMermaid();
+    const policy = frame.window.document
+      .querySelector('meta[http-equiv="Content-Security-Policy"]')
+      ?.getAttribute("content");
+    expect(policy).toContain("font-src 'self' data:");
+    const otherOrigin = window.location.origin.replace("localhost", "127.0.0.1");
+    expect(otherOrigin).not.toBe(window.location.origin);
+    // A face from another origin is refused by the frame's policy before any request.
+    const frameDocument = frame.window.document;
+    const refusals: string[] = [];
+    const onRefusal = (event: SecurityPolicyViolationEvent) =>
+      refusals.push(event.effectiveDirective);
+    frameDocument.addEventListener("securitypolicyviolation", onRefusal);
+    const style = frameDocument.createElement("style");
+    style.textContent = `@font-face{font-family:ProbeFace;src:url(${otherOrigin}/${PROBE}/font.woff2)}`;
+    frameDocument.head.append(style);
+    try {
+      await frameDocument.fonts.load("16px ProbeFace").catch(() => []);
+      await expect.poll(() => refusals, { timeout: 5_000 }).toContain("font-src");
+    } finally {
+      style.remove();
+      frameDocument.removeEventListener("securitypolicyviolation", onRefusal);
+    }
+  });
 
   it("measures first-draw latency and a long thread's diagrams", async () => {
     const timed = async (run: () => Promise<unknown>) => {
@@ -273,5 +408,35 @@ describe("stripping outside loads from a drawn SVG", () => {
     expect(stripped).toContain("fill: blue");
     // A picture drawn from data: stays.
     expect(stripped).toContain("data:image/gif");
+  });
+
+  it("drops every attribute whose value loads like CSS, and animations that set a link", () => {
+    const { svg: stripped, blocked } = stripSvgExternalResources(
+      svg(
+        [
+          '<path d="M0 0" mask="url(https://a.example/m.png?s=v)" fill="url(#local)"/>',
+          '<rect filter="url(\'https://a.example/f.svg#x\')" clip-path="url(https://a.example/c.svg#c)"/>',
+          '<line stroke="url(https://a.example/s.svg#g)" marker-start="url(https://a.example/ms.svg#m)" marker-mid="url(https://a.example/mm.svg#m)" marker-end="url(https://a.example/me.svg#m)"/>',
+          '<g cursor="url(https://a.example/cur.png), auto" data-whatever="url(https://a.example/u.png"/>',
+          '<a href="#top"><set attributeName="href" to="https://a.example/anim.png"/></a>',
+        ].join(""),
+      ),
+    );
+    expect(stripped).not.toContain("a.example");
+    expect(stripped).toContain('fill="url(#local)"');
+    expect(blocked).toEqual(
+      expect.arrayContaining([
+        "https://a.example/m.png?s=v",
+        "https://a.example/f.svg#x",
+        "https://a.example/c.svg#c",
+        "https://a.example/s.svg#g",
+        "https://a.example/ms.svg#m",
+        "https://a.example/mm.svg#m",
+        "https://a.example/me.svg#m",
+        "https://a.example/cur.png",
+        "https://a.example/u.png",
+        "https://a.example/anim.png",
+      ]),
+    );
   });
 });
