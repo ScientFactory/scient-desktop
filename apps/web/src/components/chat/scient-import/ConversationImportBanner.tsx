@@ -6,6 +6,7 @@ import type {
 import { ImportIcon } from "lucide-react";
 
 import type { ComposerBannerStackItem } from "../ComposerBannerStack";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../../ui/tooltip";
 
 function plural(count: number, one: string, many: string): string {
   return `${count} ${count === 1 ? one : many}`;
@@ -34,7 +35,10 @@ function listLabels(labels: ReadonlyArray<string>): string {
 }
 
 /** What the import banner says about an imported thread. */
-function conversationImportNotice(conversationImport: OrchestrationConversationImport): {
+export function conversationImportNotice(
+  conversationImport: OrchestrationConversationImport,
+  sessionStarted = false,
+): {
   readonly title: string;
   readonly description: string;
 } {
@@ -54,11 +58,50 @@ function conversationImportNotice(conversationImport: OrchestrationConversationI
           ? "Text copied from a Scient Markdown export, which anyone can edit."
           : "Copied from a Scient conversation file, which anyone can edit.",
       omitted.length > 0 ? `Not included: ${listLabels(omitted)}.` : null,
-      "Your next message starts a fresh session; the agent receives this history as context.",
+      sessionStarted
+        ? document
+          ? "The attached document remains unverified after the new provider session starts."
+          : "The imported history remains unverified after the new provider session starts."
+        : "Your next message starts a fresh session; the agent receives this history as context.",
     ]
       .filter((line) => line !== null)
       .join(" "),
   };
+}
+
+/** A non-dismissable provenance marker that remains visible after continuation. */
+export function ConversationImportProvenanceBadge({
+  conversationImport,
+  sessionStarted,
+}: {
+  readonly conversationImport: OrchestrationConversationImport | null | undefined;
+  readonly sessionStarted: boolean;
+}) {
+  if (!conversationImport) return null;
+  const notice = conversationImportNotice(conversationImport, sessionStarted);
+  const document = conversationImport.sourceFormat === "scient-markdown-document";
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            tabIndex={0}
+            data-conversation-import-provenance={document ? "document" : "unverified"}
+            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border px-1.5 py-0.5 text-[11px] text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+          />
+        }
+      >
+        <ImportIcon aria-hidden className="size-3" />
+        <span>{document ? "Document attached" : "Imported · unverified"}</span>
+        {!document && conversationImport.omissions.length > 0 ? (
+          <span>· {plural(conversationImport.omissions.length, "omission", "omissions")}</span>
+        ) : null}
+      </TooltipTrigger>
+      <TooltipPopup side="bottom" className="max-w-80">
+        {notice.description}
+      </TooltipPopup>
+    </Tooltip>
+  );
 }
 
 /**

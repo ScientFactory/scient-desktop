@@ -10819,6 +10819,12 @@ function ChatViewContent(props: ChatViewProps) {
             activeThreadId={activeThread.id}
             {...(routeKind === "draft" && draftId ? { draftId } : {})}
             activeThreadTitle={activeThread.title}
+            conversationImport={
+              activeServerThread?.conversationImport ??
+              activeServerThread?.forkLineage?.sourceImport ??
+              null
+            }
+            importSessionStarted={activeServerThread?.session != null}
             isServerThread={isServerThread}
             activeProject={activeProject}
             openInCwd={gitCwd}
