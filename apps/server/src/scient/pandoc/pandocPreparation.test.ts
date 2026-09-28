@@ -354,6 +354,20 @@ describe("mermaidDiagramAssetId", () => {
       mermaidDiagramAssetId("graph TD; A-->B"),
     );
   });
+
+  it("gives a CRLF fence the id of the code block Pandoc reads, which has no carriage returns", () => {
+    expect(mermaidDiagramAssetId("flowchart LR\r\n\tA --> B\r\n")).toBe(
+      mermaidDiagramAssetId("flowchart LR\n\tA --> B"),
+    );
+    // Pandoc drops a lone carriage return too, rather than treating it as a line end.
+    expect(mermaidDiagramAssetId("flowchart LR\rA --> B")).toBe(
+      mermaidDiagramAssetId("flowchart LRA --> B"),
+    );
+    // Tabs are kept by the read pass, so they are part of the identity.
+    expect(mermaidDiagramAssetId("flowchart LR\n\tA --> B")).not.toBe(
+      mermaidDiagramAssetId("flowchart LR\n    A --> B"),
+    );
+  });
 });
 
 describe("landscapeWideTables", () => {

@@ -293,9 +293,12 @@ const make = Effect.gen(function* () {
             ...(stdoutPath === undefined ? {} : { stdoutPath }),
           }).pipe(Effect.mapError(runFailure));
 
-        // 1. Read.
+        // 1. Read. Tabs stay as written, as Scient's Markdown parser reads them
+        // (and so Mermaid fences keep the identity their captured image has).
         const read = yield* run(
-          ["--sandbox", "-f", input.latex ? "latex" : SCIENT_PANDOC_READER, "-t", "json"],
+          input.latex
+            ? ["--sandbox", "-f", "latex", "-t", "json"]
+            : ["--sandbox", "--preserve-tabs", "-f", SCIENT_PANDOC_READER, "-t", "json"],
           new TextEncoder().encode(source),
           readLimits,
         );

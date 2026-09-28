@@ -40,6 +40,7 @@ import {
   readDocx,
 } from "./pandocTestSupport.ts";
 import { prepareLatexProject } from "./latexProjectPreparation.ts";
+import { planWordDiagrams } from "./wordDiagramCapture.ts";
 
 const binary = pandocBinaryForTests();
 const artifactDirectory = process.env.SCIENT_PANDOC_FIXTURE_OUT?.trim() || null;
@@ -97,6 +98,40 @@ const largeBundle = () =>
   });
 
 describe.skipIf(binary === null)("Word export with the real Pandoc (local integration)", () => {
+  it.live("embeds the captured image of CRLF and tab-indented Mermaid fences", () =>
+    withConverter(({ converter, directory }) =>
+      Effect.gen(function* () {
+        const markdown = [
+          "```mermaid",
+          "flowchart LR",
+          "\tA --> B",
+          "```",
+          "",
+          "- item",
+          "",
+          "  ```mermaid",
+          "  flowchart TD",
+          "  \tC\t-->\tD",
+          "  ```",
+          "",
+        ].join("\r\n");
+        const assets = planWordDiagrams(markdown, `sha256:${"a".repeat(64)}`).diagrams.map(
+          ({ id }) => bytesAsset({ id, bytes: PNG_BYTES, role: "rendered-diagram" }),
+        );
+        expect(assets).toHaveLength(2);
+        const { result, docx } = yield* convertTo(converter, directory, "mermaid-crlf-tabs", {
+          bundle: makeBundle({ markdown, assets }),
+        });
+        const xml = docx.text("word/document.xml");
+        expect(xml).not.toContain("Mermaid diagram source (image unavailable)");
+        expect(count(xml, /<pic:pic\b/gu)).toBe(2);
+        expect(result.warnings.map((warning) => warning.message).join("\n")).not.toContain(
+          "no rendered image",
+        );
+      }),
+    ),
+  );
+
   it.live("keeps text inside a complete raw HTML details block in the Word file", () =>
     withConverter(({ converter, directory }) =>
       Effect.gen(function* () {

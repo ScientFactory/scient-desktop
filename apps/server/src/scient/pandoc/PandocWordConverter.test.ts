@@ -61,6 +61,45 @@ describe("PandocWordConverter", () => {
       }),
     ),
   );
+  it.live("keeps tabs on the Markdown read so Mermaid fences keep their capture id", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const pidDirectory = yield* fs.makeTempDirectoryScoped({ prefix: "scient-word-args-" });
+      const pidFile = NodePath.join(pidDirectory, "pid");
+      const fake = fakePandoc(pidFile);
+      yield* run(withCommand(fake("record-args")), ({ converter, directory }) =>
+        Effect.gen(function* () {
+          yield* converter.convert({
+            bundle: makeBundle({ markdown: "Body" }),
+            outputPath: NodePath.join(directory, "markdown.docx"),
+          });
+          yield* converter.convert({
+            bundle: makeBundle({ markdown: "" }),
+            latex: {
+              source: "Body",
+              baseDirectory: directory,
+              files: [],
+              imageReferences: [],
+              bibliography: [],
+              warnings: [],
+            },
+            outputPath: NodePath.join(directory, "latex.docx"),
+          });
+        }),
+      );
+      const runs = NodeFS.readFileSync(`${pidFile}.args`, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as ReadonlyArray<string>);
+      const reads = runs.filter((args) => args[args.indexOf("-t") + 1] === "json");
+      expect(reads).toHaveLength(2);
+      expect(reads[0]).toContain("--preserve-tabs");
+      expect(reads[0]).toContain(SCIENT_PANDOC_READER);
+      expect(reads[1]).toContain("latex");
+      expect(reads[1]).not.toContain("--preserve-tabs");
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it("reads Scient's profiles with CommonMark and only the profiles' extensions", () => {
     expect(SCIENT_PANDOC_READER.startsWith("commonmark_x-")).toBe(true);
     for (const off of ["attributes", "raw_attribute", "fenced_divs", "smart", "subscript"]) {
