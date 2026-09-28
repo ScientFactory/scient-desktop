@@ -17,7 +17,7 @@ describe("Mermaid runtime recovery transaction", () => {
     native.render.mockRejectedValueOnce(syntaxError()).mockResolvedValue(good);
     const { renderMermaidDiagram } = await import("./mermaidRuntime");
     const copies = await Promise.all(
-      Array.from({ length: 48 }, () => renderMermaidDiagram(fixture.source, "light")),
+      Array.from({ length: 48 }, () => renderMermaidDiagram(fixture.source, "light", "page")),
     );
     expect(native.render.mock.calls.map((call) => call[1])).toEqual([
       fixture.source,
@@ -27,7 +27,7 @@ describe("Mermaid runtime recovery transaction", () => {
     expect(copies.every((copy) => copy.recovery?.source === fixture.expected)).toBe(true);
     expect(copies[0]?.recovery?.originalSource).toBe(fixture.source);
     expect(new Set(copies.map((copy) => copy.svg)).size).toBe(48);
-    await renderMermaidDiagram(fixture.source, "light");
+    await renderMermaidDiagram(fixture.source, "light", "page");
     expect(native.render).toHaveBeenCalledTimes(2);
   });
   it.each([syntaxError(), new Error("Layout failed"), null])(
@@ -39,14 +39,14 @@ describe("Mermaid runtime recovery transaction", () => {
       if (failure) native.render.mockRejectedValueOnce(failure);
       else native.render.mockResolvedValueOnce({ ...good, svg: "invalid SVG" });
       const { renderMermaidDiagram } = await import("./mermaidRuntime");
-      await expect(renderMermaidDiagram(fixture.source, "light")).rejects.toMatchObject({
+      await expect(renderMermaidDiagram(fixture.source, "light", "page")).rejects.toMatchObject({
         cause: original,
         details: original.message,
       });
       expect(native.render).toHaveBeenCalledTimes(2);
       // Failed candidates are not successes in cache and do not poison the queue.
       native.render.mockResolvedValue(good);
-      const result = await renderMermaidDiagram(fixture.source, "light");
+      const result = await renderMermaidDiagram(fixture.source, "light", "page");
       expect(result.recovery).toBeUndefined();
       expect(native.render).toHaveBeenCalledTimes(3);
     },
@@ -55,18 +55,18 @@ describe("Mermaid runtime recovery transaction", () => {
     native.render.mockResolvedValue(good);
     const { renderMermaidDiagram } = await import("./mermaidRuntime");
     const fixture = recoveryFixtures[0];
-    expect((await renderMermaidDiagram(fixture.source, "light")).recovery).toBeUndefined();
+    expect((await renderMermaidDiagram(fixture.source, "light", "page")).recovery).toBeUndefined();
     expect(native.render.mock.calls.map((call) => call[1])).toEqual([fixture.source]);
   });
   it("does not retry layout/resource failures and keeps theme caches separate", async () => {
     const { renderMermaidDiagram } = await import("./mermaidRuntime");
     native.render.mockRejectedValueOnce(new Error("Maximum number of edges exceeded"));
-    await expect(renderMermaidDiagram(recoveryFixtures[0].source, "light")).rejects.toThrow(
+    await expect(renderMermaidDiagram(recoveryFixtures[0].source, "light", "page")).rejects.toThrow(
       "Maximum number",
     );
     expect(native.render).toHaveBeenCalledTimes(1);
     native.render.mockResolvedValue(good);
-    await renderMermaidDiagram(recoveryFixtures[0].source, "dark");
+    await renderMermaidDiagram(recoveryFixtures[0].source, "dark", "page");
     expect(native.render).toHaveBeenCalledTimes(2);
   });
 });

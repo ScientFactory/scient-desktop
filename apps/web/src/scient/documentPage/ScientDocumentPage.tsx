@@ -210,7 +210,8 @@ function PrintMermaid({ source }: { readonly source: string }) {
   const [state, setState] = useState<DiagramState>({ status: "pending" });
   useEffect(() => {
     let active = true;
-    renderMermaidDiagram(source, "light").then(
+    // The document page already runs with no network access, so it draws in place.
+    renderMermaidDiagram(source, "light", "page").then(
       (rendered) => {
         if (active) setState({ status: "rendered", svg: rendered.svg });
       },

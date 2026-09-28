@@ -3,7 +3,7 @@ import type { ScientWordDiagramCapture, ScientWordDiagramPlan } from "@t3tools/c
 import { mermaidSvgToPngBlob } from "../diagrams/mermaidExport";
 import { MAX_MERMAID_SOURCE_LENGTH, planMermaidRecovery } from "../diagrams/mermaidRecovery";
 import { mermaidConfigFetchRisk, mermaidStyleFetchRisk } from "./diagramSafety";
-import { openIsolatedMermaid, type IsolatedMermaid } from "./isolatedMermaid";
+import { openIsolatedMermaid, type IsolatedMermaid } from "../diagrams/isolatedMermaid";
 
 const MAX_PNG_BYTES = 2 * 1024 * 1024;
 const MAX_TOTAL_PNG_BYTES = 8 * 1024 * 1024;
