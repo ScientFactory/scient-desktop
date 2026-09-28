@@ -1,11 +1,13 @@
 import type {
   ConversationImportId,
   EnvironmentId,
+  ScientConversationImportConfirmRequest,
   ScientConversationImportPreview,
+  ScientConversationImportResult,
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { FileUpIcon, ImportIcon } from "lucide-react";
-import { useEffect, useId, useMemo, useRef, useState, type DragEvent } from "react";
+import { useEffect, useEffectEvent, useId, useMemo, useRef, useState, type DragEvent } from "react";
 
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
@@ -53,6 +55,7 @@ import {
   importModelGroups,
   importRuntimeModeNote,
   isAbort,
+  isConversationImportError,
   modelDisplayName,
 } from "./importDialog.logic";
 import {
@@ -186,6 +189,26 @@ function stageStatus(stage: Stage): string | null {
 interface StagedAttempt {
   readonly environmentId: EnvironmentId;
   importId: ConversationImportId | null;
+  /**
+   * Set once a confirm is sent. From then the server may commit the import
+   * whatever happens to the connection, so the staged import is kept, and
+   * never cancelled, until the outcome is known.
+   */
+  confirming: boolean;
+}
+
+/** A confirm that was sent, and what is known about its outcome. */
+interface Confirmation {
+  readonly staged: StagedAttempt;
+  readonly request: ScientConversationImportConfirmRequest;
+  readonly modelName: string;
+  readonly isDocument: boolean;
+  /** `unknown`: the answer never arrived; the server may still have committed it. */
+  readonly phase: "sending" | "unknown";
+  /** The destination's connection dropped since the confirm was sent. */
+  readonly interrupted: boolean;
+  /** How many times the confirm has been re-sent to learn its outcome. */
+  readonly checks: number;
 }
 
 function ConversationImportDialog({ source }: { readonly source: ConversationImportSource }) {
@@ -223,17 +246,44 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
     (option) => option.environmentId === destination,
   );
   const destinationGone = destination !== null && destinationOption === undefined;
+  const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
   const [disconnectedAt, setDisconnectedAt] = useState<number | null>(null);
-  if (destinationOption?.connected === false && disconnectedAt !== retries) {
+  // A sent confirm holds its destination: losing the connection then does
+  // not abandon the attempt, it waits to learn whether the import finished.
+  if (
+    confirmation === null &&
+    destinationOption?.connected === false &&
+    disconnectedAt !== retries
+  ) {
     setDisconnectedAt(retries);
   }
-  const connectionLost = !destinationGone && destination !== null && disconnectedAt === retries;
+  const confirmingConnected =
+    confirmation !== null &&
+    environmentOptions.some(
+      (option) => option.environmentId === confirmation.staged.environmentId && option.connected,
+    );
+  if (confirmation !== null && !confirmingConnected && !confirmation.interrupted) {
+    setConfirmation({ ...confirmation, interrupted: true });
+  }
+  // Once the destination is back, ask it what became of the lost confirm.
+  if (confirmation?.interrupted === true && confirmingConnected) {
+    setConfirmation({
+      ...confirmation,
+      interrupted: false,
+      phase: "sending",
+      checks: confirmation.checks + 1,
+    });
+  }
+  const connectionLost =
+    confirmation === null && !destinationGone && destination !== null && disconnectedAt === retries;
   const environmentId =
-    destination === null
-      ? (environmentOptions.find((option) => option.connected)?.environmentId ?? null)
-      : destinationOption?.connected === true && !connectionLost
-        ? destination
-        : null;
+    confirmation !== null
+      ? confirmation.staged.environmentId
+      : destination === null
+        ? (environmentOptions.find((option) => option.connected)?.environmentId ?? null)
+        : destinationOption?.connected === true && !connectionLost
+          ? destination
+          : null;
   const config = environmentId === null ? undefined : configs.get(environmentId);
   const availableProjects = projects.filter((project) => project.environmentId === environmentId);
   const [chosenProjectId, setProjectId] = useState<string | null>(null);
@@ -271,7 +321,7 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
         : { _tag: "sending", sentBytes: null, totalBytes: file.sizeBytes };
   const [acknowledgedFor, setAcknowledgedFor] = useState<typeof attempt | null>(null);
   const acknowledged = acknowledgedFor === attempt;
-  const [importing, setImporting] = useState(false);
+  const importing = confirmation !== null;
   const [importError, setImportError] = useState<{
     readonly attempt: typeof attempt;
     readonly message: string;
@@ -288,13 +338,14 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
     const { source, environmentId, markdownMode } = attempt;
     if (source._tag === "choose" || environmentId === null || fileProblem !== null) return;
     const controller = new AbortController();
-    const staged: StagedAttempt = { environmentId, importId: null };
+    const staged: StagedAttempt = { environmentId, importId: null, confirming: false };
     stagedRef.current = staged;
     const stopped = () => controller.signal.aborted;
     const setStage = (stage: Stage) => setProgress({ attempt, stage });
     // Set while the desktop streams this attempt's file; a cancel stops it first.
     let desktopToken: string | null = null;
     const release = () => {
+      if (staged.confirming) return;
       const importId = staged.importId;
       staged.importId = null;
       if (importId === null) return;
@@ -401,20 +452,91 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
     selectedModel !== null &&
     !needsAcknowledgement;
 
+  // Closing while a confirm's answer is pending or lost keeps the staged
+  // import; the thread appears if the server committed it.
+  const closable =
+    confirmation === null || confirmation.phase === "unknown" || confirmation.interrupted;
+  const closedRef = useRef(false);
   const close = () => {
-    if (importing) return;
+    if (!closable) return;
+    closedRef.current = true;
     dismissConversationImportRequest();
   };
 
-  const runImport = async () => {
+  const finished = (next: Confirmation, result: ScientConversationImportResult) => {
+    if (closedRef.current) return;
+    closedRef.current = true;
+    next.staged.importId = null;
+    next.staged.confirming = false;
+    dismissConversationImportRequest();
+    toastManager.add({
+      type: "success",
+      title: next.isDocument ? "Conversation started" : "Conversation imported",
+      description: `Your next message continues it with ${next.modelName}.`,
+    });
+    void navigate({
+      to: "/$environmentId/$threadId",
+      params: buildThreadRouteParams({
+        environmentId: next.staged.environmentId,
+        threadId: result.threadId,
+      }),
+    });
+  };
+
+  // Sends (or re-sends) one confirm. The server answers a repeated identical
+  // confirm with the import it committed, joins the attempt still running,
+  // or reports that nothing was imported; so re-sending never imports twice.
+  const confirmSequence = useRef(0);
+  const onServerFailure = (next: Confirmation, sequence: number, cause: unknown) => {
+    if (closedRef.current || sequence !== confirmSequence.current) return;
+    if (!isConversationImportError(cause)) {
+      setConfirmation((current) => (current === null ? null : { ...current, phase: "unknown" }));
+      return;
+    }
+    // The server answered: nothing was imported.
+    next.staged.confirming = false;
+    setConfirmation(null);
+    setConversationImportReplaceable(true);
+    if (cause.reason === "import-not-found" || cause.reason === "cancelled") {
+      next.staged.importId = null;
+      setProgress({
+        attempt,
+        stage: {
+          _tag: "failed",
+          message: "The import didn't finish. Send the file again to import it.",
+        },
+      });
+    } else {
+      setImportError({
+        attempt,
+        message: importFailureMessage(cause, "The conversation couldn't be imported. Try again."),
+      });
+    }
+  };
+  const askServer = (next: Confirmation) => {
+    const sequence = ++confirmSequence.current;
+    return confirmConversationImport(next.staged.environmentId, next.request).then(
+      (result) => finished(next, result),
+      (cause: unknown) => onServerFailure(next, sequence, cause),
+    );
+  };
+  const recheck = useEffectEvent(() => {
+    if (confirmation !== null) void askServer(confirmation);
+  });
+  const checks = confirmation?.checks ?? 0;
+  useEffect(() => {
+    if (checks > 0) recheck();
+  }, [checks]);
+
+  const runImport = () => {
     const staged = stagedRef.current;
     if (!canImport || staged?.importId == null) return;
-    setImporting(true);
-    setConversationImportReplaceable(false);
+    staged.confirming = true;
     setImportError(null);
-    let result: Awaited<ReturnType<typeof confirmConversationImport>>;
-    try {
-      result = await confirmConversationImport(staged.environmentId, {
+    setConversationImportReplaceable(false);
+    const next: Confirmation = {
+      staged,
+      request: {
         importId: staged.importId,
         packageSha256: preview.package.packageSha256,
         ...(preview.kind === "markdown" && preview.markdownIssues.length > 0
@@ -426,44 +548,31 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
           runtimeMode: IMPORT_RUNTIME_MODE,
           interactionMode: "default",
         },
-      });
-    } catch (cause) {
-      setImportError({
-        attempt,
-        message: importFailureMessage(cause, "The conversation couldn't be imported. Try again."),
-      });
-      setImporting(false);
-      setConversationImportReplaceable(true);
-      return;
-    }
-    staged.importId = null;
-    dismissConversationImportRequest();
-    toastManager.add({
-      type: "success",
-      title: isDocument ? "Conversation started" : "Conversation imported",
-      description: `Your next message continues it with ${selectedModel.name}.`,
-    });
-    await navigate({
-      to: "/$environmentId/$threadId",
-      params: buildThreadRouteParams({
-        environmentId: staged.environmentId,
-        threadId: result.threadId,
-      }),
-    });
+      },
+      modelName: selectedModel.name,
+      isDocument,
+      phase: "sending",
+      interrupted: false,
+      checks: 0,
+    };
+    setConfirmation(next);
+    void askServer(next);
   };
 
   const status = fileProblem === null ? stageStatus(stage) : null;
   const failure =
     fileProblem ??
-    (destinationGone
-      ? "That destination is no longer available. Choose another."
-      : connectionLost
-        ? "Lost the connection to that destination. Choose another or try again."
-        : file !== null && environmentId === null && destination === null
-          ? "No destination is connected. Reconnect one to import this file."
-          : stage._tag === "failed"
-            ? stage.message
-            : null);
+    (confirmation !== null
+      ? null
+      : destinationGone
+        ? "That destination is no longer available. Choose another."
+        : connectionLost
+          ? "Lost the connection to that destination. Choose another or try again."
+          : file !== null && environmentId === null && destination === null
+            ? "No destination is connected. Reconnect one to import this file."
+            : stage._tag === "failed"
+              ? stage.message
+              : null);
   // "Try again" resends to the same destination, only once it is connected.
   const canRetry =
     fileProblem === null &&
@@ -493,7 +602,8 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
         <DialogPanel>
           <div className="flex flex-col gap-4">
             <ConversationFileZone file={file} disabled={importing} />
-            {environmentOptions.length > 1 || destinationGone || connectionLost ? (
+            {confirmation === null &&
+            (environmentOptions.length > 1 || destinationGone || connectionLost) ? (
               <div className="flex flex-col gap-2">
                 <span id={`${id}-environment`} className="text-sm font-medium">
                   Destination
@@ -656,6 +766,32 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
                 ) : null}
               </>
             ) : null}
+            {confirmation !== null && (confirmation.interrupted || !confirmingConnected) ? (
+              <p role="alert" className="text-sm">
+                Lost the connection while importing. Scient will check whether the import finished
+                when the connection returns.
+              </p>
+            ) : confirmation?.phase === "unknown" ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <p role="alert" className="text-sm">
+                  Scient couldn't tell whether the import finished.
+                </p>
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="outline"
+                  onClick={() =>
+                    setConfirmation({
+                      ...confirmation,
+                      phase: "sending",
+                      checks: confirmation.checks + 1,
+                    })
+                  }
+                >
+                  Check again
+                </Button>
+              </div>
+            ) : null}
             {importError?.attempt === attempt ? (
               <p role="alert" className="text-destructive text-sm">
                 {importError.message}
@@ -664,17 +800,19 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
           </div>
         </DialogPanel>
         <DialogFooter>
-          <Button type="button" variant="outline" disabled={importing} onClick={close}>
-            Cancel
+          <Button type="button" variant="outline" disabled={!closable} onClick={close}>
+            {confirmation === null ? "Cancel" : "Close"}
           </Button>
-          <Button type="button" disabled={!canImport} onClick={() => void runImport()}>
+          <Button type="button" disabled={!canImport} onClick={runImport}>
             {importing
               ? isDocument
                 ? "Starting…"
                 : "Importing…"
-              : isDocument
-                ? "Start conversation"
-                : "Import"}
+              : importError?.attempt === attempt
+                ? "Try again"
+                : isDocument
+                  ? "Start conversation"
+                  : "Import"}
           </Button>
         </DialogFooter>
       </DialogPopup>

@@ -176,7 +176,7 @@ export function pluralize(count: number, one: string, many: string): string {
   return `${count} ${count === 1 ? one : many}`;
 }
 
-const isImportError = Schema.is(ScientConversationImportError);
+export const isConversationImportError = Schema.is(ScientConversationImportError);
 const INTERNAL_CODES: ReadonlyArray<string> = [
   ...ScientConversationImportErrorReason.literals,
   ...ConversationImportRejectionReason.literals,
@@ -205,7 +205,7 @@ function plainServerMessage(error: ScientConversationImportError): string | null
 /** What to tell the person about a failed step, without internal detail. */
 export function importFailureMessage(cause: unknown, fallback: string): string {
   if (cause instanceof ConversationImportNotice) return cause.message;
-  if (isImportError(cause)) {
+  if (isConversationImportError(cause)) {
     return plainServerMessage(cause) ?? FALLBACK_BY_REASON[cause.reason] ?? fallback;
   }
   return fallback;

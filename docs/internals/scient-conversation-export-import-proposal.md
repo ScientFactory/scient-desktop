@@ -888,6 +888,16 @@ import. Changing the file or the destination environment does the same and start
   desktop failures read as plain sentences. Cancel or Esc during such an upload first asks the
   desktop to stop it (`cancelOpenedConversationFileUpload`, where available), then calls
   `cancel`; an attempt cancelled while waiting behind an earlier stream never starts its upload.
+- **Confirming.** Once the confirm is sent, the server may commit the import whatever happens to
+  the connection (it runs the commit in its own scope), so the dialog keeps the staged import and
+  its destination until the outcome is known and never cancels it. If the answer does not
+  arrive, or the connection drops, the dialog says so ("Lost the connection while importing.
+  Scient will check whether the import finished when the connection returns.") without the
+  destination picker, and on reconnect re-sends the identical confirm. The server answers a
+  repeated confirm idempotently: the committed result (the dialog then finishes as usual), the
+  running attempt's outcome, or an error meaning nothing was imported. After such an error
+  **Try again** confirms the same staged import; only when the server no longer has it
+  (`import-not-found`, `cancelled`) does Try again send the file again.
 - **Queueing.** A dropped file replaces the file of an import dialog only while one is on screen
   and not committing; otherwise, including during first-run setup, it waits its turn.
 

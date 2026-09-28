@@ -78,6 +78,10 @@ importing into a different project does not bring the sender's files with it.
 Imported conversations start in Supervised mode, which asks before commands and file changes.
 The dialog says so when your usual mode is different.
 
+If the connection drops after you choose **Import**, the import may still finish. Scient waits
+for the connection to return, checks, and then either opens the new conversation or lets you try
+again; it never imports the conversation twice.
+
 If the desktop app asks whether to send the file to another computer and you choose **Cancel**,
 the import stops without an error.
 

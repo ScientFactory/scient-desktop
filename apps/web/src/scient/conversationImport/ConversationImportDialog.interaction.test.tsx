@@ -609,16 +609,106 @@ describe("ConversationImportDialog", () => {
     expect(dialog()?.textContent).toContain("second.scic");
   });
 
-  it("keeps connection details out of a failed import", async () => {
+  it("treats an unanswered confirm as unknown, without connection details", async () => {
     confirmConversationImport.mockRejectedValueOnce(
       new Error("Remote environment endpoint http://127.0.0.1:4000/api timed out after 300000ms."),
     );
     await openWith(scic());
     await act(async () => button("Import")!.click());
     await flush();
-    expect(alerts()).toEqual(["The conversation couldn't be imported. Try again."]);
-    expect(dialog()).not.toBeNull();
-    expect(button("Import")?.disabled).toBe(false);
+    expect(alerts()).toEqual(["Scient couldn't tell whether the import finished."]);
+    expect(dialog()?.textContent).not.toContain("127.0.0.1");
+    expect(cancelConversationImport).not.toHaveBeenCalled();
+
+    await act(async () => button("Check again")!.click());
+    await flush();
+    expect(confirmConversationImport).toHaveBeenCalledTimes(2);
+    expect(confirmConversationImport.mock.calls[1]?.[1]).toEqual(
+      confirmConversationImport.mock.calls[0]?.[1],
+    );
+    expect(dialog()).toBeNull();
+    expect(navigate).toHaveBeenCalledOnce();
+  });
+
+  it("learns after reconnecting that an import sent before a drop committed", async () => {
+    state.environmentIds = [local, remote];
+    confirmConversationImport.mockReturnValueOnce(new Promise(() => {}));
+    await openWith(scic());
+    await act(async () => button("Import")!.click());
+    await flush();
+
+    await act(async () => setOffline([local]));
+    await flush();
+    expect(alerts()).toEqual([
+      "Lost the connection while importing. Scient will check whether the import finished when the connection returns.",
+    ]);
+    expect(dialog()?.textContent).not.toContain("Destination");
+    expect(cancelConversationImport).not.toHaveBeenCalled();
+    expect(createConversationImportUpload).toHaveBeenCalledOnce();
+
+    await act(async () => setOffline([]));
+    await flush();
+    expect(confirmConversationImport).toHaveBeenCalledTimes(2);
+    expect(confirmConversationImport.mock.calls[1]).toEqual(
+      confirmConversationImport.mock.calls[0],
+    );
+    expect(toastAdd).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "success", title: "Conversation imported" }),
+    );
+    expect(navigate).toHaveBeenCalledOnce();
+    expect(dialog()).toBeNull();
+    expect(createConversationImportUpload).toHaveBeenCalledOnce();
+    expect(cancelConversationImport).not.toHaveBeenCalled();
+  });
+
+  it("tries the same staged import again when the lost confirm did not commit", async () => {
+    confirmConversationImport.mockReturnValueOnce(new Promise(() => {}));
+    confirmConversationImport.mockRejectedValueOnce(
+      new ScientConversationImportError({
+        reason: "import-failed",
+        rejection: null,
+        message: "The import was interrupted. Scient will finish cleaning up; try again later.",
+      }),
+    );
+    await openWith(scic());
+    await act(async () => button("Import")!.click());
+    await flush();
+    await act(async () => setOffline([local]));
+    await flush();
+    await act(async () => setOffline([]));
+    await flush();
+
+    expect(alerts()).toEqual([
+      "The import was interrupted. Scient will finish cleaning up; try again later.",
+    ]);
+    await act(async () => button("Try again")!.click());
+    await flush();
+    expect(confirmConversationImport).toHaveBeenCalledTimes(3);
+    expect(confirmConversationImport.mock.calls[2]?.[1]).toMatchObject({ importId });
+    expect(createConversationImportUpload).toHaveBeenCalledOnce();
+    expect(cancelConversationImport).not.toHaveBeenCalled();
+    expect(dialog()).toBeNull();
+  });
+
+  it("sends the file again only when the server no longer has the staged import", async () => {
+    confirmConversationImport.mockRejectedValueOnce(new Error("socket closed"));
+    confirmConversationImport.mockRejectedValueOnce(
+      new ScientConversationImportError({
+        reason: "import-not-found",
+        rejection: null,
+        message: "This import is no longer available.",
+      }),
+    );
+    await openWith(scic());
+    await act(async () => button("Import")!.click());
+    await flush();
+    await act(async () => button("Check again")!.click());
+    await flush();
+    expect(alerts()).toEqual(["The import didn't finish. Send the file again to import it."]);
+
+    await act(async () => button("Try again")!.click());
+    await flush();
+    expect(createConversationImportUpload).toHaveBeenCalledTimes(2);
   });
 
   it("shows where a dragged conversation file will go", async () => {
