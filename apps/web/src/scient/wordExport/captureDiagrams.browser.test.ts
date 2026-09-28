@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { getMermaidRuntimePromise, renderMermaidDiagram } from "../diagrams/mermaidRuntime";
 import { captureWordDiagrams } from "./captureDiagrams";
-import { openIsolatedMermaid } from "./isolatedMermaid";
+import { openIsolatedMermaid } from "../diagrams/isolatedMermaid";
 
 const PROBE = "__scient_word_capture_probe__";
 const digest = `sha256:${"a".repeat(64)}` as const;
@@ -64,12 +64,16 @@ describe("Word diagram capture with the real Mermaid", () => {
   it("records a request to the probe, so an absent one means nothing was fetched", async () => {
     const image = new Image();
     image.src = `/${PROBE}/control.png`;
-    await settle();
-    expect(probeRequests()).toHaveLength(1);
+    // Under a loaded machine the answer can take longer than the settle delay.
+    await expect.poll(() => probeRequests(), { timeout: 10_000 }).toHaveLength(1);
   });
 
   it("needs isolation: Mermaid's strict draw in the page requests a label's image", async () => {
-    await renderMermaidDiagram(FETCHING.labelImage.replace("label.png", "page.png"), "light");
+    await renderMermaidDiagram(
+      FETCHING.labelImage.replace("label.png", "page.png"),
+      "light",
+      "page",
+    );
     await settle();
     expect(probeRequests()).toEqual([expect.stringContaining(`/${PROBE}/page.png`)]);
   });

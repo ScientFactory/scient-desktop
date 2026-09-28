@@ -1,21 +1,33 @@
 import { LRUCache } from "~/lib/lruCache";
 import { dependencies } from "../../../package.json";
+import { sharedIsolatedMermaid } from "./isolatedMermaid";
 import {
   isMermaidSyntaxError,
   planMermaidRecovery,
   MAX_MERMAID_SOURCE_LENGTH,
   type MermaidRecovery,
 } from "./mermaidRecovery";
+import { stripSvgExternalResources } from "./svgExternalResources";
 export { MAX_MERMAID_SOURCE_LENGTH } from "./mermaidRecovery";
 
 export const MERMAID_VERSION = dependencies.mermaid;
 
 export type MermaidTheme = "light" | "dark";
 
+/**
+ * Where Mermaid draws. `frame` is the shared no-network frame (`isolatedMermaid.ts`), and
+ * its SVG is stripped of anything that would load from outside before it is returned.
+ * `page` draws in this document; only a page that itself cannot fetch (the PDF document
+ * page) uses it.
+ */
+export type MermaidIsolation = "frame" | "page";
+
 export interface RenderedMermaidDiagram {
   readonly svg: string;
   readonly diagramType: string;
   readonly recovery?: MermaidRecovery;
+  /** Outside addresses the diagram named and that were left out of it. */
+  readonly blocked?: ReadonlyArray<string>;
 }
 
 const MAX_MERMAID_EDGES = 500;
@@ -26,6 +38,7 @@ interface CachedMermaidDiagram {
   readonly svgTemplate: string;
   readonly diagramType: string;
   readonly recovery?: MermaidRecovery;
+  readonly blocked?: ReadonlyArray<string>;
 }
 
 let mermaidRuntimePromise: Promise<typeof import("mermaid")> | null = null;
@@ -108,15 +121,16 @@ function validateSource(source: string): string {
   return source;
 }
 
-function renderCacheKey(source: string, theme: MermaidTheme): string {
-  return `${theme}\u0000${source}`;
+function renderCacheKey(source: string, theme: MermaidTheme, isolation: MermaidIsolation): string {
+  return `${isolation}\u0000${theme}\u0000${source}`;
 }
 
 function estimateDiagramSize(source: string, rendered: CachedMermaidDiagram): number {
   return (
     source.length * 2 +
     rendered.svgTemplate.length * 2 +
-    (rendered.recovery ? JSON.stringify(rendered.recovery).length * 2 : 0)
+    (rendered.recovery ? JSON.stringify(rendered.recovery).length * 2 : 0) +
+    (rendered.blocked ? JSON.stringify(rendered.blocked).length * 2 : 0)
   );
 }
 
@@ -166,10 +180,31 @@ export function mermaidRenderConfig(theme: MermaidTheme): import("mermaid").Merm
   };
 }
 
-async function renderNativeTemplate(
+async function renderIsolatedTemplate(
   source: string,
   theme: MermaidTheme,
 ): Promise<CachedMermaidDiagram> {
+  const frame = await sharedIsolatedMermaid();
+  const result = await frame.render(source, { theme, awaitRefusals: false });
+  if (!result.svg.includes("<svg")) {
+    throw new Error("Mermaid returned an invalid diagram.");
+  }
+  // The note names what the SVG itself referred to. The frame's own refusal reports arrive
+  // later and could belong to the previous draw, so they are not used here.
+  const stripped = stripSvgExternalResources(result.svg);
+  return {
+    svgTemplate: stripped.svg,
+    diagramType: result.diagramType,
+    ...(stripped.blocked.length > 0 ? { blocked: stripped.blocked } : {}),
+  };
+}
+
+async function renderNativeTemplate(
+  source: string,
+  theme: MermaidTheme,
+  isolation: MermaidIsolation,
+): Promise<CachedMermaidDiagram> {
+  if (isolation === "frame") return renderIsolatedTemplate(source, theme);
   const { default: mermaid } = await getMermaidRuntimePromise();
   mermaid.initialize(mermaidRenderConfig(theme));
 
@@ -180,10 +215,14 @@ async function renderNativeTemplate(
   return { svgTemplate: result.svg, diagramType: result.diagramType };
 }
 
-async function renderTemplate(source: string, theme: MermaidTheme): Promise<CachedMermaidDiagram> {
+async function renderTemplate(
+  source: string,
+  theme: MermaidTheme,
+  isolation: MermaidIsolation,
+): Promise<CachedMermaidDiagram> {
   return enqueueRender(async () => {
     try {
-      return await renderNativeTemplate(source, theme);
+      return await renderNativeTemplate(source, theme, isolation);
     } catch (originalError) {
       if (isMermaidSyntaxError(originalError)) {
         try {
@@ -191,7 +230,7 @@ async function renderTemplate(source: string, theme: MermaidTheme): Promise<Cach
           if (recovery) {
             // One atomic candidate, containing every compatible edit. A later
             // parse/layout failure must not expose partial repairs or its error.
-            const rendered = await renderNativeTemplate(recovery.source, theme);
+            const rendered = await renderNativeTemplate(recovery.source, theme, isolation);
             return { ...rendered, recovery };
           }
         } catch {
@@ -203,15 +242,19 @@ async function renderTemplate(source: string, theme: MermaidTheme): Promise<Cach
   });
 }
 
-async function getTemplate(source: string, theme: MermaidTheme): Promise<CachedMermaidDiagram> {
-  const key = renderCacheKey(source, theme);
+async function getTemplate(
+  source: string,
+  theme: MermaidTheme,
+  isolation: MermaidIsolation,
+): Promise<CachedMermaidDiagram> {
+  const key = renderCacheKey(source, theme, isolation);
   const cached = renderCache.get(key);
   if (cached != null) return cached;
 
   const existing = inFlightRenders.get(key);
   if (existing != null) return existing;
 
-  const pending = renderTemplate(source, theme)
+  const pending = renderTemplate(source, theme, isolation)
     .then((rendered) => {
       renderCache.set(key, rendered, estimateDiagramSize(source, rendered));
       return rendered;
@@ -223,18 +266,21 @@ async function getTemplate(source: string, theme: MermaidTheme): Promise<CachedM
   return pending;
 }
 
+/** Draws a diagram in the no-network frame unless `isolation` says otherwise. */
 export async function renderMermaidDiagram(
   unvalidatedSource: string,
   theme: MermaidTheme,
+  isolation: MermaidIsolation = "frame",
 ): Promise<RenderedMermaidDiagram> {
   const source = validateSource(unvalidatedSource);
 
   try {
-    const template = await getTemplate(source, theme);
+    const template = await getTemplate(source, theme, isolation);
     return {
       svg: rebaseMermaidSvgIds(template.svgTemplate, nextRenderId("instance")),
       diagramType: template.diagramType,
       ...(template.recovery ? { recovery: template.recovery } : {}),
+      ...(template.blocked ? { blocked: template.blocked } : {}),
     };
   } catch (cause) {
     throw new MermaidRenderError(cause);

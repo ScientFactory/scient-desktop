@@ -32,6 +32,7 @@ import {
   downloadMermaidSvg,
   mermaidMarkdownCopySource,
 } from "./mermaidExport";
+import { MermaidBlockedResourcesNote } from "./MermaidBlockedResourcesNote";
 import { MermaidDiagramDialog } from "./MermaidDiagramDialog";
 import {
   renderMermaidDiagram,
@@ -492,13 +493,19 @@ export function MermaidDiagramCard({
           </div>
         </div>
       ) : readyResult !== null ? (
-        <div className="scient-mermaid-inline overflow-auto p-2">
-          <div
-            // Mermaid's strict renderer sanitizes generated SVG. We deliberately
-            // do not call bindFunctions, so diagram-authored click handlers do not run.
-            dangerouslySetInnerHTML={{ __html: readyResult.svg }}
-          />
-        </div>
+        <>
+          <div className="scient-mermaid-inline overflow-auto p-2">
+            <div
+              // Drawn in the no-network frame and stripped of outside loads; Mermaid's
+              // strict renderer sanitizes it. We deliberately do not call bindFunctions,
+              // so diagram-authored click handlers do not run.
+              dangerouslySetInnerHTML={{ __html: readyResult.svg }}
+            />
+          </div>
+          {readyResult.blocked && readyResult.blocked.length > 0 ? (
+            <MermaidBlockedResourcesNote addresses={readyResult.blocked} />
+          ) : null}
+        </>
       ) : null}
 
       {diagramState.status === "error" && !sourceEditor ? (

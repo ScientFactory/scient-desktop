@@ -6,6 +6,7 @@ import {
 } from "../presentation/presentationExport";
 import { copyPngBlobToClipboard } from "../presentation/imageClipboard";
 import { loadCanvasImage } from "../presentation/loadCanvasImage";
+import { FETCHING_ELEMENTS, RESOURCE_ATTRIBUTES } from "./svgExternalResources";
 
 const MAX_PNG_DIMENSION = 8_192;
 const MAX_PNG_PIXELS = 16_777_216;
@@ -101,35 +102,6 @@ function canvasToPngBlob(canvas: HTMLCanvasElement): Promise<Blob> {
   });
 }
 
-/** Elements whose presence would make a renderer fetch, embed, or run something. */
-const FETCHING_ELEMENTS = new Set([
-  "audio",
-  "base",
-  "embed",
-  "feimage",
-  "frame",
-  "iframe",
-  "image",
-  "img",
-  "link",
-  "meta",
-  "object",
-  "picture",
-  "script",
-  "source",
-  "track",
-  "video",
-]);
-/** Attributes that name a resource to load. `href` is judged separately. */
-const RESOURCE_ATTRIBUTES = new Set([
-  "action",
-  "background",
-  "data",
-  "formaction",
-  "poster",
-  "src",
-  "srcset",
-]);
 const EXTERNAL_CSS_REFERENCE = /url\(\s*(?!['"]?#)[^)]+\)|@import/iu;
 
 /**

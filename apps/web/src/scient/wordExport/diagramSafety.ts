@@ -1,6 +1,6 @@
 /**
  * A second line of defence for Word diagram capture, behind the network
- * isolation of `isolatedMermaid.ts`: diagrams whose styles or settings refer
+ * isolation of `diagrams/isolatedMermaid.ts`: diagrams whose styles or settings refer
  * to an outside resource are refused before they are drawn at all.
  *
  * Only CSS-bearing constructs are read — `style`, `classDef`, `linkStyle`,
@@ -9,25 +9,11 @@
  * address exports normally.
  */
 
-/** CSS that loads a resource, once CSS escapes are decoded. */
-const FETCHING_CSS =
-  /(?:^|[^\w-])(?:-(?:webkit|moz|o|ms)-)?(?:url|image|image-set|cross-fade|element|src)\s*\(|@import/iu;
+import { fetchesInCss } from "../diagrams/cssResources";
+
 const STYLE_STATEMENT = /^\s*(?:style|classDef|linkStyle|cssClass)\b/iu;
 /** A CSS declaration (`background: …`) that a `;` inside a style list introduced. */
 const CSS_DECLARATION = /^\s*-?[a-z][a-z0-9-]*\s*:(?!:)/iu;
-
-/** Decodes CSS escapes (`\75`, `\72 `, `\(`) so an escaped `url(` is still seen. */
-function decodeCssEscapes(text: string): string {
-  return text.replace(/\\(?:([0-9a-f]{1,6})[ \t\n\r\f]?|([^\n\r\f0-9a-f]))/giu, (_, hex, char) => {
-    if (typeof char === "string") return char;
-    const code = Number.parseInt(hex as string, 16);
-    return code === 0 || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)
-      ? "�"
-      : String.fromCodePoint(code);
-  });
-}
-
-const fetchesInCss = (css: string) => FETCHING_CSS.test(decodeCssEscapes(css));
 
 /** A line's statements: split at each `;` that is not inside a double-quoted string. */
 function statementsOf(line: string): string[] {

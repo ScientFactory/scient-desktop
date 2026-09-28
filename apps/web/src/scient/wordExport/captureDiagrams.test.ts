@@ -5,7 +5,7 @@ const parse = vi.fn();
 const render = vi.fn();
 const close = vi.fn();
 const openIsolatedMermaid = vi.fn();
-vi.mock("./isolatedMermaid", () => ({ openIsolatedMermaid }));
+vi.mock("../diagrams/isolatedMermaid", () => ({ openIsolatedMermaid }));
 vi.mock("../diagrams/mermaidExport", () => ({ mermaidSvgToPngBlob }));
 
 const { captureWordDiagrams } = await import("./captureDiagrams");
