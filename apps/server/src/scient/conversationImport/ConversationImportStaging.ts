@@ -826,7 +826,7 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
             `This conversation is too long to import: it has ${recordCount.toLocaleString("en-US")} messages and other items, and Scient imports up to ${CONVERSATION_IMPORT_MAX_RECORDS.toLocaleString("en-US")} at once. ${
               isMarkdown
                 ? "Import it as a document instead."
-                : "Export it again without the work log, or only up to an earlier message."
+                : "Export it again with the work log and reasoning turned off."
             }`,
           );
         }

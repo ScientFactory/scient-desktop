@@ -102,8 +102,10 @@ conversation as a document, not turned into messages; the dialog then offers
 **Start conversation**.
 
 One import holds up to 5,000 messages, work-log entries, and other items. For a longer
-conversation, export it again without the work log, or only up to an earlier message. Anything an
-import leaves out, such as damaged Markdown sections, is noted on the imported conversation.
+conversation, export it again with **Work log** and **Reasoning** turned off: its messages still
+come across, without the tool details and thinking. If it is still too long, Scient can't import
+it as a conversation; export it as PDF or Markdown to keep a copy you can read. Anything an import
+leaves out, such as damaged Markdown sections, is noted on the imported conversation.
 
 ## Using Markdown later
 

@@ -776,7 +776,7 @@ describe("ConversationImportStaging", () => {
         assert.strictEqual(error.reason, "package-too-large");
         assert.strictEqual(
           error.message,
-          "This conversation is too long to import: it has 5,001 messages and other items, and Scient imports up to 5,000 at once. Export it again without the work log, or only up to an earlier message.",
+          "This conversation is too long to import: it has 5,001 messages and other items, and Scient imports up to 5,000 at once. Export it again with the work log and reasoning turned off.",
         );
       }
       assert.isFalse(NodeFS.existsSync(NodePath.join(stagingRoot(config), importId)));

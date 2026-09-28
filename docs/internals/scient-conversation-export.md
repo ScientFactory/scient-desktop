@@ -289,8 +289,8 @@ The contract between staging and the importer is the header of
   about half a second, with the process growing by about 0.6 GB while it runs (macOS arm64).
 - **Record limit.** One import writes at most 5,000 records (messages, reasoning, work-log entries,
   plans, and answers) in its single `thread.conversation.import` transaction; a larger file is
-  refused at preview with a message that suggests exporting without the work log or up to an
-  earlier message. The limit comes from the benchmark's work-log-heavy import on an on-disk
+  refused at preview with a message that suggests exporting again with the work log and reasoning
+  turned off. The limit comes from the benchmark's work-log-heavy import on an on-disk
   database: about 3.5 s at 5,000 records, 14 s at 10,000, and 65 s at 20,000.
 - **Refusals and retries.** A refused file ends the import and removes its area; every rejection
   reason has its own short message, and a reported entry name is bounded, trimmed, and omitted when
