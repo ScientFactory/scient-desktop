@@ -3422,6 +3422,37 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("the shared Stop closes a ready session and only its own", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      // Between turns: the Monitoring banner's Stop reaches this handle.
+      const handle = yield* adapter.captureTurnStop!(session.threadId);
+      let finalized = 0;
+      assert.equal(yield* handle.stop(Effect.sync(() => void finalized++)), true);
+      assert.equal(finalized, 1);
+      assert.equal(harness.query.closeCalls, 1);
+      assert.equal(yield* adapter.hasSession(session.threadId), false);
+
+      // A delayed handle cannot close the session that replaced it.
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      assert.equal(yield* handle.stop(), false);
+      assert.equal(yield* adapter.hasSession(session.threadId), true);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("interruptTurn lets Claude abort the turn before closing the session", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

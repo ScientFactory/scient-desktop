@@ -853,6 +853,64 @@ it.layer(layer)("AntigravityAdapter", (it) => {
     }),
   );
 
+  it.effect("the shared Stop closes an idle session that still runs a command", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      yield* h.adapter.startSession({
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+      const sending = yield* h.adapter
+        .sendTurn({ threadId, input: "Start a watcher" })
+        .pipe(Effect.forkChild);
+      const prompt = yield* h.nextPrompt;
+      yield* h.emitNative({
+        _tag: "ToolCallUpdated",
+        toolCall: {
+          toolCallId: "watcher-1",
+          kind: "execute",
+          status: "inProgress",
+          command: "tail -f log",
+          data: {},
+        },
+        rawPayload: {},
+      });
+      yield* Deferred.succeed(prompt.result, { stopReason: "end_turn" });
+      yield* Fiber.join(sending);
+      const started = yield* h.waitForEvent((event) => event.type === "task.started");
+
+      // The Monitoring banner's Stop reaches this handle between turns.
+      const handle = yield* h.adapter.captureTurnStop!(threadId);
+      let finalized = 0;
+      expect(yield* handle.stop(Effect.sync(() => void finalized++))).toBe(true);
+      expect(finalized).toBe(1);
+      const stopped = yield* h.waitForEvent((event) => event.type === "task.completed");
+      expect(stopped.payload).toMatchObject({ taskId: started.payload.taskId, status: "stopped" });
+      expect(yield* h.adapter.hasSession(threadId)).toBe(false);
+      expect(h.controls.closed).toBe(1);
+      // A stale handle cannot close anything else.
+      expect(yield* handle.stop()).toBe(false);
+    }),
+  );
+
+  it.effect("the shared Stop leaves a running prompt to the interrupt", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      yield* h.adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });
+      const sending = yield* h.adapter
+        .sendTurn({ threadId, input: "Think for a while" })
+        .pipe(Effect.forkChild);
+      const prompt = yield* h.nextPrompt;
+      const handle = yield* h.adapter.captureTurnStop!(threadId);
+      expect(yield* handle.stop()).toBe(false);
+      expect(yield* h.adapter.hasSession(threadId)).toBe(true);
+      expect(h.controls.closed).toBe(0);
+      yield* Deferred.succeed(prompt.result, { stopReason: "end_turn" });
+      yield* Fiber.join(sending);
+    }),
+  );
+
   it.effect("keeps a launched batch active while child tools continue", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness();
