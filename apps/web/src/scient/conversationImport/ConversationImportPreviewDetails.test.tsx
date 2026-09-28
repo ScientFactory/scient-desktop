@@ -22,6 +22,10 @@ const preview = {
       _tag: "snapshot-warning",
       warning: { _tag: "running-turn-omitted", turnId: "turn-1" },
     },
+    {
+      _tag: "snapshot-warning",
+      warning: { _tag: "records-skipped", kind: "question-answer", count: 1 },
+    },
   ],
   warnings: [
     {
@@ -55,20 +59,24 @@ describe("conversation import preview", () => {
   it("shows every actual omission and warning before confirmation as plain text", async () => {
     await act(() => root.render(<ConversationImportPreviewDetails preview={preview} />));
 
-    const omissions = container.querySelector('[aria-label="Content not included"]');
-    expect(omissions?.querySelectorAll("li")).toHaveLength(5);
-    expect(omissions?.textContent).toContain("sender excluded the work log");
-    expect(omissions?.textContent).toContain("sender excluded reasoning");
+    const omissions = container.querySelector('[aria-label="Not included"]');
+    expect(omissions?.querySelectorAll("li")).toHaveLength(6);
+    expect(omissions?.textContent).toContain("The work log was left out");
+    expect(omissions?.textContent).toContain("Reasoning was left out");
     expect(omissions?.textContent).toContain("Messages after message 12");
     expect(omissions?.textContent).toContain("notes.pdf");
-    expect(omissions?.textContent).toContain("turn still running");
+    expect(omissions?.textContent).toContain("still being written");
+    expect(omissions?.textContent).toContain(
+      "1 answered question couldn't be read and was left out.",
+    );
+    expect(omissions?.textContent).not.toContain("question-answer");
 
-    const warnings = container.querySelector('[aria-label="Import warnings"]');
+    const warnings = container.querySelector('[aria-label="Notes from the file"]');
     expect(warnings?.querySelectorAll("li")).toHaveLength(2);
     expect(warnings?.textContent).toContain("linked image <script>alert(1)</script>");
-    expect(warnings?.textContent).toContain("format version 1.3");
+    expect(warnings?.textContent).toContain("A newer version of Scient made this file.");
     expect(warnings?.querySelector("script")).toBeNull();
-    expect(container.textContent).toContain("12 messages · 2 attachments · from codex · gpt-5");
+    expect(container.textContent).toContain("12 messages · 2 attachments · from Codex · gpt-5");
   });
 
   it("identifies ordinary Markdown as a document and omits empty notice sections", async () => {
@@ -86,9 +94,35 @@ describe("conversation import preview", () => {
       ),
     );
 
-    expect(container.textContent).toContain("starts a conversation with the document attached");
+    expect(container.textContent).toContain("attached to a new conversation");
     expect(container.textContent).not.toContain("from null");
-    expect(container.querySelector('[aria-label="Content not included"]')).toBeNull();
-    expect(container.querySelector('[aria-label="Import warnings"]')).toBeNull();
+    expect(container.textContent).not.toContain("12 messages");
+    expect(container.querySelector('[aria-label="Not included"]')).toBeNull();
+    expect(container.querySelector('[aria-label="Notes from the file"]')).toBeNull();
+  });
+
+  it("counts in the singular and names the model as the destination does", async () => {
+    await act(() =>
+      root.render(
+        <ConversationImportPreviewDetails
+          preview={{
+            ...preview,
+            conversation: { ...preview.conversation, provider: "claudeAgent" },
+            counts: { ...preview.counts, messages: 1, attachments: 1 },
+          }}
+          sourceModelName="GPT-5"
+        />,
+      ),
+    );
+    expect(container.textContent).toContain("1 message · 1 attachment · from Claude · GPT-5");
+
+    await act(() =>
+      root.render(
+        <ConversationImportPreviewDetails
+          preview={{ ...preview, counts: { ...preview.counts, attachments: 0 } }}
+        />,
+      ),
+    );
+    expect(container.textContent).toContain("12 messages · no attachments");
   });
 });
