@@ -55,16 +55,17 @@ export function usePandocTool(
 
   const active = isActivePandocInstall(status);
   useEffect(() => {
-    if (!active) return;
+    if (!active || error !== null) return;
     const timer = setTimeout(() => void read(), PANDOC_INSTALL_POLL_MS);
     return () => clearTimeout(timer);
-  }, [active, read, status]);
+  }, [active, error, read, status]);
 
   const act = useCallback(() => {
-    if (status === null) {
+    if (error !== null || status === null) {
       void read();
       return;
     }
+    if (requesting || isActivePandocInstall(status) || status.installed || !status.canInstall) return;
     setRequesting(true);
     setError(null);
     installPandocTool(environmentId).then(
@@ -77,7 +78,7 @@ export function usePandocTool(
         setRequesting(false);
       },
     );
-  }, [accept, environmentId, read, status]);
+  }, [accept, environmentId, error, read, requesting, status]);
 
   return { status, view: pandocToolView({ status, requesting, error }), act };
 }

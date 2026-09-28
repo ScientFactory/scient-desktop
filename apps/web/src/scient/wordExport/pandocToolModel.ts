@@ -75,6 +75,9 @@ export function pandocToolView(input: {
       ? { kind: "failed", detail: input.error, actionLabel: "Try again", busy: false }
       : { kind: "loading", detail: "Checking Word export…", actionLabel: null, busy: true };
   }
+  if (input.error !== null) {
+    return { kind: "failed", detail: input.error, actionLabel: "Try again", busy: false };
+  }
   if (status.installed) {
     return {
       kind: "ready",
@@ -107,9 +110,6 @@ export function pandocToolView(input: {
       actionLabel: "Try again",
       busy: false,
     };
-  }
-  if (input.error !== null) {
-    return { kind: "failed", detail: input.error, actionLabel: "Try again", busy: false };
   }
   return {
     kind: "offer",

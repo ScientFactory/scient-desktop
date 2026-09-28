@@ -113,8 +113,10 @@ function useMarkdownPdfExport(target: MarkdownPdfExportTarget) {
   }, [httpBaseUrl, prepare, publish, target]);
 }
 
-/** Markdown editor → More actions → Export ▸ PDF. */
-export function MarkdownPdfExportMenuItems(props: MarkdownPdfExportTarget) {
+/** Markdown editor → More actions → Export ▸ PDF / Word. */
+export function MarkdownPdfExportMenuItems(
+  props: MarkdownPdfExportTarget & { readonly onWordExport: () => void },
+) {
   const exportPdf = useMarkdownPdfExport(props);
   const availability = documentPdfAvailability();
   return (
@@ -136,6 +138,7 @@ export function MarkdownPdfExportMenuItems(props: MarkdownPdfExportTarget) {
             )}
           </span>
         </DockCommandItem>
+        <DockCommandItem onClick={props.onWordExport}>Word</DockCommandItem>
       </MenuSubPopup>
     </MenuSub>
   );

@@ -41,8 +41,11 @@ export function WordFileExportDialog(props: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const startedRef = useRef(false);
+  const runningRef = useRef(false);
 
   const run = useCallback(async () => {
+    if (runningRef.current) return;
+    runningRef.current = true;
     setBusy(true);
     setError(null);
     try {
@@ -77,11 +80,12 @@ export function WordFileExportDialog(props: {
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
+      runningRef.current = false;
       setBusy(false);
     }
   }, [cwd, environmentId, onClose, relativePath, rootRelativePath, savedRevision]);
 
-  const tool = usePandocTool(environmentId, () => void run());
+  const tool = usePandocTool(environmentId);
   const installed = tool.status?.installed === true;
   useEffect(() => {
     if (!installed || startedRef.current) return;

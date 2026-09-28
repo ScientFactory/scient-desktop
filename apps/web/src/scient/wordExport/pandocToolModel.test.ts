@@ -94,6 +94,28 @@ describe("pandocToolView", () => {
     });
     expect(pandocToolView({ status: null, requesting: false, error: null }).kind).toBe("loading");
   });
+
+  it("shows a failed progress poll over stale downloading status and offers a status retry", () => {
+    expect(
+      pandocToolView({
+        status: status({
+          install: {
+            state: "downloading",
+            bytesReceived: 12 * 1024 * 1024,
+            totalBytes: 41_832_712,
+            failureReason: null,
+            updatedAtEpochMs: 2,
+          },
+        }),
+        requesting: false,
+        error: "Status temporarily unavailable.",
+      }),
+    ).toMatchObject({
+      kind: "failed",
+      detail: "Status temporarily unavailable.",
+      actionLabel: "Try again",
+    });
+  });
 });
 
 describe("helpers", () => {
