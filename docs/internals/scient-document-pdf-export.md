@@ -24,11 +24,13 @@ there is one PDF path, not one per source.
    titles the document, before its first level-one heading.
    macOS opens the canonical path with `O_NOFOLLOW_ANY`, rejecting an intermediate symlink
    replacement; Linux checks the opened file descriptor's `/proc/self/fd` target. On Windows,
-   Node does not currently expose a safe handle-bound containment check here, so a project
-   Markdown file cannot be exported: the export fails with "PDF export of project files is not
-   available on this platform yet" instead of relying on a raceable path recheck. (Workspace images
-   are omitted the same way, with a warning, wherever this read is unavailable.) This Windows
-   limitation must be resolved or expressly accepted before cross-platform release.
+   Node does not currently expose a safe handle-bound containment check here, so the Markdown
+   file is read by path with the same byte cap and accepted only when its bytes are exactly the
+   revision the editor saved; a file swapped in during the read has other bytes and fails with
+   "The file changed while exporting. Try again." The agent tool has no saved revision to check,
+   so on Windows it refuses to export a project file. Workspace images there are omitted, each
+   with a warning, instead of relying on a raceable path recheck. This Windows image limitation
+   must be resolved or expressly accepted before cross-platform release.
 
    The capture copies an image only when its bytes carry its format's signature (PNG, JPEG, GIF,
    WebP, AVIF, BMP, or an `<svg` element); a HEIC photo named `.jpg`, a text file named `.png`, or
@@ -56,7 +58,9 @@ there is one PDF path, not one per source.
    before each new capture.
 5. **Delivery (client).** The client saves the published PDF through the same Save dialog as every
    other export (`documents.saveAssetCopy` with a signed URL of the generated revision; a download
-   in a browser). Cancelling the dialog keeps the export dialog open. The PDF stays in the
+   in a browser). It suggests the same title-based name as the other formats: a conversation's
+   `exportFileName(title, ".pdf")`, or a project file's own name with `.pdf`, never the stored
+   revision's internal name. Cancelling the dialog keeps the export dialog open. The PDF stays in the
    generated-document store: the success notice's **Open** shows it in Scient's reader for the
    conversation or project it came from, navigating to that conversation first, so an export
    started from the sidebar never opens in a thread that is not on screen.

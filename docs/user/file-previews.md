@@ -111,10 +111,11 @@ exports exactly that saved version with its project images, and asks where to
 save the PDF; choose **Open** on the notice to read it in Scient's reader. Front
 matter at the top of the file is not printed; its `title`, if any, titles the
 PDF. Missing, remote, or unreadable images appear as labelled placeholders and
-are listed under **Export notes** at the end of the PDF. PDF export needs the
-Scient desktop app on macOS or Linux; in a browser the menu item explains that
-it is unavailable, and on Windows the export does. An agent can do the same for a file you name with an explicit
-output path.
+are listed under **Export notes** at the end of the PDF. On Windows, the PDF
+leaves out the file's project images for now and lists them in the notes. PDF
+export needs the Scient desktop app; in a browser the menu item explains that
+it is unavailable. An agent can do the same for a file you name with an explicit
+output path, except on Windows.
 
 In a project conversation, an agent can also turn an existing project HTML file
 into a PDF. Scient builds it with local project assets, opens the generated PDF
