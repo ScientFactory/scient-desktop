@@ -2375,7 +2375,12 @@ const make = Effect.gen(function* () {
         const key =
           session === undefined
             ? null
-            : nativeThreadKey(session.provider, session.resumeCursor, session.providerInstanceId);
+            : nativeThreadKey(
+                session.provider,
+                session.resumeCursor,
+                session.providerInstanceId,
+                session.nativeSessionId,
+              );
         if (key !== null && event.providerInstanceId !== undefined) {
           yield* queueSql`INSERT OR IGNORE INTO scient_native_turn_sources
             (thread_id, turn_id, provider_instance_id, native_thread_key)

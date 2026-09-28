@@ -559,7 +559,12 @@ meaning is the same.
   a native fork was not possible.
 - **Handoffs** (`scient_context_handoffs`) are delivered to one
   provider-native thread (`native_thread_key`, derived per provider from the
-  resume cursor in `context/nativeThreadKey.ts`). Delivery is `pending` while
+  live `ProviderSession.nativeSessionId` when supplied, with a resume-cursor
+  fallback in `context/nativeThreadKey.ts`). A live identity is not a resume
+  credential: an adapter may know it before its transcript is durable. It must
+  match the native identity in the eventual cursor. Validated cursors are saved
+  on turn completion or abort before publishing that event, including for
+  providers whose first send acknowledgement precedes transcript creation. Delivery is `pending` while
   the send is in flight and `inline` once accepted. A provider-native thread
   that has not received the context gets it again: a Codex resume that fell
   back to a new thread, a provider switch, a session after a crash.

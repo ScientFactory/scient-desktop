@@ -17,6 +17,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { nativeThreadKey } from "./context/nativeThreadKey.ts";
 import Migration016 from "./migrations/016_PreserveLegacyForkSessions.ts";
 import {
   ScientForkContextDelivery,
@@ -177,6 +178,70 @@ it.layer(layer)("ScientForkContextDelivery", (it) => {
         )
       `;
     });
+
+  for (const provider of ["codex", "claudeAgent", "pi", "omp"]) {
+    for (const cursorAfter of [0, 1, 5, 19]) {
+      it.effect(
+        `keeps ${provider} history through delayed cursor (${cursorAfter} messages) and restart`,
+        () =>
+          Effect.gen(function* () {
+            const sql = yield* reset;
+            const delivery = yield* ScientForkContextDelivery;
+            const id = "native-delayed-file";
+            const cursor =
+              provider === "codex"
+                ? { threadId: id }
+                : provider === "claudeAgent"
+                  ? { resume: id }
+                  : { sessionId: id };
+            const key = nativeThreadKey(provider, undefined, "instance", id);
+            const first = yield* prepare({ nativeThreadKey: key });
+            if (first.kind !== "deliver") return assert.fail("expected first handoff");
+            yield* delivery.beginDelivery({
+              threadId: FORK,
+              handoffId: first.handoffId,
+              messageId: current.id,
+              nativeThreadKey: key,
+              includedItemCount: first.includedItemCount,
+              omittedItemCount: first.omittedItemCount,
+              budgetTokens: first.budgetTokens,
+            });
+            yield* settle(first.handoffId, { type: "accepted", nativeThreadKey: key });
+            yield* recordProviderTurn("provider-turn-delayed", 1);
+            for (let message = 0; message < 20; message++) {
+              const liveKey = nativeThreadKey(
+                provider,
+                message >= cursorAfter ? cursor : undefined,
+                "instance",
+                id,
+              );
+              assert.strictEqual((yield* prepare({ nativeThreadKey: liveKey })).kind, "none");
+            }
+            // New delivery service, same durable DB and successfully resumed native conversation.
+            assert.strictEqual(
+              (yield* prepare({
+                nativeThreadKey: nativeThreadKey(provider, cursor, "instance"),
+              }).pipe(
+                Effect.provide(
+                  ScientForkContextDeliveryLive.pipe(
+                    Layer.provide(ServerSettingsService.layerTest()),
+                  ),
+                ),
+              )).kind,
+              "none",
+            );
+            const rows =
+              yield* sql`SELECT handoff_id FROM scient_context_handoffs WHERE thread_id = ${FORK}`;
+            assert.lengthOf(rows, 1);
+            const replaced = yield* prepare({
+              nativeThreadKey: nativeThreadKey(provider, cursor, "instance", "replacement"),
+            });
+            if (replaced.kind !== "deliver") return assert.fail("replacement needs history");
+            assert.isTrue(replaced.requireFreshSession);
+          }),
+      );
+    }
+  }
 
   it.effect("passes through threads without a context transfer", () =>
     Effect.gen(function* () {
