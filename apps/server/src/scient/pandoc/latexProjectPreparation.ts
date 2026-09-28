@@ -5,15 +5,26 @@
  * file's folder, as LaTeX resolves them, and are read only when they are
  * inside the Scient project the document belongs to, both as written and
  * after symbolic links are followed. Anything else becomes a visible
- * placeholder and a note.
+ * placeholder and a note. Every file is read through a handle bound to the
+ * file that check saw (`verifiedWorkspaceRead.ts`), so a file or folder
+ * swapped for a link after the check is refused rather than read.
  */
 import { parse } from "@unified-latex/unified-latex-util-parse";
 import type { DocumentWarning } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+
+import { sha256Digest } from "../documentExport/DocumentCapture.ts";
+import {
+  checkedFileIdentity,
+  readCappedFile,
+  readVerifiedWorkspaceFile,
+  type CheckedFile,
+} from "../documentExport/verifiedWorkspaceRead.ts";
 
 const INCLUDE = new Set(["input", "include", "subfile", "subfileinclude"]);
 const DEFINITIONS = new Set([
@@ -37,6 +48,11 @@ const MAX_BIB_BYTES = 4 * 1024 * 1024;
 const MAX_DEPTH = 16;
 const MAX_FILES = 256;
 const SAFE_TARGET = /^[\p{L}\p{N}_./ -]+$/u;
+
+/** Why a LaTeX export is refused where project files cannot be read through a bound handle. */
+export const LATEX_UNVERIFIABLE_PLATFORM_MESSAGE =
+  "On this platform, a LaTeX document can be exported to Word only as a single file open in the editor, without includes, figures, or bibliographies: Scient cannot otherwise confirm which files it read.";
+const LATEX_CHANGED_MESSAGE = "A file in the LaTeX project changed while exporting. Try again.";
 
 type Macro = {
   type: string;
@@ -125,12 +141,20 @@ export class LatexPreparationError extends Schema.TaggedError<LatexPreparationEr
 /** Why a named file was not read. */
 type Unresolved = "outside-project" | "unavailable";
 
+/**
+ * `shown` is the file the editor showed and its saved revision. Where an open
+ * file cannot be bound to the project (Windows), only that file is read, and
+ * only when its bytes are that revision; any other project file refuses the
+ * export.
+ */
 export const prepareLatexProject = Effect.fn("scient.pandoc.prepareLatexProject")(function* (
   rootFile: string,
   workspaceRoot: string,
+  shown?: { readonly path: string; readonly revision: string },
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const platform = yield* HostProcessPlatform;
   const workspace = path.resolve(workspaceRoot);
   const realWorkspace = yield* fs.realPath(workspace);
   const root = path.dirname(path.resolve(rootFile));
@@ -141,6 +165,10 @@ export const prepareLatexProject = Effect.fn("scient.pandoc.prepareLatexProject"
     });
   }
   const baseDirectory = root;
+  const shownReal =
+    shown === undefined
+      ? null
+      : yield* fs.realPath(shown.path).pipe(Effect.orElseSucceed(() => null));
   const warnings: DocumentWarning[] = [];
   warnings.push({
     code: "unsupported-construct",
@@ -186,41 +214,56 @@ export const prepareLatexProject = Effect.fn("scient.pandoc.prepareLatexProject"
         }
         const stat = yield* fs.stat(real).pipe(Effect.orElseSucceed(() => null));
         if (stat?.type === "File") {
-          return { ok: true, real, lexical: candidate, size: Number(stat.size) } as const;
+          return {
+            ok: true,
+            lexical: candidate,
+            checked: checkedFileIdentity(real, stat),
+          } as const;
         }
       }
       return { ok: false, reason } as const;
     });
 
+  /** Reads a resolved file only if it is still the file `resolve` checked. */
+  const read = (checked: CheckedFile, maxBytes: number) =>
+    Effect.gen(function* () {
+      const verified = yield* readVerifiedWorkspaceFile(checked, realWorkspace, platform, maxBytes);
+      if (verified._tag !== "unsupported-platform") return verified;
+      if (shown === undefined || shownReal === null || checked.canonicalPath !== shownReal) {
+        return yield* new LatexPreparationError({ message: LATEX_UNVERIFIABLE_PLATFORM_MESSAGE });
+      }
+      // Bytes equal to the editor's saved revision show nothing the user did not already have.
+      const capped = yield* readCappedFile(checked, maxBytes);
+      return capped._tag === "bytes" && sha256Digest(capped.bytes) !== shown.revision
+        ? ({ _tag: "unreadable" } as const)
+        : capped;
+    });
+  const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
+
   const flatten = (
-    file: string,
+    checked: CheckedFile,
     depth: number,
     stack: ReadonlyArray<string>,
     isSubfile = false,
   ): Effect.Effect<string, PlatformError.PlatformError | LatexPreparationError> =>
     Effect.gen(function* () {
+      const file = checked.canonicalPath;
       if (depth > MAX_DEPTH || files.size >= MAX_FILES || stack.includes(file)) {
         warn("A LaTeX include exceeded the depth, file-count, or cycle limit.");
         return "\\emph{[Unresolved include]}";
       }
-      const stat = yield* fs.stat(file);
-      const size = Number(stat.size);
-      totalBytes += size;
-      if (size > MAX_SOURCE_BYTES || totalBytes > MAX_SOURCE_BYTES) {
-        return yield* new LatexPreparationError({
-          message: "LaTeX project exceeds the 20 MB source limit.",
-        });
-      }
+      const tooLarge = () =>
+        new LatexPreparationError({ message: "LaTeX project exceeds the 20 MB source limit." });
+      const budget = MAX_SOURCE_BYTES - totalBytes;
+      totalBytes += checked.size;
+      if (checked.size > budget) return yield* tooLarge();
       files.add(file);
-      let source = yield* fs.readFileString(file);
-      if (
-        Buffer.byteLength(source) > size ||
-        Buffer.byteLength(source) + totalBytes - size > MAX_SOURCE_BYTES
-      ) {
-        return yield* new LatexPreparationError({
-          message: "LaTeX project changed or exceeds the 20 MB source limit.",
-        });
+      const contents = yield* read(checked, budget);
+      if (contents._tag === "too-large") return yield* tooLarge();
+      if (contents._tag !== "bytes") {
+        return yield* new LatexPreparationError({ message: LATEX_CHANGED_MESSAGE });
       }
+      let source = decode(contents.bytes);
       if (isSubfile && /\\documentclass\b/u.test(source)) {
         const body = /\\begin\s*\{document\}([\s\S]*?)\\end\s*\{document\}/u.exec(source);
         if (body) source = body[1] ?? "";
@@ -273,15 +316,14 @@ export const prepareLatexProject = Effect.fn("scient.pandoc.prepareLatexProject"
                     : "A bibliography that could not be found was omitted.",
                 );
               } else if (
-                result.size <= MAX_BIB_BYTES &&
+                result.checked.size <= MAX_BIB_BYTES &&
                 bibliography.length < 16 &&
-                bibliographyBytes + result.size <= MAX_BIB_BYTES
+                bibliographyBytes + result.checked.size <= MAX_BIB_BYTES
               ) {
-                const contents = yield* fs.readFileString(result.real);
-                const bytes = Buffer.byteLength(contents);
-                if (bibliographyBytes + bytes <= MAX_BIB_BYTES) {
-                  bibliography.push({ contents });
-                  bibliographyBytes += bytes;
+                const contents = yield* read(result.checked, MAX_BIB_BYTES - bibliographyBytes);
+                if (contents._tag === "bytes") {
+                  bibliography.push({ contents: decode(contents.bytes) });
+                  bibliographyBytes += contents.bytes.byteLength;
                 } else warn("A bibliography changed or exceeded the 4 MB limit and was omitted.");
               } else warn("A bibliography over the 4 MB or 16-file limit was omitted.");
             }
@@ -311,7 +353,7 @@ export const prepareLatexProject = Effect.fn("scient.pandoc.prepareLatexProject"
             if (resolved.ok) break;
             outside ||= resolved.reason === "outside-project";
           }
-          if (arg && resolved.ok && resolved.size <= 25 * 1024 * 1024) {
+          if (arg && resolved.ok && resolved.checked.size <= 25 * 1024 * 1024) {
             const relative = path
               .relative(baseDirectory, resolved.lexical)
               .split(path.sep)
@@ -361,7 +403,7 @@ export const prepareLatexProject = Effect.fn("scient.pandoc.prepareLatexProject"
           edits.push({ start: macro.start, end, text: "\\emph{[Unresolved include]}" });
         } else {
           const nested = yield* flatten(
-            resolved.real,
+            resolved.checked,
             depth + 1,
             [...stack, file],
             macro.name.startsWith("subfile"),
@@ -380,7 +422,7 @@ export const prepareLatexProject = Effect.fn("scient.pandoc.prepareLatexProject"
     return yield* new LatexPreparationError({
       message: "The selected LaTeX root is outside the project or unreadable.",
     });
-  const source = yield* flatten(resolvedRoot.real, 0, []);
+  const source = yield* flatten(resolvedRoot.checked, 0, []);
   return {
     source,
     baseDirectory,

@@ -41,7 +41,10 @@ width or height the source gave it.
 
 Files outside the project folder, including links that lead outside it, are
 never read: they become placeholders marked "outside the project folder", with a
-conversion note. Missing or computed includes and figures also become visible
+conversion note. If a project file changes while Scient reads it, the export
+stops and asks you to try again. On Windows, Word export works for now only for a
+single-file document open in the editor, without includes, figures, or
+bibliographies; Scient explains when a document needs more. Missing or computed includes and figures also become visible
 placeholders. PDF and EPS figures are not rasterized for Word. Equation
 numbering, references, layout commands, and some custom macros may change
 during conversion; review the saved Word document before sharing it.

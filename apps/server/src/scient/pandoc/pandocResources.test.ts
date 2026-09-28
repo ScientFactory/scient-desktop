@@ -3,7 +3,8 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it, vi } from "@effect/vitest";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
@@ -171,6 +172,99 @@ describe("securePandocDocument", () => {
         ok: false,
         refusal: "changed-during-capture",
       });
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("refuses a figure whose folder is swapped for a link only while it is opened", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const directory = NodeFS.realpathSync(
+        yield* fs.makeTempDirectoryScoped({ prefix: "scient-word-open-race-" }),
+      );
+      const project = NodePath.join(directory, "project");
+      const figures = NodePath.join(project, "figures");
+      const original = NodePath.join(project, "original");
+      const outside = NodePath.join(directory, "outside");
+      NodeFS.mkdirSync(figures, { recursive: true });
+      NodeFS.mkdirSync(outside);
+      const candidate = NodePath.join(figures, "plot.png");
+      NodeFS.writeFileSync(candidate, PNG_BYTES);
+      NodeFS.writeFileSync(NodePath.join(outside, "plot.png"), PNG_BYTES_ALT);
+      const toOutside = () => {
+        if (NodeFS.lstatSync(figures).isSymbolicLink()) return;
+        NodeFS.renameSync(figures, original);
+        NodeFS.symlinkSync(outside, figures);
+      };
+      const toInside = () => {
+        if (!NodeFS.lstatSync(figures).isSymbolicLink()) return;
+        NodeFS.unlinkSync(figures);
+        NodeFS.renameSync(original, figures);
+      };
+      // A writer that points the folder outside for the open, back inside for a
+      // real-path recheck, and outside again for an identity recheck by path.
+      const promises = NodeFS.promises;
+      const open = promises.open.bind(promises);
+      const realpath = promises.realpath.bind(promises);
+      const stat = promises.stat.bind(promises);
+      let armed = false;
+      const spies = [
+        vi.spyOn(promises, "open").mockImplementation((file, ...rest) => {
+          if (file === candidate) {
+            armed = true;
+            toOutside();
+          }
+          return open(file, ...rest);
+        }),
+        vi.spyOn(promises, "realpath").mockImplementation(((
+          file: NodeFS.PathLike,
+          options?: NodeFS.ObjectEncodingOptions | BufferEncoding | null,
+        ) => {
+          if (armed && file === candidate) toInside();
+          return realpath(file, options);
+        }) as typeof promises.realpath),
+        vi.spyOn(promises, "stat").mockImplementation(((file: NodeFS.PathLike, options) => {
+          if (armed && file === candidate) toOutside();
+          return stat(file, options);
+        }) as typeof promises.stat),
+      ];
+      const captured = yield* captureWordImages(["figures/plot.png"], {
+        baseDirectory: project,
+        allowRoots: [project],
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            for (const spy of spies) spy.mockRestore();
+          }),
+        ),
+      );
+      expect(captured.get("figures/plot.png")).toEqual({
+        ok: false,
+        refusal: "changed-during-capture",
+      });
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("on Windows refuses LaTeX figures and still reads Markdown images", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const project = yield* fs.makeTempDirectoryScoped({ prefix: "scient-word-windows-" });
+      NodeFS.writeFileSync(NodePath.join(project, "plot.png"), PNG_BYTES);
+      const files = { baseDirectory: project, allowRoots: [project] };
+      const markdown = yield* captureWordImages(["plot.png"], files).pipe(
+        Effect.provideService(HostProcessPlatform, "win32"),
+      );
+      expect(markdown.get("plot.png")).toEqual({ ok: true, bytes: PNG_BYTES, png: null });
+      const latex = yield* captureWordImages(["plot.png"], {
+        ...files,
+        requireVerifiedReads: true,
+      }).pipe(Effect.provideService(HostProcessPlatform, "win32"), Effect.flip);
+      expect(latex.reason).toBe("unverifiable-platform");
+      // Where the read is bound to the checked file (this host), both callers read it.
+      const bound = yield* captureWordImages(["plot.png"], {
+        ...files,
+        requireVerifiedReads: true,
+      });
+      expect(bound.get("plot.png")).toEqual({ ok: true, bytes: PNG_BYTES, png: null });
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 

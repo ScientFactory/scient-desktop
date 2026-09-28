@@ -37,7 +37,11 @@ import {
   type ConversationExportFileError,
 } from "../conversationExport/ConversationExportFiles.ts";
 import { PandocWordConverter, type WordConversionFailureReason } from "./PandocWordConverter.ts";
-import { LatexPreparationError, prepareLatexProject } from "./latexProjectPreparation.ts";
+import {
+  LATEX_UNVERIFIABLE_PLATFORM_MESSAGE,
+  LatexPreparationError,
+  prepareLatexProject,
+} from "./latexProjectPreparation.ts";
 import { citationsFromCslJson, markdownReferenceDeclarations } from "./markdownWordReferences.ts";
 import { capturedWordDiagramAssets, planWordDiagrams } from "./wordDiagramCapture.ts";
 import { captureWordImages } from "./wordImageSnapshot.ts";
@@ -295,7 +299,10 @@ const make = Effect.gen(function* () {
         "The file changed on disk. Save and reopen it before exporting.",
       );
     }
-    const prepared = yield* prepareLatexProject(document.absolutePath, root).pipe(
+    const prepared = yield* prepareLatexProject(document.absolutePath, root, {
+      path: source.absolutePath,
+      revision: shown.revision,
+    }).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
       Effect.mapError(
@@ -312,15 +319,20 @@ const make = Effect.gen(function* () {
     const imageSnapshot = yield* captureWordImages(prepared.imageReferences, {
       baseDirectory: prepared.baseDirectory,
       allowRoots: [root],
+      requireVerifiedReads: true,
     }).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
-      Effect.mapError(
-        () =>
-          new ScientWordExportError({
-            reason: "too-large",
-            message: "This document names too many images for one Word export.",
-          }),
+      Effect.mapError((error) =>
+        error.reason === "unverifiable-platform"
+          ? new ScientWordExportError({
+              reason: "file-unreadable",
+              message: LATEX_UNVERIFIABLE_PLATFORM_MESSAGE,
+            })
+          : new ScientWordExportError({
+              reason: "too-large",
+              message: "This document names too many images for one Word export.",
+            }),
       ),
     );
     const current = yield* workspaceFiles

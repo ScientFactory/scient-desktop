@@ -4,6 +4,7 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -23,6 +24,7 @@ import {
   type WordConversionInput,
 } from "./PandocWordConverter.ts";
 import { WordFileExport, layer as wordFileExportLayer } from "./WordFileExport.ts";
+import { LATEX_UNVERIFIABLE_PLATFORM_MESSAGE } from "./latexProjectPreparation.ts";
 import {
   managedToolLayer,
   pandocBinaryForTests,
@@ -409,6 +411,57 @@ describe("WordFileExport", () => {
       { seen },
     );
   });
+  it.live(
+    "on Windows exports a single open LaTeX file, refuses other project files, and keeps Markdown images",
+    () => {
+      const seen: Array<WordConversionInput> = [];
+      return run(
+        ({ service, project, revisionOf }) =>
+          Effect.gen(function* () {
+            const notes = NodePath.join(project, "notes");
+            NodeFS.writeFileSync(NodePath.join(notes, "plot.png"), PNG_BYTES);
+            NodeFS.writeFileSync(NodePath.join(notes, "single.tex"), "Single body.");
+            NodeFS.writeFileSync(NodePath.join(notes, "chapter.tex"), "Chapter.");
+            NodeFS.writeFileSync(NodePath.join(notes, "included.tex"), "\\input{chapter}");
+            NodeFS.writeFileSync(NodePath.join(notes, "figure.tex"), "\\includegraphics{plot}");
+            const exportOnWindows = (name: string) =>
+              Effect.gen(function* () {
+                const relativePath = `notes/${name}`;
+                return yield* service.exportLatex({
+                  cwd: project,
+                  relativePath,
+                  rootRelativePath: relativePath,
+                  revision: yield* revisionOf(relativePath),
+                });
+              }).pipe(Effect.provideService(HostProcessPlatform, "win32"));
+
+            yield* exportOnWindows("single.tex");
+            expect(seen[0]?.latex?.source).toBe("Single body.");
+            for (const name of ["included.tex", "figure.tex"]) {
+              const refused = yield* exportOnWindows(name).pipe(Effect.flip);
+              expect(refused).toMatchObject({
+                reason: "file-unreadable",
+                message: LATEX_UNVERIFIABLE_PLATFORM_MESSAGE,
+              });
+            }
+            expect(seen).toHaveLength(1);
+
+            yield* service
+              .export({
+                cwd: project,
+                relativePath: "notes/report.md",
+                revision: yield* revisionOf("notes/report.md"),
+              })
+              .pipe(Effect.provideService(HostProcessPlatform, "win32"));
+            const image = seen[1]?.imageSnapshot?.get("plot.png");
+            expect(image?.ok).toBe(true);
+            if (image?.ok) expect(image.bytes).toEqual(PNG_BYTES);
+          }),
+        { seen },
+      );
+    },
+  );
+
   it.live("converts the saved file with images resolved only inside the project", () => {
     const seen: Array<WordConversionInput> = [];
     return run(

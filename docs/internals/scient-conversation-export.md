@@ -218,7 +218,13 @@ document page, and the client prints and publishes it as described in
   Rendering failure stops publication; the live chat UI is not printed.
 - **Word.** A managed, pinned Pandoc executable converts the document bundle or a saved project
   Markdown file to `.docx`, with a Scient reference style. LaTeX projects enter Pandoc's LaTeX reader
-  directly. File conversion checks the saved revision again on the server. Pandoc availability is
+  directly. File conversion checks the saved revision again on the server. LaTeX includes,
+  bibliographies, and figures, and the images of a Markdown file, are read through the same
+  handle-bound reader as PDF (`documentExport/verifiedWorkspaceRead.ts`): a file or folder swapped
+  for a link after its path check is refused, never read. On Windows, where no read can be bound
+  to the checked file, a LaTeX export reads only the file open in the editor, at its saved
+  revision, and is refused if it needs any other project file; a Markdown file's images are read
+  by path and rechecked there. Pandoc availability is
   explicit and first use requires installation; a missing tool is not silently replaced with a
   lower-fidelity converter. Unsupported content is reported as warnings.
 - **Markdown import.** Scient-marked Markdown v1 can reconstruct the readable message transcript

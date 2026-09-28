@@ -442,7 +442,11 @@ and Pandoc never reads the file system.
 1. **Read, sandboxed:** Pandoc converts the prepared input to its JSON document tree.
 2. **Resolve, in Scient:** Scient replaces each image reference with an inline `data:` URI, reading only
    files in the source's allowlist (the document bundle's assets, or files inside the LaTeX project
-   root). Anything else becomes a labelled placeholder and a warning.
+   root). Anything else becomes a labelled placeholder and a warning. Project files (images, LaTeX
+   includes, bibliographies) are read through a handle bound to the file the path check saw, so a
+   file swapped for a link out of the project after that check is refused. On Windows, which has
+   no such read, a LaTeX export reads only the editor's file at its saved revision and is refused
+   when it needs any other project file.
 3. **Write, sandboxed:** Pandoc writes the Word file from the resolved tree, with Scient's reference
    document, CSL style, and bibliography named on the command line.
 
