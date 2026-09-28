@@ -243,7 +243,7 @@ An install, update, or repair:
 7. activates the verified directory atomically and cleans staging.
 
 Routine status refresh never deletes staging because a serialized mutation may still own it.
-Abandoned staging is reconciled when the next mutation acquires ownership. Cross-process mutation locks are reclaimed when their owner is gone or when the OS process start identity proves that its PID was reused. An overdue heartbeat alone does not revoke ownership: a suspended process can resume. If an older lock has no start identity or the OS identity cannot be read, a live PID remains busy until that process exits or the stale lock is explicitly recovered while all owners are stopped. A newly qualified artifact
+Abandoned staging is reconciled when the next mutation acquires ownership. Cross-process mutation locks are reclaimed when their owner is gone or when the OS process start identity proves that its PID was reused. An overdue heartbeat alone does not revoke ownership: a suspended process can resume. If an older lock has no start identity or the OS identity cannot be read, a live PID remains busy until that process exits. Scient has no automatic override for that case; with every Scient instance closed, deleting the provider's `mutation.lock` under its runtime root clears it. A newly qualified artifact
 does not invalidate the currently activated healthy copy; replacement happens only after successful
 activation.
 
