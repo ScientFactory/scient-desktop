@@ -50,6 +50,7 @@ import {
   type SourceEdit,
 } from "./markdownAst.ts";
 import { truncateUtf8, warningValue } from "./boundedText.ts";
+import { scanHtmlStartTags } from "./htmlTags.ts";
 import { writeMessageBody } from "./messageBody.ts";
 import {
   deriveTerminalAssistantMessageIds,
@@ -735,7 +736,6 @@ export function buildConversationDocument(
 }
 
 const REMOTE_IMAGE_URL = /^(?:https?:|data:image\/|\/\/)/iu;
-const HTML_IMAGE_TAG = /<img\b(?:[^>"']|"[^"]*"|'[^']*')*>/giu;
 
 function isLocalImageUrl(url: string): boolean {
   return (
@@ -763,15 +763,6 @@ function decodeHtmlEntities(text: string): string {
   });
 }
 
-/** An attribute's value in an HTML tag, entities decoded, or null when absent. */
-function htmlAttribute(tag: string, name: string): string | null {
-  const match = new RegExp(
-    `\\s${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'=<>\`]+))`,
-    "iu",
-  ).exec(tag);
-  return match ? decodeHtmlEntities(match[1] ?? match[2] ?? match[3] ?? "") : null;
-}
-
 /**
  * Images a message points at by a path on the original computer (for example
  * `![Plot](./figures/plot.png)`, or `<img src="./plot.png">` where raw HTML is
@@ -783,7 +774,7 @@ function replaceLocalImages(
   onUnresolved: (alt: string) => void,
   rendersHtml: boolean,
 ): string {
-  if (!source.includes("![") && !(rendersHtml && /<img\b/iu.test(source))) return source;
+  if (!source.includes("![") && !(rendersHtml && /<img/iu.test(source))) return source;
   const root = parseMarkdown(source);
   const definitions = new Map<string, string>();
   visitNodes(root, (node) => {
@@ -796,15 +787,15 @@ function replaceLocalImages(
       const range = nodeRange(node);
       if (!range) return;
       const html = source.slice(range.start, range.end);
-      for (const match of html.matchAll(HTML_IMAGE_TAG)) {
-        const src = htmlAttribute(match[0], "src");
-        if (src === null || !isLocalImageUrl(src)) continue;
-        const alt = htmlAttribute(match[0], "alt") ?? "";
+      for (const tag of scanHtmlStartTags(html)) {
+        const src = tag.attributes.get("src");
+        if (tag.name !== "img" || src === undefined) continue;
+        if (!isLocalImageUrl(decodeHtmlEntities(src))) continue;
+        const alt = decodeHtmlEntities(tag.attributes.get("alt") ?? "");
         onUnresolved(alt);
-        const start = range.start + match.index;
         edits.push({
-          start,
-          end: start + match[0].length,
+          start: range.start + tag.start,
+          end: range.start + tag.end,
           text: `<em>[Image not included${alt ? `: ${escapeHtmlText(alt)}` : ""}]</em>`,
         });
       }

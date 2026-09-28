@@ -482,6 +482,40 @@ describe("conversation document", () => {
     ]);
   });
 
+  it("reads an HTML image's source from its own attribute only", () => {
+    const { markdown, document } = exportMarkdown(
+      snapshotOf(
+        thread({
+          messages: [
+            message({ id: "m1", role: "user", text: "Images" }),
+            message({
+              id: "m2",
+              role: "assistant",
+              text: [
+                `<p><img alt='x src="https://e/a.png"' src="./x.png"></p>`,
+                `<p><img alt='y src="./y.png"' src="https://e/b.png"></p>`,
+                "<p><img src=./u.png alt=U></p>",
+                "<p><img src='./s.png' alt='S'></p>",
+              ].join("\n\n"),
+              turnId: "t1",
+            }),
+          ],
+        }),
+      ),
+    );
+    expect(bodies(markdown)[1]).toBe(
+      [
+        `<p><em>[Image not included: x src="https://e/a.png"]</em></p>`,
+        `<p><img alt='y src="./y.png"' src="https://e/b.png"></p>`,
+        "<p><em>[Image not included: U]</em></p>",
+        "<p><em>[Image not included: S]</em></p>",
+      ].join("\n\n"),
+    );
+    expect(
+      document.bundle.warnings.filter((warning) => warning.code === "resource-unresolved"),
+    ).toHaveLength(3);
+  });
+
   it("bounds every quoted value so a warning always fits its contract", () => {
     const alt = "A".repeat(5_000);
     const name = `${"研".repeat(250)}.png`;
