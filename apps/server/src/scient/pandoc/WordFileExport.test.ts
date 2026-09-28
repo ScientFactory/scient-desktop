@@ -257,6 +257,49 @@ describe("WordFileExport", () => {
         ),
     );
 
+  if (binary !== null)
+    it.live("embeds a captured Mermaid PNG in the real Word package", () =>
+      run(
+        ({ service, project, revisionOf }) =>
+          Effect.gen(function* () {
+            NodeFS.writeFileSync(
+              NodePath.join(project, "notes", "report.md"),
+              "# Report\n\n```mermaid\nflowchart LR\n A --> B\n```\n",
+            );
+            const request = {
+              cwd: project,
+              relativePath: "notes/report.md",
+              revision: yield* revisionOf("notes/report.md"),
+            };
+            const plan = yield* service.prepareDiagrams(request);
+            const produced = yield* service.export({
+              ...request,
+              diagramCapture: {
+                sourceDigest: plan.sourceDigest,
+                diagrams: [
+                  {
+                    id: plan.diagrams[0]!.id,
+                    result: { _tag: "png", base64: Buffer.from(PNG_BYTES).toString("base64") },
+                  },
+                ],
+              },
+            });
+            const docx = yield* readDocx(produced.path);
+            expect(
+              [...docx.entries.keys()].some((name) => /^word\/media\/.*\.png$/u.test(name)),
+            ).toBe(true);
+            expect(docx.text("word/document.xml")).toContain("w:drawing");
+            expect(docx.text("word/document.xml")).not.toContain(
+              "Mermaid diagram source (image unavailable)",
+            );
+            expect(produced.warnings.map((warning) => warning.message).join("\n")).not.toContain(
+              "complete Mermaid source",
+            );
+          }),
+        { realConverter: true },
+      ),
+    );
+
   it.live("passes only local bibliographies and reports inaccessible references", () => {
     const seen: Array<WordConversionInput> = [];
     return run(

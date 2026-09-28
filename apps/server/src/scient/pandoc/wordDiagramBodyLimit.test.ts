@@ -142,9 +142,11 @@ describe("Word diagram HTTP body limit", () => {
             request.end();
           }),
       );
-      // Node may reset a chunked sender as soon as the bounded read fails,
-      // before a 413 response can traverse the same socket.
-      expect([413, "ECONNRESET"]).toContain(result);
+      // Node may close a chunked sender as soon as the bounded read fails,
+      // before a 413 response can traverse the same socket. Depending on
+      // whether the client is reading or still writing, it reports a reset
+      // or a broken pipe.
+      expect([413, "ECONNRESET", "EPIPE"]).toContain(result);
     }).pipe(
       Effect.provide(
         HttpRouter.serve(

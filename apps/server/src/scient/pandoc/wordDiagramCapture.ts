@@ -17,7 +17,7 @@ const MAX_PNG_BYTES = 2 * 1024 * 1024;
 const MAX_TOTAL_PNG_BYTES = 8 * 1024 * 1024;
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 
-export class WordDiagramCaptureError extends Error {}
+class WordDiagramCaptureError extends Error {}
 
 /** Recomputed from the exact Markdown passed to Pandoc, never from client paths. */
 export function planWordDiagrams(
