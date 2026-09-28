@@ -21,11 +21,20 @@ sizes or alignment keep their layout instead of being placed in a card.
 
 The resolved file must remain inside the current workspace. An absolute path,
 an outside-workspace traversal, or a path in another environment is not granted
-workspace-file authority merely because it appears in Markdown. Remote web
-images retain ordinary Markdown image behavior rather than these project-file
-actions.
+workspace-file authority merely because it appears in Markdown.
 
-In an agent's response, select an inline or remote image to open a larger preview. Keyboard
+Images from the web are not downloaded automatically. Loading one would tell
+its site that, and when, you opened the conversation, and an agent misled by
+content it read could hide private data in an image address. Instead, chat,
+plans, and read-only Markdown previews show a small link card with the image's
+description and shortened address; hover to see the full address, click it to
+open it in your browser, or choose **Load image** to show that image in place.
+Loading lasts while the message stays on screen and is not saved. Images inside
+a link, project and attached files, and pull request media that Scient fetches
+through your GitHub sign-in are shown as before. Images in the editable
+Markdown document view still load directly.
+
+In an agent's response, select an inline or loaded web image to open a larger preview. Keyboard
 users can focus the image and press Enter or Space. An image that is itself a
 link keeps opening that link instead.
 
