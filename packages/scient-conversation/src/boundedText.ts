@@ -108,6 +108,18 @@ export function truncateUtf8(
   return result;
 }
 
+const WARNING_VALUE_MAX_CODE_POINTS = 200;
+
+/**
+ * A value quoted inside a warning (a name, an alt text), on one line and short
+ * enough that the warning always fits `DocumentWarning.message`.
+ */
+export function warningValue(text: string): string {
+  const line = text.replace(/\s+/gu, " ").trim();
+  const cut = truncateUtf8(line, Number.POSITIVE_INFINITY, WARNING_VALUE_MAX_CODE_POINTS);
+  return cut === line ? line : `${cut.trimEnd()}…`;
+}
+
 /** Keeps the first `max` items and reports how many were left out. */
 export function boundItems<A>(
   items: ReadonlyArray<A>,

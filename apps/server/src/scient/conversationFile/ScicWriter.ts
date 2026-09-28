@@ -27,6 +27,7 @@ import {
 } from "@t3tools/contracts";
 import {
   buildConversationDocument,
+  warningValue,
   writeConversationMarkdown,
   type ResolvedAttachmentContent,
 } from "@scientfactory/conversation";
@@ -148,7 +149,7 @@ function resolveResource(
 const UNAVAILABLE_NOTES: Record<Exclude<ScicUnavailableReason, "missing">, string> = {
   unreadable: "could not be read",
   unsupported: "is not a type or size Scient can import",
-  "too-large": "did not fit within the export's attachment limit",
+  "too-large": "is too large to include",
 };
 
 const decodeManifest = Schema.decodeUnknownExit(ScicManifest);
@@ -350,7 +351,7 @@ export function prepareScicPackage(
         ? [
             {
               code: "attachment-unavailable",
-              message: `Attachment “${resource.attachment.name}” ${UNAVAILABLE_NOTES[resource.content.reason]} and is listed by name only.`,
+              message: `Attachment “${warningValue(resource.attachment.name)}” ${UNAVAILABLE_NOTES[resource.content.reason]} and is listed by name only.`,
             },
           ]
         : [],

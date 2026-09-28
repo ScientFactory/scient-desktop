@@ -49,7 +49,7 @@ import {
   visitNodes,
   type SourceEdit,
 } from "./markdownAst.ts";
-import { truncateUtf8 } from "./boundedText.ts";
+import { truncateUtf8, warningValue } from "./boundedText.ts";
 import { writeMessageBody } from "./messageBody.ts";
 import {
   deriveTerminalAssistantMessageIds,
@@ -156,7 +156,19 @@ function quote(text: string): string {
     .join("\n");
 }
 
-function warningMessage(warning: ConversationSnapshotWarning): DocumentWarning {
+/**
+ * A snapshot warning as the file states it. `fileNumber` maps a snapshot
+ * message number to the number the file shows, or null for a message the file
+ * leaves out (system messages, answers folded into their question).
+ */
+function warningMessage(
+  warning: ConversationSnapshotWarning,
+  fileNumber: (snapshotN: number) => number | null,
+): DocumentWarning {
+  const where = (messageN: number | null) => {
+    const n = messageN === null ? null : fileNumber(messageN);
+    return n === null ? "" : ` in message ${n}`;
+  };
   switch (warning._tag) {
     case "running-turn-omitted":
       return {
@@ -166,12 +178,12 @@ function warningMessage(warning: ConversationSnapshotWarning): DocumentWarning {
     case "attachment-unavailable":
       return {
         code: "attachment-unavailable",
-        message: `Attachment “${warning.name}”${warning.messageN === null ? "" : ` in message ${warning.messageN}`} was unavailable and is listed by name only.`,
+        message: `Attachment “${warningValue(warning.name)}”${where(warning.messageN)} was unavailable and is listed by name only.`,
       };
     case "attachment-unsupported":
       return {
         code: "attachment-unsupported",
-        message: `Attachment “${warning.name}”${warning.messageN === null ? "" : ` in message ${warning.messageN}`} has a type Scient cannot display; it is included as a file.`,
+        message: `Attachment “${warningValue(warning.name)}”${where(warning.messageN)} has a type Scient cannot display; it is included as a file.`,
       };
     case "records-skipped": {
       const what =
@@ -321,9 +333,42 @@ export function buildConversationDocument(input: ConversationDocumentInput): Con
       ),
   );
 
+  // Warnings name messages by the numbers the file shows. An answer's
+  // attachments are reported once, with the answer, not again for the
+  // folded message that carried them.
+  const fileNumberBySnapshotN = new Map(exported.map((message, index) => [message.n, index + 1]));
+  const foldedAnswerNumbers = new Set(
+    snapshot.messages
+      .filter(
+        (message) =>
+          message.id.startsWith("async-answer:") &&
+          answeredRequestIds.has(message.id.slice("async-answer:".length)),
+      )
+      .map((message) => message.n),
+  );
+  const unavailableAnswerNames = new Set(
+    snapshot.questionAnswers.flatMap((answer) =>
+      answer.items.flatMap((item) =>
+        item.attachments
+          .filter((attachment) => !attachment.available)
+          .map((attachment) => attachment.name),
+      ),
+    ),
+  );
+  const snapshotWarnings = snapshot.warnings.filter(
+    (warning) =>
+      !(
+        (warning._tag === "attachment-unavailable" || warning._tag === "attachment-unsupported") &&
+        warning.messageN !== null &&
+        foldedAnswerNumbers.has(warning.messageN) &&
+        unavailableAnswerNames.has(warning.name)
+      ),
+  );
   const warnings: DocumentWarning[] = [
     ...sensitiveContentWarning(snapshot.selection),
-    ...snapshot.warnings.map(warningMessage),
+    ...snapshotWarnings.map((warning) =>
+      warningMessage(warning, (n) => fileNumberBySnapshotN.get(n) ?? null),
+    ),
     ...(snapshot.provenance._tag === "import"
       ? (snapshot.provenance.omissions ?? []).map(sourceOmissionWarning)
       : snapshot.provenance._tag === "fork"
@@ -341,7 +386,7 @@ export function buildConversationDocument(input: ConversationDocumentInput): Con
     if (attachment.available && content._tag === "unavailable") {
       warnings.push({
         code: "attachment-unavailable",
-        message: `Attachment “${attachment.name}” could not be read and is listed by name only.`,
+        message: `Attachment “${warningValue(attachment.name)}” ${content.reason === "too-large" ? "is too large to include" : "could not be read"} and is listed by name only.`,
       });
     }
     const asset: DocumentAsset = {
@@ -486,7 +531,7 @@ export function buildConversationDocument(input: ConversationDocumentInput): Con
     const unresolvedImage = (alt: string) =>
       warnings.push({
         code: "resource-unresolved",
-        message: `Image “${alt || "untitled"}” in message ${n} refers to a file on the original computer and is not included.`,
+        message: `Image “${warningValue(alt) || "untitled"}” in message ${n} refers to a file on the original computer and is not included.`,
       });
     const bodySource = replaceLocalImages(
       renderReferences(message, {
@@ -495,6 +540,7 @@ export function buildConversationDocument(input: ConversationDocumentInput): Con
         contextDetails,
       }),
       unresolvedImage,
+      role === "assistant",
     );
     const text =
       bodySource.trim().length === 0 &&
@@ -524,7 +570,7 @@ export function buildConversationDocument(input: ConversationDocumentInput): Con
       blocks.push(part("context", `**Context**\n\n${contextDetails.join("\n")}`));
     }
     for (const [planIndex, plan] of owner.plans.entries()) {
-      const planBody = writeMessageBody(replaceLocalImages(plan.markdown, unresolvedImage), {
+      const planBody = writeMessageBody(replaceLocalImages(plan.markdown, unresolvedImage, true), {
         namespace: `${namespace}p${planIndex + 1}-`,
         preserveLineBreaks: false,
         rawHtml: "render",
@@ -566,7 +612,7 @@ export function buildConversationDocument(input: ConversationDocumentInput): Con
     if (owner.reasoning.length > 0) {
       const bodies = owner.reasoning.map(
         (reasoning, reasoningIndex) =>
-          writeMessageBody(replaceLocalImages(reasoning.text, unresolvedImage), {
+          writeMessageBody(replaceLocalImages(reasoning.text, unresolvedImage, true), {
             namespace: `${namespace}r${reasoningIndex + 1}-`,
             preserveLineBreaks: true,
             rawHtml: "render",
@@ -589,12 +635,18 @@ export function buildConversationDocument(input: ConversationDocumentInput): Con
         ? `imported from ${snapshot.provenance.source === "scic" ? "a Scient conversation file" : "Markdown"} (unverified)`
         : null,
   ].filter((value): value is string => value !== null);
+  // Two attachments with one name in one message would say the same thing twice.
+  const notes = [
+    ...new Map(
+      warnings.map((warning) => [`${warning.code}\n${warning.message}`, warning]),
+    ).values(),
+  ];
   const preamble = [
     `# ${escapeMarkdownText(snapshot.thread.title)}`,
     `*Exported from Scient · ${metadata.map(escapeMarkdownText).join(" · ")}*`,
-    ...(warnings.length > 0
+    ...(notes.length > 0
       ? [
-          `**Export notes**\n\n${warnings.map((warning) => `- ${escapeMarkdownText(warning.message)}`).join("\n")}`,
+          `**Export notes**\n\n${notes.map((warning) => `- ${escapeMarkdownText(warning.message)}`).join("\n")}`,
         ]
       : []),
   ];
@@ -617,21 +669,62 @@ export function buildConversationDocument(input: ConversationDocumentInput): Con
       },
       assets,
       citations,
-      warnings,
+      warnings: notes,
     },
     messageCount: exported.length,
   };
 }
 
 const REMOTE_IMAGE_URL = /^(?:https?:|data:image\/|\/\/)/iu;
+const HTML_IMAGE_TAG = /<img\b(?:[^>"']|"[^"]*"|'[^']*')*>/giu;
+
+function isLocalImageUrl(url: string): boolean {
+  return (
+    url.trim().length > 0 &&
+    !url.startsWith(DOCUMENT_ASSET_URL_PREFIX) &&
+    !REMOTE_IMAGE_URL.test(url)
+  );
+}
+
+function decodeHtmlEntities(text: string): string {
+  return text.replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos|#39);/giu, (entity, name: string) => {
+    const lower = name.toLowerCase();
+    if (lower.startsWith("#")) {
+      const code = lower.startsWith("#x")
+        ? Number.parseInt(lower.slice(2), 16)
+        : Number.parseInt(lower.slice(1), 10);
+      return Number.isInteger(code) &&
+        code > 0 &&
+        code <= 0x10ffff &&
+        (code < 0xd800 || code > 0xdfff)
+        ? String.fromCodePoint(code)
+        : entity;
+    }
+    return { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" }[lower] ?? entity;
+  });
+}
+
+/** An attribute's value in an HTML tag, entities decoded, or null when absent. */
+function htmlAttribute(tag: string, name: string): string | null {
+  const match = new RegExp(
+    `\\s${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'=<>\`]+))`,
+    "iu",
+  ).exec(tag);
+  return match ? decodeHtmlEntities(match[1] ?? match[2] ?? match[3] ?? "") : null;
+}
 
 /**
  * Images a message points at by a path on the original computer (for example
- * `![Plot](./figures/plot.png)`) cannot travel with the export. Each becomes a
- * labelled placeholder and reports itself; remote and bundle images stay.
+ * `![Plot](./figures/plot.png)`, or `<img src="./plot.png">` where raw HTML is
+ * rendered) cannot travel with the export. Each becomes a labelled placeholder
+ * and reports itself; remote and bundle images stay.
  */
-function replaceLocalImages(source: string, onUnresolved: (alt: string) => void): string {
-  if (!source.includes("![")) return source;
+function replaceLocalImages(
+  source: string,
+  onUnresolved: (alt: string) => void,
+  rendersHtml: boolean,
+): string {
+  if (!source.includes("![") && !(rendersHtml && /<img\b/iu.test(source))) return source;
   const root = parseMarkdown(source);
   const definitions = new Map<string, string>();
   visitNodes(root, (node) => {
@@ -639,18 +732,32 @@ function replaceLocalImages(source: string, onUnresolved: (alt: string) => void)
   });
   const edits: SourceEdit[] = [];
   visitNodes(root, (node) => {
+    if (node.type === "html") {
+      if (!rendersHtml) return;
+      const range = nodeRange(node);
+      if (!range) return;
+      const html = source.slice(range.start, range.end);
+      for (const match of html.matchAll(HTML_IMAGE_TAG)) {
+        const src = htmlAttribute(match[0], "src");
+        if (src === null || !isLocalImageUrl(src)) continue;
+        const alt = htmlAttribute(match[0], "alt") ?? "";
+        onUnresolved(alt);
+        const start = range.start + match.index;
+        edits.push({
+          start,
+          end: start + match[0].length,
+          text: `<em>[Image not included${alt ? `: ${escapeHtmlText(alt)}` : ""}]</em>`,
+        });
+      }
+      return;
+    }
     const url =
       node.type === "image"
         ? node.url
         : node.type === "imageReference"
           ? definitions.get(node.identifier)
           : undefined;
-    if (
-      url === undefined ||
-      url.startsWith(DOCUMENT_ASSET_URL_PREFIX) ||
-      REMOTE_IMAGE_URL.test(url)
-    )
-      return;
+    if (url === undefined || !isLocalImageUrl(url)) return;
     const range = nodeRange(node);
     if (!range) return;
     const alt = "alt" in node ? (node.alt ?? "") : "";

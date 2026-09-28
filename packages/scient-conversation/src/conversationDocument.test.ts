@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { beforeEach } from "vite-plus/test";
-import type { ChatAttachment } from "@t3tools/contracts";
+import { ScientConversationExportResult, TurnId, type ChatAttachment } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 
 import { parseConversationMarkdown } from "./conversationMarkdown.ts";
 import { parseMarkdown, visitNodes } from "./markdownAst.ts";
@@ -14,9 +15,12 @@ import {
   resetClock,
   snapshotOf,
   thread,
+  tick,
 } from "./thread.test-fixtures.ts";
 
 beforeEach(resetClock);
+
+const encodeExportResult = Schema.encodeSync(ScientConversationExportResult);
 
 const image: ChatAttachment = {
   type: "image",
@@ -426,6 +430,170 @@ describe("conversation document", () => {
       },
     ]);
     expect(markdown).toContain("**Export notes**");
+  });
+
+  it("labels raw HTML images that point at the original computer where HTML renders", () => {
+    const local = '<p>Result: <img alt="Plot &amp; fit" src="./plot.png"></p>';
+    const { markdown, document } = exportMarkdown(
+      snapshotOf(
+        thread({
+          messages: [
+            message({ id: "m1", role: "user", text: `As text: <img src="./mine.png">` }),
+            message({ id: "r1", role: "reasoning", text: "<img src='figure.png'>", turnId: "t1" }),
+            message({
+              id: "m2",
+              role: "assistant",
+              text: `${local}\n\nInline <img src="https://example.org/a.png"> stays.`,
+              turnId: "t1",
+            }),
+          ],
+          proposedPlans: [
+            {
+              id: "p1",
+              turnId: TurnId.make("t1"),
+              planMarkdown: '<img src="/Users/someone/diagram.svg" alt="Diagram">',
+              implementedAt: null,
+              implementationThreadId: null,
+              createdAt: tick(),
+              updatedAt: tick(0),
+            },
+          ],
+        }),
+        { workLog: false, reasoning: true, throughMessageId: null },
+      ),
+    );
+    expect(bodies(markdown)).toEqual([
+      // User HTML shows as text, as in chat, so nothing is loaded from it.
+      'As text: &lt;img src="./mine.png">',
+      '<p>Result: <em>[Image not included: Plot &amp; fit]</em></p>\n\nInline <img src="https://example.org/a.png"> stays.',
+    ]);
+    expect(markdown).toContain("<em>[Image not included: Diagram]</em>");
+    expect(markdown).toContain("<em>[Image not included]</em>");
+    expect(markdown).not.toContain("./plot.png");
+    expect(markdown).not.toContain("diagram.svg");
+    expect(
+      document.bundle.warnings
+        .filter((warning) => warning.code === "resource-unresolved")
+        .map((warning) => warning.message),
+    ).toEqual([
+      "Image “Plot & fit” in message 2 refers to a file on the original computer and is not included.",
+      "Image “Diagram” in message 2 refers to a file on the original computer and is not included.",
+      "Image “untitled” in message 2 refers to a file on the original computer and is not included.",
+    ]);
+  });
+
+  it("bounds every quoted value so a warning always fits its contract", () => {
+    const alt = "A".repeat(5_000);
+    const name = `${"研".repeat(250)}.png`;
+    const snapshot = snapshotOf(
+      thread({
+        messages: [
+          message({
+            id: "m1",
+            role: "user",
+            text: "Files",
+            attachments: [
+              { ...image, name, id: "thread-1-long" },
+              { ...pdf, name },
+            ],
+          }),
+          message({ id: "m2", role: "assistant", text: `![${alt}](./x.png)`, turnId: "t1" }),
+        ],
+      }),
+      undefined,
+      (attachment) => attachment.id === "thread-1-long",
+    );
+    const { document } = exportMarkdown(snapshot, {
+      resolve: () => ({ _tag: "unavailable", reason: "unreadable" }),
+    });
+    expect(document.bundle.warnings.map((warning) => warning.code)).toEqual([
+      "attachment-unavailable",
+      "attachment-unavailable",
+      "resource-unresolved",
+    ]);
+    for (const warning of document.bundle.warnings) {
+      expect(warning.message.length).toBeLessThanOrEqual(2_048);
+      expect(warning.message).not.toContain("\n");
+    }
+    expect(() =>
+      encodeExportResult({
+        exportId: "export-1",
+        format: "markdown",
+        contentDigest: DIGEST,
+        messageCount: 2,
+        file: null,
+        text: "",
+        warnings: document.bundle.warnings,
+      }),
+    ).not.toThrow();
+  });
+
+  it("numbers warnings as the file does and reports an answer's attachment once", () => {
+    const answerFile: ChatAttachment = { ...pdf, id: "thread-1-answer", name: "answer.pdf" };
+    const laterFile: ChatAttachment = { ...pdf, id: "thread-1-later", name: "later.pdf" };
+    const snapshot = snapshotOf(
+      thread({
+        messages: [
+          message({ id: "m1", role: "user", text: "Ask me" }),
+          message({ id: "s1", role: "system", text: "Model changed" }),
+          message({ id: "m2", role: "assistant", text: "Which file?", turnId: "t1" }),
+          message({
+            id: "async-answer:req-1",
+            role: "user",
+            text: "This one",
+            attachments: [answerFile],
+          }),
+          message({ id: "m3", role: "user", text: "And this", attachments: [laterFile] }),
+        ],
+        activities: [
+          activity({
+            id: "q1",
+            kind: "user-input.requested",
+            turnId: "t1",
+            payload: { requestId: "req-1", questions: [{ id: "file", question: "Which file?" }] },
+          }),
+          activity({
+            id: "q2",
+            kind: "user-input.answer-submitted",
+            turnId: "t1",
+            payload: {
+              requestId: "req-1",
+              answers: { file: "This one" },
+              attachmentsByQuestionId: { file: [answerFile] },
+            },
+          }),
+        ],
+      }),
+      undefined,
+      () => false,
+    );
+    expect(
+      snapshot.warnings.filter((warning) => warning._tag === "attachment-unavailable"),
+    ).toEqual([
+      { _tag: "attachment-unavailable", name: "answer.pdf", messageN: 4 },
+      { _tag: "attachment-unavailable", name: "later.pdf", messageN: 5 },
+      { _tag: "attachment-unavailable", name: "answer.pdf", messageN: null },
+    ]);
+    const { markdown, document } = exportMarkdown(snapshot);
+    expect(bodies(markdown)).toEqual(["Ask me", "Which file?", "And this"]);
+    expect(document.bundle.warnings.map((warning) => warning.message)).toEqual([
+      "Attachment “later.pdf” in message 3 was unavailable and is listed by name only.",
+      "Attachment “answer.pdf” was unavailable and is listed by name only.",
+    ]);
+  });
+
+  it("says an attachment over the export's budget is too large, not unreadable", () => {
+    const { document } = exportMarkdown(
+      snapshotOf(
+        thread({
+          messages: [message({ id: "m1", role: "user", text: "Big", attachments: [pdf] })],
+        }),
+      ),
+      { resolve: () => ({ _tag: "unavailable", reason: "too-large" }) },
+    );
+    expect(document.bundle.warnings.map((warning) => warning.message)).toEqual([
+      "Attachment “notes.pdf” is too large to include and is listed by name only.",
+    ]);
   });
 
   it("never writes hard breaks inside backslash-delimited math", () => {
