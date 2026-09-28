@@ -111,4 +111,27 @@ describe("WordFileExportDialog", () => {
     expect(saveConversationExport).toHaveBeenCalledOnce();
     expect(exportWordFile).toHaveBeenCalledOnce();
   });
+
+  it("reads Pandoc's state again after a failed export, so a reinstall can be offered", async () => {
+    readPandocTool.mockResolvedValue(status(true));
+    exportWordFile.mockRejectedValue(new Error("Scient could not start Pandoc."));
+    await act(async () =>
+      root.render(
+        <WordFileExportDialog
+          environmentId={environmentId}
+          cwd="/project"
+          relativePath="notes/report.md"
+          savedRevision={async () => revision}
+          onClose={() => {}}
+        />,
+      ),
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(exportWordFile).toHaveBeenCalledOnce();
+    expect(document.body.textContent).toContain("Scient could not start Pandoc.");
+    expect(readPandocTool.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
 });

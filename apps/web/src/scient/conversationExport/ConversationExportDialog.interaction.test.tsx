@@ -353,6 +353,28 @@ describe("ConversationExportDialog", () => {
     });
   });
 
+  it("reads Word's availability again after a failed Word export", async () => {
+    const withWord = {
+      ...preparation,
+      formats: [
+        ...preparation.formats,
+        { format: "docx" as const, available: true, unavailableReason: null },
+      ],
+    };
+    readPandocTool.mockResolvedValue(pandocStatus({ installed: true }));
+    prepareConversationExport.mockResolvedValue(withWord);
+    exportConversation.mockRejectedValue(new Error("Scient could not start Pandoc."));
+    await renderHost();
+    await open("docx");
+    await flush();
+    expect(prepareConversationExport).toHaveBeenCalledTimes(1);
+
+    await click(button("Save .docx")!);
+
+    expect(document.body.textContent).toContain("Scient could not start Pandoc.");
+    expect(prepareConversationExport).toHaveBeenCalledTimes(2);
+  });
+
   it("says why Word cannot run on this computer, with nothing to press", async () => {
     readPandocTool.mockResolvedValue(pandocStatus({ canInstall: false }));
     prepareConversationExport.mockResolvedValue(preparation);

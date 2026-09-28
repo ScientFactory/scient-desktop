@@ -217,6 +217,9 @@ function ConversationExportDialog({ request }: { readonly request: OpenRequest }
       closeRequest();
     } catch (cause) {
       setError(exportErrorMessage(cause));
+      // A Pandoc that no longer starts makes Word unavailable with a reinstall
+      // offer; read availability again so the dialog shows it.
+      if (exportRequest.format === "docx") formatAvailable();
     } finally {
       setBusy(false);
     }

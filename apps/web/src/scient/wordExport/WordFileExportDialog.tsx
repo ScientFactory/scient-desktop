@@ -43,6 +43,8 @@ export function WordFileExportDialog(props: {
   const [error, setError] = useState<string | null>(null);
   const startedRef = useRef(false);
   const runningRef = useRef(false);
+  const tool = usePandocTool(environmentId);
+  const refreshTool = tool.refresh;
 
   const run = useCallback(async () => {
     if (runningRef.current) return;
@@ -87,13 +89,13 @@ export function WordFileExportDialog(props: {
       onClose();
     } catch (cause) {
       setError(errorMessage(cause));
+      // A Pandoc that no longer starts is reported as needing a reinstall.
+      refreshTool();
     } finally {
       runningRef.current = false;
       setBusy(false);
     }
-  }, [cwd, environmentId, onClose, relativePath, rootRelativePath, savedRevision]);
-
-  const tool = usePandocTool(environmentId);
+  }, [cwd, environmentId, onClose, refreshTool, relativePath, rootRelativePath, savedRevision]);
   const installed = tool.status?.installed === true;
   useEffect(() => {
     if (!installed || startedRef.current) return;
