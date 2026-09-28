@@ -577,9 +577,10 @@ Rules:
 - **Malformed or edited markers** (unknown export value, missing or duplicate numbers, out-of-order
   numbers, unknown role) are shown in the preview with the affected range. The user can import the
   messages that parsed cleanly or import the whole file as a document. There is no automatic fallback.
-  Each message number is checked against the last number accepted in order: a number no higher than
-  it is out of order (or a duplicate) and its message is left out; a number that skips ahead is a gap,
-  noted without leaving anything out.
+  Each message number is checked against the number of the last message imported: a number no higher
+  than it is out of order (or a duplicate) and its message is left out; a number that skips ahead is a
+  gap, noted without leaving anything out. A message left out for another reason (role, time, marker)
+  never moves that baseline, but still stands for a number, so the next one is not reported missing.
 - A file without Scient's front matter is never parsed as a transcript; it is treated as a document
   ("start a conversation with this document").
 - Imported Markdown history is labelled **"Imported from Markdown — unverified"** on the thread,

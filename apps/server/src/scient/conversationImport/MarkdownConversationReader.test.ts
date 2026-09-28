@@ -309,6 +309,32 @@ describe("Markdown conversation import adapter", () => {
       expect(result.issues[1]).toMatchObject({ startLine: 13, endLine: 15 });
     });
 
+    it("keeps a message that follows a rejected one with a higher number", () => {
+      const result = read(
+        [
+          "---",
+          "scient: conversation",
+          "scient-format: 1",
+          `scient-export: ${EXPORT_VALUE}`,
+          "title: Renumbered",
+          "---",
+          ...[1, 100, 3].flatMap((n, index) => [
+            `<!-- scient:message export=${EXPORT_VALUE} n=${n} role=${index === 1 ? "robot" : "user"} time=2026-09-27T14:00:00.000Z -->`,
+            `body ${index + 1}`,
+            "",
+          ]),
+        ].join("\n"),
+      );
+      expect(summary(result)).toEqual({
+        texts: ["body 1", "body 3"],
+        issues: [
+          ["missing-number", 10],
+          ["unknown-role", 10],
+        ],
+        skipped: 1,
+      });
+    });
+
     it("imports every message across a clean gap and leaves nothing out", () => {
       expect(summary(numbered([1, 3]))).toEqual({
         texts: ["body 1", "body 2"],

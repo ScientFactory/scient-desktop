@@ -362,6 +362,36 @@ describe("Scient conversation Markdown v1", () => {
       });
     });
 
+    /** Parses a transcript whose message `damaged` (1-based) has an unknown role. */
+    const parseWithBadRole = (numbers: ReadonlyArray<number>, damaged: number) => {
+      const lines = numberedTranscript(numbers).split("\n");
+      const line = markerLine(damaged) - 1;
+      lines[line] = lines[line]!.replace("role=user", "role=robot");
+      const parsed = parseConversationMarkdown(lines.join("\n"));
+      if (parsed.kind !== "conversation") throw new Error("Expected a conversation.");
+      return {
+        bodies: parsed.messages.map((entry) => entry.body),
+        issues: parsed.issues.map((issue) => [issue.kind, issue.excluded, issue.line]),
+      };
+    };
+
+    it("orders numbers only by messages it accepted, not by a rejected one", () => {
+      expect(parseWithBadRole([1, 100, 3], 2)).toEqual({
+        bodies: ["body 1", "body 3"],
+        issues: [
+          ["missing-number", false, markerLine(2)],
+          ["unknown-role", true, markerLine(2)],
+        ],
+      });
+      expect(parseWithBadRole([1, 3, 2], 2)).toEqual({
+        bodies: ["body 1", "body 3"],
+        issues: [
+          ["missing-number", false, markerLine(2)],
+          ["unknown-role", true, markerLine(2)],
+        ],
+      });
+    });
+
     it("never reports a number missing where a damaged marker stood", () => {
       const parsed = parseConversationMarkdown(
         numberedTranscript([1, 2, 3]).replace(" n=2 role=user", " n=2 role=user turn=x"),
@@ -369,6 +399,11 @@ describe("Scient conversation Markdown v1", () => {
       if (parsed.kind !== "conversation") throw new Error("Expected a conversation.");
       expect(parsed.messages.map((entry) => entry.body)).toEqual(["body 1", "body 3"]);
       expect(parsed.issues.map((issue) => issue.kind)).toEqual(["malformed-marker"]);
+      // A message left out for its role holds its number too.
+      expect(parseWithBadRole([1, 2, 3], 2)).toEqual({
+        bodies: ["body 1", "body 3"],
+        issues: [["unknown-role", true, markerLine(2)]],
+      });
     });
 
     it("keeps every message across a clean gap and only notes it", () => {
