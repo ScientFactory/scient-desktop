@@ -23,7 +23,7 @@
  * 4. The whole result against `ValidatedConversationImport`.
  */
 import * as NodeCrypto from "node:crypto";
-import { once as eventOnce } from "node:events";
+import * as NodeEvents from "node:events";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import type * as NodeStream from "node:stream";
@@ -299,7 +299,7 @@ async function readEntry(
         if (output.keep) chunks.push(chunk);
         if (sink !== null && !sink.write(chunk)) {
           if (sinkError !== null) throw sinkError;
-          await eventOnce(sink, "drain");
+          await NodeEvents.once(sink, "drain");
         }
       }
     } catch (cause) {

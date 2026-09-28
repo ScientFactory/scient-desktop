@@ -5,6 +5,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { assert, describe, it } from "@effect/vitest";
 import {
   AuthOrchestrationOperateScope,
@@ -675,7 +676,7 @@ describe("ConversationImportStaging", () => {
     }).pipe(Effect.scoped, Effect.provide(TestLayer)),
   );
 
-  if (process.platform !== "win32") {
+  if (HostProcessPlatform.defaultValue() !== "win32") {
     it.effect("waits for an interrupted attachment copy before rollback removes its journal", () =>
       Effect.gen(function* () {
         const copies = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-copy-cancel-"));

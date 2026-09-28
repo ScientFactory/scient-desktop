@@ -261,7 +261,7 @@ describe("runPandoc", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
-  if (process.platform !== "win32") {
+  if (HostProcessPlatform.defaultValue() !== "win32") {
     it.live("refuses an existing FIFO output target without waiting for a reader", () =>
       Effect.gen(function* () {
         const { directory, scratchRoot, fake, pidFile } = yield* harness;

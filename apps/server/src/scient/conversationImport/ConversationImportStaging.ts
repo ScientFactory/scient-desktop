@@ -10,7 +10,7 @@
  * Only a confirmed import reaches the importer.
  */
 import * as NodeCrypto from "node:crypto";
-import { once as eventOnce } from "node:events";
+import * as NodeEvents from "node:events";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeStreamPromises from "node:stream/promises";
@@ -294,7 +294,7 @@ async function copyVerified(
       byteLength += chunk.byteLength;
       if (!sink.write(chunk)) {
         if (sinkError !== null) throw sinkError;
-        await eventOnce(sink, "drain");
+        await NodeEvents.once(sink, "drain");
       }
     }
     if (signal.aborted) throw new Error("Attachment copy was interrupted.");
