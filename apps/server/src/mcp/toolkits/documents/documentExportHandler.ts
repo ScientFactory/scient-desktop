@@ -1,5 +1,7 @@
 import {
   ScientDocumentPageRenderOutcome,
+  scientDocumentBlockedRequestsNote,
+  type DocumentWarning,
   type ScientDocumentExportInput,
   type ScientDocumentExportResult,
   type ScientDocumentPdfExportError,
@@ -44,6 +46,9 @@ const toolError = (
 
 const boundaryToolError = (cause: ProjectDocumentBuildBoundaryError) =>
   toolError(cause.code, cause.message);
+
+/** `ScientDocumentExportResult.warnings` holds at most this many entries. */
+const MAX_TOOL_WARNINGS = 64;
 
 const RENDERER_UNAVAILABLE_MESSAGE =
   "A current connected Scient desktop is required to export this PDF.";
@@ -258,14 +263,35 @@ export const exportScientDocumentForInvocation = Effect.fn("ScientDocumentExport
         });
       }
 
-      const warnings = [
-        ...documentPdfWarnings(record, rendered).map((warning) =>
-          `${warning.code}: ${warning.message}`.slice(0, 640),
-        ),
-        ...rendered.warnings,
-        ...(rendered.blockedRequestCount > 0 ? ["blocked-external-resources"] : []),
+      // The tool result holds 64 warnings. What must always be reported (the
+      // refused-request note and the status flags) keeps its place when the
+      // document's own notes do not fit; a closing entry counts the rest.
+      const describe = (warning: DocumentWarning) =>
+        `${warning.code}: ${warning.message}`.slice(0, 640);
+      const flags = [
+        ...(rendered.blockedRequestCount > 0
+          ? [
+              describe({
+                code: "resource-unresolved",
+                message: scientDocumentBlockedRequestsNote(rendered.blockedRequestCount),
+              }),
+              "blocked-external-resources",
+            ]
+          : []),
         ...(presented ? [] : ["presentation-unavailable"]),
       ];
+      const notes = [
+        ...new Set([...documentPdfWarnings(record, rendered).map(describe), ...rendered.warnings]),
+      ].filter((note) => !flags.includes(note));
+      const room = MAX_TOOL_WARNINGS - flags.length;
+      const warnings =
+        notes.length <= room
+          ? [...notes, ...flags]
+          : [
+              ...notes.slice(0, room - 1),
+              ...flags,
+              `…and ${notes.length - (room - 1)} more notes, listed at the end of the PDF.`,
+            ];
       return {
         sourcePath: file.relativePath,
         outputPath: output.outputPath,
@@ -274,7 +300,7 @@ export const exportScientDocumentForInvocation = Effect.fn("ScientDocumentExport
         title: record.title || "Document",
         pageCount: source.pageCount ?? 1,
         byteLength: bytes.byteLength,
-        warnings: [...new Set(warnings)].slice(0, 64),
+        warnings,
         validation: "structural",
         visualReviewPerformed: false,
       } satisfies ScientDocumentExportResult;

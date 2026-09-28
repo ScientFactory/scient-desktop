@@ -50,7 +50,12 @@ const PAGE_WARNING_CODES: Readonly<
   "raw-html-sanitized": "unsupported-construct",
 };
 
-/** The capture's own warnings followed by the page's, each message once. */
+/**
+ * The capture's own warnings followed by the page's, each message once, then
+ * the notes that must always be reported. When the list would exceed the
+ * contract's limit, room is kept for those notes and for one closing entry
+ * that counts the warnings left out.
+ */
 export function documentPdfWarnings(
   record: DocumentCaptureRecord,
   render: ScientDocumentPageRenderResult,
@@ -70,13 +75,30 @@ export function documentPdfWarnings(
   }
   // Refused requests are the page's isolation working, not a failure; they are
   // reported, never silent. See DocumentPagePdfRenderer.
-  if (render.blockedRequestCount > 0) {
-    add({
-      code: "resource-unresolved",
-      message: scientDocumentBlockedRequestsNote(render.blockedRequestCount),
-    });
-  }
-  return warnings.slice(0, SCIENT_DOCUMENT_MAX_WARNINGS);
+  const mandatory: DocumentWarning[] =
+    render.blockedRequestCount > 0
+      ? [
+          {
+            code: "resource-unresolved",
+            message: scientDocumentBlockedRequestsNote(render.blockedRequestCount),
+          },
+        ]
+      : [];
+  const ordinary = warnings.filter(
+    (warning) => !mandatory.some((note) => note.message === warning.message),
+  );
+  const room = SCIENT_DOCUMENT_MAX_WARNINGS - mandatory.length;
+  if (ordinary.length <= room) return [...ordinary, ...mandatory];
+  const shown = ordinary.slice(0, room - 1);
+  const omitted = ordinary.length - shown.length;
+  return [
+    ...shown,
+    ...mandatory,
+    {
+      code: shown[0]?.code ?? "resource-unresolved",
+      message: `…and ${omitted} more notes, not listed here.`,
+    },
+  ];
 }
 
 /** Decodes and checks a render against its capture without touching any store. */

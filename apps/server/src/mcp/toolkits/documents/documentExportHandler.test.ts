@@ -92,7 +92,11 @@ const makeResolver = (root: string, state: { changed: boolean }) => {
 };
 
 type RenderBehavior =
-  | { readonly _tag: "render"; readonly overrides?: Record<string, unknown> }
+  | {
+      readonly _tag: "render";
+      readonly overrides?: Record<string, unknown>;
+      readonly blockedRequestCount?: number;
+    }
   | { readonly _tag: "no-host" }
   | { readonly _tag: "rejected"; readonly reason: "page-rejected" | "too-large" | "failed" };
 
@@ -112,7 +116,10 @@ const makeBroker = (behavior: RenderBehavior) => {
       const { expected } = decodeRequest(request.input);
       return Effect.succeed({
         _tag: "rendered",
-        result: renderResultFor(expected, behavior.overrides as never),
+        result: {
+          ...renderResultFor(expected, behavior.overrides as never),
+          blockedRequestCount: behavior.blockedRequestCount ?? 0,
+        },
       });
     }
     return Effect.succeed({});
@@ -202,6 +209,26 @@ describe("scient_document_export", () => {
         NodeFSP.readFile(NodePath.join(root, "out/report.pdf")),
       );
       expect(written).toEqual(Buffer.from(minimalPdf("document-page")));
+    }),
+  );
+
+  it.effect("keeps the refused-request note when the document's notes exceed the limit", () =>
+    Effect.gen(function* () {
+      const root = yield* Effect.promise(async () => {
+        const directory = await makeFixtureDirectory(fixtures, "scient-document-export-notes-");
+        const images = Array.from({ length: 80 }, (_, index) => `![m${index}](m${index}.png)`);
+        await writeFixtureFile(directory, "notes/report.md", `# Report\n\n${images.join(" ")}\n`);
+        return directory;
+      });
+      const { effect } = run(
+        { sourcePath: "notes/report.md", outputPath: "out/report.pdf" },
+        { root, behavior: { _tag: "render", blockedRequestCount: 2 } },
+      );
+      const result = yield* effect;
+      expect(result.warnings).toHaveLength(64);
+      expect(result.warnings).toContain("resource-unresolved: 2 web resources were not loaded.");
+      expect(result.warnings).toContain("blocked-external-resources");
+      expect(result.warnings.at(-1)).toBe("…and 19 more notes, listed at the end of the PDF.");
     }),
   );
 

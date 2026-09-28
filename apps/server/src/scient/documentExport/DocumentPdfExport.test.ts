@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 
 import {
   BROWSER_PDF_EXPORT_MAX_BYTES,
+  SCIENT_DOCUMENT_MAX_WARNINGS,
   ScientDocumentPageInput,
   type ScientDocumentPdfPrepared,
 } from "@t3tools/contracts";
@@ -37,6 +38,7 @@ import {
 } from "./DocumentExportTestUtils.ts";
 import {
   DOCUMENT_PDF_TOO_LARGE_DETAIL,
+  documentPdfWarnings,
   publishCapturedDocumentPdf,
 } from "./DocumentPdfPublication.ts";
 import { captureProjectMarkdownFile, prepareMarkdownPdf } from "./MarkdownPdfPreparation.ts";
@@ -703,6 +705,39 @@ describe("document PDF publication", () => {
         code: "resource-unresolved",
         message: "2 web resources were not loaded.",
       });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("keeps the refused-request note when the other warnings exceed the limit", () =>
+    Effect.gen(function* () {
+      const { prepared } = yield* prepare;
+      const record = yield* readDocumentCapture(prepared.expected.captureId);
+      const many = {
+        ...record,
+        warnings: Array.from({ length: 600 }, (_, index) => ({
+          code: "resource-unresolved" as const,
+          message: `Image ${index} was not found in the project.`,
+        })),
+      };
+      const warnings = documentPdfWarnings(many, {
+        ...renderResultFor(prepared.expected),
+        blockedRequestCount: 3,
+      });
+      expect(warnings).toHaveLength(SCIENT_DOCUMENT_MAX_WARNINGS);
+      expect(warnings.map((warning) => warning.message)).toContain(
+        "3 web resources were not loaded.",
+      );
+      expect(warnings.at(-1)?.message).toBe("…and 90 more notes, not listed here.");
+      // Within the limit, nothing is cut and no closing entry is added.
+      const few = documentPdfWarnings(
+        { ...record, warnings: many.warnings.slice(0, 2) },
+        { ...renderResultFor(prepared.expected), blockedRequestCount: 1 },
+      );
+      expect(few.map((warning) => warning.message)).toEqual([
+        "Image 0 was not found in the project.",
+        "Image 1 was not found in the project.",
+        "1 web resource was not loaded.",
+      ]);
     }).pipe(Effect.provide(layer)),
   );
 
