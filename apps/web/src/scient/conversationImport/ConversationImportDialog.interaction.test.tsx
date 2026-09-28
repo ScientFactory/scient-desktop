@@ -10,6 +10,7 @@ import {
   SCIC_MEDIA_TYPE,
   ScientConversationImportError,
   ThreadId,
+  type ScientConversationImportConfirmRequest,
   type ScientConversationImportPreview,
   type ServerConfig,
   type ServerProvider,
@@ -169,6 +170,16 @@ function previewOf(
   } as unknown as ScientConversationImportPreview;
 }
 
+function committedResult(request: ScientConversationImportConfirmRequest) {
+  return {
+    importId: request.importId,
+    threadId: ThreadId.make("thread-9"),
+    destination: request.destination,
+    messageCount: 1,
+    attachmentCount: 2,
+  };
+}
+
 let root: Root;
 let container: HTMLDivElement;
 
@@ -199,7 +210,9 @@ beforeEach(() => {
   uploadConversationFile.mockResolvedValue(undefined);
   previewConversationImport.mockResolvedValue(previewOf());
   cancelConversationImport.mockResolvedValue({ _tag: "cancelled" });
-  confirmConversationImport.mockResolvedValue({ threadId: ThreadId.make("thread-9") });
+  confirmConversationImport.mockImplementation(async (_environmentId, request) =>
+    committedResult(request),
+  );
   navigate.mockResolvedValue(undefined);
   container = document.createElement("div");
   document.body.append(container);
@@ -688,6 +701,76 @@ describe("ConversationImportDialog", () => {
     expect(createConversationImportUpload).toHaveBeenCalledOnce();
     expect(cancelConversationImport).not.toHaveBeenCalled();
     expect(dialog()).toBeNull();
+  });
+
+  it("finishes with the committed thread when a reconnected confirm finds it already imported", async () => {
+    confirmConversationImport.mockReturnValueOnce(new Promise(() => {}));
+    confirmConversationImport.mockRejectedValueOnce(
+      new ScientConversationImportError({
+        reason: "already-imported",
+        rejection: null,
+        message: "This conversation was already imported to another project or model.",
+      }),
+    );
+    cancelConversationImport.mockImplementation(async () => ({
+      _tag: "already-imported",
+      result: {
+        ...committedResult(confirmConversationImport.mock.calls[0]![1]),
+        threadId: ThreadId.make("thread-committed"),
+        destination: {
+          ...confirmConversationImport.mock.calls[0]![1].destination,
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+        },
+      },
+    }));
+    await openWith(scic());
+    await act(async () => button("Import")!.click());
+    await flush();
+    await act(async () => setOffline([local]));
+    await flush();
+    await act(async () => setOffline([]));
+    await flush();
+
+    expect(cancelConversationImport).toHaveBeenCalledWith(local, importId);
+    expect(toastAdd).toHaveBeenCalledWith({
+      type: "success",
+      title: "Conversation imported",
+      description: "Your next message continues it with GPT-5.",
+    });
+    expect(navigate).toHaveBeenCalledWith({
+      to: "/$environmentId/$threadId",
+      params: expect.objectContaining({ threadId: "thread-committed" }),
+    });
+    expect(dialog()).toBeNull();
+    expect(createConversationImportUpload).toHaveBeenCalledOnce();
+    expect(button("Try again")).toBeUndefined();
+  });
+
+  it("reports an import that finished after all when the dialog is closed", async () => {
+    confirmConversationImport.mockRejectedValueOnce(
+      new ScientConversationImportError({
+        reason: "import-failed",
+        rejection: null,
+        message: "The import was interrupted. Scient will finish cleaning up; try again later.",
+      }),
+    );
+    cancelConversationImport.mockImplementation(async () => ({
+      _tag: "already-imported",
+      result: committedResult(confirmConversationImport.mock.calls[0]![1]),
+    }));
+    await openWith(scic());
+    await act(async () => button("Import")!.click());
+    await flush();
+    await act(async () => button("Cancel")!.click());
+    await flush();
+
+    expect(cancelConversationImport).toHaveBeenCalledWith(local, importId);
+    expect(toastAdd).toHaveBeenCalledWith({
+      type: "success",
+      title: "Conversation imported",
+      description: "The import finished after all. It's in your conversations.",
+    });
+    expect(createConversationImportUpload).toHaveBeenCalledOnce();
   });
 
   it("sends the file again only when the server no longer has the staged import", async () => {

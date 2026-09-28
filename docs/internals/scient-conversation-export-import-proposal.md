@@ -897,7 +897,12 @@ import. Changing the file or the destination environment does the same and start
   repeated confirm idempotently: the committed result (the dialog then finishes as usual), the
   running attempt's outcome, or an error meaning nothing was imported. After such an error
   **Try again** confirms the same staged import; only when the server no longer has it
-  (`import-not-found`, `cancelled`) does Try again send the file again.
+  (`import-not-found`, `cancelled`) does Try again send the file again. `already-imported` for the
+  dialog's own import means it committed (to a destination other than this confirm's); the
+  dialog then asks `cancel`, which answers a committed import with its result, and finishes with
+  that thread, never sending the file again. The dialog calls preview only before confirming.
+  Closing after a confirm that answered "not imported" still cancels the staged import, and if
+  that cancel finds it committed after all, a toast says so.
 - **Queueing.** A dropped file replaces the file of an import dialog only while one is on screen
   and not committing; otherwise, including during first-run setup, it waits its turn.
 

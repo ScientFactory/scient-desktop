@@ -126,7 +126,13 @@ beforeEach(() => {
     expiresAt: 0,
   }));
   client.cancelConversationImport.mockResolvedValue({ _tag: "cancelled" });
-  client.confirmConversationImport.mockResolvedValue({ threadId: ThreadId.make("thread-1") });
+  client.confirmConversationImport.mockImplementation(async (_environmentId, request) => ({
+    importId: request.importId,
+    threadId: ThreadId.make("thread-1"),
+    destination: request.destination,
+    messageCount: 3,
+    attachmentCount: 0,
+  }));
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);

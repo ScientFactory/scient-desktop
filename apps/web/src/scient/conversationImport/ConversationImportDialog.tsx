@@ -195,6 +195,8 @@ interface StagedAttempt {
    * never cancelled, until the outcome is known.
    */
   confirming: boolean;
+  /** A confirm was sent at some point; a later cancel may find it committed after all. */
+  confirmed: boolean;
 }
 
 /** A confirm that was sent, and what is known about its outcome. */
@@ -338,7 +340,12 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
     const { source, environmentId, markdownMode } = attempt;
     if (source._tag === "choose" || environmentId === null || fileProblem !== null) return;
     const controller = new AbortController();
-    const staged: StagedAttempt = { environmentId, importId: null, confirming: false };
+    const staged: StagedAttempt = {
+      environmentId,
+      importId: null,
+      confirming: false,
+      confirmed: false,
+    };
     stagedRef.current = staged;
     const stopped = () => controller.signal.aborted;
     const setStage = (stage: Stage) => setProgress({ attempt, stage });
@@ -358,6 +365,17 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
       void stopDesktop
         .catch(() => undefined)
         .then(() => cancelConversationImport(staged.environmentId, importId))
+        .then((answer) => {
+          // A confirm that answered "not imported" can still have finished
+          // (for example one that was interrupted and resumed on the server).
+          if (staged.confirmed && answer._tag === "already-imported") {
+            toastManager.add({
+              type: "success",
+              title: "Conversation imported",
+              description: "The import finished after all. It's in your conversations.",
+            });
+          }
+        })
         .catch(() => undefined);
     };
     const { name, sizeBytes } = sourceFile(source)!;
@@ -469,10 +487,20 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
     next.staged.importId = null;
     next.staged.confirming = false;
     dismissConversationImportRequest();
+    // The committed destination is the server's, which can differ from this confirm's.
+    const committed = result.destination.modelSelection;
+    const modelName =
+      modelGroups
+        .flatMap((group) => group.models)
+        .find(
+          (model) =>
+            model.selection.instanceId === committed.instanceId &&
+            model.selection.model === committed.model,
+        )?.name ?? next.modelName;
     toastManager.add({
       type: "success",
       title: next.isDocument ? "Conversation started" : "Conversation imported",
-      description: `Your next message continues it with ${next.modelName}.`,
+      description: `Your next message continues it with ${modelName}.`,
     });
     void navigate({
       to: "/$environmentId/$threadId",
@@ -487,31 +515,58 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
   // confirm with the import it committed, joins the attempt still running,
   // or reports that nothing was imported; so re-sending never imports twice.
   const confirmSequence = useRef(0);
+  const notImported = (next: Confirmation) => {
+    next.staged.confirming = false;
+    next.staged.importId = null;
+    setConfirmation(null);
+    setConversationImportReplaceable(true);
+    setProgress({
+      attempt,
+      stage: {
+        _tag: "failed",
+        message: "The import didn't finish. Send the file again to import it.",
+      },
+    });
+  };
+  // "Already imported" for this import's own ID means it committed, but with
+  // a destination other than this confirm's; cancel answers a committed
+  // import with its result, so the dialog finishes with that thread and
+  // never sends the file again.
+  const collectCommitted = (next: Confirmation, sequence: number) => {
+    void cancelConversationImport(next.staged.environmentId, next.request.importId).then(
+      (answer) => {
+        if (closedRef.current || sequence !== confirmSequence.current) return;
+        if (answer._tag === "already-imported") finished(next, answer.result);
+        else notImported(next);
+      },
+      () => {
+        if (closedRef.current || sequence !== confirmSequence.current) return;
+        setConfirmation((current) => (current === null ? null : { ...current, phase: "unknown" }));
+      },
+    );
+  };
   const onServerFailure = (next: Confirmation, sequence: number, cause: unknown) => {
     if (closedRef.current || sequence !== confirmSequence.current) return;
     if (!isConversationImportError(cause)) {
       setConfirmation((current) => (current === null ? null : { ...current, phase: "unknown" }));
       return;
     }
+    if (cause.reason === "already-imported") {
+      collectCommitted(next, sequence);
+      return;
+    }
     // The server answered: nothing was imported.
+    if (cause.reason === "import-not-found" || cause.reason === "cancelled") {
+      notImported(next);
+      return;
+    }
     next.staged.confirming = false;
     setConfirmation(null);
     setConversationImportReplaceable(true);
-    if (cause.reason === "import-not-found" || cause.reason === "cancelled") {
-      next.staged.importId = null;
-      setProgress({
-        attempt,
-        stage: {
-          _tag: "failed",
-          message: "The import didn't finish. Send the file again to import it.",
-        },
-      });
-    } else {
-      setImportError({
-        attempt,
-        message: importFailureMessage(cause, "The conversation couldn't be imported. Try again."),
-      });
-    }
+    setImportError({
+      attempt,
+      message: importFailureMessage(cause, "The conversation couldn't be imported. Try again."),
+    });
   };
   const askServer = (next: Confirmation) => {
     const sequence = ++confirmSequence.current;
@@ -532,6 +587,7 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
     const staged = stagedRef.current;
     if (!canImport || staged?.importId == null) return;
     staged.confirming = true;
+    staged.confirmed = true;
     setImportError(null);
     setConversationImportReplaceable(false);
     const next: Confirmation = {
