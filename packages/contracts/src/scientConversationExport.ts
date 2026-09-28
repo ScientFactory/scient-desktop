@@ -3,6 +3,8 @@ import * as HttpServerRespondable from "effect/unstable/http/HttpServerRespondab
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 
 import {
+  ForwardCompatibleArray,
+  ForwardCompatibleNullable,
   IsoDateTime,
   MessageId,
   NonNegativeInt,
@@ -749,11 +751,15 @@ export const ScientConversationExportMessageChoice = Schema.Struct({
 export type ScientConversationExportMessageChoice =
   typeof ScientConversationExportMessageChoice.Type;
 
-/** Everything the export dialog needs before the user chooses; carries no exported content. */
+/**
+ * Everything the export dialog needs before the user chooses; carries no
+ * exported content. A format a newer server adds is dropped when decoded, so
+ * an older client offers only the formats it knows.
+ */
 export const ScientConversationExportPreparation = Schema.Struct({
   threadId: ThreadId,
   title: TrimmedNonEmptyString,
-  formats: Schema.Array(ConversationExportFormatCapability),
+  formats: ForwardCompatibleArray(ConversationExportFormatCapability),
   messageCount: NonNegativeInt,
   attachmentCount: NonNegativeInt,
   workLogEntryCount: NonNegativeInt,
@@ -788,6 +794,16 @@ export const ScientConversationExportFile = Schema.Struct({
 });
 export type ScientConversationExportFile = typeof ScientConversationExportFile.Type;
 
+/**
+ * A warning as delivered to a client. A code a newer server adds decodes as
+ * null, so an older client still shows the warning by its message.
+ */
+export const DeliveredDocumentWarning = Schema.Struct({
+  code: ForwardCompatibleNullable(DocumentWarningCode),
+  message: DocumentWarning.fields.message,
+});
+export type DeliveredDocumentWarning = typeof DeliveredDocumentWarning.Type;
+
 export const ScientConversationExportResult = Schema.Struct({
   exportId: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
   format: ConversationExportFormat,
@@ -795,7 +811,7 @@ export const ScientConversationExportResult = Schema.Struct({
   messageCount: NonNegativeInt,
   file: Schema.NullOr(ScientConversationExportFile),
   text: Schema.NullOr(Schema.String),
-  warnings: Schema.Array(DocumentWarning),
+  warnings: Schema.Array(DeliveredDocumentWarning),
 });
 export type ScientConversationExportResult = typeof ScientConversationExportResult.Type;
 
@@ -811,10 +827,14 @@ export const ScientConversationExportErrorReason = Schema.Literals([
 ]);
 export type ScientConversationExportErrorReason = typeof ScientConversationExportErrorReason.Type;
 
+/**
+ * An export the server refused, with a message for the user. A reason a newer
+ * server adds decodes as null; clients show the message either way.
+ */
 export class ScientConversationExportError extends Schema.TaggedError<ScientConversationExportError>()(
   "ScientConversationExportError",
   {
-    reason: ScientConversationExportErrorReason,
+    reason: ForwardCompatibleNullable(ScientConversationExportErrorReason),
     message: Schema.String,
   },
   { httpApiStatus: 409 },
