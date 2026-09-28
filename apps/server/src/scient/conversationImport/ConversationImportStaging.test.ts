@@ -1044,6 +1044,97 @@ describe("ConversationImportStaging", () => {
     }).pipe(Effect.scoped, Effect.provide(TestLayer)),
   );
 
+  it.effect(
+    "answers a repeated confirm, preview, and cancel from the commit while its area is being removed and after",
+    () =>
+      Effect.gen(function* () {
+        resetImporter();
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const removing = yield* Deferred.make<void>();
+        const gate = yield* Deferred.make<void>();
+        let holdArea: string | null = null;
+        // The area's removal after the commit waits until the test lets it go.
+        const slowRemoval = FileSystem.make({
+          ...fs,
+          remove: (path, options) =>
+            path === holdArea
+              ? Deferred.succeed(removing, undefined).pipe(
+                  Effect.andThen(Deferred.await(gate)),
+                  Effect.andThen(fs.remove(path, options)),
+                )
+              : fs.remove(path, options),
+        });
+        const staging = yield* makeStaging().pipe(
+          Effect.provideService(FileSystem.FileSystem, slowRemoval),
+        );
+        const { importId, packageSha256 } = yield* stagedImport(staging);
+        holdArea = NodePath.join(stagingRoot(config), importId);
+        const request = confirmRequest(importId, packageSha256);
+        // The first answer is lost to the client; it confirms again meanwhile.
+        const first = yield* Effect.forkChild(staging.confirm(request, principal));
+        yield* Deferred.await(removing);
+        const retried = yield* staging.confirm(request, principal);
+        assert.strictEqual(retried.importId, importId);
+        assert.strictEqual(retried.threadId, "thread-imported");
+        assert.deepStrictEqual(yield* staging.cancel(importId), {
+          _tag: "already-imported",
+          result: retried,
+        });
+        assert.strictEqual(yield* reasonOf(staging.preview(importId)), "already-imported");
+        yield* Deferred.succeed(gate, undefined);
+        assert.deepStrictEqual(yield* Fiber.join(first), retried);
+        assert.isFalse(NodeFS.existsSync(holdArea));
+        // After the area is gone, the completion still answers.
+        assert.deepStrictEqual(yield* staging.confirm(request, principal), retried);
+        assert.deepStrictEqual(yield* staging.cancel(importId), {
+          _tag: "already-imported",
+          result: retried,
+        });
+        assert.strictEqual(fake.imports, 1);
+      }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+  );
+
+  it.effect("answers from a commit it could not record yet, never as not found", () =>
+    Effect.gen(function* () {
+      resetImporter();
+      const fs = yield* FileSystem.FileSystem;
+      let recordable = false;
+      // The completion record cannot be written yet: the commit is known only in memory.
+      const unrecordable = FileSystem.make({
+        ...fs,
+        rename: (from, to) =>
+          !recordable && to.includes(`${NodePath.sep}completions${NodePath.sep}`)
+            ? Effect.fail(
+                PlatformError.systemError({
+                  _tag: "Unknown",
+                  module: "FileSystem",
+                  method: "rename",
+                  cause: new Error("synthetic: the disk is full"),
+                }),
+              )
+            : fs.rename(from, to),
+      });
+      const staging = yield* makeStaging().pipe(
+        Effect.provideService(FileSystem.FileSystem, unrecordable),
+      );
+      const { importId, packageSha256 } = yield* stagedImport(staging);
+      const request = confirmRequest(importId, packageSha256);
+      const result = yield* staging.confirm(request, principal);
+      const config = yield* ServerConfig.ServerConfig;
+      const record = NodePath.join(stagingRoot(config), "completions", `${importId}.json`);
+      assert.isFalse(NodeFS.existsSync(record));
+      assert.deepStrictEqual(yield* staging.confirm(request, principal), result);
+      assert.strictEqual(yield* reasonOf(staging.preview(importId)), "already-imported");
+      recordable = true;
+      yield* staging.sweep;
+      assert.isTrue(NodeFS.existsSync(record));
+      assert.deepStrictEqual(yield* staging.confirm(request, principal), result);
+      assert.deepStrictEqual(yield* staging.cancel(importId), { _tag: "already-imported", result });
+      assert.strictEqual(fake.imports, 1);
+    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+  );
+
   it.effect("refuses to overwrite different bytes at a copy destination", () =>
     Effect.gen(function* () {
       const copies = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-copies-"));

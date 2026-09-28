@@ -258,6 +258,13 @@ export class ConversationImportStaging extends Context.Service<
 const importerError = (reason: ConversationImporterError["reason"], detail: string) =>
   new ConversationImporterError({ reason, detail });
 
+/** A lookup found no live import; a retained completion may still answer it. */
+const isGoneError = (
+  error: ConversationImportStagingServiceError,
+): error is ScientConversationImportError =>
+  error._tag === "ScientConversationImportError" &&
+  (error.reason === "import-not-found" || error.reason === "cancelled");
+
 const importError = (
   reason: ScientConversationImportError["reason"],
   message: string,
@@ -1071,6 +1078,11 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
               case "importing":
                 record.touchedAt = at;
                 return { _tag: "ready", record, staged: phase.staged } as const;
+              case "committed":
+                return yield* importError(
+                  "already-imported",
+                  "This conversation has already been imported.",
+                );
               default:
                 return yield* importError(
                   "import-not-found",
@@ -1084,11 +1096,65 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
         return yield* stagedImport(importId);
       });
 
+    /**
+     * A committed import's retained completion outranks whatever its staging
+     * area is doing (importing, removing, gone): `import-not-found` and
+     * `cancelled` stand only when no completion is recorded. `whenLive` runs
+     * when none is yet; a completion that appears while it runs still wins.
+     */
+    /**
+     * The completion retained for an import. Every commit this server records
+     * or finds at startup is cached, so a live area needs no disk read (a
+     * cancel must not wait on one); only an unknown ID consults the disk.
+     */
+    const retainedCompletion = (importId: ConversationImportId) =>
+      Effect.gen(function* () {
+        const at = yield* now;
+        const cached = completions.get(importId);
+        if (cached !== undefined)
+          return isCurrent(cached, at) ? Option.some(cached) : Option.none();
+        const live = yield* locked(Effect.sync(() => records.has(importId)));
+        return live ? Option.none() : yield* lookupCompletion(importId);
+      });
+
+    const withCompletion = <A>(
+      importId: ConversationImportId,
+      committed: (
+        completion: ConversationImportCompletion,
+      ) => Effect.Effect<A, ConversationImportStagingServiceError>,
+      whenLive: Effect.Effect<A, ConversationImportStagingServiceError>,
+    ): Effect.Effect<A, ConversationImportStagingServiceError> =>
+      retainedCompletion(importId).pipe(
+        Effect.flatMap(
+          Option.match({
+            onSome: committed,
+            onNone: () =>
+              whenLive.pipe(
+                Effect.catchIf(isGoneError, (error) =>
+                  retainedCompletion(importId).pipe(
+                    Effect.flatMap(
+                      Option.match({ onSome: committed, onNone: () => Effect.fail(error) }),
+                    ),
+                  ),
+                ),
+              ),
+          }),
+        ),
+      );
+
     const preview: ConversationImportStaging["Service"]["preview"] = Effect.fn(
       "ConversationImportStaging.preview",
     )(function* (importId) {
-      const ready = yield* stagedImport(importId);
-      return buildPreview(ready.record, ready.staged);
+      return yield* withCompletion(
+        importId,
+        () =>
+          Effect.fail(
+            importError("already-imported", "This conversation has already been imported."),
+          ),
+        stagedImport(importId).pipe(
+          Effect.map((ready) => buildPreview(ready.record, ready.staged)),
+        ),
+      );
     });
 
     // ---------------------------------------------------------------------
@@ -1217,12 +1283,21 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
     const confirm: ConversationImportStaging["Service"]["confirm"] = Effect.fn(
       "ConversationImportStaging.confirm",
     )(function* (request, principal) {
+      // A retried confirm (its first answer lost) hears the committed result,
+      // never "not found", so the client does not import the file twice.
+      return yield* withCompletion(
+        request.importId,
+        (completion) => answerFromCompletion(completion, request),
+        confirmStaged(request, principal),
+      );
+    });
+
+    const confirmStaged = Effect.fnUntraced(function* (
+      request: ScientConversationImportConfirmRequest,
+      principal: EnvironmentSessionPrincipalShape,
+    ) {
       const known = yield* locked(Effect.sync(() => records.get(request.importId)));
       if (!known) {
-        const completion = yield* lookupCompletion(request.importId);
-        if (Option.isSome(completion)) {
-          return yield* answerFromCompletion(completion.value, request);
-        }
         return yield* importError("import-not-found", "This import is no longer available.");
       }
       if (known.phase._tag === "committed") {
@@ -1327,6 +1402,31 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
     const cancel: ConversationImportStaging["Service"]["cancel"] = Effect.fn(
       "ConversationImportStaging.cancel",
     )(function* (importId) {
+      const alreadyImported = (
+        completion: ConversationImportCompletion,
+      ): ScientConversationImportCancelResult => ({
+        _tag: "already-imported",
+        result: completion.result,
+      });
+      return yield* withCompletion<ScientConversationImportCancelResult>(
+        importId,
+        (completion) => Effect.succeed(alreadyImported(completion)),
+        Effect.gen(function* () {
+          const result = yield* cancelStaged(importId);
+          if (result._tag !== "cancelled") return result;
+          // A commit whose area was already going reads as gone; its completion answers.
+          const completion = yield* retainedCompletion(importId);
+          return Option.isSome(completion) ? alreadyImported(completion.value) : result;
+        }),
+      );
+    });
+
+    const cancelStaged = Effect.fnUntraced(function* (
+      importId: ConversationImportId,
+    ): Effect.fn.Return<
+      ScientConversationImportCancelResult,
+      ConversationImportStagingServiceError
+    > {
       const action = yield* locked(
         Effect.sync(() => {
           const record = records.get(importId);

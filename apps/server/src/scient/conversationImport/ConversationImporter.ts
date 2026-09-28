@@ -126,10 +126,13 @@
  * area, journal included. If step 1 fails, the area and journal stay and the
  * next sweep settles again, so a crash anywhere between commit and cleanup
  * still ends with the completion recorded. Records are kept for
- * `CONVERSATION_IMPORT_COMPLETION_RETENTION_MS` across restarts. A repeated
- * confirm is answered from the record: same digest and destination return the
- * result, another digest fails `package-changed`, another destination
- * `already-imported`.
+ * `CONVERSATION_IMPORT_COMPLETION_RETENTION_MS` across restarts. While it is
+ * retained it answers first, whatever the staging area is doing (still being
+ * removed, or gone): a repeated confirm with the same digest and destination
+ * returns the result, another digest fails `package-changed`, another
+ * destination `already-imported`; a cancel answers `already-imported`, and a
+ * preview fails `already-imported`. Only an import with no retained
+ * completion and no live area is `import-not-found`.
  */
 import * as NodeCrypto from "node:crypto";
 

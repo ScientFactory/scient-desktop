@@ -232,7 +232,11 @@ The contract between staging and the importer is the header of
   quota until the sweep removes it.
 - **Confirm.** Attachments are published into the attachment store before the thread commits, each
   flushed to disk before its rename and its folder after, so a published file survives a power
-  loss. The command's receipt then decides the outcome, as the contract describes.
+  loss. The command's receipt then decides the outcome, as the contract describes. A committed
+  import's result is kept for 24 hours and answers first: a confirm repeated because its first
+  answer was lost returns the same result, and a cancel reports the import as already done, even
+  while the staging area is still being removed. "Not found" means no such import is staged and
+  none committed.
 - **Partial Markdown.** Importing only the clean messages of damaged Scient Markdown counts each
   damaged range whose content was left out as a skipped record (a foreign marker kept as text, or
   a gap in the message numbers, is not one), so the thread's banner, provider handoff, and a
