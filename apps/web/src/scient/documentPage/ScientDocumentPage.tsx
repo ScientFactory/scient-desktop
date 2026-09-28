@@ -12,6 +12,7 @@ import {
   useMemo,
   useState,
   type ReactNode,
+  type SyntheticEvent,
 } from "react";
 import ReactMarkdown, {
   defaultUrlTransform,
@@ -292,6 +293,34 @@ const UNAVAILABLE_REASONS: Readonly<Record<string, string>> = {
   "too-large": "too large to include",
 };
 
+type CapturedImageProbe = "served" | "unserved" | "mismatch";
+
+async function sha256Digest(bytes: ArrayBuffer): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  return `sha256:${[...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
+/**
+ * Why a captured image did not display. The browser reports a missing file,
+ * a blocked request, and bytes it cannot decode the same way, so the page
+ * fetches the image once more: only bytes that were served, and that match
+ * the capture's digest, are a content limitation rather than a failed export.
+ */
+async function probeCapturedImage(
+  url: string,
+  expected: string | undefined,
+): Promise<CapturedImageProbe> {
+  try {
+    const response = await fetch(url, { credentials: "omit", cache: "no-store" });
+    if (!response.ok) return "unserved";
+    const bytes = await response.arrayBuffer();
+    if (expected !== undefined && (await sha256Digest(bytes)) !== expected) return "mismatch";
+    return "served";
+  } catch {
+    return "unserved";
+  }
+}
+
 function PrintImage({
   src,
   alt,
@@ -341,17 +370,38 @@ function PrintImage({
       <Placeholder label={`Image could not be displayed: ${asset?.fileName ?? (alt || "image")}`} />
     );
   }
-  const onError = () => {
+  const undisplayable = async () => {
     const name = asset?.fileName ?? (alt || "untitled");
-    if (asset) {
-      // A captured image that does not load means the capture was not served as recorded.
-      tracker.unresolvedAssets.add(asset.id);
-      tracker.fatal("resource-unresolved", `The captured image "${name}" could not be loaded.`);
+    if (asset?.content._tag === "captured") {
+      const probe = await probeCapturedImage(resolved, asset.content.sha256);
+      if (probe === "served") {
+        tracker.warn(
+          "missing-image",
+          `The image "${name}" could not be decoded and is shown as a placeholder.`,
+        );
+      } else {
+        // A captured image that was not served, or not as recorded, means the
+        // page is not the capture it claims to be: refuse the page.
+        tracker.unresolvedAssets.add(asset.id);
+        tracker.fatal(
+          "resource-unresolved",
+          probe === "mismatch"
+            ? `The captured image "${name}" does not match the capture.`
+            : `The captured image "${name}" could not be loaded.`,
+        );
+      }
     } else {
       tracker.warn("missing-image", `Image "${name}" could not be displayed and was left out.`);
     }
     setFailed(true);
     finish();
+  };
+  // An image with no measurable size (for example an SVG with only a
+  // viewBox) cannot be laid out on paper either.
+  const onLoad = (event: SyntheticEvent<HTMLImageElement>) => {
+    const image = event.currentTarget;
+    if (image.naturalWidth > 0 && image.naturalHeight > 0) finish();
+    else void undisplayable();
   };
   return (
     <span className="scient-document-image">
@@ -359,8 +409,8 @@ function PrintImage({
         src={resolved}
         alt={alt}
         data-scient-asset={asset?.id}
-        onLoad={finish}
-        onError={onError}
+        onLoad={onLoad}
+        onError={() => void undisplayable()}
       />
       {title ? <span className="scient-document-image-caption">{title}</span> : null}
     </span>

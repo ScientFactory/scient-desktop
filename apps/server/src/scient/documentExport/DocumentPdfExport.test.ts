@@ -125,7 +125,7 @@ describe("Markdown PDF preparation", () => {
           role: "image",
           fileName: "plot.png",
           mediaType: "image/png",
-          content: { _tag: "captured", path: "assets/0001.png" },
+          content: { _tag: "captured", path: "assets/0001.png", sha256: sha256Digest(PNG) },
         },
         expect.objectContaining({
           id: "image-0002",

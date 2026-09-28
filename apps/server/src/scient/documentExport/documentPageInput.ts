@@ -11,6 +11,8 @@ import {
   type Sha256Digest,
 } from "@t3tools/contracts";
 
+import { hasImageSignature, imageFormatLabel } from "./imageSignature.ts";
+
 /**
  * The pure half of a capture: which asset bytes a document bundle needs on
  * its page, and the page input that refers to them. Kept free of services so
@@ -62,7 +64,8 @@ export interface DocumentPageCapture {
 
 /**
  * Builds the page input for one bundle. Only images the Markdown refers to are
- * copied; attachments and other referenced assets print as labelled names.
+ * copied, and only when their bytes carry their format's signature;
+ * attachments and other referenced assets print as labelled names.
  */
 export function buildDocumentPageCapture(input: {
   readonly bundle: DocumentBundle;
@@ -92,6 +95,14 @@ export function buildDocumentPageCapture(input: {
       assets.push({ ...base, content: { _tag: "unavailable", reason: "unsupported" } });
       continue;
     }
+    if (!hasImageSignature(asset.content.bytes, asset.mediaType)) {
+      assets.push({ ...base, content: { _tag: "unavailable", reason: "unsupported" } });
+      warnings.push({
+        code: "resource-unresolved",
+        message: `Image "${asset.fileName}" is not a valid ${imageFormatLabel(asset.mediaType)} file and was left out.`,
+      });
+      continue;
+    }
     if (capturedBytes + asset.content.bytes.byteLength > DOCUMENT_CAPTURE_MAX_ASSET_BYTES) {
       assets.push({ ...base, content: { _tag: "unavailable", reason: "too-large" } });
       warnings.push({
@@ -103,7 +114,7 @@ export function buildDocumentPageCapture(input: {
     capturedBytes += asset.content.bytes.byteLength;
     const path = `assets/${String(files.length + 1).padStart(4, "0")}.${extension}`;
     files.push({ path, bytes: asset.content.bytes });
-    assets.push({ ...base, content: { _tag: "captured", path } });
+    assets.push({ ...base, content: { _tag: "captured", path, sha256: asset.content.sha256 } });
   }
   const boundedWarnings = warnings.slice(0, SCIENT_DOCUMENT_MAX_WARNINGS);
   return {

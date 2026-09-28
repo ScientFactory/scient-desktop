@@ -103,6 +103,12 @@ export const ScientDocumentPageAsset = Schema.Struct({
   content: Schema.Union([
     Schema.TaggedStruct("captured", {
       path: Schema.String.check(Schema.isPattern(/^assets\/[0-9]{4}\.[a-z0-9]{1,8}$/u)),
+      /**
+       * Digest of the captured bytes. A captured image that loads but does not
+       * decode is a placeholder only when the served bytes match it; otherwise
+       * the capture was not served as recorded. Absent from older servers.
+       */
+      sha256: Schema.optionalKey(Sha256Digest),
     }),
     Schema.TaggedStruct("unavailable", { reason: DocumentAssetUnavailableReason }),
   ]),
