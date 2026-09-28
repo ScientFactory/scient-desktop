@@ -272,6 +272,31 @@ describe("document page readiness", () => {
     expect(first?.getAttribute("href")).toBe("#user-content-fn-1");
     expect(second?.getAttribute("href")).toBe("#missing");
   });
+
+  it("keeps malformed fragment links as written and still reports the page ready", async () => {
+    const element = article(
+      [
+        "<a href='#%ZZ'>jump</a>",
+        "<a href='#%E0%A4%A'>cut</a>",
+        "<a href='#caf%C3%A9'>café</a>",
+        "<a href='#50%25'>half</a>",
+        "<h2 id='user-content-café'>Café</h2>",
+        "<h2 id='user-content-%ZZ'>Raw</h2>",
+      ].join(""),
+    );
+    const readiness = await collectDocumentPageReadiness({
+      page,
+      article: element,
+      tracker: new DocumentPageTracker(),
+      settled: true,
+    });
+    expect(readiness.status).toBe("ready");
+    expect(readiness.diagnostics).toEqual([]);
+    expect(Array.from(element.querySelectorAll("a"), (link) => link.getAttribute("href"))).toEqual(
+      // A fragment that is not valid encoding is compared as written.
+      ["#user-content-%ZZ", "#%E0%A4%A", "#user-content-café", "#50%25"],
+    );
+  });
 });
 
 describe("printed export notes", () => {

@@ -195,13 +195,24 @@ export function countDocumentBlocks(article: ParentNode): ScientDocumentPageBloc
   };
 }
 
+/** A link's fragment decoded, or as written when it is not valid encoding. */
+function decodeFragment(href: string): string {
+  const encoded = href.slice(1);
+  try {
+    return decodeURIComponent(encoded);
+  } catch {
+    return encoded;
+  }
+}
+
 /**
  * Makes in-document links point at the ids the sanitizer actually emitted,
- * so they become working PDF link annotations.
+ * so they become working PDF link annotations. A link that matches no id
+ * stays as written.
  */
 export function resolveInternalLinks(article: ParentNode): void {
   for (const anchor of article.querySelectorAll<HTMLAnchorElement>('a[href^="#"]')) {
-    const fragment = decodeURIComponent(anchor.getAttribute("href")!.slice(1));
+    const fragment = decodeFragment(anchor.getAttribute("href")!);
     if (!fragment) continue;
     const target = [fragment, `user-content-${fragment}`, `user-content-user-content-${fragment}`]
       .map((id) => (article as Document | Element).querySelector(`[id="${CSS.escape(id)}"]`))

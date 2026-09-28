@@ -109,7 +109,8 @@ notes that must always be reported, and ends with one entry giving the exact num
 `apps/web/src/scient/documentPage` renders the page with chat's Markdown grammar
 (`scientMarkdownProfiles.ts`: GFM tables, task lists, alerts, `$…$`/`$$…$$` math), KaTeX
 typesetting, the Mermaid runtime, and bidirectional text handling, but with none of chat's
-interaction: web and in-document links stay links; workspace links, citations, and chips print as
+interaction: web and in-document links stay links (an in-document link that names no heading or
+note, or whose target is not valid URL encoding, prints as written); workspace links, citations, and chips print as
 text; `scient-asset:` links to attachments print their names. Chat's own renderer keeps its plugin
 lists; a parity test holds both to the same grammar and order. The **document** profile joins
 single line breaks; the **chat** profile keeps them. A conversation bundle already writes its hard
