@@ -31,7 +31,7 @@ const warnings = [
 const published = {
   title: "Study",
   warnings,
-  source: { _tag: "generated-pdf", fileName: "Study.pdf" },
+  source: { _tag: "generated-pdf", fileName: "internal-revision-name.pdf" },
 } as unknown as ScientDocumentPdfPublished;
 const result = { bytesBase64: "JVBERi0" } as unknown as ScientDocumentPageRenderResult;
 const request = {
@@ -75,12 +75,21 @@ describe("conversation PDF export", () => {
       expected,
     });
     expect(deps.publish).toHaveBeenCalledWith({ captureId: expected.captureId, render: result });
-    expect(deps.saveCopy).toHaveBeenCalledWith(published);
+    // The same title-based name as the conversation's other formats, not the stored PDF's.
+    expect(deps.saveCopy).toHaveBeenCalledWith(published, "Study.pdf");
     expect(deps.release).not.toHaveBeenCalled();
     // The reader opens only when the notice's Open is chosen.
     expect(deps.open).not.toHaveBeenCalled();
     produced!.open!();
     expect(deps.open).toHaveBeenCalledWith(published);
+  });
+
+  it("suggests a file name built from the conversation title", async () => {
+    const deps = dependencies({
+      publish: vi.fn(async () => ({ ...published, title: 'Results: "CON" / v2?' })),
+    });
+    await runConversationPdfExport(deps, request);
+    expect(deps.saveCopy).toHaveBeenCalledWith(expect.anything(), "Results CON v2.pdf");
   });
 
   it("stays in the dialog when saving is cancelled, and reports a failed save", async () => {

@@ -15,6 +15,7 @@ import type {
 } from "../conversationExport/formatRegistry";
 import { documentPdfAvailability, renderDocumentPagePdf } from "./documentPagePdf";
 import {
+  conversationPdfFileName,
   deliverDocumentPdf,
   openDocumentPdf,
   releaseDocumentPdfCapture,
@@ -64,7 +65,11 @@ export async function runConversationPdfExport(
     prepared,
     CONVERSATION_PDF_TOO_LARGE_MESSAGE,
   );
-  const delivery = await deliverDocumentPdf(dependencies, published);
+  const delivery = await deliverDocumentPdf(
+    dependencies,
+    published,
+    conversationPdfFileName(published.title),
+  );
   if (delivery._tag === "cancelled") return null;
   return {
     title: delivery.title,
@@ -117,7 +122,7 @@ export function exportConversationPdf(input: {
         return result.value;
       },
       release: (captureId) => releaseDocumentPdfCapture(environmentId, captureId),
-      saveCopy: (published) => saveDocumentPdfCopy(environmentId, published),
+      saveCopy: (published, fileName) => saveDocumentPdfCopy(environmentId, published, fileName),
       open: (published) => openDocumentPdf(input.threadRef, published),
     },
     input.request,

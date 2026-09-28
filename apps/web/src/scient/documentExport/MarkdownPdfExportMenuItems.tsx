@@ -15,6 +15,7 @@ import { DockCommandItem } from "../markdownEditor/ui/dockChrome";
 import { documentPdfAvailability, renderDocumentPagePdf } from "./documentPagePdf";
 import {
   deliverDocumentPdf,
+  markdownPdfFileName,
   openDocumentPdf,
   releaseDocumentPdfCapture,
   saveDocumentPdfCopy,
@@ -93,8 +94,11 @@ function useMarkdownPdfExport(target: MarkdownPdfExportTarget) {
       );
       toastManager.close(toastId);
       const delivery = await deliverDocumentPdf(
-        { saveCopy: (pdf) => saveDocumentPdfCopy(target.environmentId, pdf) },
+        {
+          saveCopy: (pdf, fileName) => saveDocumentPdfCopy(target.environmentId, pdf, fileName),
+        },
         published,
+        markdownPdfFileName(target.relativePath),
       );
       if (delivery._tag === "delivered") {
         const open = {
