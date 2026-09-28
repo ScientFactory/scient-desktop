@@ -86,15 +86,6 @@ describe("Oh My Pi turn machine", () => {
     expect(reduceOmpTurn(initialOmpTurnState, { type: "process-exit" }).outcome).toBeUndefined();
   });
 
-  it("keeps cancellation distinct until it is confirmed", () => {
-    const running = reduceOmpTurn(begin(), { type: "agent-start" }).state;
-    const requested = reduceOmpTurn(running, { type: "cancel-requested" });
-    expect(requested.outcome).toBeUndefined();
-    expect(requested.state.cancelRequested).toBe(true);
-    const draining = reduceOmpTurn(requested.state, { type: "agent-end", terminal: true }).state;
-    expect(reduceOmpTurn(draining, { type: "drain-idle" }).outcome).toBe("interrupted");
-  });
-
   it("keeps an unconfirmed idle check uncertain", () => {
     const running = reduceOmpTurn(begin(), { type: "agent-start" }).state;
     const draining = reduceOmpTurn(running, { type: "agent-end", terminal: true }).state;

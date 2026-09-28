@@ -276,6 +276,8 @@ interface SessionContext {
   readonly openSubagents: Map<string, { readonly title: string; readonly turnId?: TurnId }>;
   backgroundPending: boolean;
   backgroundSequence: number;
+  /** Numbers the background results marked in this session's turns. */
+  backgroundResultSequence: number;
   warnedEscape: boolean;
   outcomeUncertain: boolean;
   protocolVersion: number;
@@ -816,9 +818,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           update.outcome === "failed"
             ? ctx.redaction.text(update.detail ?? "Oh My Pi failed this turn.")
             : undefined;
-        if (update.outcome === "interrupted") {
-          yield* offer({ type: "turn.aborted", ...stamped, payload: { reason: "cancelled" } });
-        } else if (update.outcome === "unknown") {
+        if (update.outcome === "unknown") {
           yield* offerUncertain(ctx, turnId);
         } else if (errorMessage !== undefined) {
           // A model failure is a provider error on a healthy session, as in
@@ -1064,6 +1064,23 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       }
       if (update.type === "background-work") {
         yield* reportBackground(ctx, update.pending);
+        return;
+      }
+      if (update.type === "background-result" && ctx.turnId) {
+        const base = yield* eventBase(ctx);
+        yield* offer({
+          type: "item.completed",
+          ...base,
+          itemId: RuntimeItemId.make(
+            `omp-background-result:${ctx.turnId}:${++ctx.backgroundResultSequence}`,
+          ),
+          payload: {
+            itemType: "dynamic_tool_call",
+            status: "completed",
+            title: "Background result",
+            ...(update.detail ? { detail: update.detail } : {}),
+          },
+        });
         return;
       }
       if (update.type === "session-settled") {
@@ -1542,6 +1559,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
             openSubagents: new Map(),
             backgroundPending: false,
             backgroundSequence: 0,
+            backgroundResultSequence: 0,
             warnedEscape: false,
             outcomeUncertain: false,
             protocolVersion: OMP_RPC_PROTOCOL_V2,
@@ -1977,15 +1995,6 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           if (!steering && ctx.session.status === "running") {
             return yield* validation("sendTurn", "Wait for the current Oh My Pi turn to finish.");
           }
-          const rejectPendingBackground = () => {
-            const failure = validation(
-              "sendTurn",
-              "Oh My Pi still has background work that can resume at any moment. Stop that work or wait for it to finish before sending a new message; nothing was sent.",
-            );
-            markTurnDispatchNotSent(failure);
-            return failure;
-          };
-          if (!steering && ctx.backgroundPending) return yield* rejectPendingBackground();
           if (decision === "allowed" && input.attachments && input.attachments.length > 0) {
             return yield* validation(
               "sendTurn",
@@ -2210,17 +2219,6 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
               `This message is ${formatOmpBytes(plan.messageBytes)}; Oh My Pi accepts at most ${formatOmpBytes(maxFrameBytes)} per message. Send long text as a file attachment.`,
             );
           }
-          // A native wake-up and a new prompt both emit agent_start without
-          // an owner id. Do not open a user turn while a detached job may run.
-          if (!steering) {
-            const state = yield* readState(ctx);
-            if (
-              ctx.backgroundPending ||
-              state.hasPendingAsyncWork === true ||
-              state.isSettled === false
-            )
-              return yield* rejectPendingBackground();
-          }
           const message = plan.message;
           const images: Array<OmpRpcImage> = [];
           for (const image of plan.inline) {
@@ -2248,19 +2246,18 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
               Effect.tapError(() => restoreSelection),
             );
           }
-          if (!steering && ctx.backgroundPending) {
-            yield* restoreSelection;
-            return yield* rejectPendingBackground();
-          }
           // Admission shares the native event queue: a background wake-up
-          // during preparation must be steered, never overwritten by begin.
+          // Scient has already seen is steered, never overwritten by begin.
+          // One Scient has not seen yet may be streaming when the prompt
+          // arrives; OMP then queues the prompt into that run instead of
+          // rejecting it as busy, and still reports the prompt's own result.
           const admitted = yield* ctx.handles.runtime.begin(yield* uuid);
           steering = admitted.steering;
           const turnId = TurnId.make(admitted.turnId);
           const response = yield* (
             steering
               ? ctx.handles.client.steer(message, images)
-              : ctx.handles.client.prompt({ message, images })
+              : ctx.handles.client.prompt({ message, images, streamingBehavior: "steer" })
           ).pipe(
             // A prompt that died with its process (or with a protocol
             // violation that ends it) may have reached OMP, so its outcome

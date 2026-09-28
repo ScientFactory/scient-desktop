@@ -5,21 +5,19 @@ export type OmpTurnPhase =
   | "draining"
   | "terminal"
   | "failed"
-  | "interrupted"
   | "unknown";
 
-export type OmpTurnOutcome = "local" | "completed" | "failed" | "interrupted" | "unknown";
+export type OmpTurnOutcome = "local" | "completed" | "failed" | "unknown";
 
 export interface OmpTurnState {
   readonly phase: OmpTurnPhase;
   readonly requestId?: string;
-  readonly cancelRequested: boolean;
   readonly sawAgent: boolean;
   /** The agent run this turn started, once its agent_start arrived. */
   readonly runId?: number;
   /**
-   * A run that was still open when the previous turn settled (an acknowledged
-   * abort settles before the aborted run ends). Its tail belongs to no turn.
+   * A run that was still open when the previous turn settled (for example
+   * after an unconfirmed drain). Its tail belongs to no turn.
    */
   readonly staleRunId?: number;
 }
@@ -39,8 +37,6 @@ export type OmpTurnSignal =
   | { readonly type: "agent-start"; readonly runId?: number }
   | { readonly type: "agent-end"; readonly terminal: boolean; readonly runId?: number }
   | { readonly type: "drain-idle" }
-  | { readonly type: "cancel-requested" }
-  | { readonly type: "cancel-confirmed" }
   | { readonly type: "unconfirmed" }
   | { readonly type: "process-exit" };
 
@@ -51,14 +47,13 @@ export interface OmpTurnTransition {
 
 export const initialOmpTurnState: OmpTurnState = {
   phase: "idle",
-  cancelRequested: false,
   sawAgent: false,
 };
 
 const finished = (phase: OmpTurnPhase): boolean =>
-  phase === "terminal" || phase === "failed" || phase === "interrupted" || phase === "unknown";
+  phase === "terminal" || phase === "failed" || phase === "unknown";
 
-/** The aborted previous turn's run. A turn may span several of its own runs. */
+/** The previous turn's unfinished run. A turn may span several of its own runs. */
 const isStaleRun = (state: OmpTurnState, runId: number | undefined): boolean =>
   runId !== undefined && runId === state.staleRunId;
 
@@ -86,7 +81,6 @@ export const reduceOmpTurn = (state: OmpTurnState, signal: OmpTurnSignal): OmpTu
     return {
       state: {
         phase: "accepted",
-        cancelRequested: false,
         sawAgent: false,
         ...(signal.staleRunId === undefined ? {} : { staleRunId: signal.staleRunId }),
       },
@@ -133,13 +127,7 @@ export const reduceOmpTurn = (state: OmpTurnState, signal: OmpTurnSignal): OmpTu
       return { state: { ...state, phase: "draining", sawAgent: true } };
     case "drain-idle":
       if (state.phase !== "draining") return { state };
-      return state.cancelRequested
-        ? settle(state, "interrupted", "interrupted")
-        : settle(state, "terminal", "completed");
-    case "cancel-requested":
-      return { state: { ...state, cancelRequested: true } };
-    case "cancel-confirmed":
-      return settle(state, "interrupted", "interrupted");
+      return settle(state, "terminal", "completed");
     case "unconfirmed":
     case "process-exit":
       if (state.phase === "idle") return { state };

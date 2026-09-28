@@ -222,6 +222,8 @@ export type OmpRpcEvent = typeof OmpRpcEvent.Type;
 
 export const OmpAgentMessage = Schema.Struct({
   role: Schema.String,
+  /** A `custom` message's kind, for example `async-result` for a background job's result. */
+  customType: maybeString,
   content: Schema.optional(Schema.Unknown),
   stopReason: maybeString,
   /** Provider failure text on an assistant message with `stopReason` `error` or `aborted`. */

@@ -76,6 +76,7 @@ const makeFakeOmp = (input: {
   >;
 }) => {
   let finish: Effect.Effect<void> = Effect.void;
+  let lastPromptId: string | undefined;
   const state = {
     models: [...input.models],
     modelsError: input.modelsError,
@@ -104,11 +105,26 @@ const makeFakeOmp = (input: {
           ...(data === undefined ? {} : { data }),
           ...(error === undefined ? {} : { error }),
         });
-      finish = Queue.offer(stdout, line({ type: "agent_start" })).pipe(
-        Effect.andThen(
-          Queue.offer(stdout, line({ type: "agent_end", messages: [], isTerminal: true })),
+      // The run of the latest prompt ends, and OMP 18.3.1 reports its result.
+      finish = Effect.suspend(() =>
+        Effect.forEach(
+          [
+            { type: "agent_start" },
+            { type: "agent_end", messages: [], isTerminal: true },
+            ...(lastPromptId === undefined
+              ? []
+              : [
+                  {
+                    type: "prompt_result",
+                    id: lastPromptId,
+                    agentInvoked: true,
+                    status: "completed",
+                  },
+                ]),
+          ],
+          (frame) => Queue.offer(stdout, line(frame)),
+          { discard: true },
         ),
-        Effect.asVoid,
       );
       const reply = (frame: Frame, bytes: number): Uint8Array => {
         if (
@@ -182,6 +198,7 @@ const makeFakeOmp = (input: {
           case "prompt":
           case "steer":
             state.prompts.push({ frame, bytes });
+            if (frame.type === "prompt") lastPromptId = String(frame.id);
             return respond(frame);
           default:
             return respond(frame, {});
@@ -611,28 +628,23 @@ describe("Oh My Pi selection restore", () => {
 });
 
 describe("Oh My Pi fork context", () => {
-  it.effect(
-    "refuses a prompt when native state has pending async work before Scient sees its event",
-    () => {
-      const fake = makeFakeOmp({
-        models: [{ provider: "vendor", id: "a" }],
-        initial: { provider: "vendor", id: "a" },
-      });
-      return withAdapter("pending-native-work", fake, ({ adapter, threadId }) =>
-        Effect.gen(function* () {
-          fake.state.pendingAsyncWork = true;
-          const rejected = yield* adapter
-            .sendTurn({ threadId, input: "New request" })
-            .pipe(Effect.flip);
-          expect(rejected.message).toContain("background work");
-          expect(fake.state.prompts).toHaveLength(0);
-          fake.state.pendingAsyncWork = false;
-          yield* adapter.sendTurn({ threadId, input: "Now safe" });
-          expect(fake.state.prompts).toHaveLength(1);
-        }),
-      );
-    },
-  );
+  it.effect("sends a message while native background work is pending", () => {
+    const fake = makeFakeOmp({
+      models: [{ provider: "vendor", id: "a" }],
+      initial: { provider: "vendor", id: "a" },
+    });
+    return withAdapter("pending-native-work", fake, ({ adapter, threadId }) =>
+      Effect.gen(function* () {
+        fake.state.pendingAsyncWork = true;
+        yield* adapter.sendTurn({ threadId, input: "New request" });
+        // A background run Scient has not seen yet may be streaming: OMP
+        // queues the message into it rather than rejecting it as busy.
+        expect(fake.state.prompts.map((prompt) => prompt.frame)).toMatchObject([
+          { type: "prompt", message: "New request", streamingBehavior: "steer" },
+        ]);
+      }),
+    );
+  });
 
   it.effect("reports the selected model's window only for its own instance", () => {
     const fake = makeFakeOmp({

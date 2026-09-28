@@ -17,11 +17,9 @@ const ABORTED_FALLBACK = "Oh My Pi aborted this turn.";
 export interface OmpTurnEvidence {
   /**
    * `terminal`: a terminal agent_end followed by an idle confirmation.
-   * `cancel-confirmed`: OMP acknowledged the user's abort.
    * `unconfirmed`: the drain was never confirmed, or the process exited.
    */
-  readonly settlement: "terminal" | "cancel-confirmed" | "unconfirmed";
-  readonly cancelRequested: boolean;
+  readonly settlement: "terminal" | "unconfirmed";
   /** `prompt_result.status` for this turn's prompt (OMP 18.3+). */
   readonly promptStatus?: string | undefined;
   /** `prompt_result.error.message`. */
@@ -35,7 +33,6 @@ export interface OmpTurnEvidence {
 }
 
 export type OmpTurnVerdict =
-  | { readonly outcome: "interrupted" }
   | {
       readonly outcome: "failed";
       readonly stopReason: "abort" | "error";
@@ -63,21 +60,20 @@ const firstText = (...values: ReadonlyArray<string | undefined>) =>
  * The terminal outcome of a turn. The first matching rule wins:
  *
  * 1. no confirmed terminal (drain unconfirmed, process exit) → unknown
- * 2. the user requested cancellation → interrupted
- * 3. aborted without a user cancel → failed, `stopReason: "abort"`
- * 4. a model error → failed, `stopReason: "error"`, detail from the retry's
+ * 2. aborted → failed, `stopReason: "abort"`. Scient's Stop closes the
+ *    process instead of aborting, so an abort always came from elsewhere.
+ * 3. a model error → failed, `stopReason: "error"`, detail from the retry's
  *    final error, then the message's error, then the prompt result's
- * 5. a session retry gave up → failed, as above
- * 6. `stopReason: "length"` → completed, keeping the stop reason
- * 7. otherwise (stop, toolUse, a recovered retry) → completed
+ * 4. a session retry gave up → failed, as above
+ * 5. `stopReason: "length"` → completed, keeping the stop reason
+ * 6. otherwise (stop, toolUse, a recovered retry) → completed
  *
- * `prompt_result.status` is authoritative for rules 3–5 when present; the
+ * `prompt_result.status` is authoritative for rules 2–4 when present; the
  * assistant message and retry frames supply the detail, and decide alone on
  * OMP releases without a prompt status.
  */
 export const classifyOmpTurnOutcome = (evidence: OmpTurnEvidence): OmpTurnVerdict => {
   if (evidence.settlement === "unconfirmed") return { outcome: "unknown" };
-  if (evidence.cancelRequested) return { outcome: "interrupted" };
   const category =
     promptCategory(evidence.promptStatus) ??
     (evidence.stopReason === "aborted"
