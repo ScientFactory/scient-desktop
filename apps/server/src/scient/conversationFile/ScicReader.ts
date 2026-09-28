@@ -654,6 +654,7 @@ async function readPackage(
     // Attachments: policy first, then bytes, staged by digest.
     const staged: StagedConversationImportAttachment[] = [];
     const stagedDigests = new Set<string>();
+    const validatedEntries = new Map<string, ReadEntryResult>();
     for (const resource of manifest.resources) {
       if (resource._tag !== "included") continue;
       if (
@@ -669,25 +670,32 @@ async function readPackage(
           resource.path,
         );
       }
-      if (!stagedDigests.has(resource.sha256)) {
-        const read = await readEntry(
+      // Storage is deduplicated by digest, but every distinct archive entry
+      // must be independently hashed and CRC-checked. Reused paths need only
+      // one read; each resource still receives its own policy/type check.
+      let read = validatedEntries.get(resource.path);
+      if (read === undefined) {
+        read = await readEntry(
           zip,
           archive.get(resource.path)!,
           {
             keep: false,
-            target: stagedAttachmentFile(input.attachmentsDirectory, resource.sha256),
+            target: stagedDigests.has(resource.sha256)
+              ? null
+              : stagedAttachmentFile(input.attachmentsDirectory, resource.sha256),
           },
           signal,
         );
         checkEntryDigest(read, declared.get(resource.path)!);
-        if (contradictsDeclaredType(resource.mediaType, read.head)) {
-          return reject(
-            "attachment-type-mismatch",
-            "An attachment's content contradicts its declared type.",
-            resource.path,
-          );
-        }
+        validatedEntries.set(resource.path, read);
         stagedDigests.add(resource.sha256);
+      }
+      if (contradictsDeclaredType(resource.mediaType, read.head)) {
+        return reject(
+          "attachment-type-mismatch",
+          "An attachment's content contradicts its declared type.",
+          resource.path,
+        );
       }
       staged.push({
         resourceId: resource.id,

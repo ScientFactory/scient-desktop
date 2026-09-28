@@ -765,6 +765,88 @@ describe("the .scic reader", () => {
       }),
     );
 
+    it.effect("validates every distinct entry even when attachments claim one digest", () =>
+      Effect.gen(function* () {
+        const pkg = makePackage();
+        const original = pkg.manifest.resources.find(
+          (resource) => resource._tag === "included" && resource.mediaType === "image/png",
+        );
+        if (original?._tag !== "included") throw new Error("image fixture missing");
+        const duplicateId = "attachment-4";
+        const archive = (name: string, kind: "image" | "file", mediaType: string) => {
+          const duplicatePath = scicAttachmentPath(original.sha256, name);
+          const encoded = encodeSnapshot(pkg.snapshot);
+          const changed = {
+            ...encoded,
+            messages: encoded.messages.map((message) =>
+              message.n === 1
+                ? {
+                    ...message,
+                    attachments: [
+                      ...message.attachments,
+                      attachment(duplicateId, kind, name, mediaType, PNG.byteLength),
+                    ],
+                  }
+                : message,
+            ),
+          };
+          const snapshot = {
+            ...changed,
+            contentDigest: conversationContentDigest(decodeSnapshot(changed)),
+          };
+          const manifest: ScicManifest = {
+            ...pkg.manifest,
+            contentDigest: snapshot.contentDigest,
+            resources: [
+              ...pkg.manifest.resources,
+              {
+                ...original,
+                id: duplicateId,
+                path: duplicatePath,
+                name,
+                kind,
+                mediaType,
+              },
+            ],
+          };
+          const files = assemble({
+            snapshot,
+            manifest,
+            attachments: [
+              ...pkg.files.filter((file) => file.path.startsWith("attachments/")),
+              { path: duplicatePath, bytes: PNG },
+            ],
+            mediaTypes: new Map([[duplicatePath, mediaType]]),
+          });
+          return { files, duplicatePath };
+        };
+
+        const valid = archive("copy.png", "image", "image/png");
+        const accepted = yield* read(yield* zipBytes(valid.files));
+        if (Exit.isFailure(accepted.exit)) throw new Error(String(accepted.exit.cause));
+        expect(accepted.exit.value.attachments).toHaveLength(3);
+
+        const corruptBytes = Uint8Array.from(PNG);
+        corruptBytes[corruptBytes.length - 1]! ^= 1;
+        yield* expectRejected(
+          yield* zipBytes(
+            valid.files.map((file) =>
+              file.path === valid.duplicatePath ? { ...file, bytes: corruptBytes } : file,
+            ),
+          ),
+          "manifest-mismatch",
+          valid.duplicatePath,
+        );
+
+        const wrongType = archive("copy.pdf", "file", "application/pdf");
+        yield* expectRejected(
+          yield* zipBytes(wrongType.files),
+          "attachment-type-mismatch",
+          wrongType.duplicatePath,
+        );
+      }),
+    );
+
     it.effect("attachments outside the media policy", () =>
       Effect.gen(function* () {
         const pkg = makePackage();
