@@ -65,7 +65,8 @@ export function usePandocTool(
       void read();
       return;
     }
-    if (requesting || isActivePandocInstall(status) || status.installed || !status.canInstall) return;
+    if (requesting || isActivePandocInstall(status) || status.installed || !status.canInstall)
+      return;
     setRequesting(true);
     setError(null);
     installPandocTool(environmentId).then(

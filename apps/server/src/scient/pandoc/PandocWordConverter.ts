@@ -129,7 +129,10 @@ export interface WordConversionInput {
   /** A CSL style for the bibliography; Pandoc's built-in Chicago author-date otherwise. */
   readonly cslStyle?: string | null;
   /** Saved, project-allowlisted BibTeX bytes; Pandoc reads them from stdin. */
-  readonly bibliographySources?: ReadonlyArray<{ readonly format: "bibtex"; readonly contents: string }>;
+  readonly bibliographySources?: ReadonlyArray<{
+    readonly format: "bibtex";
+    readonly contents: string;
+  }>;
   /** Overrides for tests of the limits. */
   readonly limits?: { readonly read?: PandocLimits; readonly write?: PandocLimits };
 }
@@ -319,9 +322,10 @@ const make = Effect.gen(function* () {
             new TextEncoder().encode(source.contents),
             readLimits,
           ).pipe(Effect.option);
-          const entries = parsed._tag === "Some"
-            ? citationsFromCslJson(new TextDecoder().decode(parsed.value.stdout))
-            : null;
+          const entries =
+            parsed._tag === "Some"
+              ? citationsFromCslJson(new TextDecoder().decode(parsed.value.stdout))
+              : null;
           if (entries === null) {
             bibliographyWarnings.push({
               code: "resource-unresolved",

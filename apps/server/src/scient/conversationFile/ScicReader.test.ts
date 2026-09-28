@@ -310,7 +310,13 @@ describe("the .scic writer", () => {
             ? {
                 ...message,
                 attachments: [
-                  attachment("thread-1-text", "file", "repeated.txt", "text/plain", bytes.byteLength),
+                  attachment(
+                    "thread-1-text",
+                    "file",
+                    "repeated.txt",
+                    "text/plain",
+                    bytes.byteLength,
+                  ),
                 ],
                 references: [],
               }

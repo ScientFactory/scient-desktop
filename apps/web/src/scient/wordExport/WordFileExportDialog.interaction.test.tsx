@@ -100,9 +100,7 @@ describe("WordFileExportDialog", () => {
     });
     expect(onClose).not.toHaveBeenCalled();
 
-    await act(async () =>
-      completeExport({ file: { fileName: "report.docx" }, warnings: [] }),
-    );
+    await act(async () => completeExport({ file: { fileName: "report.docx" }, warnings: [] }));
     expect(saveConversationExport).toHaveBeenCalledOnce();
     expect(exportWordFile).toHaveBeenCalledOnce();
   });

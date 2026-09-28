@@ -119,7 +119,8 @@ const make = Effect.gen(function* () {
         if (path.isAbsolute(name) || /^(?:[a-z][a-z\d+.-]*:|\\\\)/iu.test(name)) {
           warnings.push({
             code: "resource-unresolved",
-            message: "An absolute or remote bibliography was not used; its citation keys remain as written.",
+            message:
+              "An absolute or remote bibliography was not used; its citation keys remain as written.",
           });
           continue;
         }

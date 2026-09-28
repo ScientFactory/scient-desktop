@@ -7,9 +7,7 @@ import type {
 
 function snapshotWarningLabel(warning: ConversationSnapshotWarning): string {
   const messageLocation =
-    "messageN" in warning && warning.messageN !== null
-      ? ` in message ${warning.messageN}`
-      : "";
+    "messageN" in warning && warning.messageN !== null ? ` in message ${warning.messageN}` : "";
   switch (warning._tag) {
     case "running-turn-omitted":
       return "A turn still running at export was left out.";
@@ -71,8 +69,8 @@ export function ConversationImportPreviewDetails({
         {preview.conversation.model ? ` · ${preview.conversation.model}` : ""}
       </p>
       <p className="text-muted-foreground">
-        The sender's identity is not verified. Pending actions, provider sessions and workspace files do
-        not transfer.
+        The sender's identity is not verified. Pending actions, provider sessions and workspace
+        files do not transfer.
       </p>
       {preview.omissions.length > 0 ? (
         <section aria-label="Content not included" className="rounded-md border p-3">

@@ -23,10 +23,13 @@ export function markdownReferenceDeclarations(markdown: string): MarkdownReferen
   } catch {
     return {
       ...empty,
-      warnings: [{
-        code: "unsupported-construct",
-        message: "The document's YAML references could not be read; citation keys remain as written.",
-      }],
+      warnings: [
+        {
+          code: "unsupported-construct",
+          message:
+            "The document's YAML references could not be read; citation keys remain as written.",
+        },
+      ],
     };
   }
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return empty;
@@ -67,7 +70,8 @@ export function markdownReferenceDeclarations(markdown: string): MarkdownReferen
   if (!Array.isArray(declared)) {
     warnings.push({
       code: "unsupported-construct",
-      message: "YAML bibliography must name a local .json or .bib file; citation keys remain as written.",
+      message:
+        "YAML bibliography must name a local .json or .bib file; citation keys remain as written.",
     });
   } else {
     for (const entry of declared.slice(0, MAX_BIBLIOGRAPHIES)) {

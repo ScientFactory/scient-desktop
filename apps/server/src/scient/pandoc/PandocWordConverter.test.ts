@@ -10,7 +10,12 @@ import * as Layer from "effect/Layer";
 
 import { PandocManagedTool } from "./PandocManagedTool.ts";
 import type { PandocCommand } from "./pandocProcess.ts";
-import { MAX_WORD_SOURCE_BYTES, PandocWordConverter, SCIENT_PANDOC_READER, layer } from "./PandocWordConverter.ts";
+import {
+  MAX_WORD_SOURCE_BYTES,
+  PandocWordConverter,
+  SCIENT_PANDOC_READER,
+  layer,
+} from "./PandocWordConverter.ts";
 import { fakePandoc, makeBundle, managedToolLayer } from "./pandocTestSupport.ts";
 
 const run = <A, E>(
@@ -43,10 +48,12 @@ describe("PandocWordConverter", () => {
     run(withCommand(null), ({ converter, directory, scratchRoot }) =>
       Effect.gen(function* () {
         const outputPath = NodePath.join(directory, "oversized.docx");
-        const error = yield* converter.convert({
-          bundle: makeBundle({ markdown: "é".repeat(Math.floor(MAX_WORD_SOURCE_BYTES / 2) + 1) }),
-          outputPath,
-        }).pipe(Effect.flip);
+        const error = yield* converter
+          .convert({
+            bundle: makeBundle({ markdown: "é".repeat(Math.floor(MAX_WORD_SOURCE_BYTES / 2) + 1) }),
+            outputPath,
+          })
+          .pipe(Effect.flip);
         expect(error.reason).toBe("too-large");
         expect(NodeFS.existsSync(outputPath)).toBe(false);
         expect(NodeFS.existsSync(scratchRoot)).toBe(false);

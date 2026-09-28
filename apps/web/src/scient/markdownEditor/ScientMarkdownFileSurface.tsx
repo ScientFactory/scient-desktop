@@ -468,7 +468,10 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
         resolveImageSource={resolveImageSource}
         imageOptions={imageOptions}
         {...(props.onOpenFileSource
-          ? { onOpenSourceLine: (line: number) => props.onOpenFileSource?.(props.relativePath, line) }
+          ? {
+              onOpenSourceLine: (line: number) =>
+                props.onOpenFileSource?.(props.relativePath, line),
+            }
           : {})}
         documentActions={
           <MarkdownPdfExportMenuItems
