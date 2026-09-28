@@ -240,7 +240,10 @@ export function createDocumentPagePdfRenderer(options: DocumentPagePdfRendererOp
   const createWindow =
     options.createWindow ??
     ((windowOptions: BrowserWindowConstructorOptions) => new Electron.BrowserWindow(windowOptions));
-  const print = options.print ?? createBrowserPdfRenderer({ marginPolicy: "source-authored" });
+  // The page's own stylesheet owns geometry and breaks; see scient-document-page.css.
+  const print =
+    options.print ??
+    createBrowserPdfRenderer({ marginPolicy: "source-authored", paginationDefaults: false });
   const readReadiness =
     options.readReadiness ??
     ((webContents: WebContents) => webContents.executeJavaScript(readinessScript, true));

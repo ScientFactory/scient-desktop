@@ -2,8 +2,10 @@
  * Scient document page: the print stylesheet for exported Markdown files and
  * conversations. The page geometry, running header, and page numbers live in
  * @page rules (Chromium page-margin boxes); the desktop adds no margin of its
- * own. Break rules keep headings with what follows and keep small figures and
- * short code together, while long code blocks and tables are allowed to split.
+ * own, and no pagination defaults: this sheet owns every break rule. Headings,
+ * a details block's summary line, figures, short code, table rows, alerts, and
+ * images stay whole or with what follows; everything else flows, so long code,
+ * tables, quotes, work logs, and reasoning split across pages without gaps.
  */
 
 @page {
@@ -287,9 +289,13 @@ body {
   background: var(--scient-document-code-background);
 }
 
+/* Details (work logs, reasoning) flow across pages; only their summary line
+   is kept whole and with the first line that follows it. */
 .scient-document details > summary {
   font-weight: 600;
   list-style: none;
+  break-inside: avoid-page;
+  break-after: avoid-page;
 }
 
 /* Conversation documents: a heading per speaker, full-width text. */
@@ -312,6 +318,9 @@ body {
   margin-top: 2em;
   color: var(--scient-document-muted);
   font-size: 9pt;
+}
+
+.scient-document-notes li {
   break-inside: avoid-page;
 }
 

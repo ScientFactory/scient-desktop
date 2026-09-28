@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { vi } from "vite-plus/test";
 
+import { createBrowserPdfRenderer } from "./BrowserPdfRenderer.ts";
 import {
   createDocumentPagePdfRenderer,
   documentPageContentSecurityPolicy,
@@ -17,6 +18,10 @@ import {
 } from "./DocumentPagePdfRenderer.ts";
 
 vi.mock("electron", () => ({ BrowserWindow: vi.fn(), net: { fetch: vi.fn() } }));
+vi.mock("./BrowserPdfRenderer.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./BrowserPdfRenderer.ts")>();
+  return { ...actual, createBrowserPdfRenderer: vi.fn(actual.createBrowserPdfRenderer) };
+});
 
 const inputUrl = "https://environment.test/api/assets/signed-token/document.json";
 const expected: ScientDocumentPageExpectation = {
@@ -192,6 +197,16 @@ describe("DocumentPagePdfRenderer", () => {
     }
     expect(documentPageContentSecurityPolicy(page.files)).toContain("script-src 'self';");
     expect(documentPageContentSecurityPolicy(page.files)).toContain("object-src 'none'");
+  });
+
+  it("prints with the page's own margins and break rules, not the HTML-export defaults", () => {
+    createDocumentPagePdfRenderer({ page });
+    // The HTML-export defaults keep every quote and details block whole,
+    // leaving page-sized gaps before long work logs and reasoning.
+    expect(createBrowserPdfRenderer).toHaveBeenCalledWith({
+      marginPolicy: "source-authored",
+      paginationDefaults: false,
+    });
   });
 
   it.effect("prints only after a matching readiness report, in an isolated window", () =>

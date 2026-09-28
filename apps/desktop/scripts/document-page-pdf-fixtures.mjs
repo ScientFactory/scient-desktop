@@ -213,6 +213,62 @@ function fixtures(png) {
     ),
   ].join("\n");
 
+  // Work logs, reasoning, and quotes longer than a page must start right
+  // where they are, under their message, and continue on the next page.
+  const longBlock = (title, intro, block) =>
+    [
+      `# ${title}`,
+      "",
+      "## Assistant · 27 Sep 2026, 09:00",
+      "",
+      intro,
+      "",
+      block,
+      "",
+      "BLOCK_AFTER_MARKER",
+    ].join("\n");
+  const workLog = longBlock(
+    "Long work log",
+    "LOG_INTRO_MARKER Here is what I ran.",
+    [
+      "<!-- scient:part export=fixture n=1 -->",
+      "<details>",
+      "<summary>Work log · 150 steps</summary>",
+      "",
+      lines(
+        150,
+        (n) => `- LOG_STEP_${pad(n)} Ran \`pnpm test --filter step-${n}\` and read its output.`,
+      ),
+      "",
+      "</details>",
+    ].join("\n"),
+  );
+  const reasoning = longBlock(
+    "Long reasoning",
+    "THINK_INTRO_MARKER Here is how I approached it.",
+    [
+      "<!-- scient:part export=fixture n=2 -->",
+      "<details>",
+      "<summary>Reasoning</summary>",
+      "",
+      lines(120, (n) => `THINK_LINE_${pad(n)} considers the next possibility in some detail.\n`),
+      "",
+      "</details>",
+    ].join("\n"),
+  );
+  const quote = longBlock(
+    "Long quotation",
+    "QUOTE_INTRO_MARKER The source reads:",
+    lines(150, (n) => `> QUOTE_LINE_${pad(n)} is one line of the quoted passage.\n>`),
+  );
+  const flowsAcross = (prefix, first, last, summary) => ({
+    minPages: 3,
+    order: [`${prefix}_INTRO_MARKER`, first, last, "BLOCK_AFTER_MARKER"],
+    samePage: [[`${prefix}_INTRO_MARKER`, first], ...(summary ? [[summary, first]] : [])],
+    splitAcrossPages: [first, last],
+    absent: ["scient:part"],
+  });
+
   const asset = (id, fileName, content) => ({
     id,
     role: "image",
@@ -343,6 +399,25 @@ function fixtures(png) {
         all: Array.from({ length: 120 }, (_, i) => `MESSAGE_${pad(i + 1)}`),
         outlineCount: 121,
       },
+    },
+    {
+      name: "long-work-log",
+      markdown: workLog,
+      profile: "chat",
+      documentKind: "conversation",
+      expect: flowsAcross("LOG", "LOG_STEP_001", "LOG_STEP_150", "Work log"),
+    },
+    {
+      name: "long-reasoning",
+      markdown: reasoning,
+      profile: "chat",
+      documentKind: "conversation",
+      expect: flowsAcross("THINK", "THINK_LINE_001", "THINK_LINE_120", "Reasoning"),
+    },
+    {
+      name: "long-quotation",
+      markdown: quote,
+      expect: flowsAcross("QUOTE", "QUOTE_LINE_001", "QUOTE_LINE_150"),
     },
     {
       name: "conversation-export",
