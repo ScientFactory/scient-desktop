@@ -20,6 +20,8 @@ export interface OmpTurnState {
    * after an unconfirmed drain). Its tail belongs to no turn.
    */
   readonly staleRunId?: number;
+  /** The stale run ended inside this turn; frames it carried were dropped. */
+  readonly staleRunEnded?: boolean;
 }
 
 export type OmpTurnSignal =
@@ -110,10 +112,15 @@ export const reduceOmpTurn = (state: OmpTurnState, signal: OmpTurnSignal): OmpTu
       }
       if (!signal.agentInvoked && !state.sawAgent) return settle(state, "terminal", "local");
       // OMP reports a prompt after its run ends, so a reported prompt with no
-      // run never ran (an abort that won the race, a preflight denial).
-      // Nothing else would settle it; the reported status decides it.
-      if (signal.reported === true && !state.sawAgent)
-        return settle(state, "terminal", "completed");
+      // run of its own never ran (an abort that won the race, a preflight
+      // denial), and the reported status decides it. If the previous turn's
+      // unfinished run ended meanwhile, the prompt may have been queued into
+      // it and its answer dropped with that run's frames: uncertain.
+      if (signal.reported === true && !state.sawAgent) {
+        return state.staleRunEnded === true
+          ? settle(state, "unknown", "unknown")
+          : settle(state, "terminal", "completed");
+      }
       return { state };
     case "steer-accepted":
       return { state };
@@ -133,6 +140,7 @@ export const reduceOmpTurn = (state: OmpTurnState, signal: OmpTurnSignal): OmpTu
         },
       };
     case "agent-end":
+      if (isStaleRun(state, signal.runId)) return { state: { ...state, staleRunEnded: true } };
       if (isForeignEnd(state, signal.runId)) return { state };
       if (!signal.terminal) return { state: { ...state, phase: "running", sawAgent: true } };
       return { state: { ...state, phase: "draining", sawAgent: true } };
