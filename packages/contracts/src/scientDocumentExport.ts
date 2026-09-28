@@ -254,6 +254,12 @@ export const ScientDocumentPdfPublishInput = Schema.Struct({
 });
 export type ScientDocumentPdfPublishInput = typeof ScientDocumentPdfPublishInput.Type;
 
+/** Gives up a capture the desktop refused to print, so it does not wait out its expiry. */
+export const ScientDocumentPdfReleaseInput = Schema.Struct({
+  captureId: ScientDocumentCaptureId,
+});
+export type ScientDocumentPdfReleaseInput = typeof ScientDocumentPdfReleaseInput.Type;
+
 export const ScientDocumentPdfPublished = Schema.Struct({
   source: PdfSourceDescriptor,
   title: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(512)),

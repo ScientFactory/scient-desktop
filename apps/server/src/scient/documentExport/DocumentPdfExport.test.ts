@@ -18,7 +18,13 @@ import * as TestClock from "effect/testing/TestClock";
 import { resolveAsset } from "../../assets/AssetAccess.ts";
 import * as NativeAppIconResolver from "../../assets/NativeAppIconResolver.ts";
 import { GeneratedDocumentStore } from "../documentArtifacts/GeneratedDocumentStore.ts";
-import { readDocumentCapture, sha256Digest } from "./DocumentCapture.ts";
+import * as ServerConfig from "../../config.ts";
+import {
+  documentCaptureStartupSweepLayer,
+  readDocumentCapture,
+  removeDocumentCapture,
+  sha256Digest,
+} from "./DocumentCapture.ts";
 import {
   documentExportTestLayer,
   makeFixtureDirectory,
@@ -692,6 +698,56 @@ describe("document PDF publication", () => {
       }).pipe(Effect.provideService(GeneratedDocumentStore, store.store), Effect.flip);
       expect(error.reason).toBe("capture-expired");
       expect(store.beginProduction).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(layer)),
+  );
+});
+
+describe("document capture lifetime", () => {
+  const capture = Effect.gen(function* () {
+    const { root, revision } = yield* Effect.promise(() => writeReport());
+    return yield* prepareMarkdownPdf({
+      cwd: root,
+      relativePath: "notes/report.md",
+      expectedRevision: revision,
+    });
+  });
+  const captureExists = (prepared: ScientDocumentPdfPrepared) =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      return yield* fileSystem.exists(
+        NodePath.join(config.stateDir, "document-exports", prepared.expected.captureId),
+      );
+    });
+
+  it.effect("releases a capture the desktop refused to print", () =>
+    Effect.gen(function* () {
+      const prepared = yield* capture;
+      yield* removeDocumentCapture(prepared.expected.captureId);
+      expect(yield* captureExists(prepared)).toBe(false);
+      const error = yield* readDocumentCapture(prepared.expected.captureId).pipe(Effect.flip);
+      expect(error.reason).toBe("capture-expired");
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("sweeps captures a previous run left behind when the server starts", () =>
+    Effect.gen(function* () {
+      const stale = yield* capture;
+      yield* TestClock.adjust("6 minutes");
+      const current = yield* capture;
+      // The stale capture has expired; the current one has four minutes left.
+      yield* TestClock.adjust("6 minutes");
+      expect(yield* captureExists(stale)).toBe(true);
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          yield* Layer.build(documentCaptureStartupSweepLayer);
+          for (let attempt = 0; attempt < 100 && (yield* captureExists(stale)); attempt += 1) {
+            yield* TestClock.withLive(Effect.sleep("20 millis"));
+          }
+        }),
+      );
+      expect(yield* captureExists(stale)).toBe(false);
+      expect(yield* captureExists(current)).toBe(true);
     }).pipe(Effect.provide(layer)),
   );
 });

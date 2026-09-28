@@ -17,6 +17,7 @@ import * as NodeCrypto from "node:crypto";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -30,8 +31,9 @@ import { buildDocumentPageCapture, bundleSourceDigest } from "./documentPageInpu
  * the asset bytes its Markdown refers to, written to a server-owned temporary
  * directory before anything renders. Rendering reads only the capture, so a
  * slow render can neither hold the source open nor observe it changing
- * midway. A capture is removed after publication and expires if the render
- * never returns.
+ * midway. A capture is removed after publication or when the desktop refuses
+ * to print it, and expires if the render never returns. Expired captures are
+ * swept at server start and before each new capture.
  */
 
 const CAPTURE_DIRECTORY = "document-exports";
@@ -110,8 +112,8 @@ const captureDirectory = Effect.fn("DocumentCapture.directory")(function* (
   return path.join(yield* capturesRoot, captureId);
 });
 
-/** Removes captures whose render never returned. Runs before each new capture. */
-const sweepExpiredDocumentCaptures = Effect.fn("DocumentCapture.sweepExpired")(function* () {
+/** Removes captures whose render never returned. Runs at server start and before each new capture. */
+export const sweepExpiredDocumentCaptures = Effect.fn("DocumentCapture.sweepExpired")(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const root = yield* capturesRoot;
@@ -138,6 +140,11 @@ const sweepExpiredDocumentCaptures = Effect.fn("DocumentCapture.sweepExpired")(f
     { discard: true },
   );
 });
+
+/** Clears captures a previous run left behind, in the background, when the server starts. */
+export const documentCaptureStartupSweepLayer = Layer.effectDiscard(
+  Effect.forkScoped(sweepExpiredDocumentCaptures()),
+);
 
 /**
  * Writes one bundle as a complete capture and issues the short-lived URL the
