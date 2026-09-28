@@ -22,7 +22,7 @@ function snapshotWarningLabel(warning: ConversationSnapshotWarning): string {
   }
 }
 
-export function omissionLabel(omission: ConversationImportOmission): string {
+function omissionLabel(omission: ConversationImportOmission): string {
   switch (omission._tag) {
     case "work-log-excluded":
       return "The sender excluded the work log.";
@@ -35,7 +35,7 @@ export function omissionLabel(omission: ConversationImportOmission): string {
   }
 }
 
-export function warningLabel(warning: ConversationImportWarning): string {
+function warningLabel(warning: ConversationImportWarning): string {
   switch (warning._tag) {
     case "export-warning":
       return warning.warning.message;

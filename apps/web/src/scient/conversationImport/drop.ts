@@ -1,6 +1,6 @@
 import { requestConversationImport } from "./requests";
 
-export function isConversationImportFile(file: File): boolean {
+function isConversationImportFile(file: File): boolean {
   return /\.(scic|md)$/iu.test(file.name);
 }
 
