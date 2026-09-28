@@ -27,20 +27,30 @@ describe("storage path redaction", () => {
     const capability = "eyJwYXRoIjoiL1VzZXJzL2FsaWNlL3NlY3JldCJ9.signature";
     const absolute = `http://127.0.0.1:3773/api/assets/${capability}/report.html`;
     const relative = `/api/assets/${capability}/report.html`;
+    const encodedRelative = `/api%2Fassets%2F${capability}%2Freport.html`;
+    const protocolRelative = `//127.0.0.1:3773${encodedRelative}`;
     expect(redactScientAssetUrls(`Open ${absolute} and ${relative}`)).toBe(
       `Open ${SCIENT_ASSET_URL_PLACEHOLDER} and ${SCIENT_ASSET_URL_PLACEHOLDER}`,
     );
     expect(
       redactScientAssetUrls(`https://scient.example/api%2Fassets%2F${capability}%2Freport.html`),
     ).toBe(SCIENT_ASSET_URL_PLACEHOLDER);
+    expect(redactScientAssetUrls(encodedRelative)).toBe(SCIENT_ASSET_URL_PLACEHOLDER);
+    expect(redactScientAssetUrls(protocolRelative)).toBe(SCIENT_ASSET_URL_PLACEHOLDER);
+    expect(redactScientAssetUrls(`/api%252Fassets%252F${capability}%252Freport.html`)).toBe(
+      SCIENT_ASSET_URL_PLACEHOLDER,
+    );
+    expect(redactScientAssetUrls(`${encodedRelative}%BROKEN`)).toBe(SCIENT_ASSET_URL_PLACEHOLDER);
     expect(redactScientAssetUrls("https://example.org/ordinary/page")).toBe(
       "https://example.org/ordinary/page",
     );
     const snapshot = snapshotOf(
-      thread({ messages: [message({ id: "m1", role: "user", text: absolute })] }),
+      thread({
+        messages: [message({ id: "m1", role: "user", text: `${absolute} ${encodedRelative}` })],
+      }),
     );
     expect(redactSnapshotStoragePaths(snapshot, []).messages[0]?.text).toBe(
-      SCIENT_ASSET_URL_PLACEHOLDER,
+      `${SCIENT_ASSET_URL_PLACEHOLDER} ${SCIENT_ASSET_URL_PLACEHOLDER}`,
     );
   });
 

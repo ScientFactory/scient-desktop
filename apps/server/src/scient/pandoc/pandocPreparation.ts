@@ -80,8 +80,6 @@ export function mermaidDiagramAssetId(source: string): string {
 
 const MARKER = /^<!-- scient:(message|part)((?: [a-z-]+=[^\s=]+)*) -->\s*$/u;
 const DETAILS_OPEN = /^<details\b[^>]*>/iu;
-const DETAILS_CLOSE = /<\/details>\s*$/iu;
-const SUMMARY = /<summary\b[^>]*>([\s\S]*?)<\/summary>/iu;
 const DETAILS_BLOCK_TAGS = new Set([
   "blockquote",
   "br",
@@ -107,6 +105,8 @@ const DETAILS_BLOCK_TAGS = new Set([
   "ul",
 ]);
 const DETAILS_OMIT_TAGS = new Set(["iframe", "object", "script", "style", "svg", "template"]);
+type HtmlNode = DefaultTreeAdapterMap["node"];
+type HtmlElement = DefaultTreeAdapterMap["element"];
 const ALERT_KINDS = new Set(["note", "tip", "important", "warning", "caution"]);
 /** Tables this wide get proportional columns; narrower ones fit as Pandoc lays them out. */
 const WIDE_TABLE_COLUMNS = 6;
@@ -122,28 +122,12 @@ function parseMarker(text: string): { kind: string; fields: Map<string, string> 
   return { kind: match[1] ?? "", fields };
 }
 
-function decodeHtmlText(html: string): string {
-  return html
-    .replace(/<[^>]*>/gu, "")
-    .replace(/&(#x[0-9a-f]+|#[0-9]+|amp|lt|gt|quot|apos|#39|nbsp);/giu, (_, entity: string) => {
-      const lower = entity.toLowerCase();
-      if (lower.startsWith("#x")) return String.fromCodePoint(Number.parseInt(lower.slice(2), 16));
-      if (lower.startsWith("#")) return String.fromCodePoint(Number.parseInt(lower.slice(1), 10));
-      return (
-        { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " } as Record<string, string>
-      )[lower]!;
-    })
-    .trim();
+function isHtmlElement(node: HtmlNode, tag: string): node is HtmlElement {
+  return "tagName" in node && node.tagName.toLowerCase() === tag;
 }
 
-/** Retains visible text inside a raw HTML details node as safe Word paragraphs. */
-function detailsBodyBlocks(html: string): Array<PandocNode> {
-  type HtmlNode = DefaultTreeAdapterMap["node"];
-  const fragment = parseFragment(html);
-  const details = fragment.childNodes.find(
-    (node) => "tagName" in node && node.tagName.toLowerCase() === "details",
-  );
-  if (details === undefined || !("childNodes" in details)) return [];
+/** Retains visible HTML text as safe Word paragraphs, never raw HTML. */
+function visibleHtmlBlocks(nodes: ReadonlyArray<HtmlNode>): Array<PandocNode> {
   const paragraphs: Array<PandocNode> = [];
   let pending = "";
   const flush = () => {
@@ -151,8 +135,7 @@ function detailsBodyBlocks(html: string): Array<PandocNode> {
     if (text) paragraphs.push(para(textInlines(text)));
     pending = "";
   };
-  const queue: Array<{ node: HtmlNode; closing: boolean }> = details.childNodes
-    .filter((node) => !("tagName" in node && node.tagName.toLowerCase() === "summary"))
+  const queue: Array<{ node: HtmlNode; closing: boolean }> = nodes
     .toReversed()
     .map((node) => ({ node, closing: false }));
   while (queue.length > 0) {
@@ -171,6 +154,19 @@ function detailsBodyBlocks(html: string): Array<PandocNode> {
   }
   flush();
   return paragraphs;
+}
+
+function detailsFrame(details: HtmlElement, kind: DetailsKind): DetailsFrame {
+  const summary = details.childNodes.find((node) => isHtmlElement(node, "summary"));
+  return {
+    kind,
+    summary: summary
+      ? visibleHtmlBlocks(summary.childNodes)
+          .map((block) => inlineText(block.c))
+          .join(" ")
+      : "",
+    blocks: visibleHtmlBlocks(details.childNodes.filter((node) => !isHtmlElement(node, "summary"))),
+  };
 }
 
 function rawHtml(block: PandocNode): string | null {
@@ -312,11 +308,13 @@ export function applyScientStructure(
     let pendingSpeaker: string | null = null;
     let pendingPart: DetailsKind = null;
     const target = () => stack.at(-1)?.blocks ?? out;
-    const close = () => {
-      const frame = stack.pop()!;
+    const emitDetails = (frame: DetailsFrame) => {
       if (frame.kind === "work-log") workLogBlocks += 1;
       if (frame.kind === "reasoning") reasoningBlocks += 1;
       target().push(buildDetails(frame));
+    };
+    const close = () => {
+      emitDetails(stack.pop()!);
     };
 
     for (const block of list) {
@@ -344,13 +342,24 @@ export function applyScientStructure(
         }
         const trimmed = html.trim();
         if (DETAILS_OPEN.test(trimmed)) {
-          stack.push({
-            kind: pendingPart,
-            summary: decodeHtmlText(SUMMARY.exec(trimmed)?.[1] ?? ""),
-            blocks: detailsBodyBlocks(trimmed),
-          });
+          const fragment = parseFragment(trimmed, { sourceCodeLocationInfo: true });
+          // Pandoc can put complete and still-open details siblings in one RawBlock.
+          // The parser's end-tag location distinguishes them without counting
+          // tag-like text in comments, scripts, or styles.
+          for (const node of fragment.childNodes) {
+            if (isHtmlElement(node, "details")) {
+              const frame = detailsFrame(node, pendingPart);
+              pendingPart = null;
+              if (node.sourceCodeLocation?.endTag !== undefined) {
+                emitDetails(frame);
+              } else {
+                stack.push(frame);
+              }
+            } else {
+              target().push(...visibleHtmlBlocks([node]));
+            }
+          }
           pendingPart = null;
-          if (DETAILS_CLOSE.test(trimmed)) close();
           continue;
         }
         if (/^<\/details>\s*$/iu.test(trimmed) && stack.length > 0) {

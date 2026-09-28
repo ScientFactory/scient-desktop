@@ -112,6 +112,49 @@ describe.skipIf(binary === null)("Word export with the real Pandoc (local integr
     ),
   );
 
+  it.live("keeps both contiguous raw HTML details siblings in the Word file", () =>
+    withConverter(({ converter, directory }) =>
+      Effect.gen(function* () {
+        const { docx } = yield* convertTo(converter, directory, "details-siblings", {
+          bundle: makeBundle({
+            markdown:
+              "<details><summary>First</summary><p>First body</p></details>\n<details><summary>Second</summary><p>Second body</p></details>",
+          }),
+        });
+        const xml = docx.text("word/document.xml");
+        expect(xml).toContain("First body");
+        expect(xml).toContain("Second body");
+        expect(xml).toContain("First");
+        expect(xml).toContain("Second");
+        expect(xml).not.toContain("&lt;details");
+      }),
+    ),
+  );
+
+  it.live("keeps a complete details sibling before an open one in the Word file", () =>
+    withConverter(({ converter, directory }) =>
+      Effect.gen(function* () {
+        const { docx } = yield* convertTo(converter, directory, "details-mixed-siblings", {
+          bundle: makeBundle({
+            markdown: [
+              "<details><summary>First</summary><p>First body</p></details>",
+              "<details><summary>Second</summary><p>Second body</p>",
+              "",
+              "Continuation",
+              "",
+              "</details>",
+            ].join("\n"),
+          }),
+        });
+        const xml = docx.text("word/document.xml");
+        expect(xml).toContain("First body");
+        expect(xml).toContain("Second body");
+        expect(xml).toContain("Continuation");
+        expect(xml).toContain("Second");
+      }),
+    ),
+  );
+
   it.live("converts a nested LaTeX project with an embedded figure and local bibliography", () =>
     withConverter(({ converter, directory }) =>
       Effect.gen(function* () {

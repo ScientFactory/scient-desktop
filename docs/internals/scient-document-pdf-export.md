@@ -13,11 +13,17 @@ there is one PDF path, not one per source.
    at a verified revision: the editor saves pending edits first and sends the revision it saved;
    the server refuses a file whose SHA-256 differs. Workspace images resolve against the file's
    directory, must stay inside the project (symlinks included), and must be a supported image
-   type. Each image is measured before it is read: one image may be up to 64 MiB, one export up
+   type. Each image is measured and then read from a verified open file handle with a hard byte
+   cap: one image may be up to 64 MiB, one export up
    to 1,024 images and 256 MiB, and destinations that reach the same file (by query, fragment, or
    symlink) share one copy. Anything else becomes an unavailable asset with a warning. Image
    destinations are rewritten to `scient-asset:<id>` inside each parsed image's own source span,
    using the rich editor's Markdown grammar (`@scientfactory/scient-markdown`).
+   macOS opens the canonical path with `O_NOFOLLOW_ANY`, rejecting an intermediate symlink
+   replacement; Linux checks the opened file descriptor's `/proc/self/fd` target. On Windows,
+   Node does not currently expose a safe handle-bound containment check here, so workspace
+   images are omitted with an explicit warning instead of relying on a raceable path recheck.
+   This Windows limitation must be resolved or expressly accepted before cross-platform release.
 2. **Render (desktop).** The capture is exposed through a five-minute signed asset capability.
    The desktop opens the web client's standalone `scient-document.html` entry, served from its
    own app scheme, in a hidden window with a private, non-persistent session. That session can

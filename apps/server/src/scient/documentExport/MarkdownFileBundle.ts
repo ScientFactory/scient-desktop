@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Image reads use an open fd with a hard byte cap.
 import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 
 import {
   inspectMarkdownDocument,
@@ -15,6 +16,7 @@ import {
   type DocumentWarning,
   type Sha256Digest,
 } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -230,21 +232,51 @@ const locateWorkspaceImage = Effect.fn("MarkdownFileBundle.locateWorkspaceImage"
 type ImageRead =
   | { readonly _tag: "bytes"; readonly bytes: Uint8Array }
   | { readonly _tag: "too-large"; readonly limit: "image" | "total" }
+  | { readonly _tag: "unsupported-platform" }
   | { readonly _tag: "unreadable" };
+
+const isInsideNative = (root: string, candidate: string) => {
+  if (!NodePath.isAbsolute(candidate)) return false;
+  const relative = NodePath.relative(root, candidate);
+  return (
+    relative !== "" &&
+    relative !== ".." &&
+    !relative.startsWith(`..${NodePath.sep}`) &&
+    !NodePath.isAbsolute(relative)
+  );
+};
+
+// Darwin's O_NOFOLLOW_ANY applies to every path component, unlike O_NOFOLLOW.
+// Node does not expose it as a named constant, but passes numeric open flags through.
+const DARWIN_O_NOFOLLOW_ANY = 0x20000000;
 
 /** Reads at most the remaining budget plus one byte, from the same verified inode. */
 const readLocatedImage = (
   located: Extract<LocatedImage, { readonly _tag: "located" }>,
+  canonicalRoot: string,
+  platform: NodeJS.Platform,
   imageLimit: number,
   totalLimit: number,
 ) =>
   Effect.tryPromise({
     try: async (): Promise<ImageRead> => {
+      // Node exposes no path-independent containment check for an opened file
+      // on other platforms. Omit the asset rather than trust raceable rechecks.
+      if (platform !== "darwin" && platform !== "linux") {
+        return { _tag: "unsupported-platform" };
+      }
       const handle = await NodeFS.promises.open(
         located.canonicalPath,
-        NodeFS.constants.O_RDONLY | (NodeFS.constants.O_NOFOLLOW ?? 0),
+        NodeFS.constants.O_RDONLY |
+          (platform === "darwin" ? DARWIN_O_NOFOLLOW_ANY : (NodeFS.constants.O_NOFOLLOW ?? 0)),
       );
       try {
+        if (platform === "linux") {
+          // /proc resolves this particular open fd, not a pathname the attacker can toggle.
+          const openedPath = await NodeFS.promises.readlink(`/proc/self/fd/${handle.fd}`);
+          if (openedPath.endsWith(" (deleted)") || !isInsideNative(canonicalRoot, openedPath))
+            return { _tag: "unreadable" };
+        }
         const before = await handle.stat();
         if (
           !before.isFile() ||
@@ -314,6 +346,7 @@ export const buildMarkdownFileBundle = Effect.fn("MarkdownFileBundle.build")(fun
   readonly budget?: MarkdownImageBudget;
 }) {
   const path = yield* Path.Path;
+  const platform = yield* HostProcessPlatform;
   const source = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
   const markdown = yield* Effect.try({
     try: () => source.decode(input.file.bytes),
@@ -398,6 +431,8 @@ export const buildMarkdownFileBundle = Effect.fn("MarkdownFileBundle.build")(fun
     }
     const read = yield* readLocatedImage(
       located,
+      input.file.canonicalRoot,
+      platform,
       Math.max(0, Math.min(MAX_IMAGE_BYTES, budget.maxImageBytes)),
       Math.max(0, Math.min(DOCUMENT_CAPTURE_MAX_ASSET_BYTES, budget.maxTotalBytes - heldBytes)),
     );
@@ -411,6 +446,17 @@ export const buildMarkdownFileBundle = Effect.fn("MarkdownFileBundle.build")(fun
             read.limit === "image"
               ? `Image "${destination}" is larger than the per-image export limit and was not included.`
               : `Image "${destination}" was not included because the document's images exceed the export size limit.`,
+        }),
+      );
+      continue;
+    }
+    if (read._tag === "unsupported-platform") {
+      assetIdsByFile.set(
+        located.canonicalPath,
+        addAsset(destination, located.fileName, {
+          _tag: "unavailable",
+          reason: "unsupported",
+          message: `Image "${destination}" was not included because this platform cannot safely verify workspace image paths during PDF export.`,
         }),
       );
       continue;

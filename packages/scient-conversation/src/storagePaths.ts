@@ -11,20 +11,37 @@ export const SCIENT_ASSET_URL_PLACEHOLDER = "«scient-protected-asset»";
 
 const WEB_URL_PATTERN = /\bhttps?:\/\/[^\s<>"'`\)\]\}]+/giu;
 const ASSET_PATH_TEST = /\/api\/assets\/[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?:\/|$)/iu;
-const RELATIVE_ASSET_PATTERN =
-  /\/api\/assets\/[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?:\/[^\s<>"'`\)\]\}]*)?/giu;
+const PATH_CANDIDATE_PATTERN = /\/[^\s<>"'`\)\]\}]+/giu;
+
+function assetPath(candidate: string): boolean {
+  let decoded = candidate;
+  for (let pass = 0; pass < 3; pass += 1) {
+    if (ASSET_PATH_TEST.test(decoded)) return true;
+    try {
+      const next = decodeURIComponent(decoded);
+      if (next === decoded) break;
+      decoded = next;
+    } catch {
+      // A malformed escape later in the URL must not shield encoded separators.
+      decoded = decoded.replace(/%2f/giu, "/").replace(/%2e/giu, ".");
+      break;
+    }
+  }
+  return ASSET_PATH_TEST.test(decoded);
+}
 
 /** Asset links contain a signed bearer capability and encoded file claims. */
 export function redactScientAssetUrls(text: string): string {
   const withoutAbsoluteUrls = text.replace(WEB_URL_PATTERN, (candidate) => {
     try {
-      const path = decodeURIComponent(new URL(candidate).pathname);
-      return ASSET_PATH_TEST.test(path) ? SCIENT_ASSET_URL_PLACEHOLDER : candidate;
+      return assetPath(new URL(candidate).pathname) ? SCIENT_ASSET_URL_PLACEHOLDER : candidate;
     } catch {
       return candidate;
     }
   });
-  return withoutAbsoluteUrls.replace(RELATIVE_ASSET_PATTERN, SCIENT_ASSET_URL_PLACEHOLDER);
+  return withoutAbsoluteUrls.replace(PATH_CANDIDATE_PATTERN, (candidate) =>
+    assetPath(candidate) ? SCIENT_ASSET_URL_PLACEHOLDER : candidate,
+  );
 }
 
 function escapeRegExp(text: string): string {

@@ -150,6 +150,79 @@ describe("applyScientStructure", () => {
     expect(children.map((block) => inlineText(block.c))).toEqual(["Result", "Important finding"]);
   });
 
+  it("keeps every contiguous details sibling from one raw HTML block", () => {
+    const blocks: Array<PandocNode> = [
+      raw(
+        "<details><summary>First</summary><p>First body</p></details>\n<details><summary>Second</summary><p>Second body</p><script>hidden()</script></details>",
+      ),
+    ];
+    applyScientStructure(blocks, { profile: "document", assets: [] });
+    expect(blocks.map((block) => block.t)).toEqual(["Div", "Div"]);
+    expect(
+      blocks.map((block) =>
+        (block.c as [unknown, Array<PandocNode>])[1].map((child) => inlineText(child.c)),
+      ),
+    ).toEqual([
+      ["First", "First body"],
+      ["Second", "Second body"],
+    ]);
+  });
+
+  it("keeps visible text between details siblings without passing through HTML", () => {
+    const blocks: Array<PandocNode> = [
+      raw(
+        "<details><summary>First</summary><p>First body</p></details>Interlude <em>text</em><details><summary>Second</summary><p>Second body</p></details>Tail",
+      ),
+    ];
+    applyScientStructure(blocks, { profile: "document", assets: [] });
+    expect(blocks.map((block) => block.t)).toEqual(["Div", "Para", "Para", "Div", "Para"]);
+    expect(
+      blocks.map((block) =>
+        block.t === "Div"
+          ? (block.c as [unknown, Array<PandocNode>])[1].map((child) => inlineText(child.c))
+          : inlineText(block.c),
+      ),
+    ).toEqual([["First", "First body"], "Interlude", "text", ["Second", "Second body"], "Tail"]);
+  });
+
+  it("ignores tag-like text in inert HTML when grouping details siblings", () => {
+    const blocks: Array<PandocNode> = [
+      raw(
+        '<details><summary>First</summary><!-- <details> --><script>"</details>"</script><style>"<details>"</style><p>First body</p></details>\n<details><summary>Second</summary><p>Second body</p></details>',
+      ),
+    ];
+    applyScientStructure(blocks, { profile: "document", assets: [] });
+    expect(blocks.map((block) => block.t)).toEqual(["Div", "Div"]);
+    expect(
+      blocks.map((block) =>
+        (block.c as [unknown, Array<PandocNode>])[1].map((child) => inlineText(child.c)),
+      ),
+    ).toEqual([
+      ["First", "First body"],
+      ["Second", "Second body"],
+    ]);
+  });
+
+  it("keeps a complete details sibling before an open sibling continued by later blocks", () => {
+    const blocks: Array<PandocNode> = [
+      raw(
+        "<details><summary>First</summary><p>First body</p></details>\n<details><summary>Second</summary><p>Second body</p>",
+      ),
+      para(textInlines("Continuation")),
+      raw("</details>"),
+    ];
+    applyScientStructure(blocks, { profile: "document", assets: [] });
+    expect(blocks.map((block) => block.t)).toEqual(["Div", "Div"]);
+    expect(
+      blocks.map((block) =>
+        (block.c as [unknown, Array<PandocNode>])[1].map((child) => inlineText(child.c)),
+      ),
+    ).toEqual([
+      ["First", "First body"],
+      ["Second", "Second body", "Continuation"],
+    ]);
+  });
+
   it("preserves visible details paragraphs while omitting active HTML", () => {
     const blocks: Array<PandocNode> = [
       raw(

@@ -7,6 +7,7 @@ import {
   ScientDocumentPageInput,
   type ScientDocumentPdfPrepared,
 } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -275,6 +276,37 @@ describe("Markdown image budget", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("keeps an in-workspace directory symlink readable through its canonical target", () =>
+    Effect.gen(function* () {
+      const root = yield* Effect.promise(() =>
+        makeFixtureDirectory(fixtures, "scient-document-pdf-image-alias-"),
+      );
+      yield* Effect.promise(async () => {
+        await writeFixtureFile(root, "report.md", "![Image](figures/image.png)\n");
+        await writeFixtureFile(root, "real-images/image.png", PNG);
+        await NodeFSP.symlink(NodePath.join(root, "real-images"), NodePath.join(root, "figures"));
+      });
+      const file = yield* readProjectMarkdownFile(root, "report.md");
+      const bundle = yield* buildMarkdownFileBundle({ workspaceRoot: root, file });
+      expect(bundle.assets[0]?.content).toMatchObject({ _tag: "bytes", bytes: PNG });
+      expect(bundle.warnings).toEqual([]);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("fails closed when the host cannot bind an opened image to the workspace", () =>
+    Effect.gen(function* () {
+      const bundle = yield* bundleFor("![a](a.png)\n", {
+        maxImageBytes: 1_000,
+        maxTotalBytes: 1_000,
+        maxImages: 10,
+      }).pipe(Effect.provideService(HostProcessPlatform, "win32"));
+      expect(bundle.assets[0]?.content).toEqual({ _tag: "unavailable", reason: "unsupported" });
+      expect(bundle.warnings[0]?.message).toContain(
+        "this platform cannot safely verify workspace image paths",
+      );
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("holds images to the total, count, and per-image budgets before reading them", () =>
     Effect.gen(function* () {
       const total = yield* bundleFor("![a](a.png) ![b](b.png)\n", {
@@ -329,6 +361,55 @@ describe("Markdown image budget", () => {
         },
         { maxImageBytes: 1_000, maxTotalBytes: 1_000, maxImages: 10 },
       );
+      expect(bundle.assets[0]?.content).toEqual({ _tag: "unavailable", reason: "unreadable" });
+      expect(bundle.warnings).toHaveLength(1);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("refuses an intermediate directory swapped to an outside symlink after realPath", () =>
+    Effect.gen(function* () {
+      const root = yield* Effect.promise(() =>
+        makeFixtureDirectory(fixtures, "scient-document-pdf-directory-race-"),
+      );
+      const outside = yield* Effect.promise(() =>
+        makeFixtureDirectory(fixtures, "scient-document-pdf-outside-image-"),
+      );
+      const imagePath = yield* Effect.promise(async () => {
+        await writeFixtureFile(root, "report.md", "![Image](figures/image.png)\n");
+        await writeFixtureFile(outside, "image.png", new Uint8Array(PNG.byteLength).fill(0x42));
+        return writeFixtureFile(root, "figures/image.png", PNG);
+      });
+      const file = yield* readProjectMarkdownFile(root, "report.md");
+      const fileSystem = yield* FileSystem.FileSystem;
+      let swapped = false;
+      const racingFileSystem = FileSystem.FileSystem.of({
+        ...fileSystem,
+        realPath: (candidate) =>
+          fileSystem.realPath(candidate).pipe(
+            Effect.tap(() =>
+              candidate === imagePath && !swapped
+                ? Effect.promise(async () => {
+                    swapped = true;
+                    await NodeFSP.rename(
+                      NodePath.join(root, "figures"),
+                      NodePath.join(root, "figures-original"),
+                    );
+                    await NodeFSP.symlink(outside, NodePath.join(root, "figures"));
+                  })
+                : Effect.void,
+            ),
+          ),
+      });
+      const bundle = yield* buildMarkdownFileBundle({
+        workspaceRoot: root,
+        file,
+        budget: {
+          maxImageBytes: 1_000,
+          maxTotalBytes: 1_000,
+          maxImages: 10,
+        },
+      }).pipe(Effect.provideService(FileSystem.FileSystem, racingFileSystem));
+      expect(swapped).toBe(true);
       expect(bundle.assets[0]?.content).toEqual({ _tag: "unavailable", reason: "unreadable" });
       expect(bundle.warnings).toHaveLength(1);
     }).pipe(Effect.provide(layer)),
