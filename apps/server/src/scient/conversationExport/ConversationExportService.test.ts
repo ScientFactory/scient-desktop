@@ -1,10 +1,13 @@
 // @effect-diagnostics nodeBuiltinImport:off -- The test reads produced ZIP archives with yauzl.
+import * as NodeCrypto from "node:crypto";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
   ChatAttachment,
   EnvironmentFilePath,
   MessageId,
+  SCIENT_CONVERSATION_EXPORT_MAX_ASSET_BYTES,
   ScientDocumentPageInput,
   ThreadId,
   type DocumentBundle,
@@ -164,6 +167,58 @@ const exportLayer = (prefix: string, word: WordMode = { _tag: "unavailable" }) =
   );
 const TestLayer = exportLayer("scient-convexport-");
 
+type FileAccess = { readonly op: "exists" | "stat" | "stream"; readonly path: string };
+
+/** The real file system, recording which paths the export service stats and streams. */
+const recordingFileSystem = (accesses: Array<FileAccess>) =>
+  Layer.effect(
+    FileSystem.FileSystem,
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      return FileSystem.FileSystem.of({
+        ...fileSystem,
+        exists: (path) => {
+          accesses.push({ op: "exists", path });
+          return fileSystem.exists(path);
+        },
+        stat: (path) => {
+          accesses.push({ op: "stat", path });
+          return fileSystem.stat(path);
+        },
+        stream: (path, options) => {
+          accesses.push({ op: "stream", path });
+          return fileSystem.stream(path, options);
+        },
+      });
+    }),
+  ).pipe(Layer.provide(NodeServices.layer));
+
+const recordingLayer = (accesses: Array<FileAccess>) =>
+  ConversationExportService.layer.pipe(
+    Layer.provideMerge(wordLayer({ _tag: "converts", seen: [] })),
+    Layer.provideMerge(ConversationSnapshotService.layer),
+    Layer.provideMerge(ConversationExportFiles.layer),
+    Layer.provideMerge(QueryLive),
+    Layer.provideMerge(SqlitePersistenceMemory),
+    Layer.provideMerge(
+      ServerConfig.layerTest(process.cwd(), { prefix: "scient-convexport-reads-" }),
+    ),
+    Layer.provideMerge(recordingFileSystem(accesses)),
+    Layer.provideMerge(NodeServices.layer),
+  );
+
+/** Writes `bytes` where the attachment store keeps `attachment`, and returns that path. */
+const storeAttachment = (attachment: ChatAttachment, bytes: Uint8Array) =>
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const stored = resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment })!;
+    yield* fileSystem.makeDirectory(path.dirname(stored), { recursive: true });
+    yield* fileSystem.writeFile(stored, bytes);
+    return stored;
+  });
+
 const AssetConfigLive = ServerConfig.layerTest(process.cwd(), {
   prefix: "scient-convexport-asset-",
 });
@@ -193,6 +248,9 @@ const seedThread = Effect.fn("seedThread")(function* (input: {
   readonly running?: boolean;
   readonly firstUserText?: string;
   readonly attachments?: ReadonlyArray<ChatAttachment>;
+  /** Every prompt gets its own stored attachment, and every turn a reasoning message. */
+  readonly attachmentPerPrompt?: boolean;
+  readonly reasoning?: boolean;
 }) {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`INSERT INTO projection_projects
@@ -209,8 +267,20 @@ const seedThread = Effect.fn("seedThread")(function* (input: {
     const turnId = `turn-${pair}`;
     const userText =
       pair === 1 && input.firstUserText !== undefined ? input.firstUserText : `Question ${pair}`;
-    const attachments =
-      pair === 1 && input.attachments ? encodeAttachments(input.attachments) : null;
+    const own: ReadonlyArray<ChatAttachment> = input.attachmentPerPrompt
+      ? [
+          {
+            type: "file",
+            id: `thread-1-00000000-0000-4000-8000-${String(pair).padStart(12, "0")}`,
+            name: `data ${pair}.csv`,
+            mimeType: "text/csv",
+            sizeBytes: 3,
+          },
+        ]
+      : [];
+    for (const attachment of own) yield* storeAttachment(attachment, new Uint8Array([97, 44, 98]));
+    const listed = [...(pair === 1 ? (input.attachments ?? []) : []), ...own];
+    const attachments = listed.length > 0 ? encodeAttachments(listed) : null;
     const userAt = at(clock);
     yield* sql`INSERT INTO projection_thread_messages
       (message_id, thread_id, turn_id, role, text, attachments_json, is_streaming, created_at, updated_at)
@@ -227,6 +297,13 @@ const seedThread = Effect.fn("seedThread")(function* (input: {
             title: "Ran command",
             data: { item: { command: `echo ${activity}` }, token: "sk-hidden" },
           })}, ${activity}, ${at(clock)})`;
+      clock += 1;
+    }
+    if (input.reasoning) {
+      yield* sql`INSERT INTO projection_thread_messages
+        (message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at)
+        VALUES (${`reasoning-${pair}`}, ${THREAD}, ${turnId}, 'reasoning', ${`Thinking ${pair}`},
+          0, ${at(clock)}, ${at(clock)})`;
       clock += 1;
     }
     const isRunning = input.running === true && pair === input.pairs;
@@ -336,11 +413,18 @@ describe("ConversationExportService", () => {
     );
   it.effect("exports a 2,100-message thread completely from the server snapshot", () =>
     Effect.gen(function* () {
-      yield* seedThread({ pairs: 1_050, activitiesPerTurn: 1 });
+      yield* seedThread({
+        pairs: 1_050,
+        activitiesPerTurn: 3,
+        reasoning: true,
+        attachmentPerPrompt: true,
+      });
       const service = yield* ConversationExportService.ConversationExportService;
       const preparation = yield* service.prepare(THREAD);
       assert.strictEqual(preparation.messageCount, 2_100);
-      assert.strictEqual(preparation.workLogEntryCount, 1_050);
+      assert.strictEqual(preparation.workLogEntryCount, 3_150);
+      assert.strictEqual(preparation.reasoningCount, 1_050);
+      assert.strictEqual(preparation.attachmentCount, 1_050);
       assert.deepStrictEqual(preparation.formats, [
         { format: "markdown", available: true, unavailableReason: null },
         { format: "pdf", available: true, unavailableReason: null },
@@ -352,7 +436,9 @@ describe("ConversationExportService", () => {
         },
       ]);
 
-      const { produced, text } = yield* produceText(request({}, { includeWorkLog: true }));
+      const { produced, text } = yield* produceText(
+        request({}, { includeWorkLog: true, includeReasoning: true }),
+      );
       assert.strictEqual(produced.messageCount, 2_100);
       const parsed = parseConversationMarkdown(text);
       assert(parsed.kind === "conversation");
@@ -364,7 +450,20 @@ describe("ConversationExportService", () => {
           .length,
         1_050,
       );
-      assert.include(text, "echo 1050");
+      assert.strictEqual(
+        parsed.messages.filter((message) => message.parts.some((part) => part.kind === "reasoning"))
+          .length,
+        1_050,
+      );
+      assert.strictEqual(
+        parsed.messages.filter((message) =>
+          message.parts.some((part) => part.kind === "attachments"),
+        ).length,
+        1_050,
+      );
+      assert.include(text, "Work log · 3 steps");
+      assert.include(text, "- data 1050.csv · text/csv, 3 B");
+      assert.include(text, "echo 3150");
       assert.notInclude(text, "sk-hidden");
       assert.notInclude(text, "provider-session-secret");
       assert.notInclude(text, "provider-thread-secret");
@@ -439,6 +538,216 @@ describe("ConversationExportService", () => {
         "attachment-unavailable",
       );
       assert.notInclude(markdown, config.attachmentsDir);
+    }).pipe(Effect.provide(TestLayer)),
+  );
+
+  const fileAccesses: Array<FileAccess> = [];
+  it.effect("reads attachment bytes only for formats that embed them", () =>
+    Effect.gen(function* () {
+      const stored = yield* storeAttachment(image, new Uint8Array([137, 80, 78, 71]));
+      yield* seedThread({ pairs: 1, attachments: [image] });
+      const service = yield* ConversationExportService.ConversationExportService;
+      const accessesDuring = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        Effect.gen(function* () {
+          fileAccesses.length = 0;
+          const result = yield* effect;
+          return {
+            result,
+            ops: fileAccesses
+              .filter((access) => access.path === stored && access.op !== "exists")
+              .map((access) => access.op),
+          };
+        });
+
+      const text = yield* accessesDuring(produceText(request()));
+      assert.deepStrictEqual(text.ops, []);
+      assert.include(text.result.text, "- figure.png · image/png, 4 B");
+      const copied = yield* accessesDuring(produceText(request({ delivery: "clipboard" })));
+      assert.deepStrictEqual(copied.ops, []);
+      assert.include(copied.result.text, "- figure.png · image/png, 4 B");
+      const plan = yield* accessesDuring(service.prepareWordDiagrams(request({ format: "docx" })));
+      assert.deepStrictEqual(plan.ops, []);
+
+      // A `.zip` checks the file's size and streams it into the archive itself.
+      const zipped = yield* accessesDuring(
+        service.produce(request({}, { markdownPackaging: "with-attachments" })),
+      );
+      assert.deepStrictEqual(zipped.ops, ["stat"]);
+      assert(zipped.result.output._tag === "file");
+      const entries = yield* Effect.promise(() =>
+        readZip((zipped.result.output as { readonly path: string }).path),
+      );
+      assert.deepStrictEqual([...entries.get("attachments/01-figure.png")!], [137, 80, 78, 71]);
+
+      // Word and PDF embed the bytes.
+      const word = yield* accessesDuring(service.produce(request({ format: "docx" })));
+      assert.deepStrictEqual(word.ops, ["stat", "stream"]);
+      const pdf = yield* accessesDuring(service.document(request({ format: "pdf" })));
+      assert.deepStrictEqual(pdf.ops, ["stat", "stream"]);
+    }).pipe(Effect.provide(recordingLayer(fileAccesses))),
+  );
+
+  const rangeAccesses: Array<FileAccess> = [];
+  it.effect("ends every format at the chosen message, attachments included", () =>
+    Effect.gen(function* () {
+      const attachment = (id: string, name: string): ChatAttachment => ({
+        type: "image",
+        id: `thread-1-${id}`,
+        name,
+        mimeType: "image/png",
+        sizeBytes: PNG_BYTES.byteLength,
+      });
+      const before = attachment("11111111-1111-4111-8111-aaaaaaaaaaaa", "before.png");
+      const answered = attachment("22222222-2222-4222-8222-bbbbbbbbbbbb", "answered-later.png");
+      const later = attachment("33333333-3333-4333-8333-cccccccccccc", "later.png");
+      const beforePath = yield* storeAttachment(before, PNG_BYTES);
+      const excludedPaths = new Set([
+        yield* storeAttachment(answered, PNG_BYTES),
+        yield* storeAttachment(later, PNG_BYTES),
+      ]);
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO projection_threads
+        (thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode,
+         latest_turn_id, created_at, updated_at, deleted_at)
+        VALUES (${THREAD}, NULL, 'Steered', '{"provider":"codex","model":"gpt-5"}',
+         'full-access', 'default', 'turn-1', ${at(0)}, ${at(0)}, NULL)`;
+      const message = (
+        id: string,
+        role: string,
+        turnId: string | null,
+        text: string,
+        index: number,
+        attachments: ReadonlyArray<ChatAttachment> | null = null,
+      ) => sql`INSERT INTO projection_thread_messages
+        (message_id, thread_id, turn_id, role, text, attachments_json, is_streaming, created_at, updated_at)
+        VALUES (${id}, ${THREAD}, ${turnId}, ${role}, ${text},
+          ${attachments === null ? null : encodeAttachments(attachments)}, 0, ${at(index)}, ${at(index)})`;
+      const activity = (id: string, kind: string, payload: unknown, index: number) =>
+        sql`INSERT INTO projection_thread_activities
+          (activity_id, thread_id, turn_id, tone, kind, summary, payload_json, sequence, created_at)
+          VALUES (${id}, ${THREAD}, 'turn-1', 'tool', ${kind}, ${kind}, ${encodeJson(payload)},
+            ${index}, ${at(index)})`;
+      yield* message("user-1", "user", null, "Start", 1, [before]);
+      yield* activity("activity-1", "tool.completed", { title: "Before steer" }, 2);
+      yield* message("reasoning-1", "reasoning", "turn-1", "Early thought", 3);
+      yield* message("assistant-1", "assistant", "turn-1", "Working", 4);
+      yield* message("user-2", "user", null, "Change course", 5);
+      yield* activity("activity-2", "tool.completed", { title: "After steer" }, 6);
+      yield* message("reasoning-2", "reasoning", "turn-1", "Late thought", 7);
+      yield* activity(
+        "activity-3",
+        "user-input.requested",
+        { requestId: "request-1", questions: [{ id: "q", question: "Which one?" }] },
+        8,
+      );
+      yield* activity(
+        "activity-4",
+        "user-input.answer-submitted",
+        {
+          requestId: "request-1",
+          answers: { q: "This" },
+          attachmentsByQuestionId: { q: [answered] },
+        },
+        9,
+      );
+      yield* message("async-answer:request-1", "user", null, "This", 10, [answered]);
+      yield* message("assistant-2", "assistant", "turn-1", "Done", 11);
+      yield* message("user-3", "user", null, "Next", 12, [later]);
+      yield* sql`INSERT INTO projection_turns
+        (thread_id, turn_id, pending_message_id, assistant_message_id, state, requested_at, started_at,
+         completed_at, checkpoint_files_json)
+        VALUES (${THREAD}, 'turn-1', NULL, 'assistant-2', 'completed', ${at(1)}, ${at(1)}, ${at(11)}, '[]')`;
+
+      const service = yield* ConversationExportService.ConversationExportService;
+      const ranged = (format: ScientConversationExportRequest["format"]) =>
+        request(
+          { format },
+          {
+            includeWorkLog: true,
+            includeReasoning: true,
+            range: { _tag: "through-message", messageId: MessageId.make("user-2") },
+            markdownPackaging: "with-attachments",
+          },
+        );
+      const excluded = [
+        "After steer",
+        "Late thought",
+        "Which one?",
+        "answered-later",
+        "Done",
+        "Next",
+        "later.png",
+      ];
+      rangeAccesses.length = 0;
+
+      const markdown = yield* service.produce(ranged("markdown"));
+      assert(markdown.output._tag === "file");
+      const zipped = yield* Effect.promise(() =>
+        readZip((markdown.output as { readonly path: string }).path),
+      );
+      assert.deepStrictEqual([...zipped.keys()], ["Steered.md", "attachments/01-before.png"]);
+      const markdownText = zipped.get("Steered.md")!.toString("utf8");
+      for (const text of ["Start", "Before steer", "Early thought", "Working", "Change course"])
+        assert.include(markdownText, text);
+      for (const text of excluded) assert.notInclude(markdownText, text);
+
+      const scic = yield* service.produce(ranged("scic"));
+      assert(scic.output._tag === "file");
+      const packaged = yield* Effect.promise(() =>
+        readZip((scic.output as { readonly path: string }).path),
+      );
+      const snapshotJson = packaged.get("conversation.json")!.toString("utf8");
+      const manifestJson = packaged.get("manifest.json")!.toString("utf8");
+      assert.strictEqual(scic.messageCount, 3);
+      assert.include(snapshotJson, "Before steer");
+      for (const text of excluded) {
+        assert.notInclude(snapshotJson, text);
+        assert.notInclude(manifestJson, text);
+      }
+      assert.deepStrictEqual(
+        [...packaged.keys()].filter((name) => name.startsWith("attachments/")).length,
+        1,
+      );
+
+      const pdf = yield* service.document(ranged("pdf"));
+      assert.deepStrictEqual(
+        pdf.bundle.assets.map((asset) => asset.fileName),
+        ["before.png"],
+      );
+      for (const text of excluded) assert.notInclude(pdf.bundle.markdown, text);
+
+      assert.isTrue(rangeAccesses.some((access) => access.path === beforePath));
+      assert.deepStrictEqual(
+        rangeAccesses.filter((access) => excludedPaths.has(access.path)),
+        [],
+      );
+    }).pipe(Effect.provide(recordingLayer(rangeAccesses))),
+  );
+
+  it.effect("reports an attachment over the export's budget as too large to include", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const stored = yield* storeAttachment(image, new Uint8Array([137, 80, 78, 71]));
+      // A sparse file larger than the budget: never read, only measured.
+      yield* fileSystem.truncate(stored, SCIENT_CONVERSATION_EXPORT_MAX_ASSET_BYTES + 1);
+      yield* seedThread({ pairs: 1, attachments: [image] });
+      const service = yield* ConversationExportService.ConversationExportService;
+      const produced = yield* service.produce(
+        request({}, { markdownPackaging: "with-attachments" }),
+      );
+      assert.include(
+        produced.warnings.map((warning) => warning.message),
+        "Attachment “figure.png” is too large to include and is listed by name only.",
+      );
+      assert(produced.output._tag === "file");
+      const entries = yield* Effect.promise(() =>
+        readZip((produced.output as { readonly path: string }).path),
+      );
+      assert.deepStrictEqual([...entries.keys()], ["Long study results.md"]);
+      assert.include(
+        entries.get("Long study results.md")!.toString("utf8"),
+        "- figure.png · unavailable",
+      );
     }).pipe(Effect.provide(TestLayer)),
   );
 
@@ -561,6 +870,71 @@ describe("ConversationExportFiles", () => {
         }),
       );
     }).pipe(
+      Effect.provide(
+        ServerConfig.layerTest(process.cwd(), { prefix: "scient-convexport-files-" }).pipe(
+          Layer.provideMerge(NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.live("streams archive files and refuses one that changed since the export checked it", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-zip-source-" });
+      const source = path.join(directory, "data.bin");
+      const bytes = new TextEncoder().encode("attachment bytes");
+      yield* fileSystem.writeFile(source, bytes);
+      const digest =
+        `sha256:${NodeCrypto.createHash("sha256").update(bytes).digest("hex")}` as const;
+      const files = yield* ConversationExportFiles.make();
+      const written = yield* files.write({
+        exportId: "export-streamed",
+        fileName: "Chat.zip",
+        content: {
+          _tag: "zip",
+          modifiedAt: "2026-09-28T09:12:00.000Z",
+          entries: [
+            { path: "Chat.md", bytes: new TextEncoder().encode("# Chat\n") },
+            {
+              path: "attachments/01-data.bin",
+              file: { path: source, byteLength: bytes.byteLength, sha256: digest },
+            },
+          ],
+        },
+      });
+      const entries = yield* Effect.promise(() => readZip(written.path));
+      assert.strictEqual(
+        entries.get("attachments/01-data.bin")!.toString("utf8"),
+        "attachment bytes",
+      );
+
+      for (const file of [
+        { path: source, byteLength: bytes.byteLength + 1, sha256: null },
+        { path: source, byteLength: bytes.byteLength, sha256: `sha256:${"0".repeat(64)}` as const },
+        { path: path.join(directory, "missing.bin"), byteLength: 1, sha256: null },
+      ]) {
+        const exit = yield* Effect.exit(
+          files.write({
+            exportId: "export-changed",
+            fileName: "Changed.zip",
+            content: {
+              _tag: "zip",
+              modifiedAt: "2026-09-28T09:12:00.000Z",
+              entries: [{ path: "attachments/01-data.bin", file }],
+            },
+          }),
+        );
+        assert.isTrue(Exit.isFailure(exit));
+        assert.isFalse(
+          yield* fileSystem.exists(
+            path.join(path.dirname(path.dirname(written.path)), "export-changed", "Changed.zip"),
+          ),
+        );
+      }
+    }).pipe(
+      Effect.scoped,
       Effect.provide(
         ServerConfig.layerTest(process.cwd(), { prefix: "scient-convexport-files-" }).pipe(
           Layer.provideMerge(NodeServices.layer),

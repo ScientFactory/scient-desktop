@@ -63,17 +63,44 @@ export type ResolvedAttachmentContent =
   | { readonly _tag: "bytes"; readonly bytes: Uint8Array; readonly sha256: Sha256Digest }
   | { readonly _tag: "unavailable"; readonly reason: DocumentAssetUnavailableReason };
 
-export interface ConversationDocumentInput {
+/**
+ * An available attachment whose bytes stay outside the bundle: a text-only
+ * export lists it by name and size without reading it, and a packaging writer
+ * copies it into the package itself. `sha256` is set when that writer needs it.
+ */
+export interface ExternalAttachmentContent {
+  readonly _tag: "external";
+  readonly byteLength: number;
+  readonly sha256: Sha256Digest | null;
+}
+
+/** A bundle asset; an `external` one names the attachment a packaging writer copies. */
+export type ConversationDocumentAsset = Omit<DocumentAsset, "content"> & {
+  readonly content:
+    | DocumentAsset["content"]
+    | {
+        readonly _tag: "external";
+        readonly localId: string;
+        readonly sha256: Sha256Digest | null;
+      };
+};
+
+/** A document bundle whose assets may keep their bytes outside it. */
+export type ConversationDocumentBundle = Omit<DocumentBundle, "assets"> & {
+  readonly assets: ReadonlyArray<ConversationDocumentAsset>;
+};
+
+export interface ConversationDocumentInput<Content = ResolvedAttachmentContent> {
   readonly snapshot: ConversationSnapshotV1;
   /** The per-export value every structure marker carries. */
   readonly exportValue: string;
   /** IANA zone for speaker headings; UTC when unknown. */
   readonly timeZone: string;
-  readonly resolveAttachment: (attachment: ConversationAttachment) => ResolvedAttachmentContent;
+  readonly resolveAttachment: (attachment: ConversationAttachment) => Content;
 }
 
-export interface ConversationDocument {
-  readonly bundle: DocumentBundle;
+export interface ConversationDocument<Bundle = DocumentBundle> {
+  readonly bundle: Bundle;
   /** Messages written into the document, which the Markdown markers number. */
   readonly messageCount: number;
 }
@@ -317,9 +344,17 @@ function details(summary: string, body: string): string {
 
 /**
  * Builds the document bundle. Deterministic for a given snapshot, export
- * value, zone, and resolved attachment content.
+ * value, zone, and resolved attachment content. With attachment bytes only,
+ * the bundle is a `DocumentBundle` any readable writer takes; with `external`
+ * content it is for the Markdown and conversation-file writers.
  */
-export function buildConversationDocument(input: ConversationDocumentInput): ConversationDocument {
+export function buildConversationDocument(input: ConversationDocumentInput): ConversationDocument;
+export function buildConversationDocument(
+  input: ConversationDocumentInput<ResolvedAttachmentContent | ExternalAttachmentContent>,
+): ConversationDocument<ConversationDocumentBundle>;
+export function buildConversationDocument(
+  input: ConversationDocumentInput<ResolvedAttachmentContent | ExternalAttachmentContent>,
+): ConversationDocument<ConversationDocumentBundle> {
   const { snapshot, exportValue } = input;
   const answeredRequestIds = new Set(snapshot.questionAnswers.map((answer) => answer.id));
   // Chat shows a folded question answer instead of its "async-answer" message.
@@ -375,11 +410,14 @@ export function buildConversationDocument(input: ConversationDocumentInput): Con
         ? (snapshot.provenance.sourceImport?.omissions ?? []).map(sourceOmissionWarning)
         : []),
   ];
-  const assets: DocumentAsset[] = [];
+  const assets: ConversationDocumentAsset[] = [];
   const citations: DocumentCitation[] = [];
   const assetIdByLocalId = new Map<string, string>();
 
-  const registerAsset = (attachment: ConversationAttachment, id: string): DocumentAsset => {
+  const registerAsset = (
+    attachment: ConversationAttachment,
+    id: string,
+  ): ConversationDocumentAsset => {
     const content = attachment.available
       ? input.resolveAttachment(attachment)
       : ({ _tag: "unavailable", reason: "missing" } as const);
@@ -389,17 +427,24 @@ export function buildConversationDocument(input: ConversationDocumentInput): Con
         message: `Attachment “${warningValue(attachment.name)}” ${content.reason === "too-large" ? "is too large to include" : "could not be read"} and is listed by name only.`,
       });
     }
-    const asset: DocumentAsset = {
+    const asset: ConversationDocumentAsset = {
       id,
       role: attachment.kind === "image" ? "image" : "attachment",
       fileName: attachment.name,
       mediaType: attachment.mimeType,
-      byteLength: content._tag === "bytes" ? content.bytes.byteLength : attachment.sizeBytes,
+      byteLength:
+        content._tag === "bytes"
+          ? content.bytes.byteLength
+          : content._tag === "external"
+            ? content.byteLength
+            : attachment.sizeBytes,
       packagePath: `attachments/${String(assets.length + 1).padStart(2, "0")}-${safeFileName(attachment.name)}`,
       content:
         content._tag === "bytes"
           ? { _tag: "bytes", bytes: content.bytes, sha256: content.sha256 }
-          : { _tag: "unavailable", reason: content.reason },
+          : content._tag === "external"
+            ? { _tag: "external", localId: attachment.localId, sha256: content.sha256 }
+            : { _tag: "unavailable", reason: content.reason },
     };
     assets.push(asset);
     assetIdByLocalId.set(attachment.localId, id);
@@ -785,7 +830,7 @@ function replaceLocalImages(
   return applyEdits(source, edits);
 }
 
-function assetListItem(asset: DocumentAsset): string {
+function assetListItem(asset: ConversationDocumentAsset): string {
   const name = escapeMarkdownText(asset.fileName);
   if (asset.content._tag === "unavailable") return `- ${name} · unavailable`;
   const link = `${asset.role === "image" ? "!" : ""}[${name}](${DOCUMENT_ASSET_URL_PREFIX}${asset.id})`;
