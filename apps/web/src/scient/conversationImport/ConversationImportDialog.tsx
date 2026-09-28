@@ -203,23 +203,35 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
         labels: new Map(
           environments.map((environment) => [environment.environmentId, environment.label]),
         ),
+        connected: new Set(
+          environments
+            .filter((environment) => environment.connection.phase === "connected")
+            .map((environment) => environment.environmentId),
+        ),
         primaryEnvironmentId,
       }),
     [configs, environments, primaryEnvironmentId],
   );
+  const [retries, setRetries] = useState(0);
   // The destination is fixed once a file is sent there, or once the person
-  // picks one. Until then the first option (this device) is used. A fixed
-  // destination that disappears stops the import; the file is never sent
-  // to a destination nobody chose.
+  // picks one. Until then the first connected option (this device) is used.
+  // The file is never sent to a destination nobody chose: one that
+  // disappears stops the import, and so does losing its connection, which
+  // only "Try again" resumes, even after it reconnects.
   const [destination, setDestination] = useState<EnvironmentId | null>(null);
-  const destinationAvailable = environmentOptions.some(
+  const destinationOption = environmentOptions.find(
     (option) => option.environmentId === destination,
   );
-  const destinationLost = destination !== null && !destinationAvailable;
+  const destinationGone = destination !== null && destinationOption === undefined;
+  const [disconnectedAt, setDisconnectedAt] = useState<number | null>(null);
+  if (destinationOption?.connected === false && disconnectedAt !== retries) {
+    setDisconnectedAt(retries);
+  }
+  const connectionLost = !destinationGone && destination !== null && disconnectedAt === retries;
   const environmentId =
     destination === null
-      ? (environmentOptions[0]?.environmentId ?? null)
-      : destinationAvailable
+      ? (environmentOptions.find((option) => option.connected)?.environmentId ?? null)
+      : destinationOption?.connected === true && !connectionLost
         ? destination
         : null;
   const config = environmentId === null ? undefined : configs.get(environmentId);
@@ -241,7 +253,6 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
   // "Start with the whole file" re-stages this same Markdown file as a document.
   const [documentModeFor, setDocumentModeFor] = useState<ConversationImportSource | null>(null);
   const markdownMode: "document" | undefined = documentModeFor === source ? "document" : undefined;
-  const [retries, setRetries] = useState(0);
   // One attempt per file, destination, and mode; "Try again" starts another.
   // What an attempt shows is kept with it, so a new attempt starts clean.
   const attempt = useMemo(
@@ -444,11 +455,20 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
   const status = fileProblem === null ? stageStatus(stage) : null;
   const failure =
     fileProblem ??
-    (destinationLost
+    (destinationGone
       ? "That destination is no longer available. Choose another."
-      : stage._tag === "failed"
-        ? stage.message
-        : null);
+      : connectionLost
+        ? "Lost the connection to that destination. Choose another or try again."
+        : file !== null && environmentId === null && destination === null
+          ? "No destination is connected. Reconnect one to import this file."
+          : stage._tag === "failed"
+            ? stage.message
+            : null);
+  // "Try again" resends to the same destination, only once it is connected.
+  const canRetry =
+    fileProblem === null &&
+    !destinationGone &&
+    (connectionLost ? destinationOption?.connected === true : stage._tag === "failed");
   const environmentLabel = environmentOptions.find(
     (option) => option.environmentId === environmentId,
   )?.label;
@@ -473,7 +493,7 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
         <DialogPanel>
           <div className="flex flex-col gap-4">
             <ConversationFileZone file={file} disabled={importing} />
-            {environmentOptions.length > 1 || destinationLost ? (
+            {environmentOptions.length > 1 || destinationGone || connectionLost ? (
               <div className="flex flex-col gap-2">
                 <span id={`${id}-environment`} className="text-sm font-medium">
                   Destination
@@ -488,8 +508,9 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
                     const option = environmentOptions.find(
                       (candidate) => candidate.environmentId === value,
                     );
-                    if (!option || option.environmentId === environmentId) return;
+                    if (!option?.connected || option.environmentId === environmentId) return;
                     setDestination(option.environmentId);
+                    setDisconnectedAt(null);
                     setProjectId(null);
                     setModelKey(null);
                   }}
@@ -499,8 +520,12 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
                   </SelectTrigger>
                   <SelectPopup>
                     {environmentOptions.map((option) => (
-                      <SelectItem key={option.environmentId} value={option.environmentId}>
-                        {option.label}
+                      <SelectItem
+                        key={option.environmentId}
+                        value={option.environmentId}
+                        disabled={!option.connected}
+                      >
+                        {option.connected ? option.label : `${option.label} (not connected)`}
                       </SelectItem>
                     ))}
                   </SelectPopup>
@@ -517,7 +542,7 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
                 <p role="alert" className="text-destructive text-sm">
                   {failure}
                 </p>
-                {fileProblem === null && !destinationLost ? (
+                {canRetry ? (
                   <Button
                     type="button"
                     size="xs"

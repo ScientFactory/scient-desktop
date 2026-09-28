@@ -56,12 +56,15 @@ export function importFileProblem(fileName: string, sizeBytes: number): string |
 export interface ImportEnvironmentOption {
   readonly environmentId: EnvironmentId;
   readonly label: string;
+  /** Whether its connection is up now; a known environment keeps its config while it is down. */
+  readonly connected: boolean;
 }
 
-/** Connected environments by name, this device first. */
+/** Known environments by name, this device first. */
 export function importEnvironmentOptions(input: {
   readonly environmentIds: Iterable<EnvironmentId>;
   readonly labels: ReadonlyMap<EnvironmentId, string>;
+  readonly connected: ReadonlySet<EnvironmentId>;
   readonly primaryEnvironmentId: EnvironmentId | null;
 }): ReadonlyArray<ImportEnvironmentOption> {
   return [...input.environmentIds]
@@ -72,6 +75,7 @@ export function importEnvironmentOptions(input: {
         environmentId,
         runtimeLabel: input.labels.get(environmentId) ?? null,
       }),
+      connected: input.connected.has(environmentId),
     }))
     .toSorted(
       (left, right) =>

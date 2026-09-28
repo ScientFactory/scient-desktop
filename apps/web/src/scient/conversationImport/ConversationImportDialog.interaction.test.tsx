@@ -39,11 +39,16 @@ const local = EnvironmentId.make("4b1b7c1e-8d1f-4a5e-9b0e-0c9f5f1d2a3b");
 const remote = EnvironmentId.make("9f0e1d2c-3b4a-4596-8778-695a4b3c2d1e");
 const state = vi.hoisted(() => ({
   environmentIds: [] as EnvironmentId[],
+  offline: [] as EnvironmentId[],
   runtimeMode: "approval-required" as string,
 }));
 const connected = vi.hoisted(() => ({ listeners: new Set<() => void>() }));
 function setConnectedEnvironments(ids: EnvironmentId[]) {
   state.environmentIds = ids;
+  for (const listener of connected.listeners) listener();
+}
+function setOffline(ids: EnvironmentId[]) {
+  state.offline = ids;
   for (const listener of connected.listeners) listener();
 }
 
@@ -95,12 +100,30 @@ vi.mock("../../state/entities", () => ({
   },
 }));
 vi.mock("../../state/environments", () => ({
-  useEnvironments: () => ({
-    environments: [
-      { environmentId: local, label: "Local" },
-      { environmentId: remote, label: "Lab workstation" },
-    ],
-  }),
+  // Connection state is a subscription too; a dropped environment keeps its config.
+  useEnvironments: () => {
+    const offline = useSyncExternalStore(
+      (listener) => {
+        connected.listeners.add(listener);
+        return () => connected.listeners.delete(listener);
+      },
+      () => state.offline,
+    );
+    const environments = useMemo(
+      () =>
+        [
+          { environmentId: local, label: "Local" },
+          { environmentId: remote, label: "Lab workstation" },
+        ].map((environment) => ({
+          ...environment,
+          connection: {
+            phase: offline.includes(environment.environmentId) ? "reconnecting" : "connected",
+          },
+        })),
+      [offline],
+    );
+    return { environments };
+  },
   usePrimaryEnvironmentId: () => local,
 }));
 
@@ -152,6 +175,7 @@ let container: HTMLDivElement;
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   state.environmentIds = [local];
+  state.offline = [];
   state.runtimeMode = "approval-required";
   useConversationImportRequests.setState({ nextId: 0, queue: [], replaceable: false });
   for (const mock of [
@@ -298,6 +322,63 @@ describe("ConversationImportDialog", () => {
     await act(async () => setConnectedEnvironments([remote, EnvironmentId.make("third")]));
     await flush();
     expect(createConversationImportUpload).toHaveBeenCalledOnce();
+  });
+
+  it("stops when the destination's connection drops, and resends only on Try again", async () => {
+    let signal: AbortSignal | undefined;
+    uploadConversationFile.mockImplementation(
+      (_url: string, _file: File, options: { signal: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          signal = options.signal;
+          options.signal.addEventListener("abort", () =>
+            reject(new DOMException("cancelled", "AbortError")),
+          );
+        }),
+    );
+    await openWith(scic());
+    expect(document.querySelector('[role="status"]')?.textContent).toBe("Sending the file…");
+
+    // The config stays cached while the connection is down.
+    await act(async () => setOffline([local]));
+    await flush();
+    expect(signal?.aborted).toBe(true);
+    expect(cancelConversationImport).toHaveBeenCalledWith(local, importId);
+    expect(alerts()).toEqual([
+      "Lost the connection to that destination. Choose another or try again.",
+    ]);
+    expect(dialog()?.textContent).toContain("Destination");
+    expect(button("Try again")).toBeUndefined();
+
+    // Reconnecting offers Try again but does not resend by itself.
+    uploadConversationFile.mockResolvedValue(undefined);
+    await act(async () => setOffline([]));
+    await flush();
+    expect(createConversationImportUpload).toHaveBeenCalledOnce();
+    expect(alerts()).toEqual([
+      "Lost the connection to that destination. Choose another or try again.",
+    ]);
+
+    await act(async () => button("Try again")!.click());
+    await flush();
+    expect(createConversationImportUpload).toHaveBeenCalledTimes(2);
+    expect(createConversationImportUpload).toHaveBeenLastCalledWith(
+      local,
+      "field-notes.scic",
+      7,
+      undefined,
+    );
+    expect(alerts()).toEqual([]);
+    expect(button("Import")?.disabled).toBe(false);
+  });
+
+  it("stops a finished check when the destination's connection drops", async () => {
+    await openWith(scic());
+    expect(button("Import")?.disabled).toBe(false);
+    await act(async () => setOffline([local]));
+    await flush();
+    expect(cancelConversationImport).toHaveBeenCalledWith(local, importId);
+    expect(button("Import")?.disabled).toBe(true);
+    expect(dialog()?.textContent).not.toContain("1 message · 2 attachments");
   });
 
   it("stops the upload and releases the staged import when cancelled", async () => {

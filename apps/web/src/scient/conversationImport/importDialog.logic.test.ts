@@ -74,11 +74,12 @@ describe("importEnvironmentOptions", () => {
           [local, "Local"],
           [remote, "Lab workstation"],
         ]),
+        connected: new Set([local]),
         primaryEnvironmentId: local,
       }),
     ).toEqual([
-      { environmentId: local, label: "This device" },
-      { environmentId: remote, label: "Lab workstation" },
+      { environmentId: local, label: "This device", connected: true },
+      { environmentId: remote, label: "Lab workstation", connected: false },
     ]);
   });
 });

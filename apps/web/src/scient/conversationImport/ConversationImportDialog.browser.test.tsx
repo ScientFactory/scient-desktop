@@ -70,8 +70,8 @@ vi.mock("../../state/entities", () => {
 });
 vi.mock("../../state/environments", () => {
   const environments = [
-    { environmentId: local, label: "Local" },
-    { environmentId: remote, label: "Lab workstation" },
+    { environmentId: local, label: "Local", connection: { phase: "connected" } },
+    { environmentId: remote, label: "Lab workstation", connection: { phase: "connected" } },
   ];
   return {
     useEnvironments: () => ({ environments }),

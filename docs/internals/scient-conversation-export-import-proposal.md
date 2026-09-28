@@ -860,11 +860,15 @@ import. Changing the file or the destination environment does the same and start
 
 - **Destination environment.** Listed by name through the same labelling as the branch toolbar
   (the local environment is "This device"), this device first; the row is hidden when only one
-  environment is connected. The first option is used only until a file is sent or the user
-  picks one; from then the destination is fixed. If it disappears (removed, disabled or
-  disconnected), the transfer is aborted, the staged import is cancelled where that server is
-  still reachable, and the dialog asks for another destination; the file is never sent to a
-  destination the user did not choose.
+  environment is known. Availability is config membership and a live connection: a known
+  environment keeps its cached config while disconnected, so its connection phase decides, and
+  an environment that is not connected is listed but cannot be chosen. The first connected
+  option is used only until a file is sent or the user picks one; from then the destination is
+  fixed. If it disappears (removed or disabled), or its connection drops at any stage, the
+  transfer is aborted, the staged import is cancelled as a best effort (unconfirmed imports also
+  expire on the server), and the dialog asks for another destination. After a dropped
+  connection it offers **Try again** once that destination reconnects; reconnecting alone never
+  resends. The file is never sent to a destination the user did not choose.
 - **Preview.** Server validation facts only, never message text: kind, pluralized counts, the
   source provider and model by display name, what the sender left out, and notes from the file.
   A plain Markdown document is titled "Start a conversation from this document" and confirmed
