@@ -28,6 +28,18 @@ describe("conversation import provenance notice", () => {
     expect(notice.description).not.toContain("Your next message starts");
   });
 
+  it("says when imported times were moved back, and by how much", () => {
+    const moved = (timesShiftedMs: number) =>
+      conversationImportNotice({ ...imported, timesShiftedMs }).description;
+    expect(moved(86_436_000)).toContain(
+      "Times are shown 1 day 36 seconds earlier than in the file, because the file's times were later than the moment it was imported.",
+    );
+    expect(moved(2 * 3_600_000 + 5 * 60_000 + 7_000)).toContain("shown 2 hours 5 minutes earlier");
+    expect(moved(1_000)).toContain("shown 1 second earlier");
+    expect(moved(250)).toContain("shown less than a second earlier");
+    expect(conversationImportNotice(imported).description).not.toContain("Times are shown");
+  });
+
   it("renders a persistent, non-dismissable label for an imported thread after continuation", () => {
     const markup = renderToStaticMarkup(
       createElement(ConversationImportProvenanceBadge, {

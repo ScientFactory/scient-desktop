@@ -716,6 +716,12 @@ export const OrchestrationConversationImportSource = Schema.Struct({
   sourceFormatVersion: PositiveInt,
   importedAt: IsoDateTime,
   omissions: Schema.Array(OrchestrationConversationImportOmission),
+  /**
+   * How far the imported times were moved back, in milliseconds, because some
+   * were later than the importing server's clock (the sender's clock was
+   * ahead). Absent when nothing was moved; earlier transfers' moves add up.
+   */
+  timesShiftedMs: Schema.optional(PositiveInt),
 });
 export type OrchestrationConversationImportSource =
   typeof OrchestrationConversationImportSource.Type;

@@ -757,7 +757,17 @@ thread and a lineage row. An import has neither, so the model is extended explic
   `NOT NULL`) becomes nullable, and is null for imports. External IDs never masquerade as local thread
   IDs.
 - **External identity lives only in provenance:** the package's export ID, source thread ID, and digest.
-- **Imported IDs keep the source order.** Records keep their source timestamps, and history is read
+- **Imported history is an inherited prefix, whatever the clocks say.** When a file's latest time is
+  later than the import (the sender's clock was ahead), every imported time moves back by the same
+  amount, so the latest equals the import time: order and spacing are kept, and every message sent
+  afterwards shows after the imported history. The import origin records the move
+  (`timesShiftedMs`, summed with earlier transfers' moves and kept through re-export), and the
+  import notice says "Times are shown <duration> earlier than in the file, because the file's times
+  were later than the moment it was imported." The continuation handoff also treats every record
+  dated at or before the import as prior to the current message, even if that message is dated
+  earlier.
+- **Imported IDs keep the source order.** Records keep their source timestamps (moved back together
+  only as above), and history is read
   back by timestamp, then ID. So the IDs of imported messages, reasoning, activities, plans, and turns
   are one random prefix per import followed by a zero-padded number in history order; records that
   share a timestamp read back, continue, and re-export in the order the file lists them.

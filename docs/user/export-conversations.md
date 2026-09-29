@@ -105,7 +105,10 @@ One import holds up to 5,000 messages, work-log entries, and other items. For a 
 conversation, export it again with **Work log** and **Reasoning** turned off: its messages still
 come across, without the tool details and thinking. If it is still too long, Scient can't import
 it as a conversation; export it as PDF or Markdown to keep a copy you can read. Anything an import
-leaves out, such as damaged Markdown sections, is noted on the imported conversation.
+leaves out, such as damaged Markdown sections, is noted on the imported conversation. If the
+file's times are later than the moment you import it, because the other computer's clock was ahead,
+Scient moves all of them back by the same amount so that the conversation stays in order, and the
+notice on the conversation says by how much.
 
 ## Using Markdown later
 

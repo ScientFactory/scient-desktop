@@ -166,6 +166,37 @@ describe("buildHandoffItems", () => {
     expect(items.map((item) => item.itemId)).toEqual(["u1"]);
   });
 
+  it("keeps inherited history before the current message whatever its times say", () => {
+    // The current message was dated before the imported history (a clock that
+    // went back), so it sorts first; the history is still an inherited prefix.
+    const items = buildHandoffItems({
+      messages: [
+        message("next", "user", "now", null, 1),
+        message("u1", "user", "first", "t1", 2),
+        message("a1", "assistant", "answer", "t1", 3),
+      ],
+      activities: [tool("done", "tool.completed", "t1", 2)],
+      proposedPlans: [],
+      beforeMessageId: "next",
+      inheritedThrough: "2026-09-26T10:05:00.000Z",
+      midTurnCut: undefined,
+    });
+    expect(items.map((item) => item.itemId)).toEqual(["u1", "done", "a1"]);
+    // Without a transfer boundary, only what precedes the message is prior.
+    expect(
+      buildHandoffItems({
+        messages: [
+          message("next", "user", "now", null, 1),
+          message("u1", "user", "first", "t1", 2),
+        ],
+        activities: [],
+        proposedPlans: [],
+        beforeMessageId: "next",
+        midTurnCut: undefined,
+      }),
+    ).toEqual([]);
+  });
+
   it("labels a mid-turn cut: partial text and unfinished tool calls", () => {
     const cut: ThreadForkMidTurnCut = {
       sourceTurnId: TurnId.make("src"),

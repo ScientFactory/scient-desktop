@@ -40,6 +40,7 @@ import {
 } from "@t3tools/contracts";
 import { importedMessageMarkdown, importedWorkLogOmissions } from "@scientfactory/conversation";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -594,9 +595,75 @@ function importOmissions(
   return [...byKind.values()];
 }
 
+type ImportedSnapshot = ValidatedConversationImport["snapshot"];
+
+/**
+ * How far to move the imported times back so that none is later than the
+ * import. A sender whose clock ran ahead would otherwise date its history
+ * after messages sent here later: they would show, and reach the agent,
+ * before it. Zero when every time is at or before the import.
+ */
+function futureSkewMs(snapshot: ImportedSnapshot, importedAt: string): number {
+  const limit = Date.parse(importedAt);
+  let latest = limit;
+  for (const time of [
+    ...snapshot.messages.flatMap((message) => [message.createdAt, message.updatedAt]),
+    ...snapshot.reasoning.flatMap((reasoning) => [reasoning.createdAt, reasoning.updatedAt]),
+    ...snapshot.proposedPlans.flatMap((plan) => [plan.createdAt, plan.updatedAt]),
+    ...snapshot.workLog.map((entry) => entry.createdAt),
+    ...snapshot.questionAnswers.map((answer) => answer.createdAt),
+  ]) {
+    latest = Math.max(latest, Date.parse(time));
+  }
+  return latest - limit;
+}
+
+/** Every record time moved back by `shiftMs`; order and spacing are kept. */
+function shiftedBack(snapshot: ImportedSnapshot, shiftMs: number): ImportedSnapshot {
+  if (shiftMs === 0) return snapshot;
+  const back = (time: string) =>
+    DateTime.formatIso(DateTime.makeUnsafe(Date.parse(time) - shiftMs));
+  return {
+    ...snapshot,
+    messages: snapshot.messages.map((message) => ({
+      ...message,
+      createdAt: back(message.createdAt),
+      updatedAt: back(message.updatedAt),
+    })),
+    reasoning: snapshot.reasoning.map((reasoning) => ({
+      ...reasoning,
+      createdAt: back(reasoning.createdAt),
+      updatedAt: back(reasoning.updatedAt),
+    })),
+    proposedPlans: snapshot.proposedPlans.map((plan) => ({
+      ...plan,
+      createdAt: back(plan.createdAt),
+      updatedAt: back(plan.updatedAt),
+    })),
+    workLog: snapshot.workLog.map((entry) => ({ ...entry, createdAt: back(entry.createdAt) })),
+    questionAnswers: snapshot.questionAnswers.map((answer) => ({
+      ...answer,
+      createdAt: back(answer.createdAt),
+    })),
+  };
+}
+
+/** How far earlier transfers of this history already moved its times back. */
+function earlierShiftMs(snapshot: ImportedSnapshot): number {
+  const provenance = snapshot.provenance;
+  return provenance._tag === "import"
+    ? (provenance.timesShiftedMs ?? 0)
+    : provenance._tag === "fork"
+      ? (provenance.sourceImport?.timesShiftedMs ?? 0)
+      : 0;
+}
+
 /**
  * The import command for one attempt. Pure: the same package, ids, and
- * destination always give the same command.
+ * destination always give the same command. Imported history is a prefix of
+ * the new thread: when its latest time is later than the import (the
+ * sender's clock was ahead), every time moves back by the same amount, and
+ * the thread's import origin records how far (`timesShiftedMs`).
  */
 export function buildConversationImportCommand(input: {
   readonly validated: ValidatedConversationImport;
@@ -605,8 +672,14 @@ export function buildConversationImportCommand(input: {
   /** When the attempt began; recorded in the journal and reused on retry. */
   readonly importedAt: string;
 }): ThreadConversationImportCommand {
-  const { validated, ids, destination, importedAt } = input;
+  const { ids, destination, importedAt } = input;
+  const timesShiftedMs = futureSkewMs(input.validated.snapshot, importedAt);
+  const validated: ValidatedConversationImport = {
+    ...input.validated,
+    snapshot: shiftedBack(input.validated.snapshot, timesShiftedMs),
+  };
   const { snapshot } = validated;
+  const totalShiftMs = timesShiftedMs + earlierShiftMs(snapshot);
   const assignment = assignTurns(validated);
   const localTurn = (key: string | null | undefined): TurnId | null =>
     key === null || key === undefined ? null : (ids.turns[key] ?? null);
@@ -776,7 +849,11 @@ export function buildConversationImportCommand(input: {
       return turnId === undefined ? [] : [turnId];
     }),
     turns,
-    origin: { ...provenance, omissions: importOmissions(validated, skippedRecords) },
+    origin: {
+      ...provenance,
+      omissions: importOmissions(validated, skippedRecords),
+      ...(totalShiftMs > 0 ? { timesShiftedMs: totalShiftMs } : {}),
+    },
     createdAt: importedAt,
   };
 }

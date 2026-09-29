@@ -171,21 +171,33 @@ function messageItem(
  * History items for everything before `beforeMessageId`, in timeline order.
  * Streaming rows are excluded; a mid-turn fork's copied rows are complete
  * copies and are labelled partial through the cut record instead.
+ *
+ * `inheritedThrough` is the transfer boundary of an imported thread: records
+ * dated at or before it came with the import and are always prior, even when
+ * the current message is dated earlier (a clock that went back).
  */
 export function buildHandoffItems(input: {
   readonly messages: ReadonlyArray<OrchestrationMessage>;
   readonly activities: ReadonlyArray<OrchestrationThreadActivity>;
   readonly proposedPlans: ReadonlyArray<OrchestrationProposedPlan>;
   readonly beforeMessageId: string;
+  readonly inheritedThrough?: string | undefined;
   readonly midTurnCut: ThreadForkMidTurnCut | undefined;
 }): ReadonlyArray<HandoffItem> {
   const beforeIndex = input.messages.findIndex((message) => message.id === input.beforeMessageId);
-  const priorMessages = (
-    beforeIndex < 0 ? input.messages : input.messages.slice(0, beforeIndex)
-  ).filter((message) => !message.streaming);
+  const inherited = (createdAt: string) =>
+    input.inheritedThrough !== undefined && createdAt <= input.inheritedThrough;
+  const priorMessages = input.messages.filter(
+    (message, index) =>
+      !message.streaming &&
+      (beforeIndex < 0 ||
+        index < beforeIndex ||
+        (index > beforeIndex && inherited(message.createdAt))),
+  );
   const cutoff =
     beforeIndex < 0 ? undefined : (input.messages[beforeIndex]?.createdAt ?? undefined);
-  const before = (createdAt: string) => cutoff === undefined || createdAt < cutoff;
+  const before = (createdAt: string) =>
+    cutoff === undefined || createdAt < cutoff || inherited(createdAt);
 
   const timeline: Array<{ readonly createdAt: string; readonly item: Omit<HandoffItem, "order"> }> =
     [];

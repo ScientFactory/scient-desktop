@@ -18,12 +18,14 @@ import {
   writeConversationMarkdown,
 } from "@scientfactory/conversation";
 import { assert, describe, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { ServerConfig } from "../../config.ts";
@@ -102,9 +104,17 @@ const leaseFor = (
     }),
   );
 
-/** Every test runs against a fresh engine, database, and state directory. */
+/**
+ * Every test runs against a fresh engine, database, and state directory, on a
+ * clock set after the fixtures' history (the test clock otherwise starts in
+ * 1970, which would date every fixture after the import).
+ */
 const withImporter = <A, E, R>(effect: Effect.Effect<A, E, R>, controls?: ImportTestControls) =>
-  createProjects.pipe(Effect.andThen(effect), Effect.provide(importTestLayer(controls)));
+  TestClock.setTime(Date.parse("2026-09-28T09:30:00.000Z")).pipe(
+    Effect.andThen(createProjects),
+    Effect.andThen(effect),
+    Effect.provide(importTestLayer(controls)),
+  );
 
 const failImport = (lease: ConversationImportLease, request = importRequest()) =>
   Effect.flatMap(ConversationImporter, (importer) =>
@@ -465,6 +475,126 @@ describe("ConversationImporter", () => {
         assert.include(markdown, "12 more steps");
       }),
     ),
+  );
+
+  it.effect(
+    "keeps history dated after this server's clock as an inherited prefix, with a note",
+    () =>
+      withImporter(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse("2026-09-28T10:00:00.000Z"));
+          // The sender's clock ran a day and a little ahead of this server's.
+          const isoAt = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
+          const ahead = (iso: string) => isoAt(Date.parse(iso) + 2 * 24 * 60 * 60_000);
+          const fixture = importFixture({ turns: 3, reasoning: true, workLog: true });
+          const source = fixture.input.snapshot;
+          const input: typeof fixture.input = {
+            ...fixture.input,
+            snapshot: {
+              ...source,
+              messages: source.messages.map((message) => ({
+                ...message,
+                createdAt: ahead(message.createdAt),
+                updatedAt: ahead(message.updatedAt),
+              })),
+              reasoning: source.reasoning.map((reasoning) => ({
+                ...reasoning,
+                createdAt: ahead(reasoning.createdAt),
+                updatedAt: ahead(reasoning.updatedAt),
+              })),
+              workLog: source.workLog.map((entry) => ({
+                ...entry,
+                createdAt: ahead(entry.createdAt),
+              })),
+              proposedPlans: source.proposedPlans.map((plan) => ({
+                ...plan,
+                createdAt: ahead(plan.createdAt),
+                updatedAt: ahead(plan.updatedAt),
+              })),
+            },
+          };
+          const { lease } = yield* leaseFor({ ...fixture, input });
+          const { result } = yield* importOnce(lease);
+          const imported = (yield* readThread(result.threadId))!;
+          // Moved back together by how far the latest time was ahead: no
+          // imported time is later than the import, and spacing is kept.
+          const latest = "2026-09-29T10:00:36.000Z";
+          const shift = Date.parse(latest) - Date.parse("2026-09-28T10:00:00.000Z");
+          assert.strictEqual(imported.conversationImport?.timesShiftedMs, shift);
+          assert.deepStrictEqual(
+            imported.messages.map((message) => message.createdAt).toSorted(),
+            [...input.snapshot.messages, ...input.snapshot.reasoning]
+              .map((record) => isoAt(Date.parse(record.createdAt) - shift))
+              .toSorted(),
+          );
+          for (const time of [
+            ...imported.messages.flatMap((message) => [message.createdAt, message.updatedAt]),
+            ...imported.activities.map((activity) => activity.createdAt),
+            ...imported.proposedPlans.flatMap((plan) => [plan.createdAt, plan.updatedAt]),
+          ]) {
+            assert.isAtMost(Date.parse(time), Date.parse(imported.conversationImport!.importedAt));
+          }
+
+          // A message sent after the import shows after all of it, and the
+          // agent receives all of it.
+          const engine = yield* OrchestrationEngineService;
+          const messageId = MessageId.make("after-skewed-import");
+          yield* engine.dispatch({
+            type: "thread.turn.start",
+            commandId: CommandId.make("start-after-skewed-import"),
+            threadId: result.threadId,
+            message: { messageId, role: "user", text: "Carry on", attachments: [] },
+            runtimeMode: "approval-required",
+            interactionMode: "default",
+            createdAt: "2026-09-28T10:05:00.000Z",
+          });
+          const thread = (yield* readThread(result.threadId))!;
+          assert.strictEqual(thread.messages.at(-1)?.id, messageId);
+          const prepared = yield* Effect.flatMap(ScientForkContextDelivery, (delivery) =>
+            delivery.prepareTurn({
+              thread,
+              message: thread.messages.at(-1)!,
+              userText: "Carry on",
+              attachments: [],
+              nativeThreadKey: null,
+              sessionRunning: false,
+            }),
+          );
+          assert.strictEqual(prepared.kind, "deliver");
+          if (prepared.kind !== "deliver") return;
+          assert.strictEqual(prepared.omittedItemCount, 0);
+          for (const text of ["Question 1", "Answer 3", "Thinking about 3", "ok 3", "Ship it"]) {
+            assert.include(prepared.contextPreamble, text);
+          }
+
+          // Exporting again keeps the note; a later import adds its own move.
+          const exported = buildConversationSnapshot({
+            thread,
+            snapshotSequence: 1,
+            threadSequence: 1,
+            capturedAt: "2026-09-28T10:06:00.000Z",
+            selection: { workLog: true, reasoning: true, throughMessageId: null },
+            isAttachmentAvailable: () => false,
+          });
+          assert.strictEqual(
+            exported.provenance._tag === "import" ? exported.provenance.timesShiftedMs : null,
+            shift,
+          );
+          const { ids } = yield* journalOf(lease.attemptDirectory);
+          const reimport = (importedAt: string) =>
+            buildConversationImportCommand({
+              validated: {
+                ...input,
+                snapshot: { ...input.snapshot, provenance: exported.provenance },
+              },
+              ids,
+              destination: destination(),
+              importedAt,
+            }).origin.timesShiftedMs;
+          assert.strictEqual(reimport("2027-01-01T00:00:00.000Z"), shift);
+          assert.strictEqual(reimport("2026-09-29T10:00:00.000Z"), shift + 36_000);
+        }),
+      ),
   );
 
   it.effect("imports a package as a new independent thread with fresh ids", () =>
