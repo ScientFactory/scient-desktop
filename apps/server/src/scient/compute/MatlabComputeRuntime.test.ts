@@ -88,6 +88,26 @@ const matlabInstallation = Effect.gen(function* () {
 });
 
 describe("MATLAB compute bridge location", () => {
+  it.each(["app.asar", "server.asar"])("uses the physical MATLAB bridge beside %s", (archive) => {
+    expect(
+      matlabBridgePathCandidates(NodePath.join("/installed", archive, "apps/server/dist")),
+    ).toEqual([
+      NodePath.join(
+        "/installed",
+        `${archive}.unpacked`,
+        "apps/server/dist/bridge",
+        MATLAB_BRIDGE_SCRIPT_NAME,
+      ),
+      NodePath.join(
+        "/installed",
+        `${archive}.unpacked`,
+        "apps/server/dist",
+        STAGED_BRIDGE_DIRECTORY,
+        MATLAB_BRIDGE_SCRIPT_NAME,
+      ),
+    ]);
+  });
+
   it("uses the same staged bridge directory as every compute binding", () => {
     expect(matlabBridgePathCandidates("/app")).toEqual([
       NodePath.join("/app", "bridge", MATLAB_BRIDGE_SCRIPT_NAME),
