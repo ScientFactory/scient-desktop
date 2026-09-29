@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 import { MessageCopyButton } from "~/components/chat/MessageCopyButton";
 import { MessagesTimeline } from "~/components/chat/MessagesTimeline";
+import { getSyntaxHighlighterPromise } from "~/lib/syntaxHighlighting";
 import { messageCopyHtml } from "./messageCopyHtml";
 import { isScientMessageCopyHtml } from "./messageCopyMarker";
 
@@ -198,8 +199,10 @@ describe("Copy message button", () => {
   });
 
   it("adds direction-marked HTML beside the Markdown for a right-to-left assistant reply", async () => {
+    await getSyntaxHighlighterPromise("ts");
     await renderTimeline("Please summarize.", HEBREW_ASSISTANT);
     const rendered = host.querySelector('[data-message-id="assistant-1"] .chat-markdown')!;
+    expect(rendered.querySelector(".chat-markdown-shiki")).not.toBeNull();
     const before = rendered.outerHTML;
     await click(copyButtonFor("assistant-1"));
     expect(writeTexts).toEqual([]);
