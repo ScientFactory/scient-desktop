@@ -564,3 +564,31 @@ Generic files still cannot be queued. Local threads that have not reached the
 server yet have no persistent queue. Edited drafts recover from this browser's
 local storage; keep the owning window or reopen it to finish an edit. Older
 clients must update before sending to a server using the new queue protocol.
+
+## Reading while an answer arrives
+
+By default, an answer grows below your reading position. Reaching the bottom
+or clicking Scroll to end does not enable automatic following. Tool activity
+and queued messages do not pull the conversation downward.
+
+Sending near the bottom gently reveals your message and its answer, allowing
+a margin of at most two rendered body-text lines. The first message retains its existing placement
+near the top. Movement stops when your sent message's first line reaches the top
+of the reading area; only the bubble's padding may pass above it. It then stays there
+while the rest grows below the screen. If you were reading earlier content,
+sending leaves that position alone. Manual scrolling cancels both pending
+placement and limited answer following, including during an upload.
+
+Use the existing **Scroll to end** button for a single jump. It appears when more
+content remains below you, not just blank space reserved for message placement.
+Its small count shows
+new assistant messages below your view that you have not reached yet, once per
+message, not once per streaming update. It excludes your messages and tool activity.
+The count tracks reading within the current app window session; opening older
+history does not mark it newly unread.
+
+Returning to a thread, or reloading the same window, restores the message you
+were reading and its position in the view. If a temporary working indicator has
+become an answer, restoration uses that turn's content. Older history loads when
+needed to find the saved message. A thread with no saved reading position opens
+at the end once. These positions are local to the window, not synced read receipts.
