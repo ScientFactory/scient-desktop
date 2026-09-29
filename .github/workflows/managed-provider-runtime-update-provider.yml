@@ -92,7 +92,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: ${{ fromJSON(inputs.provider == 'antigravityAcp' && '["macos-26","ubuntu-24.04","ubuntu-24.04-arm","windows-2025","windows-11-arm"]' || '["macos-26","macos-15-intel","ubuntu-24.04","ubuntu-24.04-arm","windows-2025","windows-11-arm"]') }}
+        runner: ${{ fromJSON(inputs.provider == 'omp' && '["macos-26"]' || inputs.provider == 'antigravityAcp' && '["macos-26","ubuntu-24.04","ubuntu-24.04-arm","windows-2025","windows-11-arm"]' || '["macos-26","macos-15-intel","ubuntu-24.04","ubuntu-24.04-arm","windows-2025","windows-11-arm"]') }}
     steps:
       - name: Checkout immutable discovery source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -123,6 +123,12 @@ jobs:
         # These tests exercise the managed Pi binary and its JS integration. Skip
         # unrelated native build scripts such as node-pty, whose toolchain/network
         # requirements are covered by the normal repository CI matrix.
+        run: vp install --frozen-lockfile --ignore-scripts --filter=t3...
+
+      - name: Install Oh My Pi RPC qualification dependencies
+        if: inputs.provider == 'omp'
+        # The RPC v2 handshake and get_state check is the server's own
+        # managed-activation code, so it needs the server workspace.
         run: vp install --frozen-lockfile --ignore-scripts --filter=t3...
 
       - name: Exercise download, verification, smoke, activation, and removal

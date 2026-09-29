@@ -10,6 +10,7 @@ const definitions = {
   skills: { schema: 1, signals: "skillDiffSignals" },
   analysis: { schema: 2, signals: "analysisDiffSignals" },
   latex: { schema: 2, signals: "latexDiffSignals" },
+  omp: { schema: 2, signals: "ompDiffSignals" },
 };
 
 function git(cwd, args, env = process.env) {
@@ -215,17 +216,23 @@ function check(name, ctx) {
   const roots = manifest.ownedRoots;
   const files = manifest.ownedFiles;
   const mounts = manifest.upstreamMounts;
+  // Optional: Scient-owned files another seam (or shared Scient code) owns,
+  // where this seam only mounts an anchored integration point.
+  const scientMounts = manifest.scientMounts ?? [];
+  const isMount = (mount) => mount && typeof mount.anchor === "string" && mount.anchor.length > 0;
   if (
     manifest.schemaVersion !== definition.schema ||
     manifest.owner !== "ScientFactory" ||
     !Array.isArray(roots) ||
     !Array.isArray(files) ||
     !Array.isArray(mounts) ||
+    !Array.isArray(scientMounts) ||
     !Array.isArray(manifest[definition.signals]) ||
     !manifest[definition.signals].every(
       (signal) => typeof signal === "string" && signal.length > 0,
     ) ||
-    !mounts.every((mount) => mount && typeof mount.anchor === "string" && mount.anchor.length > 0)
+    !mounts.every(isMount) ||
+    !scientMounts.every(isMount)
   ) {
     return {
       name,
@@ -233,7 +240,12 @@ function check(name, ctx) {
       findings: [{ kind: "failed", message: `Invalid ${manifestPath} schema or owner` }],
     };
   }
-  const allPaths = [...roots, ...files, ...mounts.map((mount) => mount.path)];
+  const allPaths = [
+    ...roots,
+    ...files,
+    ...mounts.map((mount) => mount.path),
+    ...scientMounts.map((mount) => mount.path),
+  ];
   if (!allPaths.every(validPath) || new Set(allPaths).size !== allPaths.length) {
     return {
       name,
@@ -249,7 +261,11 @@ function check(name, ctx) {
   if (ctx.base && ctx.basePaths.has(manifestPath)) {
     const previous = JSON.parse(read(ctx.run, ctx.base, manifestPath));
     previousRoots = previous.ownedRoots;
-    previousFiles = [...previous.ownedFiles, ...previous.upstreamMounts.map((mount) => mount.path)];
+    previousFiles = [
+      ...previous.ownedFiles,
+      ...previous.upstreamMounts.map((mount) => mount.path),
+      ...(previous.scientMounts ?? []).map((mount) => mount.path),
+    ];
     if (![...previousRoots, ...previousFiles].every(validPath))
       throw new Error(`Invalid base paths in ${manifestPath}`);
     signals.push(...previous[definition.signals].map((signal) => new RegExp(signal, "u")));
@@ -268,6 +284,16 @@ function check(name, ctx) {
     }
     if (!ctx.upstreamPaths.has(mount.path)) {
       report("review-needed", `Mount absent at frozen upstream: ${mount.path}`);
+    }
+  }
+  for (const mount of scientMounts) {
+    if (!ctx.paths.has(mount.path)) {
+      report("review-needed", `Scient mount missing: ${mount.path}`);
+    } else if (!read(ctx.run, ctx.tree, mount.path).includes(mount.anchor)) {
+      report("review-needed", `Scient mount ${mount.path} missing locator: ${mount.anchor}`);
+    }
+    if (ctx.upstreamPaths.has(mount.path)) {
+      report("review-needed", `Scient mount exists upstream; use an upstream mount: ${mount.path}`);
     }
   }
   for (const path of ctx.changed) {

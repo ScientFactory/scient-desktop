@@ -74,6 +74,16 @@
         { "range": ">=0.84.4", "status": "supported" },
         { "range": "<0.84.4", "status": "unsupported" }
       ]
+    },
+    {
+      "driver": "omp",
+      "t3CodeRange": ">=0.6.18",
+      "recommendedRange": ">=18.2.8 <19.0.0",
+      "ranges": [
+        { "range": ">=18.2.8 <19.0.0", "status": "supported" },
+        { "range": ">=19.0.0", "status": "unsupported" },
+        { "range": "<18.2.8", "status": "unsupported" }
+      ]
     }
   ],
   "currentModels": {

@@ -17,6 +17,7 @@ import type { ProviderInstance } from "./ProviderDriver.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "./providerMaintenance.ts";
 import { BUILT_IN_DRIVERS } from "./builtInDrivers.ts";
 import * as Schema from "effect/Schema";
+import { OMP_MINIMUM_VERSION, OMP_SUPPORTED_MAJOR } from "@scientfactory/provider-runtime";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
 import {
   applyProviderCompatibility,
@@ -88,6 +89,38 @@ describe("provider compatibility", () => {
         expected,
       );
     }
+  });
+
+  it("scopes the Oh My Pi policy to Scient releases and caps it at the supported major", () => {
+    const omp = ProviderDriverKind.make("omp");
+    const bundled = ModelManifest.BUNDLED_MODEL_MANIFEST;
+    const policy = bundled.compatibility?.find((entry) => entry.driver === omp);
+    assert.strictEqual(policy?.t3CodeRange, ">=0.6.18");
+    assert.strictEqual(
+      policy?.recommendedRange,
+      `>=${OMP_MINIMUM_VERSION} <${OMP_SUPPORTED_MAJOR + 1}.0.0`,
+    );
+    for (const t3CodeVersion of ["0.0.42", "0.6.18", "0.7.0"]) {
+      for (const [version, expected] of [
+        ["18.2.7", "unsupported"],
+        [OMP_MINIMUM_VERSION, "supported"],
+        ["18.99.0", "supported"],
+        [`${OMP_SUPPORTED_MAJOR + 1}.0.0`, "unsupported"],
+        ["20.1.0", "unsupported"],
+      ] as const) {
+        assert.strictEqual(
+          resolveProviderCompatibility(bundled.compatibility, omp, version, t3CodeVersion)?.status,
+          expected,
+          `Scient ${t3CodeVersion} with Oh My Pi ${version}`,
+        );
+      }
+    }
+    // No shipped release before 0.6.18 contains Oh My Pi.
+    assert.isUndefined(
+      resolveProviderCompatibility(bundled.compatibility, omp, "18.3.1", "0.6.17"),
+    );
+    // The Oh My Pi policy edit is newer than the previous bundled manifest.
+    assert.isAbove(Date.parse(bundled.updatedAt ?? ""), Date.parse("2026-09-26T14:30:00Z"));
   });
 
   it("supports Codex 0.156 and marks Codex without Thread.projectId broken", () => {

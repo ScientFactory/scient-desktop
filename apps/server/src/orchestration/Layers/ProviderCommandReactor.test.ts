@@ -215,6 +215,11 @@ describe("ProviderCommandReactor", () => {
     const { stateDir } = deriveServerPathsSync(baseDir, undefined);
     createdStateDirs.add(stateDir);
     const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
+    const backgroundLiveness = ThreadBackgroundLiveness.make();
+    const backgroundLivenessLayer = Layer.succeed(
+      ThreadBackgroundLiveness.ThreadBackgroundLivenessService,
+      backgroundLiveness,
+    );
     const tryHandlePromptCommand = vi.fn<ProviderAuthService["Service"]["tryHandlePromptCommand"]>(
       input?.tryHandlePromptCommandEffect ?? (() => Effect.succeed(false)),
     );
@@ -440,7 +445,7 @@ describe("ProviderCommandReactor", () => {
 
     const orchestrationLayer = OrchestrationEngineLive.pipe(
       Layer.provide(OrchestrationProjectionSnapshotQueryLive),
-      Layer.provide(ThreadBackgroundLiveness.layer),
+      Layer.provide(backgroundLivenessLayer),
       Layer.provide(ThreadPlanProgress.layer),
       Layer.provide(OrchestrationProjectionPipelineLive),
       Layer.provide(OrchestrationEventStoreLive),
@@ -449,7 +454,7 @@ describe("ProviderCommandReactor", () => {
       Layer.provide(SqlitePersistenceMemory),
     );
     const projectionSnapshotLayer = OrchestrationProjectionSnapshotQueryLive.pipe(
-      Layer.provide(ThreadBackgroundLiveness.layer),
+      Layer.provide(backgroundLivenessLayer),
       Layer.provide(ThreadPlanProgress.layer),
       Layer.provide(RepositoryIdentityResolver.layer),
       Layer.provide(SqlitePersistenceMemory),
@@ -683,6 +688,7 @@ describe("ProviderCommandReactor", () => {
       snapshotQuery,
       confirmTurnEnd,
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
+      backgroundLiveness,
       readPendingTurnStarts: () =>
         runtime!.runPromise(
           Effect.gen(function* () {
@@ -4408,6 +4414,67 @@ describe("ProviderCommandReactor", () => {
         createdAt: now,
       } as const satisfies InternalOrchestrationCommand;
     };
+
+    effectIt.effect("Stop closes a ready session with live background work", () =>
+      Effect.gen(function* () {
+        const harness = yield* createStopHarness();
+        const running = runningSessionCommand("background-ready", asTurnId("prior-turn"));
+        const ready = {
+          ...running,
+          session: { ...running.session, status: "ready" as const, activeTurnId: null },
+        };
+        yield* harness.engine.dispatch(ready);
+        harness.backgroundLiveness.recordTaskLiveness({
+          threadId: "thread-1",
+          taskId: "omp-background",
+          taskType: "monitor",
+          status: undefined,
+          kind: "started",
+        });
+        yield* harness.engine.dispatch({
+          type: "thread.turn.interrupt",
+          commandId: CommandId.make("stop-background-ready"),
+          threadId: ThreadId.make("thread-1"),
+          sessionUpdatedAt: ready.session.updatedAt,
+          createdAt: "2026-01-01T00:00:00.000Z",
+        });
+        yield* Effect.promise(() => waitFor(() => harness.stopSession.mock.calls.length === 1));
+        yield* Effect.promise(() =>
+          waitFor(
+            async () => (await harness.readModel()).threads[0]?.session?.status === "stopped",
+          ),
+        );
+        expect(harness.interruptTurn).not.toHaveBeenCalled();
+      }),
+    );
+
+    effectIt.effect("a delayed background Stop cannot close a replacement session", () =>
+      Effect.gen(function* () {
+        const harness = yield* createStopHarness();
+        const running = runningSessionCommand("background-replacement", asTurnId("prior-turn"));
+        const ready = {
+          ...running,
+          session: { ...running.session, status: "ready" as const, activeTurnId: null },
+        };
+        yield* harness.engine.dispatch(ready);
+        harness.backgroundLiveness.recordTaskLiveness({
+          threadId: "thread-1",
+          taskId: "omp-background",
+          taskType: "monitor",
+          status: undefined,
+          kind: "started",
+        });
+        yield* harness.engine.dispatch({
+          type: "thread.turn.interrupt",
+          commandId: CommandId.make("stale-background-stop"),
+          threadId: ThreadId.make("thread-1"),
+          sessionUpdatedAt: "2025-12-31T00:00:00.000Z",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        });
+        yield* Effect.promise(() => harness.drain());
+        expect(harness.stopSession).not.toHaveBeenCalled();
+      }),
+    );
 
     effectIt.effect("does not escalate a stale probe against a newer turn, or drop its Stop", () =>
       Effect.gen(function* () {

@@ -7,6 +7,7 @@ import {
   GrokSettings,
   OpenCodeSettings,
   PiSettings,
+  OmpSettings,
   compareProviderDriverKinds,
   ProviderDriverKind,
 } from "@t3tools/contracts";
@@ -21,6 +22,7 @@ import {
   OpenAI,
   OpenCodeIcon,
   PiIcon,
+  OhMyPiIcon,
 } from "../Icons";
 
 type ProviderSettingsSchema = {
@@ -55,6 +57,13 @@ const PROVIDER_CLIENT_DEFINITIONS_UNORDERED: readonly ProviderClientDefinition[]
     label: "Pi",
     icon: PiIcon,
     settingsSchema: PiSettings,
+    supportsCustomModels: false,
+  },
+  {
+    value: ProviderDriverKind.make("omp"),
+    label: "Oh My Pi",
+    icon: OhMyPiIcon,
+    settingsSchema: OmpSettings,
     supportsCustomModels: false,
   },
   {

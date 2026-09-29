@@ -156,6 +156,7 @@ const GROK_DRIVER_KIND = ProviderDriverKind.make("grok");
 const OPENCODE_DRIVER_KIND = ProviderDriverKind.make("opencode");
 const DROID_DRIVER_KIND = ProviderDriverKind.make("droid");
 const PI_DRIVER_KIND = ProviderDriverKind.make("pi");
+const OMP_DRIVER_KIND = ProviderDriverKind.make("omp");
 const ANTIGRAVITY_DRIVER_KIND = ProviderDriverKind.make("antigravity");
 
 export const DEFAULT_MODEL = "gpt-6-astra";
@@ -250,6 +251,7 @@ export const PROVIDER_DISPLAY_ORDER: ReadonlyArray<ProviderDriverKind> = [
   OPENCODE_DRIVER_KIND,
   DROID_DRIVER_KIND,
   PI_DRIVER_KIND,
+  OMP_DRIVER_KIND,
   CURSOR_DRIVER_KIND,
   GROK_DRIVER_KIND,
 ];
@@ -277,5 +279,6 @@ export const PROVIDER_DISPLAY_NAMES: Partial<Record<ProviderDriverKind, string>>
   [OPENCODE_DRIVER_KIND]: "OpenCode",
   [DROID_DRIVER_KIND]: "Droid",
   [PI_DRIVER_KIND]: "Pi",
+  [OMP_DRIVER_KIND]: "Oh My Pi",
   [ANTIGRAVITY_DRIVER_KIND]: "Antigravity",
 };
