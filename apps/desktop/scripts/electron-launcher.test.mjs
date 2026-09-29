@@ -14,6 +14,8 @@ import {
   makeDevelopmentCodeSigningCommand,
   makeDevelopmentEnvironmentScript,
   makeDevelopmentLauncherScript,
+  developmentBootstrapConfig,
+  developmentBootstrapEnvironment,
   resolveDevelopmentCodeSigningIdentity,
   resolveElectronBinaryPath,
   resolveDevelopmentAppDisplayName,
@@ -21,6 +23,7 @@ import {
   resolveMacCodeSignArguments,
   resolveMacLauncherIconPaths,
   resolveMacLauncherPaths,
+  resolveMacDevelopmentBundleExecutable,
   writeDevelopmentLauncherScript,
 } from "./electron-launcher.mjs";
 
@@ -195,6 +198,38 @@ describe("electron development launcher", () => {
       "exec '/repo/apps/desktop/.electron-runtime/Scient (Dev).app/Contents/MacOS/Electron'",
     );
     assert.notInclude(script, "node_modules/electron");
+    assert.equal(
+      resolveMacDevelopmentBundleExecutable("/repo/Scient (Dev).app"),
+      "/repo/Scient (Dev).app/Contents/MacOS/Electron",
+    );
+    assert.equal(resolveMacBundleInfoPlistStrings("Electron").CFBundleExecutable, "Electron");
+  });
+
+  it("keeps the signed native bootstrap static and the launch environment private outside it", () => {
+    assert.deepEqual(
+      developmentBootstrapConfig({
+        desktopRoot: "/repo/apps/desktop",
+        role: "candidate",
+        stateRoot: "/repo/.scient-next",
+        nodePath: "/opt/node",
+        fallbackEnvironmentPath: "/repo/apps/desktop/.electron-runtime/dev-environment.json",
+      }),
+      {
+        repoRoot: "/repo",
+        mainEntryPath: "/repo/apps/desktop/dist-electron/main.cjs",
+        role: "candidate",
+        stateRoot: "/repo/.scient-next",
+        nodePath: "/opt/node",
+        fallbackEnvironmentPath: "/repo/apps/desktop/.electron-runtime/dev-environment.json",
+      },
+    );
+    assert.deepEqual(
+      developmentBootstrapEnvironment({
+        VITE_DEV_SERVER_URL: "http://127.0.0.1:5733",
+        SECRET_TOKEN: "not copied",
+      }),
+      { VITE_DEV_SERVER_URL: "http://127.0.0.1:5733" },
+    );
   });
 
   it("declares why the macOS app needs protected access", () => {

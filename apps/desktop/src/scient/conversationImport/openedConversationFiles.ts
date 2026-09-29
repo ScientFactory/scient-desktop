@@ -308,6 +308,7 @@ export async function uploadOpenedConversationFileTo(
   const changed = { _tag: "failed", reason: "file-changed" } as const;
   let handle: NodeFS.promises.FileHandle | null = null;
   let short = false;
+  let bodyComplete = false;
   try {
     // Bound to this descriptor from here on, whatever happens at the path.
     handle = await openFile(file.path).catch(() => null);
@@ -352,9 +353,12 @@ export async function uploadOpenedConversationFileTo(
     const stop = () => source.destroy(new Error("The upload was cancelled."));
     upload.signal.addEventListener("abort", stop, { once: true });
     const body = NodeStream.Readable.from(
-      exactBytes(source, file.sizeBytes, () => {
-        short = true;
-      }),
+      (async function* () {
+        yield* exactBytes(source, file.sizeBytes, () => {
+          short = true;
+        });
+        bodyComplete = true;
+      })(),
       { objectMode: false },
     );
     body.on("error", () => {});
@@ -369,6 +373,20 @@ export async function uploadOpenedConversationFileTo(
       } as RequestInit);
       if (upload.signal.aborted) return cancelled;
       if (short) return changed;
+      // A server response alone is not proof that the request body was read.
+      if (!bodyComplete) {
+        upload.abort();
+        return { _tag: "failed", reason: "network-failed" };
+      }
+      // A same-inode, same-length rewrite can happen after the pre-send stat.
+      // Check the held descriptor again before reporting success; the caller
+      // cancels the server's staged import on this failed result.
+      const finished = await handle.stat({ bigint: true }).catch(() => null);
+      if (upload.signal.aborted) return cancelled;
+      if (finished === null || !isSameFile(finished, file.identity)) {
+        upload.abort();
+        return changed;
+      }
       return response.ok ? { _tag: "uploaded" } : { _tag: "failed", reason: "rejected" };
     } finally {
       upload.signal.removeEventListener("abort", stop);
@@ -489,13 +507,21 @@ export function captureConversationFileOpens(): void {
   const platform = NodeOS.platform();
   app.on("second-instance", (_event, argv, cwd) => {
     for (const path of conversationFilePathsFromArgv(argv, cwd, platform)) {
-      if (argv.includes("--preview-conversation")) previewOnlyPaths.add(path);
+      if (argv.includes("--preview-conversation")) rememberPreviewOnly(path);
       openedPaths.receive(path);
     }
   });
   for (const path of conversationFilePathsFromArgv(process.argv, process.cwd(), platform)) {
-    if (process.argv.includes("--preview-conversation")) previewOnlyPaths.add(path);
+    if (process.argv.includes("--preview-conversation")) rememberPreviewOnly(path);
     openedPaths.receive(path);
+  }
+}
+
+function rememberPreviewOnly(path: string): void {
+  previewOnlyPaths.add(path);
+  while (previewOnlyPaths.size > MAX_PENDING_CONVERSATION_FILES) {
+    const oldest = previewOnlyPaths.values().next().value;
+    if (oldest !== undefined) previewOnlyPaths.delete(oldest);
   }
 }
 
@@ -504,10 +530,16 @@ export function captureConversationFileOpens(): void {
  * any workspace/backend services. OS requests remain local until confirmed.
  * The listener stays installed to give warm opens the same review boundary.
  */
-export async function prepareConversationFileOpening(): Promise<boolean> {
+export async function prepareConversationFileOpening(options?: {
+  readonly deferStartupUntilReviewed?: boolean;
+  /** Let the native launch event queue drain before an empty cold-dev handoff. */
+  readonly collectLaunchEvents?: boolean;
+  readonly onAccepted?: (path: string, identity: ReviewedFileIdentity, readOnly: boolean) => void;
+}): Promise<boolean> {
   await Electron.app.whenReady();
   const pending: string[] = [];
   let reviewing = false;
+  let activePath: string | null = null;
   let initial = true;
   let admitted = false;
   let settle: (startWorkspace: boolean) => void = () => {};
@@ -524,23 +556,35 @@ export async function prepareConversationFileOpening(): Promise<boolean> {
     try {
       while (pending.length > 0) {
         const path = pending.shift()!;
+        activePath = path;
         const readOnly = previewOnlyPaths.delete(path);
         const accepted = await reviewOpenedConversation(path, readOnly).catch(() => null);
+        activePath = null;
         if (accepted) {
+          options?.onAccepted?.(path, accepted, readOnly);
           approvedIdentities.set(path, accepted);
+          while (approvedIdentities.size > MAX_PENDING_CONVERSATION_FILES) {
+            const oldest = approvedIdentities.keys().next().value;
+            if (oldest !== undefined) approvedIdentities.delete(oldest);
+          }
           approvedPaths.receive(path);
           admitted = true;
-          settle(true);
+          if (!options?.deferStartupUntilReviewed) settle(true);
         }
       }
     } finally {
       reviewing = false;
-      if (!initial && !admitted) settle(false);
+      if (!initial && (options?.deferStartupUntilReviewed || !admitted)) settle(admitted);
     }
   };
   openedPaths.attach((path) => {
+    if (path === activePath) {
+      previewOnlyPaths.delete(path);
+      return;
+    }
     if (pending.includes(path)) return;
     if (pending.length >= MAX_PENDING_CONVERSATION_FILES) {
+      previewOnlyPaths.delete(path);
       Electron.dialog.showErrorBox(
         "Too many conversations",
         "Finish the current previews, then open the remaining files again.",
@@ -550,12 +594,55 @@ export async function prepareConversationFileOpening(): Promise<boolean> {
     pending.push(path);
     if (!initial) void pump();
   });
+  if (options?.collectLaunchEvents) {
+    // Keep the listener live while Finder finishes dispatching this launch's
+    // AppleEvents. Do not synchronously quit an apparently file-less receiver
+    // in the same ready-event turn. Later warm opens use the installed listener.
+    await new Promise<void>((resolve) => setTimeout(resolve, 250));
+  }
   initial = false;
   if (pending.length === 0) {
     admitted = true;
     settle(true);
   } else void pump();
   return startup;
+}
+
+/** Re-admit a private, single-use managed-development receipt after checking every file again. */
+export async function installApprovedConversationFileHandoff(
+  files: ReadonlyArray<{
+    readonly path: string;
+    readonly identity: ReviewedFileIdentity;
+    readonly readOnly: false;
+  }>,
+): Promise<void> {
+  if (files.length > MAX_PENDING_CONVERSATION_FILES)
+    throw new Error("Too many handed-off conversations.");
+  for (const file of files) {
+    if (
+      file.readOnly !== false ||
+      !NodePath.isAbsolute(file.path) ||
+      !file.path.toLowerCase().endsWith(SCIC_FILE_EXTENSION)
+    ) {
+      throw new Error("Invalid conversation file handoff.");
+    }
+    const stat = await NodeFS.promises.lstat(file.path, { bigint: true });
+    if (
+      !stat.isFile() ||
+      stat.dev.toString() !== file.identity.dev ||
+      stat.ino.toString() !== file.identity.ino ||
+      stat.size.toString() !== file.identity.size ||
+      stat.mtimeNs.toString() !== file.identity.mtimeNs
+    ) {
+      throw new Error(
+        "The reviewed conversation changed during development startup. Open it again.",
+      );
+    }
+  }
+  for (const file of files) {
+    approvedIdentities.set(file.path, file.identity);
+    approvedPaths.receive(file.path);
+  }
 }
 
 /**

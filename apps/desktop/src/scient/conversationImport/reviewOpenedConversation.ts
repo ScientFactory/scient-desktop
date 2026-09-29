@@ -1,6 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- explicit local-file review before the application runtime exists.
 // @effect-diagnostics globalTimers:off -- a native-window-owned deadline before the Effect application runtime exists.
-import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as Electron from "electron";
@@ -30,7 +29,9 @@ export async function reviewOpenedConversation(
     autoHideMenuBar: true,
     webPreferences: {
       preload: NodePath.join(__dirname, "conversation-review-preload.cjs"),
-      partition: `conversation-review-${NodeCrypto.randomUUID()}`,
+      // Reuse one non-persistent, credential-free session. A new partition per
+      // file would retain a Chromium session for every preview until app exit.
+      partition: "scient-conversation-review",
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
@@ -52,7 +53,20 @@ export async function reviewOpenedConversation(
   });
   const display = async (html: string) => {
     if (window.isDestroyed()) return;
-    await window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`),
+        new Promise<never>((_resolve, reject) => {
+          deadline = setTimeout(() => {
+            if (!window.isDestroyed()) window.destroy();
+            reject(new Error("Conversation preview renderer timed out."));
+          }, 10_000);
+        }),
+      ]);
+    } finally {
+      clearTimeout(deadline);
+    }
     if (!window.isDestroyed()) window.show();
   };
   return new Promise<ReviewedFileIdentity | null>((resolve) => {
@@ -109,6 +123,8 @@ export async function reviewOpenedConversation(
       Electron.ipcMain.removeListener("scient:conversation-review-action", onAction);
       resolve(accepted ? (identity ?? null) : null);
     });
+    window.webContents.once("render-process-gone", () => window.destroy());
+    window.once("unresponsive", () => window.destroy());
     void (async () => {
       await display(conversationFileReviewHtml(null, undefined, readOnly));
       const preview = await readLocalConversationPreview(path, abort.signal);

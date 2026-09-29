@@ -70,7 +70,16 @@ import * as DesktopWslBackend from "./wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "./wsl/DesktopWslEnvironment.ts";
 import * as DesktopWslServerTree from "./wsl/DesktopWslServerTree.ts";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
-import { prepareConversationFileOpening } from "./scient/conversationImport/openedConversationFiles.ts";
+import {
+  installApprovedConversationFileHandoff,
+  prepareConversationFileOpening,
+} from "./scient/conversationImport/openedConversationFiles.ts";
+import {
+  isColdDevelopmentBootstrap,
+  installSupervisedDevelopmentHandoff,
+  yieldColdDevelopmentAppOrShowError,
+  type ApprovedColdFile,
+} from "./scient/conversationImport/coldDevelopmentHandoff.ts";
 
 // The candidate's safety envelope is fail-closed even when launched directly
 // from a packaged Electron bundle rather than through a dev helper. Do not
@@ -90,6 +99,11 @@ const desktopEnvironmentLayer = Layer.unwrap(
       platform,
       processArch,
       ...metadata,
+      // The Finder-facing dev bundle contains a tiny bootstrap app, while the
+      // real desktop main bundle still lives in this worktree.
+      ...(process.env.SCIENT_DEV_BOOTSTRAP === "1"
+        ? { appPath: __dirname, isPackaged: false }
+        : {}),
     });
   }),
 );
@@ -248,9 +262,33 @@ const desktopRuntimeLayer = desktopClerkLayer.pipe(
           Electron.app.quit();
           return yield* Effect.interrupt;
         }
-        const start = yield* Effect.promise(prepareConversationFileOpening);
+        const cold = isColdDevelopmentBootstrap();
+        const handoffValid = yield* Effect.promise(() =>
+          installSupervisedDevelopmentHandoff(installApprovedConversationFileHandoff),
+        );
+        if (!handoffValid) return yield* Effect.interrupt;
+        const accepted: ApprovedColdFile[] = [];
+        let unsupportedReadOnly = false;
+        const start = yield* Effect.promise(() =>
+          prepareConversationFileOpening(
+            cold
+              ? {
+                  deferStartupUntilReviewed: true,
+                  collectLaunchEvents: true,
+                  onAccepted: (path, identity, readOnly) => {
+                    if (readOnly) unsupportedReadOnly = true;
+                    else accepted.push({ path, identity, readOnly: false });
+                  },
+                }
+              : undefined,
+          ),
+        );
         if (!start) {
           Electron.app.quit();
+          return yield* Effect.interrupt;
+        }
+        if (cold) {
+          yieldColdDevelopmentAppOrShowError(accepted, unsupportedReadOnly);
           return yield* Effect.interrupt;
         }
         return desktopApplicationRuntimeLayer.pipe(

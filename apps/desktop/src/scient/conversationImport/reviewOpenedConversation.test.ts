@@ -5,7 +5,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-const mocks = vi.hoisted(() => ({ read: vi.fn(), windows: [] as unknown[] }));
+const mocks = vi.hoisted(() => ({ read: vi.fn(), load: vi.fn(), windows: [] as unknown[] }));
 vi.mock("./localConversationPreview.ts", async (original) => ({
   ...(await original<typeof import("./localConversationPreview.ts")>()),
   readLocalConversationPreview: mocks.read,
@@ -36,11 +36,16 @@ vi.mock("electron", async () => {
     }
     async loadURL(url: string) {
       this.urls.push(decodeURIComponent(url));
+      await mocks.load();
     }
     show() {}
     close() {
+      if (this.destroyed) return;
       this.destroyed = true;
       this.emit("closed");
+    }
+    destroy() {
+      this.close();
     }
   }
   return { BrowserWindow: Window, ipcMain: new Emitter() };
@@ -76,6 +81,8 @@ const action = (
 beforeEach(async () => {
   mocks.windows.length = 0;
   mocks.read.mockReset();
+  mocks.load.mockReset();
+  mocks.load.mockResolvedValue(undefined);
   directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-local-review-"));
   file = NodePath.join(directory, "test.scic");
   await NodeFSP.writeFile(file, "fixture");
@@ -96,11 +103,26 @@ beforeEach(async () => {
   });
 });
 afterEach(async () => {
+  vi.useRealTimers();
   for (const item of mocks.windows) (item as FakeWindow).close();
   await NodeFSP.rm(directory, { recursive: true, force: true });
 });
 
 describe("focused local conversation window", () => {
+  it("settles cold startup when page loading hangs", async () => {
+    vi.useFakeTimers();
+    mocks.load.mockReturnValue(new Promise(() => {}));
+    const result = reviewOpenedConversation(file);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(await result).toBeNull();
+    expect(mocks.read).not.toHaveBeenCalled();
+    expect(ipcMain.listenerCount("scient:conversation-review-action")).toBe(0);
+  });
+  it("settles on an unresponsive preview renderer", async () => {
+    const result = reviewOpenedConversation(file);
+    window().emit("unresponsive");
+    expect(await result).toBeNull();
+  });
   it("permits full import validation when only the local preview size is exceeded", async () => {
     mocks.read.mockRejectedValue(
       new LocalConversationPreviewError("unsupported-too-large", "Large snapshot", identity),

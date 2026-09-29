@@ -355,6 +355,12 @@ application bridge, and a deny-by-default content policy. The file identity is r
 continue and admission to the import queue. The server still performs full import validation.
 Preview-size limits do not prohibit importing a larger structurally acceptable file.
 
+Upload success additionally requires complete consumption of the body and a final identity
+check on the held descriptor. An ordinary in-place edit during streaming is refused and its
+staged upload cancelled. Identity checks are not a cryptographic lock on the file: a writer
+that restores filesystem metadata can evade them. They must not be described as proof that
+every uploaded byte equals the earlier preview. The imported file remains unverified history.
+
 Release packaging and the development launcher share a dependency-light document definition.
 The format UTI is stable across application identities. Development handlers are alternatives,
 not owners of the user's default. Windows registrations are channel-specific; Linux integration
@@ -362,6 +368,16 @@ uses the persistent AppImage path and a user-level MIME definition. `--preview-c
 opens the same window without an import action, providing a read-only fallback independent of
 file-manager preview extensions. Native extension compilation, installation, signing, and
 file-manager activation require platform-specific qualification.
+
+The optional native adapters live under `native/conversation-preview`: a macOS data-based
+Quick Look extension and a Windows stream-based preview-handler DLL. Both display bounded
+plain text from the authoritative snapshot; neither evaluates markup, imports a conversation,
+or starts Scient's backend. Linux's desktop Preview action opens the same local read-only
+window, while its primary Open action retains the import confirmation flow.
+Native build CI compiles the macOS universal extension, Windows x64/ARM64 components, and Linux
+parser. Host installation, signing, activation, and uninstall tests remain separate gates;
+compilation is not proof of Finder or Explorer integration. See the
+[native build qualification contract](../../scripts/lib/conversation-preview-build.md).
 
 ## Dialog
 

@@ -70,12 +70,37 @@ describe("sniffMediaType", () => {
       `<svg><image xlink:href="http://example.com/x.png"/></svg>`,
       `<svg><style>@import url(x.css)</style></svg>`,
       `<svg style="fill:url(http://example.com/p)"></svg>`,
+      `<svg style="fill:url(' https://example.com/p ')"></svg>`,
+      `<svg style="fill:url( file:///private/image.png )"></svg>`,
+      `<svg style="fill:url('https://example.com/p)"></svg>`,
+      `<svg style="fill:url(https://example.com/p"></svg>`,
       `<!DOCTYPE svg [<!ENTITY x SYSTEM "file:///etc/passwd">]><svg>&x;</svg>`,
     ]) {
       expect(svgHasExternalReferences(new TextEncoder().encode(svg))).toBe(true);
     }
     expect(
       svgHasExternalReferences(new TextEncoder().encode(`<svg><use href="#shape"/></svg>`)),
+    ).toBe(false);
+  });
+  it("keeps quoted and whitespace-padded SVG fragment and inline image references", () => {
+    for (const target of [
+      "#gradient",
+      "'#gradient'",
+      '"#clip"',
+      " #gradient ",
+      " '#mask' ",
+      ' "#clip" ',
+      " data:image/png;base64,AAAA ",
+      "'data:image/png;base64,AAAA'",
+    ]) {
+      expect(
+        svgHasExternalReferences(
+          new TextEncoder().encode(`<svg><style>.shape { fill: url(${target}); }</style></svg>`),
+        ),
+      ).toBe(false);
+    }
+    expect(
+      svgHasExternalReferences(new TextEncoder().encode('<svg><use href="  #shape  "/></svg>')),
     ).toBe(false);
   });
 });

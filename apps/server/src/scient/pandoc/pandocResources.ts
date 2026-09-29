@@ -123,12 +123,26 @@ export function sniffMediaType(bytes: Uint8Array): ImageMediaType | "application
  */
 export function svgHasExternalReferences(bytes: Uint8Array): boolean {
   const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
-  return (
-    /\bhref\s*=\s*["']\s*(?!#|data:image\/)/iu.test(text) ||
-    /url\(\s*["']?\s*(?!#|data:image\/)/iu.test(text) ||
-    /@import\b/iu.test(text) ||
-    /<!ENTITY/iu.test(text)
-  );
+  if (/@import\b/iu.test(text) || /<!ENTITY/iu.test(text)) return true;
+  const isInternal = (value: string) => /^(?:#|data:image\/)/iu.test(value.trim());
+  for (const match of text.matchAll(/\bhref\s*=\s*(?:"([^"]*)"|'([^']*)')/giu)) {
+    if (!isInternal(match[1] ?? match[2] ?? "")) return true;
+  }
+  // Extract the complete argument before classifying it. Optional whitespace
+  // and quote matches must not backtrack into a negative lookahead.
+  let completeUrls = 0;
+  for (const match of text.matchAll(/url\(([^)]*)\)/giu)) {
+    completeUrls++;
+    let target = (match[1] ?? "").trim();
+    if (target.startsWith('"') || target.startsWith("'")) {
+      if (target.length < 2 || target.at(-1) !== target[0]) return true;
+      target = target.slice(1, -1).trim();
+    }
+    if (!isInternal(target)) return true;
+  }
+  let starts = 0;
+  for (const _match of text.matchAll(/url\(/giu)) starts++;
+  return starts !== completeUrls;
 }
 
 type ImageRefusal =

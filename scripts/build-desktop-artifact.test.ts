@@ -824,8 +824,70 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     );
     assert.include(stable, 'StrCmp $R0 "Scient Conversation" 0 +2');
     assert.include(stable, 'StrCmp $R0 "Scient.Conversation" 0 +2');
+    assert.equal(
+      stable.split("\n").find((line) => line.includes("\\shell\\open\\command")),
+      `  WriteRegStr SHELL_CONTEXT "Software\\Classes\\Scient.Conversation\\shell\\open\\command" "" '"$appExe" "%1"'`,
+    );
+    assert.equal(
+      stable.split("\n").find((line) => line.includes("\\DefaultIcon")),
+      `  WriteRegStr SHELL_CONTEXT "Software\\Classes\\Scient.Conversation\\DefaultIcon" "" '"$appExe",0'`,
+    );
     assert.notInclude(stable, "UserChoice");
+    assert.notInclude(stable, "InprocServer32");
+    assert.notInclude(stable, "PreviewHandlers");
+    const qualified = renderWindowsConversationAssociationInclude("nightly", true);
+    assert.include(qualified, "{849DCD04-E8E2-4D76-95D9-65B8B389D51D}");
+    assert.include(qualified, "InprocServer32");
+    assert.include(qualified, "ThreadingModel");
+    assert.include(qualified, "PreviewHandlers");
+    assert.include(qualified, "DeleteRegKey SHELL_CONTEXT");
+    assert.notInclude(qualified, "UserChoice");
   });
+
+  it.effect("copies qualified native adapters into platform bundle locations", () =>
+    Effect.gen(function* () {
+      const mac = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "1.2.3",
+        false,
+        false,
+        undefined,
+        undefined,
+        false,
+        "arm64",
+        "/tmp/ScientConversationQuickLook.appex",
+      );
+      assert.deepStrictEqual(mac.extraFiles, [
+        {
+          from: "/tmp/ScientConversationQuickLook.appex",
+          to: "PlugIns/ScientConversationQuickLook.appex",
+        },
+      ]);
+      const win = yield* createBuildConfig(
+        "win",
+        "nsis",
+        "1.2.3",
+        false,
+        false,
+        undefined,
+        undefined,
+        false,
+        "x64",
+        "C:/temp/ScientConversationPreview.dll",
+      );
+      assert.includeDeepMembers(win.extraResources as unknown[], [
+        {
+          from: "C:/temp/ScientConversationPreview.dll",
+          to: "conversation-preview/ScientConversationPreview.dll",
+        },
+        {
+          from: "C:/temp/ScientConversationPreview.dll.licenses",
+          to: "conversation-preview/licenses",
+        },
+      ]);
+    }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
+  );
 
   it("excludes foreign node-pty prebuilds from macOS and Linux packages", () => {
     assert.deepStrictEqual(MAC_FILE_EXCLUSIONS, [

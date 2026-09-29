@@ -554,6 +554,78 @@ describe("the file an OS-opened upload sends", () => {
     expect(sent).toBeLessThan(1024 * 1024);
   });
 
+  it("refuses a same-inode, same-size rewrite before accepting the upload response", async () => {
+    const { file, path } = await openedAt();
+    const before = NodeFS.statSync(path, { bigint: true });
+    let sent = "";
+    const upload = { signal: null as AbortSignal | null };
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      upload.signal = init?.signal ?? null;
+      sent = await new Response(init?.body).text();
+      NodeFS.writeFileSync(path, "PORTABLE CONVERSATION");
+      NodeFS.utimesSync(path, 1_577_836_800, 1_577_836_800);
+      return new Response(null, { status: 204 });
+    };
+    expect(
+      await uploadOpenedConversationFileTo(
+        { token: file.token, attemptId: nextAttemptId(), url: managedUrl },
+        managed,
+        async () => true,
+        fetchImpl,
+      ),
+    ).toEqual({ _tag: "failed", reason: "file-changed" });
+    const after = NodeFS.statSync(path, { bigint: true });
+    expect(after.ino).toBe(before.ino);
+    expect(after.size).toBe(before.size);
+    expect(after.mtimeNs).not.toBe(before.mtimeNs);
+    expect(sent).toBe("portable conversation");
+    expect(upload.signal?.aborted).toBe(true);
+  });
+
+  it("refuses a same-size rewrite while the request body is streaming", async () => {
+    const size = 1024 * 1024;
+    const { file, path } = await openedAt("a".repeat(size));
+    const before = NodeFS.statSync(path, { bigint: true });
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      if (!init?.body) throw new Error("The upload has no body.");
+      const reader = (init.body as ReadableStream<Uint8Array>).getReader();
+      expect((await reader.read()).done).toBe(false);
+      NodeFS.writeFileSync(path, "b".repeat(size));
+      NodeFS.utimesSync(path, 1_577_836_800, 1_577_836_800);
+      while (!(await reader.read()).done) {}
+      return new Response(null, { status: 204 });
+    };
+    expect(
+      await uploadOpenedConversationFileTo(
+        { token: file.token, attemptId: nextAttemptId(), url: managedUrl },
+        managed,
+        async () => true,
+        fetchImpl,
+      ),
+    ).toEqual({ _tag: "failed", reason: "file-changed" });
+    const after = NodeFS.statSync(path, { bigint: true });
+    expect(after.ino).toBe(before.ino);
+    expect(after.size).toBe(before.size);
+  });
+
+  it("does not accept an early success response before the upload body completes", async () => {
+    const { file } = await openedAt();
+    const upload = { signal: null as AbortSignal | null };
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      upload.signal = init?.signal ?? null;
+      return new Response(null, { status: 204 });
+    };
+    expect(
+      await uploadOpenedConversationFileTo(
+        { token: file.token, attemptId: nextAttemptId(), url: managedUrl },
+        managed,
+        async () => true,
+        fetchImpl,
+      ),
+    ).toEqual({ _tag: "failed", reason: "network-failed" });
+    expect(upload.signal?.aborted).toBe(true);
+  });
+
   it("closes the opened file when the upload is released, even with the prompt still open", async () => {
     const { file } = await openedAt();
     const handles: NodeFS.promises.FileHandle[] = [];

@@ -3,6 +3,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { afterEach, assert, describe, it } from "vite-plus/test";
+import { writeColdHandoff } from "../apps/desktop/scripts/dev-cold-handoff.mjs";
 
 import {
   acquireRunner,
@@ -302,6 +303,74 @@ describe("local dev app background service", () => {
       paths.servicePlistPath,
     ]);
     assert.match(lines[0], /^Launching Scient \(Dev\)/u);
+  });
+
+  it("excludes only the validated cold receiver when taking managed ownership", async () => {
+    const { paths } = fixture();
+    NodeFS.mkdirSync(NodePath.dirname(paths.markerPath), { recursive: true });
+    NodeFS.writeFileSync(
+      paths.markerPath,
+      JSON.stringify({ schema: LOCAL_DEV_APP_SCHEMA, repoRoot: paths.root }),
+    );
+    const coldStart = "Mon Sep 29 12:00:00 2026";
+    const coldPid = 1234;
+    const { path } = writeColdHandoff({
+      stateRoot: paths.stateRoot,
+      root: paths.root,
+      role: paths.role,
+      coldPid,
+      coldStart,
+      files: [],
+    });
+    const binary = NodePath.join(paths.appBundlePath, "Contents", "MacOS", "Electron");
+    const spawnSync = (_command, args) => {
+      if (args[0] === "-p")
+        return { status: 0, stdout: args[3] === "command=" ? `${binary}\n` : `${coldStart}\n` };
+      if (args[0] === "print") return { status: 1, stdout: "", stderr: "" };
+      return { status: 0, stdout: "", stderr: "" };
+    };
+    const result = await startAppInBackground({
+      paths,
+      platform: "darwin",
+      coldHandoffPath: path,
+      spawnSync,
+      clearRunner: () => null,
+      resolveOwnedApp: () => ({ pid: coldPid }),
+      resolveOwnedApps: () => [{ pid: coldPid }],
+      prepareAppBundle: () => assert.fail("A running bundle must not be re-signed"),
+      writeLine: () => undefined,
+    });
+    assert.deepEqual(result, { status: "started" });
+    assert.include(
+      NodeFS.readFileSync(paths.servicePlistPath, "utf8"),
+      "SCIENT_DEV_COLD_CLAIM_PATH",
+    );
+
+    const second = writeColdHandoff({
+      stateRoot: paths.stateRoot,
+      root: paths.root,
+      role: paths.role,
+      coldPid,
+      coldStart,
+      files: [],
+    });
+    let failure;
+    try {
+      await startAppInBackground({
+        paths,
+        platform: "darwin",
+        coldHandoffPath: second.path,
+        spawnSync,
+        clearRunner: () => null,
+        resolveOwnedApp: () => ({ pid: coldPid }),
+        resolveOwnedApps: () => [{ pid: coldPid }, { pid: 9999 }],
+        prepareAppBundle: () => assert.fail("A second process must block handoff"),
+        writeLine: () => undefined,
+      });
+    } catch (error) {
+      failure = error;
+    }
+    assert.match(String(failure), /already running/u);
   });
 
   it("names the app from the checkout, not a label inherited from another dev app", () => {
