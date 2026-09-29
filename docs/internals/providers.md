@@ -423,6 +423,20 @@ qualified official Pi 0.85.1 archives.
   output and tool-error state. It does not infer authority from `cwd` or add a separate tool registry.
   Tool discovery failure prevents silently starting a session without the bridge. Terminal-only Pi
   UI APIs are not emulated.
+- `provider/pi/PiContextExtension.ts` runs in the same session-local bridge. Its
+  `before_provider_request` hook estimates the final payload (UTF-8 text, system/tool
+  schemas and image allowances), takes the larger of that estimate and native context
+  occupancy, reserves headroom, and bounds known provider output/thinking ceilings.
+  It never deletes request messages. An oversized input starts native compaction without
+  awaiting it inside the request hook; native compaction aborts the unsent request.
+  One hidden continuation resumes the existing task afterward. Scient holds the same turn
+  open through that handoff, and recovery failures or continuation errors settle it.
+  Recovery is bounded to one attempt per input and Stop closes the owning process.
+  The bridge also registers `/compact` for RPC mode and exposes it through the existing
+  manual-compaction capability. Endpoint accounting remains authoritative; unknown
+  windows are not invented, and final context errors retain saved work with an actionable
+  explanation. The payload estimate is not a model-specific tokenizer, and later user
+  extensions can still rewrite the request.
 - `provider/Layers/PiProvider.ts` discovers models, thinking options, native skills and templates
   passively with user extensions/tools/context disabled. Scient's explicitly supplied model-registration
   extension remains available. Authentication remains model-specific and

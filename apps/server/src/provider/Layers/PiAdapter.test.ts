@@ -2441,3 +2441,104 @@ describe("PiAdapter", () => {
     );
   });
 });
+
+it.effect(
+  "keeps the same Scient turn open across guarded compaction and native continuation",
+  () => {
+    const h = makeHarness();
+    return withAdapter(h, (adapter) =>
+      Effect.gen(function* () {
+        yield* start(adapter);
+        const collected = yield* adapter.streamEvents.pipe(
+          Stream.takeUntil((event) => event.type === "turn.completed"),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+        const sent = yield* adapter.sendTurn({
+          threadId: ThreadId.make("thread"),
+          input: "continue",
+          modelSelection,
+        });
+        for (const event of [
+          { type: "agent_start" },
+          {
+            type: "extension_ui_request",
+            method: "notify",
+            message: "scient:context-recovery: compacting",
+          },
+          {
+            type: "message_end",
+            message: { role: "assistant", stopReason: "aborted", content: [] },
+          },
+          { type: "agent_settled" },
+          { type: "compaction_end", result: { summary: "saved progress" } },
+          { type: "agent_start" },
+          { type: "message_start", message: { role: "assistant" } },
+          {
+            type: "message_end",
+            message: {
+              role: "assistant",
+              stopReason: "stop",
+              content: [{ type: "text", text: "Continued" }],
+            },
+          },
+          { type: "agent_settled" },
+        ])
+          yield* Queue.offer(h.client.input, event);
+        const events = Array.from(yield* Fiber.join(collected));
+        const completed = events.filter((event) => event.type === "turn.completed");
+        assert.equal(completed.length, 1);
+        assert.equal(completed[0]?.turnId, sent.turnId);
+        assert.equal(completed[0]?.payload.state, "completed");
+        assert.equal(
+          events.some((event) => event.type === "runtime.error"),
+          false,
+        );
+      }),
+    );
+  },
+);
+
+for (const failure of [
+  { type: "extension_ui_request", method: "notify", message: "scient:context-limit: failed" },
+  { type: "extension_error", event: "send_message", error: "synthetic continuation failure" },
+]) {
+  it.effect(
+    `settles failed context recovery on ${failure.type} instead of stranding the thread`,
+    () => {
+      const h = makeHarness();
+      return withAdapter(h, (adapter) =>
+        Effect.gen(function* () {
+          yield* start(adapter);
+          const collected = yield* adapter.streamEvents.pipe(
+            Stream.takeUntil((event) => event.type === "turn.completed"),
+            Stream.runCollect,
+            Effect.forkChild,
+          );
+          yield* adapter.sendTurn({
+            threadId: ThreadId.make("thread"),
+            input: "continue",
+            modelSelection,
+          });
+          yield* Queue.offer(h.client.input, {
+            type: "extension_ui_request",
+            method: "notify",
+            message: "scient:context-recovery: compacting",
+          });
+          yield* Queue.offer(h.client.input, { type: "agent_settled" });
+          yield* Queue.offer(h.client.input, { type: "compaction_end" });
+          yield* Queue.offer(h.client.input, failure);
+          const events = Array.from(yield* Fiber.join(collected));
+          assert.equal(
+            events.find((event) => event.type === "turn.completed")?.payload.state,
+            "failed",
+          );
+          assert.match(
+            events.find((event) => event.type === "runtime.error")?.payload.message ?? "",
+            /Saved/,
+          );
+        }),
+      );
+    },
+  );
+}
