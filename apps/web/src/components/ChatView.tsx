@@ -1,4 +1,9 @@
-import { canApplySendAnchor, readSendScrollAllowance } from "./chat/readerScrollPolicy";
+import {
+  canApplySendAnchor,
+  readSendScrollAllowance,
+  shouldRevealArrivedPrompt,
+  withReadingEnd,
+} from "./chat/readerScrollPolicy";
 import { useAcknowledgeAnswer } from "../scient/answerAttention/useAcknowledgeAnswer";
 import { collectSelectedScientSkillNames } from "@t3tools/shared/composerInlineTokens";
 import {
@@ -172,7 +177,6 @@ import {
 import { type LegendListRef } from "@legendapp/list/react";
 import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
-  withRealTimelineEnd,
   readTimelinePosition,
   timelineContentOverflowsViewport,
   type TimelineScrollMode,
@@ -2277,9 +2281,10 @@ function ChatViewContent(props: ChatViewProps) {
   }
   const timelineAnchorMessageId = timelineAnchor.messageId;
   const getTimelineReadingState = useCallback(() => {
-    const state = legendListRef.current?.getState();
-    return timelineAnchorMessageId ? withRealTimelineEnd(state, composerTimelineInset) : state;
-  }, [timelineAnchorMessageId, composerTimelineInset]);
+    // The bottom is the end of the last message's text, not trailing file
+    // lists, tool groups or reserved anchor space.
+    return withReadingEnd(legendListRef.current?.getState(), composerTimelineInset);
+  }, [composerTimelineInset]);
   const isTimelineAtLogicalEnd = useCallback(
     () => resolveTimelineIsAtEnd(getTimelineReadingState()) ?? isAtEndRef.current,
     [getTimelineReadingState],
@@ -6161,8 +6166,12 @@ function ChatViewContent(props: ChatViewProps) {
     }),
     [isDraftHeroState, routeThreadKey, timelineMessages, activeLatestTurn, getTimelineReadingState],
   );
+  // Prompts this window sent frame themselves; any other new prompt (a queued
+  // message the server delivered) gets the same reveal when the reader is at the end.
+  const locallySentPromptIdsRef = useRef(new Set<string>());
   const frameSubmittedMessage = useCallback(
     (messageId: MessageId, snapshot: ReturnType<typeof captureSendReadingPosition>) => {
+      locallySentPromptIdsRef.current.add(messageId);
       if (
         !canApplySendAnchor({
           ...snapshot,
@@ -6187,6 +6196,30 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [activeThreadKey, cancelTimelinePositioning],
   );
+  const latestPromptId = useMemo(
+    () => timelineMessages.findLast((message) => message.role === "user")?.id ?? null,
+    [timelineMessages],
+  );
+  const latestPromptRef = useRef<{ threadKey: string | null; id: string | null } | null>(null);
+  // Runs before the timeline measures the new row, so the reader's end state
+  // is still the one from before the prompt arrived.
+  useLayoutEffect(() => {
+    const previous = latestPromptRef.current;
+    latestPromptRef.current = { threadKey: routeThreadKey, id: latestPromptId };
+    if (
+      !latestPromptId ||
+      !shouldRevealArrivedPrompt({
+        previous,
+        threadKey: routeThreadKey,
+        latestPromptId,
+        sentHere: locallySentPromptIdsRef.current.has(latestPromptId),
+        readerAtEnd: isAtEndRef.current,
+      })
+    )
+      return;
+    cancelTimelinePositioning();
+    setReadingFollowPromptId(latestPromptId as MessageId);
+  }, [routeThreadKey, latestPromptId, cancelTimelinePositioning]);
   useEffect(() => {
     let removeListeners: (() => void) | null = null;
     let frame: number | null = null;
@@ -6220,10 +6253,18 @@ function ChatViewContent(props: ChatViewProps) {
           } else if (event.deltaY < 0) {
             timelineScrollIntentRef.current = "away-from-end";
           }
-          handleManualNavigation();
+          // Scrolling down, momentum toward the end and pinch never cancel a
+          // reveal; scrolling back up through content does.
+          if (event.deltaY < 0 && contentScrollsUp()) {
+            handleManualNavigation();
+          }
         };
+        // Touch direction isn't observable here, so a drag cancels once it has
+        // carried the viewport away from the end.
         const handleTouchMove = () => {
-          handleManualNavigation();
+          if (viewportIsAwayFromEnd()) {
+            handleManualNavigation();
+          }
         };
         // Scrollbar drags produce no wheel/touch events; they are the only
         // pointerdowns whose target is the scroll node itself rather than a
@@ -6284,7 +6325,9 @@ function ChatViewContent(props: ChatViewProps) {
             case "End":
             case "ArrowDown":
               timelineScrollIntentRef.current = "toward-end";
-              handleManualNavigation();
+              if (viewportIsAwayFromEnd()) {
+                handleManualNavigation();
+              }
               composerRef.current?.collapseForTimelineScrollKey(event.key);
               if (isTimelineAtLogicalEnd()) {
                 composerRef.current?.restoreAfterTimelineReachedEnd();
@@ -6380,6 +6423,10 @@ function ChatViewContent(props: ChatViewProps) {
   }, []);
 
   const onIsAtEndChange = useCallback((isAtEnd: boolean) => {
+    // Only transitions count: scroll and size events repeat while the reader
+    // stays put, and must neither restart the pill's delay nor reopen a
+    // composer the reader collapsed.
+    if (isAtEndRef.current === isAtEnd) return;
     isAtEndRef.current = isAtEnd;
     if (isAtEnd) {
       if (timelineScrollIntentRef.current === "toward-end") {
@@ -6395,6 +6442,9 @@ function ChatViewContent(props: ChatViewProps) {
 
   useEffect(() => {
     setPullRequestDialogState(null);
+    // A thread returned to mid-history shows the end control right away.
+    const savedAtEnd = readTimelinePosition(routeThreadKey)?.atEnd !== false;
+    isAtEndRef.current = savedAtEnd;
     timelineScrollIntentRef.current = null;
     timelineScrollModeRef.current = "free-scrolling";
     setReadingFollowPromptId(null);
@@ -6402,7 +6452,7 @@ function ChatViewContent(props: ChatViewProps) {
     programmaticScrollPendingRef.current = false;
     positionedTimelineAnchorRef.current = null;
     showScrollDebouncer.current.cancel();
-    setShowScrollToBottom(false);
+    setShowScrollToBottom(!savedAtEnd);
     setUnreadBelowCount(0);
     return () => {
       anchorUserScrollGenerationRef.current += 1;

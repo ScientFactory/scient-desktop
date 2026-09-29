@@ -1,7 +1,8 @@
 import { activityIssuePolicy } from "@t3tools/client-runtime/work-log/issue-presentation";
 import { useBoundedAnswerFollow } from "./useBoundedAnswerFollow";
+import { deriveTerminalAssistantMessageIds } from "@scientfactory/conversation/work-log-grouping";
 import { countUnreadBelow, unreadMessagesForThread } from "./unreadTimelineMessages";
-import { readingIdentity, resolveReadingRow } from "./readerScrollPolicy";
+import { readingIdentity, resolveReadingRow, withReadingEnd } from "./readerScrollPolicy";
 import { ReadOnlySourcePreview } from "../files/AttachmentFilePreview";
 import { useRightPanelStore } from "~/rightPanelStore";
 import {
@@ -74,7 +75,11 @@ import {
   type MouseEvent,
   type ReactNode,
 } from "react";
-import { LegendList, type LegendListRef } from "@legendapp/list/react";
+import {
+  LegendList,
+  type LegendListRef,
+  type MaintainScrollAtEndOptions,
+} from "@legendapp/list/react";
 import { FileDiff } from "@pierre/diffs/react";
 import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
 import {
@@ -155,7 +160,6 @@ import { serverEnvironment } from "../../state/server";
 import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
   flushTimelinePositions,
-  withRealTimelineEnd,
   readTimelinePosition,
   rememberTimelinePosition,
   timelineContentOverflowsViewport,
@@ -374,6 +378,15 @@ function TimelineListFooter({ composerInset }: { readonly composerInset: number 
   );
 }
 const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
+/** Older-history pages a missing saved message may load before falling back. */
+const MAX_READING_HISTORY_PAGES = 2;
+// While the reader rests at the end of an idle thread, late layout (a resized
+// window, a diagram or image finishing its render) keeps the end in view. New
+// rows and streaming never move the reader: those have their own policy.
+const TIMELINE_IDLE_END_PINNING = {
+  animated: false,
+  on: { dataChange: false, footerLayout: false, itemLayout: true, layout: true },
+} as const satisfies MaintainScrollAtEndOptions;
 // ---------------------------------------------------------------------------
 // Props (public API)
 // ---------------------------------------------------------------------------
@@ -541,6 +554,14 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   if (requestedReadingPages.current.key !== listIdentityKey) {
     requestedReadingPages.current = { key: listIdentityKey, cursors: new Set() };
   }
+  // A saved message that no longer exists (a revert, a deleted turn) must not
+  // page in the whole history: after a few pages, a neighbor or the end is used.
+  const [readingHistoryPages, setReadingHistoryPages] = useState({
+    key: listIdentityKey,
+    count: 0,
+  });
+  const readingHistoryPageCount =
+    readingHistoryPages.key === listIdentityKey ? readingHistoryPages.count : 0;
   const restoringThreadPosition = positionedThreadKey !== listIdentityKey;
   const listIdentityRef = useRef(listIdentityKey);
   const previousLatestTurnRef = useRef(latestTurn);
@@ -588,6 +609,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     [listIdentityKey, rememberedPosition],
   );
   const [minimapStripMap] = useState(() => new Map<string, HTMLSpanElement>());
+  // Expanding or collapsing a block at the end must not pin the end: the
+  // toggled row keeps its place instead (maintainVisibleContentPosition).
+  const [disclosureToggleSettling, setDisclosureToggleSettling] = useState(false);
   const disclosureAnchorKeyRef = useRef<string | null>(null);
   const disclosureSettleFrameRef = useRef<number | null>(null);
   const disclosureSettleSecondFrameRef = useRef<number | null>(null);
@@ -605,6 +629,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const suspendEndScrollMaintenanceForDisclosure = useCallback(
     (anchorKey: string, collapsed = false) => {
       disclosureAnchorKeyRef.current = anchorKey;
+      setDisclosureToggleSettling(true);
       if (disclosureSettleFrameRef.current !== null) {
         cancelAnimationFrame(disclosureSettleFrameRef.current);
       }
@@ -614,17 +639,23 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       disclosureSettleFrameRef.current = requestAnimationFrame(() => {
         disclosureSettleSecondFrameRef.current = requestAnimationFrame(() => {
           disclosureAnchorKeyRef.current = null;
+          setDisclosureToggleSettling(false);
           disclosureSettleFrameRef.current = null;
           disclosureSettleSecondFrameRef.current = null;
           // Wait for row measurement and the disclosure click's blur check.
           // Closing output can reveal the end without a scroll event.
-          if (collapsed && resolveTimelineIsAtEnd(listRef.current?.getState()) === true) {
+          if (
+            collapsed &&
+            resolveTimelineIsAtEnd(
+              withReadingEnd(listRef.current?.getState(), contentInsetEndAdjustment),
+            ) === true
+          ) {
             onToolOutputCollapsedAtEnd?.();
           }
         });
       });
     },
-    [listRef, onToolOutputCollapsedAtEnd],
+    [contentInsetEndAdjustment, listRef, onToolOutputCollapsedAtEnd],
   );
 
   const shouldRestoreVisibleContentPosition = useCallback((row: MessagesTimelineRow) => {
@@ -788,12 +819,15 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     listRef,
     rows,
     promptMessageId: readingFollowPromptId,
+    responseRunning: isWorking,
     suspended: timelinePositioningPending || restoringThreadPosition || positionHistoryLoading,
     composerInset: contentInsetEndAdjustment,
   });
   const minimapItems = useMemo(() => deriveTimelineMinimapItems(rows), [rows]);
+  const readingHistoryExhausted =
+    loadEarlier === null || readingHistoryPageCount >= MAX_READING_HISTORY_PAGES;
   const restoreTarget = rememberedPosition
-    ? resolveReadingRow(rows, rememberedPosition, loadEarlier === null)
+    ? resolveReadingRow(rows, rememberedPosition, readingHistoryExhausted)
     : null;
   const restoreRowIndex = restoreTarget?.index ?? -1;
   const restoreOffset = restoreTarget?.exact ? (rememberedPosition?.offsetWithinRow ?? 0) : 0;
@@ -801,15 +835,19 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     restoringThreadPosition &&
     !!rememberedPosition &&
     restoreTarget === null &&
-    loadEarlier !== null;
+    !readingHistoryExhausted;
   useEffect(() => {
     if (!waitingForReadingHistory || positionHistoryLoading || !loadEarlier || loadEarlier.loading)
       return;
     const cursor = loadEarlier.cursor ?? "initial";
     if (requestedReadingPages.current.cursors.has(cursor)) return;
     requestedReadingPages.current.cursors.add(cursor);
+    setReadingHistoryPages((current) => ({
+      key: listIdentityKey,
+      count: (current.key === listIdentityKey ? current.count : 0) + 1,
+    }));
     loadEarlier.onLoadEarlier();
-  }, [waitingForReadingHistory, positionHistoryLoading, loadEarlier]);
+  }, [waitingForReadingHistory, positionHistoryLoading, loadEarlier, listIdentityKey]);
   const restoringAlwaysRender = useMemo(
     () =>
       restoringThreadPosition && restoreRowIndex >= 0 ? { indices: [restoreRowIndex] } : undefined,
@@ -886,7 +924,28 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     void Promise.resolve(scrolling).then(() => {
       if (cancelled) return;
       if (!position || index < 0) {
-        setPositionedThreadKey(listIdentityKey);
+        // Rows measure after the first jump; keep the end in view until the
+        // list height holds for two frames, so a fresh open lands at the end.
+        let stableEndFrames = 0;
+        let remainingEndFrames = 60;
+        const settleAtEnd = () => {
+          if (cancelled) return;
+          const element = list.getScrollableNode();
+          if (!element || --remainingEndFrames <= 0) {
+            setPositionedThreadKey(listIdentityKey);
+            return;
+          }
+          if (element.scrollHeight - element.clientHeight - element.scrollTop > 1) {
+            stableEndFrames = 0;
+            void Promise.resolve(list.scrollToEnd({ animated: false })).then(() => {
+              if (!cancelled) settleFrame = requestAnimationFrame(settleAtEnd);
+            });
+            return;
+          }
+          if (++stableEndFrames >= 2) setPositionedThreadKey(listIdentityKey);
+          else settleFrame = requestAnimationFrame(settleAtEnd);
+        };
+        settleFrame = requestAnimationFrame(settleAtEnd);
         return;
       }
       // Index scrolling starts from estimates. Keep the saved row mounted
@@ -1067,7 +1126,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       offsetWithinRow: identity.rowId
         ? element.getBoundingClientRect().top - row.getBoundingClientRect().top
         : 0,
-      atEnd: resolveTimelineIsAtEnd(state) ?? false,
+      atEnd: resolveTimelineIsAtEnd(withReadingEnd(state, contentInsetEndAdjustment)) ?? false,
       ...(anchorMessageId ? { anchorMessageId } : {}),
       disclosures: {
         turns: paintedExpandedTurnIds,
@@ -1110,6 +1169,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       window.removeEventListener("pagehide", save);
     };
   }, [listIdentityKey]);
+  // Each response's latest message: the unit the unread badge counts.
+  const responseEndMessageIds = useMemo(
+    () => deriveTerminalAssistantMessageIds(timelineEntries),
+    [timelineEntries],
+  );
   const handleScroll = useCallback(() => {
     const state = listRef.current?.getState?.();
     if (restoringThreadPosition || positionHistoryLoading || state?.data !== rows) return;
@@ -1119,7 +1183,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       const messages = timelineEntries.flatMap((entry) =>
         entry.kind === "message" ? [entry.message] : [],
       );
-      const unread = unreadMessagesForThread(listIdentityKey, messages);
+      const unread = unreadMessagesForThread(listIdentityKey, messages, responseEndMessageIds);
       const rect = viewport.getBoundingClientRect();
       const bounds = rows.flatMap((row, index) => {
         if (row.kind !== "message" || row.message.role !== "assistant") return [];
@@ -1149,11 +1213,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       // Removing a tail wholly below the viewport cannot clamp the reading position.
       if (bottom >= state.scroll + state.scrollLength) onReleaseUnusedAnchor?.();
     }
-    // Reserved anchor space is not unread content. Only real rows can make the
-    // existing end control appear; overflowing answers still do.
-    const isAtEnd = resolveTimelineIsAtEnd(
-      anchorMessageId ? withRealTimelineEnd(state, contentInsetEndAdjustment) : state,
-    );
+    // The reader is at the bottom once the last message's text is in view:
+    // reserved anchor space and trailing file lists or tool groups are not
+    // unread content. Overflowing answers still show the end control.
+    const isAtEnd = resolveTimelineIsAtEnd(withReadingEnd(state, contentInsetEndAdjustment));
     if (isAtEnd !== undefined && !citationPositioning) onIsAtEndChange(isAtEnd);
     reportContentOverflow();
     if (!state || minimapItems.length === 0) {
@@ -1204,6 +1267,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     positionHistoryLoading,
     saveReadingPosition,
     timelineEntries,
+    responseEndMessageIds,
     onUnreadBelowChange,
     anchorMessageId,
     timelinePositioningPending,
@@ -1219,6 +1283,26 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     const frame = requestAnimationFrame(handleScroll);
     return () => cancelAnimationFrame(frame);
   }, [handleScroll, rows.length]);
+  // Row size changes arrive many times per frame while an answer streams. The
+  // position, unread and end bookkeeping runs once per frame, not per change.
+  const handleScrollRef = useRef(handleScroll);
+  useLayoutEffect(() => {
+    handleScrollRef.current = handleScroll;
+  });
+  const sizeChangeFrameRef = useRef<number | null>(null);
+  const handleScrollOnNextFrame = useCallback(() => {
+    if (sizeChangeFrameRef.current !== null) return;
+    sizeChangeFrameRef.current = requestAnimationFrame(() => {
+      sizeChangeFrameRef.current = null;
+      handleScrollRef.current();
+    });
+  }, []);
+  useEffect(
+    () => () => {
+      if (sizeChangeFrameRef.current !== null) cancelAnimationFrame(sizeChangeFrameRef.current);
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!timelineViewportElement) {
@@ -1442,15 +1526,25 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             }}
             {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
             contentInsetEndAdjustment={anchoredEndSpace ? contentInsetEndAdjustment : 0}
-            maintainScrollAtEnd={false}
+            maintainScrollAtEnd={
+              isWorking ||
+              readingFollowPromptId !== null ||
+              timelinePositioningPending ||
+              citationPositioning ||
+              restoringThreadPosition ||
+              anchoredEndSpace ||
+              disclosureToggleSettling
+                ? false
+                : TIMELINE_IDLE_END_PINNING
+            }
             maintainVisibleContentPosition={
               citationPositioning || restoringThreadPosition
                 ? false
                 : maintainVisibleContentPosition
             }
-            maintainScrollAtEndThreshold={1}
+            maintainScrollAtEndThreshold={0.05}
             onScroll={handleScroll}
-            onItemSizeChanged={handleScroll}
+            onItemSizeChanged={handleScrollOnNextFrame}
             className={cn(
               "scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain px-3 [overflow-anchor:none] sm:px-5",
               topFadeEnabled && "topbar-scroll-fade",
@@ -2459,6 +2553,8 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
                 if (preview) ctx.onImageExpand(preview);
               }}
             />
+            {/* SCIENT-FORK: the end of the answer's readable content (withReadingEnd). */}
+            <span data-reading-end="true" aria-hidden="true" className="block h-0" />
           </>
         </AssistantCitationSource>
         <AssistantChangedFilesSection

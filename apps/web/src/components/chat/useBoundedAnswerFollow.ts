@@ -2,43 +2,70 @@ import { useLayoutEffect, useRef, type RefObject } from "react";
 import type { LegendListRef } from "@legendapp/list/react";
 import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
 import { CHAT_TIMELINE_ANCHOR_OFFSET } from "./timelineScrollAnchoring";
+import { isTimelineScrollTarget } from "./timelineScrollTarget";
 
-/** Reveal growth only while the sent prompt's text remains visible. */
-function boundedAnswerScrollDelta(input: {
+/** How much of a newly arrived message the reveal shows: its first lines. */
+const FIRST_LINES_PX = 48;
+
+/**
+ * How far the reveal may scroll now. Growth is revealed only while the sent
+ * prompt's text keeps room above it. When traces and tool rows push the
+ * latest message below the fold, the reveal continues past the prompt just
+ * far enough to show that message's first lines, and never scrolls the
+ * message itself above the reading margin: the answer is read from its
+ * beginning, not followed to its end.
+ */
+export function boundedAnswerScrollDelta(input: {
   promptTextTop: number;
+  answerTop: number | null;
   answerBottom: number;
   viewportTop: number;
   viewportBottom: number;
 }) {
-  const roomAbove = Math.max(
-    0,
-    input.promptTextTop - input.viewportTop - CHAT_TIMELINE_ANCHOR_OFFSET,
-  );
+  const readingTop = input.viewportTop + CHAT_TIMELINE_ANCHOR_OFFSET;
+  const promptRoom = Math.max(0, input.promptTextTop - readingTop);
   const hiddenBelow = Math.max(0, input.answerBottom - input.viewportBottom);
-  return Math.min(roomAbove, hiddenBelow);
+  const growth = Math.min(promptRoom, hiddenBelow);
+  if (input.answerTop === null) return growth;
+  const firstLinesHidden = Math.max(
+    0,
+    Math.min(input.answerTop + FIRST_LINES_PX, input.answerBottom) - input.viewportBottom,
+  );
+  const answerRoom = Math.max(0, input.answerTop - readingTop);
+  return Math.max(growth, Math.min(firstLinesHidden, answerRoom));
 }
 
+/**
+ * After an eligible send, reveals the prompt and then the start of its
+ * response. The response's latest assistant message is the target, so the
+ * reveal moves past progress notes and trace runs to the message the agent is
+ * writing now. It stops once the response has settled and its last message
+ * is revealed, or when the reader scrolls back up. Scrolling down, clicks,
+ * text selection and scrolling inside nested output never cancel it.
+ */
 export function useBoundedAnswerFollow({
   listRef,
   rows,
   promptMessageId,
+  responseRunning,
   suspended,
   composerInset,
 }: {
   listRef: RefObject<LegendListRef | null>;
   rows: readonly MessagesTimelineRow[];
   promptMessageId: string | null;
+  /** Whether the thread is still working, so later messages may still arrive. */
+  responseRunning: boolean;
   suspended: boolean;
   composerInset: number;
 }) {
-  const intent = useRef<{ prompt: string | null; answer: string | null; stopped: boolean }>({
+  const intent = useRef<{ prompt: string | null; stopped: boolean }>({
     prompt: null,
-    answer: null,
     stopped: false,
   });
   useLayoutEffect(() => {
     if (intent.current.prompt !== promptMessageId)
-      intent.current = { prompt: promptMessageId, answer: null, stopped: false };
+      intent.current = { prompt: promptMessageId, stopped: false };
     if (!promptMessageId || suspended || intent.current.stopped) return;
     const promptIndex = rows.findIndex(
       (row) => row.kind === "message" && row.message.id === promptMessageId,
@@ -49,21 +76,18 @@ export function useBoundedAnswerFollow({
       const row = rows[i];
       if (row?.kind !== "message") continue;
       if (row.message.role === "user") break;
-      if (
-        row.message.role === "assistant" &&
-        row.message.text.trim() &&
-        (!intent.current.answer || row.message.id === intent.current.answer)
-      ) {
-        answerIndex = i;
-        intent.current.answer = row.message.id;
-        break;
-      }
+      if (row.message.role === "assistant" && row.message.text.trim()) answerIndex = i;
     }
 
     const list = listRef.current;
     const viewport = list?.getScrollableNode();
     const promptRow = rows[promptIndex]!;
     const answerRow = rows[answerIndex] ?? promptRow;
+    const answerSettled =
+      answerIndex >= 0 &&
+      !responseRunning &&
+      answerRow.kind === "message" &&
+      !answerRow.message.streaming;
     if (!viewport || !list) return;
     let observedAnswer: Element | null = null;
     let mountAttempts = 12;
@@ -93,23 +117,24 @@ export function useBoundedAnswerFollow({
       const prompt =
         promptIndexNow === undefined ? null : measuredState.elementAtIndex(promptIndexNow);
       const promptText = prompt?.querySelector('[data-user-message-body="true"]') ?? prompt;
-      if (!promptText || !promptText.isConnected) return;
-      const promptTextTop = promptText.getBoundingClientRect().top;
-      const rect = answer.getBoundingClientRect();
+      // A prompt scrolled out of the rendered window has no room left above it.
       const viewportRect = viewport.getBoundingClientRect();
+      const promptTextTop =
+        promptText && promptText.isConnected
+          ? promptText.getBoundingClientRect().top
+          : viewportRect.top;
+      const rect = answer.getBoundingClientRect();
       const delta = boundedAnswerScrollDelta({
         promptTextTop,
+        answerTop: answerIndex >= 0 ? rect.top : null,
         answerBottom: rect.bottom,
         viewportTop: viewportRect.top,
         viewportBottom: viewportRect.top + viewport.clientHeight - composerInset,
       });
-      if (promptTextTop <= viewportRect.top + CHAT_TIMELINE_ANCHOR_OFFSET + 1) {
-        intent.current.stopped = true;
-        return;
-      }
       if (delta <= 0.5) {
-        if (answerIndex >= 0 && answerRow.kind === "message" && !answerRow.message.streaming)
-          intent.current.stopped = true;
+        // Nothing to reveal now. Later messages may still arrive while the
+        // thread works; the reveal ends once the settled response is shown.
+        if (answerSettled) intent.current.stopped = true;
         return;
       }
       const before = viewport.scrollTop;
@@ -128,9 +153,13 @@ export function useBoundedAnswerFollow({
       if (frame !== null) cancelAnimationFrame(frame);
       frame = null;
     };
+    const onWheel = (event: WheelEvent) => {
+      if (event.deltaY < 0 && isTimelineScrollTarget(event.target, viewport, event.deltaY))
+        cancel();
+    };
     const onKey = (event: KeyboardEvent) => {
       if (
-        ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key) &&
+        ["ArrowUp", "PageUp", "Home"].includes(event.key) &&
         !(
           event.target instanceof Element &&
           event.target.closest("input, textarea, [contenteditable=true]")
@@ -138,9 +167,7 @@ export function useBoundedAnswerFollow({
       )
         cancel();
     };
-    viewport.addEventListener("wheel", cancel, { passive: true });
-    viewport.addEventListener("touchmove", cancel, { passive: true });
-    viewport.addEventListener("pointerdown", cancel, { passive: true });
+    viewport.addEventListener("wheel", onWheel, { passive: true });
     viewport.ownerDocument.addEventListener("keydown", onKey);
     const observer = new ResizeObserver(schedule);
     observer.observe(viewport);
@@ -148,10 +175,8 @@ export function useBoundedAnswerFollow({
     return () => {
       if (frame !== null) cancelAnimationFrame(frame);
       observer.disconnect();
-      viewport.removeEventListener("wheel", cancel);
-      viewport.removeEventListener("touchmove", cancel);
-      viewport.removeEventListener("pointerdown", cancel);
+      viewport.removeEventListener("wheel", onWheel);
       viewport.ownerDocument.removeEventListener("keydown", onKey);
     };
-  }, [listRef, rows, promptMessageId, suspended, composerInset]);
+  }, [listRef, rows, promptMessageId, responseRunning, suspended, composerInset]);
 }
