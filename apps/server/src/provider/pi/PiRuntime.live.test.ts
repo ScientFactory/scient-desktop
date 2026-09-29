@@ -427,8 +427,12 @@ it.effect.skipIf(!binary)(
             turn === 1 ? "failed" : "completed",
           );
           expect(completedTool?.raw?.payload).toMatchObject({ isError: turn === 1 });
+          expect(completedTool?.raw?.payload).toMatchObject({
+            result: { details: { structuredContent: { test: "preserved" } } },
+          });
           expect(events.some((event) => event.type === "thread.token-usage.updated")).toBe(true);
-          expect(modelRequests[modelRequests.length - 1]).toContain("preserved");
+          expect(modelRequests[modelRequests.length - 1]).toContain("Bridge: שלום π");
+          expect(modelRequests[modelRequests.length - 1]).not.toContain("preserved");
         }
         expect(calls.filter((call) => call.method === "tools/call")).toHaveLength(2);
         expect(modelRequests).toHaveLength(4);

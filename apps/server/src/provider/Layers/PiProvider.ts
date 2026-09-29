@@ -184,7 +184,10 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
     checkedAt,
     models: models(settings, discovered),
     modelConnections: discovery.value.modelConnections,
-    slashCommands: commands.slashCommands,
+    slashCommands: [
+      ...commands.slashCommands.filter((command) => command.name !== "compact"),
+      { name: "compact", description: "Compact conversation context" },
+    ],
     skills: commands.skills,
     probe: {
       installed: true,
