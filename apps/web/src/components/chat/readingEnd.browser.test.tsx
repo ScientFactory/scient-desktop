@@ -374,3 +374,28 @@ it("does not pin the end right after a click that expands content", async () => 
   await frames(6);
   expect(Math.abs(node().scrollTop - before)).toBeLessThanOrEqual(1);
 });
+
+it("keeps the end of the answer's text in view while idle, not the end of what follows it", async () => {
+  const key = "reading-end:idle-text-end";
+  const answer = (text: string) => message(30, "assistant", text, "turn-30");
+  const entries = [...history(10), message(29, "user", "Question", "turn-30")];
+  render(key, [...entries, answer("Short answer.")]);
+  await expect.poll(() => readTimelinePosition(key)).toBeDefined();
+  await listRef.current!.scrollToEnd({ animated: false });
+  await frames(6);
+  // Rest exactly at the end of the answer's text, above its trailing rows.
+  const state = listRef.current!.getState();
+  const trailing = state.contentLength - withReadingEnd(state, COMPOSER_INSET)!.contentLength;
+  await listRef.current!.scrollToOffset({ offset: node().scrollTop - trailing, animated: false });
+  await frames(6);
+  const readingGap = () => {
+    const now = listRef.current!.getState();
+    return withReadingEnd(now, COMPOSER_INSET)!.contentLength - now.scroll - now.scrollLength;
+  };
+  const before = readingGap();
+  // The answer's content grows late (an image or diagram finishing its render).
+  render(key, [...entries, answer(paragraph(30).repeat(3))]);
+  await expect
+    .poll(() => Math.abs(readingGap() - before), { timeout: 4000 })
+    .toBeLessThanOrEqual(2);
+});

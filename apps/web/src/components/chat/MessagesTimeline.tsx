@@ -75,11 +75,7 @@ import {
   type MouseEvent,
   type ReactNode,
 } from "react";
-import {
-  LegendList,
-  type LegendListRef,
-  type MaintainScrollAtEndOptions,
-} from "@legendapp/list/react";
+import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { FileDiff } from "@pierre/diffs/react";
 import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
 import {
@@ -378,15 +374,13 @@ function TimelineListFooter({ composerInset }: { readonly composerInset: number 
   );
 }
 const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
+/** Which rows are listed: a new or removed row changes it, a row changing size does not. */
+function timelineRowsKey(data: readonly unknown[]) {
+  const last = data.at(-1) as { id?: string } | undefined;
+  return `${data.length}:${last?.id ?? ""}`;
+}
 /** Older-history pages a missing saved message may load before falling back. */
 const MAX_READING_HISTORY_PAGES = 2;
-// While the reader rests at the end of an idle thread, late layout (a resized
-// window, a diagram or image finishing its render) keeps the end in view. New
-// rows and streaming never move the reader: those have their own policy.
-const TIMELINE_IDLE_END_PINNING = {
-  animated: false,
-  on: { dataChange: false, footerLayout: false, itemLayout: true, layout: true },
-} as const satisfies MaintainScrollAtEndOptions;
 // ---------------------------------------------------------------------------
 // Props (public API)
 // ---------------------------------------------------------------------------
@@ -1219,6 +1213,14 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     () => deriveTerminalAssistantMessageIds(timelineEntries),
     [timelineEntries],
   );
+  // Where the reader last rested at the reading end: the scroll offset and the
+  // distance left to the end of the last message's text. Null when not at the end.
+  const restingAtReadingEndRef = useRef<{
+    scroll: number;
+    gap: number;
+    /** The rows at rest (count and last row): only their size changes are kept in view. */
+    rowsKey: string;
+  } | null>(null);
   const handleScroll = useCallback(() => {
     const state = listRef.current?.getState?.();
     if (restoringThreadPosition || positionHistoryLoading || state?.data !== rows) return;
@@ -1261,8 +1263,17 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     // The reader is at the bottom once the last message's text is in view:
     // reserved anchor space and trailing file lists or tool groups are not
     // unread content. Overflowing answers still show the end control.
-    const isAtEnd = resolveTimelineIsAtEnd(withReadingEnd(state, contentInsetEndAdjustment));
+    const readingState = withReadingEnd(state, contentInsetEndAdjustment);
+    const isAtEnd = resolveTimelineIsAtEnd(readingState);
     if (isAtEnd !== undefined && !citationPositioning) onIsAtEndChange(isAtEnd);
+    restingAtReadingEndRef.current =
+      isAtEnd === true && readingState?.contentLength !== undefined
+        ? {
+            scroll: state.scroll,
+            gap: readingState.contentLength - state.scroll - state.scrollLength,
+            rowsKey: timelineRowsKey(state.data),
+          }
+        : null;
     reportContentOverflow();
     if (!state || minimapItems.length === 0) {
       return;
@@ -1331,11 +1342,51 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   useLayoutEffect(() => {
     handleScrollRef.current = handleScroll;
   });
+  // While the reader rests at the end of an idle thread, late layout (a
+  // resized window, a diagram or image finishing its render) keeps the end of
+  // the last message's text where it was. New rows, streaming, reveals, and
+  // content the reader just toggled never move the reader.
+  const idleEndKeeping =
+    !isWorking &&
+    !revealActive &&
+    !interactionSettling &&
+    !timelinePositioningPending &&
+    !citationPositioning &&
+    !restoringThreadPosition &&
+    !anchoredEndSpace &&
+    !disclosureToggleSettling;
+  const idleEndKeepingRef = useRef(idleEndKeeping);
+  useLayoutEffect(() => {
+    idleEndKeepingRef.current = idleEndKeeping;
+  });
+  const keepReadingEndInView = useCallback(() => {
+    const resting = restingAtReadingEndRef.current;
+    const list = listRef.current;
+    const viewport = list?.getScrollableNode();
+    if (!idleEndKeepingRef.current || !resting || !list || !viewport) return;
+    const state = list.getState();
+    // The reader moved since resting at the end, or rows arrived or left:
+    // new rows grow below the reader and never move them.
+    if (
+      Math.abs(state.scroll - resting.scroll) > 1 ||
+      timelineRowsKey(state.data) !== resting.rowsKey
+    )
+      return;
+    const reading = withReadingEnd(state, contentInsetEndAdjustment);
+    if (reading?.contentLength === undefined) return;
+    const grown = reading.contentLength - state.scroll - state.scrollLength - resting.gap;
+    if (grown > 1) viewport.scrollTop += grown;
+  }, [contentInsetEndAdjustment, listRef]);
+  const keepReadingEndInViewRef = useRef(keepReadingEndInView);
+  useLayoutEffect(() => {
+    keepReadingEndInViewRef.current = keepReadingEndInView;
+  });
   const bookkeepingFrameRef = useRef<number | null>(null);
   const handleScrollOnNextFrame = useCallback(() => {
     if (bookkeepingFrameRef.current !== null) return;
     bookkeepingFrameRef.current = requestAnimationFrame(() => {
       bookkeepingFrameRef.current = null;
+      keepReadingEndInViewRef.current();
       handleScrollRef.current();
     });
   }, []);
@@ -1348,6 +1399,14 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   useEffect(() => {
     handleScrollOnNextFrame();
   }, [handleScroll, handleScrollOnNextFrame, rows.length]);
+  // A resized window or panel changes the viewport without a scroll or row event.
+  useEffect(() => {
+    const viewport = readingListLoaded ? listRef.current?.getScrollableNode() : null;
+    if (!viewport) return;
+    const observer = new ResizeObserver(() => handleScrollOnNextFrame());
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, [handleScrollOnNextFrame, listRef, readingListLoaded]);
 
   useEffect(() => {
     if (!timelineViewportElement) {
@@ -1571,25 +1630,14 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             }}
             {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
             contentInsetEndAdjustment={anchoredEndSpace ? contentInsetEndAdjustment : 0}
-            maintainScrollAtEnd={
-              isWorking ||
-              revealActive ||
-              interactionSettling ||
-              timelinePositioningPending ||
-              citationPositioning ||
-              restoringThreadPosition ||
-              anchoredEndSpace ||
-              disclosureToggleSettling
-                ? false
-                : TIMELINE_IDLE_END_PINNING
-            }
+            maintainScrollAtEnd={false}
             maintainVisibleContentPosition={
               citationPositioning || restoringThreadPosition
                 ? false
                 : maintainVisibleContentPosition
             }
-            maintainScrollAtEndThreshold={0.05}
-            onScroll={handleScroll}
+            maintainScrollAtEndThreshold={1}
+            onScroll={handleScrollOnNextFrame}
             onItemSizeChanged={handleScrollOnNextFrame}
             className={cn(
               "scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain px-3 [overflow-anchor:none] sm:px-5",

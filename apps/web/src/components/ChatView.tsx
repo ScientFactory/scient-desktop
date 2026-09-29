@@ -6267,27 +6267,25 @@ function ChatViewContent(props: ChatViewProps) {
           }
         };
         // A finger moving down drags older content into view: that is scrolling
-        // back up, which cancels. Dragging toward newer content never does.
-        let touchStartY: number | null = null;
+        // back up, which cancels. Direction is read move by move, so reversing
+        // a drag counts. Dragging toward newer content never cancels.
+        let touchY: number | null = null;
         const handleTouchStart = (event: TouchEvent) => {
-          touchStartY = event.touches[0]?.clientY ?? null;
+          touchY = event.touches[0]?.clientY ?? null;
         };
         const handleTouchMove = (event: TouchEvent) => {
           const y = event.touches[0]?.clientY;
-          if (touchStartY === null || y === undefined) return;
-          if (y - touchStartY > 8 && contentScrollsUp()) {
+          if (touchY === null || y === undefined) return;
+          const movedTowardOlder = y - touchY > 2;
+          touchY = y;
+          if (movedTowardOlder && contentScrollsUp()) {
             handleManualNavigation();
           }
         };
-        // Scrollbar drags produce no wheel/touch events; they are the only
-        // pointerdowns whose target is the scroll node itself rather than a
-        // message row. Clicking or selecting content never moves the reader,
-        // so it never cancels placement or a reveal.
-        const handlePointerDown = (event: PointerEvent) => {
-          if (event.target === scrollNode && contentScrollsUp()) {
-            handleManualNavigation();
-          }
-        };
+        // Pointer presses (content clicks, selection, padding, the scrollbar)
+        // never cancel on their own: a scrollbar drag upward is caught as an
+        // upward scroll by the reveal itself.
+
         // Keyboard scrolling (PageUp/Home/ArrowUp) bypasses wheel and
         // pointer events entirely; without this the timeline yanks back to
         // the end on the next stream chunk. Clicking message text can leave
@@ -6350,15 +6348,11 @@ function ChatViewContent(props: ChatViewProps) {
         scrollNode.addEventListener("touchmove", handleTouchMove, {
           passive: true,
         });
-        scrollNode.addEventListener("pointerdown", handlePointerDown, {
-          passive: true,
-        });
         document.addEventListener("keydown", handleKeyDown);
         removeListeners = () => {
           scrollNode.removeEventListener("wheel", handleWheel);
           scrollNode.removeEventListener("touchstart", handleTouchStart);
           scrollNode.removeEventListener("touchmove", handleTouchMove);
-          scrollNode.removeEventListener("pointerdown", handlePointerDown);
           document.removeEventListener("keydown", handleKeyDown);
         };
       });

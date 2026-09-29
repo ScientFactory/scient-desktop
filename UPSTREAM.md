@@ -3,8 +3,10 @@
 Scient owns desktop/web reader-position policy in `ChatView.tsx`,
 `MessagesTimeline.tsx`, and `chat/readerScrollPolicy.ts`. The outer timeline never
 maintains the live end during streaming, tool activity, completion, or queued
-sends; it keeps the end only for layout-only changes while idle at the end, paused
-during disclosure toggles and briefly after any click or key in the timeline. The end is the last message's text
+sends (LegendList `maintainScrollAtEnd` stays off). While idle and resting at the reading
+end, `MessagesTimeline` itself keeps that end in place through size changes of existing
+rows and viewport resizes, never for new rows, paused during disclosure toggles and
+briefly after any click or key in the timeline. Scroll bookkeeping runs once per frame. The end is the last message's text
 (`withReadingEnd`), not trailing changed files, tool groups or meta rows. Preserve
 the existing first-message framing. Send eligibility allows at most two
 rendered body-text lines below the reading edge; other end controls retain the
@@ -12,8 +14,8 @@ inherited 40-pixel band. Eligible sends, and queued prompts the server delivers 
 the reader is at the end, reveal the prompt and the start of its response's latest
 message through `chat/useBoundedAnswerFollow.ts`: capped at the prompt's first line
 reaching the top margin, past it only to show a message pushed below the fold, never
-past that message's top. Scrolling up cancels pending placement and bounded
-following; scrolling down, clicks and selection do not. `onIsAtEndChange` reacts to
+past that message's top. Scrolling up by any means (wheel, keys, touch, scrollbar)
+cancels pending placement and bounded following; scrolling down, clicks and selection do not. `onIsAtEndChange` reacts to
 transitions only. The existing Scroll to end button is a one-shot action with an
 unread badge counting responses, not a follow toggle. Do not add a second navigation button.
 Reading positions resolve by message/turn identity, load up to two pages of missing

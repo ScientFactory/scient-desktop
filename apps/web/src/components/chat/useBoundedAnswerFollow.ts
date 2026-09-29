@@ -100,6 +100,8 @@ export function useBoundedAnswerFollow({
     let mountAttempts = 12;
     let frame: number | null = null;
     let previousFrameTime = performance.now();
+    // The highest position the reveal (or the reader scrolling down) reached.
+    let revealTop = viewport.scrollTop;
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const tick = () => {
       frame = null;
@@ -164,6 +166,7 @@ export function useBoundedAnswerFollow({
       viewport.scrollTop += reducedMotion
         ? delta
         : Math.min(delta, Math.max(0.5, Math.min(elapsed * 1.2, eased)));
+      revealTop = Math.max(revealTop, viewport.scrollTop);
       if (Math.abs(viewport.scrollTop - before) > 0.1) frame = requestAnimationFrame(tick);
     };
     const schedule = () => {
@@ -178,6 +181,12 @@ export function useBoundedAnswerFollow({
       if (event.deltaY < 0 && isTimelineScrollTarget(event.target, viewport, event.deltaY))
         cancel();
     };
+    // Any upward movement the reveal did not make (a touch drag, the
+    // scrollbar, a key) is the reader scrolling back, which ends the reveal.
+    const onScroll = () => {
+      if (viewport.scrollTop < revealTop - 2) cancel();
+      else revealTop = Math.max(revealTop, viewport.scrollTop);
+    };
     const onKey = (event: KeyboardEvent) => {
       if (
         ["ArrowUp", "PageUp", "Home"].includes(event.key) &&
@@ -189,6 +198,7 @@ export function useBoundedAnswerFollow({
         cancel();
     };
     viewport.addEventListener("wheel", onWheel, { passive: true });
+    viewport.addEventListener("scroll", onScroll, { passive: true });
     viewport.ownerDocument.addEventListener("keydown", onKey);
     const observer = new ResizeObserver(schedule);
     observer.observe(viewport);
@@ -197,6 +207,7 @@ export function useBoundedAnswerFollow({
       if (frame !== null) cancelAnimationFrame(frame);
       observer.disconnect();
       viewport.removeEventListener("wheel", onWheel);
+      viewport.removeEventListener("scroll", onScroll);
       viewport.ownerDocument.removeEventListener("keydown", onKey);
     };
   }, [listRef, rows, promptMessageId, responseRunning, suspended, composerInset, onFinished]);
