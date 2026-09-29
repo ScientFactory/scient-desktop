@@ -97,16 +97,13 @@ export function SourcePdfPreview(props: {
     return (
       <div className="scient-pdf-reader">
         <div
-          className={
-            currentAsset._tag === "Failure"
-              ? "scient-pdf-state-card text-destructive"
-              : "scient-pdf-state-card"
-          }
+          className="scient-pdf-state-card"
+          role={currentAsset._tag === "Failure" ? "alert" : undefined}
         >
           {currentAsset._tag === "Failure" ? (
             <>
-              <FileText className="size-6" aria-hidden="true" />
-              <h2>Unable to open PDF</h2>
+              <FileText className="size-6 text-muted-foreground/70" aria-hidden="true" />
+              <h2>Couldn't open this PDF</h2>
               <p>Scient could not create an authorized preview for this file.</p>
               <Button size="xs" variant="outline" onClick={refresh}>
                 Try again

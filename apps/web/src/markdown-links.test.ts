@@ -5,6 +5,7 @@ import ReactMarkdown from "react-markdown";
 
 import {
   extractMarkdownLinkHrefs,
+  markdownFileLinkRelativeCopyPath,
   markdownLinkLookupKey,
   isWindowsDrivePathHref,
   resolveInlineCodeFileLinkMeta,
@@ -540,5 +541,48 @@ describe("directory paths with a trailing separator", () => {
   it("does not produce an empty label for the filesystem root", () => {
     const meta = resolveMarkdownFileLinkMeta("/tmp/", "/repo/project");
     expect(meta?.basename).not.toBe("");
+  });
+});
+
+describe("markdownFileLinkRelativeCopyPath", () => {
+  const relativeCopyPath = (href: string, cwd: string) => {
+    const meta = resolveMarkdownFileLinkMeta(href, cwd);
+    if (!meta) throw new Error(`unresolved link ${href}`);
+    return markdownFileLinkRelativeCopyPath(meta);
+  };
+
+  it("copies the workspace-relative path, not the workspace-prefixed label", () => {
+    expect(relativeCopyPath("docs/report.md", "/workspace/project")).toBe("docs/report.md");
+    expect(relativeCopyPath("/workspace/project/report.md", "/workspace/project")).toBe(
+      "report.md",
+    );
+    expect(relativeCopyPath("docs/My%20Folder/a%20b.md", "/workspace/project")).toBe(
+      "docs/My Folder/a b.md",
+    );
+  });
+
+  it("keeps the link's line and column", () => {
+    expect(relativeCopyPath("src/main.ts:12:4", "/workspace/project")).toBe("src/main.ts:12:4");
+    expect(
+      relativeCopyPath(
+        "file:///C:/Users/mike/dev-stuff/t3code/apps/web/src/session-logic.ts#L501",
+        "C:/Users/mike/dev-stuff/t3code",
+      ),
+    ).toBe("apps/web/src/session-logic.ts:501");
+  });
+
+  it("has no relative path for a file outside the workspace", () => {
+    expect(relativeCopyPath("/tmp/report.md", "/workspace/project")).toBeNull();
+    expect(relativeCopyPath("../outside.md:12", "/workspace/project")).toBeNull();
+    expect(relativeCopyPath("/workspace/project/../outside.md", "/workspace/project")).toBeNull();
+    expect(relativeCopyPath("C:/repo/../other/a.ts", "C:/repo")).toBeNull();
+    expect(relativeCopyPath("docs/..", "/workspace/project")).toBeNull();
+  });
+
+  it("collapses dot segments that stay inside the workspace", () => {
+    expect(relativeCopyPath("../project/report.md:12", "/workspace/project")).toBe("report.md:12");
+    expect(relativeCopyPath("C:/repo/../repo/src/a.ts", "C:/repo")).toBe("src/a.ts");
+    expect(relativeCopyPath("docs/../src/./main.ts:3", "/workspace/project")).toBe("src/main.ts:3");
+    expect(relativeCopyPath("./docs/report.md", "/workspace/project")).toBe("docs/report.md");
   });
 });

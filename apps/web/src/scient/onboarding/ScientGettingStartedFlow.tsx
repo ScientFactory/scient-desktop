@@ -103,6 +103,10 @@ export function ScientGettingStartedFlow(props: { readonly mode: "automatic" | "
           driverKind: definition.value,
           icon: definition.icon,
           label: definition.label,
+          detail:
+            [definition.vendorLabel, definition.accountLabel]
+              .filter((part) => part !== undefined)
+              .join(" · ") || null,
           status: providerOnboardingStatusLabel(entry ?? undefined),
           ready: entry ? isProviderInstancePickerReady(entry) : false,
           actionable: operateAccess === "granted",

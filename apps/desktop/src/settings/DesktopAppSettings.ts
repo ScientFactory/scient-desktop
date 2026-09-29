@@ -34,6 +34,7 @@ export interface DesktopSettings {
   readonly mainWindowMaximized: boolean;
   // An absent on-disk marker identifies profiles created before the size increase.
   readonly mainWindowSizeIncreaseApplied: boolean;
+  readonly mainWindowNearFullSizeApplied: boolean;
   readonly serverExposureMode: DesktopServerExposureMode;
   readonly tailscaleServeEnabled: boolean;
   readonly tailscaleServePort: number;
@@ -85,6 +86,7 @@ export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   mainWindowBounds: null,
   mainWindowMaximized: false,
   mainWindowSizeIncreaseApplied: true,
+  mainWindowNearFullSizeApplied: true,
   serverExposureMode: "local-only",
   tailscaleServeEnabled: false,
   tailscaleServePort: DEFAULT_TAILSCALE_SERVE_PORT,
@@ -109,6 +111,7 @@ const DesktopSettingsDocument = Schema.Struct({
   mainWindowBounds: Schema.optionalKey(Schema.NullOr(DesktopWindowBoundsDocument)),
   mainWindowMaximized: Schema.optionalKey(Schema.Boolean),
   mainWindowSizeIncreaseApplied: Schema.optionalKey(Schema.Boolean),
+  mainWindowNearFullSizeApplied: Schema.optionalKey(Schema.Boolean),
   serverExposureMode: Schema.optionalKey(DesktopServerExposureModeSchema),
   tailscaleServeEnabled: Schema.optionalKey(Schema.Boolean),
   tailscaleServePort: Schema.optionalKey(Schema.Number),
@@ -174,6 +177,9 @@ export class DesktopAppSettings extends Context.Service<
       isMaximized: boolean,
     ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
     readonly applyMainWindowSizeIncrease: (
+      bounds: DesktopWindowBounds | null,
+    ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
+    readonly applyMainWindowNearFullSize: (
       bounds: DesktopWindowBounds | null,
     ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
     readonly setServerExposureMode: (
@@ -267,6 +273,7 @@ function normalizeDesktopSettingsDocument(
     mainWindowBounds,
     mainWindowMaximized: mainWindowBounds !== null && parsed.mainWindowMaximized === true,
     mainWindowSizeIncreaseApplied: parsed.mainWindowSizeIncreaseApplied === true,
+    mainWindowNearFullSizeApplied: parsed.mainWindowNearFullSizeApplied === true,
     serverExposureMode:
       parsed.serverExposureMode === "network-accessible" ? "network-accessible" : "local-only",
     tailscaleServeEnabled: parsed.tailscaleServeEnabled === true,
@@ -304,6 +311,10 @@ function toDesktopSettingsDocument(
     // Do not omit this just because fresh profiles default to true: absence
     // means an older profile still needs its one-time window size increase.
     document.mainWindowSizeIncreaseApplied = true;
+  }
+  if (settings.mainWindowNearFullSizeApplied) {
+    // Absence identifies profiles that have not received this size update.
+    document.mainWindowNearFullSizeApplied = true;
   }
   if (settings.serverExposureMode !== defaults.serverExposureMode) {
     document.serverExposureMode = settings.serverExposureMode;
@@ -375,6 +386,20 @@ function applyMainWindowSizeIncrease(
         mainWindowBounds: bounds,
         mainWindowMaximized: bounds !== null && settings.mainWindowMaximized,
         mainWindowSizeIncreaseApplied: true,
+      };
+}
+
+function applyMainWindowNearFullSize(
+  settings: DesktopSettings,
+  bounds: DesktopWindowBounds | null,
+): DesktopSettings {
+  return settings.mainWindowNearFullSizeApplied
+    ? settings
+    : {
+        ...settings,
+        mainWindowBounds: bounds,
+        mainWindowMaximized: bounds !== null && settings.mainWindowMaximized,
+        mainWindowNearFullSizeApplied: true,
       };
 }
 
@@ -647,6 +672,10 @@ export const make = Effect.gen(function* () {
       persist((settings) => applyMainWindowSizeIncrease(settings, bounds)).pipe(
         Effect.withSpan("desktop.settings.applyMainWindowSizeIncrease"),
       ),
+    applyMainWindowNearFullSize: (bounds) =>
+      persist((settings) => applyMainWindowNearFullSize(settings, bounds)).pipe(
+        Effect.withSpan("desktop.settings.applyMainWindowNearFullSize"),
+      ),
     setServerExposureMode: (mode) =>
       persist((settings) => setServerExposureMode(settings, mode)).pipe(
         Effect.withSpan("desktop.settings.setServerExposureMode", { attributes: { mode } }),
@@ -718,6 +747,8 @@ export const layerTest = (initialSettings: DesktopSettings = DEFAULT_DESKTOP_SET
           update((settings) => setMainWindowBounds(settings, bounds, isMaximized)),
         applyMainWindowSizeIncrease: (bounds) =>
           update((settings) => applyMainWindowSizeIncrease(settings, bounds)),
+        applyMainWindowNearFullSize: (bounds) =>
+          update((settings) => applyMainWindowNearFullSize(settings, bounds)),
         setServerExposureMode: (mode) =>
           update((settings) => setServerExposureMode(settings, mode)),
         setTailscaleServe: (input) => update((settings) => setTailscaleServe(settings, input)),

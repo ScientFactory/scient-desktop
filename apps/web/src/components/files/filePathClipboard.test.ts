@@ -3,9 +3,13 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { toastManager } from "../ui/toast";
 import {
   copyFilePathToClipboard,
+  filePathCopyFormats,
   filePathCopyTitle,
+  fileSurfacePath,
   resolveFilePathCopyValue,
 } from "./filePathClipboard";
+
+const workspace = (relativePath: string) => ({ kind: "workspace", relativePath }) as const;
 
 describe("file path clipboard", () => {
   afterEach(() => {
@@ -21,21 +25,21 @@ describe("file path clipboard", () => {
   it("selects the relative or workspace-resolved value requested by the menu", () => {
     expect(
       resolveFilePathCopyValue({
-        relativePath: "src/main.ts",
+        path: workspace("src/main.ts"),
         workspaceRoot: "C:\\repo",
         format: "relative",
       }),
     ).toBe("src/main.ts");
     expect(
       resolveFilePathCopyValue({
-        relativePath: "src/main.ts",
+        path: workspace("src/main.ts"),
         workspaceRoot: "C:\\repo",
         format: "full",
       }),
     ).toBe("C:\\repo\\src\\main.ts");
     expect(
       resolveFilePathCopyValue({
-        relativePath: "src/main.ts",
+        path: workspace("src/main.ts"),
         workspaceRoot: null,
         format: "full",
       }),
@@ -45,25 +49,72 @@ describe("file path clipboard", () => {
   it("treats workspace-relative names as paths rather than terminal-link syntax", () => {
     expect(
       resolveFilePathCopyValue({
-        relativePath: "~/notes.md",
+        path: workspace("~/notes.md"),
         workspaceRoot: "/Users/alice/project",
         format: "full",
       }),
     ).toBe("/Users/alice/project/~/notes.md");
     expect(
       resolveFilePathCopyValue({
-        relativePath: "C:/notes.md",
+        path: workspace("C:/notes.md"),
         workspaceRoot: "/Users/alice/project",
         format: "full",
       }),
     ).toBe("/Users/alice/project/C:/notes.md");
     expect(
       resolveFilePathCopyValue({
-        relativePath: "docs/notes.md",
+        path: workspace("docs/notes.md"),
         workspaceRoot: "C:\\repo\\",
         format: "full",
       }),
     ).toBe("C:\\repo\\docs\\notes.md");
+  });
+
+  it("classifies file surfaces like the files panel", () => {
+    expect(fileSurfacePath({ relativePath: "docs/report.md" })).toEqual(
+      workspace("docs/report.md"),
+    );
+    expect(fileSurfacePath({ relativePath: "/tmp/report.md" })).toEqual({
+      kind: "host",
+      absolutePath: "/tmp/report.md",
+    });
+    expect(fileSurfacePath({ relativePath: "C:\\Users\\alice\\report.md" })).toEqual({
+      kind: "host",
+      absolutePath: "C:\\Users\\alice\\report.md",
+    });
+    expect(fileSurfacePath({ relativePath: "report.pdf", attachment: {} })).toBeNull();
+  });
+
+  it("offers only the path forms a surface actually has", () => {
+    expect(filePathCopyFormats(workspace("docs/report.md"))).toEqual(["relative", "full"]);
+    expect(filePathCopyFormats({ kind: "host", absolutePath: "/tmp/report.md" })).toEqual(["full"]);
+    expect(filePathCopyFormats(null)).toEqual([]);
+  });
+
+  it("copies a host file's absolute path unchanged instead of joining it to the workspace", () => {
+    for (const workspaceRoot of ["/workspace/project", "C:\\repo", null]) {
+      expect(
+        resolveFilePathCopyValue({
+          path: { kind: "host", absolutePath: "/tmp/report.md" },
+          workspaceRoot,
+          format: "full",
+        }),
+      ).toBe("/tmp/report.md");
+    }
+    expect(
+      resolveFilePathCopyValue({
+        path: { kind: "host", absolutePath: "D:\\data\\run 1\\report.md" },
+        workspaceRoot: "C:\\repo",
+        format: "full",
+      }),
+    ).toBe("D:\\data\\run 1\\report.md");
+    expect(
+      resolveFilePathCopyValue({
+        path: { kind: "host", absolutePath: "/tmp/report.md" },
+        workspaceRoot: "/workspace/project",
+        format: "relative",
+      }),
+    ).toBeNull();
   });
 
   it("copies the supplied path and reports the matching success", async () => {

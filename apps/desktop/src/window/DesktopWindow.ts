@@ -161,6 +161,7 @@ function getInitialWindowBackgroundColor(shouldUseDarkColors: boolean): string {
 
 type DisplayBounds = Pick<Electron.Rectangle, "x" | "y" | "width" | "height">;
 type DisplayArea = { readonly bounds: DisplayBounds; readonly workArea: DisplayBounds };
+const MAIN_WINDOW_WORK_AREA_INSET = 8;
 
 function windowFitsWithinDisplay(
   windowBounds: DesktopAppSettings.DesktopWindowBounds,
@@ -186,6 +187,19 @@ function windowBoundsEqual(
   );
 }
 
+function nearFullMainWindowSize(workArea: DisplayBounds): { width: number; height: number } {
+  return {
+    width: Math.max(
+      DesktopAppSettings.MIN_MAIN_WINDOW_SIZE.width,
+      workArea.width - 2 * MAIN_WINDOW_WORK_AREA_INSET,
+    ),
+    height: Math.max(
+      DesktopAppSettings.MIN_MAIN_WINDOW_SIZE.height,
+      workArea.height - 2 * MAIN_WINDOW_WORK_AREA_INSET,
+    ),
+  };
+}
+
 export function resolveInitialMainWindowBounds(
   persistedBounds: DesktopAppSettings.DesktopWindowBounds | null,
   displays: readonly DisplayBounds[],
@@ -200,15 +214,40 @@ export function resolveInitialMainWindowBounds(
   if (defaultWorkArea === undefined) {
     return DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE;
   }
+  return nearFullMainWindowSize(defaultWorkArea);
+}
+
+export function resolveOneTimeNearFullMainWindowBounds(
+  persistedBounds: DesktopAppSettings.DesktopWindowBounds | null,
+  isMaximized: boolean,
+  displays: readonly DisplayArea[],
+): DesktopAppSettings.DesktopWindowBounds | null {
+  if (persistedBounds === null || isMaximized) return persistedBounds;
+  const display = displays.find((area) => windowFitsWithinDisplay(persistedBounds, area.bounds));
+  if (display === undefined) return persistedBounds;
+
+  const { workArea } = display;
+  const isOldDefault =
+    (persistedBounds.width === 1100 && persistedBounds.height === 780) ||
+    (persistedBounds.width === 1280 && persistedBounds.height === 840);
+  // Include windows already sized almost to the work area, such as a saved
+  // 1698x977 window on a 1728x1005 work area, without changing smaller choices.
+  const isNearFull =
+    persistedBounds.width >= workArea.width * 0.95 &&
+    persistedBounds.height >= workArea.height * 0.95;
+  if (!isOldDefault && !isNearFull) return persistedBounds;
+
+  const target = nearFullMainWindowSize(workArea);
+  const width = Math.max(persistedBounds.width, target.width);
+  const height = Math.max(persistedBounds.height, target.height);
+  if (width === persistedBounds.width && height === persistedBounds.height) return persistedBounds;
+  const horizontalArea = width <= workArea.width ? workArea : display.bounds;
+  const verticalArea = height <= workArea.height ? workArea : display.bounds;
   return {
-    width: Math.max(
-      DesktopAppSettings.MIN_MAIN_WINDOW_SIZE.width,
-      Math.min(DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE.width, defaultWorkArea.width),
-    ),
-    height: Math.max(
-      DesktopAppSettings.MIN_MAIN_WINDOW_SIZE.height,
-      Math.min(DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE.height, defaultWorkArea.height),
-    ),
+    x: horizontalArea.x + Math.floor((horizontalArea.width - width) / 2),
+    y: verticalArea.y + Math.floor((verticalArea.height - height) / 2),
+    width,
+    height,
   };
 }
 
@@ -466,6 +505,24 @@ export const make = Effect.gen(function* () {
         Effect.map((change) => change.settings),
         Effect.catch((error) =>
           logWindowWarning("failed to persist one-time main window size increase", {
+            message: error.message,
+          }).pipe(Effect.as(persistedSettings)),
+        ),
+      );
+    }
+    if (
+      !persistedSettings.mainWindowNearFullSizeApplied &&
+      displayBoundsResult._tag === "Success"
+    ) {
+      const nearFullBounds = resolveOneTimeNearFullMainWindowBounds(
+        persistedSettings.mainWindowBounds,
+        persistedSettings.mainWindowMaximized,
+        displayBoundsResult.displays,
+      );
+      persistedSettings = yield* desktopSettings.applyMainWindowNearFullSize(nearFullBounds).pipe(
+        Effect.map((change) => change.settings),
+        Effect.catch((error) =>
+          logWindowWarning("failed to persist near-full main window size", {
             message: error.message,
           }).pipe(Effect.as(persistedSettings)),
         ),

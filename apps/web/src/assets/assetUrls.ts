@@ -13,7 +13,12 @@ export { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 
 export type AssetUrlState =
   | { readonly _tag: "Loading"; readonly refresh: () => void }
-  | { readonly _tag: "Failure"; readonly refresh: () => void }
+  | {
+      readonly _tag: "Failure";
+      readonly refresh: () => void;
+      /** A refresh of the failed URL is in flight. */
+      readonly waiting?: boolean;
+    }
   | {
       readonly _tag: "Success";
       readonly url: string;
@@ -35,14 +40,14 @@ export function useAssetUrlState(
   const result = useAtomValue(assetAtom);
   const refresh = useAtomRefresh(assetAtom);
   if (result._tag === "Failure") {
-    return { _tag: "Failure", refresh };
+    return { _tag: "Failure", refresh, waiting: result.waiting };
   }
   if (preparedConnection._tag === "None" || result._tag !== "Success") {
     return { _tag: "Loading", refresh };
   }
   const url = resolveAssetUrl(preparedConnection.value.httpBaseUrl, result.value.relativeUrl);
   return url === null
-    ? { _tag: "Failure", refresh }
+    ? { _tag: "Failure", refresh, waiting: result.waiting }
     : {
         _tag: "Success",
         url,
