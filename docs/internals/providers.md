@@ -473,9 +473,9 @@ orchestration types. The adapter owns the process and the turn mapping.
 
 - The executable is `omp` 18.2.8 or newer and below major 19; a newer major is refused until it is
   qualified. Launch arguments are `--mode rpc` and
-  `--approval-mode yolo`. Scient does not call `login` during discovery. A desktop macOS Apple
-  silicon app can install the qualified private binary. Other machines use an executable the user
-  installed.
+  `--approval-mode yolo`. Scient does not call `login` during discovery. The desktop app can
+  install the qualified private binary on every approved target (below); otherwise Scient uses an
+  executable the user installed.
   Scient never runs `omp update`: it cannot pin a version, follows npm `latest` across majors,
   and has no rollback. The maintenance capabilities are manual-only for every channel. The
   advisory compares the running version with the latest stable release in the supported major,

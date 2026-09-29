@@ -84,6 +84,8 @@ export function modelSourceSectionLabel(
 /** Collapsed sections, as section keys, remembered on this device. */
 export const COLLAPSED_MODEL_SOURCES_STORAGE_KEY = "scient:model-picker:collapsed-sources:v1";
 export const CollapsedModelSources = Schema.Array(Schema.String);
+/** Stable default, so the stored value keeps its identity between renders. */
+export const NO_COLLAPSED_MODEL_SOURCES: ReadonlyArray<string> = [];
 
 export interface ModelSourceSectionRows<T> {
   /** The header keys and the keys of the models they show, in list order. */

@@ -171,13 +171,25 @@ function normalizedProviderRelease(release: ManagedRuntimeCatalogData["providers
   };
 }
 
-function isSameProviderRelease(
-  left: ManagedRuntimeCatalogData["providers"][string],
-  right: ManagedRuntimeCatalogData["providers"][string],
+/**
+ * The same release, or a republish of it that only adds targets: every
+ * artifact `reference` lists is unchanged in `candidate`. Publication adds a
+ * target to an existing version when app policy approves a new one.
+ */
+function extendsProviderRelease(
+  candidate: ManagedRuntimeCatalogData["providers"][string],
+  reference: ManagedRuntimeCatalogData["providers"][string],
 ): boolean {
+  const next = normalizedProviderRelease(candidate);
+  const base = normalizedProviderRelease(reference);
+  if (!next || !base) return false;
   return (
-    JSON.stringify(normalizedProviderRelease(left)) ===
-    JSON.stringify(normalizedProviderRelease(right))
+    next.contractRevision === base.contractRevision &&
+    next.channel === base.channel &&
+    next.version === base.version &&
+    Object.entries(base.artifacts).every(
+      ([target, artifact]) => JSON.stringify(next.artifacts[target]) === JSON.stringify(artifact),
+    )
   );
 }
 
@@ -185,7 +197,8 @@ function isSameProviderRelease(
  * Apply an authoritative fetch against both the app floor and current LKG.
  * Explicit version withdrawals are allowed down to the bundled floor, while
  * missing entries, incomparable versions, and same-version repacks retain the
- * current known-good release.
+ * current known-good release. A same-version republish that only adds targets
+ * replaces it.
  */
 export function resolveFetchedManagedRuntimeCatalog(
   fetched: ManagedRuntimeCatalogData,
@@ -212,7 +225,7 @@ export function resolveFetchedManagedRuntimeCatalog(
       candidate: candidate.version,
     });
     if (floorComparison === "older" || floorComparison === "unknown") continue;
-    if (floorComparison === "equal" && !isSameProviderRelease(candidate, bundled)) continue;
+    if (floorComparison === "equal" && !extendsProviderRelease(candidate, bundled)) continue;
 
     const currentComparison = compareManagedRuntimeVersions({
       provider,
@@ -220,7 +233,7 @@ export function resolveFetchedManagedRuntimeCatalog(
       candidate: candidate.version,
     });
     if (currentComparison === "unknown") continue;
-    if (currentComparison === "equal" && !isSameProviderRelease(candidate, existing)) continue;
+    if (currentComparison === "equal" && !extendsProviderRelease(candidate, existing)) continue;
     providers[provider] = candidate;
   }
   return { schemaVersion: 1, providers };

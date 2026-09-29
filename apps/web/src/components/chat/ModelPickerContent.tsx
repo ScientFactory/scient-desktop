@@ -66,6 +66,7 @@ import {
   modelSourceSection,
   modelSourceSectionKey,
   modelSourceSectionLabel,
+  NO_COLLAPSED_MODEL_SOURCES,
   parseModelSourceSectionKey,
 } from "~/scient/modelPicker/modelSourceSections";
 import { cn } from "~/lib/utils";
@@ -421,7 +422,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   );
   const [collapsedModelSources, setCollapsedModelSources] = useLocalStorage(
     COLLAPSED_MODEL_SOURCES_STORAGE_KEY,
-    [],
+    NO_COLLAPSED_MODEL_SOURCES,
     CollapsedModelSources,
   );
   // The section holding the selected model opens with the picker.

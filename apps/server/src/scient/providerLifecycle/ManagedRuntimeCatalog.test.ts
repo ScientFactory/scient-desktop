@@ -270,6 +270,26 @@ describe("managed runtime catalog resolution", () => {
     );
   });
 
+  it("accepts a same-version republish that only adds targets", () => {
+    const full = remoteCatalog();
+    const codex = full.providers.codex;
+    assert.isDefined(codex);
+    const darwin = codex.artifacts["darwin-arm64"];
+    assert.isDefined(darwin);
+    const sparse = { ...codex, artifacts: { "darwin-arm64": darwin } };
+    const cached = { schemaVersion: 1 as const, providers: { ...full.providers, codex: sparse } };
+
+    assert.deepStrictEqual(
+      resolveFetchedManagedRuntimeCatalog(full, cached).providers.codex,
+      codex,
+    );
+    // Dropping a target the cached release lists is not an extension.
+    assert.deepStrictEqual(
+      resolveFetchedManagedRuntimeCatalog(cached, full).providers.codex,
+      codex,
+    );
+  });
+
   it("keeps release facts synchronized with every bundled provider target", () => {
     for (const { provider, resolve } of policies) {
       for (const target of targets) {
