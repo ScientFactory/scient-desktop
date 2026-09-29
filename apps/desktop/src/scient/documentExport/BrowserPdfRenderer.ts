@@ -55,6 +55,12 @@ export interface BrowserPdfRendererError {
 export interface BrowserPdfRendererOptions {
   readonly waitForReadiness?: (webContents: WebContents) => Promise<BrowserPdfPageSignals>;
   readonly marginPolicy?: BrowserPdfMarginPolicy;
+  /**
+   * Whether to add the HTML-export pagination defaults before printing.
+   * Pages that own their print stylesheet, such as Scient's document page,
+   * turn them off: the defaults keep every quote and details block whole.
+   */
+  readonly paginationDefaults?: boolean;
 }
 
 export type BrowserPdfMarginPolicy = "readable-fallback" | "source-authored";
@@ -298,6 +304,7 @@ export function warningsForSignals(
 
 export function createBrowserPdfRenderer(options: BrowserPdfRendererOptions) {
   const marginPolicy = options.marginPolicy ?? "readable-fallback";
+  const paginationDefaults = options.paginationDefaults ?? true;
   const waitForReadiness =
     options.waitForReadiness ??
     (async (webContents: WebContents): Promise<BrowserPdfPageSignals> => {
@@ -360,9 +367,11 @@ export function createBrowserPdfRenderer(options: BrowserPdfRendererOptions) {
         webContents.on("destroyed", onDestroyed);
         webContents.on("render-process-gone", onRenderProcessGone);
         try {
-          paginationCssKey = await webContents.insertCSS(PAGINATION_CSS, {
-            cssOrigin: "author",
-          });
+          if (paginationDefaults) {
+            paginationCssKey = await webContents.insertCSS(PAGINATION_CSS, {
+              cssOrigin: "author",
+            });
+          }
           const page = await waitForReadiness(webContents);
           assertStableSurface(page.sourceUrl);
           const data = await webContents.printToPDF(

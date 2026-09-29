@@ -118,6 +118,20 @@ const ICON_PATHS: Record<string, ReadonlyArray<{ tag: string; attrs: Record<stri
     { tag: "path", attrs: { d: "M9 19h6" } },
   ],
   // SCIENT-FORK:END
+  // SCIENT-FORK:START — conversation export and Copy ▸ Conversation as Markdown.
+  download: [
+    { tag: "path", attrs: { d: "M12 15V3" } },
+    { tag: "path", attrs: { d: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" } },
+    { tag: "path", attrs: { d: "m7 10 5 5 5-5" } },
+  ],
+  "file-text": [
+    { tag: "path", attrs: { d: "M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" } },
+    { tag: "path", attrs: { d: "M14 2v4a2 2 0 0 0 2 2h4" } },
+    { tag: "path", attrs: { d: "M10 9H8" } },
+    { tag: "path", attrs: { d: "M16 13H8" } },
+    { tag: "path", attrs: { d: "M16 17H8" } },
+  ],
+  // SCIENT-FORK:END
   "folder-tree": [
     {
       tag: "path",

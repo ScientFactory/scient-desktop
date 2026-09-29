@@ -131,7 +131,18 @@ export function foldUserInputActivities(
     const attachmentsByQuestionId = Object.fromEntries(
       payloads.flatMap((payload) => Object.entries(record(payload.attachmentsByQuestionId) ?? {})),
     );
-    const answer = { requestId, questionTextById, answers, attachmentsByQuestionId };
+    // SCIENT-FORK:START — an imported answer names the message that carries it.
+    const messageId = payloads
+      .map((payload) => payload.messageId)
+      .findLast((value) => typeof value === "string");
+    const answer = {
+      requestId,
+      questionTextById,
+      answers,
+      attachmentsByQuestionId,
+      ...(typeof messageId === "string" ? { messageId } : {}),
+    };
+    // SCIENT-FORK:END
     if (!isQuestionAnswer(answer)) continue;
     const submittedAnswer =
       Object.keys(answers).length > 0 || Object.keys(attachmentsByQuestionId).length > 0;

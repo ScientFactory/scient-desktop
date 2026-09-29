@@ -22,6 +22,12 @@ import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import rootPackageJson from "../package.json" with { type: "json" };
 import desktopPackageJson from "../apps/desktop/package.json" with { type: "json" };
 import gnomeCaptureBundle from "../apps/desktop/gnome-extension/bundle.json" with { type: "json" };
+import {
+  CONVERSATION_FILE_TYPE,
+  macConversationDocumentTypes,
+  macConversationExportedTypes,
+  windowsConversationProgId,
+} from "../apps/desktop/scripts/conversation-file-type.mjs";
 import serverPackageJson from "../apps/server/package.json" with { type: "json" };
 
 import { applyWebBrandAssets } from "./apply-web-brand-assets.ts";
@@ -1025,6 +1031,56 @@ interface StagePackageJson {
 
 export const STAGE_INSTALL_ARGS = ["install", "--prod"] as const;
 export const DESKTOP_ELECTRON_LANGUAGES = ["en-US"] as const;
+// SCIENT-FORK:START — Scient conversation files open with Scient on every
+// platform. The extension and media type are the `.scic` contract's
+// (SCIC_FILE_EXTENSION, SCIC_MEDIA_TYPE in @t3tools/contracts).
+export const DESKTOP_FILE_ASSOCIATIONS = [
+  {
+    ext: CONVERSATION_FILE_TYPE.extension,
+    name: CONVERSATION_FILE_TYPE.name,
+    description: CONVERSATION_FILE_TYPE.description,
+    mimeType: CONVERSATION_FILE_TYPE.mediaType,
+    role: "Viewer",
+    icon: "icon.icns",
+  },
+] as const;
+/**
+ * macOS type declarations for those files, so Finder and drags recognise a
+ * `.scic` as Scient's own zip-based document rather than an unknown file.
+ */
+export const DESKTOP_MAC_EXPORTED_TYPES = macConversationExportedTypes();
+
+export const WINDOWS_CONVERSATION_ASSOCIATION_INCLUDE = "scient-conversation-association.nsh";
+
+// electron-builder 26's APP_ASSOCIATE writes the .scic extension default on
+// every install. Register an owned OpenWith ProgID instead; Windows UserChoice
+// and any existing extension default remain the user's decision.
+export function renderWindowsConversationAssociationInclude(
+  channel: "latest" | "nightly" | "preview",
+) {
+  const progId = windowsConversationProgId(channel);
+  return [
+    "!macro customInstall",
+    `  WriteRegNone SHELL_CONTEXT "Software\\Classes\\.scic\\OpenWithProgids" "${progId}"`,
+    `  WriteRegStr SHELL_CONTEXT "Software\\Classes\\${progId}" "" "${CONVERSATION_FILE_TYPE.name}"`,
+    `  WriteRegStr SHELL_CONTEXT "Software\\Classes\\${progId}\\DefaultIcon" "" '"$appExe",0'`,
+    `  WriteRegStr SHELL_CONTEXT "Software\\Classes\\${progId}\\shell\\open\\command" "" '"$appExe" "%1"'`,
+    '  ReadRegStr $R0 SHELL_CONTEXT "Software\\Classes\\.scic" ""',
+    '  StrCmp $R0 "Scient Conversation" 0 +2',
+    `    WriteRegStr SHELL_CONTEXT "Software\\Classes\\.scic" "" "${progId}"`,
+    "!macroend",
+    "",
+    "!macro customUnInstall",
+    `  DeleteRegValue SHELL_CONTEXT "Software\\Classes\\.scic\\OpenWithProgids" "${progId}"`,
+    '  ReadRegStr $R0 SHELL_CONTEXT "Software\\Classes\\.scic" ""',
+    `  StrCmp $R0 "${progId}" 0 +2`,
+    '    DeleteRegValue SHELL_CONTEXT "Software\\Classes\\.scic" ""',
+    `  DeleteRegKey SHELL_CONTEXT "Software\\Classes\\${progId}"`,
+    "!macroend",
+    "",
+  ].join("\n");
+}
+// SCIENT-FORK:END
 export const DESKTOP_FILE_EXCLUSIONS = [
   // Scient always passes the user's installed Claude executable to the SDK,
   // so the SDK's optional platform packages (each a ~200MB bundled executable)
@@ -2830,6 +2886,12 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     productName: resolveDesktopProductName(version),
     artifactName: "Scient-${version}-${arch}.${ext}",
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
+    // SCIENT-FORK:START
+    fileAssociations:
+      platform === "linux"
+        ? DESKTOP_FILE_ASSOCIATIONS.map((association) => ({ ...association }))
+        : [],
+    // SCIENT-FORK:END
     files: [
       ...DESKTOP_FILE_EXCLUSIONS,
       ...(platform === "mac"
@@ -2867,6 +2929,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       extendInfo: {
         NSMicrophoneUsageDescription: `${SCIENT_DESKTOP_IDENTITY.baseName} uses the microphone only while you dictate a message. Audio is transcribed on this device.`,
         NSScreenCaptureUsageDescription: `${SCIENT_DESKTOP_IDENTITY.baseName} captures the active window when you use the window capture shortcut.`,
+        // SCIENT-FORK:START — the `.scic` document type.
+        CFBundleDocumentTypes: macConversationDocumentTypes(),
+        UTExportedTypeDeclarations: DESKTOP_MAC_EXPORTED_TYPES,
+        // SCIENT-FORK:END
       },
       protocols: [
         {
@@ -2946,7 +3012,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     // Keep blockmap-based differential downloads enabled while changing the
     // installed file topology. The optimization is in the payload shape, not
     // in trading update bandwidth for install speed.
-    buildConfig.nsis = { differentialPackage: true };
+    buildConfig.nsis = {
+      differentialPackage: true,
+      include: WINDOWS_CONVERSATION_ASSOCIATION_INCLUDE,
+    };
     const winConfig: Record<string, unknown> = {
       target: [target],
       icon: "icon.ico",
@@ -3938,6 +4007,14 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   // electron-builder is filtering out stageResourcesDir directory in the AppImage for production
   const stageProdResourcesDir = path.join(stageAppDir, "apps/desktop/prod-resources");
   yield* fs.copy(stageResourcesDir, stageProdResourcesDir);
+  if (options.platform === "win") {
+    yield* fs.writeFileString(
+      path.join(stageResourcesDir, WINDOWS_CONVERSATION_ASSOCIATION_INCLUDE),
+      renderWindowsConversationAssociationInclude(
+        isDesktopPreviewVersion(appVersion) ? "preview" : resolveDesktopUpdateChannel(appVersion),
+      ),
+    );
+  }
 
   const configuredMacPasskeySigning =
     options.platform === "mac" && options.signed && SCIENT_DESKTOP_IDENTITY.cloudEnabled

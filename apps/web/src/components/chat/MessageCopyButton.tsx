@@ -12,6 +12,9 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 export const MessageCopyButton = memo(function MessageCopyButton({
   text,
   extraFlavors,
+  // SCIENT-FORK:START
+  resolveHtml,
+  // SCIENT-FORK:END
   size = "xs",
   variant = "outline",
   className,
@@ -19,6 +22,10 @@ export const MessageCopyButton = memo(function MessageCopyButton({
   text: string;
   /** Additional clipboard types written beside `text/plain` when the platform allows it. */
   extraFlavors?: Readonly<Record<string, string>>;
+  // SCIENT-FORK:START
+  /** Rich `text/html` built at click time from the rendered message; null keeps the plain copy. */
+  resolveHtml?: (button: HTMLButtonElement) => string | null;
+  // SCIENT-FORK:END
   size?: "xs" | "icon-xs";
   variant?: "outline" | "ghost";
   className?: string;
@@ -38,7 +45,16 @@ export const MessageCopyButton = memo(function MessageCopyButton({
           <Button
             aria-label="Copy message"
             disabled={isCopied}
-            onClick={() => copyToClipboard(text)}
+            // SCIENT-FORK:START
+            onClick={() => {
+              const html = ref.current && resolveHtml ? resolveHtml(ref.current) : null;
+              copyToClipboard(
+                text,
+                undefined,
+                html ? { ...extraFlavors, "text/html": html } : undefined,
+              );
+            }}
+            // SCIENT-FORK:END
             ref={ref}
             type="button"
             size={size}

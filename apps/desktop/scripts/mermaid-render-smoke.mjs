@@ -108,12 +108,9 @@ async function run() {
       `(${async function (sources, progressPrefix) {
         const progress = (message) => console.info(`${progressPrefix}${message}`);
         progress("loading renderer modules");
-        const {
-          renderMermaidDiagram,
-          MermaidRenderError,
-          MERMAID_VERSION,
-          getMermaidRuntimePromise,
-        } = await import("/src/scient/diagrams/mermaidRuntime.ts");
+        const { renderMermaidDiagram, MermaidRenderError, MERMAID_VERSION } =
+          await import("/src/scient/diagrams/mermaidRuntime.ts");
+        const { sharedIsolatedMermaid } = await import("/src/scient/diagrams/isolatedMermaid.ts");
         const { prepareSvgForExport, copyMermaidPng } =
           await import("/src/scient/diagrams/mermaidExport.ts");
         function check(condition, message) {
@@ -202,7 +199,14 @@ async function run() {
             ids.add(element.id);
           }
         }
-        const { default: mermaid } = await getMermaidRuntimePromise();
+        // Chat draws in the shared no-network frame, so inspect that Mermaid, not
+        // the page's own copy (which only the PDF document page initializes).
+        const frame = await sharedIsolatedMermaid();
+        const mermaid = frame.window.mermaid;
+        check(
+          frame.window.frameElement?.isConnected === true && mermaid !== undefined,
+          "Chat diagrams were not drawn in the isolated frame",
+        );
         const { recoveryFixtures, unrecoverableFixtures, userRegressionFixtures } =
           await import("/src/scient/diagrams/mermaidRecovery.fixtures.ts");
         const { planMermaidRecovery } = await import("/src/scient/diagrams/mermaidRecovery.ts");

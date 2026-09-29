@@ -2,7 +2,7 @@ import {
   requestKindFromRequestType,
   type PendingApproval,
 } from "@t3tools/client-runtime/pending-requests";
-import { UserInputAttachmentAnswerPayload } from "@t3tools/contracts";
+import { UserInputAttachmentAnswerPayload, questionAnswerMessageId } from "@t3tools/contracts";
 import { foldUserInputActivities } from "@t3tools/client-runtime/work-log/user-input";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -1857,8 +1857,11 @@ export function deriveTimelineEntriesWithState(
     if (entries !== null) return { messages, proposedPlans, workEntries, turnPlans, entries };
   }
   const foldedAnswerMessageIds = new Set(
-    workEntries.flatMap((entry) =>
-      entry.questionAnswer ? [`async-answer:${entry.questionAnswer.requestId}`] : [],
+    workEntries.flatMap(
+      (entry) =>
+        // SCIENT-FORK:START — imported answers name their message.
+        entry.questionAnswer ? [questionAnswerMessageId(entry.questionAnswer)] : [],
+      // SCIENT-FORK:END
     ),
   );
   const showMessage = (message: ChatMessage) =>

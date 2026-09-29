@@ -37,7 +37,7 @@ const makeEnvironment = (path: Path.Path, overrides: Record<string, unknown> = {
     ...overrides,
   } as unknown as DesktopEnvironment.DesktopEnvironment["Service"]);
 
-const mockProcess = (exitCode: number, stalled = false) =>
+const mockProcess = (exitCode: number, stdout = "", stalled = false) =>
   ChildProcessSpawner.makeHandle({
     pid: ChildProcessSpawner.ProcessId(1),
     exitCode: stalled ? Effect.never : Effect.succeed(ChildProcessSpawner.ExitCode(exitCode)),
@@ -45,7 +45,7 @@ const mockProcess = (exitCode: number, stalled = false) =>
     kill: () => Effect.void,
     unref: Effect.succeed(Effect.void),
     stdin: Sink.drain,
-    stdout: Stream.empty,
+    stdout: stdout ? Stream.make(new TextEncoder().encode(stdout)) : Stream.empty,
     stderr: Stream.empty,
     all: Stream.empty,
     getInputFd: () => Sink.drain,
@@ -60,6 +60,7 @@ const makeHandlerLayer = (
     readonly updateDesktopDatabaseStalled?: boolean;
     readonly updateDesktopDatabaseStarted?: Deferred.Deferred<void>;
     readonly xdgMimeExitCode?: number;
+    readonly fileDefault?: string;
     readonly writeError?: PlatformError.PlatformError;
     readonly existingEntry?: string;
     readonly iconSource?: string;
@@ -126,6 +127,7 @@ const makeHandlerLayer = (
                 : (input.xdgMimeExitCode ?? 0);
             const handle = mockProcess(
               exitCode,
+              childProcess.args[0] === "query" ? (input.fileDefault ?? "") : "",
               childProcess.command === "update-desktop-database" &&
                 input.updateDesktopDatabaseStalled === true,
             );
@@ -177,7 +179,10 @@ describe("DesktopLinuxUrlHandler", () => {
     );
     assert.include(entry, "NoDisplay=true");
     assert.notInclude(entry, "StartupWMClass=");
-    assert.include(entry, "MimeType=x-scheme-handler/scient-next;");
+    assert.include(
+      entry,
+      "MimeType=x-scheme-handler/scient-next;application/vnd.scient.conversation+zip;",
+    );
     assert.include(entry, "Icon=/home/al ice/icons/T3\\\\x.png");
   });
 
@@ -216,8 +221,11 @@ describe("DesktopLinuxUrlHandler", () => {
       return Effect.gen(function* () {
         yield* runRegister(recorded);
 
-        assert.deepEqual(recorded.directories, ["/home/alice/.local/share/applications"]);
-        assert.equal(recorded.files.length, 1);
+        assert.deepEqual(recorded.directories, [
+          "/home/alice/.local/share/applications",
+          "/home/alice/.local/share/applications",
+        ]);
+        assert.equal(recorded.files.length, 2);
         assert.equal(
           recorded.files[0]?.path,
           "/home/alice/.local/share/applications/scient.desktop",
@@ -230,7 +238,11 @@ describe("DesktopLinuxUrlHandler", () => {
           recorded.files[0]?.content,
           "Icon=/home/alice/.local/share/icons/scient.desktop.png",
         );
-        assert.include(recorded.files[0]?.content, "MimeType=x-scheme-handler/scient;");
+        assert.include(
+          recorded.files[0]?.content,
+          "MimeType=x-scheme-handler/scient;application/vnd.scient.conversation+zip;",
+        );
+        assert.include(recorded.files[1]?.content, '<glob pattern="*.scic" weight="80"/>');
         assert.deepEqual(recorded.commands, [
           {
             command: "update-desktop-database",
@@ -239,6 +251,23 @@ describe("DesktopLinuxUrlHandler", () => {
           {
             command: "xdg-mime",
             args: ["default", "scient.desktop", "x-scheme-handler/scient"],
+          },
+          {
+            command: "xdg-mime",
+            args: [
+              "install",
+              "--mode",
+              "user",
+              "/home/alice/.local/share/applications/scient-conversation.xml",
+            ],
+          },
+          {
+            command: "xdg-mime",
+            args: ["query", "default", "application/vnd.scient.conversation+zip"],
+          },
+          {
+            command: "xdg-mime",
+            args: ["default", "scient.desktop", "application/vnd.scient.conversation+zip"],
           },
         ]);
       });
@@ -271,8 +300,10 @@ describe("DesktopLinuxUrlHandler", () => {
         }),
       });
 
-      assert.deepEqual(recorded.files, []);
-      assert.deepEqual(recorded.directories, []);
+      assert.isFalse(recorded.files.some(({ path }) => path.endsWith("scient.desktop")));
+      assert.equal(recorded.files.length, 1);
+      assert.equal(recorded.directories.length, 1);
+      assert.include(recorded.files[0]?.content, '<glob pattern="*.scic" weight="80"/>');
       assert.deepEqual(recorded.commands, [
         {
           command: "update-desktop-database",
@@ -281,6 +312,23 @@ describe("DesktopLinuxUrlHandler", () => {
         {
           command: "xdg-mime",
           args: ["default", "scient.desktop", "x-scheme-handler/scient"],
+        },
+        {
+          command: "xdg-mime",
+          args: [
+            "install",
+            "--mode",
+            "user",
+            "/home/alice/.local/share/applications/scient-conversation.xml",
+          ],
+        },
+        {
+          command: "xdg-mime",
+          args: ["query", "default", "application/vnd.scient.conversation+zip"],
+        },
+        {
+          command: "xdg-mime",
+          args: ["default", "scient.desktop", "application/vnd.scient.conversation+zip"],
         },
       ]);
     });
@@ -299,7 +347,7 @@ describe("DesktopLinuxUrlHandler", () => {
           iconPath,
         }),
       });
-      assert.deepEqual(recorded.files, []);
+      assert.equal(recorded.files.length, 1);
       assert.deepEqual(recorded.copies, [
         { source: "/tmp/.mount_T3/resources/icon.png", destination: iconPath },
       ]);
@@ -319,10 +367,10 @@ describe("DesktopLinuxUrlHandler", () => {
           description: "read-only icon directory",
         }),
       });
-      assert.equal(recorded.files.length, 1);
+      assert.equal(recorded.files.length, 2);
       assert.deepEqual(
         recorded.commands.map(({ command }) => command),
-        ["update-desktop-database", "xdg-mime"],
+        ["update-desktop-database", "xdg-mime", "xdg-mime", "xdg-mime", "xdg-mime"],
       );
     });
   });
@@ -349,6 +397,19 @@ describe("DesktopLinuxUrlHandler", () => {
     });
   });
 
+  it.effect("preserves an existing .scic default", () => {
+    const recorded = emptyRecording();
+    return Effect.gen(function* () {
+      yield* runRegister(recorded, { fileDefault: "another-app.desktop\n" });
+      assert.isFalse(
+        recorded.commands.some(
+          ({ args }) =>
+            args[0] === "default" && args[2] === "application/vnd.scient.conversation+zip",
+        ),
+      );
+    });
+  });
+
   it.effect("never fails startup when registration cannot complete", () => {
     const desktopDatabaseFailed = emptyRecording();
     const xdgMimeFailed = emptyRecording();
@@ -369,7 +430,7 @@ describe("DesktopLinuxUrlHandler", () => {
 
       assert.deepEqual(
         desktopDatabaseFailed.commands.map(({ command }) => command),
-        ["update-desktop-database", "xdg-mime"],
+        ["update-desktop-database", "xdg-mime", "xdg-mime", "xdg-mime", "xdg-mime"],
       );
       assert.equal(xdgMimeFailed.files.length, 1);
       assert.deepEqual(writeFailed.commands, []);
@@ -391,7 +452,7 @@ describe("DesktopLinuxUrlHandler", () => {
 
       assert.deepEqual(
         recorded.commands.map(({ command }) => command),
-        ["update-desktop-database", "xdg-mime"],
+        ["update-desktop-database", "xdg-mime", "xdg-mime", "xdg-mime", "xdg-mime"],
       );
     }),
   );

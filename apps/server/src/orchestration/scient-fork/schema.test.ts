@@ -66,7 +66,7 @@ const QuarantinePayloadEvidence = Schema.fromJsonString(
 );
 const decodeQuarantinePayload = Schema.decodeSync(QuarantinePayloadEvidence);
 
-const SCIENT_MIGRATION_IDS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17];
+const SCIENT_MIGRATION_IDS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
 const SCIENT_MIGRATION_NAMES = [
   "durable-thread-forks",
   "durable-provider-bootstrap",
@@ -85,6 +85,7 @@ const SCIENT_MIGRATION_NAMES = [
   "fork-evidence",
   "preserve-legacy-fork-sessions",
   "fork-accepted-turn",
+  "import-context-transfers",
 ];
 const SCIENT_MIGRATIONS_AFTER_BOOTSTRAP = SCIENT_MIGRATION_IDS.slice(2);
 
@@ -595,6 +596,7 @@ it.effect("only unapplied migrations run in ascending order", () =>
           [15, "fork-evidence"],
           [16, "preserve-legacy-fork-sessions"],
           [17, "fork-accepted-turn"],
+          [18, "import-context-transfers"],
         ] as const,
       );
 
@@ -843,7 +845,7 @@ it.effect("migration 4 repairs databases that already recorded migration 3", () 
       const executed = yield* runScientMigrations(sql);
       assert.deepStrictEqual(
         executed.map(([id]) => id),
-        [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17],
+        [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
       );
 
       const active = yield* sql<{ readonly thread_id: string }>`
@@ -2018,11 +2020,114 @@ it.effect("migration 9 converges a development database that already recorded mi
         [15, "fork-evidence"],
         [16, "preserve-legacy-fork-sessions"],
         [17, "fork-accepted-turn"],
+        [18, "import-context-transfers"],
       ]);
       const columns = yield* sql<{
         readonly name: string;
       }>`PRAGMA table_info(scient_thread_lineage)`;
       assert.isTrue(columns.some((column) => column.name === "copied_boundaries_json"));
+    }),
+  ),
+);
+
+it.effect("reconciles only the exact former import-17 ledger without losing receipts or rows", () =>
+  withMemory(
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runScientMigrations(sql);
+      yield* sql`ALTER TABLE scient_context_handoffs DROP COLUMN accepted_turn_id`;
+      yield* sql`
+        INSERT INTO scient_context_handoffs
+          (handoff_id, thread_id, delivery_status, turn_id, created_at, updated_at)
+        VALUES ('old-handoff', 'fork-thread', 'inline', 'confirmed-turn',
+          '2026-09-28T00:00:00Z', '2026-09-28T00:00:00Z')
+      `;
+      yield* sql`
+        INSERT INTO scient_context_transfers
+          (thread_id, type, source_thread_id, status, origin_json, created_at, updated_at)
+        VALUES ('import-thread', 'import', NULL, 'pending', '{}',
+          '2026-09-28T00:00:00Z', '2026-09-28T00:00:00Z')
+      `;
+      yield* sql`DELETE FROM scient_schema_migrations WHERE migration_id = 18`;
+      yield* sql`
+        UPDATE scient_schema_migrations
+        SET name = 'import-context-transfers', created_at = '2026-09-28T01:02:03Z'
+        WHERE migration_id = 17
+      `;
+
+      assert.deepStrictEqual(yield* runScientMigrations(sql), []);
+      const ledger = yield* sql<{
+        readonly migration_id: number;
+        readonly name: string;
+        readonly created_at: string;
+      }>`SELECT migration_id, name, created_at FROM scient_schema_migrations ORDER BY migration_id`;
+      assert.deepStrictEqual(
+        ledger.map((row) => row.migration_id),
+        SCIENT_MIGRATION_IDS,
+      );
+      assert.deepStrictEqual(
+        ledger.map((row) => row.name),
+        SCIENT_MIGRATION_NAMES,
+      );
+      assert.strictEqual(ledger[17]?.created_at, "2026-09-28T01:02:03Z");
+      assert.deepStrictEqual(
+        yield* sql`SELECT handoff_id, turn_id, accepted_turn_id FROM scient_context_handoffs`,
+        [{ handoff_id: "old-handoff", turn_id: "confirmed-turn", accepted_turn_id: null }],
+      );
+      assert.deepStrictEqual(
+        yield* sql`SELECT thread_id, origin_json FROM scient_context_transfers WHERE thread_id = 'import-thread'`,
+        [{ thread_id: "import-thread", origin_json: "{}" }],
+      );
+      assert.deepStrictEqual(yield* runScientMigrations(sql), []);
+      assert.deepStrictEqual(
+        yield* sql`SELECT migration_id, name, created_at FROM scient_schema_migrations ORDER BY migration_id`,
+        ledger,
+      );
+    }),
+  ),
+);
+
+it.effect("does not reconcile a former import-17 row with a mismatched prefix", () =>
+  withMemory(
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runScientMigrations(sql);
+      yield* sql`DELETE FROM scient_schema_migrations WHERE migration_id = 18`;
+      yield* sql`UPDATE scient_schema_migrations SET name = 'import-context-transfers' WHERE migration_id = 17`;
+      yield* sql`UPDATE scient_schema_migrations SET name = 'unknown-migration' WHERE migration_id = 16`;
+
+      const error = yield* Effect.flip(runScientMigrations(sql));
+      if (error._tag !== "ScientMigrationError") {
+        assert.fail(`Expected ScientMigrationError, got ${error._tag}`);
+      } else {
+        assert.strictEqual(error.kind, "BadState");
+      }
+      assert.deepStrictEqual(
+        yield* sql`SELECT migration_id, name FROM scient_schema_migrations WHERE migration_id >= 16 ORDER BY migration_id`,
+        [
+          { migration_id: 16, name: "unknown-migration" },
+          { migration_id: 17, name: "import-context-transfers" },
+        ],
+      );
+    }),
+  ),
+);
+
+it.effect("rolls back former import-17 reconciliation if fork migration 17 cannot run", () =>
+  withMemory(
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runScientMigrations(sql);
+      yield* sql`DELETE FROM scient_schema_migrations WHERE migration_id = 18`;
+      yield* sql`UPDATE scient_schema_migrations SET name = 'import-context-transfers' WHERE migration_id = 17`;
+      yield* sql`DROP TABLE scient_context_handoffs`;
+
+      const result = yield* Effect.result(runScientMigrations(sql));
+      assert.strictEqual(result._tag, "Failure");
+      assert.deepStrictEqual(
+        yield* sql`SELECT migration_id, name FROM scient_schema_migrations WHERE migration_id >= 17`,
+        [{ migration_id: 17, name: "import-context-transfers" }],
+      );
     }),
   ),
 );
@@ -2055,7 +2160,8 @@ it.effect("a ledger from a newer build (unknown future ID) fails closed", () =>
       yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (15, 'fork-evidence')`;
       yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (16, 'preserve-legacy-fork-sessions')`;
       yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (17, 'fork-accepted-turn')`;
-      yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (18, 'future-migration')`;
+      yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (18, 'import-context-transfers')`;
+      yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (19, 'future-migration')`;
 
       const error = yield* Effect.flip(runScientMigrations(sql));
       if (error._tag !== "ScientMigrationError") {
@@ -2063,7 +2169,7 @@ it.effect("a ledger from a newer build (unknown future ID) fails closed", () =>
       } else {
         assert.strictEqual(error.kind, "BadState");
         assert.isTrue(
-          error.message.includes("unknown migration 18"),
+          error.message.includes("unknown migration 19"),
           `Unexpected message: ${error.message}`,
         );
       }
@@ -2074,7 +2180,7 @@ it.effect("a ledger from a newer build (unknown future ID) fails closed", () =>
       `;
       assert.deepStrictEqual(
         ledger.map((row) => row.migration_id),
-        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
+        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
       );
     }),
   ),

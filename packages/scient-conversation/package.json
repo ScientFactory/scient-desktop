@@ -1,0 +1,42 @@
+{
+  "name": "@scientfactory/conversation",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    },
+    "./chat-math-delimiters": {
+      "types": "./src/chatMathDelimiters.ts",
+      "import": "./src/chatMathDelimiters.ts"
+    },
+    "./work-log-grouping": {
+      "types": "./src/workLogGrouping.ts",
+      "import": "./src/workLogGrouping.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vp test run"
+  },
+  "dependencies": {
+    "@t3tools/contracts": "workspace:*",
+    "@t3tools/shared": "workspace:*",
+    "effect": "catalog:",
+    "mdast-util-from-markdown": "2.0.3",
+    "mdast-util-frontmatter": "2.0.1",
+    "mdast-util-gfm": "3.1.0",
+    "mdast-util-math": "3.0.0",
+    "micromark-extension-frontmatter": "2.0.0",
+    "micromark-extension-gfm": "3.0.0",
+    "micromark-extension-math": "3.1.0",
+    "yaml": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@types/mdast": "4.0.4",
+    "vite-plus": "catalog:"
+  }
+}

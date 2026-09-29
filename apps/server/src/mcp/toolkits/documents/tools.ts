@@ -4,6 +4,8 @@ import {
   ScientLatexPdfBuildInput,
   ScientLatexPdfBuildResult,
   ScientLatexToolchainStatus,
+  ScientDocumentExportInput,
+  ScientDocumentExportResult,
   ScientPdfBuildInput,
   ScientPdfBuildResult,
 } from "@t3tools/contracts";
@@ -50,6 +52,31 @@ export class ScientPdfBuildToolError extends Schema.TaggedError<ScientPdfBuildTo
     message: NonEmptyMessage,
     publishedSource: Schema.optional(PdfSourceDescriptor),
     outputPath: Schema.optional(ScientPdfBuildInput.fields.outputPath),
+  },
+) {}
+
+export class ScientDocumentExportToolError extends Schema.TaggedError<ScientDocumentExportToolError>()(
+  "ScientDocumentExportToolError",
+  {
+    code: Schema.Literals([
+      "capability-unavailable",
+      "project-required",
+      "project-changed",
+      "invalid-source-path",
+      "invalid-output-path",
+      "unsupported-format",
+      "source-not-found",
+      "source-changed",
+      "renderer-unavailable",
+      "render-failed",
+      "too-large",
+      "publication-failed",
+      "output-write-failed",
+      "partial-publication",
+    ]),
+    message: NonEmptyMessage,
+    publishedSource: Schema.optional(PdfSourceDescriptor),
+    outputPath: Schema.optional(ScientDocumentExportInput.fields.outputPath),
   },
 ) {}
 
@@ -111,7 +138,9 @@ const documentOperation = (id: string): OperationMetadata => ({
   documentation:
     id === "documents.latex.build"
       ? "docs/internals/scient-latex.md"
-      : "docs/internals/scient-browser-pdf-export.md",
+      : id === "documents.export"
+        ? "docs/internals/scient-document-pdf-export.md"
+        : "docs/internals/scient-browser-pdf-export.md",
 });
 
 export const ScientPdfBuildTool = Tool.make("scient_pdf_build", {
@@ -144,4 +173,23 @@ export const ScientLatexBuildTool = Tool.make("scient_latex_build", {
   .annotate(Tool.OpenWorld, true)
   .annotate(ScientOperation, documentOperation("documents.latex.build"));
 
-export const ScientDocumentsToolkit = Toolkit.make(ScientPdfBuildTool, ScientLatexBuildTool);
+const ScientDocumentExportTool = Tool.make("scient_document_export", {
+  description:
+    "Export an existing project-relative Markdown document to an explicit project-relative output path. The output extension selects the format; PDF is available. Scient captures the saved file and its workspace images, renders it as one complete document page in its isolated Chromium renderer, refuses a wrong or unfinished page, structurally validates and publishes the PDF as an immutable generated document, writes it to the project, and opens it in Scient. Missing images become labelled placeholders listed in warnings. Requires a connected Scient desktop. This does not visually review the pages.",
+  parameters: ScientDocumentExportInput,
+  success: ScientDocumentExportResult,
+  failure: ScientDocumentExportToolError,
+  dependencies: htmlDocumentDependencies,
+})
+  .annotate(Tool.Title, "Export a project Markdown document")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.Idempotent, false)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, documentOperation("documents.export"));
+
+export const ScientDocumentsToolkit = Toolkit.make(
+  ScientPdfBuildTool,
+  ScientLatexBuildTool,
+  ScientDocumentExportTool,
+);

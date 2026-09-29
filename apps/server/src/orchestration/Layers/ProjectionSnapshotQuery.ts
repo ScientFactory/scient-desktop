@@ -73,6 +73,7 @@ import {
 import {
   makeForkLineageQueries,
   toForkLineageMarker,
+  importMarkerField,
   type ProjectionForkLineageRow,
 } from "../scient-fork/ForkBoundaryReadModel.ts";
 import { projectActivityPayload } from "../ActivityPayloadProjection.ts";
@@ -2619,6 +2620,7 @@ pending_approval_requests AS (
                 activities: activitiesByThread.get(row.threadId) ?? [],
                 checkpoints: checkpointsByThread.get(row.threadId) ?? [],
                 forkLineage: toForkLineageMarker(forkLineageByThread.get(row.threadId)),
+                ...importMarkerField(forkLineageByThread.get(row.threadId)), // SCIENT-FORK: imports
                 session: sessionsByThread.get(row.threadId) ?? null,
               }));
 
@@ -3066,6 +3068,7 @@ pending_approval_requests AS (
                         ),
                         planProgress: threadPlanProgress.getThreadPlanProgress(row.threadId),
                         forkLineage: toForkLineageMarker(forkLineageByThread.get(row.threadId)),
+                        ...importMarkerField(forkLineageByThread.get(row.threadId)), // SCIENT-FORK: imports
                       } satisfies OrchestrationThreadShell)
                     : Result.failVoid,
                 ),
@@ -3280,6 +3283,7 @@ pending_approval_requests AS (
                   ),
                   planProgress: threadPlanProgress.getThreadPlanProgress(row.threadId),
                   forkLineage: toForkLineageMarker(forkLineageByThread.get(row.threadId)),
+                  ...importMarkerField(forkLineageByThread.get(row.threadId)), // SCIENT-FORK: imports
                 })),
                 updatedAt: updatedAt ?? "1970-01-01T00:00:00.000Z",
               } satisfies OrchestrationShellSnapshot;
@@ -3642,6 +3646,7 @@ pending_approval_requests AS (
         ),
         planProgress: threadPlanProgress.getThreadPlanProgress(threadRow.value.threadId),
         forkLineage: toForkLineageMarker(Option.getOrUndefined(forkLineageRow)),
+        ...importMarkerField(Option.getOrUndefined(forkLineageRow)), // SCIENT-FORK: imports
       } satisfies OrchestrationThreadShell);
     });
 
@@ -4015,6 +4020,7 @@ pending_approval_requests AS (
           completedAt: row.completedAt,
         })),
         forkLineage: toForkLineageMarker(Option.getOrUndefined(forkLineageRow)),
+        ...importMarkerField(Option.getOrUndefined(forkLineageRow)), // SCIENT-FORK: imports
         session: Option.isSome(sessionRow) ? mapSessionRow(sessionRow.value) : null,
       };
 

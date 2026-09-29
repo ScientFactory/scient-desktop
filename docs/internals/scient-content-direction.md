@@ -75,6 +75,54 @@ assistant streaming, the message base is seeded once per message (preferably
 from the preceding user message) and held stable; after completion, the full
 response is resolved again. Plain-text boxes still use their own content rule.
 
+## Clipboard
+
+Rich-paste targets (Word, Google Docs, Pages) do not see Scient's stylesheet,
+so a copy that contains any strong RTL character carries direction in its
+`text/html` flavour only; `text/plain` and every copy without RTL text stay
+byte-identical, and no bidi control characters are added.
+`scient/clipboard/clipboardDirection.ts` marks a detached copy after the T3
+sanitizer runs: every paragraph, heading, quote, list item, table cell, and
+code block gets `dir` plus `style="direction:…;text-align:…"`, and lists and
+tables get `dir` plus `direction`. Each block keeps the direction chat
+displayed (the `rehypeScientBidi` result already on the copied DOM); list items
+inherit their list, a block without one uses the chat paragraph rule, cells
+keep their column's alignment unless an authored alignment exists, source code
+stays LTR, and a plain-text box keeps its displayed direction. Inline content
+copied without its block is wrapped in a `span` with that block's direction.
+Inside RTL blocks, inline code, math source, LTR link and file-chip text, and
+URLs or file paths written as prose become `<span dir="ltr"
+style="direction:ltr;unicode-bidi:embed">`. `span dir` is the form Word itself
+writes for direction runs, so it is preferred over `bdi`; the explicit
+`unicode-bidi:embed` is what the macOS HTML importer maps to a writing
+direction (a bare `dir` computes to `isolate`). Google Docs keeps only paragraph
+direction, which is what matters most for punctuation. Plain LTR words stay
+prose so trailing punctuation keeps the paragraph direction. Before the
+sanitizer runs, an RTL copy's controls and cards become content
+(`scient/clipboard/clipboardContent.ts`): chips rendered as buttons become their
+Markdown copy (code, link text, or text), details become a bold summary
+paragraph followed by the body, display math becomes an LTR paragraph of its
+source, and diagram and chart cards become an LTR code block with their fence
+source, so the HTML carries what the plain flavour
+carries.
+
+The Copy message button adds the same HTML only for messages with RTL text.
+It renders the message's Markdown (the plain flavour's own text) into an inert
+document with chat's own pipeline, exported from `ChatMarkdown` behind a seam:
+`chatMarkdownPipeline` (math delimiter normalization, the chat remark plugins
+for the message profile, and the raw-HTML and sanitize steps),
+`chatMarkdownCodeBoxDirection` (fence `dir` and title metadata), and
+`chatMarkdownAlertLabel`, followed by `rehypeScientBidi`. Math carries chat's
+`$$` copy source and display math becomes its own LTR paragraph, as in a
+selection copy. The result does not depend on whether the virtualized row is
+mounted or a details block is collapsed; a mounted row only supplies the
+displayed message direction. `messageCopyParity.test.tsx` compares its blocks,
+directions, and LTR islands with what `ChatMarkdown` renders. Images become
+their alt text and links to local, context, or citation targets become their
+label. The wrapper carries `data-scient-message-copy`, and the Markdown
+document editor pastes that copy's Markdown text, as for every other Copy
+message paste.
+
 ## Composer
 
 The composer adapter changes only the Tiptap root and its direct paragraphs,
@@ -89,7 +137,10 @@ composer seam and does not alter prompt serialization.
 
 The setting contract and Scient bidi modules are Scient-owned. The only
 inherited host edits are the ChatMarkdown renderer, ChatView scope, composer
-plugin mount, and settings panel entry. Do not fork T3's renderer or add
+plugin mount, settings panel entry, and the clipboard seams in
+`markdown-clipboard.ts`, `useCopyToClipboard.ts`, `MessageCopyButton.tsx`, and
+the two Copy message call sites in `MessagesTimeline.tsx`, and the clipboard
+pipeline exports and shared code-box direction in `ChatMarkdown.tsx`. Do not fork T3's renderer or add
 direction logic to provider, server, persistence, or shell code. When T3's
 Markdown or composer seams change, reapply this narrow adapter and rerun the
 focused bidi tests before accepting the upstream update.

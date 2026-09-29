@@ -2,6 +2,7 @@ import { DesktopAssetCopyRequestSchema, DesktopAssetCopyResultSchema } from "@t3
 import * as Schema from "effect/Schema";
 
 import * as DesktopAssetCopy from "../../scient/documentArtifacts/AssetCopy.ts";
+import * as DocumentPageIpc from "../../scient/documentExport/documentPageIpc.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 
@@ -23,4 +24,10 @@ export const revealSavedAsset = DesktopIpc.makeIpcMethod({
   payload: SavedAssetPath,
   result: Schema.Void,
   handler: DesktopAssetCopy.revealSavedAsset,
+});
+
+export const renderDocumentPagePdf = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.RENDER_DOCUMENT_PAGE_PDF_CHANNEL,
+  ...DocumentPageIpc.renderDocumentPagePdfSchemas,
+  handler: DocumentPageIpc.renderDocumentPagePdf,
 });

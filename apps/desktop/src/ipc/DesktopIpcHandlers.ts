@@ -1,4 +1,12 @@
 import { setUnreadAnswerCount } from "../scient/answerAttention/ipc.ts";
+// SCIENT-FORK:START — conversation files the OS opened with Scient.
+import {
+  cancelOpenedConversationFileUpload,
+  releaseOpenedConversationFile,
+  takeOpenedConversationFiles,
+  uploadOpenedConversationFile,
+} from "../scient/conversationImport/openedConversationFiles.ts";
+// SCIENT-FORK:END
 import * as Effect from "effect/Effect";
 
 import * as DesktopIpc from "./DesktopIpc.ts";
@@ -9,7 +17,11 @@ import {
   getConnectionCatalog,
   setConnectionCatalog,
 } from "./methods/connectionCatalog.ts";
-import { revealSavedAsset, saveAssetCopy } from "./methods/documentArtifacts.ts";
+import {
+  renderDocumentPagePdf,
+  revealSavedAsset,
+  saveAssetCopy,
+} from "./methods/documentArtifacts.ts";
 import {
   getLocalEnvironmentEnabled,
   setLocalEnvironmentEnabled,
@@ -82,6 +94,12 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* PreviewIpc.installPreviewEventForwarding();
 
   yield* ipc.handle(setUnreadAnswerCount);
+  // SCIENT-FORK:START — conversation files the OS opened with Scient.
+  yield* ipc.handle(takeOpenedConversationFiles);
+  yield* ipc.handle(uploadOpenedConversationFile);
+  yield* ipc.handle(cancelOpenedConversationFileUpload);
+  yield* ipc.handle(releaseOpenedConversationFile);
+  // SCIENT-FORK:END
   yield* ipc.handle(AppActivationIpc.setReady);
   yield* ipc.handle(AppActivationIpc.complete);
 
@@ -135,6 +153,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(pickProjectFavicon);
   yield* ipc.handle(saveAssetCopy);
   yield* ipc.handle(revealSavedAsset);
+  yield* ipc.handle(renderDocumentPagePdf);
   yield* ipc.handle(pickThemeFiles);
   yield* ipc.handle(setTheme);
   yield* ipc.handle(copyPngToClipboard);

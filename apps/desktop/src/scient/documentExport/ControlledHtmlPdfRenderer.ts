@@ -83,7 +83,7 @@ const rendererError = (operation: string, cause?: unknown): ControlledHtmlPdfRen
   ...(cause === undefined ? {} : { cause }),
 });
 
-const waitForLoadSettlement = (
+export const waitForLoadSettlement = (
   webContents: WebContents,
 ): Effect.Effect<void, ControlledHtmlPdfRendererError> => {
   if (!webContents.isLoading()) return Effect.void;

@@ -42,6 +42,13 @@ Choose **Move controls** in More to expose a movement handle. Drag it or use
 arrow keys to move within the card; press Enter or Escape to finish.
 **Reset controls position** restores the default placement.
 
+Diagrams are drawn without network access. If a diagram names an outside
+picture or style (an icon, an image shape, an image in a label), Scient draws
+the diagram without it and adds one line underneath listing what was not
+loaded; click a web address there to open it in your browser. This keeps a
+diagram from revealing to another site that, and when, you opened the
+conversation.
+
 While an answer is still being written, Scient shows the Mermaid source as an
 ordinary code block. Rendering begins only after the answer settles and the
 diagram is close to the visible conversation. A bad or unsupported diagram
