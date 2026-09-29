@@ -1,5 +1,5 @@
 /**
- * Context transfers for imported conversations.
+ * Context transfers for imported conversations (migration 18).
  *
  * A fork's transfer names its local source thread; an imported thread has
  * none, so `source_thread_id` becomes nullable. SQLite cannot relax NOT NULL

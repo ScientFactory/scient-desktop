@@ -18,6 +18,9 @@ describe `main`'s code, so a release build applies a fetched policy only when it
 range names a Scient release (`0.6.0` or later); otherwise its bundled policy
 stays in effect. To change what shipped builds see, for example to flag a newly
 broken provider version, write a Scient-scoped range such as `>=0.6.18 <0.7.0`.
+Oh My Pi has no upstream policy: its only entry is Scient-scoped from its first release
+(`>=0.6.18`), supports `>=18.2.8 <19.0.0`, and marks 19 and later unsupported, matching the
+client's own major cap (`OMP_SUPPORTED_MAJOR`).
 
 Releases up to 0.6.17 predate that rule and apply every fetched policy. The
 `pre-release-scoping-compatibility.json` test fixture pins what they resolve;

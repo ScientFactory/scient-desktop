@@ -46,34 +46,34 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current T3 alignment is recorded in
-[`docs/internals/2026-09-27-upstream-sync-a727d1d9.md`](docs/internals/2026-09-27-upstream-sync-a727d1d9.md)
-and in `upstream-state.json`. It extends the integration through
-`de251fc2971a884cb5b1305ba4daf309dc8cccb0`: 15 official commits after
-`95030dc674883f0f2a7fd034b32ce742c8cf55d0`, merged onto owned base
-`1ad094bbc3ffc58ad4e171f1e1ea5ce1d859ed5c`. The original a727 merge is
-`0c33fa4233ad8c2293349803bf2ce50c5f1e876b`; the exact upstream extension merge
-is `a556a6905fdbd9b6121f8952a994531b4870671d`, whose second parent is the exact
-official target. The reviewed candidate was then brought forward through owned
-`main` catch-up merges: first to `12437d152ee30d7d39313a05200fcf1c27c82d1a`
-through `70a9f9d980ab4e4aa8ae391211875cfd3ff05cbc`, then to the latest
-`4d95770a0404ac0e0463352b174a5eb40a67c9c8` through
-`4cb506b80b3e553c0d74a3765b697ba6f97a574d`. The alignment is prepared in
-[PR #384](https://github.com/ScientFactory/scient-desktop/pull/384). The preceding alignment
-([PR #372](docs/internals/2026-09-26-upstream-sync-95030dc6.md)) remains literal
-ancestry.
+[`docs/internals/2026-09-29-upstream-sync-d2c9281b8.md`](docs/internals/2026-09-29-upstream-sync-d2c9281b8.md)
+and in `upstream-state.json`. It advances the integration through
+`d2c9281b8112dc3b2991642c4bdb985e4b08b9bb`: 14 official commits after
+`de251fc2971a884cb5b1305ba4daf309dc8cccb0`, merged onto owned base
+`63d9edf1b6eba1387826c8aa6ae7dfe8c292a770` as
+`eb56e78c44cb76fa37c19d0a99b099a93a69eee3`, whose second parent is the exact
+official target. Every one of the 14 donor commits is literal ancestry. The
+preceding alignment ([PR #384](docs/internals/2026-09-27-upstream-sync-a727d1d9.md))
+remains literal ancestry.
 
-This routine range activates no protected boundary. In addition to the original
-a727 accessibility, Usage, telemetry, and offline-banner work, the extension
-makes partially successful onboarding history imports complete instead of
-trapping the user, and carries that behavior into Scient's extracted local
-Getting Started import step. `node-pty` stays on `^1.1.0`; the Usage page keeps
-its Spend metric; unknown usage elements remain forward-compatible; two
-upstream product strings remain labelled `Scient`; and the relaxed
-`simctl`/`adb` guidance stays consistent across the always-on awareness and
-`device_open` quick start. The owned-main catch-up preserves the fork redesign,
-sidebar sections, dev-app signing isolation, and migration `058` beside the
-alignment's `057`. The receipt records the exact conflict compositions,
-clean-merge audits, complete gate results, and remaining owner follow-ups.
+This routine range activates no protected boundary. It carries Claude Sonnet
+5.5, the OpenCode v2 incompatibility marking, a large-transcript usage
+preservation fix, a shortcut-latency fix, the Linux URL-handler icon and
+MIME-cache refresh, Bitbucket credentials in Source Control settings, and the
+Claude/OpenCode interrupt fixes. `node-pty` stays on `^1.1.0` and no package
+manifest changed: the range does not bump the version, upstream's Windows
+readiness wait is a no-op on 1.1.0 because the process PID is assigned
+synchronously, and upstream's `node-pty@1.2.0-beta.15` patch registration was
+removed because pnpm rejects an entry for an uninstalled version — the patch
+file is retained for a future adoption. Desktop identity stays `scient` /
+`scient.desktop` / `Name=Scient`; the fork's usage-accounting secret lifecycle
+composes beside upstream's Bitbucket one behind a generalized redaction marker.
+Three upstream identity literals had auto-merged into non-conflicted test
+regions and were corrected. `docs/user/remote-access.md` keeps Scient's framing:
+upstream's replacement would have advertised T3 Connect and a hosted relay the
+product does not provide. The receipt records every conflict composition, the
+post-merge semantic findings, the full gate results, and the attributed
+env-blocked `server.test.ts` baseline.
 
 ## Receiving T3 updates
 
@@ -479,6 +479,21 @@ This foundation does not import the separate Compute toolkit branch or change
 Compute/Analysis runtime, UI or history ownership. Future consumers must
 deliberately reconcile workspace authority and tool ownership against their
 current implementation. No unmerged Orchestration V2 code is imported.
+
+Oh My Pi's external provider is a Scient-owned seam. `packages/effect-omp-rpc` is the wire client.
+`apps/server/src/provider/omp`, `Drivers/OmpDriver.ts`, `Layers/OmpAdapter.ts`,
+`Layers/OmpProvider.ts`, and `textGeneration/OmpTextGeneration.ts` own process, cursor, and turn
+mapping; `OmpManagedRuntimeActions.ts`, `managedOmpRuntime.ts` and `ompManifest.ts` own its managed
+runtime and version cap. Everything else is a mount: upstream files (driver registration, settings
+and model contracts, server and ws wiring, the MCP transport export, the shared provider environment
+predicate and update-command formatting, the model manifest, icons, the provider picker and
+open-url activity) as `upstreamMounts`, and shared Scient files (awareness and skill delivery, the
+Pi extension generator, the managed-runtime catalog, policy and workflows, custom models) as
+anchored `scientMounts`, so none of them is claimed as OMP-owned. Analytics sends OMP as the
+gateway's existing `other` provider and is not a mount. `scient-omp-seams.json` is the inventory;
+`scripts/scient-seam-check.mjs --base --head` checks it with the onboarding, skills, analysis, and
+LaTeX seams in the upstream-provenance workflow. Do not fold this provider into Pi's RPC client,
+and do not add an Orchestration V2 adapter until that upstream work is in the official range.
 
 Review previews preserve the source Git index timestamp when preparing a temporary
 index for untracked files. A freshly timestamped copy can bypass Git's racy-clean

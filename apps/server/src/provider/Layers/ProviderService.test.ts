@@ -66,7 +66,7 @@ import {
   ProviderWorkspaceMissingError,
   type ProviderAdapterError,
 } from "../Errors.ts";
-import { classifyTurnDispatchFailure } from "../turnDispatchPhase.ts";
+import { classifyTurnDispatchFailure, markTurnDispatchNotSent } from "../turnDispatchPhase.ts";
 import type {
   ProviderAdapterShape,
   ProviderAdapterSendTurnInput,
@@ -1932,6 +1932,46 @@ routing.layer("ProviderServiceLive routing", (it) => {
         assert.equal(startPayload.threadId, session.threadId);
       }
       assert.equal(routing.codex.sendTurn.mock.calls.length, 1);
+    }),
+  );
+
+  it.effect("persists a non-Claude resume cursor first available at turn completion", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      const threadId = asThreadId("thread-late-cursor");
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const cursor = { threadId: "native-late-cursor" };
+      routing.codex.updateSession(threadId, (session) => ({ ...session, resumeCursor: cursor }));
+      const completed = yield* provider.streamEvents.pipe(
+        Stream.filter((event) => event.eventId === "evt-late-cursor"),
+        Stream.take(1),
+        Stream.runDrain,
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
+      routing.codex.emit({
+        type: "turn.completed",
+        eventId: asEventId("evt-late-cursor"),
+        provider: CODEX_DRIVER,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        threadId,
+        turnId: asTurnId("late-cursor-turn"),
+        payload: { state: "completed" },
+      });
+      yield* Fiber.join(completed);
+      const binding = yield* directory.getBinding(threadId);
+      assert(Option.isSome(binding));
+      assert.deepEqual(binding.value.resumeCursor, cursor);
+      yield* provider.stopSession({ threadId });
+      routing.codex.startSession.mockClear();
+      yield* provider.sendTurn({ threadId, input: "after restart", attachments: [] });
+      assert.deepEqual(routing.codex.startSession.mock.calls[0]?.[0].resumeCursor, cursor);
     }),
   );
 
@@ -5055,6 +5095,7 @@ validation.layer("ProviderServiceLive validation", (it) => {
       assert.isTrue(sent?.input?.startsWith(`${contextPreamble}\n\n${input}`));
       assert.equal(sent?.originalInput, input);
       assert.notProperty(sent ?? {}, "contextPreamble");
+      assert.isTrue(sent?.hasContextPreamble);
     }),
   );
 
@@ -5131,6 +5172,30 @@ validation.layer("ProviderServiceLive validation", (it) => {
         .pipe(Effect.sandbox, Effect.flip);
       assert.equal(classifyTurnDispatchFailure(cause), "notSent");
       assert.equal(validation.codex.sendTurn.mock.calls.length, 0);
+    }),
+  );
+
+  it.effect("preserves an adapter's proof that a preflight rejection sent nothing", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-dispatch-explicit-not-sent");
+      yield* provider.startSession(threadId, {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const failure = new ProviderAdapterRequestError({
+        provider: "codex",
+        method: "turn/start",
+        detail: "preflight rejected before writing",
+      });
+      markTurnDispatchNotSent(failure);
+      validation.codex.sendTurn.mockImplementationOnce(() => Effect.fail(failure));
+      const cause = yield* provider
+        .sendTurn({ threadId, input: "continue" })
+        .pipe(Effect.sandbox, Effect.flip);
+      assert.equal(classifyTurnDispatchFailure(cause), "notSent");
     }),
   );
 

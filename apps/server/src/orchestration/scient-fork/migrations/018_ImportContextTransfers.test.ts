@@ -3,11 +3,11 @@ import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../../../persistence/Layers/Sqlite.ts";
-import Migration017 from "./017_ImportContextTransfers.ts";
+import Migration018 from "./018_ImportContextTransfers.ts";
 
 const NOW = "2026-09-28T12:00:00.000Z";
 
-it.layer(SqlitePersistenceMemory)("Scient migration 17: import context transfers", (it) => {
+it.layer(SqlitePersistenceMemory)("Scient migration 18: import context transfers", (it) => {
   /** The table exactly as migration 14 created it, with fork rows in every state. */
   const restoreForkOnlyTable = Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -45,7 +45,7 @@ it.layer(SqlitePersistenceMemory)("Scient migration 17: import context transfers
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       const before = yield* restoreForkOnlyTable;
-      yield* Migration017;
+      yield* Migration018;
       const after = yield* sql<Record<string, unknown>>`
         SELECT thread_id, type, source_thread_id, source_point_json, status, resolution_json,
           fidelity, error, created_at, updated_at
@@ -64,7 +64,7 @@ it.layer(SqlitePersistenceMemory)("Scient migration 17: import context transfers
       assert.strictEqual(columns.find((column) => column.name === "source_thread_id")?.notnull, 0);
 
       // Idempotent: a second run changes nothing.
-      yield* Migration017;
+      yield* Migration018;
       assert.strictEqual(
         (yield* sql`SELECT thread_id FROM scient_context_transfers`).length,
         before.length,
@@ -76,7 +76,7 @@ it.layer(SqlitePersistenceMemory)("Scient migration 17: import context transfers
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* restoreForkOnlyTable;
-      yield* Migration017;
+      yield* Migration018;
       yield* sql`
         INSERT INTO scient_context_transfers (thread_id, type, source_thread_id, status, origin_json,
           created_at, updated_at)

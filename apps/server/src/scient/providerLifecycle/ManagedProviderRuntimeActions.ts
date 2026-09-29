@@ -46,26 +46,29 @@ export function managedRuntimeInstallationFailureMessage(
     : summary;
 }
 
-const hasHealthyConfiguredRuntime = Effect.fn(
-  "ManagedProviderRuntimeActions.hasHealthyConfiguredRuntime",
-)(function* (
-  binary: string,
-  environment: NodeJS.ProcessEnv,
-  spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
-) {
-  const resolved = yield* resolveSpawnCommand(binary, ["--version"], {
-    env: environment,
-    extendEnv: true,
+/** Whether `binary --version` exits 0 within five seconds. */
+export const configuredRuntimeVersionSucceeds = Effect.fn(
+  "ManagedProviderRuntimeActions.configuredRuntimeVersionSucceeds",
+)(function* (input: {
+  readonly binary: string;
+  readonly environment: NodeJS.ProcessEnv;
+  /** Whether the child also inherits the server's own environment. */
+  readonly extendEnv: boolean;
+  readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
+}) {
+  const resolved = yield* resolveSpawnCommand(input.binary, ["--version"], {
+    env: input.environment,
+    extendEnv: input.extendEnv,
   });
   const result = yield* spawnAndCollect(
-    binary,
+    input.binary,
     ChildProcess.make(resolved.command, resolved.args, {
-      env: environment,
-      extendEnv: true,
+      env: input.environment,
+      extendEnv: input.extendEnv,
       shell: resolved.shell,
     }),
   ).pipe(
-    Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, input.spawner),
     Effect.timeoutOption("5 seconds"),
     Effect.result,
   );
@@ -73,6 +76,16 @@ const hasHealthyConfiguredRuntime = Effect.fn(
     result._tag === "Success" && Option.isSome(result.success) && result.success.value.code === 0
   );
 });
+
+/** Decides whether the configured (custom or system) runtime is healthy. */
+export type ConfiguredRuntimeProbe = (
+  binary: string,
+  environment: NodeJS.ProcessEnv,
+  spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
+) => Effect.Effect<boolean>;
+
+const hasHealthyConfiguredRuntime: ConfiguredRuntimeProbe = (binary, environment, spawner) =>
+  configuredRuntimeVersionSucceeds({ binary, environment, extendEnv: true, spawner });
 
 export function resolveManagedRuntimeSource(input: {
   readonly hasCustomRuntime: boolean;
@@ -170,6 +183,8 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
   readonly environment: NodeJS.ProcessEnv;
   readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly configuredRuntimeProbeAllowed?: boolean | undefined;
+  /** A provider whose processes need more than a plain `--version` run supplies its own. */
+  readonly probeConfiguredRuntime?: ConfiguredRuntimeProbe | undefined;
   readonly managedInstallationAllowed: boolean;
   readonly systemToManagedSwitchAllowed: boolean;
   readonly sourceLabel: string;
@@ -210,9 +225,11 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
   const configuredRuntimeHealthy =
     input.configuredRuntimeProbeAllowed === false
       ? false
-      : yield* hasHealthyConfiguredRuntime(input.configuredBinaryPath, environment, spawner).pipe(
-          Effect.catchCause(() => Effect.succeed(false)),
-        );
+      : yield* (input.probeConfiguredRuntime ?? hasHealthyConfiguredRuntime)(
+          input.configuredBinaryPath,
+          environment,
+          spawner,
+        ).pipe(Effect.catchCause(() => Effect.succeed(false)));
   const configuredExecutable = configuredRuntimeHealthy
     ? yield* resolveCommandPath(input.configuredBinaryPath, {
         env: environment,

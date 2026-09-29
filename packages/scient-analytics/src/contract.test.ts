@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 
 import { durationBucket, modelKey, normalizeInheritedEvent } from "./contract.ts";
+import { eventContractViolation } from "./wireContract.ts";
 
 const context = {
   appVersion: "0.0.32",
@@ -32,6 +33,34 @@ describe("Scient analytics contract", () => {
       normalizeInheritedEvent("provider.turn.completed", { provider: "pi" }, context)?.name,
     ).toBe("provider.turn.completed");
   });
+  it("sends OMP analytics as the gateway's existing other provider", () => {
+    const event = normalizeInheritedEvent(
+      "provider.turn.completed",
+      { provider: "omp", terminalStatus: "completed" },
+      context,
+    );
+    expect(event?.properties.provider).toBe("other");
+    if (!event) throw new Error("Missing normalizer");
+    expect(
+      eventContractViolation({
+        name: event.name,
+        privacyLevel: event.privacyLevel,
+        consentLevel: event.privacyLevel,
+        properties: event.properties,
+      }),
+    ).toBeNull();
+    // The wire contract mirrors the hosted gateway. Adding "omp" needs a
+    // contract revision that ships to the gateway first.
+    expect(
+      eventContractViolation({
+        name: event.name,
+        privacyLevel: event.privacyLevel,
+        consentLevel: event.privacyLevel,
+        properties: { ...event.properties, provider: "omp" },
+      }),
+    ).not.toBeNull();
+  });
+
   it("attributes Pi without collecting custom endpoint or model names", () => {
     const event = normalizeInheritedEvent(
       "provider.turn.sent",

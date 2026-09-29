@@ -16,6 +16,7 @@ import { AntigravityDriver } from "../../provider/Drivers/AntigravityDriver.ts";
 import { CursorDriver } from "../../provider/Drivers/CursorDriver.ts";
 import { DroidDriver } from "../../provider/Drivers/DroidDriver.ts";
 import { GrokDriver } from "../../provider/Drivers/GrokDriver.ts";
+import { OmpDriver } from "../../provider/Drivers/OmpDriver.ts";
 import { PiDriver } from "../../provider/Drivers/PiDriver.ts";
 
 import type { ProviderManagedRuntimeActions } from "../../provider/ProviderDriver.ts";
@@ -72,6 +73,7 @@ describe("ManagedRuntimeCatalogReconciler", () => {
       DroidDriver,
       GrokDriver,
       PiDriver,
+      OmpDriver,
     ];
     assert.deepStrictEqual(
       drivers.map((driver) => catalogProviderForDriver(driver.driverKind)),

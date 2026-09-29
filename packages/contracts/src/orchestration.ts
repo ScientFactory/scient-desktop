@@ -1545,6 +1545,8 @@ const ThreadTurnInterruptCommand = Schema.Struct({
   commandId: CommandId,
   threadId: ThreadId,
   turnId: Schema.optional(TurnId),
+  /** Captures a turnless session when Stop targets background work. */
+  sessionUpdatedAt: Schema.optional(IsoDateTime),
   createdAt: IsoDateTime,
 });
 
@@ -2314,6 +2316,7 @@ export const ThreadTurnStartRequestedPayload = Schema.Struct({
 export const ThreadTurnInterruptRequestedPayload = Schema.Struct({
   threadId: ThreadId,
   turnId: Schema.optional(TurnId),
+  sessionUpdatedAt: Schema.optional(IsoDateTime),
   createdAt: IsoDateTime,
 });
 

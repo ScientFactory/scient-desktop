@@ -75,6 +75,7 @@
     "@types/yazl": "3.3.1",
     "effect-acp": "workspace:*",
     "effect-codex-app-server": "workspace:*",
+    "effect-omp-rpc": "workspace:*",
     "vite-plus": "catalog:"
   },
   "engines": {

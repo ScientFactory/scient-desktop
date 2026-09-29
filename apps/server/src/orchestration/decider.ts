@@ -1684,6 +1684,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           ...(command.turnId !== undefined ? { turnId: command.turnId } : {}),
+          ...(command.sessionUpdatedAt !== undefined
+            ? { sessionUpdatedAt: command.sessionUpdatedAt }
+            : {}),
           createdAt: command.createdAt,
         },
       };

@@ -15,6 +15,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { ScientThreadQueueItem, ScientThreadQueueItemId } from "@t3tools/contracts";
+import { composerCitationsToPlainText } from "@t3tools/shared/composerCitations";
 import { CornerDownRight, GripVertical, Paperclip, Pencil, Trash2 } from "lucide-react";
 import { useCallback } from "react";
 
@@ -75,15 +76,19 @@ function QueueRow(props: {
               <GripVertical className="size-3" aria-hidden="true" />
             </button>
           )}
-          <div className="min-w-0 flex-1">
-            <span className="block truncate text-sm text-foreground">{props.item.text}</span>
-            {props.item.attachments.length > 0 && (
-              <span className="mt-0.5 inline-flex items-center gap-1 text-[11px] text-muted-foreground">
-                <Paperclip className="size-3" aria-hidden="true" />
-                {props.item.attachments.length}
-              </span>
-            )}
-          </div>
+          {props.item.attachments.length > 0 && (
+            <span
+              className="inline-flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground"
+              role="img"
+              aria-label={`${props.item.attachments.length} ${props.item.attachments.length === 1 ? "attachment" : "attachments"}`}
+            >
+              <Paperclip className="size-3" aria-hidden="true" />
+              {props.item.attachments.length}
+            </span>
+          )}
+          <span dir="auto" className="min-w-0 flex-1 truncate text-sm text-foreground">
+            {composerCitationsToPlainText(props.item.text)}
+          </span>
           {props.threadBusy && (
             <Button
               type="button"

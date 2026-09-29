@@ -50,6 +50,7 @@ import * as ModelManifest from "./provider/ModelManifest.ts";
 import * as ResetCreditCoordinator from "./provider/Layers/resetCreditCoordinator.ts";
 import * as ProviderEventLoggers from "./provider/Layers/ProviderEventLoggers.ts";
 import * as ManagedRuntimeCatalog from "./scient/providerLifecycle/ManagedRuntimeCatalog.ts";
+import * as OmpExecutableGate from "./provider/omp/OmpExecutableGate.ts";
 import { ProviderServiceLive } from "./provider/Layers/ProviderService.ts";
 import { ProviderAuthServiceLive } from "./provider/Layers/ProviderAuthService.ts";
 import { AntigravityInstallation } from "./provider/AntigravityInstallation.ts";
@@ -672,6 +673,9 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
       ProviderEventLoggers.layer,
       ModelManifest.layer,
       ManagedRuntimeCatalog.layer,
+      // One Oh My Pi executable gate per server: every OMP process and every
+      // managed OMP activation reserves its executable here.
+      OmpExecutableGate.layer,
       ResetCreditCoordinator.layer,
     ),
   ),

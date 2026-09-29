@@ -29,6 +29,7 @@ import { CursorDriver, type CursorDriverEnv } from "./Drivers/CursorDriver.ts";
 import { DroidDriver, type DroidDriverEnv } from "./Drivers/DroidDriver.ts";
 import { GrokDriver, type GrokDriverEnv } from "./Drivers/GrokDriver.ts";
 import { OpenCodeDriver, type OpenCodeDriverEnv } from "./Drivers/OpenCodeDriver.ts";
+import { OmpDriver, type OmpDriverEnv } from "./Drivers/OmpDriver.ts";
 import { PiDriver, type PiDriverEnv } from "./Drivers/PiDriver.ts";
 import type { AnyProviderDriver } from "./ProviderDriver.ts";
 
@@ -45,6 +46,7 @@ export type BuiltInDriversEnv =
   | DroidDriverEnv
   | GrokDriverEnv
   | OpenCodeDriverEnv
+  | OmpDriverEnv
   | PiDriverEnv;
 
 /**
@@ -60,5 +62,6 @@ export const BUILT_IN_DRIVERS: ReadonlyArray<AnyProviderDriver<BuiltInDriversEnv
   DroidDriver,
   GrokDriver,
   OpenCodeDriver,
+  OmpDriver,
   PiDriver,
 ].toSorted((left, right) => compareProviderDriverKinds(left.driverKind, right.driverKind));

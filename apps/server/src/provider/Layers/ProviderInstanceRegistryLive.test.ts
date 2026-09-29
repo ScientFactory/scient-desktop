@@ -60,6 +60,7 @@ import { DroidDriver } from "../Drivers/DroidDriver.ts";
 import { GrokDriver } from "../Drivers/GrokDriver.ts";
 import { OpenCodeDriver } from "../Drivers/OpenCodeDriver.ts";
 import * as ModelManifest from "../ModelManifest.ts";
+import * as OmpExecutableGate from "../omp/OmpExecutableGate.ts";
 import { OpenCodeRuntimeLive } from "../opencodeRuntime.ts";
 import {
   defaultProviderContinuationIdentity,
@@ -282,6 +283,7 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
     Layer.provideMerge(TestHttpClientLive),
     Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
     Layer.provideMerge(ModelManifest.layerTest),
+    Layer.provideMerge(OmpExecutableGate.layer),
     Layer.provideMerge(ResetCreditCoordinator.layerTest),
   );
 
@@ -650,6 +652,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
     Layer.provideMerge(TestPtyAdapterLive),
     Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
     Layer.provideMerge(ModelManifest.layerTest),
+    Layer.provideMerge(OmpExecutableGate.layer),
     Layer.provideMerge(ResetCreditCoordinator.layerTest),
   );
 
