@@ -2261,13 +2261,10 @@ code {
   border-bottom: 1px solid color-mix(in srgb, var(--contrast-border) 60%, transparent);
 }
 
-/* Collapsed (default): single-line cells truncate so arbitrary chat content
-   cannot blow the column out; the footer toggle expands cells to wrap. */
+/* Collapsed: single-line cells keep their full text and the table scrolls
+   horizontally. Never truncate here; clipped text would be unreachable. */
 .chat-markdown .chat-markdown-table-container[data-expanded="false"] th,
 .chat-markdown .chat-markdown-table-container[data-expanded="false"] td {
-  overflow: hidden;
-  max-width: 24rem;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
