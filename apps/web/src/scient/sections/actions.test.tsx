@@ -29,7 +29,7 @@ vi.mock("../../components/ui/toast", () => ({
 vi.mock("../../hooks/showThreadUndoNotice", () => ({ showThreadUndoNotice: vi.fn() }));
 
 import { showThreadUndoNotice } from "../../hooks/showThreadUndoNotice";
-import { stackedThreadToast } from "../../components/ui/toast";
+import { stackedThreadToast, toastManager } from "../../components/ui/toast";
 import { useThreadSectionActions } from "./actions";
 
 const target = scopeThreadRef(EnvironmentId.make("remote"), ThreadId.make("thread"));
@@ -123,7 +123,10 @@ describe("moving threads into a section", () => {
     expect(await actions.moveThreadsToSection([target], section)).toBe(false);
     expect(mocks.mutate).not.toHaveBeenCalled();
     expect(showThreadUndoNotice).not.toHaveBeenCalled();
-    expect(vi.mocked(stackedThreadToast)).toHaveBeenCalledWith(
+    vi.mocked(stackedThreadToast).mockImplementation((toast) => toast as never);
+    await actions.moveThreadsToSection([target], section);
+    // The notice is actually shown, not only built.
+    expect(vi.mocked(toastManager.add)).toHaveBeenCalledWith(
       expect.objectContaining({ type: "error", title: "Failed to move thread to section" }),
     );
   });

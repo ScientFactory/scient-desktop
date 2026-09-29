@@ -29,7 +29,7 @@ import { SidebarSectionsToggle } from "./SidebarSectionsToggle";
 import { setSidebarSectionScope } from "./sidebarScope";
 import type { SidebarSectionsViewProps } from "./SidebarSectionsView";
 import { useEmptySectionCleanup } from "./useEmptySectionCleanup";
-import { sectionOriginForThreads, useNewSectionForThreads } from "./useNewSectionForThreads";
+import { createSectionAndFile, useNewSectionForThreads } from "./useNewSectionForThreads";
 import { useThreadSectionMenu } from "./useThreadSectionMenu";
 
 const SIDEBAR_VIEW_MODE_KEY = "scient:sidebar:view-mode";
@@ -217,16 +217,18 @@ export function useSidebarSections(input: {
     async (name: string) => {
       const threadRefs = creating?.threadRefs ?? [];
       setCreating(null);
-      const section = await catalog.create(
+      const section = await createSectionAndFile({
         name,
-        sectionOriginForThreads(threadRefs, scopeProjectRefs),
-      );
+        threadRefs,
+        scopeProjectRefs,
+        create: catalog.create,
+        moveThreadsToSection,
+      });
       if (section === null) {
         toastManager.add(stackedThreadToast({ type: "error", title: "Failed to create section" }));
         return;
       }
       setCollapsedIds((current) => current.filter((id) => id !== section.id));
-      if (threadRefs.length > 0) await moveThreadsToSection(threadRefs, section.id);
     },
     [catalog, creating, moveThreadsToSection, scopeProjectRefs, setCollapsedIds],
   );

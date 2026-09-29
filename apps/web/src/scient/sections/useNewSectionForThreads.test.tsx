@@ -1,7 +1,7 @@
 import { EnvironmentId, ThreadId, ThreadSectionId } from "@t3tools/contracts";
 import { act, type ReactNode, useLayoutEffect } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   create: vi.fn(),
@@ -27,7 +27,7 @@ vi.mock("./NewSectionDialog", () => ({
 }));
 
 import { setSidebarSectionScope } from "./sidebarScope";
-import { useNewSectionForThreads } from "./useNewSectionForThreads";
+import { createSectionAndFile, useNewSectionForThreads } from "./useNewSectionForThreads";
 
 const threadRef = {
   environmentId: EnvironmentId.make("local"),
@@ -106,4 +106,61 @@ it("files nothing and reports failure when the section cannot be created", async
   });
   expect(submitted).toBe(false);
   expect(mocks.moveThreadsToSection).not.toHaveBeenCalled();
+});
+
+// The shared step behind the dialog and the Sections view's inline row.
+describe("createSectionAndFile", () => {
+  const second = { environmentId: EnvironmentId.make("remote"), threadId: ThreadId.make("t-2") };
+  const design = { id: ThreadSectionId.make("design"), name: "Design", order: 0 };
+
+  it.each([
+    ["one thread", [threadRef]],
+    ["several threads", [threadRef, second]],
+  ])("creates the section, then files %s into it", async (_label, refs) => {
+    const steps: string[] = [];
+    const section = await createSectionAndFile({
+      name: "Design",
+      threadRefs: refs,
+      scopeProjectRefs: null,
+      create: async (name, origin) => {
+        steps.push(`create ${name} ${origin.environmentIds?.join(",")}`);
+        return design;
+      },
+      moveThreadsToSection: async (moved, sectionId) => {
+        steps.push(`file ${moved.map((ref) => ref.threadId).join(",")} into ${sectionId}`);
+        return true;
+      },
+    });
+    expect(section).toBe(design);
+    expect(steps).toEqual([
+      `create Design ${refs.map((ref) => ref.environmentId).join(",")}`,
+      `file ${refs.map((ref) => ref.threadId).join(",")} into design`,
+    ]);
+  });
+
+  it("creates an empty section from the New section row without filing", async () => {
+    const move = vi.fn();
+    await createSectionAndFile({
+      name: "Design",
+      threadRefs: [],
+      scopeProjectRefs: [{ environmentId: "local", projectId: "project-a" }],
+      create: async () => design,
+      moveThreadsToSection: move,
+    });
+    expect(move).not.toHaveBeenCalled();
+  });
+
+  it("files nothing when the section cannot be created", async () => {
+    const move = vi.fn();
+    expect(
+      await createSectionAndFile({
+        name: "Design",
+        threadRefs: [threadRef],
+        scopeProjectRefs: null,
+        create: async () => null,
+        moveThreadsToSection: move,
+      }),
+    ).toBeNull();
+    expect(move).not.toHaveBeenCalled();
+  });
 });

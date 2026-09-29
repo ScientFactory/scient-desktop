@@ -1,4 +1,9 @@
-import type { ScopedThreadRef, ThreadSectionProjectRef } from "@t3tools/contracts";
+import type {
+  ScopedThreadRef,
+  ThreadSection,
+  ThreadSectionId,
+  ThreadSectionProjectRef,
+} from "@t3tools/contracts";
 import { type ReactNode, useCallback, useState } from "react";
 
 import { readThreadShell } from "../../state/entities";
@@ -28,6 +33,31 @@ export function sectionOriginForThreads(
 }
 
 /**
+ * Creates a section for `threadRefs` and files them into it: the one step
+ * behind both the dialog and the Sections view's inline row. Resolves the
+ * section, or null when it could not be created (nothing is filed then).
+ * Filing reports its own failures and offers Undo.
+ */
+export async function createSectionAndFile(input: {
+  readonly name: string;
+  readonly threadRefs: readonly ScopedThreadRef[];
+  readonly scopeProjectRefs: readonly ThreadSectionProjectRef[] | null;
+  readonly create: (name: string, origin: SectionOrigin) => Promise<ThreadSection | null>;
+  readonly moveThreadsToSection: (
+    threadRefs: readonly ScopedThreadRef[],
+    sectionId: ThreadSectionId,
+  ) => Promise<boolean>;
+}): Promise<ThreadSection | null> {
+  const section = await input.create(
+    input.name,
+    sectionOriginForThreads(input.threadRefs, input.scopeProjectRefs),
+  );
+  if (section === null) return null;
+  if (input.threadRefs.length > 0) await input.moveThreadsToSection(input.threadRefs, section.id);
+  return section;
+}
+
+/**
  * "New section…" from a thread menu: asks for a name, creates the section
  * (or reuses one with that name) and files the threads into it in one step.
  */
@@ -47,14 +77,14 @@ export function useNewSectionForThreads(): {
 
   const submit = useCallback(
     async (name: string) => {
-      const threadRefs = pending ?? [];
-      const section = await catalog.create(
+      const section = await createSectionAndFile({
         name,
-        sectionOriginForThreads(threadRefs, readSidebarSectionScope()),
-      );
-      if (section === null) return false;
-      if (threadRefs.length > 0) await moveThreadsToSection(threadRefs, section.id);
-      return true;
+        threadRefs: pending ?? [],
+        scopeProjectRefs: readSidebarSectionScope(),
+        create: catalog.create,
+        moveThreadsToSection,
+      });
+      return section !== null;
     },
     [catalog, moveThreadsToSection, pending],
   );
