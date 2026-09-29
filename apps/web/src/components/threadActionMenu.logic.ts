@@ -2,6 +2,11 @@ import type { ContextMenuItem } from "@t3tools/contracts";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 // SCIENT-FORK:START
 import type { SectionMenuId } from "../scient/sections/menu";
+import {
+  COPY_CONVERSATION_MARKDOWN_MENU_ITEM,
+  conversationExportMenuItem,
+  type ConversationExportMenuId,
+} from "../scient/conversationExport/menu";
 // SCIENT-FORK:END
 
 /**
@@ -12,6 +17,7 @@ import type { SectionMenuId } from "../scient/sections/menu";
 export type ThreadActionMenuId =
   // SCIENT-FORK:START
   | SectionMenuId
+  | ConversationExportMenuId
   // SCIENT-FORK:END
   | "new-thread-on-branch"
   | "filter-by-project"
@@ -124,6 +130,11 @@ export function buildThreadActionMenuItems(
               },
         ]
       : []),
+    // SCIENT-FORK:START
+    // Section sits with pin, settle and snooze: all four decide where the
+    // thread lives in the sidebar.
+    ...(state.sectionMenu ? [state.sectionMenu] : []),
+    // SCIENT-FORK:END
     { id: "rename", label: "Rename thread", icon: "pencil", separatorBefore: true },
     ...(state.supports.titleRegeneration
       ? [
@@ -172,9 +183,6 @@ export function buildThreadActionMenuItems(
           },
         ]
       : []),
-    // SCIENT-FORK:START
-    ...(state.sectionMenu ? [state.sectionMenu] : []),
-    // SCIENT-FORK:END
     {
       id: "copy",
       label: "Copy",
@@ -186,8 +194,14 @@ export function buildThreadActionMenuItems(
           ? [{ id: "copy-branch" as const, label: "Branch", icon: "git-branch" }]
           : []),
         { id: "copy-thread-id", label: "Thread ID", icon: "hash" },
+        // SCIENT-FORK:START
+        COPY_CONVERSATION_MARKDOWN_MENU_ITEM,
+        // SCIENT-FORK:END
       ],
     },
+    // SCIENT-FORK:START
+    conversationExportMenuItem(),
+    // SCIENT-FORK:END
     { id: "project-settings", label: "Project settings", icon: "settings" },
     // Archive removes the thread from the sidebar while keeping its
     // conversation under Settings > Archived threads — distinct from Settle

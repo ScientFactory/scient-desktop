@@ -1,3 +1,5 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off - FileSystem.stat follows symlinks; checkpoint accounting needs lstat.
+import * as NodeFSP from "node:fs/promises";
 import * as NodeCrypto from "node:crypto";
 import * as NodeBuffer from "node:buffer";
 
@@ -13,7 +15,9 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   GitCommandError,
   VcsExecutableUnavailableError,
+  VcsCheckpointUnavailableError,
   VcsProcessExitError,
+  VcsProcessTimeoutError,
   type VcsSwitchRefInput,
   type VcsSwitchRefResult,
   type VcsCreateRefInput,
@@ -394,6 +398,9 @@ export class GitVcsDriver extends Context.Service<
 const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const CHECKPOINT_RECOVERY_MAX_CANDIDATES = 64;
 const CHECKPOINT_RECOVERY_TIMEOUT = "5 seconds";
+const CHECKPOINT_CAPTURE_TIMEOUT_MS = 90_000;
+const CHECKPOINT_CAPTURE_MAX_FILE_BYTES = 512n * 1024n * 1024n;
+const CHECKPOINT_CAPTURE_MAX_CHANGED_BYTES = 1024n * 1024n * 1024n;
 const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
 const CHECKPOINT_DIFF_MAX_OUTPUT_BYTES = 10_000_000;
 const WORKSPACE_GIT_HARDENED_CONFIG_ARGS = [
@@ -780,6 +787,92 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       return path.isAbsolute(gitCommonDir) ? gitCommonDir : path.resolve(cwd, gitCommonDir);
     });
 
+  const checkpointFileError = (
+    cwd: string,
+    operation: string,
+    error: { readonly message: string },
+  ) =>
+    new VcsCheckpointUnavailableError({
+      operation: VcsProcess.CHECKPOINT_CAPTURE_OPERATION,
+      cwd,
+      reason: "filesystem-error",
+      detail: `${operation}: ${error.message}`,
+    });
+
+  // Reject captures that would have to hash unusually large changed files.
+  // This is a checkpoint availability limit, never a limit on the user's files
+  // or on their ability to continue a conversation.
+  const checkCheckpointSize = Effect.fn("GitVcsDriver.checkpoints.checkSize")(function* (
+    cwd: string,
+    env: NodeJS.ProcessEnv,
+  ) {
+    const operation = VcsProcess.CHECKPOINT_CAPTURE_OPERATION;
+    // Porcelain v1 paths are repository-relative even when cwd is a subdirectory.
+    // Scope enumeration to the same pathspec used by checkpoint staging.
+    const root = yield* execute({ operation, cwd, args: ["rev-parse", "--show-toplevel"], env });
+    const status = yield* execute({
+      operation,
+      cwd,
+      args: ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", "."],
+      env: { ...env, GIT_OPTIONAL_LOCKS: "0" },
+      maxOutputBytes: 16 * 1024 * 1024,
+      outputMode: "truncate",
+    });
+    if (status.stdoutTruncated) {
+      return yield* new VcsCheckpointUnavailableError({
+        operation,
+        cwd,
+        reason: "path-limit",
+        detail: "Too many changed paths to safely capture a checkpoint.",
+      });
+    }
+    let changedBytes = 0n;
+    const records = status.stdout.split("\0");
+    for (let index = 0; index < records.length; index++) {
+      const record = records[index];
+      if (!record || record.length < 4) continue;
+      // Porcelain -z adds the old path as a second record for renames/copies.
+      if (/[RC]/.test(record.slice(0, 2))) index++;
+      const filePath = path.join(root.stdout.replace(/\r?\n$/, ""), record.slice(3));
+      // Git stores the link text, not the target bytes. lstat also preserves
+      // dangling links; a following exists/stat pair incorrectly treats them as deletions.
+      const info = yield* Effect.tryPromise({
+        try: () =>
+          NodeFSP.lstat(filePath, { bigint: true }).catch((error: NodeJS.ErrnoException) => {
+            if (error.code === "ENOENT") return null; // Deleted while enumerating.
+            throw error;
+          }),
+        catch: (error) =>
+          checkpointFileError(cwd, "checkpoint size check", {
+            message: error instanceof Error ? error.message : String(error),
+          }),
+      });
+      if (info === null || info.isDirectory()) continue; // Gitlinks contain no file payload.
+      if (!info.isFile() && !info.isSymbolicLink()) {
+        return yield* new VcsCheckpointUnavailableError({
+          operation,
+          cwd,
+          reason: "unsupported-file",
+          detail: "A changed special file cannot be included in file history.",
+        });
+      }
+      const size = info.size;
+      changedBytes += size;
+      if (
+        size > CHECKPOINT_CAPTURE_MAX_FILE_BYTES ||
+        changedBytes > CHECKPOINT_CAPTURE_MAX_CHANGED_BYTES
+      ) {
+        return yield* new VcsCheckpointUnavailableError({
+          operation,
+          cwd,
+          reason: "size-limit",
+          detail:
+            "Changed files exceed the checkpoint capture size limit (512 MiB per file, 1 GiB total).",
+        });
+      }
+    }
+  });
+
   // Git renames loose objects and refs into place without fsync by default, so
   // an unclean restart can leave 0-byte files under refs/t3/** that break every
   // later fetch and push. Checkpoint writes flush before they are published;
@@ -814,6 +907,16 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         GIT_COMMITTER_EMAIL: "t3code@users.noreply.github.com",
       };
 
+      const cleanGitEnv: NodeJS.ProcessEnv = {
+        ...process.env,
+        GIT_DIR: undefined,
+        GIT_WORK_TREE: undefined,
+        GIT_COMMON_DIR: undefined,
+        GIT_INDEX_FILE: undefined,
+        GIT_OBJECT_DIRECTORY: undefined,
+        GIT_ALTERNATE_OBJECT_DIRECTORIES: undefined,
+      };
+
       // Forced process termination can leave Git's private index lock behind.
       const cleanupTempIndex = Effect.forEach(
         [tempIndexPath, `${tempIndexPath}.lock`],
@@ -822,6 +925,52 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       );
 
       yield* Effect.gen(function* () {
+        // Git hashes workspace files into a scoped bare repository, so staging
+        // failures cannot strand pack files in the user's repository. Git then
+        // transfers the completed object graph and publishes the hidden ref.
+        const objectFormat = yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: ["rev-parse", "--show-object-format"],
+          env: cleanGitEnv,
+          allowNonZeroExit: true,
+        });
+        const stagingRepo = yield* fileSystem
+          .makeTempDirectoryScoped({
+            prefix: "scient-checkpoint-",
+          })
+          .pipe(
+            Effect.mapError((error) =>
+              checkpointFileError(input.cwd, "create checkpoint staging repository", error),
+            ),
+          );
+        yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: [
+            "init",
+            "--bare",
+            "--quiet",
+            ...(objectFormat.stdout.trim() === "sha256" ? ["--object-format=sha256"] : []),
+            stagingRepo,
+          ],
+          env: cleanGitEnv,
+        });
+        yield* fileSystem
+          .writeFileString(
+            path.join(stagingRepo, "objects", "info", "alternates"),
+            `${path.join(gitCommonDir, "objects").replaceAll("\\", "/")}\n`,
+          )
+          .pipe(
+            Effect.mapError((error) =>
+              checkpointFileError(input.cwd, "prepare checkpoint staging repository", error),
+            ),
+          );
+        const stagedEnv: NodeJS.ProcessEnv = {
+          ...commitEnv,
+          GIT_OBJECT_DIRECTORY: path.join(stagingRepo, "objects"),
+          GIT_ALTERNATE_OBJECT_DIRECTORIES: undefined,
+        };
         const headExists = yield* hasHeadCommit(input.cwd);
         const sparseConfig = yield* execute({
           operation,
@@ -857,7 +1006,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               operation,
               cwd: input.cwd,
               args: [...indexConfig, "read-tree", "--reset", "HEAD"],
-              env: commitEnv,
+              env: stagedEnv,
             });
             // read-tree can rewrite the index, so restore its racy timestamp afterward.
             yield* fileSystem.utimes(tempIndexPath, indexTime, indexTime);
@@ -871,7 +1020,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               command: "git",
               cwd: input.cwd,
               args: [...indexConfig, "ls-files", "--full-name", "--sparse", "-v", "-z"],
-              env: commitEnv,
+              env: stagedEnv,
               maxOutputBytes: 4_096,
               outputMode: "truncate",
               // Inspect every tag; retain only skipped file paths for checking sparse rules.
@@ -905,7 +1054,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                 cwd: input.cwd,
                 args: [...indexConfig, "sparse-checkout", "check-rules", "-z"],
                 stdin: skippedPaths.join("\0") + "\0",
-                env: commitEnv,
+                env: stagedEnv,
                 maxOutputBytes: 1,
                 outputMode: "truncate",
               });
@@ -942,10 +1091,12 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               args: sparseCheckout
                 ? [...indexConfig, "-c", "index.sparse=true", "read-tree", "--reset", "HEAD"]
                 : ["read-tree", "HEAD"],
-              env: commitEnv,
+              env: stagedEnv,
             });
           }
         }
+
+        yield* checkCheckpointSize(input.cwd, stagedEnv);
 
         const stageFiles = (exclusions: ReadonlyArray<string>) =>
           execute({
@@ -962,7 +1113,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               ".",
               ...exclusions,
             ],
-            env: commitEnv,
+            env: stagedEnv,
           });
         yield* stageFiles([]).pipe(
           Effect.catchTags({
@@ -974,7 +1125,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                   operation,
                   cwd: input.cwd,
                   args: ["ls-files", "--others", "--exclude-standard", "-z", "--", "."],
-                  env: commitEnv,
+                  env: stagedEnv,
                   maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
                 });
                 if (untracked.stdoutTruncated) return yield* error;
@@ -1021,7 +1172,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           operation,
           cwd: input.cwd,
           args: [...indexConfig, ...durableWrite, "write-tree"],
-          env: commitEnv,
+          env: stagedEnv,
         });
         const treeOid = writeTreeResult.stdout.trim();
         if (treeOid.length === 0) {
@@ -1039,7 +1190,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           operation,
           cwd: input.cwd,
           args: [...durableWrite, "commit-tree", treeOid, "-m", message],
-          env: commitEnv,
+          env: stagedEnv,
         });
         const commitOid = commitTreeResult.stdout.trim();
         if (commitOid.length === 0) {
@@ -1055,9 +1206,47 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         yield* execute({
           operation,
           cwd: input.cwd,
-          args: [...durableWrite, "update-ref", input.checkpointRef, commitOid],
+          args: [
+            "--git-dir",
+            stagingRepo,
+            ...durableWrite,
+            "update-ref",
+            "refs/t3/staging",
+            commitOid,
+          ],
+          env: stagedEnv,
         });
-      }).pipe(Effect.ensuring(cleanupTempIndex));
+        yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: [
+            ...durableWrite,
+            "fetch",
+            "--quiet",
+            "--no-write-fetch-head",
+            "--no-tags",
+            "--no-recurse-submodules",
+            stagingRepo,
+            `+refs/t3/staging:${input.checkpointRef}`,
+          ],
+          env: cleanGitEnv,
+        });
+      }).pipe(
+        Effect.ensuring(cleanupTempIndex),
+        Effect.scoped,
+        Effect.timeoutOrElse({
+          duration: CHECKPOINT_CAPTURE_TIMEOUT_MS,
+          orElse: () =>
+            Effect.fail(
+              new VcsProcessTimeoutError({
+                operation,
+                command: "git checkpoint capture",
+                cwd: input.cwd,
+                timeoutMs: CHECKPOINT_CAPTURE_TIMEOUT_MS,
+              }),
+            ),
+        }),
+      );
     }),
 
     hasCheckpointRef: (input) =>

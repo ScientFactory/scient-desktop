@@ -42,6 +42,7 @@ it("marks the on state with a small gray inset that the white hover surrounds", 
   await nextFrame();
 
   const button = host.querySelector<HTMLElement>('[data-testid="sidebar-sections-toggle"]')!;
+  await userEvent.unhover(button);
   const mark = button.querySelector<HTMLElement>("span.absolute")!;
   const gray = tokenColor("bg-sidebar-foreground/6");
   expect(gray).not.toBe(tokenColor("bg-sidebar-row-selected"));

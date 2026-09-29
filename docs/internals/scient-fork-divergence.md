@@ -559,7 +559,12 @@ meaning is the same.
   a native fork was not possible.
 - **Handoffs** (`scient_context_handoffs`) are delivered to one
   provider-native thread (`native_thread_key`, derived per provider from the
-  resume cursor in `context/nativeThreadKey.ts`). Delivery is `pending` while
+  live `ProviderSession.nativeSessionId` when supplied, with a resume-cursor
+  fallback in `context/nativeThreadKey.ts`). A live identity is not a resume
+  credential: an adapter may know it before its transcript is durable. It must
+  match the native identity in the eventual cursor. Validated cursors are saved
+  on turn completion or abort before publishing that event, including for
+  providers whose first send acknowledgement precedes transcript creation. Delivery is `pending` while
   the send is in flight and `inline` once accepted. A provider-native thread
   that has not received the context gets it again: a Codex resume that fell
   back to a new thread, a provider switch, a session after a crash.
@@ -571,9 +576,14 @@ meaning is the same.
   fresh provider session (`ProviderService.discardSessionContinuity`) and
   delivers again. A duplicate can only exist in the abandoned session.
 - **Evidence, not acceptance.** A handoff counts as received once the provider
-  reported the turn it started (`projection_turns.pending_message_id`), or
-  while that turn still runs. An adapter that only enqueued the turn in memory
-  (Claude) and then died is re-delivered.
+  reported the turn it started, or while that turn still runs. New deliveries
+  retain the provider send receipt's turn ID and verify that exact turn in the
+  durable projection; older deliveries use `projection_turns.pending_message_id`.
+  This survives an internal session reset clearing the temporary pending-message
+  record, so recovery does not reset and resend history on every later message.
+  Acceptance alone is insufficient: an adapter that only enqueued the turn in
+  memory (Claude) and then died is re-delivered. Existing incomplete receipts
+  may need one fresh delivery before later turns can reuse the confirmed session.
 - **Revert** invalidates a handoff whose carrying turn was removed. Every
   preparation rechecks durable turn evidence, including previously confirmed
   rows, so a missed live notification cannot retain stale trust. A changed or

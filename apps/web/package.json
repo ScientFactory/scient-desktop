@@ -36,6 +36,7 @@
     "@pierre/diffs": "catalog:",
     "@pierre/theme": "1.1.0",
     "@pierre/trees": "1.0.0-beta.4",
+    "@scientfactory/conversation": "workspace:*",
     "@scientfactory/document-artifacts": "workspace:*",
     "@scientfactory/scient-citations": "workspace:*",
     "@scientfactory/scient-markdown": "workspace:*",

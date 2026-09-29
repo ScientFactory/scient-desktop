@@ -114,6 +114,8 @@ describe("Scient awareness", () => {
     expect(SCIENT_DOCUMENT_BUILD_AWARENESS).toContain("requested PDF deliverable");
     expect(SCIENT_DOCUMENT_BUILD_AWARENESS).toContain("existing project HTML source");
     expect(SCIENT_DOCUMENT_BUILD_AWARENESS).toContain("existing project LaTeX source");
+    expect(SCIENT_DOCUMENT_BUILD_AWARENESS).toContain("`scient_document_export`");
+    expect(SCIENT_DOCUMENT_BUILD_AWARENESS).toContain("existing project Markdown document");
     for (const skillWorkflowDetail of [
       "retryAfterMs",
       "pageCount",
@@ -137,6 +139,7 @@ describe("Scient awareness", () => {
 
     expect(awareness).toContain("`mcp__t3-code__scient_pdf_build`");
     expect(awareness).toContain("`mcp__t3-code__scient_latex_build`");
+    expect(awareness).toContain("`mcp__t3-code__scient_document_export`");
     expect(awareness).toContain("`mcp__t3-code__preview_status`");
     expect(awareness).toContain("`mcp__t3-code__preview_open`");
     expect(awareness).not.toContain("`preview_status`");
@@ -156,5 +159,7 @@ describe("Scient awareness", () => {
     expect(Object.keys(SCIENT_AWARENESS_DELIVERY).toSorted()).toEqual(builtInKinds);
     expect(SCIENT_AWARENESS_DELIVERY.antigravity).toBe("unsupported-no-private-system-seam");
     expect(SCIENT_AWARENESS_DELIVERY.cursor).toBe("unsupported-no-private-system-seam");
+    // Oh My Pi uses Pi's session-local extension hook, appended to its string[] prompt.
+    expect(SCIENT_AWARENESS_DELIVERY.omp).toBe(SCIENT_AWARENESS_DELIVERY.pi);
   });
 });

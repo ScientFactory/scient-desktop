@@ -226,31 +226,6 @@ export function shouldDockDraftHeroForSubmission(input: {
   );
 }
 
-export function shouldReleaseTimelineAnchorForToolActivity(input: {
-  anchorMessageId: MessageId | null;
-  liveFollowEnabled: boolean;
-  runningTurnId: TurnId | null;
-  timelineEntries: ReadonlyArray<TimelineEntry>;
-}): boolean {
-  if (input.anchorMessageId === null || !input.liveFollowEnabled || input.runningTurnId === null) {
-    return false;
-  }
-
-  return input.timelineEntries.some((timelineEntry) => {
-    if (timelineEntry.kind !== "work" || timelineEntry.entry.turnId !== input.runningTurnId) {
-      return false;
-    }
-
-    const entry = timelineEntry.entry;
-    return (
-      entry.tone === "tool" ||
-      entry.itemType !== undefined ||
-      entry.requestKind !== undefined ||
-      (entry.command?.trim().length ?? 0) > 0
-    );
-  });
-}
-
 export {
   findRecordedWorktreeSetup,
   resolveVisibleWorktreeSetup,
@@ -587,11 +562,15 @@ export function shouldWriteThreadErrorToCurrentServerThread(input: {
 export function buildThreadTurnInterruptInput(thread: Pick<Thread, "id" | "session">): {
   threadId: ThreadId;
   turnId?: TurnId;
+  sessionUpdatedAt?: NonNullable<Thread["session"]>["updatedAt"];
 } {
   const runningTurnId = thread.session?.status === "running" ? thread.session.activeTurnId : null;
   return {
     threadId: thread.id,
     ...(runningTurnId !== null ? { turnId: runningTurnId } : {}),
+    ...(thread.session?.status === "ready" && thread.session.activeTurnId === null
+      ? { sessionUpdatedAt: thread.session.updatedAt }
+      : {}),
   };
 }
 

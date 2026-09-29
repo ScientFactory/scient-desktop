@@ -347,6 +347,52 @@ function makeThread(
 }
 
 describe("buildThreadFeed", () => {
+  it("folds the message each submitted answer names, and a live answer's async-answer message", () => {
+    const turnId = TurnId.make("answer-turn");
+    const userMessage = (id: string, text: string, second: number) => ({
+      id: MessageId.make(id),
+      role: "user" as const,
+      text,
+      turnId: null,
+      streaming: false,
+      createdAt: `2026-04-01T00:00:0${second}.000Z`,
+      updatedAt: `2026-04-01T00:00:0${second}.000Z`,
+    });
+    const answer = (id: string, requestId: string, second: number, messageId?: string) =>
+      makeActivity({
+        id: EventId.make(id),
+        kind: "user-input.answer-submitted",
+        summary: "Question answer submitted",
+        createdAt: `2026-04-01T00:00:0${second}.000Z`,
+        turnId,
+        payload: {
+          requestId,
+          answers: { color: "Blue" },
+          attachmentsByQuestionId: {},
+          ...(messageId === undefined ? {} : { messageId }),
+        },
+      });
+    const feed = buildThreadFeed(
+      makeThread({
+        id: ThreadId.make("folded-answers"),
+        projectId: ProjectId.make("project-1"),
+        title: "Folded answers",
+        messages: [
+          userMessage("plain-message", "Keep me", 1),
+          userMessage("imp-attempt-000002", "Blue", 2),
+          userMessage("async-answer:live-request", "Green", 3),
+        ],
+        activities: [
+          answer("imported-answer", "imported-request", 2, "imp-attempt-000002"),
+          answer("live-answer", "live-request", 3),
+        ],
+      }),
+    );
+    expect(feed.flatMap((entry) => (entry.type === "message" ? [entry.message.text] : []))).toEqual(
+      ["Keep me"],
+    );
+  });
+
   it("reuses unchanged feed and presentation rows during an assistant text update", () => {
     const completedTurnId = TurnId.make("completed-turn");
     const activeTurnId = TurnId.make("active-turn");
@@ -783,9 +829,13 @@ describe("buildThreadFeed", () => {
       if (group?.type !== "activity-group") return;
       const row = group.activities[0]!;
       expect(row.canExpand).toBe(true);
-      expect(workEntryRowLabel(row.workEntry, true)).toBe(message);
-      expect(row.getFullDetail()).toBeNull();
-      expect(row.getCopyText()).toBe(`Runtime error\n${message}`);
+      const summary =
+        kind === "runtime.error" ? "The agent encountered a problem" : "Runtime error";
+      expect(workEntryRowLabel(row.workEntry, true)).toBe(
+        kind === "runtime.error" ? summary : message,
+      );
+      expect(row.getFullDetail()).toBe(kind === "runtime.error" ? message : null);
+      expect(row.getCopyText()).toBe(`${summary}\n${message}`);
     },
   );
 
@@ -853,10 +903,14 @@ describe("buildThreadFeed", () => {
     if (group?.type !== "activity-group") return;
     const row = group.activities[0]!;
     expect(row.canExpand).toBe(true);
-    expect(workEntryRowLabel(row.workEntry)).toBe(input.detail.replace(/\s+/g, " "));
-    expect(workEntryRowLabel(row.workEntry, true)).toBe(input.detail);
-    expect(row.getFullDetail()).toBeNull();
-    expect(row.getCopyText()).toBe(`${input.summary}\n${input.detail}`);
+    const isIssue = input.kind === "runtime.error";
+    const summary = isIssue ? "The agent encountered a problem" : input.summary;
+    expect(workEntryRowLabel(row.workEntry)).toBe(
+      isIssue ? summary : input.detail.replace(/\s+/g, " "),
+    );
+    expect(workEntryRowLabel(row.workEntry, true)).toBe(isIssue ? summary : input.detail);
+    expect(row.getFullDetail()).toBe(isIssue ? input.detail : null);
+    expect(row.getCopyText()).toBe(`${summary}\n${input.detail}`);
   });
 
   it("drops a truncated Claude echo of a long command", () => {
@@ -3836,4 +3890,58 @@ it("keeps attachment-only question answers expandable outside mobile work groups
   expect(running[0]?.type).toBe("work-toggle");
   expect(running[1]).toBe(group);
   expect(running[2]?.type).toBe("work-toggle");
+});
+
+describe("issue ownership on mobile", () => {
+  it.each(["checkpoint.capture.failed", "checkpoint.diff.failed"])(
+    "omits historical %s while preserving the answer",
+    (kind) => {
+      const date = "2026-09-29T00:00:00.000Z";
+      const thread = makeThread({
+        id: ThreadId.make("history"),
+        projectId: ProjectId.make("project"),
+        title: "History",
+        activities: [
+          makeActivity({
+            id: EventId.make("background"),
+            kind,
+            summary: "Checkpoint failed",
+            tone: "error",
+            payload: { detail: "git status exited with 1" },
+            createdAt: date,
+          }),
+        ],
+        messages: [
+          {
+            id: MessageId.make("answer"),
+            role: "assistant",
+            text: "Here. What do you need?",
+            turnId: TurnId.make("turn"),
+            createdAt: date,
+            updatedAt: date,
+            streaming: false,
+          },
+        ],
+      });
+      const feed = buildThreadFeed(thread);
+      expect(feed).toHaveLength(1);
+      expect(feed[0]).toMatchObject({
+        type: "message",
+        message: { text: "Here. What do you need?" },
+      });
+    },
+  );
+  it("keeps technical details out of the main issue label", () => {
+    expect(
+      workEntryRowLabel({
+        id: "failure",
+        turnId: null,
+        createdAt: "2026-09-29T00:00:00.000Z",
+        tone: "error",
+        label: "Message could not be sent",
+        sourceActivityKind: "provider.turn.start.failed",
+        detail: "Internal transport failure",
+      }),
+    ).toBe("Message could not be sent");
+  });
 });

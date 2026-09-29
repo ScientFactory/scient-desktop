@@ -1,0 +1,184 @@
+{
+  "schemaVersion": 2,
+  "owner": "ScientFactory",
+  "purpose": "External Oh My Pi provider. The wire package has no Scient orchestration types. Desktop files own process, session cursor, and current turn mapping. Shared integration points are mounts; Scient-owned provider documentation and release copy are classified here when they name Oh My Pi.",
+  "ownedRoots": ["packages/effect-omp-rpc", "apps/server/src/provider/omp"],
+  "ownedFiles": [
+    "apps/server/scripts/qualify-omp-rpc.ts",
+    "apps/server/src/provider/Drivers/OmpDriver.ts",
+    "apps/server/src/provider/Layers/OmpAdapter.ts",
+    "apps/server/src/provider/Layers/OmpProvider.ts",
+    "apps/server/src/scient/providerLifecycle/OmpManagedRuntimeActions.ts",
+    "apps/server/src/textGeneration/OmpTextGeneration.ts",
+    "apps/web/src/scient/providerConnection/OmpInlineSetup.tsx",
+    "apps/web/src/scient/releaseNotes/catalog.ts",
+    "docs/user/providers-omp.md",
+    "packages/scient-provider-runtime/src/managedOmpRuntime.ts",
+    "packages/scient-provider-runtime/src/ompManifest.ts"
+  ],
+  "scientMounts": [
+    {
+      "path": ".github/workflows/managed-provider-runtime-update-provider.yml",
+      "anchor": "inputs.provider == 'omp'",
+      "purpose": "Qualify Oh My Pi catalog candidates on its one supported target with the server's RPC check."
+    },
+    {
+      "path": ".github/workflows/managed-provider-runtime-updates.yml",
+      "anchor": "\"pi\",\"omp\"",
+      "purpose": "Include Oh My Pi in the scheduled managed runtime catalog refresh."
+    },
+    {
+      "path": "apps/server/src/provider/agentModel.ts",
+      "anchor": "splitAgentModelSlug",
+      "purpose": "Share the provider/model slug codec and reasoning descriptors between Pi and Oh My Pi."
+    },
+    {
+      "path": "apps/server/src/provider/pi/PiModel.ts",
+      "anchor": "splitAgentModelSlug",
+      "purpose": "Keep Pi's canonical slug rule on top of the codec it now shares with Oh My Pi."
+    },
+    {
+      "path": "apps/server/src/provider/ScientAwareness.ts",
+      "anchor": "omp: \"before-agent-start-system-append\"",
+      "purpose": "Deliver Scient awareness to Oh My Pi through its session extension."
+    },
+    {
+      "path": "apps/server/src/scient/skills/ScientSkillSession.ts",
+      "anchor": "omp: \"mcp\"",
+      "purpose": "Deliver Scient skills to Oh My Pi through the thread's MCP session."
+    },
+    {
+      "path": "apps/server/src/scient/providerLifecycle/bundled-managed-runtime-catalog.json",
+      "anchor": "\"omp\": {",
+      "purpose": "Ship the reviewed Oh My Pi managed runtime release for offline first install."
+    },
+    {
+      "path": "apps/web/src/components/settings/CustomModelsPanel.tsx",
+      "anchor": "PROVIDER_DISPLAY_NAMES[value.driver]",
+      "purpose": "Name custom-model agents, including Oh My Pi, from the shared display names."
+    },
+    {
+      "path": "apps/web/src/scient/providerConnection/AssistedProviderSetupHost.tsx",
+      "anchor": "OmpInlineSetup",
+      "purpose": "Route Oh My Pi to its inline assisted setup."
+    },
+    {
+      "path": "packages/contracts/src/customModels.ts",
+      "anchor": "driver === \"omp\"",
+      "purpose": "Let custom model connections attach to Oh My Pi agents."
+    },
+    {
+      "path": "packages/scient-provider-runtime/src/index.ts",
+      "anchor": "./managedOmpRuntime.ts",
+      "purpose": "Export the Oh My Pi managed runtime and release policy."
+    },
+    {
+      "path": "packages/scient-provider-runtime/src/managedProviderRuntime.ts",
+      "anchor": "\"omp\"",
+      "purpose": "Register Oh My Pi as a managed runtime provider."
+    },
+    {
+      "path": "packages/scient-provider-runtime/src/managedRuntimeArtifact.ts",
+      "anchor": "\"omp\"",
+      "purpose": "Accept Oh My Pi catalog artifacts."
+    },
+    {
+      "path": "packages/scient-provider-runtime/src/managedRuntimePolicy.ts",
+      "anchor": "omp: { revision: 1",
+      "purpose": "Pin Oh My Pi's managed runtime contract revision."
+    },
+    {
+      "path": "scripts/lib/managed-runtime-catalog.ts",
+      "anchor": "discoverOmp",
+      "purpose": "Discover stable Oh My Pi releases within the supported major for the catalog."
+    },
+    {
+      "path": "scripts/qualify-managed-runtime-catalog.ts",
+      "anchor": "verifyOmpRpc",
+      "purpose": "Publish an Oh My Pi release only after the server's RPC qualification passes."
+    }
+  ],
+  "upstreamMounts": [
+    {
+      "path": "apps/mobile/src/components/ProviderIcon.tsx",
+      "anchor": "props.provider === \"omp\"",
+      "purpose": "Show the Oh My Pi mark in the mobile provider icon."
+    },
+    {
+      "path": "apps/server/src/mcp/McpHttpServer.ts",
+      "anchor": "export const McpTransportLive",
+      "purpose": "Let Oh My Pi's Scient tool tests serve the authenticated MCP transport with a subset of toolkits."
+    },
+    {
+      "path": "apps/server/src/provider/builtInDrivers.ts",
+      "anchor": "OmpDriver",
+      "purpose": "Register the Oh My Pi driver."
+    },
+    {
+      "path": "apps/server/src/provider/model-manifest.json",
+      "anchor": "\"driver\": \"omp\"",
+      "purpose": "Scope Oh My Pi's supported version range to Scient releases that ship it."
+    },
+    {
+      "path": "apps/server/src/provider/providerMaintenance.ts",
+      "anchor": "export function formatProviderUpdateCommand",
+      "purpose": "Share the copyable update command formatting with Oh My Pi's manual update advisory."
+    },
+    {
+      "path": "apps/server/src/server.ts",
+      "anchor": "OmpExecutableGate.layer",
+      "purpose": "Provide one Oh My Pi executable gate per server so processes cannot race managed activation."
+    },
+    {
+      "path": "apps/server/src/ws.ts",
+      "anchor": "encodeOmpModelSlug",
+      "purpose": "Test custom model connections through Oh My Pi's own model slug."
+    },
+    {
+      "path": "apps/web/src/components/chat/MessagesTimeline.tsx",
+      "anchor": "workEntry.externalUrl",
+      "purpose": "Offer an Open in browser link for provider open-url activity such as Oh My Pi's login."
+    },
+    {
+      "path": "apps/web/src/components/chat/providerIconUtils.ts",
+      "anchor": "[ProviderDriverKind.make(\"omp\")]: OhMyPiIcon",
+      "purpose": "Resolve the Oh My Pi icon."
+    },
+    {
+      "path": "apps/web/src/components/Icons.tsx",
+      "anchor": "OhMyPiIcon",
+      "purpose": "Define the Oh My Pi mark."
+    },
+    {
+      "path": "apps/web/src/components/settings/providerDriverMeta.ts",
+      "anchor": "settingsSchema: OmpSettings",
+      "purpose": "List Oh My Pi in provider settings."
+    },
+    {
+      "path": "apps/web/src/session-logic.ts",
+      "anchor": "ProviderDriverKind.make(\"omp\")",
+      "purpose": "List Oh My Pi in the model picker and project open-url activity."
+    },
+    {
+      "path": "knip.jsonc",
+      "anchor": "scripts/qualify-omp-rpc.ts",
+      "purpose": "Register the Oh My Pi RPC qualification entry spawned by the catalog workflow."
+    },
+    {
+      "path": "packages/contracts/src/model.ts",
+      "anchor": "OMP_DRIVER_KIND",
+      "purpose": "Declare the Oh My Pi driver kind and display name."
+    },
+    {
+      "path": "packages/contracts/src/settings.ts",
+      "anchor": "OmpSettings",
+      "purpose": "Declare Oh My Pi instance settings."
+    },
+    {
+      "path": "scripts/release-smoke.ts",
+      "anchor": "packages/effect-omp-rpc/package.json",
+      "purpose": "Include the Oh My Pi wire package in release smoke packaging."
+    }
+  ],
+  "ompDiffSignals": ["Oh My Pi", "effect-omp-rpc", "provider/omp", "Omp", "\"omp\""]
+}

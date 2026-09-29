@@ -1,6 +1,7 @@
 import {
   type EnvironmentId,
   type EditorId,
+  type OrchestrationConversationImport,
   type ProjectScript,
   type ResolvedKeybindingsConfig,
   type ThreadId,
@@ -55,12 +56,15 @@ import { cn } from "~/lib/utils";
 import { useIsMobile } from "~/hooks/useMediaQuery";
 import { Button } from "../ui/button";
 import { Menu, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
+import { ConversationImportProvenanceBadge } from "./scient-import/ConversationImportBanner";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
   activeThreadId: ThreadId;
   draftId?: DraftId;
   activeThreadTitle: string;
+  conversationImport?: OrchestrationConversationImport | null;
+  importSessionStarted?: boolean;
   /** Drafts have no server thread yet, so the title carries no action menu. */
   isServerThread: boolean;
   activeProject: EnvironmentProject | null;
@@ -131,6 +135,8 @@ export const ChatHeader = memo(function ChatHeader({
   activeThreadId,
   draftId,
   activeThreadTitle,
+  conversationImport,
+  importSessionStarted = false,
   isServerThread,
   activeProject,
   openInCwd,
@@ -496,6 +502,10 @@ export const ChatHeader = memo(function ChatHeader({
           )}
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
+      <ConversationImportProvenanceBadge
+        conversationImport={conversationImport}
+        sessionStarted={importSessionStarted}
+      />
       <div
         ref={headerActionsRef}
         data-chat-header-actions

@@ -64,14 +64,18 @@ and their limits; the counts are observed so far, not a scan of the entire archi
 `managed-provider-runtime-updates.yml` runs every two hours and may also be
 started manually. It invokes `managed-provider-runtime-update-provider.yml`
 once for each of Codex, Claude, legacy Antigravity, official Antigravity ACP, Cursor, Droid,
-Grok, and Pi. The eight release-family runs are intentionally independent:
+Grok, Pi, and Oh My Pi. The nine release-family runs are intentionally independent:
 
 1. Read the latest generated catalog, or the bundled catalog before the branch
    exists.
 2. Read only that provider's official stable pointer.
    Droid uses Factory's native `factory-cli/LATEST` download channel, not the
    independently maintained changelog RSS. Pi uses the official `earendil-works/pi`
-   stable GitHub release.
+   stable GitHub release. Oh My Pi uses the `can1357/oh-my-pi` stable GitHub release
+   and refuses any release outside the supported major (`OMP_SUPPORTED_MAJOR` in
+   `@scientfactory/provider-runtime`): every client refuses it, and because publication
+   only accepts newer versions, a published next major would block later patches of the
+   supported one. Qualifying a new major is a code change.
 3. If the version is newer, its installer contract changed, or an older feed is
    missing a subsequently approved target, collect complete immutable metadata
    for every app-approved target.
@@ -83,6 +87,11 @@ Grok, and Pi. The eight release-family runs are intentionally independent:
    Pi binary runs the isolated live Pi integration suites once against synthetic local
    model endpoints. Those suites verify runtime/RPC behavior, custom-model protocols,
    secret isolation, and preservation of Pi-owned configuration before repair and removal.
+   Oh My Pi runs only on the macOS Apple-silicon runner, its only approved target. After
+   install and after repair, `apps/server/scripts/qualify-omp-rpc.ts` runs the app's own
+   managed-activation check against the installed binary: the RPC v2 handshake, the
+   reported version, and `get_state`, in an isolated home without a session, tools,
+   extensions, skills or rules. Its server dependencies are installed for that step.
    Official Antigravity ACP uses T3's paired-executable installer instead of the generic
    runtime engine. Its five runners cover Apple-silicon macOS, Linux x64/ARM64, and Windows
    x64/ARM64; no ACP artifact exists for Intel macOS. Its qualification initializes the

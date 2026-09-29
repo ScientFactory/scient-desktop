@@ -1124,6 +1124,7 @@ export function ScientMarkdownControls({
   wikiLinkCandidates = EMPTY_WIKI_LINK_CANDIDATES,
   recentWikiLinkPaths = EMPTY_WIKI_LINK_RECENT_PATHS,
   onWikiLinkSelected = ignoreWikiLinkSelection,
+  documentActions,
 }: {
   readonly controller: ScientMarkdownEditorView;
   readonly expanded: boolean;
@@ -1131,6 +1132,8 @@ export function ScientMarkdownControls({
   readonly wikiLinkCandidates?: ReadonlyArray<ScientMarkdownWikiLinkCandidate>;
   readonly recentWikiLinkPaths?: ReadonlyArray<string>;
   readonly onWikiLinkSelected?: (path: string) => void;
+  /** File-level actions, such as Export, listed after the editing actions in More actions. */
+  readonly documentActions?: ReactNode;
 }) {
   const snapshot = useSyncExternalStore(
     controller.subscribe,
@@ -1358,7 +1361,17 @@ export function ScientMarkdownControls({
         expanded={expanded}
         onExpandedChange={onExpandedChange}
         groups={dockGroups}
-        overflowItems={<BlockActionsMenuItems controller={controller} snapshot={snapshot} />}
+        overflowItems={
+          <>
+            <BlockActionsMenuItems controller={controller} snapshot={snapshot} />
+            {documentActions ? (
+              <>
+                <MenuSeparator />
+                {documentActions}
+              </>
+            ) : null}
+          </>
+        }
       />
 
       {snapshot.findOpen ? <ScientFindBar controller={controller} snapshot={snapshot} /> : null}

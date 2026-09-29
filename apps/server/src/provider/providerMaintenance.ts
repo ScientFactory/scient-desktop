@@ -156,6 +156,18 @@ function quoteUpdateExecutable(executable: string, platform: NodeJS.Platform): s
   return platform === "win32" && quoted !== executable ? `& ${quoted}` : quoted;
 }
 
+/** A copyable `<executable> <args>` command, quoted for the host's default shell. */
+export function formatProviderUpdateCommand(
+  executable: string,
+  args: ReadonlyArray<string>,
+  platform: NodeJS.Platform,
+): string {
+  return [
+    quoteUpdateExecutable(executable, platform),
+    ...args.map((arg) => quoteShellWord(arg, platform)),
+  ].join(" ");
+}
+
 export function makeProviderMaintenanceCapabilities(input: {
   readonly provider: ProviderDriverKind;
   readonly packageName: string | null;
@@ -176,10 +188,7 @@ export function makeProviderMaintenanceCapabilities(input: {
       : {
           command:
             input.updateCommand ??
-            [
-              quoteUpdateExecutable(input.updateExecutable, platform),
-              ...input.updateArgs.map((arg) => quoteShellWord(arg, platform)),
-            ].join(" "),
+            formatProviderUpdateCommand(input.updateExecutable, input.updateArgs, platform),
           executable: input.updateExecutable,
           args: input.updateArgs,
           lockKey: input.updateLockKey,

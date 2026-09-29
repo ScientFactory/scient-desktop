@@ -1,4 +1,4 @@
-import { isFileCitation, type ComposerCitation } from "@t3tools/contracts";
+import { isFileCitation, type ComposerCitation, type FileCitation } from "@t3tools/contracts";
 import { serializeComposerCitation } from "@t3tools/shared/composerCitations";
 import {
   fileCitationHash,
@@ -7,10 +7,12 @@ import {
 import { basenameOfPath } from "~/pierre-icons";
 import { Link, useNavigate } from "@tanstack/react-router";
 import {
+  Fragment,
   useEffect,
   useEffectEvent,
   useRef,
   useState,
+  type ReactElement,
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { PencilIcon, QuoteIcon, XIcon } from "lucide-react";
@@ -130,11 +132,6 @@ export function AssistantCitationChip({
       {...sourceLinkProps}
       className="inline-flex h-full min-w-0 items-center gap-[0.33em] rounded-sm text-inherit no-underline focus-visible:outline-2 focus-visible:outline-foreground"
       aria-label={`View cited ${isFileCitation(citation) ? citation.path : "assistant text"}: ${label}`}
-      title={
-        isFileCitation(citation)
-          ? `${citation.path} · within lines ${citation.startLine}–${citation.endLine}${citation.origin === "draft" ? " · unsaved at capture" : ""}\n${citation.text}`
-          : undefined
-      }
     >
       <QuoteIcon aria-hidden="true" />
       <ContextChipLabel className="max-w-[16em]">{label}</ContextChipLabel>
@@ -145,11 +142,6 @@ export function AssistantCitationChip({
       {...sourceLinkProps}
       className="inline-flex h-full min-w-0 items-center gap-[0.33em] rounded-sm text-inherit no-underline hover:bg-(--context-chip-accent)/17 focus-visible:outline-2 focus-visible:outline-foreground"
       aria-label={`View cited ${isFileCitation(citation) ? citation.path : "assistant text"}: ${label}`}
-      title={
-        isFileCitation(citation)
-          ? `${citation.path} · within lines ${citation.startLine}–${citation.endLine}${citation.origin === "draft" ? " · unsaved at capture" : ""}\n${citation.text}`
-          : undefined
-      }
     >
       <QuoteIcon aria-hidden="true" />
       <ContextChipLabel className="max-w-[16em]">{label}</ContextChipLabel>
@@ -163,7 +155,12 @@ export function AssistantCitationChip({
       data-file-citation-chip={isFileCitation(citation) ? "true" : undefined}
       data-markdown-copy={serializeComposerCitation(citation)}
     >
-      {composer ? (
+      {isFileCitation(citation) ? (
+        <FileCitationHoverCard
+          citation={citation}
+          trigger={composer ? composerSourceLink : chatSourceLink}
+        />
+      ) : composer ? (
         composerSourceLink
       ) : (
         <Tooltip>
@@ -267,5 +264,56 @@ export function AssistantCitationChip({
         </ContextChipAction>
       ) : null}
     </ContextChip>
+  );
+}
+
+/**
+ * Compact hover card for a file citation: the filename stands out, the directory
+ * wraps at path separators onto a few short lines, and the cited range and
+ * excerpt follow. Replaces the native `title`, which rendered deep absolute
+ * paths as one unstyled line spanning the chat width.
+ */
+function FileCitationHoverCard({
+  citation,
+  trigger,
+}: {
+  citation: FileCitation;
+  trigger: ReactElement;
+}) {
+  const separatorIndex = Math.max(citation.path.lastIndexOf("/"), citation.path.lastIndexOf("\\"));
+  const fileName = citation.path.slice(separatorIndex + 1);
+  const directory = separatorIndex > 0 ? citation.path.slice(0, separatorIndex + 1) : "";
+  // Offer a break after every separator so long paths wrap between segments.
+  const directorySegments = directory.split(/(?<=[\\/])/);
+  const excerpt = citation.text.replace(/\s+/g, " ").trim();
+  return (
+    <Tooltip>
+      <TooltipTrigger render={trigger} />
+      <TooltipPopup side="top" className="max-w-72">
+        <span className="flex min-w-0 flex-col gap-0.5 py-0.5 text-left">
+          <span className="font-medium text-foreground">{fileName || citation.path}</span>
+          {directory ? (
+            <span className="line-clamp-3 font-mono text-2xs text-muted-foreground">
+              {directorySegments.map((segment, index) => (
+                // oxlint-disable-next-line react/no-array-index-key -- segments are positional and static
+                <Fragment key={index}>
+                  {segment}
+                  <wbr />
+                </Fragment>
+              ))}
+            </span>
+          ) : null}
+          <span className="text-muted-foreground">
+            Lines {citation.startLine}–{citation.endLine}
+            {citation.origin === "draft" ? " · unsaved at capture" : ""}
+          </span>
+          {excerpt ? (
+            <span className="mt-0.5 line-clamp-2 border-l-2 border-border pl-1.5 text-muted-foreground">
+              {excerpt}
+            </span>
+          ) : null}
+        </span>
+      </TooltipPopup>
+    </Tooltip>
   );
 }

@@ -32,6 +32,14 @@ describe("ChatMarkdown workspace-image seam", () => {
     expect(chatMarkdownSource).toContain("<ChatMarkdownImageFallback");
   });
 
+  it("gates web images through one Scient-owned link card", () => {
+    expect(chatMarkdownSource.match(/<ScientRemoteImageReference/gu)).toHaveLength(1);
+    expect(chatMarkdownSource).toContain(
+      "if (remoteImageReference !== null) return remoteImageReference;",
+    );
+    expect(chatMarkdownSource).toContain("failureFallback={remoteImageReference ?? undefined}");
+  });
+
   it("uses authorized asset URLs and never executes SVG as document markup", () => {
     expect(imageCardSource).toContain("useAssetUrlState(props.threadRef.environmentId, resource)");
     expect(imageCardSource).toContain("<img");

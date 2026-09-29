@@ -485,6 +485,8 @@ export function ProviderInstanceCard({
     : null;
   const connectionPresentation = providerSettingsLifecyclePresentation(liveProvider, displayName);
   const versionLabel = getProviderVersionLabel(liveProvider?.version);
+  // Custom instances of a driver still come from the same company.
+  const vendorLabel = driverOption?.vendorLabel;
   const usesScientManagedRuntime = liveProvider?.connection?.runtime?.source === "scient_managed";
   const hasCompatibilityWarning =
     compatibility !== undefined &&
@@ -769,20 +771,29 @@ export function ProviderInstanceCard({
                 )
               ) : null}
             </span>
-            {showStatus ? (
+            {showStatus || vendorLabel ? (
               <span className="mt-0.5 flex items-start gap-1.5 text-sm leading-compact text-muted-foreground/80">
-                {statusDotNode ? (
+                {/* The company sits beside the status; the switch owns the right edge. */}
+                {vendorLabel ? (
+                  <span className="shrink-0">
+                    {vendorLabel}
+                    {showStatus ? " ·" : null}
+                  </span>
+                ) : null}
+                {showStatus && statusDotNode ? (
                   <span className="flex h-[1.45em] shrink-0 items-center">{statusDotNode}</span>
                 ) : null}
-                <ProviderStatusDiagnostic detail={statusDiagnostic}>
-                  <span
-                    tabIndex={statusDiagnostic ? 0 : undefined}
-                    className="pointer-events-auto line-clamp-2 [overflow-wrap:anywhere]"
-                  >
-                    {statusHeadline}
-                    {needsAttention && inlineStatusDetail ? ` · ${inlineStatusDetail}` : null}
-                  </span>
-                </ProviderStatusDiagnostic>
+                {showStatus ? (
+                  <ProviderStatusDiagnostic detail={statusDiagnostic}>
+                    <span
+                      tabIndex={statusDiagnostic ? 0 : undefined}
+                      className="pointer-events-auto line-clamp-2 [overflow-wrap:anywhere]"
+                    >
+                      {statusHeadline}
+                      {needsAttention && inlineStatusDetail ? ` · ${inlineStatusDetail}` : null}
+                    </span>
+                  </ProviderStatusDiagnostic>
+                ) : null}
               </span>
             ) : null}
           </span>

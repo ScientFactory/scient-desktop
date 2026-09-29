@@ -1188,7 +1188,7 @@ it.live("forwards claudeAgent approval responses to the provider session", () =>
   ),
 );
 
-it.live("forwards thread.turn.interrupt to claudeAgent provider sessions", () =>
+it.live("settles an interrupted claudeAgent turn and its graceful session exit", () =>
   withHarness(
     (harness) =>
       Effect.gen(function* () {
@@ -1254,6 +1254,55 @@ it.live("forwards thread.turn.interrupt to claudeAgent provider sessions", () =>
           "claude provider interrupt call",
         );
         assert.equal(interruptCalls.length, 1);
+
+        const snapshot = yield* harness.snapshotQuery.getSnapshot();
+        const interruptingThread = snapshot.threads.find((entry) => entry.id === THREAD_ID);
+        assert.equal(interruptingThread?.session?.status, "running");
+        const turnId = interruptingThread?.session?.activeTurnId;
+        assert.ok(turnId);
+
+        yield* harness.adapterHarness!.emitEvent({
+          type: "turn.completed",
+          ...runtimeBase(
+            "evt-claude-interrupted",
+            "2026-05-01T00:00:01.000Z",
+            CLAUDE_AGENT_PROVIDER,
+          ),
+          threadId: THREAD_ID,
+          turnId,
+          payload: { state: "interrupted" },
+        });
+        yield* harness.waitForReceipt(
+          (receipt): receipt is TurnProcessingQuiescedReceipt =>
+            receipt.type === "turn.processing.quiesced" &&
+            receipt.threadId === THREAD_ID &&
+            receipt.turnId === turnId &&
+            receipt.checkpointTurnCount === 1,
+        );
+        const interruptedThread = yield* harness.waitForThread(
+          THREAD_ID,
+          (entry) => entry.session?.status === "ready",
+        );
+        assert.equal(interruptedThread.session?.activeTurnId, null);
+        assert.equal(interruptedThread.session?.lastError, null);
+        assert.equal(interruptedThread.latestTurn?.state, "completed");
+        assert.ok(interruptedThread.messages.some((message) => message.role === "assistant"));
+        assert.ok(interruptedThread.messages.every((message) => !message.streaming));
+
+        yield* harness.adapterHarness!.emitEvent({
+          type: "session.exited",
+          ...runtimeBase("evt-claude-exited", "2026-05-01T00:00:02.000Z", CLAUDE_AGENT_PROVIDER),
+          threadId: THREAD_ID,
+          payload: { exitKind: "graceful", reason: "Session stopped" },
+        });
+        const stoppedThread = yield* harness.waitForThread(
+          THREAD_ID,
+          (entry) => entry.session?.status === "stopped",
+        );
+        assert.equal(stoppedThread.session?.activeTurnId, null);
+        assert.equal(stoppedThread.session?.lastError, null);
+        assert.equal(stoppedThread.latestTurn?.state, "completed");
+        assert.ok(stoppedThread.messages.every((message) => !message.streaming));
       }),
     CLAUDE_AGENT_PROVIDER,
   ),
@@ -1405,4 +1454,84 @@ it.live("reverts claudeAgent turns and rolls back provider conversation state", 
       }),
     CLAUDE_AGENT_PROVIDER,
   ),
+);
+
+it.live(
+  "preserves stable reading identities through burst-streamed turns and snapshot rehydration",
+  () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        yield* seedProjectAndThread(harness);
+        const savedAnswers: Array<{ id: MessageId; turnId: string | null; text: string }> = [];
+        for (let turn = 0; turn < 12; turn++) {
+          const turnId = `reader-stress-${turn}`;
+          const createdAt = `2026-09-29T00:${String(turn).padStart(2, "0")}:00.000Z`;
+          const chunks = Array.from(
+            { length: 40 },
+            (_, chunk) => `Turn ${turn}, paragraph ${chunk}.\n\n`,
+          );
+          const response: TestTurnResponse = {
+            events: [
+              {
+                type: "turn.started",
+                ...runtimeBase(`${turnId}-start`, createdAt),
+                threadId: THREAD_ID,
+                turnId,
+              },
+              ...chunks.map((delta, chunk) => ({
+                type: "message.delta",
+                ...runtimeBase(`${turnId}-${chunk}`, createdAt),
+                threadId: THREAD_ID,
+                turnId,
+                delta,
+              })),
+              {
+                type: "turn.completed",
+                ...runtimeBase(`${turnId}-done`, createdAt),
+                threadId: THREAD_ID,
+                turnId,
+                status: "completed",
+              },
+            ],
+          };
+          if (turn === 0) yield* harness.adapterHarness!.queueTurnResponseForNextSession(response);
+          else yield* harness.adapterHarness!.queueTurnResponse(THREAD_ID, response);
+          yield* startTurn({
+            harness,
+            commandId: `reader-command-${turn}`,
+            messageId: `reader-prompt-${turn}`,
+            text: `Stress turn ${turn}`,
+            createdAt,
+          });
+          yield* harness.waitForReceipt(
+            (receipt): receipt is TurnProcessingQuiescedReceipt =>
+              receipt.type === "turn.processing.quiesced" &&
+              receipt.threadId === THREAD_ID &&
+              receipt.checkpointTurnCount === turn + 1,
+          );
+          const thread = yield* harness.waitForThread(
+            THREAD_ID,
+            (entry) =>
+              entry.messages.filter((message) => message.role === "assistant" && !message.streaming)
+                .length ===
+              turn + 1,
+          );
+          const answer = thread.messages.findLast((message) => message.role === "assistant")!;
+          assert.equal(answer.text, chunks.join(""));
+          savedAnswers.push({ id: answer.id, turnId: answer.turnId, text: answer.text });
+        }
+        // This query rehydrates from SQLite, as a newly connected/reloaded client does.
+        const snapshot = yield* harness.snapshotQuery.getSnapshot();
+        const rehydrated = snapshot.threads.find((thread) => thread.id === THREAD_ID)!;
+        for (const saved of savedAnswers) {
+          const message = rehydrated.messages.find((message) => message.id === saved.id);
+          assert.deepEqual(
+            message && { id: message.id, turnId: message.turnId, text: message.text },
+            saved,
+          );
+        }
+        assert.equal(new Set(savedAnswers.map((answer) => answer.id)).size, 12);
+        assert.equal(new Set(savedAnswers.map((answer) => answer.turnId)).size, 12);
+      }),
+    ),
 );

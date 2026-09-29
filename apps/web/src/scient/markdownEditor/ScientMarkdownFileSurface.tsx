@@ -4,7 +4,7 @@ import type { MarkdownCiteHandler } from "./markdownCitation";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { resolveAssetUrl } from "~/assets/assetUrls";
 import {
@@ -23,6 +23,9 @@ import { useMediaActionUrl } from "~/components/media/MediaActions";
 import { copyStaticImage, downloadStaticImage } from "~/components/preview/staticImageActions";
 import type { ScientImageAction } from "~/scient/images/ScientImageControls";
 
+import { MarkdownPdfExportMenuItems } from "../documentExport/MarkdownPdfExportMenuItems";
+import { savedMarkdownRevision } from "../documentExport/markdownSavedRevision";
+import { WordFileExportDialog } from "../wordExport/WordFileExportDialog";
 import { ScientMarkdownWorkspaceSurface } from "./ScientMarkdownWorkspaceSurface";
 import type { ScientMarkdownLinkCopyRequest, ScientMarkdownLinkKind } from "./linkContextMenu";
 import { isScientMarkdownDocumentPath } from "./markdownDocumentPaths";
@@ -72,6 +75,7 @@ export interface ScientMarkdownFileSurfaceProps {
 }
 
 export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps) {
+  const [wordExportOpen, setWordExportOpen] = useState(false);
   const onOpenFile = props.onOpenFile;
   const listDirectory = useAtomCommand(projectEnvironment.listDirectory, {
     reportDefect: false,
@@ -430,49 +434,73 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
     ],
   );
   return (
-    <ScientMarkdownWorkspaceSurface
-      key={JSON.stringify([props.environmentId, props.cwd, props.relativePath])}
-      persistence={props.persistence}
-      citationSource={{ ...props.threadRef, cwd: props.cwd, path: props.relativePath }}
-      {...(props.onCite ? { onCite: props.onCite } : {})}
-      citationReveal={props.citationReveal}
-      citationRevealId={props.citationRevealId}
-      ariaLabel={`${props.relativePath} Markdown document`}
-      resolvedTheme={props.resolvedTheme}
-      workspaceResourceIndexKey={workspaceResourceIndexKey}
-      onLocalHeadingOpened={() => {
-        beginLinkOpen();
-      }}
-      onOpenWikiLink={handleOpenWikiLink}
-      resolveLinkFullPath={resolveLinkFullPath}
-      onCopyLink={handleCopyLink}
-      wikiLinkTargetExists={wikiLinkTargetExists}
-      wikiLinkCandidates={wikiLinkCandidates}
-      recentWikiLinkPaths={recentWikiLinkPaths}
-      onWikiLinkSelected={(path) => {
-        setStoredRecentWikiLinkPaths((current) =>
-          promoteRecentWikiLinkPath(
-            sanitizeRecentWikiLinkPaths(current).filter((candidatePath) =>
-              wikiLinkCandidatePathSet.has(candidatePath),
+    <>
+      <ScientMarkdownWorkspaceSurface
+        key={JSON.stringify([props.environmentId, props.cwd, props.relativePath])}
+        persistence={props.persistence}
+        citationSource={{ ...props.threadRef, cwd: props.cwd, path: props.relativePath }}
+        {...(props.onCite ? { onCite: props.onCite } : {})}
+        citationReveal={props.citationReveal}
+        citationRevealId={props.citationRevealId}
+        ariaLabel={`${props.relativePath} Markdown document`}
+        resolvedTheme={props.resolvedTheme}
+        workspaceResourceIndexKey={workspaceResourceIndexKey}
+        onLocalHeadingOpened={() => {
+          beginLinkOpen();
+        }}
+        onOpenWikiLink={handleOpenWikiLink}
+        resolveLinkFullPath={resolveLinkFullPath}
+        onCopyLink={handleCopyLink}
+        wikiLinkTargetExists={wikiLinkTargetExists}
+        wikiLinkCandidates={wikiLinkCandidates}
+        recentWikiLinkPaths={recentWikiLinkPaths}
+        onWikiLinkSelected={(path) => {
+          setStoredRecentWikiLinkPaths((current) =>
+            promoteRecentWikiLinkPath(
+              sanitizeRecentWikiLinkPaths(current).filter((candidatePath) =>
+                wikiLinkCandidatePathSet.has(candidatePath),
+              ),
+              path,
             ),
-            path,
-          ),
-        );
-      }}
-      onOpenLink={handleOpenLink}
-      resolveImageSource={resolveImageSource}
-      imageOptions={imageOptions}
-      {...(props.onOpenFileSource
-        ? { onOpenSourceLine: (line: number) => props.onOpenFileSource?.(props.relativePath, line) }
-        : {})}
-      uploadImage={uploadImage}
-      onImageUploadFailure={(error) => {
-        toastManager.add({
-          type: "error",
-          title: "Unable to add image",
-          description: error instanceof Error ? error.message : "The image upload failed.",
-        });
-      }}
-    />
+          );
+        }}
+        onOpenLink={handleOpenLink}
+        resolveImageSource={resolveImageSource}
+        imageOptions={imageOptions}
+        {...(props.onOpenFileSource
+          ? {
+              onOpenSourceLine: (line: number) =>
+                props.onOpenFileSource?.(props.relativePath, line),
+            }
+          : {})}
+        documentActions={
+          <MarkdownPdfExportMenuItems
+            environmentId={props.environmentId}
+            cwd={props.cwd}
+            relativePath={props.relativePath}
+            threadRef={props.threadRef}
+            persistence={props.persistence}
+            onWordExport={() => setWordExportOpen(true)}
+          />
+        }
+        uploadImage={uploadImage}
+        onImageUploadFailure={(error) => {
+          toastManager.add({
+            type: "error",
+            title: "Unable to add image",
+            description: error instanceof Error ? error.message : "The image upload failed.",
+          });
+        }}
+      />
+      {wordExportOpen ? (
+        <WordFileExportDialog
+          environmentId={props.environmentId}
+          cwd={props.cwd}
+          relativePath={props.relativePath}
+          savedRevision={() => savedMarkdownRevision(props.persistence)}
+          onClose={() => setWordExportOpen(false)}
+        />
+      ) : null}
+    </>
   );
 }

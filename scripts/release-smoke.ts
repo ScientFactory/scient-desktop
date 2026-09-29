@@ -39,6 +39,7 @@ const workspaceFiles = [
   "packages/scient-project-init/package.json",
   "packages/scient-citations/package.json",
   "packages/scient-compute/package.json",
+  "packages/scient-conversation/package.json",
   "packages/scient-skills/package.json",
   "packages/scient-sources/package.json",
   "packages/scient-voice/package.json",
@@ -47,6 +48,7 @@ const workspaceFiles = [
   "packages/tailscale/package.json",
   "packages/effect-acp/package.json",
   "packages/effect-codex-app-server/package.json",
+  "packages/effect-omp-rpc/package.json",
   "scripts/package.json",
 ] as const;
 

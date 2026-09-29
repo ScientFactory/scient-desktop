@@ -85,7 +85,12 @@ import { PreviewPanelShell, type PreviewPanelMode } from "./preview/PreviewPanel
 import { FaviconImage } from "./preview/PreviewFaviconIcon";
 import { previewBridge } from "./preview/previewBridge";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
-import type { FilePathCopyFormat } from "./files/filePathClipboard";
+import {
+  filePathCopyFormats,
+  fileSurfacePath,
+  type FilePathCopyFormat,
+  type FileSurfacePath,
+} from "./files/filePathClipboard";
 import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 
@@ -120,7 +125,7 @@ interface RightPanelTabsProps {
   onCloseOtherSurfaces: (surface: RightPanelSurface) => void;
   onCloseSurfacesToRight: (surface: RightPanelSurface) => void;
   onCloseAllSurfaces: () => void;
-  onCopyFilePath: (relativePath: string, format: FilePathCopyFormat) => void;
+  onCopyFilePath: (path: FileSurfacePath, format: FilePathCopyFormat) => void;
   onAddBrowser: () => void;
   /**
    * Separate from `onAddBrowser` on purpose: that one is passed directly as a
@@ -300,17 +305,18 @@ export function surfaceShortcutTargetsTypingContext(
 }
 
 export function buildTabContextMenuItems(input: {
-  readonly file: boolean;
+  /** Path forms the tab can copy; empty for non-file tabs and attachments. */
+  readonly pathCopyFormats: readonly FilePathCopyFormat[];
   readonly mute: { readonly label: string; readonly disabled: boolean } | null;
   readonly surfaceIndex: number;
   readonly surfaceCount: number;
 }): readonly ContextMenuItem<TabContextMenuAction>[] {
   const items: ContextMenuItem<TabContextMenuAction>[] = [];
-  if (input.file) {
-    items.push(
-      { id: "copy-relative-path", label: "Copy relative path" },
-      { id: "copy-full-path", label: "Copy full path" },
-    );
+  if (input.pathCopyFormats.includes("relative")) {
+    items.push({ id: "copy-relative-path", label: "Copy relative path" });
+  }
+  if (input.pathCopyFormats.includes("full")) {
+    items.push({ id: "copy-full-path", label: "Copy full path" });
   }
   if (input.mute) {
     items.push({ id: "toggle-mute", ...input.mute });
@@ -1104,12 +1110,13 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
         ? (props.desktopByTabId[menuPreviewTabId] ?? null)
         : null;
       const menuMuted = menuOverlay?.audioMuted ?? false;
+      const menuFilePath = surface.kind === "file" ? fileSurfacePath(surface) : null;
       const items: readonly ContextMenuItem<TabContextMenuAction>[] = [
         ...(surface.kind === "device" && props.onRenameDevice
           ? ([{ id: "rename", label: "Rename" }] as const)
           : []),
         ...buildTabContextMenuItems({
-          file: surface.kind === "file",
+          pathCopyFormats: filePathCopyFormats(menuFilePath),
           // Not gated on audibility: silencing a quiet tab ahead of time is the
           // point, so the item is offered whenever the tab is mutable at all.
           mute:
@@ -1130,10 +1137,10 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           if (surface.kind === "device") setRenamingDevice(surface.id);
           break;
         case "copy-relative-path":
-          if (surface.kind === "file") props.onCopyFilePath(surface.relativePath, "relative");
+          if (menuFilePath) props.onCopyFilePath(menuFilePath, "relative");
           break;
         case "copy-full-path":
-          if (surface.kind === "file") props.onCopyFilePath(surface.relativePath, "full");
+          if (menuFilePath) props.onCopyFilePath(menuFilePath, "full");
           break;
         case "toggle-mute": {
           // menuOverlay repeats the disabled gate above: the desktop tab must

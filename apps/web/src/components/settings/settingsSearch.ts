@@ -158,6 +158,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["scientific computing languages"],
   },
   {
+    id: "word-export",
+    title: "Word export (Pandoc)",
+    to: "/settings/scientific-computing",
+    searchTerms: ["word", "docx", "export", "pandoc", "document conversion", "latex", "reinstall"],
+  },
+  {
     id: "storage-worktrees",
     title: "Worktree cleanup",
     to: "/settings/storage",
@@ -762,6 +768,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [
       "automatic remote branch refresh background credentials security keys seconds off",
     ],
+    environmentOnly: true,
+    scope: "environment-defaults",
+  },
+  {
+    id: "bitbucket-credentials",
+    title: "Bitbucket credentials",
+    to: "/settings/source-control",
+    searchTerms: ["bitbucket atlassian access token api token email credentials sign in"],
     environmentOnly: true,
     scope: "environment-defaults",
   },

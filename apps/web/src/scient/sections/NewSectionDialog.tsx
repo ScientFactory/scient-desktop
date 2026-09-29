@@ -11,6 +11,7 @@ import {
 } from "../../components/ui/dialog";
 import { Input } from "../../components/ui/input";
 
+import { newSectionTitle } from "./logic";
 import { readTypedSectionName } from "./sectionNameInput";
 
 /**
@@ -69,9 +70,7 @@ function NewSectionForm(props: {
       }}
     >
       <DialogHeader>
-        <DialogTitle>
-          {threadCount > 1 ? `New section for ${threadCount} threads` : "New section"}
-        </DialogTitle>
+        <DialogTitle>{newSectionTitle(threadCount)}</DialogTitle>
       </DialogHeader>
       <DialogPanel>
         <div className="flex flex-col gap-1.5">

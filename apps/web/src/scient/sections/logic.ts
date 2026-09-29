@@ -1,5 +1,10 @@
 import { planPinnedReorder } from "@t3tools/client-runtime/state/thread-sort";
-import type { ThreadSection, ThreadSectionId, ThreadSections } from "@t3tools/contracts";
+import type {
+  ThreadSection,
+  ThreadSectionId,
+  ThreadSectionProjectRef,
+  ThreadSections,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 /**
@@ -64,25 +69,87 @@ function renumber(sections: readonly ThreadSection[]): ThreadSection[] {
   );
 }
 
-/** Appends a section, or returns the existing one with the same name. */
+/** Names what a new section is for, so threads the user picked are never silently dropped. */
+export function newSectionTitle(threadCount: number): string {
+  if (threadCount === 1) return "New section for this thread";
+  return threadCount > 1 ? `New section for ${threadCount} threads` : "New section";
+}
+
+/** What a new section records about where it was made (see `ThreadSection`). */
+export interface SectionOrigin {
+  /** Environments of the threads filed into it on creation. */
+  readonly environmentIds?: readonly string[];
+  readonly createdInProjects?: readonly ThreadSectionProjectRef[];
+}
+
+/**
+ * Appends a section, or returns the existing one with the same name.
+ * `changed` is false when the catalog needs no write: the name exists and
+ * already records everything in `origin`.
+ */
 export function catalogWithCreatedSection(
   sections: ThreadSections,
   name: string,
   id: ThreadSectionId,
+  origin: SectionOrigin = {},
 ): {
   readonly catalog: ThreadSection[];
   readonly section: ThreadSection;
   readonly created: boolean;
+  readonly changed: boolean;
 } {
   const ordered = readThreadSections(sections);
   const existing = findSectionByName(ordered, name);
-  if (existing) return { catalog: ordered, section: existing, created: false };
-  const section: ThreadSection = {
-    id,
-    name: normalizeSectionName(name),
-    order: ordered.length,
+  if (existing) {
+    // Reusing a name still makes the section show where it was asked for.
+    const recorded = withSectionOrigin(existing, origin);
+    if (recorded === existing) {
+      return { catalog: ordered, section: existing, created: false, changed: false };
+    }
+    const catalog = ordered.map((section) => (section === existing ? recorded : section));
+    return { catalog, section: recorded, created: false, changed: true };
+  }
+  const section = withSectionOrigin(
+    { id, name: normalizeSectionName(name), order: ordered.length },
+    origin,
+  );
+  return { catalog: renumber([...ordered, section]), section, created: true, changed: true };
+}
+
+/** `section` with `origin` merged in; the same object when nothing is new. */
+function withSectionOrigin(section: ThreadSection, origin: SectionOrigin): ThreadSection {
+  const environmentIds = mergeEnvironmentIds(section.environmentIds, origin.environmentIds ?? []);
+  const createdInProjects = mergeProjectRefs(
+    section.createdInProjects,
+    origin.createdInProjects ?? [],
+  );
+  if (environmentIds === null && createdInProjects === null) return section;
+  // Recording threads also means the section is no longer empty.
+  const { emptySince: _emptySince, ...occupied } = section;
+  return {
+    ...(environmentIds === null ? section : occupied),
+    ...(environmentIds === null ? {} : { environmentIds }),
+    ...(createdInProjects === null ? {} : { createdInProjects }),
   };
-  return { catalog: renumber([...ordered, section]), section, created: true };
+}
+
+function projectRefKey(ref: ThreadSectionProjectRef): string {
+  return `${ref.environmentId}:${ref.projectId}`;
+}
+
+/** `recorded` plus any new refs, or null when nothing is new. */
+function mergeProjectRefs(
+  recorded: readonly ThreadSectionProjectRef[] | undefined,
+  seen: readonly ThreadSectionProjectRef[],
+): ThreadSectionProjectRef[] | null {
+  const merged = [...(recorded ?? [])];
+  const keys = new Set(merged.map(projectRefKey));
+  for (const ref of seen) {
+    if (keys.has(projectRefKey(ref))) continue;
+    keys.add(projectRefKey(ref));
+    merged.push({ environmentId: ref.environmentId, projectId: ref.projectId });
+  }
+  return merged.length === (recorded ?? []).length ? null : merged;
 }
 
 export type CatalogRenameResult =
@@ -325,11 +392,74 @@ function sectionGroupIdOf(
 }
 
 /**
+ * Which sections a sidebar scoped to one project lists (null: every section,
+ * for All projects). A section is listed where it has threads: any
+ * unarchived thread of the scope, on any shelf. A section with no threads
+ * anywhere is listed in the projects it was created for, so a new section
+ * stays in view to be filled; one without that record lists only under All
+ * projects. "No threads anywhere" is only concluded when every environment
+ * that has held its threads is loaded here; otherwise its threads may simply
+ * not be visible yet.
+ */
+export function sectionIdsInProjectScope(input: {
+  readonly sections: readonly ThreadSection[];
+  /** The scope's `${environmentId}:${projectId}` keys; null for All projects. */
+  readonly scopeProjectKeys: ReadonlySet<string> | null;
+  /** Environments whose threads this client currently holds. */
+  readonly loadedEnvironmentIds: ReadonlySet<string>;
+  /** Every thread this client knows, across projects and shelves. */
+  readonly threads: ReadonlyArray<{
+    readonly environmentId: string;
+    readonly projectId: string | null;
+    readonly sectionId?: string | null | undefined;
+    readonly archivedAt?: string | null | undefined;
+  }>;
+}): ReadonlySet<string> | null {
+  const scope = input.scopeProjectKeys;
+  if (scope === null) return null;
+  const inScope = new Set<string>();
+  const occupied = new Set<string>();
+  for (const thread of input.threads) {
+    if (thread.sectionId == null || thread.archivedAt != null) continue;
+    occupied.add(thread.sectionId);
+    if (scope.has(`${thread.environmentId}:${thread.projectId}`)) inScope.add(thread.sectionId);
+  }
+  for (const section of input.sections) {
+    if (occupied.has(section.id)) continue;
+    const allLoaded = (section.environmentIds ?? []).every((id) =>
+      input.loadedEnvironmentIds.has(id),
+    );
+    if (!allLoaded) continue;
+    if ((section.createdInProjects ?? []).some((ref) => scope.has(projectRefKey(ref)))) {
+      inScope.add(section.id);
+    }
+  }
+  return inScope;
+}
+
+/**
+ * Applies a new order of the listed groups to the full layout order: hidden
+ * sections keep their slots, and the listed ones fill the rest in the new
+ * order. Without this, reordering in a project scope would push every hidden
+ * section to the end.
+ */
+export function mergeListedGroupOrder(
+  fullOrder: readonly string[],
+  listedOrder: readonly string[],
+): string[] {
+  const listed = new Set(listedOrder);
+  const queue = [...listedOrder];
+  const merged = fullOrder.map((id) => (listed.has(id) ? queue.shift()! : id));
+  return [...merged, ...queue];
+}
+
+/**
  * Pinned and active threads grouped by section, with General (threads without
- * a section, including new ones) at its stored position. Every section shows,
- * even empty, since each is a drop target. Each group keeps the Status view's
- * order: pinned first, then active. Snoozed and settled threads stay on their
- * own shelves.
+ * a section, including new ones) at its stored position. Every listed section
+ * shows, even empty, since each is a drop target; `listedSectionIds` (null:
+ * all) hides the rest, see `sectionIdsInProjectScope`. Each group keeps the
+ * Status view's order: pinned first, then active. Snoozed and settled threads
+ * stay on their own shelves.
  */
 export function groupThreadsBySection<
   T extends { readonly sectionId?: string | null | undefined },
@@ -338,6 +468,7 @@ export function groupThreadsBySection<
   readonly generalIndex: number;
   readonly pinned: readonly T[];
   readonly active: readonly T[];
+  readonly listedSectionIds?: ReadonlySet<string> | null;
 }): SectionGroup<T>[] {
   const known = new Set<string>(input.sections.map((section) => section.id));
   const members = new Map<string, T[]>();
@@ -348,11 +479,21 @@ export function groupThreadsBySection<
     else members.set(groupId, [thread]);
   }
   const bySection = new Map(input.sections.map((section) => [section.id as string, section]));
-  return sectionLayoutOrder(input.sections, input.generalIndex).map((id) => ({
-    id,
-    section: bySection.get(id) ?? null,
-    threads: members.get(id) ?? [],
-  }));
+  const listed = input.listedSectionIds ?? null;
+  return sectionLayoutOrder(input.sections, input.generalIndex)
+    .filter(
+      (id) =>
+        id === GENERAL_SECTION_GROUP_ID ||
+        listed === null ||
+        listed.has(id) ||
+        // Never hide a thread the grouping placed.
+        members.has(id),
+    )
+    .map((id) => ({
+      id,
+      section: bySection.get(id) ?? null,
+      threads: members.get(id) ?? [],
+    }));
 }
 
 // ── Drag and drop ──────────────────────────────────────────────────────
@@ -378,6 +519,8 @@ export type SectionsListItem =
       readonly lifecycle: SectionsLifecycle;
       /** The group the row renders in; null on the snoozed and settled shelves. */
       readonly groupId: string | null;
+      /** A snoozed row that keeps its pin; it rejoins the pinned rows when dropped. */
+      readonly pinned?: boolean;
     }
   | { readonly kind: "shelf"; readonly id: string; readonly shelf: "snoozed" | "settled" };
 
@@ -386,9 +529,79 @@ export type SectionsDropTarget =
   | { readonly kind: "settled" };
 
 /**
+ * The index a lifted row takes in the list without it, when dropped over the
+ * item at `overIndex`. A row lands in the over item's slot, except over a
+ * section header, where it always lands just below the header (the top of
+ * that section), whichever way it was dragged. Without that, dragging up onto
+ * a header would file the row into the section above it, and a header-only
+ * (empty or collapsed) section could never be reached from below.
+ */
+export function sectionsDropIndex(
+  items: readonly SectionsListItem[],
+  activeIndex: number,
+  overIndex: number,
+): number {
+  const active = items[activeIndex];
+  const index =
+    items[overIndex]?.kind === "header" && overIndex < activeIndex ? overIndex + 1 : overIndex;
+  if (active?.kind !== "thread") return index;
+  // A drop never changes a pin, and a section lists pinned rows first, so the
+  // row lands on its own side of that boundary (where the planner puts it).
+  const moved = items.filter((_, position) => position !== activeIndex);
+  let header = -1;
+  for (let position = index - 1; position >= 0; position -= 1) {
+    const item = moved[position]!;
+    if (item.kind === "thread") continue;
+    header = item.kind === "header" ? position : -1;
+    break;
+  }
+  if (header < 0) return index;
+  let firstActive = header + 1;
+  for (let row = moved[firstActive]; row?.kind === "thread" && row.lifecycle === "pinned";) {
+    firstActive += 1;
+    row = moved[firstActive];
+  }
+  return droppedAsPinned(active) ? Math.min(index, firstActive) : Math.max(index, firstActive);
+}
+
+/** Whether a dropped row joins its section's pinned rows (settling clears a pin). */
+function droppedAsPinned(item: Extract<SectionsListItem, { kind: "thread" }>): boolean {
+  return item.lifecycle === "pinned" || (item.lifecycle === "snoozed" && item.pinned === true);
+}
+
+/**
+ * A section's full row order after a drop, from the order the list showed:
+ * a collapsed section shows only some of its rows (or none), so the dropped
+ * row is placed before the shown row it landed above, else after the one it
+ * landed below, else at the top. A drop on the section's header is always at
+ * the top, whatever the collapsed section still shows.
+ */
+export function expandSectionDropOrder(input: {
+  /** The section's rows as shown, with the dropped row in place. */
+  readonly shownOrder: readonly string[];
+  /** Every row of the section before the drop, in order. */
+  readonly fullOrder: readonly string[];
+  readonly droppedId: string;
+  readonly onHeader?: boolean;
+}): string[] {
+  const { droppedId, shownOrder } = input;
+  const full = input.fullOrder.filter((id) => id !== droppedId);
+  if (input.onHeader === true) return [droppedId, ...full];
+  const at = shownOrder.indexOf(droppedId);
+  const next = shownOrder[at + 1];
+  const previous = at > 0 ? shownOrder[at - 1] : undefined;
+  const nextIndex = next === undefined ? -1 : full.indexOf(next);
+  const previousIndex = previous === undefined ? -1 : full.indexOf(previous);
+  const insertAt = nextIndex >= 0 ? nextIndex : previousIndex >= 0 ? previousIndex + 1 : 0;
+  full.splice(insertAt, 0, droppedId);
+  return full;
+}
+
+/**
  * Where a lifted row lands if dropped over `overId`: the section whose header
  * precedes the slot (with that section's rows in their new order), the settled
- * shelf, or nowhere (the snoozed shelf is never a destination).
+ * shelf, or nowhere (the snoozed shelf is never a destination). Over a header,
+ * that header's section, at its top (see `sectionsDropIndex`).
  */
 export function resolveSectionsDropTarget(
   items: readonly SectionsListItem[],
@@ -399,10 +612,11 @@ export function resolveSectionsDropTarget(
   const overIndex = items.findIndex((item) => item.id === overId);
   const active = items[activeIndex];
   if (activeIndex === -1 || overIndex === -1 || active?.kind !== "thread") return null;
+  const dropIndex = sectionsDropIndex(items, activeIndex, overIndex);
   const moved = items.filter((_, index) => index !== activeIndex);
-  moved.splice(overIndex, 0, active);
+  moved.splice(dropIndex, 0, active);
   let owner: SectionsListItem | null = null;
-  for (let index = overIndex - 1; index >= 0; index -= 1) {
+  for (let index = dropIndex - 1; index >= 0; index -= 1) {
     const item = moved[index]!;
     if (item.kind !== "thread") {
       owner = item;
@@ -461,6 +675,8 @@ export function planSectionsThreadDrop(input: {
   readonly pinnedKeysById: ReadonlyMap<string, string | null | undefined>;
   readonly activeKeysById: ReadonlyMap<string, string | null | undefined>;
   readonly toSectionId: (groupId: string) => ThreadSectionId | null;
+  /** Whether these threads' servers accept order-key writes (default: yes). */
+  readonly canWriteOrderKeys?: (ids: readonly string[], group: "pinned" | "active") => boolean;
 }): SectionsThreadDropPlan {
   const { source, target } = input;
   if (target.kind === "settled") {
@@ -486,7 +702,7 @@ export function planSectionsThreadDrop(input: {
   // A thread landing alone (an empty or collapsed section) keeps its key:
   // with no neighbours to sit between, a new key would only move it in the
   // Status view.
-  const assignments =
+  const planned =
     orderChanged && orderedIds.length > 1
       ? planPinnedReorder({
           orderedIds,
@@ -494,6 +710,14 @@ export function planSectionsThreadDrop(input: {
           movedId: source.key,
         })
       : [];
+  // Keys are written all or nothing; without them only the move itself remains.
+  const writable =
+    input.canWriteOrderKeys?.(
+      planned.map((assignment) => assignment.id),
+      group,
+    ) ?? true;
+  const assignments = writable ? planned : [];
+  if (!sectionChanged && !lifecycleChanged && assignments.length === 0) return { kind: "none" };
   return {
     kind: "move",
     ...(sectionChanged ? { sectionId: input.toSectionId(target.groupId) } : {}),

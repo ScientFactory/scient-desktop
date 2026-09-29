@@ -1,6 +1,9 @@
 import {
   EnvironmentHttpApi,
+  ScientConversationExportError,
+  ScientConversationImportError,
   ScientThreadQueueOperationError,
+  ScientWordExportError,
   EnvironmentHttpCommonError,
   type EnvironmentAuthInvalidError,
   type EnvironmentInternalError,
@@ -20,6 +23,10 @@ import { FetchHttpClient, HttpClient, HttpClientError } from "effect/unstable/ht
 import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
 
 const isEnvironmentHttpCommonError = Schema.is(EnvironmentHttpCommonError);
+const isScientThreadQueueOperationError = Schema.is(ScientThreadQueueOperationError);
+const isScientConversationExportError = Schema.is(ScientConversationExportError);
+const isScientConversationImportError = Schema.is(ScientConversationImportError);
+const isScientWordExportError = Schema.is(ScientWordExportError);
 
 export class RemoteEnvironmentAuthFetchError extends Data.TaggedError(
   "RemoteEnvironmentAuthFetchError",
@@ -69,6 +76,9 @@ export class RemoteEnvironmentAuthTimeoutError extends Data.TaggedError(
 
 export type RemoteEnvironmentRequestError =
   | ScientThreadQueueOperationError
+  | ScientConversationExportError
+  | ScientConversationImportError
+  | ScientWordExportError
   | EnvironmentRequestInvalidError
   | EnvironmentAuthInvalidError
   | EnvironmentScopeRequiredError
@@ -128,7 +138,13 @@ const failRemoteRequest = (
   if (cause instanceof RemoteEnvironmentAuthTimeoutError) {
     return Effect.fail(cause);
   }
-  if (isEnvironmentHttpCommonError(cause) || Schema.is(ScientThreadQueueOperationError)(cause)) {
+  if (
+    isEnvironmentHttpCommonError(cause) ||
+    isScientThreadQueueOperationError(cause) ||
+    isScientConversationExportError(cause) ||
+    isScientConversationImportError(cause) ||
+    isScientWordExportError(cause)
+  ) {
     return Effect.fail(cause);
   }
   if (Schema.isSchemaError(cause)) {

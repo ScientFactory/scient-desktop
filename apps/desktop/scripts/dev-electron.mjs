@@ -38,6 +38,7 @@ import {
   writeDevelopmentProcessPid,
 } from "./dev-app-process.mjs";
 import { waitForResources } from "./wait-for-resources.mjs";
+import { takeApprovedHandoff, writeApprovedHandoff } from "./dev-cold-handoff.mjs";
 
 const devServerUrl = process.env.VITE_DEV_SERVER_URL?.trim();
 if (!devServerUrl) {
@@ -54,13 +55,17 @@ const requiredFiles = [
   "dist-electron/main.cjs",
   "dist-electron/electron/WindowsForegroundFocusWorker.cjs",
   "dist-electron/preload.cjs",
+  "dist-electron/conversation-review-preload.cjs",
   "dist-electron/snapShot/GlobalShiftShortcutWorker.cjs",
   "dist-electron/snapShot/RegionSnapShotWorker.cjs",
   "dist-electron/snapShot/SnapShotAccessibilityWorker.cjs",
   "../server/dist/bin.mjs",
 ];
 const watchedDirectories = [
-  { directory: "dist-electron", files: new Set(["main.cjs", "preload.cjs"]) },
+  {
+    directory: "dist-electron",
+    files: new Set(["main.cjs", "preload.cjs", "conversation-review-preload.cjs"]),
+  },
   {
     directory: "dist-electron/electron",
     files: new Set(["WindowsForegroundFocusWorker.cjs"]),
@@ -81,6 +86,18 @@ const remoteDebuggingPort = process.env.T3CODE_DESKTOP_REMOTE_DEBUGGING_PORT?.tr
 // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone dev script has no Effect runtime.
 const hostPlatform = NodeOS.platform();
 const managedByLocalDevApp = process.env.SCIENT_LOCAL_DEV_APP_MANAGED === "1";
+const coldApprovedPath = process.env.SCIENT_DEV_COLD_APPROVED_PATH;
+const coldStateRoot =
+  process.env.SCIENT_NEXT_HOME ?? NodePath.resolve(desktopDir, "..", "..", ".scient-next");
+const coldRole = process.env.SCIENT_DEV_APP_ROLE === "stable" ? "stable" : "candidate";
+const coldFiles = coldApprovedPath
+  ? takeApprovedHandoff({
+      path: coldApprovedPath,
+      stateRoot: coldStateRoot,
+      root: NodePath.resolve(desktopDir, "..", ".."),
+      role: coldRole,
+    })
+  : [];
 
 NodeChildProcess.execFileSync(
   process.execPath,
@@ -106,9 +123,11 @@ delete childEnv[SCIENT_DEV_BACKEND_PID_FILE_ENV];
 // the app, so the managed launch gets the same filtered copy.
 delete childEnv[SCIENT_DEV_APP_BACKGROUND_SERVICE_ENV];
 delete childEnv[SCIENT_DEV_APP_FAILURE_FILE_ENV];
+delete childEnv.SCIENT_DEV_COLD_APPROVED_PATH;
 const macOpenEnv = { ...process.env };
 delete macOpenEnv[SCIENT_DEV_APP_BACKGROUND_SERVICE_ENV];
 delete macOpenEnv[SCIENT_DEV_APP_FAILURE_FILE_ENV];
+delete macOpenEnv.SCIENT_DEV_COLD_APPROVED_PATH;
 childEnv.SCIENT_NEXT_SAFETY_ENVELOPE = "true";
 childEnv.SCIENT_NEXT_DEV_RUNNER_ACTIVE = "1";
 const devProtocolClient = resolveDevProtocolClient();
@@ -129,6 +148,24 @@ const configuredAppPidFilePath =
   );
 const launchStateDir = NodePath.dirname(configuredAppPidFilePath);
 const backendEntryPath = NodePath.resolve(desktopDir, "..", "server", "dist", "bin.mjs");
+const conversationOpenArgumentsPath = NodePath.join(
+  launchStateDir,
+  "conversation-open-arguments.bin",
+);
+
+function takeConversationOpenArguments() {
+  try {
+    const data = NodeFS.readFileSync(conversationOpenArgumentsPath);
+    NodeFS.rmSync(conversationOpenArgumentsPath);
+    return data.toString("utf8").split("\0").filter(Boolean);
+  } catch (error) {
+    if (error?.code === "ENOENT") return [];
+    throw error;
+  }
+}
+
+let pendingConversationOpenArguments = takeConversationOpenArguments();
+let pendingColdFiles = coldFiles;
 
 let shuttingDown = false;
 let currentApp = null;
@@ -139,6 +176,7 @@ let launchSequence = 0;
 function cleanupLaunchFiles(app) {
   const { launchPaths } = app;
   removeDevelopmentLaunchFiles(launchPaths.environmentFilePath);
+  if (app.approvedPath) removeDevelopmentLaunchFiles(app.approvedPath);
   const launcherActive = developmentLauncherIsActive(app.launcher);
   if (!launcherActive) {
     removeDevelopmentLaunchFiles(launchPaths.launcherPidPath);
@@ -231,9 +269,25 @@ function startApp() {
     return;
   }
 
-  const electronArgs = remoteDebuggingPort
-    ? [`--remote-debugging-port=${remoteDebuggingPort}`]
-    : [];
+  const conversationOpenArguments = pendingConversationOpenArguments;
+  pendingConversationOpenArguments = [];
+  const coldFiles = pendingColdFiles;
+  pendingColdFiles = [];
+  const approvedPath =
+    coldFiles.length > 0
+      ? writeApprovedHandoff({
+          stateRoot: coldStateRoot,
+          root: NodePath.resolve(desktopDir, "..", ".."),
+          role: coldRole,
+          files: coldFiles,
+        })
+      : null;
+  const launchEnv = approvedPath
+    ? { ...childEnv, SCIENT_DEV_APPROVED_HANDOFF_PATH: approvedPath }
+    : childEnv;
+  const electronArgs = devProtocolClient ? [`--t3code-dev-root=${desktopDir}`] : [];
+  if (remoteDebuggingPort) electronArgs.push(`--remote-debugging-port=${remoteDebuggingPort}`);
+  electronArgs.push(...conversationOpenArguments);
   const launchArgs = devProtocolClient
     ? electronArgs
     : [...electronArgs, `--t3code-dev-root=${desktopDir}`, "dist-electron/main.cjs"];
@@ -253,7 +307,7 @@ function startApp() {
     removeDevelopmentLaunchRecord(launchPaths);
     writeDevelopmentLaunchHandoff(launchPaths);
     writeDevelopmentEnvironmentFile(launchPaths.environmentFilePath, {
-      ...childEnv,
+      ...launchEnv,
       [SCIENT_DEV_APP_LAUNCH_GENERATION_ENV]: launchPaths.generation,
       [SCIENT_DEV_BACKEND_PID_FILE_ENV]: launchPaths.backendPidPath,
     });
@@ -263,7 +317,7 @@ function startApp() {
       "MacOS",
       "Electron",
     );
-    mainCommandPrefix = `${electronBinaryPath} --t3code-dev-root=${desktopDir} ${NodePath.join(desktopDir, "dist-electron", "main.cjs")}`;
+    mainCommandPrefix = `${electronBinaryPath} --t3code-dev-root=${desktopDir}`;
     electronCommand = makeMacDevelopmentAppLaunchCommand({
       appBundlePath: devProtocolClient.appBundlePath,
       args: electronArgs,
@@ -295,7 +349,7 @@ function startApp() {
     electronCommand.args,
     {
       cwd: desktopDir,
-      env: managedMacLaunch ? macOpenEnv : childEnv,
+      env: managedMacLaunch ? macOpenEnv : launchEnv,
       stdio: "inherit",
     },
   );
@@ -314,6 +368,7 @@ function startApp() {
     launcher,
     managedMacLaunch,
     launchPaths,
+    approvedPath,
     electronBinaryPath,
     mainCommandPrefix,
     backendCommandPrefix,

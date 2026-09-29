@@ -14,6 +14,7 @@ import {
   resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsPatch,
+  OmpSettings,
 } from "./settings.ts";
 
 const decodeClientSettings = Schema.decodeUnknownSync(ClientSettingsSchema);
@@ -136,14 +137,16 @@ describe("ServerSettings default permissions", () => {
 });
 
 describe("ServerSettings Cursor account usage", () => {
-  it("enables Keychain usage by default while preserving an explicit opt-out", () => {
-    expect(decodeServerSettings({}).cursorKeychainUsageEnabled).toBe(true);
-    expect(DEFAULT_SERVER_SETTINGS.cursorKeychainUsageEnabled).toBe(true);
+  // Reading another app's Keychain login makes macOS ask for a password, so it
+  // stays off until the user turns it on; never at launch by default.
+  it("keeps Keychain usage off until enabled, preserving an explicit opt-in", () => {
+    expect(decodeServerSettings({}).cursorKeychainUsageEnabled).toBe(false);
+    expect(DEFAULT_SERVER_SETTINGS.cursorKeychainUsageEnabled).toBe(false);
     expect(
-      decodeServerSettings({ cursorKeychainUsageEnabled: false }).cursorKeychainUsageEnabled,
-    ).toBe(false);
-    expect(decodeServerSettingsPatch({ cursorKeychainUsageEnabled: false })).toEqual({
-      cursorKeychainUsageEnabled: false,
+      decodeServerSettings({ cursorKeychainUsageEnabled: true }).cursorKeychainUsageEnabled,
+    ).toBe(true);
+    expect(decodeServerSettingsPatch({ cursorKeychainUsageEnabled: true })).toEqual({
+      cursorKeychainUsageEnabled: true,
     });
   });
 });
@@ -220,6 +223,15 @@ describe("custom model settings", () => {
       "bare-slug",
       { slug: "named", name: "Named", capabilities },
     ]);
+  });
+
+  it("accepts custom model entries for OMP instances", () => {
+    const decodeOmpSettings = Schema.decodeUnknownSync(OmpSettings);
+    expect(
+      decodeOmpSettings({ customModels: [{ slug: "local", name: "Local", capabilities }] })
+        .customModels,
+    ).toEqual([{ slug: "local", name: "Local", capabilities }]);
+    expect(decodeOmpSettings({}).customModels).toEqual([]);
   });
 
   it("accepts entries at the settings patch boundary", () => {

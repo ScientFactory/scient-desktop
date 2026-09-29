@@ -169,3 +169,7 @@ and saved connections are kept.
 
 Turn **Local environment** back on in the same place to restore the previous local
 environment.
+
+Removing a saved remote environment from **Settings → Connections** forgets it on
+this device only. Scient hosts no relay, so there is no account-level
+registration left behind to revoke.

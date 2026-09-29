@@ -324,6 +324,16 @@ describe("searchSettings", () => {
     });
   });
 
+  it("finds Word export by the words people look for it with", () => {
+    for (const query of ["word export", "pandoc", "docx", "export"]) {
+      expect(searchSettings(query)[0], query).toMatchObject({
+        id: "word-export",
+        to: "/settings/scientific-computing",
+      });
+    }
+    expect(searchSettings("word wrap")[0]?.id).toBe("word-wrap");
+  });
+
   it("routes conditional window capture settings to the stable toggle row", () => {
     const targets = [
       "capture accessibility data",

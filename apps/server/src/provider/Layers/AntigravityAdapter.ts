@@ -1218,6 +1218,45 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
         );
     });
 
+  /**
+   * The shared Stop for background work between turns. Commands that
+   * outlived their turn die with the session, so an idle session closes. A
+   * running prompt keeps the interrupt-only Stop above.
+   */
+  const captureTurnStop: NonNullable<Adapter["captureTurnStop"]> = (threadId) =>
+    Effect.map(requireSession(threadId), (context) => {
+      const owns = () => sessions.get(threadId) === context && !context.stopped;
+      return {
+        interrupt: Effect.suspend(() => (owns() ? interruptTurn(threadId) : Effect.void)),
+        confirm: Effect.succeed("unknown" as const),
+        // The thread lock excludes a replacement session until onStopped
+        // has run. Waiting for it stays interruptible; once the session is
+        // marked stopped it must close.
+        stop: (onStopped = Effect.void) =>
+          withThreadLock(
+            threadId,
+            Effect.uninterruptible(
+              Effect.gen(function* () {
+                // Decided under the prompt lock so a turn cannot start in between.
+                // A held prompt lock means a prompt is starting: this is not
+                // an idle session, and waiting here would block stopSession.
+                const idle = yield* context.promptLock.withPermitsIfAvailable(1)(
+                  Effect.sync(() => {
+                    if (!owns() || context.promptFiber) return false;
+                    context.stopped = true;
+                    return true;
+                  }),
+                );
+                if (idle._tag === "None" || !idle.value) return false;
+                yield* stopContext(context);
+                yield* onStopped;
+                return true;
+              }),
+            ),
+          ),
+      };
+    });
+
   const respondToRequest: Adapter["respondToRequest"] = (threadId, requestId, decision) =>
     Effect.gen(function* () {
       const context = yield* requireSession(threadId);
@@ -1299,6 +1338,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
     startSession,
     sendTurn,
     interruptTurn,
+    captureTurnStop,
     respondToRequest,
     respondToUserInput,
     stopSession,

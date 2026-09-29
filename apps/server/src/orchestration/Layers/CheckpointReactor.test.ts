@@ -294,6 +294,7 @@ describe("CheckpointReactor", () => {
   });
 
   async function createHarness(options?: {
+    readonly failDiff?: boolean;
     readonly checkpointLookupFailure?: (
       cwd: string,
     ) => VcsProcessTimeoutError | VcsProcessSpawnError | undefined;
@@ -312,6 +313,7 @@ describe("CheckpointReactor", () => {
     readonly gitStatusRefreshCalls?: Array<string>;
     readonly pullRequestRefreshCalls?: Array<string>;
     readonly pullRequestRefresh?: Effect.Effect<void>;
+    readonly pullRequestRefreshAfterTurn?: Effect.Effect<void>;
   }) {
     const cwd = createGitRepository();
     if (options?.initializeGit === false) {
@@ -345,7 +347,10 @@ describe("CheckpointReactor", () => {
       prefix: "t3-checkpoint-reactor-test-",
     });
     const pullRequestRefreshes: number[] = [];
-    const refreshAfterTurn = () => Effect.sync(() => void pullRequestRefreshes.push(1));
+    const refreshAfterTurn = () =>
+      Effect.sync(() => void pullRequestRefreshes.push(1)).pipe(
+        Effect.andThen(options?.pullRequestRefreshAfterTurn ?? Effect.void),
+      );
     const vcsStatusBroadcasterLayer = Layer.succeed(VcsStatusBroadcaster, {
       getStatus: () => Effect.die("getStatus should not be called in this test"),
       refreshLocalStatus: (cwd: string) =>
@@ -387,6 +392,17 @@ describe("CheckpointReactor", () => {
           CheckpointStore.make.pipe(
             Effect.map((store) => ({
               ...store,
+              diffCheckpoints: (input) =>
+                options?.failDiff
+                  ? Effect.fail(
+                      new VcsProcessTimeoutError({
+                        operation: "test.diff",
+                        command: "git diff",
+                        cwd: input.cwd,
+                        timeoutMs: 30000,
+                      }),
+                    )
+                  : store.diffCheckpoints(input),
               hasCheckpointRef: (input) => {
                 const failure = options?.checkpointLookupFailure?.(input.cwd);
                 return failure ? Effect.fail(failure) : store.hasCheckpointRef(input);
@@ -613,6 +629,53 @@ describe("CheckpointReactor", () => {
         expect(harness.provider.rollbackConversation).not.toHaveBeenCalled();
       }
     }),
+  );
+
+  effectIt.effect(
+    "preserves a captured checkpoint when comparison fails and reports a diff diagnostic",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() =>
+          createHarness({ seedFilesystemCheckpoints: false, failDiff: true }),
+        );
+        const threadId = ThreadId.make("thread-1");
+        const turnId = asTurnId("turn-diff-failure");
+        harness.provider.emit({
+          type: "turn.started",
+          eventId: EventId.make("diff-start"),
+          provider: ProviderDriverKind.make("codex"),
+          createdAt: "2026-01-01T00:00:00.000Z",
+          threadId,
+          turnId,
+        });
+        expect(yield* harness.nextReceipt).toMatchObject({ type: "checkpoint.baseline.captured" });
+        NodeFS.writeFileSync(
+          NodePath.join(harness.cwd, "README.md"),
+          "captured even without comparison\n",
+        );
+        harness.provider.emit({
+          type: "turn.completed",
+          eventId: EventId.make("diff-finish"),
+          provider: ProviderDriverKind.make("codex"),
+          createdAt: "2026-01-01T00:00:01.000Z",
+          threadId,
+          turnId,
+          payload: { state: "completed" },
+        });
+        expect(yield* harness.nextReceipt).toMatchObject({ type: "checkpoint.diff.finalized" });
+        yield* Effect.promise(harness.drain);
+        const thread = (yield* Effect.promise(harness.readModel)).threads[0];
+        expect(
+          thread?.activities.find((activity) => activity.kind === "checkpoint.diff.failed"),
+        ).toMatchObject({ tone: "info", summary: "Changes could not be compared" });
+        expect(
+          thread?.activities.some((activity) => activity.kind === "checkpoint.capture.failed"),
+        ).toBe(false);
+        expect(thread?.checkpoints[0]).toMatchObject({ status: "ready" });
+        expect(
+          gitShowFileAtRef(harness.cwd, checkpointRefForThreadTurn(threadId, 1), "README.md"),
+        ).toBe("captured even without comparison\n");
+      }),
   );
 
   effectIt.effect.each(["timeout", "spawn"] as const)(
@@ -1149,6 +1212,40 @@ describe("CheckpointReactor", () => {
     expect(completion?.answer_done).toBe(0);
     expect(completion?.checkpoint_done).toBe(1);
     expect(completion?.successful).toBe(1);
+  });
+
+  it("settles the checkpoint barrier when PR refresh fails before capture", async () => {
+    const harness = await createHarness({
+      seedFilesystemCheckpoints: false,
+      pullRequestRefreshAfterTurn: Effect.die("PR refresh failed"),
+    });
+    const createdAt = "2026-01-01T00:00:00.000Z";
+    const threadId = ThreadId.make("thread-1");
+    const turnId = asTurnId("turn-before-capture-failure");
+    harness.provider.emit({
+      type: "turn.started",
+      eventId: EventId.make("evt-before-capture-started"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt,
+      threadId,
+      turnId,
+    });
+    await waitForGitRefExists(harness.cwd, checkpointRefForThreadTurn(threadId, 0));
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.make("evt-before-capture-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt,
+      threadId,
+      turnId,
+      payload: { state: "completed" },
+    });
+    await harness.drain();
+
+    const completion = await harness.readQueueFinalization(turnId);
+    expect(completion?.answer_done).toBe(0);
+    expect(completion?.checkpoint_done).toBe(1);
+    expect(gitRefExists(harness.cwd, checkpointRefForThreadTurn(threadId, 1))).toBe(false);
   });
 
   it("refreshes local git status state on turn completion using the session cwd", async () => {

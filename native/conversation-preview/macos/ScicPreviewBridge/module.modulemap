@@ -1,0 +1,4 @@
+module ScicPreviewBridge {
+  header "../../include/scic_preview.h"
+  export *
+}

@@ -72,6 +72,7 @@ import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 import {
   ScientForkContextDelivery,
+  ScientForkContextError,
   type ForkDeliveryOutcome,
   type ForkTurnContext,
   type NativeForkPlan,
@@ -663,7 +664,12 @@ const make = Effect.gen(function* () {
     const key =
       session === undefined
         ? null
-        : nativeThreadKey(session.provider, session.resumeCursor, session.providerInstanceId);
+        : nativeThreadKey(
+            session.provider,
+            session.resumeCursor,
+            session.providerInstanceId,
+            session.nativeSessionId,
+          );
     // The new provider thread must differ from the source's: otherwise the
     // adapter resumed instead of forking and the portable handoff is needed.
     if (
@@ -712,16 +718,31 @@ const make = Effect.gen(function* () {
         detail,
         ...(cause === undefined ? {} : { cause }),
       });
-    const detail = yield* projectionSnapshotQuery
+    // Read only when this turn must carry the history, never after its delivery.
+    const historyUnavailable = (cause?: unknown) =>
+      new ScientForkContextError({
+        threadId: input.thread.id,
+        detail: "The conversation history is unavailable.",
+        ...(cause === undefined ? {} : { cause }),
+      });
+    const loadThread = projectionSnapshotQuery
       .getThreadDetailById(input.thread.id, { fullHistory: true })
-      .pipe(Effect.map(Option.getOrUndefined));
-    if (!detail) return yield* toTurnStartError("The forked conversation is unavailable.");
+      .pipe(
+        Effect.mapError(historyUnavailable),
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.fail(historyUnavailable()),
+            onSome: Effect.succeed,
+          }),
+        ),
+      );
     const liveSession = (yield* providerService.listSessions()).find(
       (session) => session.threadId === input.thread.id,
     );
     const context = yield* scientForkContextDelivery
       .prepareTurn({
-        thread: detail,
+        threadId: input.thread.id,
+        loadThread,
         modelSelection: input.modelSelection,
         message: input.message,
         userText: input.providerMessageText,
@@ -733,6 +754,7 @@ const make = Effect.gen(function* () {
                 liveSession.provider,
                 liveSession.resumeCursor,
                 liveSession.providerInstanceId,
+                liveSession.nativeSessionId,
               ),
         // An accepted turn is "starting" until the provider reports it.
         sessionRunning:
@@ -1772,11 +1794,11 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    // SCIENT-FORK:START — a fork's provider session does not hold the
-    // conversation natively. Decide after the session is ensured, so the
+    // SCIENT-FORK:START — a fork's or an imported thread's provider session
+    // does not hold the conversation natively. Decide after the session is ensured, so the
     // delivery is tied to the provider-native thread that will receive it.
     const forkContext: ForkTurnContext | { readonly kind: "skip" } =
-      thread.forkLineage == null
+      thread.forkLineage == null && thread.conversationImport == null
         ? { kind: "none" }
         : yield* prepareScientForkContext({
             thread,
@@ -1848,6 +1870,7 @@ const make = Effect.gen(function* () {
                   targetSession.provider,
                   targetSession.resumeCursor,
                   targetSession.providerInstanceId,
+                  targetSession.nativeSessionId,
                 ),
           includedItemCount: forkContext.includedItemCount,
           omittedItemCount: forkContext.omittedItemCount,
@@ -1874,6 +1897,7 @@ const make = Effect.gen(function* () {
                 );
                 return settleForkContext({
                   type: "accepted",
+                  turnId: turn.turnId,
                   nativeThreadKey:
                     session === undefined
                       ? null
@@ -1881,6 +1905,7 @@ const make = Effect.gen(function* () {
                           session.provider,
                           turn.resumeCursor ?? session.resumeCursor,
                           session.providerInstanceId,
+                          session.nativeSessionId,
                         ),
                 }).pipe(
                   Effect.andThen(
@@ -1932,13 +1957,16 @@ const make = Effect.gen(function* () {
   type PendingStop = {
     readonly threadId: ThreadId;
     readonly session: OrchestrationSession;
+    readonly background: boolean;
     readonly deadline: number;
   };
   const pendingStops = new Map<ThreadId, PendingStop>();
   const ownsStop = (operation: PendingStop, session: OrchestrationSession | null | undefined) =>
     pendingStops.get(operation.threadId) === operation &&
     session != null &&
-    (session.status === "running" || session.status === "starting") &&
+    (operation.background
+      ? session.status === "ready" && session.updatedAt === operation.session.updatedAt
+      : session.status === "running" || session.status === "starting") &&
     session.providerInstanceId === operation.session.providerInstanceId &&
     session.activeTurnId === operation.session.activeTurnId;
 
@@ -1989,10 +2017,17 @@ const make = Effect.gen(function* () {
   ) {
     const thread = yield* resolveThreadShell(event.payload.threadId);
     const session = thread?.session;
+    const background =
+      session?.status === "ready" &&
+      session.activeTurnId === null &&
+      thread?.backgroundLiveness != null &&
+      event.payload.turnId === undefined &&
+      event.payload.sessionUpdatedAt !== undefined &&
+      event.payload.sessionUpdatedAt === session.updatedAt;
     // A delayed Stop must not interrupt a replacement turn or revive a settled session.
     if (
       !session ||
-      (session.status !== "running" && session.status !== "starting") ||
+      (!background && session.status !== "running" && session.status !== "starting") ||
       (event.payload.turnId !== undefined && event.payload.turnId !== session.activeTurnId)
     )
       return;
@@ -2007,6 +2042,7 @@ const make = Effect.gen(function* () {
     const operation: PendingStop = {
       threadId: event.payload.threadId,
       session,
+      background,
       deadline: (yield* Clock.currentTimeMillis) + stopTiming.deadlineMillis,
     };
     pendingStops.set(operation.threadId, operation);
@@ -2032,6 +2068,17 @@ const make = Effect.gen(function* () {
               stop: () => Effect.succeed(false),
             };
       if (!(yield* stopStillOwned(operation))) return;
+      if (operation.background) {
+        // There is no foreground turn to interrupt. The adapter's captured
+        // handle owns the exact runtime and closes its detached work.
+        const stopped = yield* bounded(handle.stop(), stopTiming.sessionTimeoutMillis);
+        if (Option.isSome(stopped) && stopped.value) {
+          yield* updateStoppedTurn(operation, "stopped", null);
+        } else {
+          yield* reportUnconfirmedStop(operation);
+        }
+        return;
+      }
       const interrupted = yield* bounded(handle.interrupt, stopTiming.interruptTimeoutMillis).pipe(
         Effect.catchCause((cause) =>
           Cause.hasInterruptsOnly(cause)

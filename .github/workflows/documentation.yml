@@ -2,6 +2,8 @@ name: Documentation
 
 on:
   pull_request:
+  merge_group:
+    types: [checks_requested]
   push:
     branches:
       - main
@@ -32,7 +34,7 @@ jobs:
 
       - name: Check documentation
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
           EVENT_NAME: ${{ github.event_name }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         shell: bash
@@ -41,6 +43,9 @@ jobs:
 
           if [[ "$EVENT_NAME" == "pull_request" ]]; then
             START_SHA="$(git merge-base "$BASE_SHA" "$HEAD_SHA")"
+          elif [[ "$EVENT_NAME" == "merge_group" ]]; then
+            git cat-file -e "$BASE_SHA^{commit}"
+            START_SHA="$BASE_SHA"
           elif git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
             START_SHA="$BASE_SHA"
           else

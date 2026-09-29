@@ -20,6 +20,9 @@ import { resolveServerBackedAppDisplayName } from "../branding.logic";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
 import { CommandPalette } from "../components/CommandPalette";
 import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
+// SCIENT-FORK: conversation export dialog.
+import { ConversationExportDialogHost } from "../scient/conversationExport/ConversationExportDialog";
+import { ConversationImportDialogHost } from "../scient/conversationImport/ConversationImportDialog";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
 import { FirstRunGate } from "../components/onboarding/FirstRunGate";
 import { ConnectOnboardingDialog } from "../components/cloud/ConnectOnboardingDialog";
@@ -179,6 +182,9 @@ function RootRouteView() {
           <GlassAppearanceSync />
           <FontAppearanceSync />
           <CustomSnoozeDialogHost />
+          {/* SCIENT-FORK: conversation export dialog; imports wait for setup to finish. */}
+          <ConversationExportDialogHost />
+          <ConversationImportDialogHost suspended />
           <CommandPalette>
             <AppSidebarLayout>
               <Outlet />
@@ -228,6 +234,9 @@ function RootRouteView() {
           <ThreadNotificationCoordinator />
           <ConfirmDialogHost />
           <CustomSnoozeDialogHost />
+          {/* SCIENT-FORK: conversation export dialog. */}
+          <ConversationExportDialogHost />
+          <ConversationImportDialogHost />
           <SlowRpcRequestToastCoordinator />
           <ProjectCloneToastCoordinator />
           <HostedStaticEnvironmentBootstrap />

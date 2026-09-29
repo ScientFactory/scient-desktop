@@ -257,6 +257,9 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
       `Origin thread '${command.originThreadId}' has no project and cannot be forked.`,
     );
   }
+  const sourceImport = origin.conversationImport
+    ? (({ inheritedTurnIds: _turns, ...source }) => source)(origin.conversationImport)
+    : origin.forkLineage?.sourceImport;
 
   // The new thread id must be free.
   yield* requireThreadAbsent({
@@ -458,6 +461,24 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
       updatedAt: occurredAt,
     },
   });
+  // A fork stays in its origin's section. Filed in the same decision, so the
+  // fork is never briefly unsectioned. An id whose catalog entry was removed
+  // reads as General, exactly like the origin.
+  if (origin.sectionId != null) {
+    events.push({
+      ...(yield* withForkEventBase({
+        commandId: command.commandId,
+        aggregateId: command.newThreadId,
+        occurredAt,
+      })),
+      type: "thread.meta-updated",
+      payload: {
+        threadId: command.newThreadId,
+        sectionId: origin.sectionId,
+        updatedAt: occurredAt,
+      },
+    });
+  }
 
   // The imported transcript is one immutable provider-neutral baseline. It is
   // deliberately not represented as N native provider turns: the new provider
@@ -618,6 +639,10 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
       );
       requestIds.set(answer.requestId, requestId);
     }
+    // An imported answer names the message it folds; the fork names its copy.
+    const { messageId: originMessageId, ...copiedAnswer } = answer;
+    const messageId =
+      originMessageId === undefined ? undefined : messageIdRemap.get(originMessageId);
     events.push({
       ...(yield* withForkEventBase({
         commandId: command.commandId,
@@ -632,8 +657,9 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
           id,
           turnId,
           payload: {
-            ...answer,
+            ...copiedAnswer,
             requestId,
+            ...(messageId === undefined ? {} : { messageId }),
             attachmentsByQuestionId: Object.fromEntries(
               Object.entries(answer.attachmentsByQuestionId).map(([questionId, attachments]) => [
                 questionId,
@@ -768,6 +794,7 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
       providerMode: "transcript-bootstrap",
       attachmentCopies,
       inheritedTurnIds: [...new Set(importedTurnIds.values())],
+      ...(sourceImport === undefined ? {} : { sourceImport }),
       ...(liveTail === null
         ? {}
         : {

@@ -1,8 +1,14 @@
 import {
+  activityIssuePolicy,
+  isBackgroundActivityIssue,
+  isRequestIssueOwnedByCard,
+} from "@t3tools/client-runtime/work-log/issue-presentation";
+import { deriveRequestIssueOwnerIds } from "@t3tools/client-runtime/pending-requests";
+import {
   requestKindFromRequestType,
   type PendingApproval,
 } from "@t3tools/client-runtime/pending-requests";
-import { UserInputAttachmentAnswerPayload } from "@t3tools/contracts";
+import { UserInputAttachmentAnswerPayload, questionAnswerMessageId } from "@t3tools/contracts";
 import { foldUserInputActivities } from "@t3tools/client-runtime/work-log/user-input";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -61,6 +67,12 @@ const PROVIDER_OPTIONS_UNORDERED: Array<{
   { value: ProviderDriverKind.make("claudeAgent"), label: "Claude", available: true },
   { value: ProviderDriverKind.make("pi"), label: "Pi", available: true, pickerSidebarBadge: "new" },
   {
+    value: ProviderDriverKind.make("omp"),
+    label: "Oh My Pi",
+    available: true,
+    pickerSidebarBadge: "new",
+  },
+  {
     value: ProviderDriverKind.make("opencode"),
     label: "OpenCode",
     available: true,
@@ -112,6 +124,7 @@ export interface WorkLogEntry {
   toolCallId?: string;
   label: string;
   detail?: string;
+  externalUrl?: { readonly href: string };
   viewedImagePath?: string;
   command?: string;
   rawCommand?: string;
@@ -215,15 +228,9 @@ export interface TimelineEntriesProjection {
   readonly entries: TimelineEntry[];
 }
 
-/** Severe failures keep the red treatment ordinary tool failures lost: runtime
- *  errors and orchestration `*.failed` activities (provider.turn.start.failed,
- *  checkpoint.capture.failed, ...) mean the turn or a core side effect broke,
- *  not that a command exited nonzero. */
+/** Only known failures of the requested turn/session warrant a severe chat row. */
 export function workEntrySignalsSevereFailure(entry: WorkLogEntry): boolean {
-  return (
-    entry.sourceActivityKind === "runtime.error" ||
-    entry.sourceActivityKind?.endsWith(".failed") === true
-  );
+  return activityIssuePolicy(entry.sourceActivityKind)?.severe === true;
 }
 
 /** Tool-like row with neither clear success nor failure (empty, incomplete, in progress, etc.). */
@@ -559,6 +566,8 @@ function isAgentInternalActivity(activity: OrchestrationThreadActivity): boolean
 export function deriveWorkLogEntries(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
 ): WorkLogEntry[] {
+  const pendingRequestIds = deriveRequestIssueOwnerIds(activities);
+  const hasSetupCard = activities.some((activity) => activity.kind === "worktree-setup");
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
   // A launch tool and its task lifecycle describe the same run. Only hide
   // launch rows once their tool-use id has an agent row to replace them.
@@ -576,6 +585,12 @@ export function deriveWorkLogEntries(
   }
   const entries: DerivedWorkLogEntry[] = [];
   for (const activity of foldUserInputActivities(ordered)) {
+    if (
+      (activity.kind === "setup-script.failed" && hasSetupCard) ||
+      isBackgroundActivityIssue(activity.kind) ||
+      isRequestIssueOwnedByCard(activity, pendingRequestIds)
+    )
+      continue;
     if (
       isWorktreeSetupActivity(activity.kind) &&
       (activity.tone !== "error" || activity.kind === "worktree-setup")
@@ -676,6 +691,32 @@ function scientSkillUsageLabel(itemValue: unknown): string | null {
 }
 const decodeQuestionAttachmentAnswer = Schema.decodeUnknownOption(UserInputAttachmentAnswerPayload);
 
+function httpUrl(value: unknown): string | null {
+  const text = asTrimmedString(value);
+  if (!text) return null;
+  try {
+    const url = new URL(text);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A provider's browser action. `url` is shown; the server stores it without
+ * its query, so an OAuth flow's loopback `launchUrl`, which redirects to the
+ * full authorization URL, is the link when the provider supplies one.
+ */
+function externalOpenUrl(
+  payload: Record<string, unknown> | null,
+): { readonly url: string; readonly href: string } | null {
+  const detail = asRecord(payload?.detail);
+  if (detail?.kind !== "open-url") return null;
+  const url = httpUrl(detail.url);
+  if (!url) return null;
+  return { url, href: httpUrl(detail.launchUrl) ?? url };
+}
+
 function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWorkLogEntry {
   const cachedEntry = derivedWorkLogEntryByActivity.get(activity);
   if (cachedEntry) {
@@ -718,7 +759,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     id: activity.id,
     createdAt: activity.createdAt,
     turnId: activity.turnId,
-    label: taskLabel || activity.summary,
+    label: activityIssuePolicy(activity.kind)?.summary ?? (taskLabel || activity.summary),
     tone:
       activity.kind === "task.progress"
         ? "thinking"
@@ -744,6 +785,11 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     ) {
       entry.detail = message;
     }
+  }
+  const externalUrl = externalOpenUrl(payload);
+  if (externalUrl) {
+    entry.externalUrl = { href: externalUrl.href };
+    entry.detail = [entry.detail, externalUrl.url].filter(Boolean).join("\n\n");
   }
   if (viewedImagePath) {
     entry.viewedImagePath = viewedImagePath;
@@ -1819,8 +1865,11 @@ export function deriveTimelineEntriesWithState(
     if (entries !== null) return { messages, proposedPlans, workEntries, turnPlans, entries };
   }
   const foldedAnswerMessageIds = new Set(
-    workEntries.flatMap((entry) =>
-      entry.questionAnswer ? [`async-answer:${entry.questionAnswer.requestId}`] : [],
+    workEntries.flatMap(
+      (entry) =>
+        // SCIENT-FORK:START — imported answers name their message.
+        entry.questionAnswer ? [questionAnswerMessageId(entry.questionAnswer)] : [],
+      // SCIENT-FORK:END
     ),
   );
   const showMessage = (message: ChatMessage) =>

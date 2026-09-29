@@ -50,6 +50,19 @@ export function readEnvironmentSupportsSections(environmentId: EnvironmentId): b
   );
 }
 
+/** Whether the thread's server accepts order-key writes for pinned or active rows. */
+export function readEnvironmentSupportsThreadReorder(
+  environmentId: EnvironmentId,
+  group: "pinned" | "active",
+): boolean {
+  const capabilities = appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)
+    ?.environment.capabilities;
+  return (
+    (group === "pinned" ? capabilities?.threadPinReorder : capabilities?.threadActiveReorder) ===
+    true
+  );
+}
+
 /** Membership writes. Section moves are undoable from the sidebar notice (⌘Z). */
 export function useThreadSectionActions() {
   const setSectionMutation = useAtomCommand(threadEnvironment.setSection, {

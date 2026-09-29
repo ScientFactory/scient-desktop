@@ -1,3 +1,4 @@
+import { canApplySendAnchor, readSendScrollAllowance } from "./chat/readerScrollPolicy";
 import { useAcknowledgeAnswer } from "../scient/answerAttention/useAcknowledgeAnswer";
 import { collectSelectedScientSkillNames } from "@t3tools/shared/composerInlineTokens";
 import {
@@ -28,6 +29,8 @@ import {
 } from "@t3tools/shared/usageLimits";
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
 import { usageLimitsBannerItem } from "./chat/ComposerUsageLimits";
+// SCIENT-FORK: imported-conversation notice.
+import { conversationImportBannerItem } from "./chat/scient-import/ConversationImportBanner";
 import { derivePendingRequests } from "@t3tools/client-runtime/pending-requests";
 import {
   questionAttachmentDraftId,
@@ -169,7 +172,7 @@ import {
 import { type LegendListRef } from "@legendapp/list/react";
 import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
-  getAnchoredTurnMetrics,
+  withRealTimelineEnd,
   readTimelinePosition,
   timelineContentOverflowsViewport,
   type TimelineScrollMode,
@@ -258,6 +261,7 @@ import {
   copyFilePathToClipboard,
   resolveFilePathCopyValue,
   type FilePathCopyFormat,
+  type FileSurfacePath,
 } from "./files/filePathClipboard";
 import { AgentsPanel } from "./AgentsPanel";
 import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
@@ -349,7 +353,10 @@ import {
   preventRepeatedTerminalCloseShortcut,
   preventTerminalCloseShortcut,
 } from "../lib/terminalCloseShortcut";
-import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
+import {
+  resolveNewDraftStartFromOrigin,
+  resolveStaleDraftDefaultModelSelection,
+} from "../lib/chatThreadActions";
 import {
   derivePhysicalProjectKey,
   deriveLogicalProjectKeyFromSettings,
@@ -435,9 +442,9 @@ import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import {
+  resolveTimelineIsAtEnd,
   findLatestCompletedAssistantMessageId,
   findPrecedingCompletedAssistantMessageId,
-  resolveTimelineIsAtEnd,
   worktreeSetupAgentStarted,
 } from "./chat/MessagesTimeline.logic";
 import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
@@ -508,7 +515,6 @@ import {
   hasServerAcknowledgedLocalDispatch,
   isBranchMismatchDismissedForSession,
   shouldDockDraftHeroForSubmission,
-  shouldReleaseTimelineAnchorForToolActivity,
   shouldShowBranchMismatchBanner,
   shouldShowPlanFollowUpPrompt,
   shouldOpenProactivePullRequest,
@@ -626,8 +632,6 @@ import {
 import { useComputeFilePresentationStore } from "~/scient/compute/computeFilePresentationStore";
 import { computeSourceLanguageForPath } from "~/scient/compute/computeSourceLanguage";
 
-const INSTALL_GIT_AGENT_PROMPT =
-  "Install Git in this execution environment using its standard trusted package manager. Verify that `git --version` works afterward. Ask before taking any action that requires administrator privileges. Do not initialize a repository or modify project files.";
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_USAGE_LIMIT_SOURCES: UsageLimitSourceSnapshots = [];
@@ -1594,14 +1598,7 @@ const noopHeldTurnDiff = (_turnId: TurnId, _filePath?: string) => {};
 const noopHeldRevert = (_targetTurnCount: number) => {};
 const noopHeldAttachment = (_attachment: ChatFileAttachment) => {};
 
-/**
- * Drops the send-time anchored end space. That space is what holds a sent
- * message near the top while its turn streams, and it keeps LegendList's
- * maintainScrollAtEnd switched off for as long as it is installed — ChatView
- * drives the streaming scrolls itself, but only in "anchoring-new-turn" mode.
- * So every return to the live edge has to release the anchor too, otherwise the
- * timeline settles into "following-end" with nothing following anything.
- */
+/** Release reserved space only for explicit navigation or once it is below the viewport. */
 function releaseChatTimelineAnchor<T extends { readonly messageId: MessageId | null }>(
   current: T,
 ): T {
@@ -1847,6 +1844,7 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const [isWorkspaceFileDragActive, setIsWorkspaceFileDragActive] = useState(false);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  const [unreadBelowCount, setUnreadBelowCount] = useState(0);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   useEffect(() => {
     const item = expandedImage?.images[expandedImage.index];
@@ -1955,10 +1953,6 @@ function ChatViewContent(props: ChatViewProps) {
   const composerOverlayHeightRef = useRef(0);
   const [scrollToEndClearance, setScrollToEndClearance] = useState(0);
   const isAtEndRef = useRef(true);
-  const isTimelineAtLogicalEnd = useCallback(
-    () => resolveTimelineIsAtEnd(legendListRef.current?.getState()) ?? isAtEndRef.current,
-    [],
-  );
   // Whether the timeline's rows extend past the viewport above the composer.
   // The composer only rests when there is reading space to give back.
   const [timelineOverflows, setTimelineOverflows] = useState(false);
@@ -2275,11 +2269,27 @@ function ChatViewContent(props: ChatViewProps) {
   const [timelineAnchor, setTimelineAnchor] = useState<{
     readonly threadKey: string | null;
     readonly messageId: MessageId | null;
-  }>({ threadKey: activeThreadKey, messageId: null });
+  }>({
+    threadKey: activeThreadKey,
+    messageId:
+      (readTimelinePosition(routeThreadKey)?.anchorMessageId as MessageId | undefined) ?? null,
+  });
   if (timelineAnchor.threadKey !== activeThreadKey) {
-    setTimelineAnchor({ threadKey: activeThreadKey, messageId: null });
+    setTimelineAnchor({
+      threadKey: activeThreadKey,
+      messageId:
+        (readTimelinePosition(routeThreadKey)?.anchorMessageId as MessageId | undefined) ?? null,
+    });
   }
   const timelineAnchorMessageId = timelineAnchor.messageId;
+  const getTimelineReadingState = useCallback(() => {
+    const state = legendListRef.current?.getState();
+    return timelineAnchorMessageId ? withRealTimelineEnd(state, composerTimelineInset) : state;
+  }, [timelineAnchorMessageId, composerTimelineInset]);
+  const isTimelineAtLogicalEnd = useCallback(
+    () => resolveTimelineIsAtEnd(getTimelineReadingState()) ?? isAtEndRef.current,
+    [getTimelineReadingState],
+  );
   const activeRightPanelKind = useRightPanelStore((state) =>
     selectActiveRightPanel(state.byThreadKey, activeThreadRef),
   );
@@ -2583,6 +2593,18 @@ function ChatViewContent(props: ChatViewProps) {
     runProjectCloneAction,
   ]);
   const activeProjectDefaultModelSelection = activeProjectSettings.settings.defaultModelSelection;
+  // An unpicked draft follows a default changed in Settings. ChatView
+  // remounts on return, so this compares state rather than watching changes.
+  useEffect(() => {
+    if (draftId === null || isServerThread) return;
+    const nextSelection = resolveStaleDraftDefaultModelSelection(
+      useComposerDraftStore.getState().getComposerDraft(draftId),
+      activeProjectDefaultModelSelection,
+    );
+    if (nextSelection) {
+      setComposerDraftModelSelection(draftId, nextSelection, { replaceOptions: true });
+    }
+  }, [activeProjectDefaultModelSelection, draftId, isServerThread, setComposerDraftModelSelection]);
   const handleNewThreadInActiveProject = useCallback(() => {
     startNewThreadForProject(activeThreadTargetRef, handleNewThread);
   }, [activeThreadTargetRef, handleNewThread]);
@@ -3276,7 +3298,34 @@ function ChatViewContent(props: ChatViewProps) {
       ? null
       : JSON.stringify([activityId, latestCheckpointCompletedAt]);
   }, [latestCheckpointCompletedAt, threadActivities]);
-  const workLogEntries = useMemo(() => deriveWorkLogEntries(threadActivities), [threadActivities]);
+  const [pendingRevert, setPendingRevert] = useState<{
+    turnCount: number;
+    messageId: MessageId;
+    routeThreadKey: string;
+    error?: string;
+  } | null>(null);
+  const workLogEntries = useMemo(
+    () =>
+      deriveWorkLogEntries(threadActivities).filter(
+        (entry) =>
+          !(
+            pendingRevert?.routeThreadKey === routeThreadKey &&
+            entry.sourceActivityKind === "checkpoint.revert.failed"
+          ),
+      ),
+    [threadActivities, pendingRevert, routeThreadKey],
+  );
+  const fileHistoryIssue = useMemo(
+    () =>
+      threadActivities
+        .toReversed()
+        .find(
+          (activity) =>
+            activity.kind === "checkpoint.capture.failed" ||
+            activity.kind === "checkpoint.diff.failed",
+        ),
+    [threadActivities],
+  );
   const turnPlans = useMemo(() => deriveTurnPlans(threadActivities), [threadActivities]);
   // Native subagent fold: memoized by activity-list identity, shared by the
   // Agents surface, live strip, and workflow cards. v2Projection is null
@@ -3290,10 +3339,26 @@ function ChatViewContent(props: ChatViewProps) {
       }),
     [agentSessionLive, threadActivities],
   );
-  const { approvals: pendingApprovals, userInputs: pendingUserInputs } = useMemo(
-    () => derivePendingRequests(threadActivities),
-    [threadActivities],
+  const [requestResponseErrors, setRequestResponseErrors] = useState<Record<string, string>>({});
+  const setRequestResponseError = useCallback(
+    (requestId: ApprovalRequestId, message: string) => {
+      const key = JSON.stringify([environmentId, activeThreadId, requestId]);
+      setRequestResponseErrors((errors) => ({ ...errors, [key]: message }));
+    },
+    [environmentId, activeThreadId],
   );
+  const { approvals: pendingApprovals, userInputs: pendingUserInputs } = useMemo(() => {
+    const requests = derivePendingRequests(threadActivities);
+    const withLocalError = <T extends { requestId: ApprovalRequestId }>(request: T) => {
+      const responseError =
+        requestResponseErrors[JSON.stringify([environmentId, activeThreadId, request.requestId])];
+      return responseError ? { ...request, responseError } : request;
+    };
+    return {
+      approvals: requests.approvals.map(withLocalError),
+      userInputs: requests.userInputs.map(withLocalError),
+    };
+  }, [threadActivities, requestResponseErrors, environmentId, activeThreadId]);
   const activePendingUserInput = pendingUserInputs[0] ?? null;
   const activePendingRequestKey = JSON.stringify([
     environmentId,
@@ -4058,12 +4123,6 @@ function ChatViewContent(props: ChatViewProps) {
           input: { cwd: gitStatusCwd },
         }),
   );
-  const gitNoticeKey = gitStatusCwd === null ? null : `${environmentId}:${gitStatusCwd}`;
-  const [dismissedGitNoticeKey, setDismissedGitNoticeKey] = useState<string | null>(null);
-  const gitInstallRefreshStateRef = useRef<{
-    readonly key: string;
-    sawWorking: boolean;
-  } | null>(null);
   useWorkspaceMutationRefresh({
     enabled: gitStatusCwd !== null,
     mutationId: workspaceMutationId,
@@ -5892,9 +5951,9 @@ function ChatViewContent(props: ChatViewProps) {
     runAfterPendingSurfaceSave,
   ]);
   const copyRightPanelFilePath = useCallback(
-    (relativePath: string, format: FilePathCopyFormat) => {
+    (path: FileSurfacePath, format: FilePathCopyFormat) => {
       const value = resolveFilePathCopyValue({
-        relativePath,
+        path,
         workspaceRoot: activeWorkspaceRoot,
         format,
       });
@@ -6003,56 +6062,41 @@ function ChatViewContent(props: ChatViewProps) {
     new Debouncer(() => setShowScrollToBottom(true), { wait: 150 }),
   );
   const timelineScrollIntentRef = useRef<"toward-end" | "away-from-end" | null>(null);
-  const timelineScrollModeRef = useRef<TimelineScrollMode>("following-end");
-  // State mirror of the follow mode refs. LegendList's maintainScrollAtEnd
-  // re-pins on its own (independent of the refs), so the timeline needs a
-  // render-visible flag to switch it off once the user scrolls away.
-  const [timelineLiveFollowEnabled, setTimelineLiveFollowEnabled] = useState(true);
-  const pendingTimelineAnchorRef = useRef<MessageId | null>(null);
+  const timelineScrollModeRef = useRef<TimelineScrollMode>("free-scrolling");
+  const [timelinePositioningPending, setTimelinePositioningPending] = useState(false);
+  const [readingFollowPromptId, setReadingFollowPromptId] = useState<MessageId | null>(null);
   const positionedTimelineAnchorRef = useRef<MessageId | null>(null);
-  const settledTimelineAnchorRef = useRef<MessageId | null>(null);
-  const activeTimelineAnchorIndexRef = useRef<number | null>(null);
+  const programmaticScrollPendingRef = useRef(false);
   const anchorUserScrollGenerationRef = useRef(0);
   const cancelPositionRestoreRef = useRef<(() => void) | null>(null);
-  const liveFollowUserScrollGenerationRef = useRef<number | null>(0);
-  // Manual navigation stops live-follow without removing anchored end space.
+  // Manual navigation cancels pending placement without removing anchored end space.
   // Collapsing that space during a gesture clamps the viewport back to the end.
-  const cancelTimelineLiveFollowForUserNavigation = useCallback(() => {
+  const cancelTimelinePositioning = useCallback(() => {
     cancelPositionRestoreRef.current?.();
     anchorUserScrollGenerationRef.current += 1;
+    if (positionedTimelineAnchorRef.current !== null || programmaticScrollPendingRef.current) {
+      const list = legendListRef.current;
+      const node = list?.getScrollableNode();
+      // Legend can defer this request during layout; read the offset when it executes
+      // so cancelling never overwrites the user's intervening wheel/touch movement.
+      if (node)
+        void list?.scrollToOffset({
+          get offset() {
+            return node.scrollTop;
+          },
+          animated: false,
+        });
+    }
     timelineScrollModeRef.current = "free-scrolling";
-    liveFollowUserScrollGenerationRef.current = null;
-    setTimelineLiveFollowEnabled(false);
-    pendingTimelineAnchorRef.current = null;
+    setReadingFollowPromptId(null);
+    setTimelinePositioningPending(false);
+    programmaticScrollPendingRef.current = false;
     positionedTimelineAnchorRef.current = null;
-    settledTimelineAnchorRef.current = null;
-    activeTimelineAnchorIndexRef.current = null;
   }, []);
-  const cancelTimelineLiveFollowForUserNavigationRef = useRef(
-    cancelTimelineLiveFollowForUserNavigation,
-  );
+  const cancelTimelinePositioningRef = useRef(cancelTimelinePositioning);
   useEffect(() => {
-    cancelTimelineLiveFollowForUserNavigationRef.current =
-      cancelTimelineLiveFollowForUserNavigation;
-  }, [cancelTimelineLiveFollowForUserNavigation]);
-  const getActiveTimelineTurnMetrics = useCallback(
-    (list?: LegendListRef | null) => {
-      const resolvedList = list ?? legendListRef.current;
-      const anchorIndex = activeTimelineAnchorIndexRef.current;
-      const state = resolvedList?.getState();
-      if (!resolvedList || !state || anchorIndex === null) {
-        return null;
-      }
-
-      return getAnchoredTurnMetrics({
-        state,
-        anchorIndex,
-        composerOverlayHeight: composerTimelineInset,
-        anchorOffset: CHAT_TIMELINE_ANCHOR_OFFSET,
-      });
-    },
-    [composerTimelineInset],
-  );
+    cancelTimelinePositioningRef.current = cancelTimelinePositioning;
+  }, [cancelTimelinePositioning]);
   const timelineRealContentOverflowsViewport = useCallback(
     (list?: LegendListRef | null) =>
       timelineContentOverflowsViewport((list ?? legendListRef.current)?.getState(), {
@@ -6067,9 +6111,7 @@ function ChatViewContent(props: ChatViewProps) {
   const handlePageScrollStart = useEffectEvent((key: PageScrollKey) => {
     timelineScrollIntentRef.current = key === "PageUp" ? "away-from-end" : "toward-end";
     composerRef.current?.collapseForTimelineScrollKey(key);
-    if ((key === "PageUp" && timelineRealContentOverflowsViewport()) || !isTimelineAtLogicalEnd()) {
-      cancelTimelineLiveFollowForUserNavigation();
-    }
+    cancelTimelinePositioning();
   });
   useEffect(() => {
     const controller = createPageScrollController({
@@ -6095,47 +6137,69 @@ function ChatViewContent(props: ChatViewProps) {
   const onComposerPageScrollRelease = useCallback(() => {
     pageScrollControllerRef.current?.releaseActiveKey();
   }, []);
-  // Live-follow stays active after send/thread-open until an actual list scroll
-  // gesture opts out.
-  const scrollToEnd = useCallback((animated = false) => {
-    cancelPositionRestoreRef.current?.();
-    isAtEndRef.current = true;
-    timelineScrollModeRef.current = "following-end";
-    liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
-    setTimelineLiveFollowEnabled(true);
-    pendingTimelineAnchorRef.current = null;
-    positionedTimelineAnchorRef.current = null;
-    settledTimelineAnchorRef.current = null;
-    activeTimelineAnchorIndexRef.current = null;
-    showScrollDebouncer.current.cancel();
-    setShowScrollToBottom(false);
-    setTimelineAnchor(releaseChatTimelineAnchor);
-    requestAnimationFrame(() => {
-      void legendListRef.current?.scrollToEnd?.({ animated });
-    });
-  }, []);
-  useLayoutEffect(() => {
-    if (timelineScrollModeRef.current !== "anchoring-new-turn") {
-      return;
-    }
+  // Explicit navigation is a one-shot operation; it never enables live following.
+  const scrollToEnd = useCallback(
+    (animated = false) => {
+      cancelTimelinePositioning();
+      const generation = anchorUserScrollGenerationRef.current;
+      setTimelineAnchor(releaseChatTimelineAnchor);
+      programmaticScrollPendingRef.current = true;
+      setTimelinePositioningPending(true);
+      requestAnimationFrame(() => {
+        if (generation !== anchorUserScrollGenerationRef.current) return;
+        void Promise.resolve(legendListRef.current?.scrollToEnd({ animated })).then(() => {
+          if (generation !== anchorUserScrollGenerationRef.current) return;
+          programmaticScrollPendingRef.current = false;
+          setTimelinePositioningPending(false);
+          legendListRef.current?.getScrollableNode()?.dispatchEvent(new Event("scroll"));
+        });
+      });
+    },
+    [cancelTimelinePositioning],
+  );
 
-    if (
-      shouldReleaseTimelineAnchorForToolActivity({
-        anchorMessageId: timelineAnchorMessageId,
-        liveFollowEnabled: timelineLiveFollowEnabled,
-        runningTurnId: activeRunningTurnId,
-        timelineEntries,
-      })
-    ) {
-      scrollToEnd();
-    }
-  }, [
-    activeRunningTurnId,
-    scrollToEnd,
-    timelineAnchorMessageId,
-    timelineEntries,
-    timelineLiveFollowEnabled,
-  ]);
+  const captureSendReadingPosition = useCallback(
+    () => ({
+      atEnd:
+        isDraftHeroState ||
+        (resolveTimelineIsAtEnd(
+          getTimelineReadingState(),
+          readSendScrollAllowance(legendListRef.current?.getScrollableNode()),
+        ) ??
+          isAtEndRef.current),
+      firstMessage:
+        activeLatestTurn === null && !timelineMessages.some((message) => message.role === "user"),
+      threadKey: routeThreadKey,
+      navigationGeneration: anchorUserScrollGenerationRef.current,
+    }),
+    [isDraftHeroState, routeThreadKey, timelineMessages, activeLatestTurn, getTimelineReadingState],
+  );
+  const frameSubmittedMessage = useCallback(
+    (messageId: MessageId, snapshot: ReturnType<typeof captureSendReadingPosition>) => {
+      if (
+        !canApplySendAnchor({
+          ...snapshot,
+          currentThreadKey: currentRouteThreadKeyRef.current ?? "",
+          currentNavigationGeneration: anchorUserScrollGenerationRef.current,
+        })
+      )
+        return;
+      if (!snapshot.firstMessage) {
+        // One bounded controller reveals the prompt and then its answer. Retain
+        // existing tail space until it can disappear without clamping the viewport.
+        cancelTimelinePositioning();
+        setReadingFollowPromptId(messageId);
+        return;
+      }
+      cancelPositionRestoreRef.current?.();
+      setReadingFollowPromptId(messageId);
+      timelineScrollModeRef.current = "anchoring-new-turn";
+      setTimelinePositioningPending(true);
+      positionedTimelineAnchorRef.current = null;
+      setTimelineAnchor({ threadKey: activeThreadKey, messageId });
+    },
+    [activeThreadKey, cancelTimelinePositioning],
+  );
   useEffect(() => {
     let removeListeners: (() => void) | null = null;
     let frame: number | null = null;
@@ -6153,23 +6217,11 @@ function ChatViewContent(props: ChatViewProps) {
           return;
         }
         const handleManualNavigation = () => {
-          cancelTimelineLiveFollowForUserNavigationRef.current();
+          cancelTimelinePositioningRef.current();
         };
-        // The gestures below must only break follow when they can actually
-        // move the viewport away from the live edge. Follow now gates
-        // LegendList's maintainScrollAtEnd, so a spurious break while pinned
-        // at the end produces no scroll event, never re-arms, and streaming
-        // silently stops following. Underflowing content can't scroll at all,
-        // so nothing there should break follow.
         const contentScrollsUp = () => timelineRealContentOverflowsViewport();
-        // The follow re-arm band, not the strict flag: streaming growth makes
-        // isAtEnd flicker false for a frame before the follow scroll catches
-        // up, and a gesture landing in that window while still pinned would
-        // otherwise break follow with no scroll event left to re-arm it.
-        const viewportIsAwayFromEnd = () =>
-          resolveTimelineIsAtEnd(legendListRef.current?.getState()) === false;
-        // Only an upward wheel is a navigation intent; wheeling down while
-        // following either does nothing (at the end) or moves toward it.
+        const viewportIsAwayFromEnd = () => !isTimelineAtLogicalEnd();
+        // Any outer-list navigation cancels pending placement. Nested scrolls keep their owner.
         const handleWheel = (event: WheelEvent) => {
           if (event.ctrlKey || !isTimelineScrollTarget(event.target, scrollNode, event.deltaY))
             return;
@@ -6181,18 +6233,10 @@ function ChatViewContent(props: ChatViewProps) {
           } else if (event.deltaY < 0) {
             timelineScrollIntentRef.current = "away-from-end";
           }
-          if (event.deltaY < 0 && contentScrollsUp()) {
-            handleManualNavigation();
-          }
+          handleManualNavigation();
         };
-        // Touch direction isn't observable here (touchmove fires on any
-        // finger motion, scrolling or not), so break only once the drag has
-        // actually carried the viewport out of the end band — an upward flick
-        // gets there within its first few events and later touchmoves break.
         const handleTouchMove = () => {
-          if (viewportIsAwayFromEnd()) {
-            handleManualNavigation();
-          }
+          handleManualNavigation();
         };
         // Scrollbar drags produce no wheel/touch events; they are the only
         // pointerdowns whose target is the scroll node itself rather than a
@@ -6253,9 +6297,7 @@ function ChatViewContent(props: ChatViewProps) {
             case "End":
             case "ArrowDown":
               timelineScrollIntentRef.current = "toward-end";
-              if (viewportIsAwayFromEnd()) {
-                handleManualNavigation();
-              }
+              handleManualNavigation();
               composerRef.current?.collapseForTimelineScrollKey(event.key);
               if (isTimelineAtLogicalEnd()) {
                 composerRef.current?.restoreAfterTimelineReachedEnd();
@@ -6293,22 +6335,15 @@ function ChatViewContent(props: ChatViewProps) {
     };
   }, [activeThread?.id, isTimelineAtLogicalEnd, timelineRealContentOverflowsViewport]);
 
-  const onTimelineAnchorReady = useCallback((messageId: MessageId, anchorIndex: number) => {
-    // Anchored-end space can be remeasured when the turn completes. Once the
-    // user has scrolled away (or returned to ordinary end-following), that
-    // remeasurement must not restart the send-time anchor positioning.
+  const onTimelineAnchorReady = useCallback((messageId: MessageId, _anchorIndex: number) => {
+    // Measurement updates may not restart a completed or cancelled placement.
     if (timelineScrollModeRef.current !== "anchoring-new-turn") {
       return;
     }
-    if (pendingTimelineAnchorRef.current === messageId) {
-      pendingTimelineAnchorRef.current = null;
-    }
-    activeTimelineAnchorIndexRef.current = anchorIndex;
     if (positionedTimelineAnchorRef.current === messageId) {
       return;
     }
     positionedTimelineAnchorRef.current = messageId;
-    settledTimelineAnchorRef.current = null;
     const positionAnchor = (remainingAttempts: number) => {
       requestAnimationFrame(() => {
         if (positionedTimelineAnchorRef.current !== messageId) {
@@ -6321,9 +6356,16 @@ function ChatViewContent(props: ChatViewProps) {
           }
           return;
         }
+        const currentAnchorIndex = list
+          .getState()
+          .data.findIndex(
+            (row: { kind: string; message?: { id: string } }) =>
+              row.kind === "message" && row.message?.id === messageId,
+          );
+        if (currentAnchorIndex < 0) return;
         void list
           .scrollToIndex({
-            index: anchorIndex,
+            index: currentAnchorIndex,
             animated: true,
             viewPosition: 0,
             viewOffset: CHAT_TIMELINE_ANCHOR_OFFSET,
@@ -6332,11 +6374,18 @@ function ChatViewContent(props: ChatViewProps) {
             if (positionedTimelineAnchorRef.current !== messageId) {
               return;
             }
-            settledTimelineAnchorRef.current = messageId;
+            setTimelinePositioningPending(false);
+            positionedTimelineAnchorRef.current = null;
+            timelineScrollModeRef.current = "free-scrolling";
+            legendListRef.current?.getScrollableNode()?.dispatchEvent(new Event("scroll"));
           });
       });
     };
     requestAnimationFrame(() => positionAnchor(12));
+  }, []);
+
+  const releaseUnusedTimelineAnchor = useCallback(() => {
+    setTimelineAnchor(releaseChatTimelineAnchor);
   }, []);
 
   const onToolOutputCollapsedAtEnd = useCallback(() => {
@@ -6344,107 +6393,34 @@ function ChatViewContent(props: ChatViewProps) {
   }, []);
 
   const onIsAtEndChange = useCallback((isAtEnd: boolean) => {
-    if (
-      !isAtEnd &&
-      liveFollowUserScrollGenerationRef.current === anchorUserScrollGenerationRef.current
-    ) {
-      showScrollDebouncer.current.cancel();
-      setShowScrollToBottom(false);
-      return;
-    }
-    if (isAtEndRef.current === isAtEnd) return;
     isAtEndRef.current = isAtEnd;
     if (isAtEnd) {
       if (timelineScrollIntentRef.current === "toward-end") {
         composerRef.current?.restoreAfterTimelineReachedEnd();
       }
-      timelineScrollModeRef.current = "following-end";
-      liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
-      setTimelineLiveFollowEnabled(true);
-      // Reachable only once manual navigation has already broken follow, so
-      // the anchored turn framing is over: the user scrolled back to the live
-      // edge and expects the stream to stick to it again, exactly like the
-      // scroll-to-bottom pill.
-      setTimelineAnchor(releaseChatTimelineAnchor);
       showScrollDebouncer.current.cancel();
       setShowScrollToBottom(false);
+      setUnreadBelowCount(0);
     } else {
-      timelineScrollModeRef.current = "free-scrolling";
-      liveFollowUserScrollGenerationRef.current = null;
       showScrollDebouncer.current.maybeExecute();
     }
   }, []);
 
-  // Anchored end space intentionally disables LegendList's normal end-follow so
-  // the sent message can stay near the top. T3 only owns streaming adjustments
-  // during that mode; LegendList owns ordinary end-follow everywhere else.
-  useEffect(() => {
-    if (!activeThread?.id) {
-      return;
-    }
-    if (liveFollowUserScrollGenerationRef.current !== anchorUserScrollGenerationRef.current) {
-      return;
-    }
-    if (timelineScrollModeRef.current !== "anchoring-new-turn") {
-      return;
-    }
-
-    let secondFrame: number | null = null;
-    const frame = requestAnimationFrame(() => {
-      secondFrame = requestAnimationFrame(() => {
-        if (liveFollowUserScrollGenerationRef.current !== anchorUserScrollGenerationRef.current) {
-          return;
-        }
-        if (pendingTimelineAnchorRef.current !== null) {
-          return;
-        }
-        if (
-          positionedTimelineAnchorRef.current !== null &&
-          settledTimelineAnchorRef.current !== positionedTimelineAnchorRef.current
-        ) {
-          return;
-        }
-        const list = legendListRef.current;
-        if (!list) {
-          return;
-        }
-
-        const metrics = getActiveTimelineTurnMetrics(list);
-        if (!metrics || metrics.scrollDeltaToRevealEnd <= 1) {
-          return;
-        }
-
-        const nextOffset = list.getState().scroll + metrics.scrollDeltaToRevealEnd;
-        void list.scrollToOffset({ offset: nextOffset, animated: false });
-      });
-    });
-
-    return () => {
-      cancelAnimationFrame(frame);
-      if (secondFrame !== null) {
-        cancelAnimationFrame(secondFrame);
-      }
-    };
-  }, [activeThread?.id, timelineEntries, getActiveTimelineTurnMetrics]);
-
   useEffect(() => {
     setPullRequestDialogState(null);
-    const followEnd = readTimelinePosition(routeThreadKey)?.atEnd !== false;
-    isAtEndRef.current = followEnd;
     timelineScrollIntentRef.current = null;
-    timelineScrollModeRef.current = followEnd ? "following-end" : "free-scrolling";
-    liveFollowUserScrollGenerationRef.current = followEnd
-      ? anchorUserScrollGenerationRef.current
-      : null;
-    setTimelineLiveFollowEnabled(followEnd);
-    pendingTimelineAnchorRef.current = null;
+    timelineScrollModeRef.current = "free-scrolling";
+    setReadingFollowPromptId(null);
+    setTimelinePositioningPending(false);
+    programmaticScrollPendingRef.current = false;
     positionedTimelineAnchorRef.current = null;
-    settledTimelineAnchorRef.current = null;
-    activeTimelineAnchorIndexRef.current = null;
     showScrollDebouncer.current.cancel();
-    setShowScrollToBottom(!followEnd);
-    // activeThreadRef resets transitively with the active thread.
-  }, [activeThread?.id, routeThreadKey]);
+    setShowScrollToBottom(false);
+    setUnreadBelowCount(0);
+    return () => {
+      anchorUserScrollGenerationRef.current += 1;
+    };
+  }, [routeThreadKey]);
 
   useEffect(() => {
     if (!activeThread?.id || terminalUiState.terminalOpen) return;
@@ -7215,7 +7191,24 @@ function ChatViewContent(props: ChatViewProps) {
       }),
     [feedbackSubmissions, routeThreadKey],
   );
+  // SCIENT-FORK:START — an imported thread says where it came from until its
+  // first provider session starts.
+  const [dismissedImportNoticeThreadId, setDismissedImportNoticeThreadId] = useState<string | null>(
+    null,
+  );
+  const conversationImportBanner = useMemo(
+    () =>
+      activeServerThread == null || dismissedImportNoticeThreadId === activeServerThread.id
+        ? null
+        : conversationImportBannerItem(activeServerThread, () =>
+            setDismissedImportNoticeThreadId(activeServerThread.id),
+          ),
+    [activeServerThread, dismissedImportNoticeThreadId],
+  );
+  // SCIENT-FORK:END
   const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
+    const conversationImportItems =
+      conversationImportBanner === null ? [] : [conversationImportBanner];
     const tokenLimitItems: ComposerBannerStackItem[] = hasTokenLimitNotice
       ? [
           {
@@ -7241,73 +7234,25 @@ function ChatViewContent(props: ChatViewProps) {
     // The user asked for this one, so it leads the notice tier instead of trailing it.
     const usageLimitsItems = usageLimitsBanner === null ? [] : [usageLimitsBanner];
     const projectCloneItems = projectCloneBannerItem === null ? [] : [projectCloneBannerItem];
-    const gitUnavailableItems: ComposerBannerStackItem[] =
-      gitUnavailable && gitNoticeKey !== null && dismissedGitNoticeKey !== gitNoticeKey
-        ? [
-            {
-              id: `git-unavailable:${gitNoticeKey}`,
-              variant: "info",
-              icon: <GitBranchIcon />,
-              title: "Git isn’t installed",
-              description:
-                "Git features are unavailable, but you can continue using Scient normally.",
-              actions: (
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  disabled={
-                    !activeThread ||
-                    !queueEditsReady ||
-                    queueEdit !== undefined ||
-                    isWorking ||
-                    isSendBusy ||
-                    isConnecting ||
-                    isRevertingCheckpoint ||
-                    !clientSettingsHydrated ||
-                    threadDetailLoading ||
-                    activeEnvironmentUnavailable ||
-                    activePendingProgress !== null ||
-                    !selectedProviderEntry?.enabled ||
-                    !selectedProviderEntry.isAvailable ||
-                    selectedProviderEntry.status !== "ready"
-                  }
-                  onClick={() => {
-                    gitInstallRefreshStateRef.current = {
-                      key: gitNoticeKey,
-                      sawWorking: isWorking,
-                    };
-                    void onSend(undefined, "foreground", undefined, {
-                      directPrompt: INSTALL_GIT_AGENT_PROMPT,
-                    });
-                  }}
-                >
-                  Ask agent to install
-                </Button>
-              ),
-              dismissLabel: "Dismiss Git notice",
-              onDismiss: () => setDismissedGitNoticeKey(gitNoticeKey),
-            },
-          ]
-        : [];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
         ...feedbackBannerItems,
         ...usageLimitsItems,
         ...projectCloneItems,
-        ...gitUnavailableItems,
         ...systemComposerBannerItems,
         ...tokenLimitItems,
         ...backgroundLivenessItems,
         ...resumeCompactionItems,
         ...wokeThreadItems,
         ...parkedThreadItems,
+        ...conversationImportItems,
       ];
     }
     return [
+      ...conversationImportItems,
       ...feedbackBannerItems,
       ...usageLimitsItems,
       ...projectCloneItems,
-      ...gitUnavailableItems,
       ...systemComposerBannerItems,
       ...tokenLimitItems,
       ...backgroundLivenessItems,
@@ -7359,11 +7304,11 @@ function ChatViewContent(props: ChatViewProps) {
     activePendingProgress,
     activeThread,
     backgroundLivenessBannerItem,
+    conversationImportBanner,
     clientSettingsHydrated,
     hasTokenLimitNotice,
     tokenLimitNoticeKey,
     feedbackBannerItems,
-    gitNoticeKey,
     gitUnavailable,
     handleRestoreThreadBranch,
     isRestoringThreadBranch,
@@ -7381,7 +7326,6 @@ function ChatViewContent(props: ChatViewProps) {
     systemComposerBannerItems,
     threadDetailLoading,
     usageLimitsBanner,
-    dismissedGitNoticeKey,
     wokeThreadBannerItem,
   ]);
   useEffect(() => {
@@ -7803,12 +7747,6 @@ function ChatViewContent(props: ChatViewProps) {
     };
   }, [activeThreadId, composerRef]);
 
-  const [pendingRevert, setPendingRevert] = useState<{
-    turnCount: number;
-    messageId: MessageId;
-    routeThreadKey: string;
-  } | null>(null);
-
   if (pendingRevert && pendingRevert.routeThreadKey !== routeThreadKey) {
     setPendingRevert(null);
   }
@@ -7823,21 +7761,31 @@ function ChatViewContent(props: ChatViewProps) {
       if (!message || message.role !== "user") return;
 
       if (!supportsConversationRollback) {
-        setThreadError(
-          activeThread.id,
-          "This provider does not support reverting conversation history. Start a new thread instead.",
-        );
+        setPendingRevert({
+          turnCount,
+          messageId,
+          routeThreadKey,
+          error:
+            "This provider does not support reverting conversation history. Start a new thread instead.",
+        });
         return;
       }
       if (activeEnvironmentUnavailable && activeEnvironmentUnavailableLabel) {
-        setThreadError(
-          activeThread.id,
-          `Reconnect ${activeEnvironmentUnavailableLabel} before reverting checkpoints.`,
-        );
+        setPendingRevert({
+          turnCount,
+          messageId,
+          routeThreadKey,
+          error: `Reconnect ${activeEnvironmentUnavailableLabel} before rewinding.`,
+        });
         return;
       }
       if (phase === "running" || isSendBusy || isConnecting) {
-        setThreadError(activeThread.id, "Interrupt the current turn before reverting checkpoints.");
+        setPendingRevert({
+          turnCount,
+          messageId,
+          routeThreadKey,
+          error: "Stop the current turn before rewinding.",
+        });
         return;
       }
       if (restoreFiles === undefined) {
@@ -7845,6 +7793,7 @@ function ChatViewContent(props: ChatViewProps) {
         return;
       }
 
+      setPendingRevert({ turnCount, messageId, routeThreadKey });
       useComposerDraftStore.setState((store) => ({
         rewindingThreadKeys: new Set(store.rewindingThreadKeys).add(routeThreadKey),
       }));
@@ -7913,10 +7862,18 @@ function ChatViewContent(props: ChatViewProps) {
               composerRef.current?.focusAtEnd();
           });
         }
+        setPendingRevert((current) =>
+          current?.routeThreadKey === routeThreadKey ? null : current,
+        );
       } catch (error) {
-        setThreadError(
-          activeThread.id,
-          error instanceof Error ? error.message : "Failed to revert thread state.",
+        setPendingRevert((current) =>
+          current?.routeThreadKey === routeThreadKey
+            ? {
+                ...current,
+                error:
+                  error instanceof Error ? error.message : "Could not rewind this conversation.",
+              }
+            : current,
         );
       } finally {
         useComposerDraftStore.setState((store) => {
@@ -7948,6 +7905,7 @@ function ChatViewContent(props: ChatViewProps) {
   );
 
   const onCompactContext = async () => {
+    const readingPositionAtSend = captureSendReadingPosition();
     if (compactDisabled || !activeThread || !clientSettingsHydrated || sendInFlightRef.current) {
       return;
     }
@@ -7973,7 +7931,7 @@ function ChatViewContent(props: ChatViewProps) {
         streaming: false,
       },
     ]);
-    scrollToEnd();
+    frameSubmittedMessage(messageId, readingPositionAtSend);
     try {
       const settingsResult = await persistThreadSettingsForNextTurn({
         threadId,
@@ -8032,6 +7990,7 @@ function ChatViewContent(props: ChatViewProps) {
     // SCIENT-FORK:END
   ) {
     e?.preventDefault();
+    const readingPositionAtSend = captureSendReadingPosition();
     const directPrompt = options?.directPrompt?.trim() || null;
     // Typed out in full rather than picked from the menu. Attachments or contexts
     // mean the user is sending a prompt, so those go through as usual.
@@ -8331,6 +8290,7 @@ function ChatViewContent(props: ChatViewProps) {
       composerRef.current?.resetCursorState();
       const followUpSent = await onSubmitPlanFollowUp({
         text: followUp.text,
+        readingPositionAtSend,
         context: buildMessageContext({
           terminalContexts: sendableComposerTerminalContexts,
           reviewComments: composerReviewComments,
@@ -9066,25 +9026,7 @@ function ChatViewContent(props: ChatViewProps) {
             ...(attachment.source ? { source: attachment.source } : {}),
           },
     );
-    const shouldAnchorFirstMessage =
-      activeThread.latestTurn === null &&
-      !timelineMessages.some((message) => message.role === "user");
-    if (shouldAnchorFirstMessage) {
-      isAtEndRef.current = true;
-      timelineScrollModeRef.current = "anchoring-new-turn";
-      liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
-      setTimelineLiveFollowEnabled(true);
-      pendingTimelineAnchorRef.current = messageIdForSend;
-      activeTimelineAnchorIndexRef.current = null;
-      showScrollDebouncer.current.cancel();
-      setShowScrollToBottom(false);
-      setTimelineAnchor({
-        threadKey: scopedThreadKey(scopeThreadRef(activeThread.environmentId, threadIdForSend)),
-        messageId: messageIdForSend,
-      });
-    } else {
-      scrollToEnd();
-    }
+    frameSubmittedMessage(messageIdForSend, readingPositionAtSend);
     setOptimisticUserMessages((existing) => [
       ...existing,
       {
@@ -9455,21 +9397,6 @@ function ChatViewContent(props: ChatViewProps) {
       resetLocalDispatch();
     }
   }
-  useEffect(() => {
-    const refreshState = gitInstallRefreshStateRef.current;
-    if (refreshState === null) return;
-    if (refreshState.key !== gitNoticeKey) {
-      gitInstallRefreshStateRef.current = null;
-      return;
-    }
-    if (isWorking) {
-      refreshState.sawWorking = true;
-      return;
-    }
-    if (!refreshState.sawWorking) return;
-    gitStatusQuery.refresh();
-    gitInstallRefreshStateRef.current = null;
-  }, [gitNoticeKey, gitStatusQuery, isWorking]);
 
   // SCIENT-FORK:START — actions mutate the captured thread queue. Only the
   // server worker admits queued messages into orchestration.
@@ -9528,16 +9455,12 @@ function ChatViewContent(props: ChatViewProps) {
         },
       });
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-        const error = squashAtomCommandFailure(result);
-        setThreadError(
-          activeThreadId,
-          error instanceof Error ? error.message : "Failed to submit approval decision.",
-        );
+        setRequestResponseError(requestId, "Approval could not be sent. Try again.");
       }
       setRespondingRequestIds((existing) => existing.filter((id) => id !== requestId));
       return result;
     },
-    [activeThreadId, environmentId, respondToThreadApproval, setThreadError],
+    [activeThreadId, environmentId, respondToThreadApproval, setRequestResponseError],
   );
 
   const onRespondToUserInput = useCallback(
@@ -9562,8 +9485,8 @@ function ChatViewContent(props: ChatViewProps) {
         if (attachments.length === 0) continue;
         const uploaded = getUploadedAttachments({ environmentId, images: attachments });
         if (!uploaded) {
-          setThreadError(
-            activeThreadId,
+          setRequestResponseError(
+            requestId,
             "Wait for attachments to finish uploading, or remove failed uploads.",
           );
           return;
@@ -9589,11 +9512,7 @@ function ChatViewContent(props: ChatViewProps) {
         },
       });
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-        const error = squashAtomCommandFailure(result);
-        setThreadError(
-          activeThreadId,
-          error instanceof Error ? error.message : "Failed to submit user input.",
-        );
+        setRequestResponseError(requestId, "Your response could not be sent. Try again.");
       }
       userInputResponsesInFlight.current.delete(responseKey);
       setRespondingUserInputRequestIds((existing) => existing.filter((id) => id !== requestId));
@@ -9605,7 +9524,7 @@ function ChatViewContent(props: ChatViewProps) {
       activePendingIsResponding,
       environmentId,
       respondToThreadUserInput,
-      setThreadError,
+      setRequestResponseError,
     ],
   );
 
@@ -9623,16 +9542,12 @@ function ChatViewContent(props: ChatViewProps) {
         input: { threadId: activeThreadId, requestId },
       });
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-        const error = squashAtomCommandFailure(result);
-        setThreadError(
-          activeThreadId,
-          error instanceof Error ? error.message : "Failed to dismiss the question.",
-        );
+        setRequestResponseError(requestId, "The question could not be dismissed. Try again.");
       }
       setRespondingUserInputRequestIds((existing) => existing.filter((id) => id !== requestId));
       return result;
     },
-    [activeThreadId, dismissThreadUserInput, environmentId, setThreadError],
+    [activeThreadId, dismissThreadUserInput, environmentId, setRequestResponseError],
   );
 
   const setActivePendingUserInputQuestionIndex = useCallback(
@@ -9775,7 +9690,9 @@ function ChatViewContent(props: ChatViewProps) {
       context,
       interactionMode: nextInteractionMode,
       selectedScientSkillNames,
+      readingPositionAtSend,
     }: {
+      readingPositionAtSend?: ReturnType<typeof captureSendReadingPosition>;
       text: string;
       context?: ReturnType<typeof buildMessageContext>;
       interactionMode: "default" | "plan";
@@ -9825,7 +9742,10 @@ function ChatViewContent(props: ChatViewProps) {
       beginLocalDispatch({ preparingWorktree: false });
       setThreadError(threadIdForSend, null);
 
-      scrollToEnd();
+      frameSubmittedMessage(
+        messageIdForSend,
+        readingPositionAtSend ?? captureSendReadingPosition(),
+      );
 
       setOptimisticUserMessages((existing) => [
         ...existing,
@@ -9932,7 +9852,8 @@ function ChatViewContent(props: ChatViewProps) {
       persistThreadSettingsForNextTurn,
       resetLocalDispatch,
       runtimeMode,
-      scrollToEnd,
+      captureSendReadingPosition,
+      frameSubmittedMessage,
       setComposerDraftInteractionMode,
       setThreadError,
       startThreadTurn,
@@ -10826,6 +10747,12 @@ function ChatViewContent(props: ChatViewProps) {
             activeThreadId={activeThread.id}
             {...(routeKind === "draft" && draftId ? { draftId } : {})}
             activeThreadTitle={activeThread.title}
+            conversationImport={
+              activeServerThread?.conversationImport ??
+              activeServerThread?.forkLineage?.sourceImport ??
+              null
+            }
+            importSessionStarted={activeServerThread?.session != null}
             isServerThread={isServerThread}
             activeProject={activeProject}
             openInCwd={gitCwd}
@@ -10967,13 +10894,17 @@ function ChatViewContent(props: ChatViewProps) {
                 anchorMessageId={paintOnlyDisplayedTimeline ? null : timelineAnchorMessageId}
                 onAnchorReady={onTimelineAnchorReady}
                 contentInsetEndAdjustment={composerTimelineInset}
-                liveFollowEnabled={!paintOnlyDisplayedTimeline && timelineLiveFollowEnabled}
+                timelinePositioningPending={timelinePositioningPending}
+                readingFollowPromptId={readingFollowPromptId}
+                onReleaseUnusedAnchor={releaseUnusedTimelineAnchor}
                 onIsAtEndChange={onIsAtEndChange}
+                onUnreadBelowChange={setUnreadBelowCount}
                 onContentOverflowChange={setTimelineOverflows}
                 onToolOutputCollapsedAtEnd={onToolOutputCollapsedAtEnd}
-                onManualNavigation={cancelTimelineLiveFollowForUserNavigation}
+                onManualNavigation={cancelTimelinePositioning}
                 cancelPositionRestoreRef={cancelPositionRestoreRef}
                 hideEmptyPlaceholder={isDraftHeroState || threadDetailLoading}
+                positionHistoryLoading={paintOnlyDisplayedTimeline || threadDetailLoading}
                 topFadeEnabled={!hasTimelineTopBanner}
                 loadEarlier={paintOnlyDisplayedTimeline ? null : loadEarlierTurns}
               />
@@ -10985,7 +10916,11 @@ function ChatViewContent(props: ChatViewProps) {
                   style={{ bottom: scrollToEndClearance + 4 }}
                 >
                   <Button
-                    aria-label="Scroll to end"
+                    aria-label={
+                      unreadBelowCount > 0
+                        ? `Scroll to end, ${unreadBelowCount} unread ${unreadBelowCount === 1 ? "message" : "messages"} below`
+                        : "Scroll to end"
+                    }
                     onPointerDown={(event) => event.preventDefault()}
                     onClick={() => {
                       composerRef.current?.restoreAfterTimelineReachedEnd();
@@ -10998,6 +10933,14 @@ function ChatViewContent(props: ChatViewProps) {
                     <ChevronDownIcon className="size-3.5" />
                     Scroll to end
                   </Button>
+                  {unreadBelowCount > 0 && (
+                    <span
+                      aria-hidden="true"
+                      className="pointer-events-none absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full border border-info/20 bg-background/90 bg-linear-to-b from-info/5 to-info/5 px-1 text-3xs leading-none font-semibold text-info-foreground tabular-nums backdrop-blur-sm"
+                    >
+                      {unreadBelowCount > 99 ? "99+" : unreadBelowCount}
+                    </span>
+                  )}
                 </div>
               )}
             </div>
@@ -11504,7 +11447,7 @@ function ChatViewContent(props: ChatViewProps) {
       <AlertDialog
         open={pendingRevert !== null && pendingRevert.routeThreadKey === routeThreadKey}
         onOpenChange={(open) => {
-          if (!open) setPendingRevert(null);
+          if (!open && !isRevertingCheckpoint) setPendingRevert(null);
         }}
       >
         <AlertDialogPopup>
@@ -11518,14 +11461,42 @@ function ChatViewContent(props: ChatViewProps) {
                 : null}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {fileHistoryIssue ? (
+            <details className="text-sm text-muted-foreground">
+              <summary>File history diagnostics</summary>
+              <p>
+                Some file history or change comparisons were unavailable in this conversation. This
+                does not affect the agent’s answers.
+              </p>
+              <pre className="whitespace-pre-wrap break-words">
+                {JSON.stringify(fileHistoryIssue.payload, null, 2)}
+              </pre>
+            </details>
+          ) : null}
+          {pendingRevert?.error ? (
+            <div role="alert" className="space-y-2 text-sm">
+              <p>
+                Could not rewind this conversation. Your current conversation and files may need
+                review before retrying.
+              </p>
+              <details>
+                <summary>Details</summary>
+                <pre className="whitespace-pre-wrap break-words">{pendingRevert.error}</pre>
+              </details>
+            </div>
+          ) : null}
           <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <AlertDialogClose
+              render={<Button variant="outline" disabled={isRevertingCheckpoint} />}
+            >
+              Cancel
+            </AlertDialogClose>
             {activeWorktreePath !== null ? (
               <Button
                 variant="destructive"
+                disabled={isRevertingCheckpoint}
                 onClick={() => {
                   if (!pendingRevert || pendingRevert.routeThreadKey !== routeThreadKey) return;
-                  setPendingRevert(null);
                   void onRevertToTurnCount(pendingRevert.turnCount, pendingRevert.messageId, true);
                 }}
               >
@@ -11533,9 +11504,9 @@ function ChatViewContent(props: ChatViewProps) {
               </Button>
             ) : null}
             <Button
+              disabled={isRevertingCheckpoint}
               onClick={() => {
                 if (!pendingRevert || pendingRevert.routeThreadKey !== routeThreadKey) return;
-                setPendingRevert(null);
                 void onRevertToTurnCount(pendingRevert.turnCount, pendingRevert.messageId, false);
               }}
             >

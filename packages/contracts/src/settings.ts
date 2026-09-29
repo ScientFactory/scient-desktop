@@ -99,6 +99,13 @@ const DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT: SidebarThreadPreviewCount = 6;
  * on each thread, so removing a catalog entry leaves its threads' IDs intact:
  * they read as unsectioned, and restoring the entry brings them back.
  */
+/** A physical project: the environment it lives on and its id there. */
+export const ThreadSectionProjectRef = Schema.Struct({
+  environmentId: TrimmedNonEmptyString,
+  projectId: TrimmedNonEmptyString,
+});
+export type ThreadSectionProjectRef = typeof ThreadSectionProjectRef.Type;
+
 export const ThreadSection = Schema.Struct({
   id: ThreadSectionId,
   name: TrimmedNonEmptyString,
@@ -111,6 +118,14 @@ export const ThreadSection = Schema.Struct({
    * single client or server sees every environment's threads.
    */
   environmentIds: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
+  /**
+   * The projects the section was created for: the sidebar's selected project,
+   * plus the projects of any threads filed into it on creation. A sidebar
+   * scoped to one project lists a section once that project has threads in
+   * it; while the section has no threads anywhere, it is listed only in these
+   * projects (and under All projects).
+   */
+  createdInProjects: Schema.optionalKey(Schema.Array(ThreadSectionProjectRef)),
 });
 export type ThreadSection = typeof ThreadSection.Type;
 
@@ -129,7 +144,12 @@ export const ThreadSectionsPrecondition = Schema.Struct({
 });
 export type ThreadSectionsPrecondition = typeof ThreadSectionsPrecondition.Type;
 
-/** Whether two catalogs hold the same entries in the same order. */
+/**
+ * Whether two catalogs hold the same entries in the same order. Leaves out
+ * `createdInProjects`: clients that predate it drop the field when they read
+ * the catalog, and must still pass the write precondition. The server keeps
+ * the stored refs on every write instead, since refs are only ever added.
+ */
 export function threadSectionCatalogsEqual(left: ThreadSections, right: ThreadSections): boolean {
   const sameIds = (a?: ReadonlyArray<string>, b?: ReadonlyArray<string>) =>
     (a ?? []).length === (b ?? []).length && (a ?? []).every((id, index) => id === b?.[index]);
@@ -868,6 +888,46 @@ export const PiSettings = makeProviderSettingsSchema(
 );
 export type PiSettings = typeof PiSettings.Type;
 
+export const OmpSettings = makeProviderSettingsSchema(
+  {
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    binaryPath: makeBinaryPathSetting("omp").pipe(
+      Schema.annotateKey({
+        title: "Binary path",
+        description: "Path to the Oh My Pi executable (18.2.8 or newer).",
+        providerSettingsForm: { placeholder: "omp", clearWhenEmpty: "omit" },
+      }),
+    ),
+    customModels: Schema.Array(CustomModelSetting).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    homePath: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Oh My Pi home",
+        description:
+          "Optional PI_CODING_AGENT_DIR for this instance. Leave empty to use the server's normal Oh My Pi home and credentials, which every empty-home instance shares. Set a directory to isolate this instance; do not combine it with a named profile.",
+        providerSettingsForm: { placeholder: "~/.omp/agent", clearWhenEmpty: "omit" },
+      }),
+    ),
+    profile: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Oh My Pi profile",
+        description:
+          "Optional OMP_PROFILE for this instance. Leave empty to use Oh My Pi's default profile. A profile name asks Oh My Pi to use that profile's agent directory; do not combine it with a custom home.",
+        providerSettingsForm: { placeholder: "work", clearWhenEmpty: "omit" },
+      }),
+    ),
+  },
+  { order: ["binaryPath", "homePath", "profile"] },
+);
+export type OmpSettings = typeof OmpSettings.Type;
+
 export const DroidSettings = makeProviderSettingsSchema(
   {
     // Off by default (like Cursor, Grok, and OpenCode): the binding is not
@@ -1058,6 +1118,19 @@ export const UsageAccountingSourceConfig = Schema.Struct({
   enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
 });
 export type UsageAccountingSourceConfig = typeof UsageAccountingSourceConfig.Type;
+
+/**
+ * Bitbucket API credentials for this environment, used before the
+ * `T3CODE_BITBUCKET_*` environment variables. The tokens live in the server's
+ * secret store; settings and clients only see a redaction marker when one is
+ * set. The access token wins when both kinds are configured.
+ */
+export const BitbucketSettings = Schema.Struct({
+  email: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  accessToken: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  apiToken: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+});
+export type BitbucketSettings = typeof BitbucketSettings.Type;
 
 export const ObservabilitySettings = Schema.Struct({
   otlpTracesUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
@@ -1476,6 +1549,7 @@ export const ServerSettings = Schema.Struct({
     opencode: OpenCodeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     droid: DroidSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     pi: PiSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    omp: OmpSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     antigravity: AntigravitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // New driver-agnostic instance map. Keyed by `ProviderInstanceId`; values
@@ -1487,6 +1561,7 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  bitbucket: BitbucketSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // Keyed by a user-chosen id so a source keeps its rows across edits. Entries
   // this build cannot decode round-trip untouched, as provider instances do.
   usageLimitSources: Schema.Record(UsageLimitSourceId, UsageLimitSourceConfig).pipe(
@@ -1496,7 +1571,9 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
   /** Allows this server to read the Cursor CLI's macOS Keychain login for account usage. */
-  cursorKeychainUsageEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  cursorKeychainUsageEnabled: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
   /** Exact model IDs, applied to past and future usage on this environment. */
   usagePriceOverrides: Schema.Record(TrimmedNonEmptyString, UsageModelPriceOverride).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
@@ -1666,6 +1743,13 @@ const PiSettingsPatch = Schema.Struct({
   binaryPath: Schema.optionalKey(TrimmedString),
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
+
+const OmpSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  binaryPath: Schema.optionalKey(TrimmedString),
+  homePath: Schema.optionalKey(TrimmedString),
+  profile: Schema.optionalKey(TrimmedString),
+});
 export const ServerSettingsPatch = Schema.Struct({
   // SCIENT-FORK:START — replaces the whole catalog; omitted leaves it alone.
   threadSections: Schema.optionalKey(ThreadSections),
@@ -1782,6 +1866,14 @@ export const ServerSettingsPatch = Schema.Struct({
       otlpLogsUrl: Schema.optionalKey(TrimmedString),
     }),
   ),
+  /** An empty token clears it; an omitted one keeps what the server has. */
+  bitbucket: Schema.optionalKey(
+    Schema.Struct({
+      email: Schema.optionalKey(TrimmedString),
+      accessToken: Schema.optionalKey(TrimmedString),
+      apiToken: Schema.optionalKey(TrimmedString),
+    }),
+  ),
   providers: Schema.optionalKey(
     Schema.Struct({
       codex: Schema.optionalKey(CodexSettingsPatch),
@@ -1791,6 +1883,7 @@ export const ServerSettingsPatch = Schema.Struct({
       opencode: Schema.optionalKey(OpenCodeSettingsPatch),
       droid: Schema.optionalKey(DroidSettingsPatch),
       pi: Schema.optionalKey(PiSettingsPatch),
+      omp: Schema.optionalKey(OmpSettingsPatch),
       antigravity: Schema.optionalKey(AntigravitySettingsPatch),
     }),
   ),

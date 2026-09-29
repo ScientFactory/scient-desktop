@@ -28,6 +28,8 @@ vi.mock("../../components/ui/toast", () => ({
 }));
 vi.mock("../../hooks/showThreadUndoNotice", () => ({ showThreadUndoNotice: vi.fn() }));
 
+import { showThreadUndoNotice } from "../../hooks/showThreadUndoNotice";
+import { stackedThreadToast, toastManager } from "../../components/ui/toast";
 import { useThreadSectionActions } from "./actions";
 
 const target = scopeThreadRef(EnvironmentId.make("remote"), ThreadId.make("thread"));
@@ -91,5 +93,41 @@ describe("section membership registration", () => {
     expect((await actions.setThreadSection(target, null))._tag).toBe("Success");
     expect(mocks.record).not.toHaveBeenCalled();
     expect(mocks.mutate).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("moving threads into a section", () => {
+  const other = scopeThreadRef(EnvironmentId.make("remote"), ThreadId.make("other"));
+
+  it("files every thread and offers an Undo that restores its previous section", async () => {
+    expect(await actions.moveThreadsToSection([target, other], section)).toBe(true);
+    expect(mocks.mutate).toHaveBeenCalledTimes(2);
+    expect(mocks.mutate).toHaveBeenCalledWith({
+      environmentId: other.environmentId,
+      input: { threadId: other.threadId, sectionId: section },
+    });
+    const notices = vi.mocked(showThreadUndoNotice).mock.calls;
+    expect(notices).toHaveLength(2);
+    expect(notices[0]?.[0]).toMatchObject({ action: "Moved" });
+    // Undo writes the thread's previous section (General) back.
+    mocks.shell.mockReturnValue({ sectionId: section });
+    await notices[0]![0].undo();
+    expect(mocks.mutate).toHaveBeenLastCalledWith({
+      environmentId: target.environmentId,
+      input: { threadId: target.threadId, sectionId: null },
+    });
+  });
+
+  it("reports a filing failure instead of silently leaving the section empty", async () => {
+    mocks.record.mockResolvedValue(false);
+    expect(await actions.moveThreadsToSection([target], section)).toBe(false);
+    expect(mocks.mutate).not.toHaveBeenCalled();
+    expect(showThreadUndoNotice).not.toHaveBeenCalled();
+    vi.mocked(stackedThreadToast).mockImplementation((toast) => toast as never);
+    await actions.moveThreadsToSection([target], section);
+    // The notice is actually shown, not only built.
+    expect(vi.mocked(toastManager.add)).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "error", title: "Failed to move thread to section" }),
+    );
   });
 });

@@ -9,6 +9,8 @@ import type {
   VoiceTranscribeRequest,
 } from "@t3tools/contracts";
 
+import { randomUUID } from "../../lib/utils.ts";
+
 import { type VoiceRecorderErrorKind, useVoiceRecorder } from "./useVoiceRecorder.ts";
 import type { VoiceTranscriptionClient } from "./voiceClient.ts";
 import { describeVoiceError } from "./voiceErrorPresentation.ts";
@@ -134,6 +136,7 @@ export function useScientVoiceController({
   const [elapsedMs, setElapsedMs] = useState(0);
   const phaseRef = useRef<VoicePhase>("idle");
   const operationRef = useRef(0);
+  const transcriptionRequestRef = useRef<string | null>(null);
   const recordingStartedAtRef = useRef(0);
   const downloadModelIdRef = useRef<VoiceModelId | null>(null);
   const pendingCorrectionRef = useRef<PendingVoiceCorrection | null>(null);
@@ -181,8 +184,11 @@ export function useScientVoiceController({
           languageMode: language ? "explicit" : "automatic",
         },
       });
+      const requestId = randomUUID();
+      transcriptionRequestRef.current = requestId;
       try {
         const request: VoiceTranscribeRequest = {
+          requestId,
           audioBase64: clip.base64,
           mimeType: "audio/wav",
           sampleRateHz: clip.sampleRateHz,
@@ -190,6 +196,7 @@ export function useScientVoiceController({
           ...(language ? { language } : {}),
         };
         const transcript = await client.transcribe(request);
+        if (transcriptionRequestRef.current === requestId) transcriptionRequestRef.current = null;
         if (operation !== operationRef.current) return;
         const text = transcript.text.trim();
         if (!text) {
@@ -248,6 +255,7 @@ export function useScientVoiceController({
           },
         });
       } catch (error) {
+        if (transcriptionRequestRef.current === requestId) transcriptionRequestRef.current = null;
         if (operation !== operationRef.current) return;
         pendingCorrectionRef.current = null;
         setPhase("idle");
@@ -424,10 +432,12 @@ export function useScientVoiceController({
             })
             .catch(() => undefined)
         : undefined;
-    const cancelHost =
-      phaseRef.current === "transcribing"
-        ? client?.cancelTranscription().catch(() => undefined)
-        : undefined;
+    const requestId = transcriptionRequestRef.current;
+    transcriptionRequestRef.current = null;
+    const cancelHost = requestId
+      ? client?.cancelTranscriptionRequest?.({ requestId }).catch(() => undefined)
+      : undefined;
+    phaseRef.current = "idle";
     await Promise.all([cancelRecording(), cancelDownload, cancelHost]);
     if (operation !== operationRef.current) return;
     if (cancelledPhase === "recording" || cancelledPhase === "transcribing") {
@@ -450,6 +460,7 @@ export function useScientVoiceController({
   }, [setPhase]);
 
   autoStopRef.current = (clip) => {
+    if (phaseRef.current !== "recording") return;
     const operation = (operationRef.current += 1);
     void transcribe(clip, false, operation);
   };
@@ -496,10 +507,14 @@ export function useScientVoiceController({
   useEffect(
     () => () => {
       operationRef.current += 1;
+      phaseRef.current = "idle";
       pendingCorrectionRef.current?.abortController.abort();
       pendingCorrectionRef.current = null;
       void cancelRecording();
-      void client?.cancelTranscription();
+      const requestId = transcriptionRequestRef.current;
+      transcriptionRequestRef.current = null;
+      if (requestId)
+        void client?.cancelTranscriptionRequest?.({ requestId }).catch(() => undefined);
     },
     [cancelRecording, client],
   );

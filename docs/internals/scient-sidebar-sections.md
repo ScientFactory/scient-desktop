@@ -35,10 +35,11 @@ Everything in upstream-owned files is a mount, listed under [Seams](#seams).
   `thread.section.set` command. Like T3's `thread.active.reorder`, it emits
   `thread.meta-updated` with the thread's _unchanged_ `updatedAt`. So
   organizing never reads as activity, reorders a list, or changes a timestamp.
-- **Catalog:** names, order, `emptySince` and `environmentIds` live in
-  `threadSections` in the **primary** environment's server settings. Every
-  window and client shares it, and threads in other environments keep ids
-  that resolve against that one catalog.
+- **Catalog:** names, order, `emptySince`, `environmentIds` and
+  `createdInProjects` live in `threadSections` in the **primary**
+  environment's server settings. Every window and client shares it, and
+  threads in other environments keep ids that resolve against that one
+  catalog.
 
 **Catalog writes are conditional.** Clients replace the whole catalog, so two
 clients editing at once could each overwrite the other's edit.
@@ -52,6 +53,19 @@ clients editing at once could each overwrite the other's edit.
   and reapplies it to the catalog the server holds, up to three times
   (`writeCatalog`).
 - **Within one client**, writes also run one at a time.
+- **A missing section is confirmed before it is trusted.** A write resolves
+  before the settings stream delivers it, so the local copy can lack a
+  section this client just created. An edit that needs a section it cannot
+  find (registering environments, rename, remove) first sends a write that
+  changes nothing, conditional on its copy; only if the server accepts it is
+  the section really gone. Otherwise the edit reruns on the server's catalog.
+  Without this, New section… created the section and then failed to file the
+  thread into it.
+- **Creation projects are add-only.** The precondition leaves out
+  `createdInProjects`, so clients that predate it (and drop it when reading)
+  can still write. The server merges the stored refs back into every written
+  catalog instead, so neither those clients nor a write from a trailing copy
+  can erase them.
 
 **General is built in.**
 
@@ -76,6 +90,34 @@ Because it's one rule, the field never shows a name that saves differently.
 
 ### Behavior
 
+**New section… files its threads.** Creating a section from a thread menu
+(or the chat header) creates it already registered for those threads'
+environments and projects, then files them. The dialog and the inline row
+say which threads it is for.
+
+**A fork stays in its origin's section.** The fork decision emits the
+origin's `sectionId` as `thread.meta-updated` right after `thread.created`,
+so the fork is never briefly unsectioned. A removed section's id reads as
+General, as for the origin.
+
+**Sections follow the sidebar's project scope.** Under All projects every
+section is listed. With a project selected (`sectionIdsInProjectScope`):
+
+- **Where it has threads:** a section is listed when any unarchived thread of
+  the project is in it, on any shelf. A section with threads in two projects
+  is listed under both, with only that project's threads.
+- **Empty sections:** a section with no threads anywhere is listed only in
+  the projects in its `createdInProjects`: the project selected when it was
+  created (published by the sidebar for creation elsewhere,
+  `sidebarScope.ts`) and the projects of the threads filed on creation. One
+  without that record, such as a section created before this, lists only
+  under All projects. "No threads anywhere" is concluded only while every
+  environment in its `environmentIds` is connected.
+- **Order is global:** reordering in a scope keeps hidden sections in their
+  slots (`mergeListedGroupOrder`, applied inside each write attempt).
+- **Filing stays global:** the Section submenu lists every section, so a
+  thread can join a section of another project.
+
 **Sections never change lifecycle.** Filing, unfiling and dragging a thread do
 not pin, unpin, settle, snooze or wake it. There are two drag exceptions, both
 mirroring the Status view:
@@ -99,10 +141,21 @@ section when un-settled or woken.
 
 **Drops land where the list shows them.**
 
-- **Gaps are the truth:** while dragging a row up over a header, the header
-  slides down, so the row lands at the end of the section above.
-- **Above the first header:** a row dropped there lands at the top of the
-  first section.
+- **Headers are targets:** a row dropped on a section header lands at the top
+  of that section, from either direction, so an empty or collapsed section
+  (only a header) can be reached from below. `sectionsDropIndex` decides the
+  slot, and the Sections view's sorting strategy slides rows to the same slot
+  while dragging, so the header stays put instead of sliding past the row.
+- **Pins stay on top:** the slot keeps the row on its own side of the pinned
+  rows, since a drop never changes a pin.
+- **Whole sections:** a drop is planned against every row of the target
+  section, including those a collapsed section hides
+  (`expandSectionDropOrder`).
+- **Only real drops highlight:** a section or shelf highlights only when the
+  drop would change something. Order keys are written all or nothing, only
+  when every affected row's server accepts them; a reorder that can't be
+  written is no drop, while a move into another section still files the
+  thread without new keys.
 
 **Section drags never reflow the list.** Dragging a header freezes every
 section's measured block at drag start, then slides whole blocks (header plus
@@ -222,31 +275,31 @@ rebuilt per render. So streaming updates don't re-render every row.
 Upstream-owned files touched. JavaScript mounts are additive and carry
 `SCIENT-FORK` markers unless listed as in place; SQL column lists are unmarked.
 
-| File                                                                                                                                                      | Mount                                                                                                                                                                                                                                                                                                    |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/contracts/src/baseSchemas.ts`                                                                                                                   | `ThreadSectionId`                                                                                                                                                                                                                                                                                        |
-| `packages/contracts/src/orchestration.ts`                                                                                                                 | `sectionId` on thread, shell and `thread.meta-updated`; `thread.section.set` in both client command unions                                                                                                                                                                                               |
-| `packages/contracts/src/environment.ts`                                                                                                                   | `threadSections` capability                                                                                                                                                                                                                                                                              |
-| `packages/contracts/src/settings.ts`                                                                                                                      | `ThreadSection` (with `emptySince`, `environmentIds`), `ThreadSectionsPrecondition`, `threadSectionCatalogsEqual`; `threadSections`, `threadSectionsGeneralIndex`, `threadSectionsDeleteEmptyAfterDays`, `threadSectionsExpected`                                                                        |
-| `packages/client-runtime/src/operations/commands.ts`, `state/threadCommands.ts`                                                                           | `setThreadSection` command and its optimistic patch                                                                                                                                                                                                                                                      |
-| `packages/client-runtime/src/state/threadReducer.ts`, `state/threadDetail.ts`                                                                             | `sectionId` in the detail reducer's `thread.meta-updated` case and in the shell–detail merge, like `activeOrderKey`                                                                                                                                                                                      |
-| `apps/server/src/serverSettings.ts`                                                                                                                       | `applyThreadSectionsPrecondition` inside `updateSettings`'s write lock                                                                                                                                                                                                                                   |
-| `apps/server/src/orchestration/decider.ts`                                                                                                                | `thread.section.set` case                                                                                                                                                                                                                                                                                |
-| `apps/server/src/orchestration/projector.ts`, `Layers/ProjectionPipeline.ts`                                                                              | project `sectionId`                                                                                                                                                                                                                                                                                      |
-| `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts`, `persistence/Layers/ProjectionThreads.ts`, `persistence/Services/ProjectionThreads.ts` | read and write `projection_threads.section_id` (SQL column lists unmarked)                                                                                                                                                                                                                               |
-| `apps/server/src/persistence/Migrations.ts`                                                                                                               | migration 058                                                                                                                                                                                                                                                                                            |
-| `apps/server/src/environment/ServerEnvironment.ts`                                                                                                        | advertises `threadSections`                                                                                                                                                                                                                                                                              |
-| Upstream server tests: `ProjectionPipeline.test.ts`, `ProjectionSnapshotQuery.test.ts`, `Migrations.compatibility.test.ts`                                | the section case, `sectionId: null` in expected rows, and migration 058                                                                                                                                                                                                                                  |
-| `apps/web/src/components/Sidebar.tsx`                                                                                                                     | `useSidebarSections`; the Section submenu in both context-menu handlers; the Sections view branch and its row renderer; the New thread row and its Shift+click handler. In place: T3's `orderedThreads` memo is renamed `statusOrderedThreads`, and the Status list's condition gains `&& !sectionsView` |
-| `apps/web/src/components/sidebar/SidebarThreadHeader.tsx`                                                                                                 | `groupingToggle` slot and `hideNewThreadButton`. In place: the search field's class list, and a `hidden` attribute on T3's New thread icon                                                                                                                                                               |
-| `apps/web/src/hooks/useHandleNewThread.ts`                                                                                                                | reusing an empty draft forgets its remembered section                                                                                                                                                                                                                                                    |
-| `apps/web/src/components/threadActionMenu.logic.ts`                                                                                                       | Section menu ids in `ThreadActionMenuId`; optional `sectionMenu` item before Copy                                                                                                                                                                                                                        |
-| `apps/web/src/hooks/useThreadActionMenu.ts`, `components/chat/ChatHeader.tsx`                                                                             | Section submenu in the chat-header menu and its New section dialog                                                                                                                                                                                                                                       |
-| `apps/web/src/hooks/showThreadUndoNotice.ts`                                                                                                              | In place: `"Moved"` in the undo action union                                                                                                                                                                                                                                                             |
-| `apps/web/src/components/ui/sidebar.tsx`                                                                                                                  | `toggle` variant of `SidebarMenuButton`                                                                                                                                                                                                                                                                  |
-| `apps/web/src/contextMenuFallback.ts`                                                                                                                     | `list-filter` icon                                                                                                                                                                                                                                                                                       |
-| `apps/web/src/components/settings/SettingsPanels.tsx`, `settingsSearch.ts`                                                                                | `EmptySectionCleanupSettings` under General → Organization, and its two search entries                                                                                                                                                                                                                   |
-| `apps/web/src/components/CommandPalette.tsx`, `CommandPalette.logic.ts`                                                                                   | "Add project" at the end of the "New thread in…" picker, which also opens with no projects. In place: `shouldOpenNewThreadTargetPicker` is true whatever the number of projects, and the picker's early return and its two project lists (the pushed picker and the palette's "New thread in…" submenu)  |
+| File                                                                                                                                                      | Mount                                                                                                                                                                                                                                                                                                                                                                                    |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/contracts/src/baseSchemas.ts`                                                                                                                   | `ThreadSectionId`                                                                                                                                                                                                                                                                                                                                                                        |
+| `packages/contracts/src/orchestration.ts`                                                                                                                 | `sectionId` on thread, shell and `thread.meta-updated`; `thread.section.set` in both client command unions                                                                                                                                                                                                                                                                               |
+| `packages/contracts/src/environment.ts`                                                                                                                   | `threadSections` capability                                                                                                                                                                                                                                                                                                                                                              |
+| `packages/contracts/src/settings.ts`                                                                                                                      | `ThreadSection` (with `emptySince`, `environmentIds`, `createdInProjects`), `ThreadSectionProjectRef`, `ThreadSectionsPrecondition`, `threadSectionCatalogsEqual`; `threadSections`, `threadSectionsGeneralIndex`, `threadSectionsDeleteEmptyAfterDays`, `threadSectionsExpected`                                                                                                        |
+| `packages/client-runtime/src/operations/commands.ts`, `state/threadCommands.ts`                                                                           | `setThreadSection` command and its optimistic patch                                                                                                                                                                                                                                                                                                                                      |
+| `packages/client-runtime/src/state/threadReducer.ts`, `state/threadDetail.ts`                                                                             | `sectionId` in the detail reducer's `thread.meta-updated` case and in the shell–detail merge, like `activeOrderKey`                                                                                                                                                                                                                                                                      |
+| `apps/server/src/serverSettings.ts`                                                                                                                       | `applyThreadSectionsPrecondition` inside `updateSettings`'s write lock                                                                                                                                                                                                                                                                                                                   |
+| `apps/server/src/orchestration/decider.ts`                                                                                                                | `thread.section.set` case                                                                                                                                                                                                                                                                                                                                                                |
+| `apps/server/src/orchestration/projector.ts`, `Layers/ProjectionPipeline.ts`                                                                              | project `sectionId`                                                                                                                                                                                                                                                                                                                                                                      |
+| `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts`, `persistence/Layers/ProjectionThreads.ts`, `persistence/Services/ProjectionThreads.ts` | read and write `projection_threads.section_id` (SQL column lists unmarked)                                                                                                                                                                                                                                                                                                               |
+| `apps/server/src/persistence/Migrations.ts`                                                                                                               | migration 058                                                                                                                                                                                                                                                                                                                                                                            |
+| `apps/server/src/environment/ServerEnvironment.ts`                                                                                                        | advertises `threadSections`                                                                                                                                                                                                                                                                                                                                                              |
+| Upstream server tests: `ProjectionPipeline.test.ts`, `ProjectionSnapshotQuery.test.ts`, `Migrations.compatibility.test.ts`                                | the section case, `sectionId: null` in expected rows, and migration 058                                                                                                                                                                                                                                                                                                                  |
+| `apps/web/src/components/Sidebar.tsx`                                                                                                                     | `useSidebarSections` (with the selected project's refs); the Section submenu in both context-menu handlers, right after Snooze in the multi-select menu; the Sections view branch and its row renderer; the New thread row and its Shift+click handler. In place: T3's `orderedThreads` memo is renamed `statusOrderedThreads`, and the Status list's condition gains `&& !sectionsView` |
+| `apps/web/src/components/sidebar/SidebarThreadHeader.tsx`                                                                                                 | `groupingToggle` slot and `hideNewThreadButton`. In place: the search field's class list, and a `hidden` attribute on T3's New thread icon                                                                                                                                                                                                                                               |
+| `apps/web/src/hooks/useHandleNewThread.ts`                                                                                                                | reusing an empty draft forgets its remembered section                                                                                                                                                                                                                                                                                                                                    |
+| `apps/web/src/components/threadActionMenu.logic.ts`                                                                                                       | Section menu ids in `ThreadActionMenuId`; optional `sectionMenu` item right after Snooze, in the placement group                                                                                                                                                                                                                                                                         |
+| `apps/web/src/hooks/useThreadActionMenu.ts`, `components/chat/ChatHeader.tsx`                                                                             | Section submenu in the chat-header menu and its New section dialog                                                                                                                                                                                                                                                                                                                       |
+| `apps/web/src/hooks/showThreadUndoNotice.ts`                                                                                                              | In place: `"Moved"` in the undo action union                                                                                                                                                                                                                                                                                                                                             |
+| `apps/web/src/components/ui/sidebar.tsx`                                                                                                                  | `toggle` variant of `SidebarMenuButton`                                                                                                                                                                                                                                                                                                                                                  |
+| `apps/web/src/contextMenuFallback.ts`                                                                                                                     | `list-filter` icon                                                                                                                                                                                                                                                                                                                                                                       |
+| `apps/web/src/components/settings/SettingsPanels.tsx`, `settingsSearch.ts`                                                                                | `EmptySectionCleanupSettings` under General → Organization, and its two search entries                                                                                                                                                                                                                                                                                                   |
+| `apps/web/src/components/CommandPalette.tsx`, `CommandPalette.logic.ts`                                                                                   | "Add project" at the end of the "New thread in…" picker, which also opens with no projects. In place: `shouldOpenNewThreadTargetPicker` is true whatever the number of projects, and the picker's early return and its two project lists (the pushed picker and the palette's "New thread in…" submenu)                                                                                  |
 
 **When aligning:**
 
@@ -263,9 +316,13 @@ Upstream-owned files touched. JavaScript mounts are additive and carry
 ## Verification
 
 - **Web unit tests** (`apps/web/src/scient/sections/`):
-  - `logic.test.ts`: catalog edits, grouping, drop planning, drag order,
-    environment-aware cleanup sweeps, and capitalization;
-  - `catalogWrite.test.ts`: concurrent edits from two clients both survive;
+  - `logic.test.ts`: catalog edits, grouping, project-scope visibility,
+    drop planning (header drops, pinned rows, collapsed sections, order-key
+    support), drag order, environment-aware cleanup sweeps, and
+    capitalization;
+  - `catalogWrite.test.ts`: concurrent edits from two clients both survive,
+    and a missing section is confirmed before it is trusted;
+  - `useNewSectionForThreads.test.tsx`: New section… creates and files;
   - `pendingNewThreadSections.test.ts`: optimistic rollback, filing retries and draft reuse;
   - `actions.test.tsx`, `catalog.test.tsx`: registration failures, conflicts and queued cleanup;
   - `useEmptySectionCleanup.test.tsx`: synchronization gating and cancellation;
@@ -276,7 +333,9 @@ Upstream-owned files touched. JavaScript mounts are additive and carry
   thread row.
 - **Server tests:**
   - `apps/server/src/scient/threadSections/`: the precondition, directly and
-    through the real `updateSettings`;
+    through the real `updateSettings`, and add-only creation projects;
+  - `scient-fork/forkDecider.test.ts` and `crossArea.test.ts`: a fork keeps
+    its origin's section through projection;
   - `decider.threadSections.test.ts`;
   - `ProjectionSnapshotQuery.threadSections.test.ts`: every snapshot path reads
     `sectionId`;

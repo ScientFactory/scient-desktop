@@ -51,6 +51,7 @@ import type {
 } from "~/scient/pdf/ScientPdfReader";
 import { usePdfSaveCopy } from "~/scient/pdf/usePdfSaveCopy";
 import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
+import { WordFileExportDialog } from "~/scient/wordExport/WordFileExportDialog";
 
 import { documentBindingChanges } from "./bindingChanges";
 const LatexProjectVisualEditor = lazy(() =>
@@ -513,6 +514,13 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   }>({ pending: false, error: null });
   const visibleSaveError = saveError ?? visualProjectState.error;
   const [syncNotice, setSyncNotice] = useState<LatexSyncNotice | null>(null);
+  const [wordExportOpen, setWordExportOpen] = useState(false);
+  const [sourcePending, setSourcePending] = useState(false);
+  const [confirmedSave, setConfirmedSave] = useState<{
+    path: string;
+    shownRevision: string;
+    savedRevision: string;
+  } | null>(null);
   const [forwardSyncTarget, setForwardSyncTarget] = useState<PdfForwardSyncTarget | null>(null);
   const [handledRevealRequestId, setHandledRevealRequestId] = useState<number | null>(null);
   const [finishedVisualRevealRequestId, setFinishedVisualRevealRequestId] = useState<number | null>(
@@ -563,6 +571,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   } = props;
   const handleSaveConfirmed = useCallback(
     (path: string, contents: string, revision: string) => {
+      setConfirmedSave({ path, shownRevision: props.revision, savedRevision: revision });
       setSaveError(null);
       visualConfirmedRevisionRef.current = revision;
       confirmVisualDraft(visualDraftKey, contents);
@@ -577,7 +586,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
         setVisualAwaitingSave(false);
       }
     },
-    [onSaveConfirmed, target, visualDraftKey],
+    [onSaveConfirmed, props.revision, target, visualDraftKey],
   );
   const handleSaveFailure = useCallback(
     (path: string, error: unknown, failedContents?: string) => {
@@ -643,6 +652,10 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   const coordinator = useFileSaveCoordinator({
     ...props,
     debounceMs: 500,
+    onPendingChange: (path, pending) => {
+      if (path === props.relativePath) setSourcePending(pending);
+      props.onPendingChange(path, pending);
+    },
     onSaveConfirmed: handleSaveConfirmed,
     onSaveFailure: handleSaveFailure,
     onSaveResolutionApplied: handleSaveResolutionApplied,
@@ -1069,6 +1082,21 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
         </div>
         <div className="scient-latex-actions">
           <div className="scient-latex-document-tools" ref={setDocumentToolsHost} />
+          <button
+            type="button"
+            className="scient-latex-action"
+            disabled={
+              target === null ||
+              sourcePending ||
+              visualAwaitingSave ||
+              visualProjectState.pending ||
+              hasLocalVisualDraft ||
+              visibleSaveError !== null
+            }
+            onClick={() => setWordExportOpen(true)}
+          >
+            Export ▸ Word
+          </button>
           {status.canCancel && target !== null ? (
             <button
               type="button"
@@ -1349,6 +1377,27 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
           </div>
         ) : null}
       </div>
+      {wordExportOpen && target !== null ? (
+        <WordFileExportDialog
+          environmentId={props.environmentId}
+          cwd={props.cwd}
+          relativePath={props.relativePath}
+          rootRelativePath={target.relativePath}
+          savedRevision={async () =>
+            sourcePending ||
+            visualAwaitingSave ||
+            visualProjectState.pending ||
+            hasLocalVisualDraft ||
+            visibleSaveError !== null
+              ? null
+              : confirmedSave?.path === props.relativePath &&
+                  confirmedSave.shownRevision === props.revision
+                ? confirmedSave.savedRevision
+                : props.revision
+          }
+          onClose={() => setWordExportOpen(false)}
+        />
+      ) : null}
     </div>
   );
 }

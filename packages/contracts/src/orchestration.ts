@@ -410,8 +410,23 @@ export const UserInputAttachmentAnswerPayload = Schema.Struct({
   questionTextById: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   answers: ProviderUserInputAnswers,
   attachmentsByQuestionId: UserInputAttachments,
+  // SCIENT-FORK:START — imported history names the message that carries an answer.
+  /**
+   * The user message that carries this answer, when it is not
+   * `async-answer:<requestId>`: imported history gives every message an ID
+   * that sorts in its source order, so the answer names its message instead.
+   */
+  messageId: Schema.optional(MessageId),
+  // SCIENT-FORK:END
 });
 export type UserInputAttachmentAnswerPayload = typeof UserInputAttachmentAnswerPayload.Type;
+
+// SCIENT-FORK:START — imported history names the message that carries an answer.
+/** The ID of the user message chat folds into this submitted answer. */
+export function questionAnswerMessageId(answer: UserInputAttachmentAnswerPayload): string {
+  return answer.messageId ?? `async-answer:${answer.requestId}`;
+}
+// SCIENT-FORK:END
 // SCIENT-FORK:START — the Scient thread queue stores upload-shaped
 // attachments so a queued item dispatches through thread.turn.start
 // unchanged. Export the wire schema instead of duplicating it.
@@ -676,15 +691,76 @@ export type OrchestrationForkBoundary = typeof OrchestrationForkBoundary.Type;
 export const isForkBaselineBoundary = (boundary: OrchestrationForkBoundary): boolean =>
   boundary.conversationTurnCount === 0 && boundary.turnId !== null;
 
+/** What an imported conversation's file did not carry, as the thread's import banner lists it. */
+export const OrchestrationConversationImportOmission = Schema.Union([
+  Schema.TaggedStruct("work-log-excluded", {}),
+  Schema.TaggedStruct("reasoning-excluded", {}),
+  Schema.TaggedStruct("range-truncated", { throughMessageN: PositiveInt }),
+  Schema.TaggedStruct("running-turn-omitted", {}),
+  Schema.TaggedStruct("attachments-unavailable", { count: PositiveInt }),
+  Schema.TaggedStruct("records-skipped", { count: PositiveInt }),
+]);
+export type OrchestrationConversationImportOmission =
+  typeof OrchestrationConversationImportOmission.Type;
+
+/** At most this many file notices are kept on an imported thread. */
+export const CONVERSATION_IMPORT_MAX_NOTICES = 10;
+
 /**
- * Narrow fork-lineage marker carried by shell and detail payloads. Replaces
- * the complete `conversationForkBoundaries` array in client-facing state with
- * just the presentation metadata the UI needs: the origin thread and the
- * inherited baseline assistant message. Plain threads expose no marker.
+ * A note the imported file carried about itself that no omission states (for
+ * example that attachment contents were not included): one line of plain
+ * text, without paths or codes, shown by the thread's import banner.
  */
+export const OrchestrationConversationImportNotice = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(300),
+);
+export type OrchestrationConversationImportNotice =
+  typeof OrchestrationConversationImportNotice.Type;
+
+/**
+ * External source identity and known omissions of imported history. The
+ * identifiers came from a package: they are provenance only, never local ids.
+ */
+export const OrchestrationConversationImportSource = Schema.Struct({
+  source: Schema.Literals(["scic", "markdown"]),
+  exportId: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+  sourceThreadId: Schema.NullOr(TrimmedNonEmptyString.check(Schema.isMaxLength(512))),
+  packageDigest: TrimmedNonEmptyString.check(Schema.isPattern(/^sha256:[a-f0-9]{64}$/)),
+  sourceFormat: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+  sourceFormatVersion: PositiveInt,
+  importedAt: IsoDateTime,
+  omissions: Schema.Array(OrchestrationConversationImportOmission),
+  /**
+   * How far the imported times were moved back, in milliseconds, because some
+   * were later than the importing server's clock (the sender's clock was
+   * ahead). Absent when nothing was moved; earlier transfers' moves add up.
+   */
+  timesShiftedMs: Schema.optional(PositiveInt),
+  /** The file's own notes, deduplicated against the omissions; absent when there are none. */
+  notices: Schema.optional(
+    Schema.Array(OrchestrationConversationImportNotice).check(
+      Schema.isMaxLength(CONVERSATION_IMPORT_MAX_NOTICES),
+    ),
+  ),
+});
+export type OrchestrationConversationImportSource =
+  typeof OrchestrationConversationImportSource.Type;
+
+export const OrchestrationConversationImport = Schema.Struct({
+  ...OrchestrationConversationImportSource.fields,
+  /**
+   * Server read model only: turns holding imported history. Revert keeps
+   * them, as it keeps a fork's inherited turns. Client-facing payloads omit it.
+   */
+  inheritedTurnIds: Schema.optional(Schema.Array(TurnId)),
+});
+export type OrchestrationConversationImport = typeof OrchestrationConversationImport.Type;
+
+/** Fork lineage and any external source history retained through the fork. */
 export const OrchestrationForkLineage = Schema.Struct({
   originThreadId: ThreadId,
   baselineAssistantMessageId: Schema.NullOr(MessageId),
+  sourceImport: Schema.optional(OrchestrationConversationImportSource),
   /**
    * Server read model only: destination turns holding inherited transcript.
    * Revert never removes them. Client-facing payloads omit it.
@@ -692,6 +768,19 @@ export const OrchestrationForkLineage = Schema.Struct({
   inheritedTurnIds: Schema.optional(Schema.Array(TurnId)),
 });
 export type OrchestrationForkLineage = typeof OrchestrationForkLineage.Type;
+
+/**
+ * One imported turn. Imported turns are completed history with no provider
+ * turn or checkpoint behind them, like a fork's inherited turns.
+ */
+export const ThreadConversationImportTurn = Schema.Struct({
+  turnId: TurnId,
+  userMessageId: Schema.NullOr(MessageId),
+  assistantMessageId: Schema.NullOr(MessageId),
+  requestedAt: IsoDateTime,
+  completedAt: IsoDateTime,
+});
+export type ThreadConversationImportTurn = typeof ThreadConversationImportTurn.Type;
 // SCIENT-FORK:END
 
 export const OrchestrationThreadActivityTone = Schema.Literals([
@@ -910,6 +999,9 @@ export const OrchestrationThread = Schema.Struct({
   // Narrow lineage marker for forked threads. Absent on plain threads and
   // old servers; survives shell/detail reloads, windowing, and sequence gaps.
   forkLineage: Schema.optional(Schema.NullOr(OrchestrationForkLineage)),
+  // SCIENT-FORK:START — set on threads created by a conversation import.
+  conversationImport: Schema.optional(Schema.NullOr(OrchestrationConversationImport)),
+  // SCIENT-FORK:END
   session: Schema.NullOr(OrchestrationSession),
 });
 export type OrchestrationThread = typeof OrchestrationThread.Type;
@@ -1008,6 +1100,9 @@ export const OrchestrationThreadShell = Schema.Struct({
   // Narrow fork-lineage marker for shell rows. Absent on plain threads and
   // old servers; the shell snapshot populates it from scient_thread_lineage.
   forkLineage: Schema.optional(Schema.NullOr(OrchestrationForkLineage)),
+  // SCIENT-FORK:START — set on threads created by a conversation import.
+  conversationImport: Schema.optional(Schema.NullOr(OrchestrationConversationImport)),
+  // SCIENT-FORK:END
 });
 export type OrchestrationThreadShell = typeof OrchestrationThreadShell.Type;
 
@@ -1450,6 +1545,8 @@ const ThreadTurnInterruptCommand = Schema.Struct({
   commandId: CommandId,
   threadId: ThreadId,
   turnId: Schema.optional(TurnId),
+  /** Captures a turnless session when Stop targets background work. */
+  sessionUpdatedAt: Schema.optional(IsoDateTime),
   createdAt: IsoDateTime,
 });
 
@@ -1825,6 +1922,43 @@ const ThreadForkCompleteCommand = Schema.Struct({
   ),
   createdAt: IsoDateTime,
 });
+
+/**
+ * Internal command: create a new, independent thread holding an imported
+ * conversation, in one decision. Only the server's conversation importer
+ * dispatches it, after publishing every attachment the history references;
+ * every id in it is new and local.
+ */
+const ThreadConversationImportCommand = Schema.Struct({
+  type: Schema.Literal("thread.conversation.import"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  projectId: ProjectId,
+  title: TrimmedNonEmptyString,
+  modelSelection: ModelSelection,
+  runtimeMode: RuntimeMode,
+  interactionMode: ProviderInteractionMode,
+  /** Transcript messages and reasoning, in timeline order. */
+  messages: Schema.Array(
+    Schema.Struct({
+      messageId: MessageId,
+      role: OrchestrationMessageRole,
+      text: Schema.String,
+      attachments: Schema.optional(Schema.Array(ChatAttachment)),
+      turnId: Schema.NullOr(TurnId),
+      createdAt: IsoDateTime,
+      updatedAt: IsoDateTime,
+    }),
+  ),
+  proposedPlans: Schema.Array(OrchestrationProposedPlan),
+  /** Work log and submitted question answers; history only, never executable. */
+  activities: Schema.Array(OrchestrationThreadActivity),
+  /** Every turn holding imported history, including turns without a response. */
+  inheritedTurnIds: Schema.Array(TurnId),
+  turns: Schema.Array(ThreadConversationImportTurn),
+  origin: OrchestrationConversationImport,
+  createdAt: IsoDateTime,
+});
 // SCIENT-FORK:END
 
 const ThreadTitleGenerateCompleteCommand = Schema.Struct({
@@ -1895,6 +2029,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadRevertCompleteCommand,
   // SCIENT-FORK:START
   ThreadForkCompleteCommand,
+  ThreadConversationImportCommand,
   // SCIENT-FORK:END
   ThreadTitleRegenerationCompleteCommand,
   ThreadTitleGenerateCompleteCommand,
@@ -1947,6 +2082,7 @@ export const OrchestrationEventType = Schema.Literals([
   // SCIENT-FORK:START
   "thread.forked",
   "thread.fork-completed",
+  "thread.conversation-imported",
   // SCIENT-FORK:END
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
@@ -2180,6 +2316,7 @@ export const ThreadTurnStartRequestedPayload = Schema.Struct({
 export const ThreadTurnInterruptRequestedPayload = Schema.Struct({
   threadId: ThreadId,
   turnId: Schema.optional(TurnId),
+  sessionUpdatedAt: Schema.optional(IsoDateTime),
   createdAt: IsoDateTime,
 });
 
@@ -2295,6 +2432,8 @@ export const ThreadForkedPayload = Schema.Struct({
    * Older events omit it: derive it from `copiedBoundaries` and `baselineTurnId`.
    */
   inheritedTurnIds: Schema.optional(Schema.Array(TurnId)),
+  /** External source history carried by a fork of imported history. */
+  sourceImport: Schema.optional(OrchestrationConversationImportSource),
   midTurnCut: Schema.optional(ThreadForkMidTurnCut),
   createdAt: IsoDateTime,
 });
@@ -2310,6 +2449,21 @@ export const ThreadForkCompletedPayload = Schema.Struct({
   ),
 });
 export type ThreadForkCompletedPayload = typeof ThreadForkCompletedPayload.Type;
+
+/**
+ * Closes a `thread.conversation.import` decision, after the thread and its
+ * history: the import's provenance and the turns that hold imported history.
+ */
+export const ThreadConversationImportedPayload = Schema.Struct({
+  threadId: ThreadId,
+  origin: OrchestrationConversationImport,
+  /** Every turn holding imported history; revert keeps them. */
+  inheritedTurnIds: Schema.Array(TurnId),
+  /** Imported turns that have a response, in order; projected as completed turns. */
+  turns: Schema.Array(ThreadConversationImportTurn),
+  createdAt: IsoDateTime,
+});
+export type ThreadConversationImportedPayload = typeof ThreadConversationImportedPayload.Type;
 // SCIENT-FORK:END
 
 export const ThreadSessionStopRequestedPayload = Schema.Struct({
@@ -2560,6 +2714,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.fork-completed"),
     payload: ThreadForkCompletedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.conversation-imported"),
+    payload: ThreadConversationImportedPayload,
   }),
   // SCIENT-FORK:END
 ]);

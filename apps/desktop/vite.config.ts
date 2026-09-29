@@ -144,6 +144,14 @@ export default defineConfig({
       outExtensions: () => ({ js: ".cjs" }),
       entry: ["src/mac-permission-preload.ts"],
     },
+    {
+      format: "cjs",
+      outDir: "dist-electron",
+      dts: false,
+      outExtensions: () => ({ js: ".cjs" }),
+      entry: ["src/conversation-review-preload.ts"],
+      clean: false,
+    },
   ],
   test: {
     // The Windows lane runs workspace suites concurrently; filesystem-heavy

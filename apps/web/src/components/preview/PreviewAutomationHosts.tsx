@@ -70,6 +70,7 @@ import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { scientGeneratedPdfSurface } from "~/scient/rightPanel/surfaces";
+import { renderDocumentPagePdfForHost } from "~/scient/documentExport/documentPagePdf";
 
 import { previewBridge } from "./previewBridge";
 import {
@@ -401,6 +402,21 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             bytesBase64: Encoding.encodeBase64Url(artifact.data),
           } satisfies ControlledHtmlPdfRenderResult;
         }
+        // SCIENT-FORK:START — print a captured Scient document page (Markdown or conversation PDF).
+        if (request.operation === "documentPagePdfRender") {
+          if (httpBaseUrl === null) {
+            throw new PreviewAutomationTargetUnavailableError({
+              requestId: request.requestId,
+              operation: request.operation,
+              environmentId,
+              threadId: request.threadId,
+              tabId: null,
+              bridgeAvailable: Boolean(previewBridge),
+            });
+          }
+          return await renderDocumentPagePdfForHost(httpBaseUrl, request.input);
+        }
+        // SCIENT-FORK:END
         if (request.operation === "documentPdfPresent") {
           const input = request.input as ControlledPdfPresentRequest;
           if (input.source._tag !== "generated-pdf") {

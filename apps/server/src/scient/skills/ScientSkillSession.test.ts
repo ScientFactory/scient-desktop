@@ -119,6 +119,7 @@ describe("Scient skill session planning", () => {
     ).toBe("unsupported");
     expect(ScientSkillSession.SCIENT_SKILL_DELIVERY.antigravity).toBe("mcp");
     expect(ScientSkillSession.SCIENT_SKILL_DELIVERY.cursor).toBe("mcp");
+    expect(ScientSkillSession.SCIENT_SKILL_DELIVERY.omp).toBe("mcp");
   });
 
   it.effect("withholds project skills until the exact current lock is trusted", () =>

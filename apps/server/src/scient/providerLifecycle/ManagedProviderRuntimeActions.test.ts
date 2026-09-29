@@ -19,6 +19,8 @@ import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
 import * as Stream from "effect/Stream";
 import { BUNDLED_MANAGED_RUNTIME_CATALOG, ManagedRuntimeCatalog } from "./ManagedRuntimeCatalog.ts";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import type * as ChildProcess from "effect/unstable/process/ChildProcess";
+import * as Sink from "effect/Sink";
 
 import {
   makeManagedProviderRuntimeDiagnostics,
@@ -482,6 +484,64 @@ describe("managed provider runtime diagnostics", () => {
     expect(nativeProviderRuntimeBackendLabel("win32")).toBe("Windows native");
     expect(nativeProviderRuntimeBackendLabel("linux")).toBe("Linux native");
   });
+});
+
+describe("configured runtime health probe", () => {
+  it.effect("keeps every other provider's probe on the extended server environment", () =>
+    Effect.gen(function* () {
+      const baseDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-managed-provider-probe-")),
+      );
+      temporaryRoots.push(baseDir);
+      const spawned: Array<ChildProcess.StandardCommand> = [];
+      const spawner = ChildProcessSpawner.make((command) => {
+        spawned.push(command as ChildProcess.StandardCommand);
+        return Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+            isRunning: Effect.succeed(false),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.empty,
+            stderr: Stream.empty,
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          }),
+        );
+      });
+      const environment = { PATH: "/usr/bin", CLAUDE_CONFIG_DIR: "/tmp/claude" };
+      const resolution = yield* makeManagedProviderRuntimeResolution({
+        configuredBinaryPath: "claude-custom",
+        defaultBinary: "claude",
+        providerName: "Claude",
+        providerSlug: "claude",
+        runtime: new ManagedProviderRuntime(baseDir, {
+          providerDirectory: "claude",
+          displayName: "Claude",
+        }),
+        bundledArtifact: reviewedArtifact,
+        contractRevision: 1,
+        targetLabel: "darwin-arm64",
+        environment,
+        spawner,
+        managedInstallationAllowed: true,
+        systemToManagedSwitchAllowed: true,
+        sourceLabel: "Official Anthropic Claude Code release",
+        managedInstallationLimitation: "Managed installation is unavailable here.",
+        diagnosticsHomePath: null,
+        diagnosticsBackend: "macOS native",
+      });
+
+      expect(resolution.summary.source).toBe("custom");
+      expect(spawned).toHaveLength(1);
+      expect(spawned[0]!.command).toBe("claude-custom");
+      expect(spawned[0]!.args).toEqual(["--version"]);
+      expect(spawned[0]!.options).toMatchObject({ env: environment, extendEnv: true });
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });
 
 describe("managed provider runtime installation failures", () => {

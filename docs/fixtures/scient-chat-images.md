@@ -56,7 +56,7 @@ Text after the missing image must remain visible.
 
 ## Ordinary remote image fallback
 
-The workspace renderer must not claim this URL. Network availability may
-determine whether React Markdown's ordinary image renders.
+The workspace renderer must not claim this URL. It renders as a web-image link
+card; the image is requested only after **Load image**.
 
 ![Remote image control](https://example.com/scient-image-control.png)

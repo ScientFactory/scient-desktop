@@ -27,11 +27,16 @@ function makeActivity(
 }
 
 describe("runtime diagnostics in the work log", () => {
-  it("shows the retained error message in place of its generic row label", () => {
+  it("keeps a concise error label and retains the technical message for expansion", () => {
     const [entry] = deriveWorkLogEntries([makeActivity()]);
 
-    expect(entry).toMatchObject({ label: "Runtime error", detail: retainedMessage });
-    expect(entry && workEntryDisplayLabel(entry, undefined)).toBe(retainedMessage);
+    expect(entry).toMatchObject({
+      label: "The agent encountered a problem",
+      detail: retainedMessage,
+    });
+    expect(entry && workEntryDisplayLabel(entry, undefined)).toBe(
+      "The agent encountered a problem",
+    );
   });
 
   it("shows the retained warning message beyond its truncated label", () => {
@@ -63,6 +68,48 @@ describe("runtime diagnostics in the work log", () => {
 
     expect(entry?.label).toBe("Reconnecting... 2/5");
     expect(entry?.detail).toBeUndefined();
+  });
+
+  it("keeps an Oh My Pi browser action visible and clickable", () => {
+    const [entry] = deriveWorkLogEntries([
+      makeActivity({
+        kind: "runtime.warning",
+        tone: "info",
+        summary: "Oh My Pi requested a browser action.",
+        payload: {
+          message: "Oh My Pi requested a browser action.",
+          detail: {
+            kind: "open-url",
+            url: "https://example.com/authorize",
+          },
+        },
+      }),
+    ]);
+
+    expect(entry?.externalUrl).toEqual({ href: "https://example.com/authorize" });
+    expect(entry?.detail).toContain("https://example.com/authorize");
+  });
+
+  it("links an OAuth browser action through its loopback launch URL", () => {
+    const [entry] = deriveWorkLogEntries([
+      makeActivity({
+        kind: "runtime.warning",
+        tone: "info",
+        summary: "Oh My Pi requested a browser action.",
+        payload: {
+          message: "Oh My Pi requested a browser action.",
+          detail: {
+            kind: "open-url",
+            url: "https://auth.example.com/authorize",
+            launchUrl: "http://127.0.0.1:43199/launch",
+          },
+        },
+      }),
+    ]);
+
+    expect(entry?.externalUrl).toEqual({ href: "http://127.0.0.1:43199/launch" });
+    expect(entry?.detail).toContain("https://auth.example.com/authorize");
+    expect(entry?.detail).not.toContain("127.0.0.1");
   });
 
   it("does not interpret an unrelated activity message as a runtime diagnostic", () => {

@@ -6,6 +6,7 @@ import { create, type ReactTestRenderer } from "react-test-renderer";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
+import { GlobeIcon } from "lucide-react";
 import { GitHubIcon } from "./Icons";
 import { Button } from "./ui/button";
 import { setMarkdownTaskChecked } from "./files/filePreviewMode";
@@ -240,7 +241,7 @@ describe("ChatMarkdown context references", () => {
 });
 
 describe("ChatMarkdown favicon privacy", () => {
-  it("suppresses private link images while preserving public links across updates", async () => {
+  it("draws link icons locally and never requests a favicon", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     let renderer: ReactTestRenderer | undefined;
     const markdown = (url: string) => <ChatMarkdown cwd="/tmp/project" text={`[Link](${url})`} />;
@@ -248,20 +249,20 @@ describe("ChatMarkdown favicon privacy", () => {
       await act(async () => {
         renderer = create(markdown("https://example.com"));
       });
-      expect(renderer!.root.findAllByType("img").map((image) => image.props.src)).toEqual([
-        "https://www.google.com/s2/favicons?domain=example.com&sz=32",
-      ]);
-      for (const url of ["http://192.168.1.10:8080", "http://localhost:3000", "http://home.arpa"]) {
+      for (const url of [
+        "https://example.com",
+        "http://192.168.1.10:8080",
+        "http://localhost:3000",
+        "https://secret-value.attacker.example",
+      ]) {
         await act(async () => {
           renderer!.update(markdown(url));
         });
+        // A public favicon service would learn every link host, and when the chat was opened.
         expect(renderer!.root.findAllByType("img")).toHaveLength(0);
+        expect(renderer!.root.findAllByType(GlobeIcon)).toHaveLength(1);
       }
-      await act(async () => {
-        renderer!.update(markdown("https://example.com"));
-      });
-      expect(renderer!.root.findAllByType("img")).toHaveLength(1);
-      // GitHub links draw the brand mark in currentColor instead of fetching a favicon.
+      // GitHub links draw the bundled brand mark in currentColor.
       await act(async () => {
         renderer!.update(markdown("https://github.com/pingdotgg/t3code/pull/1"));
       });

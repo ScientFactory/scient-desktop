@@ -148,6 +148,15 @@ Do not ask again when the conversation already provides it.
   delivery workflow.
 - Before opening a PR, check its relationship to current main. Choose alignment
   appropriate to branch ownership; do not automatically rebase shared history.
+- Queue a PR only when the user explicitly authorized its merge or auto-merge
+  is already enabled. Non-draft status and green CI alone are not authorization.
+  Never enable auto-merge on other PRs just because they look ready. Review the
+  current head and respect unresolved blockers; report conflicts instead of
+  resolving them. Use GitHub's merge queue without bypassing checks or jumping
+  the queue, and do not repeatedly realign queued branches. Before pushing a
+  correction to a queued PR, remove it from the queue and disable auto-merge;
+  review the new head before requesting delivery again. Return the PR/CI links
+  rather than monitoring unless the user asks.
 - Preserve literal upstream ancestry. Upstream merges use dedicated branches
   and `docs/internals/upstream-alignment-protocol.md`, separate from product
   changes.

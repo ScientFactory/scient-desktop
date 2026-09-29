@@ -201,7 +201,12 @@ export interface ResolvedPdfSource {
 
 export type PdfSourceResolution =
   | { readonly _tag: "Loading"; readonly refresh: () => void }
-  | { readonly _tag: "Failure"; readonly refresh: () => void }
+  | {
+      readonly _tag: "Failure";
+      readonly refresh: () => void;
+      /** A refresh of the failed source is in flight. */
+      readonly waiting?: boolean;
+    }
   | ({ readonly _tag: "Success" } & ResolvedPdfSource);
 
 export interface PdfSourceResolver {

@@ -25,6 +25,13 @@ import {
   SCIENT_DEV_APP_BACKGROUND_SERVICE_ENV,
   SCIENT_DEV_APP_FAILURE_FILE_ENV,
 } from "../apps/desktop/scripts/dev-app-bundle.mjs";
+import {
+  claimColdHandoff,
+  processStartToken,
+  readClaimedColdHandoff,
+  takeClaimedColdHandoff,
+  writeApprovedHandoff,
+} from "../apps/desktop/scripts/dev-cold-handoff.mjs";
 
 export const LOCAL_DEV_APP_NAME = "Scient (Dev)";
 export const LOCAL_DEV_APP_STABLE_NAME = "Scient (Dev) Stable";
@@ -177,6 +184,7 @@ export function makeLocalDevAppLaunchAgentPlist({
   paths = resolveLocalDevAppPaths(),
   nodePath = process.execPath,
   environment = process.env,
+  coldClaimPath,
 } = {}) {
   const scriptPath = NodePath.join(paths.root, "scripts", "local-dev-app.mjs");
   const pathParts = [
@@ -195,6 +203,7 @@ export function makeLocalDevAppLaunchAgentPlist({
   serviceEnvironment.PATH = pathParts;
   // The service launches an app that `start` already built and signed.
   serviceEnvironment[SCIENT_DEV_APP_BACKGROUND_SERVICE_ENV] = "1";
+  if (coldClaimPath) serviceEnvironment.SCIENT_DEV_COLD_CLAIM_PATH = coldClaimPath;
   if (paths.role === "stable") {
     serviceEnvironment[SCIENT_DEV_APP_ROLE_ENV] = "stable";
     serviceEnvironment[SCIENT_NEXT_HOME_ENV] = paths.stateRoot;
@@ -353,50 +362,123 @@ export async function startAppInBackground({
   spawnSync = NodeChildProcess.spawnSync,
   prepareAppBundle = prepareDevelopmentAppBundle,
   writeLine = console.log,
+  coldHandoffPath,
+  resolveOwnedApp = resolveOwnedDevelopmentApp,
+  resolveOwnedApps = resolveOwnedDevelopmentApps,
+  clearRunner = clearStaleRunner,
 } = {}) {
   if (platform !== "darwin") {
     throw new Error("The background local dev app launcher currently supports macOS only.");
   }
-  const runner = clearStaleRunner(paths);
-  const ownedLaunches = runner ? [] : resolveOwnedDevelopmentLaunches(paths);
-  const ownedApps = runner ? [] : resolveOwnedDevelopmentApps(paths);
-  const ownedBackends = runner ? [] : resolveOwnedDevelopmentBackends(paths);
-  if (runner || ownedLaunches.length > 0 || ownedApps.length > 0 || ownedBackends.length > 0) {
-    writeLine(
-      `${paths.appName} is already ${runner?.starting ? "starting" : "running"} for ${paths.root}.`,
+  let coldClaim = null;
+  if (coldHandoffPath) {
+    const marker = assertOwnedInstallation(paths);
+    if (!marker || NodePath.resolve(marker.repoRoot) !== NodePath.resolve(paths.root)) {
+      throw new Error("Cold handoff requires this checkout's installed development app.");
+    }
+    coldClaim = claimColdHandoff({
+      path: coldHandoffPath,
+      stateRoot: paths.stateRoot,
+      root: paths.root,
+      role: paths.role,
+    });
+    const binary = NodePath.join(paths.appBundlePath, "Contents", "MacOS", "Electron");
+    const command = spawnSync("ps", ["-p", String(coldClaim.receipt.coldPid), "-o", "command="], {
+      encoding: "utf8",
+    });
+    if (
+      processStartToken(coldClaim.receipt.coldPid, { spawnSync }) !== coldClaim.receipt.coldStart ||
+      command.status !== 0 ||
+      !(command.stdout.trim() === binary || command.stdout.trim().startsWith(`${binary} `))
+    ) {
+      NodeFS.rmSync(coldClaim.path, { force: true });
+      throw new Error("Cold handoff did not come from this installed development app process.");
+    }
+  }
+  let started = false;
+  try {
+    const runner = clearRunner(paths);
+    // The validated Finder receiver may still be alive during the handshake;
+    // exclude exactly that PID, never another app or backend process.
+    const coldPid = coldClaim?.receipt.coldPid;
+    const ownedAppCandidate = runner ? null : resolveOwnedApp(paths);
+    const ownedApp = ownedAppCandidate?.pid === coldPid ? null : ownedAppCandidate;
+    const ownedLaunches = runner
+      ? []
+      : resolveOwnedDevelopmentLaunches(paths).filter(
+          (launch) =>
+            launch.app?.pid !== coldPid ||
+            Boolean(launch.launcher || launch.backend || launch.pending),
+        );
+    const ownedApps = runner ? [] : resolveOwnedApps(paths).filter(({ pid }) => pid !== coldPid);
+    const ownedBackends = runner ? [] : resolveOwnedDevelopmentBackends(paths);
+    if (
+      runner ||
+      ownedApp ||
+      ownedLaunches.length > 0 ||
+      ownedApps.length > 0 ||
+      ownedBackends.length > 0
+    ) {
+      if (coldClaim) NodeFS.rmSync(coldClaim.path, { force: true });
+      if (coldClaim) {
+        throw new Error(
+          "Another managed development app is already running; the reviewed file was not handed off.",
+        );
+      }
+      writeLine(
+        `${paths.appName} is already ${runner?.starting ? "starting" : "running"} for ${paths.root}.`,
+      );
+      return { status: "already-running" };
+    }
+
+    if (coldClaim && localDevAppServiceIsLoaded(paths, { spawnSync })) {
+      NodeFS.rmSync(coldClaim.path, { force: true });
+      throw new Error("A managed development service is already loaded for this checkout.");
+    }
+
+    const unloaded = unloadLocalDevAppService(paths, { spawnSync });
+    if (
+      unloaded &&
+      !(await waitForLocalDevAppServiceToUnload(paths, {
+        serviceIsLoaded: (target) => localDevAppServiceIsLoaded(target, { spawnSync }),
+      }))
+    ) {
+      throw new Error(
+        `Could not finish stopping the previous ${paths.appName} background service.`,
+      );
+    }
+    NodeFS.mkdirSync(paths.runtimeDir, { recursive: true });
+    NodeFS.rmSync(paths.failurePath, { force: true });
+    // Sign here, in the caller's session: macOS can refuse it to the service.
+    if (!coldClaim) prepareAppBundle({ paths });
+    const temporaryPath = `${paths.servicePlistPath}.tmp-${String(process.pid)}`;
+    NodeFS.writeFileSync(
+      temporaryPath,
+      makeLocalDevAppLaunchAgentPlist({
+        paths,
+        coldClaimPath: coldClaim?.path,
+      }),
+      { mode: 0o600 },
     );
-    return { status: "already-running" };
-  }
+    NodeFS.renameSync(temporaryPath, paths.servicePlistPath);
 
-  const unloaded = unloadLocalDevAppService(paths, { spawnSync });
-  if (
-    unloaded &&
-    !(await waitForLocalDevAppServiceToUnload(paths, {
-      serviceIsLoaded: (target) => localDevAppServiceIsLoaded(target, { spawnSync }),
-    }))
-  ) {
-    throw new Error(`Could not finish stopping the previous ${paths.appName} background service.`);
+    const result = runLaunchctl(
+      ["bootstrap", currentUserGuiDomain(), paths.servicePlistPath],
+      spawnSync,
+    );
+    if (result.status !== 0) {
+      if (coldClaim) NodeFS.rmSync(coldClaim.path, { force: true });
+      NodeFS.rmSync(paths.servicePlistPath, { force: true });
+      const detail = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
+      throw new Error(`Could not launch ${paths.appName}${detail ? `: ${detail}` : "."}`);
+    }
+    writeLine(`Launching ${paths.appName} for ${paths.root}.`);
+    writeLine(`Use pnpm dev:app:status or pnpm dev:app:logs while it starts.`);
+    started = true;
+    return { status: "started" };
+  } finally {
+    if (!started && coldClaim) NodeFS.rmSync(coldClaim.path, { force: true });
   }
-  NodeFS.mkdirSync(paths.runtimeDir, { recursive: true });
-  NodeFS.rmSync(paths.failurePath, { force: true });
-  // Sign here, in the caller's session: macOS can refuse it to the service.
-  prepareAppBundle({ paths });
-  const temporaryPath = `${paths.servicePlistPath}.tmp-${String(process.pid)}`;
-  NodeFS.writeFileSync(temporaryPath, makeLocalDevAppLaunchAgentPlist({ paths }), { mode: 0o600 });
-  NodeFS.renameSync(temporaryPath, paths.servicePlistPath);
-
-  const result = runLaunchctl(
-    ["bootstrap", currentUserGuiDomain(), paths.servicePlistPath],
-    spawnSync,
-  );
-  if (result.status !== 0) {
-    NodeFS.rmSync(paths.servicePlistPath, { force: true });
-    const detail = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
-    throw new Error(`Could not launch ${paths.appName}${detail ? `: ${detail}` : "."}`);
-  }
-  writeLine(`Launching ${paths.appName} for ${paths.root}.`);
-  writeLine(`Use pnpm dev:app:status or pnpm dev:app:logs while it starts.`);
-  return { status: "started" };
 }
 
 export function resolveStableDevHome(homeDir = NodeOS.homedir()) {
@@ -716,7 +798,7 @@ function resolveOwnedDevelopmentAppCommandPrefix(paths) {
     "MacOS",
     "Electron",
   );
-  return `${electronBinaryPath} --t3code-dev-root=${NodePath.join(paths.root, "apps", "desktop")} ${NodePath.join(paths.root, "apps", "desktop", "dist-electron", "main.cjs")}`;
+  return `${electronBinaryPath} --t3code-dev-root=${NodePath.join(paths.root, "apps", "desktop")}`;
 }
 
 export function resolveOwnedDevelopmentApps(paths, { inspectAllProcesses } = {}) {
@@ -860,8 +942,40 @@ async function waitForStopped(
 
 async function runApp() {
   const paths = resolveLocalDevAppPaths();
+  const coldClaimPath = process.env.SCIENT_DEV_COLD_CLAIM_PATH;
+  let coldApprovedPath = null;
+  if (coldClaimPath) {
+    const receipt = readClaimedColdHandoff({
+      path: coldClaimPath,
+      stateRoot: paths.stateRoot,
+      root: paths.root,
+      role: paths.role,
+    });
+    const deadline = Date.now() + 45_000;
+    while (processStartToken(receipt.coldPid) === receipt.coldStart) {
+      if (Date.now() > deadline) throw new Error("Cold development app did not yield ownership.");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    const claimed = takeClaimedColdHandoff({
+      path: coldClaimPath,
+      stateRoot: paths.stateRoot,
+      root: paths.root,
+      role: paths.role,
+    });
+    if (claimed.nonce !== receipt.nonce)
+      throw new Error("Cold handoff changed during ownership transfer.");
+    if (claimed.files.length > 0) {
+      coldApprovedPath = writeApprovedHandoff({
+        stateRoot: paths.stateRoot,
+        root: paths.root,
+        role: paths.role,
+        files: claimed.files,
+      });
+    }
+  }
   const runner = acquireRunner(paths);
   if (!runner.acquired) {
+    if (coldApprovedPath) NodeFS.rmSync(coldApprovedPath, { force: true });
     console.log(
       runner.state.starting
         ? `${LOCAL_DEV_APP_NAME} is already starting for this checkout.`
@@ -895,6 +1009,8 @@ async function runApp() {
     SCIENT_DEV_APP_PID_FILE: paths.appPidPath,
     [SCIENT_DEV_APP_FAILURE_FILE_ENV]: paths.failurePath,
   };
+  delete childEnv.SCIENT_DEV_COLD_CLAIM_PATH;
+  if (coldApprovedPath) childEnv.SCIENT_DEV_COLD_APPROVED_PATH = coldApprovedPath;
   const child = NodeChildProcess.spawn(
     pnpmExecPath ? process.execPath : "pnpm",
     pnpmExecPath ? [pnpmExecPath, ...devDesktopArgs] : devDesktopArgs,
@@ -926,6 +1042,7 @@ async function runApp() {
     child.once("exit", (code, signal) => resolve({ code, signal }));
   }).finally(() => {
     stopWatching();
+    if (coldApprovedPath) NodeFS.rmSync(coldApprovedPath, { force: true });
     cleanup();
   });
 
@@ -1193,7 +1310,10 @@ async function main() {
   const flags = rawFlags.filter((flag) => flag !== "--");
   const replace = flags.includes("--replace");
   const stable = flags.includes("--stable");
-  if (flags.some((flag) => flag !== "--replace" && flag !== "--stable")) {
+  const coldHandoffFlag = flags.find((flag) => flag.startsWith("--cold-handoff="));
+  if (
+    flags.some((flag) => flag !== "--replace" && flag !== "--stable" && flag !== coldHandoffFlag)
+  ) {
     throw new Error(
       `Unknown option: ${flags.find((flag) => flag !== "--replace" && flag !== "--stable")}`,
     );
@@ -1205,7 +1325,10 @@ async function main() {
     }
   }
   if (command === "run") return runApp();
-  if (command === "start") return startAppInBackground();
+  if (command === "start")
+    return startAppInBackground({
+      coldHandoffPath: coldHandoffFlag?.slice("--cold-handoff=".length),
+    });
   if (command === "install") return installApp({ replace });
   if (command === "logs") return printLogs();
   if (command === "status") return statusApp();

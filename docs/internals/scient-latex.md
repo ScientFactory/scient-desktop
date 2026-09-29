@@ -58,10 +58,11 @@ manifest itself (schema version, owner), that every owned root/file and mount
 anchor still exists, that the owned roots are still absent from the official
 T3 upstream ref, and — given `--base`/`--head` — that any changed path
 matching a `latexDiffSignals` pattern is classified somewhere in the manifest
-rather than landing as an unclassified fork change. It runs as part of the
-"Verify provenance and General Chat seams" step in
-`.github/workflows/scient-upstream-provenance.yml`, alongside the general
-upstream-provenance check and the General Chat and analysis seam verifiers.
+rather than landing as an unclassified fork change. CI runs the same check for
+every seam manifest through `scripts/scient-seam-check.mjs --base --head` in the
+"Verify upstream provenance and Scient seams" step of
+`.github/workflows/scient-upstream-provenance.yml`, after the general
+upstream-provenance check.
 
 ## Build lifecycle
 
@@ -697,6 +698,23 @@ workspace-relative file are buttons through the same line-aware open seam. Any
 revision change invalidates the in-flight navigation request and target, and a
 missing/evicted revision or index returns a typed `unavailable` result rather
 than navigating against a newer PDF.
+
+## Word export
+
+The LaTeX surface sends its selected root and saved source revision to the
+server's Word export endpoint. `WordFileExport` checks that revision, prepares
+the root project, and confirms the opened source belongs to the resulting
+include set. `latexProjectPreparation` uses a structural LaTeX parse to splice
+literal local inputs, resolve `\graphicspath` figures, and collect local
+bibliographies, with depth, file-count, and byte limits. Each resource must
+remain inside the root document's directory after real-path resolution;
+unresolved inputs become placeholders. Macros are not expanded.
+
+`PandocWordConverter` reads the prepared source with Pandoc's LaTeX reader
+under `--sandbox`, passes the document tree through the existing image and
+metadata security pass, then writes Word with only staged bibliography files
+and the Scient reference document. PDF/EPS figures remain placeholders. The
+LaTeX-to-Markdown route is withheld pending separate fidelity qualification.
 
 ## Verification
 

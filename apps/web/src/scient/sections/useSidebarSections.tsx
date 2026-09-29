@@ -1,9 +1,15 @@
+import { useAtomValue } from "@effect/atom-react";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
-import type { ScopedThreadRef, ThreadSection, ThreadSectionId } from "@t3tools/contracts";
+import type {
+  ScopedThreadRef,
+  ThreadSection,
+  ThreadSectionId,
+  ThreadSectionProjectRef,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { type ReactNode, useCallback, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 
 import { stackedThreadToast, toastManager } from "../../components/ui/toast";
 import type { useHandleNewThread } from "../../hooks/useHandleNewThread";
@@ -12,16 +18,18 @@ import { resolveThreadActionProjectRef } from "../../lib/chatThreadActions";
 import { readLocalApi } from "../../localApi";
 import { useEnvironments } from "../../state/environments";
 import { useThreadSectionActions } from "./actions";
+import { loadedThreadEnvironmentsKeyAtom } from "./loadedEnvironments";
 import { useThreadSectionCatalog } from "./catalog";
-import { groupThreadsBySection, sectionLayoutOrder, SidebarViewMode } from "./logic";
+import { groupThreadsBySection, sectionIdsInProjectScope, SidebarViewMode } from "./logic";
 import {
   rememberSectionForNewThread,
   useApplyPendingNewThreadSections,
 } from "./pendingNewThreadSections";
 import { SidebarSectionsToggle } from "./SidebarSectionsToggle";
+import { setSidebarSectionScope } from "./sidebarScope";
 import type { SidebarSectionsViewProps } from "./SidebarSectionsView";
 import { useEmptySectionCleanup } from "./useEmptySectionCleanup";
-import { useNewSectionForThreads } from "./useNewSectionForThreads";
+import { createSectionAndFile, useNewSectionForThreads } from "./useNewSectionForThreads";
 import { useThreadSectionMenu } from "./useThreadSectionMenu";
 
 const SIDEBAR_VIEW_MODE_KEY = "scient:sidebar:view-mode";
@@ -58,6 +66,8 @@ export type SidebarSectionsOwnViewProps = Pick<
 export function useSidebarSections(input: {
   /** Every thread shell, for membership. */
   readonly threads: readonly Shell[];
+  /** The projects of the sidebar's selected project; null under All projects. */
+  readonly scopeProjectRefs: readonly ThreadSectionProjectRef[] | null;
   readonly pinnedThreads: readonly Shell[];
   readonly activeThreads: readonly Shell[];
   readonly routeThreadKey: string | null;
@@ -65,11 +75,22 @@ export function useSidebarSections(input: {
   /** Closes the mobile sidebar before navigating to a new draft. */
   readonly onBeforeNewThread: () => void;
 }) {
-  const { activeThreads, newThreadContext, onBeforeNewThread, pinnedThreads, routeThreadKey } =
-    input;
+  const {
+    activeThreads,
+    newThreadContext,
+    onBeforeNewThread,
+    pinnedThreads,
+    routeThreadKey,
+    scopeProjectRefs,
+  } = input;
   const catalog = useThreadSectionCatalog();
   const { moveThreadsToSection, setThreadSection } = useThreadSectionActions();
   const newSectionDialog = useNewSectionForThreads();
+  // Section creation outside the sidebar records the same selected project.
+  useEffect(() => {
+    setSidebarSectionScope(scopeProjectRefs);
+    return () => setSidebarSectionScope(null);
+  }, [scopeProjectRefs]);
   const { environments } = useEnvironments();
 
   const [viewMode, setViewMode] = useLocalStorage(
@@ -92,6 +113,29 @@ export function useSidebarSections(input: {
   const supported = catalog.available;
   const sectionsView = viewMode === "sections" && supported;
 
+  // A project scope lists only that project's sections (see sectionIdsInProjectScope).
+  const scopeProjectKeys = useMemo(
+    () =>
+      scopeProjectRefs === null
+        ? null
+        : new Set(scopeProjectRefs.map((ref) => `${ref.environmentId}:${ref.projectId}`)),
+    [scopeProjectRefs],
+  );
+  const loadedKey = useAtomValue(loadedThreadEnvironmentsKeyAtom);
+  const loadedEnvironmentIds = useMemo(
+    () => new Set(loadedKey.length > 0 ? loadedKey.split("\n") : []),
+    [loadedKey],
+  );
+  const listedSectionIds = useMemo(
+    () =>
+      sectionIdsInProjectScope({
+        sections: catalog.sections,
+        scopeProjectKeys,
+        loadedEnvironmentIds,
+        threads: input.threads,
+      }),
+    [catalog.sections, input.threads, loadedEnvironmentIds, scopeProjectKeys],
+  );
   const groups = useMemo(
     () =>
       groupThreadsBySection({
@@ -99,8 +143,9 @@ export function useSidebarSections(input: {
         generalIndex: catalog.generalIndex,
         pinned: pinnedThreads,
         active: activeThreads,
+        listedSectionIds,
       }),
-    [activeThreads, catalog.generalIndex, catalog.sections, pinnedThreads],
+    [activeThreads, catalog.generalIndex, catalog.sections, listedSectionIds, pinnedThreads],
   );
   /** Rows in display order; a collapsed section still shows the open thread. */
   const visibleGroupThreads = useMemo(
@@ -172,15 +217,20 @@ export function useSidebarSections(input: {
     async (name: string) => {
       const threadRefs = creating?.threadRefs ?? [];
       setCreating(null);
-      const section = await catalog.create(name);
+      const section = await createSectionAndFile({
+        name,
+        threadRefs,
+        scopeProjectRefs,
+        create: catalog.create,
+        moveThreadsToSection,
+      });
       if (section === null) {
         toastManager.add(stackedThreadToast({ type: "error", title: "Failed to create section" }));
         return;
       }
       setCollapsedIds((current) => current.filter((id) => id !== section.id));
-      if (threadRefs.length > 0) await moveThreadsToSection(threadRefs, section.id);
     },
-    [catalog, creating, moveThreadsToSection, setCollapsedIds],
+    [catalog, creating, moveThreadsToSection, scopeProjectRefs, setCollapsedIds],
   );
 
   const renameSection = useCallback(
@@ -204,9 +254,10 @@ export function useSidebarSections(input: {
     [catalog],
   );
 
+  /** Takes the new order of the listed groups; hidden sections keep their slots. */
   const reorderSections = useCallback(
-    (orderedIds: readonly string[]) => {
-      void catalog.reorder(orderedIds).then((saved) => {
+    (listedOrder: readonly string[]) => {
+      void catalog.reorder(listedOrder).then((saved) => {
         if (!saved) {
           toastManager.add(
             stackedThreadToast({ type: "error", title: "Failed to reorder sections" }),
@@ -256,8 +307,8 @@ export function useSidebarSections(input: {
     async (section: ThreadSection, position: { x: number; y: number }) => {
       const api = readLocalApi();
       if (!api) return;
-      // Moves step over General like any other section.
-      const order = sectionLayoutOrder(catalog.sections, catalog.generalIndex);
+      // Moves step over General like any other section, and only over listed ones.
+      const order = groups.map((group) => group.id);
       const index = order.indexOf(section.id);
       const clicked = await settlePromise(() =>
         api.contextMenu.show(
@@ -303,13 +354,7 @@ export function useSidebarSections(input: {
           return;
       }
     },
-    [
-      catalog.generalIndex,
-      catalog.sections,
-      deleteSection,
-      reorderSections,
-      startNewThreadInSection,
-    ],
+    [deleteSection, groups, reorderSections, startNewThreadInSection],
   );
 
   const toggleGroup = useCallback(
@@ -331,7 +376,10 @@ export function useSidebarSections(input: {
     renamingSectionId,
     onRenamingSectionChange: setRenamingSectionId,
     onRenameSection: renameSection,
-    creatingSection: creating === null ? null : { onSubmit: submitNewSection },
+    creatingSection:
+      creating === null
+        ? null
+        : { onSubmit: submitNewSection, threadCount: creating.threadRefs.length },
     onStartCreateSection: () => setCreating({ threadRefs: [] }),
     onCancelCreateSection: () => setCreating(null),
   };

@@ -68,3 +68,13 @@ describe("ComposerPendingUserInputPanel", () => {
     expect(markup).toContain("Big bang");
   });
 });
+
+it("keeps reply feedback next to the available question", () => {
+  const markup = renderPanel({
+    ...prompt,
+    responseError: "Your response could not be sent. Try again.",
+  });
+  expect(markup).toContain('role="alert"');
+  expect(markup).toContain("Your response could not be sent. Try again.");
+  expect(markup).toContain("Which approach should the migration take?");
+});

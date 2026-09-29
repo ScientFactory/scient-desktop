@@ -14,6 +14,7 @@ import { createModelSelection } from "@t3tools/shared/model";
 import * as EffectAcpErrors from "effect-acp/errors";
 import { customModelProviderId } from "./customModels.ts";
 import { droidCustomModelId } from "./provider/droid/DroidCustomModels.ts";
+import { encodeOmpModelSlug } from "./provider/omp/OmpModel.ts";
 import { encodePiModelSlug } from "./provider/pi/PiModel.ts";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -60,6 +61,7 @@ import {
   OrchestrationGetTurnDiffError,
   ORCHESTRATION_WS_METHODS,
   ProjectId,
+  PROVIDER_DISPLAY_NAMES,
   type ProjectDirectoryFailure,
   type ProjectDirectoryOperation,
   type ProjectEntriesFailure,
@@ -160,6 +162,11 @@ import { reconcileManagedRuntimeProviders } from "./scient/providerLifecycle/Man
 import { workspaceEntryDisposition } from "./scient/workspace/WorkspaceEntryPolicy.ts";
 import * as GeneratedDocumentStore from "./scient/documentArtifacts/GeneratedDocumentStore.ts";
 import { publishBrowserPdfExport } from "./scient/documentArtifacts/BrowserPdfExportPublication.ts";
+import { publishCapturedDocumentPdf } from "./scient/documentExport/DocumentPdfPublication.ts";
+import { prepareMarkdownPdf } from "./scient/documentExport/MarkdownPdfPreparation.ts";
+import { prepareConversationPdf } from "./scient/documentExport/ConversationPdfPreparation.ts";
+import { removeDocumentCapture } from "./scient/documentExport/DocumentCapture.ts";
+import { ConversationExportService } from "./scient/conversationExport/ConversationExportService.ts";
 import * as AnalysisService from "./scient/analysis/AnalysisService.ts";
 import { makeComputeRpcGateway } from "./scient/compute/ComputeRpcGateway.ts";
 import { WorkspaceBindingResolver } from "./scient/projectScope/WorkspaceBindingResolver.ts";
@@ -248,7 +255,7 @@ const compactProviderError = (value: unknown): string | null => {
 };
 
 const customModelTestFailure = (driver: ProviderDriverKind, cause: unknown) => {
-  const agent = driver === "droid" ? "Droid" : "Pi";
+  const agent = PROVIDER_DISPLAY_NAMES[driver] ?? driver;
   if (isTextGenerationError(cause) && isAcpRequestError(cause.cause)) {
     const providerDetail = compactProviderError(cause.cause.data);
     if (providerDetail) return new CustomModelError({ message: `${agent}: ${providerDetail}` });
@@ -874,6 +881,7 @@ const makeWsRpcLayer = (
       const agentSessionScanner = yield* AgentSessionScanner.AgentSessionScanner;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const generatedDocuments = yield* GeneratedDocumentStore.GeneratedDocumentStore;
+      const conversationExports = yield* ConversationExportService;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
       const rpcClientIds = yield* Ref.make(new Set<RpcClientId>());
       yield* Effect.addFinalizer(() =>
@@ -3030,7 +3038,7 @@ const makeWsRpcLayer = (
               !supportsModelConnections(instance.driverKind, connection.protocol)
             )
               return yield* new CustomModelError({
-                message: "Connect this model to an enabled Pi or Droid agent first.",
+                message: "Connect this model to an enabled Pi, Droid, or Oh My Pi agent first.",
               });
             const resolved = yield* serverSettings.resolveCustomModels(input.instanceId);
             const credentialError = resolved.find((c) => c.id === connection.id)?.credentialError;
@@ -3039,7 +3047,9 @@ const makeWsRpcLayer = (
             const slug =
               instance.driverKind === "droid"
                 ? droidCustomModelId(connection.id, model.id)
-                : encodePiModelSlug(customModelProviderId(connection.id), model.modelId);
+                : instance.driverKind === "omp"
+                  ? encodeOmpModelSlug(customModelProviderId(connection.id), model.modelId)
+                  : encodePiModelSlug(customModelProviderId(connection.id), model.modelId);
             if (!slug) return yield* new CustomModelError({ message: "Invalid model ID." });
             yield* instance.textGeneration
               .generateThreadTitle({
@@ -3889,6 +3899,35 @@ const makeWsRpcLayer = (
             publishBrowserPdfExport(generatedDocuments, input),
             { "rpc.aggregate": "documents" },
           ),
+        [WS_METHODS.documentsPrepareMarkdownPdf]: (input) =>
+          observeRpcEffect(WS_METHODS.documentsPrepareMarkdownPdf, prepareMarkdownPdf(input), {
+            "rpc.aggregate": "documents",
+          }),
+        [WS_METHODS.documentsPrepareConversationPdf]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.documentsPrepareConversationPdf,
+            prepareConversationPdf(input).pipe(
+              Effect.provideService(ConversationExportService, conversationExports),
+            ),
+            { "rpc.aggregate": "documents" },
+          ),
+        [WS_METHODS.documentsPublishDocumentPdf]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.documentsPublishDocumentPdf,
+            publishCapturedDocumentPdf(input).pipe(
+              Effect.provideService(
+                GeneratedDocumentStore.GeneratedDocumentStore,
+                generatedDocuments,
+              ),
+            ),
+            { "rpc.aggregate": "documents" },
+          ),
+        [WS_METHODS.documentsReleaseDocumentPdf]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.documentsReleaseDocumentPdf,
+            removeDocumentCapture(input.captureId),
+            { "rpc.aggregate": "documents" },
+          ),
         [WS_METHODS.attachmentsCreateUploadUrl]: (input) =>
           observeRpcEffect(WS_METHODS.attachmentsCreateUploadUrl, issueAttachmentUploadUrl(input), {
             "rpc.aggregate": "workspace",
@@ -4659,6 +4698,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
     const analysis = yield* AnalysisService.AnalysisService;
     const compute = yield* ComputeSessionService.ComputeSessionService;
     const runtimePreferences = yield* ScientificRuntimePreferences;
+    const conversationExports = yield* ConversationExportService;
     const sql = yield* SqlClient.SqlClient;
     return HttpRouter.add(
       "GET",
@@ -4731,6 +4771,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               Layer.provide(Layer.succeed(AnalysisService.AnalysisService, analysis)),
               Layer.provide(Layer.succeed(ComputeSessionService.ComputeSessionService, compute)),
               Layer.provide(Layer.succeed(ScientificRuntimePreferences, runtimePreferences)),
+              Layer.provide(Layer.succeed(ConversationExportService, conversationExports)),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
                   Layer.provide(

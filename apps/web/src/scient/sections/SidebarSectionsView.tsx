@@ -13,7 +13,12 @@ import {
   useSensors,
 } from "@dnd-kit/core";
 import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-kit/modifiers";
-import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import {
+  SortableContext,
+  type SortingStrategy,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
@@ -41,7 +46,7 @@ import { stackedThreadToast, toastManager } from "../../components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { useThreadActions } from "../../hooks/useThreadActions";
 import { cn } from "../../lib/utils";
-import { useThreadSectionActions } from "./actions";
+import { readEnvironmentSupportsThreadReorder, useThreadSectionActions } from "./actions";
 import { FadeTruncate } from "./FadeTruncate";
 import {
   GENERAL_SECTION_GROUP_ID,
@@ -53,9 +58,12 @@ import {
   resolveSectionDragOrder,
   resolveSectionsDropTarget,
   type SectionBlock,
+  sectionsDropIndex,
+  expandSectionDropOrder,
   sectionShifts,
   sectionGroupIdFromHeaderItemId,
   sectionHeaderItemId,
+  newSectionTitle,
 } from "./logic";
 import { readTypedSectionName } from "./sectionNameInput";
 
@@ -108,7 +116,11 @@ export interface SidebarSectionsViewProps {
   readonly onRenamingSectionChange: (sectionId: string | null) => void;
   readonly onRenameSection: (sectionId: string, name: string) => void;
   /** Inline name input replacing the "New section" row; null when not creating. */
-  readonly creatingSection: { readonly onSubmit: (name: string) => void } | null;
+  readonly creatingSection: {
+    readonly onSubmit: (name: string) => void;
+    /** Threads the section is being made for (0 from the "New section" row). */
+    readonly threadCount: number;
+  } | null;
   readonly onStartCreateSection: () => void;
   readonly onCancelCreateSection: () => void;
 }
@@ -228,7 +240,13 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
     if (props.showSnoozedShelf) {
       items.push({ kind: "shelf", id: shelfMarkerId("snoozed"), shelf: "snoozed" });
       for (const thread of snoozedThreads) {
-        items.push({ kind: "thread", id: keyOf(thread), lifecycle: "snoozed", groupId: null });
+        items.push({
+          kind: "thread",
+          id: keyOf(thread),
+          lifecycle: "snoozed",
+          groupId: null,
+          ...(thread.pinnedAt != null ? { pinned: true } : {}),
+        });
       }
     }
     items.push({ kind: "shelf", id: shelfMarkerId("settled"), shelf: "settled" });
@@ -271,6 +289,17 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
   const holding = items !== canonicalItems;
 
   const sortableIds = useMemo(() => items.map((item) => item.id), [items]);
+  // Rows slide to where a drop would land, so over a header the lifted row
+  // shows below it, in that header's section (see sectionsDropIndex).
+  const sortingStrategy = useCallback<SortingStrategy>(
+    (args) =>
+      verticalListSortingStrategy(
+        args.activeIndex < 0 || args.overIndex < 0 || items[args.activeIndex]?.kind !== "thread"
+          ? args
+          : { ...args, overIndex: sectionsDropIndex(items, args.activeIndex, args.overIndex) },
+      ),
+    [items],
+  );
 
   const lifecycleByKey = useMemo(
     () =>
@@ -282,13 +311,21 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
     [items],
   );
 
-  const orderOfGroup = useCallback(
-    (groupId: string) =>
-      items.flatMap((item) =>
-        item.kind === "thread" && item.groupId === groupId ? [item.id] : [],
-      ),
-    [items],
+  // Every row of each section, including those a collapsed section hides:
+  // a drop is planned against the whole section, not only what it shows.
+  const fullOrderByGroup = useMemo(
+    () => new Map(groups.map((group) => [group.id, group.threads.map(keyOf)])),
+    [groups],
   );
+  const planLifecycleByKey = useMemo(() => {
+    const map = new Map(lifecycleByKey);
+    for (const group of groups) {
+      for (const thread of group.threads) {
+        map.set(keyOf(thread), thread.pinnedAt != null ? "pinned" : "active");
+      }
+    }
+    return map;
+  }, [groups, lifecycleByKey]);
 
   const handleDragStart = useCallback(
     (event: DragStartEvent) => {
@@ -340,20 +377,6 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
     [],
   );
 
-  const handleDragOver = useCallback(
-    (event: DragOverEvent) => {
-      const activeId = String(event.active.id);
-      if (sectionGroupIdFromHeaderItemId(activeId) !== null) return;
-      const target = event.over
-        ? resolveSectionsDropTarget(items, activeId, String(event.over.id))
-        : null;
-      setDrag((current) =>
-        current?.kind === "thread" && current.key === activeId ? { ...current, target } : current,
-      );
-    },
-    [items],
-  );
-
   const reportFailure = useCallback(
     (title: string, result: AtomCommandResult<unknown, unknown>) => {
       if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
@@ -398,12 +421,26 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
     [groups, items, onReorderSections],
   );
 
-  const dropThread = useCallback(
+  /** What dropping the lifted row over `overId` would do; null when nothing. */
+  const planThreadDrop = useCallback(
     (activeKey: string, overId: string) => {
       const thread = threadByKey.get(activeKey);
       const source = items.find((item) => item.id === activeKey);
-      const target = resolveSectionsDropTarget(items, activeKey, overId);
-      if (thread === undefined || source?.kind !== "thread" || target === null) return;
+      const shown = resolveSectionsDropTarget(items, activeKey, overId);
+      if (thread === undefined || source?.kind !== "thread" || shown === null) return null;
+      const fullOrder = shown.kind === "section" ? fullOrderByGroup.get(shown.groupId) : undefined;
+      const target =
+        shown.kind === "section" && fullOrder !== undefined
+          ? {
+              ...shown,
+              order: expandSectionDropOrder({
+                shownOrder: shown.order,
+                fullOrder,
+                droppedId: activeKey,
+                onHeader: sectionGroupIdFromHeaderItemId(overId) === shown.groupId,
+              }),
+            }
+          : shown;
       const plan = planSectionsThreadDrop({
         source: {
           key: activeKey,
@@ -412,26 +449,59 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
           pinned: thread.pinnedAt != null,
         },
         target,
-        targetOrderBefore: target.kind === "section" ? orderOfGroup(target.groupId) : [],
-        lifecycleByKey,
+        targetOrderBefore: target.kind === "section" ? (fullOrder ?? []) : [],
+        lifecycleByKey: planLifecycleByKey,
         pinnedKeysById,
         activeKeysById,
         toSectionId: (groupId) =>
           groupId === GENERAL_SECTION_GROUP_ID ? null : ThreadSectionId.make(groupId),
+        canWriteOrderKeys: (ids, group) =>
+          ids.every((id) => {
+            const row = threadByKey.get(id);
+            return (
+              row !== undefined && readEnvironmentSupportsThreadReorder(row.environmentId, group)
+            );
+          }),
       });
+      return plan.kind === "none" ? null : { thread, target, plan };
+    },
+    [activeKeysById, fullOrderByGroup, items, pinnedKeysById, planLifecycleByKey, threadByKey],
+  );
+
+  // Only a drop that changes something highlights its section or shelf.
+  const handleDragOver = useCallback(
+    (event: DragOverEvent) => {
+      const activeId = String(event.active.id);
+      if (sectionGroupIdFromHeaderItemId(activeId) !== null) return;
+      const target = event.over
+        ? (planThreadDrop(activeId, String(event.over.id))?.target ?? null)
+        : null;
+      setDrag((current) =>
+        current?.kind === "thread" && current.key === activeId ? { ...current, target } : current,
+      );
+    },
+    [planThreadDrop],
+  );
+
+  const dropThread = useCallback(
+    (activeKey: string, overId: string) => {
+      const planned = planThreadDrop(activeKey, overId);
+      if (planned === null) return;
+      const { thread, target, plan } = planned;
       const threadRef = scopeThreadRef(thread.environmentId, thread.id);
-      if (plan.kind === "none") return;
       if (plan.kind === "settle") {
         onSettleThread(threadRef);
         return;
       }
       if (target.kind === "section") {
         // Show the drop where it landed while the writes travel.
+        const activeIndex = items.findIndex((item) => item.id === activeKey);
         const overIndex = items.findIndex((item) => item.id === overId);
         const ids = items.map((item) => item.id).filter((id) => id !== activeKey);
-        ids.splice(overIndex, 0, activeKey);
+        ids.splice(sectionsDropIndex(items, activeIndex, overIndex), 0, activeKey);
         setHeld({ ids, expiresAt: Date.now() + HELD_LAYOUT_MS });
       }
+
       const release = () => setHeld(null);
       void (async () => {
         if (plan.unsettle) {
@@ -475,13 +545,10 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
       })();
     },
     [
-      activeKeysById,
       items,
-      lifecycleByKey,
       moveThreadsToSection,
       onSettleThread,
-      orderOfGroup,
-      pinnedKeysById,
+      planThreadDrop,
       reorderActiveThread,
       reorderPinnedThread,
       reportFailure,
@@ -544,7 +611,7 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
       onDragEnd={handleDragEnd}
       onDragCancel={handleDragCancel}
     >
-      <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
+      <SortableContext items={sortableIds} strategy={sortingStrategy}>
         <ul ref={listRef} role="list" className="relative flex flex-1 flex-col gap-px">
           {props.leading}
           {items.map((item, index) => {
@@ -583,6 +650,7 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
                   {firstShelf ? (
                     props.creatingSection !== null ? (
                       <NewSectionRow
+                        threadCount={props.creatingSection.threadCount}
                         onSubmit={props.creatingSection.onSubmit}
                         onCancel={props.onCancelCreateSection}
                       />
@@ -877,14 +945,20 @@ function AddSectionRow(props: { onClick: () => void }) {
   );
 }
 
-function NewSectionRow(props: { onSubmit: (name: string) => void; onCancel: () => void }) {
+function NewSectionRow(props: {
+  threadCount: number;
+  onSubmit: (name: string) => void;
+  onCancel: () => void;
+}) {
   return (
     <li className="mx-0.5 h-8 list-none" data-testid="sidebar-new-section-row" data-sections-end>
       <div className="flex h-full items-center px-2">
         <SectionNameInput
           initialName=""
-          ariaLabel="New section name"
-          placeholder="Section name"
+          ariaLabel={newSectionTitle(props.threadCount)}
+          placeholder={
+            props.threadCount === 0 ? "Section name" : `${newSectionTitle(props.threadCount)}…`
+          }
           onSubmit={props.onSubmit}
           onCancel={props.onCancel}
         />

@@ -159,10 +159,15 @@ pnpm dev:app:install -- --stable --replace
 Never use `--replace` merely because another worktree is convenient. Confirm
 the previous owner is stopped, clean, and intentionally superseded first.
 
-Clicking the installed app directly starts the stable background runtime in its
-recorded checkout using the exact Node and pnpm runtime captured during
-installation. It does not use Terminal automation or request permission to
-control another app.
+Clicking the installed app enters Electron directly, then starts the stable
+background runtime in its recorded checkout using the Node runtime captured
+during installation. A Finder-opened `.scic` is reviewed locally before the
+service, web renderer, or backend starts. On acceptance, a private single-use
+receipt transfers the reviewed file identity to the managed app; on
+cancellation, no runtime starts. This does not use Terminal automation or
+request permission to control another app. After changing the dev launcher,
+reinstall this clickable bundle from its owning checkout before testing Finder
+file opening.
 Stable launches write an append-only development log to
 `~/.scient-next/scient-dev-stable/local-dev-app.log`; candidate launches write
 to `<worktree>/.scient-next/local-dev-app.log`. Direct terminal launches keep
@@ -266,8 +271,9 @@ off, or by `pnpm dev:app`. macOS can refuse the background service permission
 to sign it (`Operation not permitted`), so the service never signs. If it finds
 the bundle needs rebuilding, it stops before copying anything and
 `dev:app:status` reports what to run. The signed bundle stays identical between
-launches: its start command only runs a script kept beside it in
-`apps/desktop/.electron-runtime/`, where the Node and pnpm paths live. Each
+launches: its native Electron executable loads a static bootstrap inside the
+bundle, while volatile environment values live in a private file beside it in
+`apps/desktop/.electron-runtime/`. Each
 bundle there has its own build record, so a production-mode smoke build in the
 same checkout does not invalidate the dev app. A rebuild is staged beside the
 bundle and replaces it only after signing succeeds.
