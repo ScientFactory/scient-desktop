@@ -84,8 +84,9 @@ preferred application remains your operating system's decision. Native file-mana
 (Quick Look or Explorer's Preview pane) require separately built preview components; the file
 association alone does not provide them.
 
-Inside Scient, choose a file and a **Project**, then press **Import**. Scient sends the file to
-the project's environment and checks it in the background. Projects are grouped by environment
+Inside Scient, choose a file and a **Project**. Once both are selected, Scient uploads the file to
+the project's environment and checks it in the background, before you press **Import**.
+**Import** creates the conversation only after those checks finish. Projects are grouped by environment
 when more than one is available; there is no separate destination selector. **Cancel** or Esc
 stops the check before import. If the chosen project's environment becomes unavailable,
 Scient asks you to choose another project or try again after reconnecting. It never switches
