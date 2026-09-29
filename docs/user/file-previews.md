@@ -121,8 +121,8 @@ Choose **More actions → Export → Word** instead for an editable `.docx` of t
 saved file (Word export needs Pandoc; the first export offers to install it).
 Images that cannot be embedded appear as labelled placeholders and are listed in
 the **Exported with notes** notice. On Windows, as with PDF, Word leaves out the
-file's project images for now and lists them there; the rest of the document
-exports.
+file's project images, and any bibliography file its front matter names, for now
+and lists them there; the rest of the document exports.
 
 In a project conversation, an agent can also turn an existing project HTML file
 into a PDF. Scient builds it with local project assets, opens the generated PDF

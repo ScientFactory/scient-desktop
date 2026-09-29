@@ -22,6 +22,7 @@ import {
 } from "@t3tools/contracts";
 import { exportFileName } from "@scientfactory/conversation";
 import { inspectMarkdownDocument } from "@scientfactory/scient-markdown";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -36,6 +37,10 @@ import {
   ConversationExportFiles,
   type ConversationExportFileError,
 } from "../conversationExport/ConversationExportFiles.ts";
+import {
+  checkedFileIdentity,
+  readVerifiedWorkspaceFile,
+} from "../documentExport/verifiedWorkspaceRead.ts";
 import { PandocWordConverter, type WordConversionFailureReason } from "./PandocWordConverter.ts";
 import {
   LATEX_UNVERIFIABLE_PLATFORM_MESSAGE,
@@ -47,6 +52,8 @@ import { capturedWordDiagramAssets, planWordDiagrams } from "./wordDiagramCaptur
 import { captureWordImages } from "./wordImageSnapshot.ts";
 
 const MARKDOWN_FILE = /\.(?:md|markdown|mdown|mkd)$/iu;
+/** The most of one bibliography file a Markdown export reads, as for any project file read. */
+const BIBLIOGRAPHY_MAX_BYTES = 1024 * 1024;
 const isLatexPreparationError = Schema.is(LatexPreparationError);
 
 export interface ProducedWordFile {
@@ -89,6 +96,51 @@ const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const path = yield* Path.Path;
   const fileSystem = yield* FileSystem.FileSystem;
+
+  const isInside = (root: string, candidate: string) => {
+    const relative = path.relative(root, candidate);
+    return (
+      relative !== "" &&
+      relative !== ".." &&
+      !relative.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(relative)
+    );
+  };
+
+  /**
+   * Reads a bibliography the Markdown file names, only through a handle bound
+   * to the file its path check saw (`verifiedWorkspaceRead.ts`), so a file or
+   * folder swapped for a link out of the project after the check is not read.
+   */
+  const readBibliography = Effect.fn("WordFileExport.readBibliography")(function* (
+    root: string,
+    candidate: string,
+  ) {
+    const unreadable = { _tag: "unreadable" } as const;
+    if (!isInside(root, candidate)) return unreadable;
+    const canonicalRoot = yield* fileSystem.realPath(root).pipe(Effect.option);
+    const canonical = yield* fileSystem.realPath(candidate).pipe(Effect.option);
+    if (
+      canonicalRoot._tag === "None" ||
+      canonical._tag === "None" ||
+      !isInside(canonicalRoot.value, canonical.value)
+    )
+      return unreadable;
+    const info = yield* fileSystem.stat(canonical.value).pipe(Effect.option);
+    if (info._tag === "None" || info.value.type !== "File") return unreadable;
+    if (Number(info.value.size) > BIBLIOGRAPHY_MAX_BYTES) return unreadable;
+    const read = yield* readVerifiedWorkspaceFile(
+      checkedFileIdentity(canonical.value, info.value),
+      canonicalRoot.value,
+      yield* HostProcessPlatform,
+      BIBLIOGRAPHY_MAX_BYTES,
+    );
+    return read._tag === "bytes"
+      ? ({ _tag: "contents", contents: new TextDecoder("utf-8").decode(read.bytes) } as const)
+      : read._tag === "unsupported-platform"
+        ? read
+        : unreadable;
+  });
 
   const readSavedMarkdown = Effect.fn("WordFileExport.readSavedMarkdown")(function* (
     request: ScientWordFileExportRequest,
@@ -159,17 +211,18 @@ const make = Effect.gen(function* () {
           });
           continue;
         }
-        const relativePath = path.join(path.dirname(target.relativePath), name);
-        const bibliography = yield* workspacePaths
-          .resolveRelativePathWithinRoot({ workspaceRoot: root, relativePath })
-          .pipe(Effect.option);
-        const loaded =
-          bibliography._tag === "Some"
-            ? yield* workspaceFiles
-                .readFile({ cwd: root, relativePath: bibliography.value.relativePath })
-                .pipe(Effect.option)
-            : null;
-        if (loaded === null || loaded._tag === "None" || loaded.value.truncated) {
+        const loaded = yield* readBibliography(
+          root,
+          path.resolve(path.dirname(target.absolutePath), name),
+        );
+        if (loaded._tag === "unsupported-platform") {
+          warnings.push({
+            code: "resource-unresolved",
+            message: `Bibliography “${path.basename(name)}” was not used: this platform cannot safely verify workspace file paths during Word export; its citation keys remain as written.`,
+          });
+          continue;
+        }
+        if (loaded._tag !== "contents") {
           warnings.push({
             code: "resource-unresolved",
             message: `Bibliography “${path.basename(name)}” could not be read inside this project; its citation keys remain as written.`,
@@ -177,10 +230,10 @@ const make = Effect.gen(function* () {
           continue;
         }
         if (/\.bib$/iu.test(name)) {
-          bibliographySources.push({ format: "bibtex", contents: loaded.value.contents });
+          bibliographySources.push({ format: "bibtex", contents: loaded.contents });
           continue;
         }
-        const entries = citationsFromCslJson(loaded.value.contents);
+        const entries = citationsFromCslJson(loaded.contents);
         if (entries === null) {
           warnings.push({
             code: "resource-unresolved",
