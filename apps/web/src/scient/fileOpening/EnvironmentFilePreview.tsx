@@ -164,12 +164,16 @@ function EnvironmentImageSurface(props: {
     environmentFileAssetResource({ path: props.file.canonicalPath }),
   );
   const previousRefreshTokenRef = useRef(props.refreshToken);
-  const autoRetriedUrlRef = useRef<string | null>(null);
+  // One automatic reauthorization per load, even if each refresh yields a new URL.
+  const autoRetriedRef = useRef(false);
+  // The authorized URL whose image still failed after the automatic retry.
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const refreshAsset = asset.refresh;
   useEffect(() => {
     if (previousRefreshTokenRef.current === props.refreshToken) return;
     previousRefreshTokenRef.current = props.refreshToken;
-    autoRetriedUrlRef.current = null;
+    autoRetriedRef.current = false;
+    setFailedUrl(null);
     refreshAsset();
   }, [props.refreshToken, refreshAsset]);
 
@@ -178,11 +182,24 @@ function EnvironmentImageSurface(props: {
       <FileSurfaceFailure
         title={MEDIA_FAILURE_COPY.image.title}
         description="Scient could not authorize this image."
+        retrying={asset.waiting === true}
         onRetry={refreshAsset}
       />
     );
   }
   if (asset._tag !== "Success") return <CenteredLoading label="Preparing image…" />;
+  if (failedUrl === asset.url) {
+    return (
+      <FileSurfaceFailure
+        {...MEDIA_FAILURE_COPY.image}
+        onRetry={() => {
+          autoRetriedRef.current = false;
+          setFailedUrl(null);
+          refreshAsset();
+        }}
+      />
+    );
+  }
   return (
     <PreviewImageSurface
       className="absolute inset-0"
@@ -192,8 +209,11 @@ function EnvironmentImageSurface(props: {
         revisionKey: `${props.file.canonicalPath}:${props.file.byteLength}:${props.file.mtimeMs}`,
       }}
       onLoadError={() => {
-        if (autoRetriedUrlRef.current === asset.url) return;
-        autoRetriedUrlRef.current = asset.url;
+        if (autoRetriedRef.current) {
+          setFailedUrl(asset.url);
+          return;
+        }
+        autoRetriedRef.current = true;
         refreshAsset();
       }}
     />
@@ -228,6 +248,7 @@ function EnvironmentMediaSurface(props: {
       <FileSurfaceFailure
         title={MEDIA_FAILURE_COPY[props.kind].title}
         description="Scient could not authorize this media file."
+        retrying={asset.waiting === true}
         onRetry={refreshAsset}
       />
     );
@@ -414,7 +435,7 @@ function EnvironmentFileBody(props: {
   switch (props.file.presentation.kind) {
     case "image":
       return (
-        <div className="relative min-h-0 flex-1 overflow-hidden">
+        <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
           <EnvironmentImageSurface {...props} />
         </div>
       );
@@ -566,7 +587,13 @@ export default function EnvironmentFilePreview(props: {
           <span className="min-w-0 flex-1 truncate">
             The latest version could not be loaded. Showing the last available copy.
           </span>
-          <Button size="xs" variant="outline" onClick={freshness.refresh}>
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={freshness.isPending}
+            aria-busy={freshness.isPending}
+            onClick={freshness.refresh}
+          >
             Try again
           </Button>
         </div>

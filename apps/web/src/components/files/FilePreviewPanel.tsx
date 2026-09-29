@@ -334,13 +334,17 @@ function WorkspaceImagePreview(props: {
   if (assetUrl._tag === "Failure" || (imageUrl !== null && failedUrl === imageUrl)) {
     return (
       <MediaActions source={actionsSource}>
-        <FileSurfaceFailure
-          {...MEDIA_FAILURE_COPY.image}
-          onRetry={() => {
-            setFailedUrl(null);
-            assetUrl.refresh();
-          }}
-        />
+        {/* A plain element receives the menu trigger's handlers and ref. */}
+        <div className="flex min-h-0 flex-1 flex-col">
+          <FileSurfaceFailure
+            {...MEDIA_FAILURE_COPY.image}
+            retrying={assetUrl._tag === "Failure" && assetUrl.waiting === true}
+            onRetry={() => {
+              setFailedUrl(null);
+              assetUrl.refresh();
+            }}
+          />
+        </div>
       </MediaActions>
     );
   }
@@ -417,7 +421,13 @@ function WorkspaceBrowserPreview(props: {
       : `${assetUrl._tag === "Success" && assetUrl.url.includes("?") ? "&" : "?"}workspace-revision=${props.refreshKey}`;
 
   if (assetUrl._tag === "Failure") {
-    return <FileSurfaceFailure {...MEDIA_FAILURE_COPY.document} onRetry={assetUrl.refresh} />;
+    return (
+      <FileSurfaceFailure
+        {...MEDIA_FAILURE_COPY.document}
+        retrying={assetUrl.waiting === true}
+        onRetry={assetUrl.refresh}
+      />
+    );
   }
   if (assetUrl._tag !== "Success") {
     return (
@@ -524,6 +534,7 @@ function WorkspaceAudioPreview(props: {
   const assetUrl = useAssetUrlState(props.environmentId, resource);
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const [retrying, setRetrying] = useState(false);
   useWorkspaceMutationRefresh({
     mutationId: props.workspaceMutationId,
     resourceKey: JSON.stringify([props.environmentId, resource]),
@@ -540,9 +551,13 @@ function WorkspaceAudioPreview(props: {
     return (
       <FileSurfaceFailure
         {...MEDIA_FAILURE_COPY.audio}
+        retrying={retrying}
         onRetry={() => {
           setFailedUrl(null);
-          void refreshAssetUrl().catch(() => undefined);
+          setRetrying(true);
+          void refreshAssetUrl()
+            .catch(() => undefined)
+            .finally(() => setRetrying(false));
         }}
       />
     );
@@ -1909,6 +1924,7 @@ export default function FilePreviewPanel({
           saveError={saveError}
           saveRetryReady={saveRetryReady}
           hasFallbackData={file.data !== null}
+          reloading={file.isPending}
           onCancel={cancelReloadNotice}
           onReload={requestManualReload}
           onRequestOverwrite={requestOverwrite}

@@ -48,6 +48,8 @@ export function ScientFileFreshnessNotices(props: {
   readonly saveError: FileSaveErrorNotice | null;
   readonly saveRetryReady: boolean;
   readonly hasFallbackData: boolean;
+  /** A reload is in flight; blocks a second Try again. */
+  readonly reloading?: boolean;
   readonly onCancel: () => void;
   readonly onReload: () => void;
   readonly onRequestOverwrite: () => void;
@@ -132,7 +134,13 @@ export function ScientFileFreshnessNotices(props: {
           <span className="min-w-0 flex-1 truncate">
             The latest version could not be loaded. Showing the last available copy.
           </span>
-          <Button size="xs" variant="outline" onClick={props.onReload}>
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={props.reloading ?? false}
+            aria-busy={props.reloading ?? false}
+            onClick={props.onReload}
+          >
             Try again
           </Button>
         </div>

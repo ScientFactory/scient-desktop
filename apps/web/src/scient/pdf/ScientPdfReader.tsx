@@ -155,6 +155,14 @@ export function ScientPdfReader(props: {
 }) {
   const resolver = props.resolver ?? webPdfSourceResolver;
   const asset = resolver.useResolve(props.source);
+  // Remounts the loaded reader so a failed document download is fetched again
+  // even when the renewed authorization yields the same URL.
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const refreshAsset = asset.refresh;
+  const retryLoad = useCallback(() => {
+    setLoadAttempt((attempt) => attempt + 1);
+    refreshAsset();
+  }, [refreshAsset]);
   const previousRefreshKey = useRef(props.refreshKey);
   useEffect(() => {
     if (previousRefreshKey.current === props.refreshKey) return;
@@ -168,8 +176,15 @@ export function ScientPdfReader(props: {
           <FileText className="size-6 text-muted-foreground/70" aria-hidden="true" />
           <h2>Couldn't open this PDF</h2>
           <p>Scient could not create an authorized preview for this file.</p>
-          <Button type="button" size="xs" variant="outline" onClick={asset.refresh}>
-            <RefreshIcon size="xs" />
+          <Button
+            type="button"
+            size="xs"
+            variant="outline"
+            disabled={asset.waiting === true}
+            aria-busy={asset.waiting === true}
+            onClick={asset.refresh}
+          >
+            <RefreshIcon size="xs" refreshing={asset.waiting === true} />
             Try again
           </Button>
         </div>
@@ -189,13 +204,14 @@ export function ScientPdfReader(props: {
   const documentKey = pdfReaderSessionDocumentKey(props.source, props.readerScope);
   return (
     <LoadedScientPdfReader
-      key={documentKey}
+      key={`${documentKey}\0${loadAttempt}`}
       documentKey={documentKey}
       legacyDocumentKey={pdfReaderSessionDocumentKey(props.source)}
       source={props.source}
       sourceUrl={asset.url}
       sourceExpiresAt={asset.expiresAt}
       refreshSource={asset.refresh}
+      onRetryLoad={retryLoad}
       actions={props.actions ?? webPdfSourceActions}
       {...(props.syncNavigation === undefined ? {} : { syncNavigation: props.syncNavigation })}
     />
@@ -208,6 +224,8 @@ function LoadedScientPdfReader(props: {
   readonly legacyDocumentKey: string;
   readonly source: PdfSourceDescriptor;
   readonly refreshSource: () => void;
+  /** Fetches the document again after a failed load. */
+  readonly onRetryLoad: () => void;
   readonly sourceExpiresAt: number;
   readonly sourceUrl: string;
   readonly syncNavigation?: PdfSyncNavigation;
@@ -774,6 +792,10 @@ function LoadedScientPdfReader(props: {
                 <FileText className="size-6 text-muted-foreground/70" aria-hidden="true" />
                 <h2>Couldn't open this PDF</h2>
                 <p>{state.error}</p>
+                <Button type="button" size="xs" variant="outline" onClick={props.onRetryLoad}>
+                  <RefreshIcon size="xs" />
+                  Try again
+                </Button>
               </div>
             </div>
           ) : null}

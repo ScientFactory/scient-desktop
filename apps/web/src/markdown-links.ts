@@ -116,11 +116,31 @@ export function resolveMarkdownFileLinkMeta(
  */
 export function markdownFileLinkRelativeCopyPath(meta: MarkdownFileLinkMeta): string | null {
   if (meta.workspaceRelativePath === null) return null;
+  const path = collapseDotSegments(meta.workspaceRelativePath);
+  if (path === null) return null;
   return formatFilePathPosition({
-    path: meta.workspaceRelativePath,
+    path,
     ...(meta.line !== undefined ? { line: meta.line } : {}),
     ...(meta.column !== undefined ? { column: meta.column } : {}),
   });
+}
+
+/**
+ * Resolves `.` and `..` in a workspace-relative path. The link target is joined
+ * lexically, so `../outside.md` still starts with the workspace root; a path
+ * that climbs above the root, or names the root itself, has no relative form.
+ */
+function collapseDotSegments(relativePath: string): string | null {
+  const segments: string[] = [];
+  for (const segment of relativePath.split("/")) {
+    if (segment === "" || segment === ".") continue;
+    if (segment === "..") {
+      if (segments.pop() === undefined) return null;
+      continue;
+    }
+    segments.push(segment);
+  }
+  return segments.length > 0 ? segments.join("/") : null;
 }
 
 function buildFileLinkMetaFromTarget(

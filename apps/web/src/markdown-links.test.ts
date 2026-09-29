@@ -573,5 +573,14 @@ describe("markdownFileLinkRelativeCopyPath", () => {
 
   it("has no relative path for a file outside the workspace", () => {
     expect(relativeCopyPath("/tmp/report.md", "/workspace/project")).toBeNull();
+    expect(relativeCopyPath("../outside.md:12", "/workspace/project")).toBeNull();
+    expect(relativeCopyPath("/workspace/project/../outside.md", "/workspace/project")).toBeNull();
+    expect(relativeCopyPath("C:/repo/../other/a.ts", "C:/repo")).toBeNull();
+    expect(relativeCopyPath("docs/..", "/workspace/project")).toBeNull();
+  });
+
+  it("collapses dot segments that stay inside the workspace", () => {
+    expect(relativeCopyPath("docs/../src/./main.ts:3", "/workspace/project")).toBe("src/main.ts:3");
+    expect(relativeCopyPath("./docs/report.md", "/workspace/project")).toBe("docs/report.md");
   });
 });

@@ -24,8 +24,23 @@ vi.mock("./fileSurfaceChrome", () => ({
   FileSurfaceAction: ({ label, onPress }: { label: string; onPress: () => void }) => (
     <button aria-label={label} onClick={onPress} />
   ),
-  FileSurfaceFailure: ({ description }: { description: string }) => (
-    <div role="alert">{description}</div>
+  FileSurfaceFailure: ({
+    title,
+    description,
+    details,
+    onRetry,
+  }: {
+    title: string;
+    description: string;
+    details?: string | null;
+    onRetry?: () => void;
+  }) => (
+    <div role="alert">
+      <p data-title>{title}</p>
+      <p data-description>{description}</p>
+      {details ? <pre data-details>{details}</pre> : null}
+      {onRetry ? <button aria-label="Try again" onClick={onRetry} /> : null}
+    </div>
   ),
   FileSurfaceLoading: () => <div role="status">Loading</div>,
   FileSurfaceMessage: ({ title }: { title: string }) => <div role="status">{title}</div>,
@@ -94,8 +109,12 @@ describe("attachment HTML preview recovery", () => {
     refresh.mockResolvedValue(null);
     await toggleMode("Show HTML source");
     expect(fetch).not.toHaveBeenCalled();
-    expect(renderer.root.findByProps({ role: "alert" }).children).toEqual([
+    // The underlying reason stays behind Details; the visible copy is plain language.
+    expect(renderer.root.findByProps({ "data-details": true }).children).toEqual([
       "Reconnect to the environment and try again.",
+    ]);
+    expect(renderer.root.findByProps({ "data-description": true }).children).toEqual([
+      "Scient couldn't load this attachment.",
     ]);
 
     await toggleMode("Show rendered page");
@@ -127,10 +146,52 @@ describe("attachment HTML preview recovery", () => {
       );
     });
     await toggleMode("Show HTML source");
-    expect(renderer.root.findByProps({ role: "alert" }).children.join("")).toContain("not UTF-8");
+    expect(renderer.root.findByProps({ "data-details": true }).children.join("")).toContain(
+      "not UTF-8",
+    );
 
     await toggleMode("Show rendered page");
     expect(renderer.root.findAllByProps({ role: "alert" })).toHaveLength(0);
     expect(renderer.root.findByType("iframe").props.title).toBe("document.html");
+  });
+});
+
+describe("attachment media failure", () => {
+  let renderer: ReactTestRenderer | undefined;
+
+  beforeEach(() => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  });
+
+  afterEach(async () => {
+    if (renderer) await act(() => renderer?.unmount());
+    renderer = undefined;
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("shows plain media copy and remounts a local Blob preview on retry", async () => {
+    const file = new Blob([new Uint8Array([0x89, 0x50])], { type: "image/png" });
+    await act(async () => {
+      renderer = create(
+        <AttachmentFilePreview name="photo.png" mimeType="image/png" sizeBytes={2} file={file} />,
+      );
+    });
+    const firstImage = renderer!.root.findByType("img");
+    const firstSrc: unknown = firstImage.props.src;
+    expect(firstSrc).toEqual(expect.any(String));
+    await act(async () => firstImage.props.onError());
+
+    expect(renderer!.root.findByProps({ "data-title": true }).children).toEqual([
+      "Couldn't display this image",
+    ]);
+    expect(renderer!.root.findAllByProps({ "data-details": true })).toHaveLength(0);
+
+    await act(async () =>
+      renderer!.root.findByProps({ "aria-label": "Try again" }).props.onClick(),
+    );
+
+    expect(renderer!.root.findAllByProps({ role: "alert" })).toHaveLength(0);
+    expect(renderer!.root.findByType("img").props.src).toBe(firstSrc);
   });
 });
