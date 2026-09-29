@@ -11,7 +11,13 @@ import type {
 import { FileTree, useFileTree, useFileTreeSearch, useFileTreeSelector } from "@pierre/trees/react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
-import { ChevronsDownUpIcon, ChevronsUpDownIcon, MoreHorizontal, SearchIcon } from "lucide-react";
+import {
+  ChevronsDownUpIcon,
+  ChevronsUpDownIcon,
+  FolderXIcon,
+  MoreHorizontal,
+  SearchIcon,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "~/lib/utils";
 
@@ -48,6 +54,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { PIERRE_TREE_UNSAFE_CSS, pierreTreeStyle } from "~/pierre-tree-theme";
 
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
+import { FileSurfaceFailure } from "./fileSurfaceChrome";
 import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTreeExpansion";
 import {
   refreshProjectEntriesQuery,
@@ -733,17 +740,14 @@ export default function FileBrowserPanel({
               : "Workspace files loaded."}
       </div>
       {treeSnapshot.rootError && treeSnapshot.entries.size === 0 ? (
-        <div className="flex flex-col items-start gap-2 p-4 text-xs leading-relaxed text-destructive">
-          <span>{treeSnapshot.rootError}</span>
-          <Button
-            type="button"
-            variant="ghost"
-            size="compact"
-            onClick={() => void treeControllerRef.current?.retry("")}
-          >
-            Retry
-          </Button>
-        </div>
+        <FileSurfaceFailure
+          icon={FolderXIcon}
+          title="Couldn't load project files"
+          description="Scient couldn't list the files in this project."
+          details={treeSnapshot.rootError}
+          retrying={treeSnapshot.isPending}
+          onRetry={() => void treeControllerRef.current?.retry("")}
+        />
       ) : (
         <div
           className="flex min-h-0 flex-1 flex-col"
@@ -752,7 +756,7 @@ export default function FileBrowserPanel({
           {treeSnapshot.failures[0] ? (
             <button
               type="button"
-              className="shrink-0 border-b border-destructive/15 px-3 py-1.5 text-left scient-reading-micro leading-4 text-destructive transition-colors hover:bg-destructive/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              className="shrink-0 border-b border-warning/20 bg-warning-surface px-3 py-1.5 text-left scient-reading-micro leading-4 text-warning-foreground transition-colors hover:bg-warning/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
               onClick={() =>
                 void treeControllerRef.current?.retry(
                   treeSnapshot.failures[0]?.relativeDirectory ?? "",

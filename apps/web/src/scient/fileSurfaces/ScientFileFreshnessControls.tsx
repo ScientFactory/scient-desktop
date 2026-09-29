@@ -48,6 +48,8 @@ export function ScientFileFreshnessNotices(props: {
   readonly saveError: FileSaveErrorNotice | null;
   readonly saveRetryReady: boolean;
   readonly hasFallbackData: boolean;
+  /** A reload is in flight; blocks a second Try again. */
+  readonly reloading?: boolean;
   readonly onCancel: () => void;
   readonly onReload: () => void;
   readonly onRequestOverwrite: () => void;
@@ -123,15 +125,22 @@ export function ScientFileFreshnessNotices(props: {
         </div>
       ) : null}
       {props.relativePath && props.readError && props.hasFallbackData ? (
+        // The last good copy is still on screen, so this is a caution, not a failure.
         <div
-          className="flex shrink-0 items-center gap-2 border-b border-destructive/20 bg-destructive/5 px-3 py-2 scient-reading-micro text-destructive"
-          role="alert"
+          className="flex shrink-0 items-center gap-2 border-b border-warning/20 bg-warning-surface px-3 py-2 scient-reading-micro text-warning-foreground"
+          role="status"
         >
           <AlertTriangle className="size-3.5 shrink-0" aria-hidden="true" />
           <span className="min-w-0 flex-1 truncate">
             The latest version could not be loaded. Showing the last available copy.
           </span>
-          <Button size="xs" variant="outline" onClick={props.onReload}>
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={props.reloading ?? false}
+            aria-busy={props.reloading ?? false}
+            onClick={props.onReload}
+          >
             Try again
           </Button>
         </div>

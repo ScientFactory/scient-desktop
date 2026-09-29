@@ -140,7 +140,12 @@
     {
       "path": "apps/web/src/components/files/FilePreviewPanel.tsx",
       "anchor": "ScientComputeFileSurface",
-      "purpose": "Mount additive analysis and compute actions plus generic freshness controls in the file viewer."
+      "purpose": "Mount additive analysis and compute actions, generic freshness controls, and plain-language file failure copy in the file viewer."
+    },
+    {
+      "path": "apps/web/src/components/files/AttachmentFilePreview.tsx",
+      "anchor": "MEDIA_FAILURE_COPY",
+      "purpose": "Use Scient's shared plain-language copy for attachment preview failures."
     },
     {
       "path": "apps/web/src/components/settings/SettingsSidebarNav.tsx",
