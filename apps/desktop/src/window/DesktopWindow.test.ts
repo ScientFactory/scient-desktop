@@ -224,6 +224,7 @@ function makeTestLayer(input: {
   readonly desktopSettings?: DesktopAppSettings.DesktopSettings;
   readonly mainWindowBoundsUpdates?: DesktopAppSettings.DesktopWindowBounds[];
   readonly mainWindowSizeIncreaseUpdates?: (DesktopAppSettings.DesktopWindowBounds | null)[];
+  readonly mainWindowNearFullSizeUpdates?: (DesktopAppSettings.DesktopWindowBounds | null)[];
   readonly mainWindowMaximizedUpdates?: boolean[];
   readonly beforeMainWindowBoundsUpdate?: (
     bounds: DesktopAppSettings.DesktopWindowBounds,
@@ -270,6 +271,20 @@ function makeTestLayer(input: {
             mainWindowSizeIncreaseApplied: true,
           };
           input.mainWindowSizeIncreaseUpdates?.push(bounds);
+        }
+        return { settings: desktopSettings, changed };
+      }),
+    applyMainWindowNearFullSize: (bounds) =>
+      Effect.sync(() => {
+        const changed = !desktopSettings.mainWindowNearFullSizeApplied;
+        if (changed) {
+          desktopSettings = {
+            ...desktopSettings,
+            mainWindowBounds: bounds,
+            mainWindowMaximized: bounds !== null && desktopSettings.mainWindowMaximized,
+            mainWindowNearFullSizeApplied: true,
+          };
+          input.mainWindowNearFullSizeUpdates?.push(bounds);
         }
         return { settings: desktopSettings, changed };
       }),
@@ -611,7 +626,7 @@ describe("DesktopWindow", () => {
     );
   });
 
-  it("fits the new default to the usable screen without changing the native minimum", () => {
+  it("opens eight points inside the usable screen without changing the native minimum", () => {
     assert.deepEqual(
       DesktopWindow.resolveInitialMainWindowBounds(null, [], {
         x: 0,
@@ -619,7 +634,67 @@ describe("DesktopWindow", () => {
         width: 1180,
         height: 760,
       }),
-      { width: 1180, height: 760 },
+      { width: 1164, height: 744 },
+    );
+    assert.deepEqual(
+      DesktopWindow.resolveInitialMainWindowBounds(null, [], {
+        x: 0,
+        y: 25,
+        width: 1728,
+        height: 1005,
+      }),
+      { width: 1712, height: 989 },
+    );
+    assert.deepEqual(
+      DesktopWindow.resolveInitialMainWindowBounds(null, [], {
+        x: 0,
+        y: 0,
+        width: 820,
+        height: 600,
+      }),
+      DesktopAppSettings.MIN_MAIN_WINDOW_SIZE,
+    );
+  });
+
+  it("enlarges old defaults and near-full windows once while preserving custom sizes", () => {
+    const display = {
+      bounds: { x: 0, y: 0, width: 1728, height: 1117 },
+      workArea: { x: 0, y: 25, width: 1728, height: 1005 },
+    };
+    const nearFull = { x: 15, y: 39, width: 1698, height: 977 };
+    const target = { x: 8, y: 33, width: 1712, height: 989 };
+    assert.deepEqual(
+      DesktopWindow.resolveOneTimeNearFullMainWindowBounds(nearFull, false, [display]),
+      target,
+    );
+    assert.deepEqual(
+      DesktopWindow.resolveOneTimeNearFullMainWindowBounds(
+        { x: 100, y: 100, width: 1280, height: 840 },
+        false,
+        [display],
+      ),
+      target,
+    );
+    const custom = { x: 200, y: 100, width: 1400, height: 850 };
+    assert.strictEqual(
+      DesktopWindow.resolveOneTimeNearFullMainWindowBounds(custom, false, [display]),
+      custom,
+    );
+    assert.strictEqual(
+      DesktopWindow.resolveOneTimeNearFullMainWindowBounds(nearFull, true, [display]),
+      nearFull,
+    );
+    const external = {
+      bounds: { x: 1728, y: 0, width: 2560, height: 1440 },
+      workArea: { x: 1728, y: 25, width: 2560, height: 1350 },
+    };
+    assert.deepEqual(
+      DesktopWindow.resolveOneTimeNearFullMainWindowBounds(
+        { x: 1900, y: 100, width: 1280, height: 840 },
+        false,
+        [display, external],
+      ),
+      { x: 1736, y: 33, width: 2544, height: 1334 },
     );
   });
 
@@ -728,8 +803,8 @@ describe("DesktopWindow", () => {
 
         yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
         assert.equal(yield* Ref.get(createCount), 1);
-        assert.equal(createdWindowOptions[0]?.width, 1280);
-        assert.equal(createdWindowOptions[0]?.height, 840);
+        assert.equal(createdWindowOptions[0]?.width, 1904);
+        assert.equal(createdWindowOptions[0]?.height, 1024);
         assert.isUndefined(createdWindowOptions[0]?.x);
         assert.isUndefined(createdWindowOptions[0]?.y);
         assert.isTrue(createdWindowOptions[0]?.disableAutoHideCursor);
@@ -1005,6 +1080,41 @@ describe("DesktopWindow", () => {
         assert.equal(fakeWindow.maximize.mock.calls.length, 0);
         fakeWindow.windowListeners.get("ready-to-show")?.();
         assert.equal(fakeWindow.maximize.mock.calls.length, 1);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("opens a saved near-full window at the new size once", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const createdWindowOptions: Electron.BrowserWindowConstructorOptions[] = [];
+      const mainWindowNearFullSizeUpdates: (DesktopAppSettings.DesktopWindowBounds | null)[] = [];
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        createdWindowOptions,
+        mainWindowNearFullSizeUpdates,
+        desktopSettings: {
+          ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+          mainWindowBounds: { x: 15, y: 15, width: 1890, height: 1010 },
+          mainWindowNearFullSizeApplied: false,
+        },
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        assert.deepEqual(mainWindowNearFullSizeUpdates, [
+          { x: 8, y: 8, width: 1904, height: 1024 },
+        ]);
+        assert.equal(createdWindowOptions[0]?.width, 1904);
+        assert.equal(createdWindowOptions[0]?.height, 1024);
+        assert.equal(createdWindowOptions[0]?.x, 8);
+        assert.equal(createdWindowOptions[0]?.y, 8);
       }).pipe(Effect.provide(layer));
     }),
   );
