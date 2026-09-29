@@ -169,11 +169,14 @@ export function readSendScrollAllowance(
   return Number.isFinite(lineHeight) && lineHeight > 0 ? lineHeight * 2 : undefined;
 }
 
+/** The server delivers a queued prompt under this message id prefix (threadQueue Worker). */
+const QUEUED_PROMPT_ID_PREFIX = "queue:";
+
 /**
- * Whether a newly arrived prompt that this window did not send (a queued
- * message the server delivered, or one sent elsewhere) gets the same reveal
- * as a direct send: only a new latest prompt in the same thread, while the
- * reader was at the end before it arrived.
+ * Whether a newly arrived prompt gets the same reveal as a direct send: only
+ * a queued prompt the server delivered (not one sent from another window),
+ * as the new latest prompt of the same thread, while the reader was at the
+ * end before it arrived.
  */
 export function shouldRevealArrivedPrompt(input: {
   previous: { threadKey: string | null; id: string | null } | null;
@@ -185,6 +188,7 @@ export function shouldRevealArrivedPrompt(input: {
   const { previous } = input;
   return (
     input.latestPromptId !== null &&
+    input.latestPromptId.startsWith(QUEUED_PROMPT_ID_PREFIX) &&
     previous !== null &&
     previous.threadKey === input.threadKey &&
     previous.id !== null &&
@@ -192,4 +196,15 @@ export function shouldRevealArrivedPrompt(input: {
     !input.sentHere &&
     input.readerAtEnd
   );
+}
+
+/** Whether the reader crossed the end ("reached"/"left"); null when nothing changed. */
+export function endTransition(wasAtEnd: boolean, isAtEnd: boolean): "reached" | "left" | null {
+  if (wasAtEnd === isAtEnd) return null;
+  return isAtEnd ? "reached" : "left";
+}
+
+/** A thread returned to mid-history starts away from the end, so its end control shows at once. */
+export function savedPositionIsAtEnd(position: { readonly atEnd?: boolean } | null | undefined) {
+  return position?.atEnd !== false;
 }

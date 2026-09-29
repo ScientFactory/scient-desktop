@@ -612,6 +612,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   // Expanding or collapsing a block at the end must not pin the end: the
   // toggled row keeps its place instead (maintainVisibleContentPosition).
   const [disclosureToggleSettling, setDisclosureToggleSettling] = useState(false);
+  // Any click or key in the timeline can expand or collapse content (a long
+  // message, a plan, tool output). Idle end pinning pauses briefly after one,
+  // so the toggled content keeps its place instead of being pinned to its end.
+  const [interactionSettling, setInteractionSettling] = useState(false);
   const disclosureAnchorKeyRef = useRef<string | null>(null);
   const disclosureSettleFrameRef = useRef<number | null>(null);
   const disclosureSettleSecondFrameRef = useRef<number | null>(null);
@@ -815,6 +819,13 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     worktreeSetup,
   ]);
   const rows = useStableRows(rawRows, listIdentityKey);
+  // A finished reveal (revealed or cancelled) no longer holds off idle end pinning.
+  const [finishedRevealPromptId, setFinishedRevealPromptId] = useState<string | null>(null);
+  const onRevealFinished = useCallback((promptId: string) => {
+    setFinishedRevealPromptId(promptId);
+  }, []);
+  const revealActive =
+    readingFollowPromptId !== null && finishedRevealPromptId !== readingFollowPromptId;
   useBoundedAnswerFollow({
     listRef,
     rows,
@@ -822,10 +833,13 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     responseRunning: isWorking,
     suspended: timelinePositioningPending || restoringThreadPosition || positionHistoryLoading,
     composerInset: contentInsetEndAdjustment,
+    onFinished: onRevealFinished,
   });
   const minimapItems = useMemo(() => deriveTimelineMinimapItems(rows), [rows]);
+  // The last allowed page must arrive before the saved message is given up on.
   const readingHistoryExhausted =
-    loadEarlier === null || readingHistoryPageCount >= MAX_READING_HISTORY_PAGES;
+    loadEarlier === null ||
+    (readingHistoryPageCount >= MAX_READING_HISTORY_PAGES && !loadEarlier.loading);
   const restoreTarget = rememberedPosition
     ? resolveReadingRow(rows, rememberedPosition, readingHistoryExhausted)
     : null;
@@ -837,7 +851,13 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     restoreTarget === null &&
     !readingHistoryExhausted;
   useEffect(() => {
-    if (!waitingForReadingHistory || positionHistoryLoading || !loadEarlier || loadEarlier.loading)
+    if (
+      !waitingForReadingHistory ||
+      positionHistoryLoading ||
+      !loadEarlier ||
+      loadEarlier.loading ||
+      readingHistoryPageCount >= MAX_READING_HISTORY_PAGES
+    )
       return;
     const cursor = loadEarlier.cursor ?? "initial";
     if (requestedReadingPages.current.cursors.has(cursor)) return;
@@ -847,7 +867,13 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       count: (current.key === listIdentityKey ? current.count : 0) + 1,
     }));
     loadEarlier.onLoadEarlier();
-  }, [waitingForReadingHistory, positionHistoryLoading, loadEarlier, listIdentityKey]);
+  }, [
+    waitingForReadingHistory,
+    positionHistoryLoading,
+    loadEarlier,
+    listIdentityKey,
+    readingHistoryPageCount,
+  ]);
   const restoringAlwaysRender = useMemo(
     () =>
       restoringThreadPosition && restoreRowIndex >= 0 ? { indices: [restoreRowIndex] } : undefined,
@@ -1012,6 +1038,25 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
     null,
   );
+  useEffect(() => {
+    if (!timelineViewportElement) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const settle = () => {
+      setInteractionSettling(true);
+      if (timer !== null) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = null;
+        setInteractionSettling(false);
+      }, 400);
+    };
+    timelineViewportElement.addEventListener("click", settle, { capture: true });
+    timelineViewportElement.addEventListener("keydown", settle, { capture: true });
+    return () => {
+      if (timer !== null) clearTimeout(timer);
+      timelineViewportElement.removeEventListener("click", settle, { capture: true });
+      timelineViewportElement.removeEventListener("keydown", settle, { capture: true });
+    };
+  }, [timelineViewportElement]);
   // Re-measure the minimap gutter when the chat column changes width without a viewport resize.
   const chatWidth = useClientSettings((settings) => settings.chatWidth);
   const {
@@ -1528,7 +1573,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             contentInsetEndAdjustment={anchoredEndSpace ? contentInsetEndAdjustment : 0}
             maintainScrollAtEnd={
               isWorking ||
-              readingFollowPromptId !== null ||
+              revealActive ||
+              interactionSettling ||
               timelinePositioningPending ||
               citationPositioning ||
               restoringThreadPosition ||

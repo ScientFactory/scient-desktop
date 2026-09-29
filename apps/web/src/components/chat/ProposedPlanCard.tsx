@@ -193,6 +193,8 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
           {canCollapse && !expanded ? (
             <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-linear-to-t from-card/95 via-card/80 to-transparent" />
           ) : null}
+          {/* SCIENT-FORK: the end of the plan's readable text (withReadingEnd). */}
+          <span data-reading-end="true" aria-hidden="true" className="block h-0" />
         </div>
         {canCollapse ? (
           <div className="mt-4 flex justify-center">

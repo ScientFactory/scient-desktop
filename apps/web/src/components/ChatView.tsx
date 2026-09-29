@@ -1,6 +1,8 @@
 import {
   canApplySendAnchor,
   readSendScrollAllowance,
+  endTransition,
+  savedPositionIsAtEnd,
   shouldRevealArrivedPrompt,
   withReadingEnd,
 } from "./chat/readerScrollPolicy";
@@ -6103,7 +6105,7 @@ function ChatViewContent(props: ChatViewProps) {
   const handlePageScrollStart = useEffectEvent((key: PageScrollKey) => {
     timelineScrollIntentRef.current = key === "PageUp" ? "away-from-end" : "toward-end";
     composerRef.current?.collapseForTimelineScrollKey(key);
-    cancelTimelinePositioning();
+    if (key === "PageUp") cancelTimelinePositioning();
   });
   useEffect(() => {
     const controller = createPageScrollController({
@@ -6166,8 +6168,8 @@ function ChatViewContent(props: ChatViewProps) {
     }),
     [isDraftHeroState, routeThreadKey, timelineMessages, activeLatestTurn, getTimelineReadingState],
   );
-  // Prompts this window sent frame themselves; any other new prompt (a queued
-  // message the server delivered) gets the same reveal when the reader is at the end.
+  // Prompts this window sent frame themselves; a queued prompt the server
+  // delivered gets the same reveal when the reader is at the end.
   const locallySentPromptIdsRef = useRef(new Set<string>());
   const frameSubmittedMessage = useCallback(
     (messageId: MessageId, snapshot: ReturnType<typeof captureSendReadingPosition>) => {
@@ -6268,17 +6270,10 @@ function ChatViewContent(props: ChatViewProps) {
         };
         // Scrollbar drags produce no wheel/touch events; they are the only
         // pointerdowns whose target is the scroll node itself rather than a
-        // message row. Content clicks break follow only away from the end
-        // (reading or selecting up there must hold position); clicking near
-        // the live edge keeps following.
+        // message row. Clicking or selecting content never moves the reader,
+        // so it never cancels placement or a reveal.
         const handlePointerDown = (event: PointerEvent) => {
-          if (event.target === scrollNode) {
-            if (contentScrollsUp()) {
-              handleManualNavigation();
-            }
-            return;
-          }
-          if (viewportIsAwayFromEnd()) {
+          if (event.target === scrollNode && contentScrollsUp()) {
             handleManualNavigation();
           }
         };
@@ -6324,10 +6319,8 @@ function ChatViewContent(props: ChatViewProps) {
             case "PageDown":
             case "End":
             case "ArrowDown":
+              // Moving toward the end never cancels a reveal, like scrolling down.
               timelineScrollIntentRef.current = "toward-end";
-              if (viewportIsAwayFromEnd()) {
-                handleManualNavigation();
-              }
               composerRef.current?.collapseForTimelineScrollKey(event.key);
               if (isTimelineAtLogicalEnd()) {
                 composerRef.current?.restoreAfterTimelineReachedEnd();
@@ -6426,9 +6419,10 @@ function ChatViewContent(props: ChatViewProps) {
     // Only transitions count: scroll and size events repeat while the reader
     // stays put, and must neither restart the pill's delay nor reopen a
     // composer the reader collapsed.
-    if (isAtEndRef.current === isAtEnd) return;
+    const transition = endTransition(isAtEndRef.current, isAtEnd);
+    if (transition === null) return;
     isAtEndRef.current = isAtEnd;
-    if (isAtEnd) {
+    if (transition === "reached") {
       if (timelineScrollIntentRef.current === "toward-end") {
         composerRef.current?.restoreAfterTimelineReachedEnd();
       }
@@ -6443,7 +6437,7 @@ function ChatViewContent(props: ChatViewProps) {
   useEffect(() => {
     setPullRequestDialogState(null);
     // A thread returned to mid-history shows the end control right away.
-    const savedAtEnd = readTimelinePosition(routeThreadKey)?.atEnd !== false;
+    const savedAtEnd = savedPositionIsAtEnd(readTimelinePosition(routeThreadKey));
     isAtEndRef.current = savedAtEnd;
     timelineScrollIntentRef.current = null;
     timelineScrollModeRef.current = "free-scrolling";

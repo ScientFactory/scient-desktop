@@ -272,3 +272,105 @@ it("stops paging history for a missing saved message after a few pages", async (
   // The reader is placed (at a neighbor or the end) rather than left waiting.
   await expect.poll(() => readTimelinePosition(key)?.messageId).not.toBe("message-gone");
 });
+
+it("reveals the latest message after very tall notes", async () => {
+  const key = "reading-end:virtualized";
+  const entries = history(10);
+  render(key, entries);
+  await expect.poll(() => readTimelinePosition(key)).toBeDefined();
+  const prompt = message(20, "user", "A question with a long investigation");
+  const running = { isWorking: true, readingFollowPromptId: prompt.message.id };
+  render(key, [...entries, prompt], running);
+  await frames(8);
+  // Several very tall notes push the next message far past the rendered window.
+  const tallNotes = [21, 22, 23, 24].map((index) =>
+    message(
+      index,
+      "assistant",
+      `Investigation ${index}. ${"Reading the logs. ".repeat(900)}`,
+      "turn-20",
+    ),
+  );
+  const latest = message(25, "assistant", "Here is what I found.", "turn-20");
+  // The notes are measured first; the latest message arrives afterwards, far
+  // below the rendered window.
+  render(key, [...entries, prompt, ...tallNotes], running);
+  await frames(12);
+  render(key, [...entries, prompt, ...tallNotes, latest], running);
+  await expect.poll(() => firstLinesVisible(latest.message.id), { timeout: 8000 }).toBe(true);
+});
+
+it("waits for a history page still loading before giving up on the saved message", async () => {
+  const key = "reading-end:slow-page";
+  const saved = message(3, "user", paragraph(3));
+  rememberTimelinePosition(key, {
+    rowId: saved.id,
+    messageId: saved.message.id,
+    turnId: saved.message.turnId,
+    offsetWithinRow: 0,
+    scrollOffset: 5000,
+    atEnd: false,
+  });
+  const recent = Array.from({ length: 10 }, (_, i) => message(i + 40, "user", paragraph(i + 40)));
+  const load = vi.fn();
+  render(key, recent, { loadEarlier: { loading: false, cursor: "page-1", onLoadEarlier: load } });
+  await expect.poll(() => load.mock.calls.length).toBe(1);
+  const middle = Array.from({ length: 10 }, (_, i) => message(i + 20, "user", paragraph(i + 20)));
+  render(key, [...middle, ...recent], {
+    loadEarlier: { loading: false, cursor: "page-2", onLoadEarlier: load },
+  });
+  await expect.poll(() => load.mock.calls.length).toBe(2);
+  // The second page is slow: restoration must keep waiting for it.
+  render(key, [...middle, ...recent], {
+    loadEarlier: { loading: true, cursor: "page-2", onLoadEarlier: load },
+  });
+  await frames(30);
+  const all = [
+    ...Array.from({ length: 10 }, (_, i) => message(i, "user", paragraph(i))),
+    ...middle,
+    ...recent,
+  ];
+  render(key, all, { loadEarlier: { loading: false, cursor: null, onLoadEarlier: load } });
+  await expect
+    .poll(
+      () => {
+        const rect = rowRect(saved.message.id);
+        return rect ? Math.abs(rect.top - node().getBoundingClientRect().top) : Infinity;
+      },
+      { timeout: 5000 },
+    )
+    .toBeLessThanOrEqual(2);
+});
+
+it("pins the idle end again once a reveal has finished", async () => {
+  const key = "reading-end:after-reveal";
+  const entries = history(10);
+  render(key, entries);
+  await expect.poll(() => readTimelinePosition(key)).toBeDefined();
+  const prompt = message(20, "user", "Question");
+  const answer = message(21, "assistant", "Short answer.", "turn-20");
+  // The response has settled; the reveal stops, but the prompt id stays set.
+  render(key, [...entries, prompt, answer], { readingFollowPromptId: prompt.message.id });
+  await frames(10);
+  await listRef.current!.scrollToEnd({ animated: false });
+  await frames(10);
+  render(key, [...entries, prompt, message(21, "assistant", paragraph(21).repeat(3), "turn-20")], {
+    readingFollowPromptId: prompt.message.id,
+  });
+  await expect.poll(() => gapToListEnd(), { timeout: 4000 }).toBeLessThanOrEqual(1);
+});
+
+it("does not pin the end right after a click that expands content", async () => {
+  const key = "reading-end:click-expand";
+  const entries = [...history(11), message(11, "assistant", "Short answer.")];
+  render(key, entries);
+  await expect.poll(() => readTimelinePosition(key)).toBeDefined();
+  await listRef.current!.scrollToEnd({ animated: false });
+  await frames(10);
+  const before = node().scrollTop;
+  // A click (e.g. Show full message) grows content below the reader.
+  node().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  render(key, [...entries.slice(0, -1), message(11, "assistant", paragraph(11).repeat(3))]);
+  await frames(6);
+  expect(Math.abs(node().scrollTop - before)).toBeLessThanOrEqual(1);
+});

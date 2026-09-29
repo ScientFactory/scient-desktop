@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
-import { shouldRevealArrivedPrompt } from "./readerScrollPolicy";
+import {
+  endTransition,
+  savedPositionIsAtEnd,
+  shouldRevealArrivedPrompt,
+} from "./readerScrollPolicy";
 import { CHAT_TIMELINE_ANCHOR_OFFSET } from "./timelineScrollAnchoring";
 import { boundedAnswerScrollDelta } from "./useBoundedAnswerFollow";
 
@@ -58,7 +62,7 @@ describe("shouldRevealArrivedPrompt", () => {
   const arrived = {
     previous,
     threadKey: "thread",
-    latestPromptId: "p2",
+    latestPromptId: "queue:item-2",
     sentHere: false,
     readerAtEnd: true,
   };
@@ -72,10 +76,27 @@ describe("shouldRevealArrivedPrompt", () => {
     expect(shouldRevealArrivedPrompt({ ...arrived, readerAtEnd: false })).toBe(false);
     expect(shouldRevealArrivedPrompt({ ...arrived, threadKey: "other" })).toBe(false);
     expect(shouldRevealArrivedPrompt({ ...arrived, latestPromptId: "p1" })).toBe(false);
+    // A direct send from another window is not a queued delivery.
+    expect(shouldRevealArrivedPrompt({ ...arrived, latestPromptId: "p2" })).toBe(false);
     // Opening a thread, or its first prompt, is not an arrival.
     expect(shouldRevealArrivedPrompt({ ...arrived, previous: null })).toBe(false);
     expect(shouldRevealArrivedPrompt({ ...arrived, previous: { ...previous, id: null } })).toBe(
       false,
     );
+  });
+});
+
+describe("end control transitions", () => {
+  it("reacts only when the reader crosses the end", () => {
+    expect(endTransition(true, true)).toBeNull();
+    expect(endTransition(false, false)).toBeNull();
+    expect(endTransition(true, false)).toBe("left");
+    expect(endTransition(false, true)).toBe("reached");
+  });
+
+  it("starts a thread returned to mid-history away from the end", () => {
+    expect(savedPositionIsAtEnd({ atEnd: false })).toBe(false);
+    expect(savedPositionIsAtEnd({ atEnd: true })).toBe(true);
+    expect(savedPositionIsAtEnd(null)).toBe(true);
   });
 });

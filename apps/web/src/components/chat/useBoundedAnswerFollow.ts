@@ -50,6 +50,7 @@ export function useBoundedAnswerFollow({
   responseRunning,
   suspended,
   composerInset,
+  onFinished,
 }: {
   listRef: RefObject<LegendListRef | null>;
   rows: readonly MessagesTimelineRow[];
@@ -58,6 +59,8 @@ export function useBoundedAnswerFollow({
   responseRunning: boolean;
   suspended: boolean;
   composerInset: number;
+  /** Called once when the reveal for `promptMessageId` ends (revealed or cancelled). */
+  onFinished?: (promptMessageId: string) => void;
 }) {
   const intent = useRef<{ prompt: string | null; stopped: boolean }>({
     prompt: null,
@@ -89,6 +92,10 @@ export function useBoundedAnswerFollow({
       answerRow.kind === "message" &&
       !answerRow.message.streaming;
     if (!viewport || !list) return;
+    const finish = () => {
+      intent.current.stopped = true;
+      onFinished?.(promptMessageId);
+    };
     let observedAnswer: Element | null = null;
     let mountAttempts = 12;
     let frame: number | null = null;
@@ -101,29 +108,43 @@ export function useBoundedAnswerFollow({
       previousFrameTime = now;
       if (intent.current.stopped) return;
       const measuredState = list.getState();
-      const measuredIndex = measuredState.indexByKey(answerRow.id);
-      const answer =
-        measuredIndex === undefined ? null : measuredState.elementAtIndex(measuredIndex);
-      if (!answer || !answer.isConnected || answer.getBoundingClientRect().height <= 0) {
+      const viewportRect = viewport.getBoundingClientRect();
+      // A row outside the rendered window is placed from the list's measured
+      // positions; scrolling toward it mounts it.
+      const rowRect = (rowId: string) => {
+        const index = measuredState.indexByKey(rowId);
+        if (index === undefined) return null;
+        const element = measuredState.elementAtIndex(index);
+        if (element?.isConnected && element.getBoundingClientRect().height > 0)
+          return {
+            element,
+            top: element.getBoundingClientRect().top,
+            rect: element.getBoundingClientRect(),
+          };
+        const position = measuredState.positionAtIndex(index);
+        const size = measuredState.sizeAtIndex(index);
+        if (position === undefined || size === undefined) return null;
+        const top = viewportRect.top + position - measuredState.scroll;
+        return { element: null, top, rect: { top, bottom: top + size } };
+      };
+      const answerBox = rowRect(answerRow.id);
+      if (!answerBox) {
         if (mountAttempts-- > 0) frame = requestAnimationFrame(tick);
         return;
       }
-      if (observedAnswer !== answer) {
+      const answer = answerBox.element;
+      if (answer && observedAnswer !== answer) {
         if (observedAnswer) observer.unobserve(observedAnswer);
         observer.observe(answer);
         observedAnswer = answer;
       }
-      const promptIndexNow = measuredState.indexByKey(promptRow.id);
-      const prompt =
-        promptIndexNow === undefined ? null : measuredState.elementAtIndex(promptIndexNow);
-      const promptText = prompt?.querySelector('[data-user-message-body="true"]') ?? prompt;
-      // A prompt scrolled out of the rendered window has no room left above it.
-      const viewportRect = viewport.getBoundingClientRect();
-      const promptTextTop =
-        promptText && promptText.isConnected
-          ? promptText.getBoundingClientRect().top
-          : viewportRect.top;
-      const rect = answer.getBoundingClientRect();
+      const promptBox = rowRect(promptRow.id);
+      const promptText =
+        promptBox?.element?.querySelector('[data-user-message-body="true"]') ?? promptBox?.element;
+      const promptTextTop = promptText?.isConnected
+        ? promptText.getBoundingClientRect().top
+        : (promptBox?.top ?? viewportRect.top);
+      const rect = answerBox.rect;
       const delta = boundedAnswerScrollDelta({
         promptTextTop,
         answerTop: answerIndex >= 0 ? rect.top : null,
@@ -134,7 +155,7 @@ export function useBoundedAnswerFollow({
       if (delta <= 0.5) {
         // Nothing to reveal now. Later messages may still arrive while the
         // thread works; the reveal ends once the settled response is shown.
-        if (answerSettled) intent.current.stopped = true;
+        if (answerSettled) finish();
         return;
       }
       const before = viewport.scrollTop;
@@ -149,9 +170,9 @@ export function useBoundedAnswerFollow({
       if (frame === null && !intent.current.stopped) frame = requestAnimationFrame(tick);
     };
     const cancel = () => {
-      intent.current.stopped = true;
       if (frame !== null) cancelAnimationFrame(frame);
       frame = null;
+      finish();
     };
     const onWheel = (event: WheelEvent) => {
       if (event.deltaY < 0 && isTimelineScrollTarget(event.target, viewport, event.deltaY))
@@ -178,5 +199,5 @@ export function useBoundedAnswerFollow({
       viewport.removeEventListener("wheel", onWheel);
       viewport.ownerDocument.removeEventListener("keydown", onKey);
     };
-  }, [listRef, rows, promptMessageId, responseRunning, suspended, composerInset]);
+  }, [listRef, rows, promptMessageId, responseRunning, suspended, composerInset, onFinished]);
 }
