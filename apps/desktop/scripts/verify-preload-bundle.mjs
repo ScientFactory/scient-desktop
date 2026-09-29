@@ -69,6 +69,7 @@ const createSandboxModules = (exposedGlobals) => {
       exposeInMainWorld: (name, api) => exposedGlobals.set(name, api),
     },
     ipcRenderer,
+    webFrame: { getZoomFactor: () => 1 },
     webUtils: {
       getPathForFile: () => "",
     },
@@ -108,6 +109,12 @@ const executeBundle = (source, sandboxModules) => {
     {
       process: sandboxProcess,
       require: requireSandboxModule,
+      window: {
+        addEventListener: (name, callback) => {
+          if (name === "DOMContentLoaded") callback();
+        },
+      },
+      document: { documentElement: { style: { setProperty: () => {} } } },
     },
     {
       filename: "desktop-preload.cjs",
@@ -144,8 +151,73 @@ export const verifyPreloadBundle = (source) => {
   }
 };
 
+/** The file-only preview must never acquire the normal application's bridge. */
+export const verifyConversationReviewPreload = (source) => {
+  if (inspectBundle(source).some((name) => name !== "electron")) {
+    throw new Error("Conversation review preload may import only Electron IPC.");
+  }
+  const sent = [];
+  const context = NodeVM.createContext({
+    ready: undefined,
+    cancelClick: undefined,
+    continueClick: undefined,
+    keydown: undefined,
+    require: (name) => {
+      if (name !== "electron") throw new Error("Unexpected review preload import");
+      return {
+        ipcRenderer: { send: (...args) => sent.push(args) },
+        contextBridge: {
+          exposeInMainWorld: () => {
+            throw new Error("Review preload exposed a bridge");
+          },
+        },
+      };
+    },
+    window: {
+      addEventListener: (name, callback) => {
+        if (name !== "DOMContentLoaded") throw new Error("Unexpected review window event");
+        context.ready = callback;
+      },
+    },
+    document: {
+      getElementById: (id) => {
+        if (id !== "cancel" && id !== "continue") throw new Error("Unexpected review element");
+        return {
+          addEventListener: (name, callback) => {
+            if (name !== "click") throw new Error("Unexpected review element event");
+            context[`${id}Click`] = callback;
+          },
+        };
+      },
+      addEventListener: (name, callback) => {
+        if (name !== "keydown") throw new Error("Unexpected review document event");
+        context.keydown = callback;
+      },
+    },
+  });
+  NodeVM.runInContext(source, context, { timeout: preloadExecutionTimeoutMs });
+  NodeVM.runInContext(
+    'ready(); cancelClick(); continueClick(); keydown({key:"Escape"}); keydown({key:"a"});',
+    context,
+    { timeout: preloadExecutionTimeoutMs },
+  );
+  const expected = ["cancel", "continue", "cancel"].map((action) => [
+    "scient:conversation-review-action",
+    action,
+  ]);
+  if (JSON.stringify(sent) !== JSON.stringify(expected)) {
+    throw new Error("Conversation review preload sent unexpected actions");
+  }
+};
+
 if (process.argv[1] && NodeURL.pathToFileURL(process.argv[1]).href === import.meta.url) {
   const preloadUrl = new URL("../dist-electron/preload.cjs", import.meta.url);
   const source = await NodeFSP.readFile(preloadUrl, "utf8");
   verifyPreloadBundle(source);
+  verifyConversationReviewPreload(
+    await NodeFSP.readFile(
+      new URL("../dist-electron/conversation-review-preload.cjs", import.meta.url),
+      "utf8",
+    ),
+  );
 }

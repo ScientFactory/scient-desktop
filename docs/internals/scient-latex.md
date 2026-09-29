@@ -714,6 +714,23 @@ revision change invalidates the in-flight navigation request and target, and a
 missing/evicted revision or index returns a typed `unavailable` result rather
 than navigating against a newer PDF.
 
+## Word export
+
+The LaTeX surface sends its selected root and saved source revision to the
+server's Word export endpoint. `WordFileExport` checks that revision, prepares
+the root project, and confirms the opened source belongs to the resulting
+include set. `latexProjectPreparation` uses a structural LaTeX parse to splice
+literal local inputs, resolve `\graphicspath` figures, and collect local
+bibliographies, with depth, file-count, and byte limits. Each resource must
+remain inside the root document's directory after real-path resolution;
+unresolved inputs become placeholders. Macros are not expanded.
+
+`PandocWordConverter` reads the prepared source with Pandoc's LaTeX reader
+under `--sandbox`, passes the document tree through the existing image and
+metadata security pass, then writes Word with only staged bibliography files
+and the Scient reference document. PDF/EPS figures remain placeholders. The
+LaTeX-to-Markdown route is withheld pending separate fidelity qualification.
+
 ## Verification
 
 Server-side coverage is co-located unit tests per module —

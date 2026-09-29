@@ -114,6 +114,8 @@ describe("Scient awareness", () => {
     expect(SCIENT_DOCUMENT_BUILD_AWARENESS).toContain("requested PDF deliverable");
     expect(SCIENT_DOCUMENT_BUILD_AWARENESS).toContain("existing project HTML source");
     expect(SCIENT_DOCUMENT_BUILD_AWARENESS).toContain("existing project LaTeX source");
+    expect(SCIENT_DOCUMENT_BUILD_AWARENESS).toContain("`scient_document_export`");
+    expect(SCIENT_DOCUMENT_BUILD_AWARENESS).toContain("existing project Markdown document");
     for (const skillWorkflowDetail of [
       "retryAfterMs",
       "pageCount",
@@ -137,6 +139,7 @@ describe("Scient awareness", () => {
 
     expect(awareness).toContain("`mcp__t3-code__scient_pdf_build`");
     expect(awareness).toContain("`mcp__t3-code__scient_latex_build`");
+    expect(awareness).toContain("`mcp__t3-code__scient_document_export`");
     expect(awareness).toContain("`mcp__t3-code__preview_status`");
     expect(awareness).toContain("`mcp__t3-code__preview_open`");
     expect(awareness).not.toContain("`preview_status`");

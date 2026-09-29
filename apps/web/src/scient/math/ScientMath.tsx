@@ -46,7 +46,7 @@ export function renderCachedScientMath(
  * be subject to the guarded tokenizer's plausibility rules on paste. The
  * newline framing keeps display math a block.
  */
-function mathMarkdownCopySource(tex: string, displayMode: boolean): string {
+export function mathMarkdownCopySource(tex: string, displayMode: boolean): string {
   return displayMode ? `$$\n${tex}\n$$\n\n` : `$$${tex}$$`;
 }
 

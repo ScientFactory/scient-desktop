@@ -347,6 +347,52 @@ function makeThread(
 }
 
 describe("buildThreadFeed", () => {
+  it("folds the message each submitted answer names, and a live answer's async-answer message", () => {
+    const turnId = TurnId.make("answer-turn");
+    const userMessage = (id: string, text: string, second: number) => ({
+      id: MessageId.make(id),
+      role: "user" as const,
+      text,
+      turnId: null,
+      streaming: false,
+      createdAt: `2026-04-01T00:00:0${second}.000Z`,
+      updatedAt: `2026-04-01T00:00:0${second}.000Z`,
+    });
+    const answer = (id: string, requestId: string, second: number, messageId?: string) =>
+      makeActivity({
+        id: EventId.make(id),
+        kind: "user-input.answer-submitted",
+        summary: "Question answer submitted",
+        createdAt: `2026-04-01T00:00:0${second}.000Z`,
+        turnId,
+        payload: {
+          requestId,
+          answers: { color: "Blue" },
+          attachmentsByQuestionId: {},
+          ...(messageId === undefined ? {} : { messageId }),
+        },
+      });
+    const feed = buildThreadFeed(
+      makeThread({
+        id: ThreadId.make("folded-answers"),
+        projectId: ProjectId.make("project-1"),
+        title: "Folded answers",
+        messages: [
+          userMessage("plain-message", "Keep me", 1),
+          userMessage("imp-attempt-000002", "Blue", 2),
+          userMessage("async-answer:live-request", "Green", 3),
+        ],
+        activities: [
+          answer("imported-answer", "imported-request", 2, "imp-attempt-000002"),
+          answer("live-answer", "live-request", 3),
+        ],
+      }),
+    );
+    expect(feed.flatMap((entry) => (entry.type === "message" ? [entry.message.text] : []))).toEqual(
+      ["Keep me"],
+    );
+  });
+
   it("reuses unchanged feed and presentation rows during an assistant text update", () => {
     const completedTurnId = TurnId.make("completed-turn");
     const activeTurnId = TurnId.make("active-turn");

@@ -159,6 +159,9 @@ import {
   timelineContentOverflowsViewport,
 } from "./timelineScrollAnchoring";
 import { MessageCopyButton } from "./MessageCopyButton";
+// SCIENT-FORK:START
+import { messageCopyHtml } from "~/scient/clipboard/messageCopyHtml";
+// SCIENT-FORK:END
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { inferEntryKindFromPath } from "../../pierre-icons";
 import { AssistantSelectionToolbar } from "./AssistantSelectionToolbar";
@@ -244,6 +247,9 @@ import { useUiStateStore } from "~/uiStateStore";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
 import { ScientChatImageGallery } from "~/scient/images/ScientChatImageGallery";
+// SCIENT-FORK:START — website tool icons never fetch a web favicon
+import { remoteImageAddress } from "~/scient/presentation/remoteImageAddress";
+// SCIENT-FORK:END
 import { SkillChipIcon, SkillInlineText } from "./SkillInlineText";
 import { deriveAgentSpawnSummary } from "./agentSpawnSummary";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
@@ -2163,6 +2169,17 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                       extraFlavors: { [COMPOSER_CONTEXT_CLIPBOARD_MIME]: contextClipboardFragment },
                     }
                   : {})}
+                // SCIENT-FORK:START — right-to-left messages also copy as direction-marked HTML
+                resolveHtml={(anchor) =>
+                  messageCopyHtml({
+                    anchor,
+                    messageId: row.message.id,
+                    markdown: resolvedContext.text,
+                    lineBreaks: true,
+                    parseRawHtml: false,
+                  })
+                }
+                // SCIENT-FORK:END
                 variant="ghost"
               />
             )}
@@ -2438,7 +2455,23 @@ function AssistantCopyButton({
     return null;
   }
 
-  return <MessageCopyButton text={assistantCopyState.text ?? ""} variant="ghost" />;
+  return (
+    <MessageCopyButton
+      text={assistantCopyState.text ?? ""}
+      // SCIENT-FORK:START — right-to-left messages also copy as direction-marked HTML
+      resolveHtml={(anchor) =>
+        messageCopyHtml({
+          anchor,
+          messageId: message.id,
+          markdown: assistantCopyState.text ?? "",
+          lineBreaks: shouldPreserveAssistantLineBreaks(assistantCopyState.text ?? ""),
+          parseRawHtml: true,
+        })
+      }
+      // SCIENT-FORK:END
+      variant="ghost"
+    />
+  );
 }
 
 function ProposedPlanTimelineRow({
@@ -4196,7 +4229,11 @@ function ToolActivityIconView(props: {
     return <WorkEntryIcon name={props.fallbackName} className={fallbackClassName} />;
   }
   if (props.icon._tag === "website") {
-    const src = toolActivityFaviconUrl(props.icon, resolvedTheme, 32);
+    // SCIENT-FORK:START — only local icon bytes (`data:`, the app's own assets); a web
+    // favicon would tell the site when this conversation was opened.
+    const faviconSrc = toolActivityFaviconUrl(props.icon, resolvedTheme, 32);
+    const src = faviconSrc !== null && remoteImageAddress(faviconSrc) === null ? faviconSrc : null;
+    // SCIENT-FORK:END
     return src ? (
       <ToolActivityImageIcon
         key={src}

@@ -118,7 +118,10 @@ describe("DesktopPreReadyPlatform", () => {
             assert.equal(identity.desktopName, "scient.desktop");
             assert.include(identity.desktopEntry ?? "", 'Exec="/Applications/current.AppImage" %U');
             assert.include(identity.desktopEntry ?? "", "Name=Scient");
-            assert.include(identity.desktopEntry ?? "", "MimeType=x-scheme-handler/scient;");
+            assert.include(
+              identity.desktopEntry ?? "",
+              "MimeType=x-scheme-handler/scient;application/vnd.scient.conversation+zip;",
+            );
             assert.include(identity.desktopEntry ?? "", "Icon=/xdg/icons/scient.desktop.png");
             assert.isTrue(identity.iconInstalled);
           }),

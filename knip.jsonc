@@ -85,6 +85,8 @@
       // also a test entry point.
       "entry": [
         "scripts/warm-dep-cache.ts",
+        // The standalone PDF print page is loaded by scient-document.html.
+        "src/scient/documentPage/main.tsx",
         "src/scient/diagrams/mermaidRecovery.fixtures.ts",
         "public/scient-voice-worklet.js!",
       ],

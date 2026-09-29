@@ -83,6 +83,8 @@ import {
   WindowsDesktopBuildPrerequisitesMissingError,
   WindowsPackagedPayloadValidationError,
   WINDOWS_EXTRA_RESOURCE_FILE_EXCLUSIONS,
+  WINDOWS_CONVERSATION_ASSOCIATION_INCLUDE,
+  renderWindowsConversationAssociationInclude,
   WINDOWS_NATIVE_ASAR_UNPACK_GLOB,
   WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT,
   WINDOWS_SERVER_ASAR_IGNORE_GLOBS,
@@ -745,7 +747,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         ...DESKTOP_EXTRA_RESOURCES,
         ...WINDOWS_SERVER_EXTRA_RESOURCES,
       ]);
-      assert.deepStrictEqual(win.nsis, { differentialPackage: true });
+      assert.deepStrictEqual(win.nsis, {
+        differentialPackage: true,
+        include: WINDOWS_CONVERSATION_ASSOCIATION_INCLUDE,
+      });
       // The Claude SDK platform packages and .bin shims never ship.
       assert.deepStrictEqual(WINDOWS_SERVER_ASAR_IGNORE_GLOBS, [
         "**/node_modules/@anthropic-ai/claude-agent-sdk-*",
@@ -774,6 +779,20 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.deepStrictEqual((linux.linux as Record<string, unknown>).protocols, [
         { name: "Scient", schemes: ["scient"] },
       ]);
+      assert.deepStrictEqual(linux.fileAssociations, [
+        {
+          ext: "scic",
+          name: "Scient Conversation",
+          description: "Scient conversation",
+          mimeType: "application/vnd.scient.conversation+zip",
+          role: "Viewer",
+          icon: "icon.icns",
+        },
+      ]);
+      // macOS declares its own UTI and references it in the document type.
+      assert.deepStrictEqual(mac.fileAssociations, []);
+      // Windows uses a custom OpenWith ProgID to preserve the user's default.
+      assert.deepStrictEqual(win.fileAssociations, []);
       assert.deepStrictEqual(mac.files, [...DESKTOP_FILE_EXCLUSIONS, ...MAC_FILE_EXCLUSIONS]);
       assert.deepStrictEqual(linux.files, [...DESKTOP_FILE_EXCLUSIONS, ...LINUX_FILE_EXCLUSIONS]);
       assert.deepStrictEqual(win.files, [
@@ -786,6 +805,87 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         assert.deepStrictEqual(config.electronLanguages, DESKTOP_ELECTRON_LANGUAGES);
       }
       assert.deepStrictEqual(mac.electronLanguages, DESKTOP_ELECTRON_LANGUAGES);
+    }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
+  );
+
+  it("registers channel-owned Windows Open With classes without changing defaults", () => {
+    const stable = renderWindowsConversationAssociationInclude("latest");
+    const nightly = renderWindowsConversationAssociationInclude("nightly");
+    const preview = renderWindowsConversationAssociationInclude("preview");
+    assert.include(stable, '"Software\\Classes\\.scic\\OpenWithProgids" "Scient.Conversation"');
+    assert.include(
+      nightly,
+      '"Software\\Classes\\.scic\\OpenWithProgids" "Scient.Nightly.Conversation"',
+    );
+    assert.include(stable, 'DeleteRegKey SHELL_CONTEXT "Software\\Classes\\Scient.Conversation"');
+    assert.include(
+      preview,
+      '"Software\\Classes\\.scic\\OpenWithProgids" "Scient.Preview.Conversation"',
+    );
+    assert.include(stable, 'StrCmp $R0 "Scient Conversation" 0 +2');
+    assert.include(stable, 'StrCmp $R0 "Scient.Conversation" 0 +2');
+    assert.equal(
+      stable.split("\n").find((line) => line.includes("\\shell\\open\\command")),
+      `  WriteRegStr SHELL_CONTEXT "Software\\Classes\\Scient.Conversation\\shell\\open\\command" "" '"$appExe" "%1"'`,
+    );
+    assert.equal(
+      stable.split("\n").find((line) => line.includes("\\DefaultIcon")),
+      `  WriteRegStr SHELL_CONTEXT "Software\\Classes\\Scient.Conversation\\DefaultIcon" "" '"$appExe",0'`,
+    );
+    assert.notInclude(stable, "UserChoice");
+    assert.notInclude(stable, "InprocServer32");
+    assert.notInclude(stable, "PreviewHandlers");
+    const qualified = renderWindowsConversationAssociationInclude("nightly", true);
+    assert.include(qualified, "{849DCD04-E8E2-4D76-95D9-65B8B389D51D}");
+    assert.include(qualified, "InprocServer32");
+    assert.include(qualified, "ThreadingModel");
+    assert.include(qualified, "PreviewHandlers");
+    assert.include(qualified, "DeleteRegKey SHELL_CONTEXT");
+    assert.notInclude(qualified, "UserChoice");
+  });
+
+  it.effect("copies qualified native adapters into platform bundle locations", () =>
+    Effect.gen(function* () {
+      const mac = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "1.2.3",
+        false,
+        false,
+        undefined,
+        undefined,
+        false,
+        "arm64",
+        "/tmp/ScientConversationQuickLook.appex",
+      );
+      assert.deepStrictEqual(mac.extraFiles, [
+        {
+          from: "/tmp/ScientConversationQuickLook.appex",
+          to: "PlugIns/ScientConversationQuickLook.appex",
+        },
+      ]);
+      const win = yield* createBuildConfig(
+        "win",
+        "nsis",
+        "1.2.3",
+        false,
+        false,
+        undefined,
+        undefined,
+        false,
+        "x64",
+        "C:/temp/ScientConversationPreview.dll",
+      );
+      assert.includeDeepMembers(win.extraResources as unknown[], [
+        {
+          from: "C:/temp/ScientConversationPreview.dll",
+          to: "conversation-preview/ScientConversationPreview.dll",
+        },
+        {
+          from: "C:/temp/ScientConversationPreview.dll.licenses",
+          to: "conversation-preview/licenses",
+        },
+      ]);
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
 
@@ -2001,6 +2101,28 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const mac = config.mac as Record<string, unknown>;
       const extendInfo = mac.extendInfo as Record<string, unknown>;
       assert.match(String(extendInfo.NSMicrophoneUsageDescription), /dictate a message/u);
+      assert.deepStrictEqual(extendInfo.CFBundleDocumentTypes, [
+        {
+          CFBundleTypeName: "Scient Conversation",
+          CFBundleTypeExtensions: ["scic"],
+          CFBundleTypeRole: "Viewer",
+          CFBundleTypeIconFile: "icon.icns",
+          LSItemContentTypes: ["com.scientfactory.scient.conversation"],
+          LSHandlerRank: "Default",
+        },
+      ]);
+      // Finder and drags recognise a `.scic` as Scient's zip-based document.
+      assert.deepStrictEqual(extendInfo.UTExportedTypeDeclarations, [
+        {
+          UTTypeIdentifier: "com.scientfactory.scient.conversation",
+          UTTypeDescription: "Scient Conversation",
+          UTTypeConformsTo: ["public.zip-archive", "public.data"],
+          UTTypeTagSpecification: {
+            "public.filename-extension": ["scic"],
+            "public.mime-type": ["application/vnd.scient.conversation+zip"],
+          },
+        },
+      ]);
       assert.match(String(mac.entitlements), /scripts[\\/]entitlements\.mac\.plist$/u);
       assert.equal(mac.entitlementsInherit, mac.entitlements);
       assert.include(

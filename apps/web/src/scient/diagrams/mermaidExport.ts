@@ -6,6 +6,7 @@ import {
 } from "../presentation/presentationExport";
 import { copyPngBlobToClipboard } from "../presentation/imageClipboard";
 import { loadCanvasImage } from "../presentation/loadCanvasImage";
+import { FETCHING_ELEMENTS, RESOURCE_ATTRIBUTES } from "./svgExternalResources";
 
 const MAX_PNG_DIMENSION = 8_192;
 const MAX_PNG_PIXELS = 16_777_216;
@@ -101,9 +102,50 @@ function canvasToPngBlob(canvas: HTMLCanvasElement): Promise<Blob> {
   });
 }
 
-async function mermaidSvgToPngBlob(svg: string, theme: MermaidTheme): Promise<Blob> {
+const EXTERNAL_CSS_REFERENCE = /url\(\s*(?!['"]?#)[^)]+\)|@import/iu;
+
+/**
+ * Why a rendered diagram cannot be rasterized, or `null` when it can. A
+ * saved document may contain arbitrary Mermaid, and rasterization must never
+ * make the browser retrieve an external image, stylesheet, or reference.
+ * Links are allowed: an `<a href>` (or `xlink:href`) is a navigation target
+ * and never loads anything when the SVG is drawn as an image.
+ */
+export function svgRasterizationRefusal(svgElement: Element): string | null {
+  for (const element of [svgElement, ...svgElement.querySelectorAll("*")]) {
+    const name = element.localName.toLowerCase();
+    if (FETCHING_ELEMENTS.has(name)) {
+      return "The diagram contains an external image and cannot be exported.";
+    }
+    for (const attribute of element.attributes) {
+      const attributeName = attribute.localName.toLowerCase();
+      const value = attribute.value.trim();
+      if (attributeName.startsWith("on")) {
+        return "The diagram contains active content and cannot be exported.";
+      }
+      const external = value.length > 0 && !value.startsWith("#");
+      if (attributeName === "href" && name !== "a" && external) {
+        return "The diagram contains an external resource and cannot be exported.";
+      }
+      if (RESOURCE_ATTRIBUTES.has(attributeName) && external) {
+        return "The diagram contains an external resource and cannot be exported.";
+      }
+      if (EXTERNAL_CSS_REFERENCE.test(value)) {
+        return "The diagram contains an external resource and cannot be exported.";
+      }
+    }
+    if (name === "style" && EXTERNAL_CSS_REFERENCE.test(element.textContent ?? "")) {
+      return "The diagram contains an external stylesheet and cannot be exported.";
+    }
+  }
+  return null;
+}
+
+export async function mermaidSvgToPngBlob(svg: string, theme: MermaidTheme): Promise<Blob> {
   const prepared = prepareSvgForExport(svg, theme);
   const svgElement = new DOMParser().parseFromString(prepared, "image/svg+xml").documentElement;
+  const refusal = svgRasterizationRefusal(svgElement);
+  if (refusal !== null) throw new Error(refusal);
   const dimensions = parseSvgDimensions(svgElement);
   // Give the rasterizer an intrinsic viewport, independent of the chat's CSS
   // or the browser's default size for SVGs with width="100%".

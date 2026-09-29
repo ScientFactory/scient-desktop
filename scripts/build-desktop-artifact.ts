@@ -22,6 +22,12 @@ import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import rootPackageJson from "../package.json" with { type: "json" };
 import desktopPackageJson from "../apps/desktop/package.json" with { type: "json" };
 import gnomeCaptureBundle from "../apps/desktop/gnome-extension/bundle.json" with { type: "json" };
+import {
+  CONVERSATION_FILE_TYPE,
+  macConversationDocumentTypes,
+  macConversationExportedTypes,
+  windowsConversationProgId,
+} from "../apps/desktop/scripts/conversation-file-type.mjs";
 import serverPackageJson from "../apps/server/package.json" with { type: "json" };
 
 import { applyWebBrandAssets } from "./apply-web-brand-assets.ts";
@@ -36,6 +42,16 @@ import {
   selectCliRuntimeExternalDependencies,
 } from "./lib/cli-external-packages.ts";
 import { selectDesktopRuntimeExternalDependencies } from "./lib/desktop-external-packages.ts";
+import {
+  buildConversationPreview,
+  macPreviewBundleIdentifier,
+  requirePreviewQualification,
+  MAC_PREVIEW_BUNDLE,
+  WINDOWS_PREVIEW_APP_ID,
+  WINDOWS_PREVIEW_CLSIDS,
+  WINDOWS_PREVIEW_DLL,
+  type ConversationPreviewChannel,
+} from "./lib/conversation-preview-build.ts";
 import { loadRepoEnv } from "./lib/public-config.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
 import { stageScientVoiceRuntimeForDesktopBuild } from "./lib/scient-voice-build.ts";
@@ -1025,6 +1041,76 @@ interface StagePackageJson {
 
 export const STAGE_INSTALL_ARGS = ["install", "--prod"] as const;
 export const DESKTOP_ELECTRON_LANGUAGES = ["en-US"] as const;
+// SCIENT-FORK:START — Scient conversation files open with Scient on every
+// platform. The extension and media type are the `.scic` contract's
+// (SCIC_FILE_EXTENSION, SCIC_MEDIA_TYPE in @t3tools/contracts).
+export const DESKTOP_FILE_ASSOCIATIONS = [
+  {
+    ext: CONVERSATION_FILE_TYPE.extension,
+    name: CONVERSATION_FILE_TYPE.name,
+    description: CONVERSATION_FILE_TYPE.description,
+    mimeType: CONVERSATION_FILE_TYPE.mediaType,
+    role: "Viewer",
+    icon: "icon.icns",
+  },
+] as const;
+/**
+ * macOS type declarations for those files, so Finder and drags recognise a
+ * `.scic` as Scient's own zip-based document rather than an unknown file.
+ */
+export const DESKTOP_MAC_EXPORTED_TYPES = macConversationExportedTypes();
+
+export const WINDOWS_CONVERSATION_ASSOCIATION_INCLUDE = "scient-conversation-association.nsh";
+
+// electron-builder 26's APP_ASSOCIATE writes the .scic extension default on
+// every install. Register an owned OpenWith ProgID instead; Windows UserChoice
+// and any existing extension default remain the user's decision.
+export function renderWindowsConversationAssociationInclude(
+  channel: "latest" | "nightly" | "preview",
+  nativePreviewEnabled = false,
+) {
+  const progId = windowsConversationProgId(channel);
+  const clsid = WINDOWS_PREVIEW_CLSIDS[channel];
+  const previewKey = "{8895b1c6-b41f-4c1c-a562-0d564250836f}";
+  return [
+    "!macro customInstall",
+    `  WriteRegNone SHELL_CONTEXT "Software\\Classes\\.scic\\OpenWithProgids" "${progId}"`,
+    `  WriteRegStr SHELL_CONTEXT "Software\\Classes\\${progId}" "" "${CONVERSATION_FILE_TYPE.name}"`,
+    `  WriteRegStr SHELL_CONTEXT "Software\\Classes\\${progId}\\DefaultIcon" "" '"$appExe",0'`,
+    `  WriteRegStr SHELL_CONTEXT "Software\\Classes\\${progId}\\shell\\open\\command" "" '"$appExe" "%1"'`,
+    '  ReadRegStr $R0 SHELL_CONTEXT "Software\\Classes\\.scic" ""',
+    '  StrCmp $R0 "Scient Conversation" 0 +2',
+    `    WriteRegStr SHELL_CONTEXT "Software\\Classes\\.scic" "" "${progId}"`,
+    ...(nativePreviewEnabled
+      ? [
+          `  WriteRegStr SHELL_CONTEXT "Software\\Classes\\CLSID\\${clsid}" "" "Scient Conversation Preview (${channel})"`,
+          `  WriteRegStr SHELL_CONTEXT "Software\\Classes\\CLSID\\${clsid}" "AppID" "${WINDOWS_PREVIEW_APP_ID}"`,
+          `  WriteRegStr SHELL_CONTEXT "Software\\Classes\\CLSID\\${clsid}\\InprocServer32" "" "$INSTDIR\\resources\\conversation-preview\\${WINDOWS_PREVIEW_DLL}"`,
+          `  WriteRegStr SHELL_CONTEXT "Software\\Classes\\CLSID\\${clsid}\\InprocServer32" "ThreadingModel" "Apartment"`,
+          `  WriteRegStr SHELL_CONTEXT "Software\\Classes\\${progId}\\shellex\\${previewKey}" "" "${clsid}"`,
+          `  WriteRegStr SHELL_CONTEXT "Software\\Microsoft\\Windows\\CurrentVersion\\PreviewHandlers" "${clsid}" "Scient Conversation Preview (${channel})"`,
+        ]
+      : []),
+    "!macroend",
+    "",
+    "!macro customUnInstall",
+    `  DeleteRegValue SHELL_CONTEXT "Software\\Classes\\.scic\\OpenWithProgids" "${progId}"`,
+    '  ReadRegStr $R0 SHELL_CONTEXT "Software\\Classes\\.scic" ""',
+    `  StrCmp $R0 "${progId}" 0 +2`,
+    '    DeleteRegValue SHELL_CONTEXT "Software\\Classes\\.scic" ""',
+    ...(nativePreviewEnabled
+      ? [
+          `  DeleteRegKey SHELL_CONTEXT "Software\\Classes\\${progId}\\shellex\\${previewKey}"`,
+          `  DeleteRegValue SHELL_CONTEXT "Software\\Microsoft\\Windows\\CurrentVersion\\PreviewHandlers" "${clsid}"`,
+          `  DeleteRegKey SHELL_CONTEXT "Software\\Classes\\CLSID\\${clsid}"`,
+        ]
+      : []),
+    `  DeleteRegKey SHELL_CONTEXT "Software\\Classes\\${progId}"`,
+    "!macroend",
+    "",
+  ].join("\n");
+}
+// SCIENT-FORK:END
 export const DESKTOP_FILE_EXCLUSIONS = [
   // Scient always passes the user's installed Claude executable to the SDK,
   // so the SDK's optional platform packages (each a ~200MB bundled executable)
@@ -2814,6 +2900,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   // whose source file was never written fails the electron-builder step.
   wslRuntimeBundled = false,
   arch?: typeof BuildArch.Type,
+  nativePreviewPath?: string,
 ) {
   const updateChannel = resolveDesktopUpdateChannel(version);
   const publishConfig = isDesktopPreviewVersion(version)
@@ -2830,6 +2917,12 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     productName: resolveDesktopProductName(version),
     artifactName: "Scient-${version}-${arch}.${ext}",
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
+    // SCIENT-FORK:START
+    fileAssociations:
+      platform === "linux"
+        ? DESKTOP_FILE_ASSOCIATIONS.map((association) => ({ ...association }))
+        : [],
+    // SCIENT-FORK:END
     files: [
       ...DESKTOP_FILE_EXCLUSIONS,
       ...(platform === "mac"
@@ -2850,11 +2943,20 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       : {}),
     extraResources: [
       ...DESKTOP_EXTRA_RESOURCES,
+      ...(platform === "win" && nativePreviewPath
+        ? [
+            { from: nativePreviewPath, to: `conversation-preview/${WINDOWS_PREVIEW_DLL}` },
+            { from: `${nativePreviewPath}.licenses`, to: "conversation-preview/licenses" },
+          ]
+        : []),
       ...(platform === "linux" ? LINUX_CAPTURE_EXTRA_RESOURCES : []),
       ...(platform === "linux" ? LINUX_BROWSER_SECRET_EXTRA_RESOURCES : []),
       ...(platform === "win" ? WINDOWS_SERVER_EXTRA_RESOURCES : []),
       ...(platform === "win" && wslRuntimeBundled ? WSL_RUNTIME_EXTRA_RESOURCES : []),
     ],
+    ...(platform === "mac" && nativePreviewPath
+      ? { extraFiles: [{ from: nativePreviewPath, to: `PlugIns/${MAC_PREVIEW_BUNDLE}` }] }
+      : {}),
     ...(publishConfig ? { publish: [publishConfig] } : {}),
   };
   if (platform === "mac") {
@@ -2867,6 +2969,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       extendInfo: {
         NSMicrophoneUsageDescription: `${SCIENT_DESKTOP_IDENTITY.baseName} uses the microphone only while you dictate a message. Audio is transcribed on this device.`,
         NSScreenCaptureUsageDescription: `${SCIENT_DESKTOP_IDENTITY.baseName} captures the active window when you use the window capture shortcut.`,
+        // SCIENT-FORK:START — the `.scic` document type.
+        CFBundleDocumentTypes: macConversationDocumentTypes(),
+        UTExportedTypeDeclarations: DESKTOP_MAC_EXPORTED_TYPES,
+        // SCIENT-FORK:END
       },
       protocols: [
         {
@@ -2946,7 +3052,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     // Keep blockmap-based differential downloads enabled while changing the
     // installed file topology. The optimization is in the payload shape, not
     // in trading update bandwidth for install speed.
-    buildConfig.nsis = { differentialPackage: true };
+    buildConfig.nsis = {
+      differentialPackage: true,
+      include: WINDOWS_CONVERSATION_ASSOCIATION_INCLUDE,
+    };
     const winConfig: Record<string, unknown> = {
       target: [target],
       icon: "icon.ico",
@@ -3935,9 +4044,71 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     options.verbose,
   );
 
+  const nativePreviewSetting = process.env.SCIC_PREVIEW_ENABLE_NATIVE;
+  if (
+    nativePreviewSetting !== undefined &&
+    nativePreviewSetting !== "0" &&
+    nativePreviewSetting !== "1"
+  ) {
+    return yield* new BuildCommandFailedError({
+      command: "qualify native conversation preview",
+      exitCode: 1,
+      stderrTail: "SCIC_PREVIEW_ENABLE_NATIVE must be 0 or 1.",
+    });
+  }
+  const previewChannel: ConversationPreviewChannel = isDesktopPreviewVersion(appVersion)
+    ? "preview"
+    : resolveDesktopUpdateChannel(appVersion);
+  const nativePreviewStage =
+    nativePreviewSetting === "1"
+      ? yield* Effect.tryPromise({
+          try: async () => {
+            if (options.platform === "linux")
+              throw new Error(
+                "Linux uses the built-in --preview-conversation action, not a native adapter.",
+              );
+            const status = await requirePreviewQualification({
+              platform: options.platform,
+              arch: options.arch,
+              channel: previewChannel,
+              manifestPath: process.env.SCIC_PREVIEW_QUALIFIED_STAGE_MANIFEST,
+              repoRoot,
+            });
+            const nativePath = await buildConversationPreview({
+              repoRoot,
+              stageRoot,
+              platform: options.platform,
+              arch: options.arch,
+              channel: previewChannel,
+              hostPlatform,
+              parentAppId: DESKTOP_APP_ID,
+            });
+            return { status, nativePath };
+          },
+          catch: (cause) =>
+            new BuildCommandFailedError({
+              command: `build native conversation preview (${options.platform}/${options.arch}/${previewChannel})`,
+              exitCode: 1,
+              stderrTail: cause instanceof Error ? cause.message : String(cause),
+            }),
+        })
+      : undefined;
+  const nativePreviewPath = nativePreviewStage?.nativePath;
+  if (nativePreviewStage?.status === "candidate") {
+    yield* Effect.logWarning(
+      "[desktop-artifact] Native conversation preview is an unqualified preview candidate; do not publish as a release.",
+    );
+  }
+
   // electron-builder is filtering out stageResourcesDir directory in the AppImage for production
   const stageProdResourcesDir = path.join(stageAppDir, "apps/desktop/prod-resources");
   yield* fs.copy(stageResourcesDir, stageProdResourcesDir);
+  if (options.platform === "win") {
+    yield* fs.writeFileString(
+      path.join(stageResourcesDir, WINDOWS_CONVERSATION_ASSOCIATION_INCLUDE),
+      renderWindowsConversationAssociationInclude(previewChannel, nativePreviewPath !== undefined),
+    );
+  }
 
   const configuredMacPasskeySigning =
     options.platform === "mac" && options.signed && SCIENT_DESKTOP_IDENTITY.cloudEnabled
@@ -4017,6 +4188,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
         : undefined,
       bundlesWslRuntime({ arch: options.arch, prebuildPath: options.wslPrebuild }),
       options.arch,
+      nativePreviewPath,
     ),
     dependencies: stageDependencies,
     devDependencies: {
@@ -4103,6 +4275,16 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     delete buildEnv.APPLE_API_KEY_ID;
     delete buildEnv.APPLE_API_ISSUER;
   }
+  if (options.platform === "mac" && nativePreviewPath !== undefined) {
+    buildEnv.SCIC_PREVIEW_EXPECTED = "1";
+    buildEnv.SCIC_PREVIEW_EXPECTED_BUNDLE_ID = macPreviewBundleIdentifier(
+      DESKTOP_APP_ID,
+      previewChannel,
+    );
+  } else {
+    delete buildEnv.SCIC_PREVIEW_EXPECTED;
+    delete buildEnv.SCIC_PREVIEW_EXPECTED_BUNDLE_ID;
+  }
 
   if (hostPlatform === "win32") {
     const python = yield* resolvePythonForNodeGyp();
@@ -4159,6 +4341,30 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       arch: options.arch,
     });
   }
+  if (options.platform === "mac" && nativePreviewPath !== undefined) {
+    const macDirectories = (yield* fs.readDirectory(stageDistDir)).filter((entry) =>
+      entry.startsWith("mac"),
+    );
+    let found = false;
+    for (const macDirectory of macDirectories) {
+      const extension = path.join(
+        stageDistDir,
+        macDirectory,
+        `${resolveDesktopProductName(appVersion)}.app`,
+        "Contents",
+        "PlugIns",
+        MAC_PREVIEW_BUNDLE,
+      );
+      if (yield* fs.exists(extension)) found = true;
+    }
+    if (!found) {
+      return yield* new BuildCommandFailedError({
+        command: "verify packaged macOS conversation preview",
+        exitCode: 1,
+        stderrTail: "Qualified Quick Look extension missing from packaged app.",
+      });
+    }
+  }
 
   // Prove the packaged bundle is self-contained by loading it the way the WSL
   // backend does, rather than by reasoning about the emitted source.
@@ -4173,7 +4379,12 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   // the app asar. Windows validates and executes the separately packed server
   // sidecar after electron-builder copies it into the final payload.
   if (options.platform === "win") {
-    yield* validateWindowsPackagedPayload({
+    // Native static dependencies ship their license notices beside the DLL.
+    // Account for the exact staged inventory rather than weakening the general cap.
+    const nativePreviewPayloadFiles = nativePreviewPath
+      ? 1 + (yield* fs.readDirectory(`${nativePreviewPath}.licenses`)).length
+      : 0;
+    const validatedPayload = yield* validateWindowsPackagedPayload({
       stageDistDir,
       appExecutableName: `${resolveDesktopProductName(appVersion)}.exe`,
       targetArch: options.arch,
@@ -4183,13 +4394,33 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       // provenance.json) — which the cap must admit without loosening the
       // guard for anything else. A whisper release that changes its file
       // inventory should fail here and get this allowance re-counted.
-      fileLimit: WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT + SCIENT_VOICE_RUNTIME_PAYLOAD_FILES,
+      fileLimit:
+        WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT +
+        SCIENT_VOICE_RUNTIME_PAYLOAD_FILES +
+        nativePreviewPayloadFiles,
       expectWslRuntime: bundlesWslRuntime({
         arch: options.arch,
         prebuildPath: options.wslPrebuild,
       }),
       verbose: options.verbose,
     });
+    if (
+      nativePreviewPath !== undefined &&
+      !(yield* fs.exists(
+        path.join(
+          validatedPayload.packagedAppDir,
+          "resources",
+          "conversation-preview",
+          WINDOWS_PREVIEW_DLL,
+        ),
+      ))
+    ) {
+      return yield* new BuildCommandFailedError({
+        command: "verify packaged Windows conversation preview",
+        exitCode: 1,
+        stderrTail: "Qualified preview DLL missing from packaged resources.",
+      });
+    }
   }
 
   const stageEntries = yield* fs.readDirectory(stageDistDir);

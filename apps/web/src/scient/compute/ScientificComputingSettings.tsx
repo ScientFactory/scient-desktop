@@ -105,6 +105,7 @@ const UPCOMING_LANGUAGES = [
   { id: "stata", label: "Stata" },
 ] as const;
 
+import { WordExportSettingsSection } from "../wordExport/WordExportSettingsSection";
 import { PythonToolkitSettings, type ToolkitChange } from "./PythonToolkitSettings";
 import { ComputeInstallationRow } from "./ComputeInstallationRow";
 import { useComputeInstallationSelection } from "./useComputeInstallationSelection";
@@ -1058,6 +1059,7 @@ function EnvironmentScientificComputingSettings({
           </p>
         ) : null}
       </SettingsSection>
+      <WordExportSettingsSection environmentId={environmentId} />
     </SettingsPageContainer>
   );
 }

@@ -6,11 +6,33 @@ artifact-backed and interactive renderers.
 ## Contract and ownership
 
 A settled Markdown image whose destination resolves to a supported file inside
-the current workspace is presented by a Scient-owned image card. Ordinary
-remote images and unsupported destinations retain React Markdown's inherited
-image behavior. The host integration is one `img` renderer in
-`ChatMarkdown.tsx`; resolution, presentation, actions, and tests live under
-`apps/web/src/scient/images`.
+the current workspace is presented by a Scient-owned image card. Unsupported
+destinations retain React Markdown's inherited image behavior. The host
+integration is one `img` renderer in `ChatMarkdown.tsx`; resolution,
+presentation, actions, and tests live under `apps/web/src/scient/images`.
+
+Remote sources never reach an `<img>`, `<video>`, or `<source>` on render.
+`remoteImageAddress` resolves each source against the document base with the
+URL parser, as the browser does, so backslash and network-path forms, tab- or
+newline-split schemes, and case are judged by where they lead. A source is
+local only when it is `data:` or `blob:`, on the app's own scheme and host, or
+(in the desktop app) on its private app scheme; anything else, including a
+source the parser rejects, is remote. `srcset` is split into candidates by the
+HTML srcset rules and a `<source>` is dropped when any candidate is remote. The same
+renderer returns `ScientRemoteImageReference`
+(`apps/web/src/scient/presentation/`), a link card whose **Load image** button
+mounts the ordinary chat media under `ScientRemoteImageLoadedContext` for that
+mounted view only; `<picture>` sources with a remote `srcset` are dropped. Inside
+a link the card renders the address as text, so the surrounding link stays the
+only link, and its button prevents the click from following the link. GitHub media in pull request bodies
+still loads through the authenticated `github-media` asset; when that asset
+cannot be signed, the card replaces the former direct fallback. Per-site
+allowances and a stored copy of loaded images would plug into the card's
+permission hook. The rich Markdown editor (`scient/markdownEditor`) has its
+own image node view and does not use this gate. For the same reason chat link
+icons are drawn locally (globe, or the bundled GitHub mark) instead of from a
+favicon service, and website tool-activity icons render only local bytes
+(`data:` or same-origin) instead of a page's `/favicon.ico` or a hosted asset.
 
 The source Markdown and project file remain canonical. The card derives a
 rooted `workspace-file` resource from `cwd + relativePath`, retaining the

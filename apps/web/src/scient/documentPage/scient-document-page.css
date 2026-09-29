@@ -1,0 +1,340 @@
+/*
+ * Scient document page: the print stylesheet for exported Markdown files and
+ * conversations. The page geometry, running header, and page numbers live in
+ * @page rules (Chromium page-margin boxes); the desktop adds no margin of its
+ * own, and no pagination defaults: this sheet owns every break rule. Headings,
+ * a details block's summary line, figures, short code, table rows, alerts, and
+ * images stay whole or with what follows; everything else flows, so long code,
+ * tables, quotes, work logs, and reasoning split across pages without gaps.
+ */
+
+@page {
+  size: A4;
+  margin: 22mm 20mm 24mm;
+
+  @top-center {
+    color: #6b7280;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Arial, sans-serif;
+    font-size: 8.5pt;
+    vertical-align: bottom;
+    padding-bottom: 4mm;
+  }
+
+  @bottom-right {
+    content: counter(page) " / " counter(pages);
+    color: #6b7280;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Arial, sans-serif;
+    font-size: 8.5pt;
+    vertical-align: top;
+    padding-top: 4mm;
+  }
+}
+
+:root {
+  color-scheme: light;
+  --scient-document-text: #1f2328;
+  --scient-document-muted: #57606a;
+  --scient-document-rule: #d0d7de;
+  --scient-document-code-background: #f6f8fa;
+  --scient-document-accent: #4f46e5;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: #ffffff;
+  color: var(--scient-document-text);
+}
+
+body {
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", "Helvetica Neue", Arial,
+    "Noto Sans Hebrew", "Arial Hebrew", "Noto Sans Arabic", sans-serif;
+  font-size: 10.5pt;
+  line-height: 1.55;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+.scient-document {
+  overflow-wrap: anywhere;
+}
+
+.scient-document :where(p, li) {
+  orphans: 3;
+  widows: 3;
+}
+
+.scient-document :where(h1, h2, h3, h4, h5, h6) {
+  line-height: 1.25;
+  margin: 1.4em 0 0.5em;
+  break-after: avoid-page;
+  break-inside: avoid-page;
+}
+
+.scient-document h1 {
+  font-size: 20pt;
+  margin-top: 0;
+}
+
+.scient-document h2 {
+  font-size: 15pt;
+  border-bottom: 0.5pt solid var(--scient-document-rule);
+  padding-bottom: 0.15em;
+}
+
+.scient-document h3 {
+  font-size: 12.5pt;
+}
+
+.scient-document :where(h4, h5, h6) {
+  font-size: 11pt;
+}
+
+.scient-document :where(p, ul, ol, blockquote, .scient-document-table, figure) {
+  margin: 0 0 0.8em;
+}
+
+.scient-document :where(ul, ol) {
+  padding-inline-start: 1.6em;
+}
+
+.scient-document li > :where(ul, ol) {
+  margin-bottom: 0;
+}
+
+.scient-document a {
+  color: var(--scient-document-accent);
+  text-decoration: none;
+}
+
+.scient-document hr {
+  border: 0;
+  border-top: 0.5pt solid var(--scient-document-rule);
+  margin: 1.2em 0;
+}
+
+.scient-document blockquote {
+  margin-inline: 0;
+  padding: 0.1em 0.9em;
+  border-inline-start: 2.5pt solid var(--scient-document-rule);
+  color: var(--scient-document-muted);
+}
+
+.scient-document blockquote[data-alert] {
+  border-inline-start-color: var(--scient-document-accent);
+  color: var(--scient-document-text);
+  break-inside: avoid-page;
+}
+
+.scient-document blockquote[data-alert]::before {
+  display: block;
+  font-weight: 600;
+  margin: 0.4em 0 0.2em;
+  text-transform: capitalize;
+  content: attr(data-alert);
+}
+
+.scient-document blockquote[data-alert="warning"],
+.scient-document blockquote[data-alert="caution"] {
+  border-inline-start-color: #bf8700;
+}
+
+/* Inline code and code blocks. Long blocks wrap and may split across pages. */
+.scient-document code {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 0.9em;
+}
+
+.scient-document :not(pre) > code {
+  background: var(--scient-document-code-background);
+  border-radius: 3pt;
+  padding: 0.05em 0.3em;
+}
+
+.scient-document figure.scient-document-code {
+  margin-inline: 0;
+  break-inside: auto;
+}
+
+.scient-document figure.scient-document-code[data-short] {
+  break-inside: avoid-page;
+}
+
+.scient-document .scient-document-code-label {
+  color: var(--scient-document-muted);
+  font-size: 8pt;
+  margin-bottom: 0.2em;
+  break-after: avoid-page;
+}
+
+.scient-document pre.scient-document-code-body,
+.scient-document figure.scient-document-code pre {
+  margin: 0;
+  padding: 0.6em 0.8em;
+  background: var(--scient-document-code-background);
+  border: 0.5pt solid var(--scient-document-rule);
+  border-radius: 4pt;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 8.5pt;
+  line-height: 1.45;
+  break-inside: auto;
+}
+
+/* Tables may split between rows; the header row repeats on each page. */
+.scient-document .scient-document-table {
+  /* Collapsed borders straddle the table edge; keep the outer half on the page. */
+  padding-inline: 0.5pt;
+}
+
+.scient-document .scient-document-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 9pt;
+  break-inside: auto;
+}
+
+.scient-document .scient-document-table :where(th, td) {
+  border: 0.5pt solid var(--scient-document-rule);
+  padding: 0.3em 0.5em;
+  vertical-align: top;
+  text-align: start;
+  /* Keep ordinary words intact when the browser sizes columns; break only as a fallback. */
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.scient-document .scient-document-table th {
+  background: var(--scient-document-code-background);
+}
+
+.scient-document .scient-document-table thead {
+  display: table-header-group;
+}
+
+.scient-document .scient-document-table tr {
+  break-inside: avoid-page;
+}
+
+/* Figures: images and diagrams stay whole and never exceed the page. */
+.scient-document .scient-document-image {
+  display: inline-block;
+  max-width: 100%;
+  break-inside: avoid-page;
+}
+
+.scient-document p > .scient-document-image:only-child {
+  display: block;
+  text-align: center;
+}
+
+.scient-document .scient-document-image img {
+  max-width: 100%;
+  max-height: 200mm;
+  object-fit: contain;
+}
+
+/* Attachment lists show images as thumbnails beside their details. */
+.scient-document li .scient-document-image {
+  vertical-align: top;
+  margin-inline-end: 0.5em;
+}
+
+.scient-document li .scient-document-image img {
+  max-height: 60mm;
+}
+
+.scient-document .scient-document-image-caption {
+  display: block;
+  color: var(--scient-document-muted);
+  font-size: 8.5pt;
+  margin-top: 0.3em;
+}
+
+.scient-document figure.scient-document-diagram {
+  margin-inline: 0;
+  text-align: center;
+  break-inside: avoid-page;
+}
+
+.scient-document figure.scient-document-diagram svg {
+  max-width: 100%;
+  max-height: 200mm;
+  height: auto;
+}
+
+.scient-document .scient-document-placeholder {
+  display: inline-block;
+  border: 0.75pt dashed #9ca3af;
+  border-radius: 4pt;
+  padding: 0.5em 0.8em;
+  color: var(--scient-document-muted);
+  font-size: 9pt;
+  break-inside: avoid-page;
+}
+
+.scient-document .scient-document-placeholder-label {
+  color: var(--scient-document-muted);
+  font-size: 8.5pt;
+  margin-bottom: 0.3em;
+}
+
+.scient-document .scient-math-display {
+  display: block;
+  margin: 0.6em 0;
+  overflow-wrap: normal;
+  break-inside: avoid-page;
+}
+
+.scient-document .scient-document-math-source {
+  background: var(--scient-document-code-background);
+}
+
+/* Details (work logs, reasoning) flow across pages; only their summary line
+   is kept whole and with the first line that follows it. */
+.scient-document details > summary {
+  font-weight: 600;
+  list-style: none;
+  break-inside: avoid-page;
+  break-after: avoid-page;
+}
+
+/* Conversation documents: a heading per speaker, full-width text. */
+.scient-document--conversation h2 {
+  font-size: 12pt;
+  color: var(--scient-document-accent);
+  border-bottom: 0.75pt solid var(--scient-document-rule);
+  margin-top: 1.8em;
+}
+
+.scient-document--conversation details {
+  margin: 0 0 0.8em;
+  padding-inline-start: 0.9em;
+  border-inline-start: 1.5pt solid var(--scient-document-rule);
+  color: var(--scient-document-muted);
+  font-size: 9pt;
+}
+
+.scient-document-notes {
+  margin-top: 2em;
+  color: var(--scient-document-muted);
+  font-size: 9pt;
+}
+
+.scient-document-notes li {
+  break-inside: avoid-page;
+}
+
+.scient-document-notes .scient-document-note-detail {
+  margin: 0.3em 0 0;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 8pt;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.scient-document-notes h2 {
+  font-size: 11pt;
+}

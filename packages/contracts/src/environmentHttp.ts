@@ -137,6 +137,38 @@ import {
   ScientThreadQueueUpdateRequest,
 } from "./scientThreadQueue.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient Word export (managed Pandoc) contracts.
+import {
+  ScientPandocToolStatus,
+  ScientWordExportError,
+  ScientWordFileExportRequest,
+  ScientWordLatexExportRequest,
+  ScientWordFileExportResult,
+} from "./scientPandoc.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — Scient conversation export contracts.
+import {
+  ScientConversationExportError,
+  ScientConversationExportPreparation,
+  ScientConversationExportPrepareRequest,
+  ScientConversationExportRequest,
+  ScientConversationExportResult,
+  ScientWordDiagramPlan,
+} from "./scientConversationExport.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — Scient conversation import contracts.
+import {
+  ScientConversationImportCancelRequest,
+  ScientConversationImportCancelResult,
+  ScientConversationImportConfirmRequest,
+  ScientConversationImportCreateUploadRequest,
+  ScientConversationImportError,
+  ScientConversationImportPreview,
+  ScientConversationImportPreviewRequest,
+  ScientConversationImportResult,
+  ScientConversationImportUpload,
+} from "./scientConversationImport.ts";
+// SCIENT-FORK:END
 
 const OptionalBearerHeaders = Schema.Struct({
   authorization: Schema.optionalKey(Schema.String),
@@ -191,6 +223,9 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "scient_analytics_deletion_failed",
   // SCIENT-FORK:START
   "scient_thread_queue_operation_failed",
+  "scient_conversation_export_failed",
+  "scient_conversation_import_failed",
+  "scient_word_export_failed",
   // SCIENT-FORK:END
   "internal_error",
 ]);
@@ -1085,6 +1120,126 @@ export class EnvironmentScientThreadQueueHttpApi extends HttpApiGroup.make("scie
   ) {}
 // SCIENT-FORK:END
 
+// SCIENT-FORK:START — Scient conversation export group, appended like the
+// thread queue group so upstream additions never collide with it.
+export class EnvironmentScientConversationExportHttpApi extends HttpApiGroup.make(
+  "scientConversationExport",
+)
+  .add(
+    HttpApiEndpoint.post("prepare", "/api/scient/conversation-export/v1/prepare", {
+      headers: OptionalBearerHeaders,
+      payload: ScientConversationExportPrepareRequest,
+      success: ScientConversationExportPreparation,
+      error: [EnvironmentHttpCommonError, ScientConversationExportError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post(
+      "prepareWordDiagrams",
+      "/api/scient/conversation-export/v1/word-diagrams",
+      {
+        headers: OptionalBearerHeaders,
+        payload: ScientConversationExportRequest,
+        success: ScientWordDiagramPlan,
+        error: [EnvironmentHttpCommonError, ScientConversationExportError],
+      },
+    ).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("export", "/api/scient/conversation-export/v1/export", {
+      headers: OptionalBearerHeaders,
+      payload: ScientConversationExportRequest,
+      success: ScientConversationExportResult,
+      error: [EnvironmentHttpCommonError, ScientConversationExportError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+// SCIENT-FORK:END
+
+// SCIENT-FORK:START — Scient conversation import group. The file itself is
+// uploaded through the signed URL `createUpload` returns, not through this group.
+// Every handler requires SCIENT_CONVERSATION_IMPORT_REQUIRED_SCOPE.
+export class EnvironmentScientConversationImportHttpApi extends HttpApiGroup.make(
+  "scientConversationImport",
+)
+  .add(
+    HttpApiEndpoint.post("createUpload", "/api/scient/conversation-import/v1/create-upload", {
+      headers: OptionalBearerHeaders,
+      payload: ScientConversationImportCreateUploadRequest,
+      success: ScientConversationImportUpload,
+      error: [EnvironmentHttpCommonError, ScientConversationImportError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("preview", "/api/scient/conversation-import/v1/preview", {
+      headers: OptionalBearerHeaders,
+      payload: ScientConversationImportPreviewRequest,
+      success: ScientConversationImportPreview,
+      error: [EnvironmentHttpCommonError, ScientConversationImportError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("import", "/api/scient/conversation-import/v1/import", {
+      headers: OptionalBearerHeaders,
+      payload: ScientConversationImportConfirmRequest,
+      success: ScientConversationImportResult,
+      error: [EnvironmentHttpCommonError, ScientConversationImportError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("cancel", "/api/scient/conversation-import/v1/cancel", {
+      headers: OptionalBearerHeaders,
+      payload: ScientConversationImportCancelRequest,
+      success: ScientConversationImportCancelResult,
+      error: [EnvironmentHttpCommonError, ScientConversationImportError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+// SCIENT-FORK:END
+
+// SCIENT-FORK:START — Scient Word export group: the managed Pandoc tool and
+// project-file export, appended like the other Scient groups.
+export class EnvironmentScientWordExportHttpApi extends HttpApiGroup.make("scientWordExport")
+  .add(
+    HttpApiEndpoint.post("tool", "/api/scient/word-export/v1/tool", {
+      headers: OptionalBearerHeaders,
+      success: ScientPandocToolStatus,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    // Begins the managed install and answers with the state it left; clients
+    // poll `tool` to watch it finish.
+    HttpApiEndpoint.post("installTool", "/api/scient/word-export/v1/tool/install", {
+      headers: OptionalBearerHeaders,
+      success: ScientPandocToolStatus,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("prepareFileDiagrams", "/api/scient/word-export/v1/file-diagrams", {
+      headers: OptionalBearerHeaders,
+      payload: ScientWordFileExportRequest,
+      success: ScientWordDiagramPlan,
+      error: [EnvironmentHttpCommonError, ScientWordExportError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("exportFile", "/api/scient/word-export/v1/file", {
+      headers: OptionalBearerHeaders,
+      payload: ScientWordFileExportRequest,
+      success: ScientWordFileExportResult,
+      error: [EnvironmentHttpCommonError, ScientWordExportError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("exportLatex", "/api/scient/word-export/v1/latex", {
+      headers: OptionalBearerHeaders,
+      payload: ScientWordLatexExportRequest,
+      success: ScientWordFileExportResult,
+      error: [EnvironmentHttpCommonError, ScientWordExportError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+// SCIENT-FORK:END
+
 export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMetadataHttpApi)
   .add(EnvironmentAuthHttpApi)
@@ -1097,5 +1252,8 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentScientLatexHttpApi)
   // SCIENT-FORK:START
   .add(EnvironmentScientThreadQueueHttpApi)
+  .add(EnvironmentScientConversationExportHttpApi)
+  .add(EnvironmentScientConversationImportHttpApi)
+  .add(EnvironmentScientWordExportHttpApi)
   // SCIENT-FORK:END
   .add(EnvironmentConnectHttpApi) {}
