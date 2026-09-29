@@ -1653,9 +1653,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 }
 .scient-latex-abstract-preview textarea:hover,
 .scient-latex-abstract-preview textarea:focus {
-  border-color: #a8c1dc;
   outline: none;
-  background: #f8fbff;
 }
 .scient-latex-simple-preview {
   margin-block: 1em;
@@ -1680,7 +1678,6 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 .scient-latex-part-preview textarea:focus,
 .scient-latex-bibliography-preview :is(textarea, input):focus {
   outline: none;
-  border-color: #a8c1dc;
 }
 .scient-latex-simple-preview[data-environment="quotation"] {
   margin-inline: 2.5em;
@@ -1739,13 +1736,6 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   font: 0.75em/1.2 var(--font-sans);
   color: #64748b;
 }
-.scient-latex-rich-preview:is(.scient-latex-part-preview, .scient-latex-bibliography-preview):is(
-    :focus-within,
-    [data-selected="true"]
-  ) {
-  border-color: transparent;
-  box-shadow: none;
-}
 .scient-latex-toc-preview {
   margin: 2em 0;
   padding: 0 2em;
@@ -1800,18 +1790,8 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   background: transparent;
   overflow: visible;
 }
-.scient-latex-rich-preview:focus-within {
-  border-color: #d7dde5;
+.scient-latex-rich-preview:is(:focus-within, [data-selected="true"]) {
   z-index: 4;
-}
-.scient-latex-rich-preview[data-selected="true"] {
-  border-color: #8eb1d8;
-  box-shadow: 0 0 0 2px #dceafb;
-  z-index: 4;
-}
-.scient-latex-rich-preview[data-kind="table"] {
-  border-color: transparent;
-  box-shadow: none;
 }
 .scient-latex-rich-preview-label {
   position: absolute;
@@ -1926,20 +1906,11 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   overflow: hidden;
   field-sizing: content;
 }
-.scient-latex-rich-preview dt input:hover,
-.scient-latex-rich-preview dd textarea:hover,
-.scient-latex-rich-preview figcaption input:hover,
-.scient-latex-rich-preview figcaption textarea:hover {
-  border-color: #cbd5e1;
-  background: #fff;
-}
 .scient-latex-rich-preview dt input:focus,
 .scient-latex-rich-preview dd textarea:focus,
 .scient-latex-rich-preview figcaption input:focus,
 .scient-latex-rich-preview figcaption textarea:focus {
-  border-color: #6b9acb;
-  outline: 2px solid #dceafb;
-  background: #fff;
+  outline: none;
 }
 .scient-latex-structure-remove {
   position: absolute;
@@ -2016,11 +1987,8 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   color: #526477;
   font: 11px/1.4 var(--font-mono);
 }
-.scient-latex-table-label input:hover,
 .scient-latex-table-label input:focus {
-  border-color: #cbd5e1;
   outline: none;
-  background: #fff;
 }
 .scient-latex-rich-table-scroll {
   max-width: 100%;
@@ -2285,12 +2253,10 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 .scient-latex-scientific-preview > .scient-latex-object-field {
   margin: 7px 13px 0;
 }
-.scient-latex-scientific-heading :focus,
+.scient-latex-scientific-heading input:focus,
 .scient-latex-scientific-preview > textarea:focus,
 .scient-latex-scientific-preview > .scient-latex-object-field input:focus {
-  border-color: #6b9acb;
-  outline: 2px solid #dceafb;
-  background: #fff;
+  outline: none;
 }
 .scient-latex-structure-actions {
   position: absolute;
@@ -2968,18 +2934,6 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   text-align: center;
   resize: none;
   field-sizing: content;
-}
-.scient-latex-figure-preview:focus-within,
-.scient-latex-scientific-preview:focus-within {
-  border-color: transparent;
-  box-shadow: none;
-}
-.scient-latex-scientific-preview > textarea:focus,
-.scient-latex-abstract-preview textarea:focus,
-.scient-latex-abstract-preview textarea:hover {
-  border-color: transparent;
-  outline: none;
-  background: transparent;
 }
 .scient-latex-title-preview textarea {
   white-space: pre-wrap;
