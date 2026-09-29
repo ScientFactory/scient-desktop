@@ -161,6 +161,7 @@ export const verifyConversationReviewPreload = (source) => {
     ready: undefined,
     cancelClick: undefined,
     continueClick: undefined,
+    readToggle: undefined,
     keydown: undefined,
     require: (name) => {
       if (name !== "electron") throw new Error("Unexpected review preload import");
@@ -181,6 +182,7 @@ export const verifyConversationReviewPreload = (source) => {
     },
     document: {
       getElementById: (id) => {
+        if (id === "read") return context.read;
         if (id !== "cancel" && id !== "continue") throw new Error("Unexpected review element");
         return {
           addEventListener: (name, callback) => {
@@ -195,13 +197,26 @@ export const verifyConversationReviewPreload = (source) => {
       },
     },
   });
+  context.HTMLDetailsElement = class HTMLDetailsElement {
+    open = false;
+    addEventListener(name, callback) {
+      if (name !== "toggle") throw new Error("Unexpected review element event");
+      context.readToggle = callback;
+    }
+  };
+  context.read = new context.HTMLDetailsElement();
   NodeVM.runInContext(source, context, { timeout: preloadExecutionTimeoutMs });
   NodeVM.runInContext(
     'ready(); cancelClick(); continueClick(); keydown({key:"Escape"}); keydown({key:"a"});',
     context,
     { timeout: preloadExecutionTimeoutMs },
   );
-  const expected = ["cancel", "continue", "cancel"].map((action) => [
+  if (!context.readToggle) throw new Error("Conversation review preload is missing read toggle");
+  context.read.open = true;
+  context.readToggle();
+  context.read.open = false;
+  context.readToggle();
+  const expected = ["cancel", "continue", "cancel", "expand", "collapse"].map((action) => [
     "scient:conversation-review-action",
     action,
   ]);

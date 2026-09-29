@@ -65,12 +65,13 @@ Open a conversation file in any of these ways:
   elsewhere opens for import.
 - Open a `.scic` file with the desktop app, for example by double-clicking it or choosing
   **Open with Scient**. Scient first shows a compact local confirmation with the conversation's
-  title and counts. Expand **Read conversation (optional)** if you want to read it first.
+  title and counts. Choose **Read conversation** if you want to read it first; the window grows
+  to show it.
   Nothing is imported or uploaded in this window. **Cancel** leaves your workspace unchanged;
-  **Continue to import** opens the project chooser. Import happens only when you
+  **Import…** opens the project chooser. Import happens only when you
   confirm there, and no agent runs automatically. During first-time setup, the accepted file
   waits until setup is finished. Very large conversations may not fit the local preview;
-  you can still continue to have the complete file checked for import.
+  you can still choose **Import…** to have the complete file checked.
 
 The file-opening window shows a bounded text preview, not a full-fidelity rendering of every
 attachment or diagram. A packaged app launched solely to preview a file does not start its

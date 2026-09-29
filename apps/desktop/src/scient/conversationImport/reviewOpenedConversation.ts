@@ -14,16 +14,23 @@ export type ReviewedFileIdentity = Awaited<
   ReturnType<typeof readLocalConversationPreview>
 >["identity"];
 
+const COMPACT_SIZE = { width: 440, height: 196 } as const;
+const READ_SIZE = { width: 640, height: 600 } as const;
+
 export async function reviewOpenedConversation(
   path: string,
   readOnly = false,
 ): Promise<ReviewedFileIdentity | null> {
   const abort = new AbortController();
   const window = new Electron.BrowserWindow({
-    width: readOnly ? 680 : 600,
-    height: readOnly ? 660 : 460,
-    minWidth: 440,
-    minHeight: 400,
+    // Opening a file is a compact confirmation; it grows only when the person
+    // chooses to read the conversation.
+    width: readOnly ? READ_SIZE.width : COMPACT_SIZE.width,
+    height: readOnly ? READ_SIZE.height : COMPACT_SIZE.height,
+    useContentSize: true,
+    resizable: readOnly,
+    minWidth: COMPACT_SIZE.width,
+    minHeight: COMPACT_SIZE.height,
     title: "Open conversation — Scient",
     show: false,
     autoHideMenuBar: true,
@@ -80,6 +87,13 @@ export async function reviewOpenedConversation(
         return;
       if (action === "cancel") {
         window.close();
+        return;
+      }
+      if (!readOnly && (action === "expand" || action === "collapse")) {
+        const reading = action === "expand";
+        const size = reading ? READ_SIZE : COMPACT_SIZE;
+        window.setResizable(reading);
+        window.setContentSize(size.width, size.height, true);
         return;
       }
       if (readOnly || action !== "continue" || !ready || !identity || confirming) return;
