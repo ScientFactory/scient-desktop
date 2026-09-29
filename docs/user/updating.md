@@ -12,15 +12,19 @@ periodically while the app is open. Updates are deliberate:
 1. Select the update control near the bottom of the sidebar, or use
    **Scient → Check for Updates…** on macOS.
 2. When a release is available, choose the control again to download it.
-3. After the download finishes, review the restart confirmation and install it.
+3. When the download finishes, a notice appears just above the control. Choose
+   **Restart now** to install the update.
 
-The **Read more** link in the download notification opens that version's
-Scient release notes. Reading the notes does not install the update; return to
-Scient and use the update control to restart and install it.
+The notice closes after about five seconds, or when you dismiss it. The update
+control then shows **Restart**. Choosing **Restart**, in the sidebar or in
+**Settings**, restarts Scient right away, with no extra confirmation. The
+**Read more** link in the notice opens that version's Scient release notes;
+reading them does not install the update. On Windows, Scient can stay closed for
+a few minutes while the update installs, then reopens.
 
-Scient does not install an update silently while work is running. Let active
-agent turns and terminal commands finish before restarting. Threads, settings,
-and project files remain in their existing locations.
+Scient never installs an update on its own. Restarting interrupts running agent
+turns and terminal commands, so let them finish before choosing **Restart**.
+Threads, settings, and project files remain in their existing locations.
 
 Scient publishes one desktop update track: stable. If you previously selected
 Nightly, Scient automatically returns to stable updates when you run a version

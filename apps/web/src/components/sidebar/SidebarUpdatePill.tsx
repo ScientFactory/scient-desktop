@@ -6,7 +6,6 @@ import { isElectron } from "../../env";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { useScientDownloadProgress } from "../../hooks/useScientDownloadProgress";
 import { cn } from "../../lib/utils";
-import { ensureLocalApi } from "../../localApi";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
@@ -14,14 +13,18 @@ import {
   getArm64IntelBuildWarningDescription,
   getDesktopUpdateActionError,
   getDesktopUpdateButtonTooltip,
-  getDesktopUpdateInstallConfirmationMessage,
   getScientDesktopUpdateLabel,
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
   shouldShowArm64IntelBuildWarning,
   shouldToastDesktopUpdateActionResult,
 } from "../desktopUpdate.logic";
-import { showDesktopUpdateDownloadedToast } from "../desktopUpdate.toast";
+// SCIENT-FORK: a finished download offers Restart in place, and Restart needs no confirmation.
+import {
+  installDesktopUpdateNow,
+  type ScientUpdateReadyNoticeHandle,
+  showScientUpdateReadyNotice,
+} from "../../scient/desktopUpdate/updateReadyNotice";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Popover, PopoverCreateHandle, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { SidebarMenuItem } from "../ui/sidebar";
@@ -127,6 +130,9 @@ function SidebarUpdateControl() {
   const suppressReleaseNotesFocusOpen = useRef(false);
   const releaseNotesPopupRef = useRef<HTMLDivElement>(null);
   const releaseNotesTriggerId = useId();
+  // SCIENT-FORK: the ready notice anchors to this control; close it if the control goes away.
+  const updateReadyNoticeRef = useRef<ScientUpdateReadyNoticeHandle | null>(null);
+  useEffect(() => () => updateReadyNoticeRef.current?.close(), []);
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const displayedDownloadPercent = useScientDownloadProgress({
     status: state?.status,
@@ -197,7 +203,13 @@ function SidebarUpdateControl() {
         .downloadUpdate()
         .then((result) => {
           if (result.completed) {
-            showDesktopUpdateDownloadedToast(bridge, result.state);
+            // SCIENT-FORK: offer Restart next to the button that started the download.
+            updateReadyNoticeRef.current?.close();
+            updateReadyNoticeRef.current = showScientUpdateReadyNotice({
+              shell: bridge,
+              state: result.state,
+              anchor: document.getElementById(releaseNotesTriggerId),
+            });
           }
           if (!shouldToastDesktopUpdateActionResult(result)) return;
           const actionError = getDesktopUpdateActionError(result);
@@ -224,50 +236,9 @@ function SidebarUpdateControl() {
     }
 
     if (action === "install") {
-      let confirmed = false;
-      try {
-        confirmed = await ensureLocalApi().dialogs.confirm(
-          getDesktopUpdateInstallConfirmationMessage(state),
-        );
-      } catch (error) {
-        setIsActionPending(false);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Could not confirm update",
-            description: error instanceof Error ? error.message : "Update confirmation failed.",
-          }),
-        );
-        return;
-      }
-      if (!confirmed) {
-        setIsActionPending(false);
-        return;
-      }
-      void bridge
-        .installUpdate()
-        .then((result) => {
-          if (!shouldToastDesktopUpdateActionResult(result)) return;
-          const actionError = getDesktopUpdateActionError(result);
-          if (!actionError) return;
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Could not install update",
-              description: actionError,
-            }),
-          );
-        })
-        .catch((error) => {
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Could not install update",
-              description: error instanceof Error ? error.message : "An unexpected error occurred.",
-            }),
-          );
-        })
-        .finally(() => setIsActionPending(false));
+      // SCIENT-FORK: Restart is the user's explicit action; no second confirmation.
+      updateReadyNoticeRef.current?.close();
+      void installDesktopUpdateNow(bridge).finally(() => setIsActionPending(false));
       return;
     }
 
@@ -298,7 +269,7 @@ function SidebarUpdateControl() {
         );
       })
       .finally(() => setIsActionPending(false));
-  }, [action, isInteractionDisabled, prefersReducedMotion, state]);
+  }, [action, isInteractionDisabled, prefersReducedMotion, releaseNotesTriggerId, state]);
 
   const handleCheckAnimationIteration = useCallback(() => {
     setIsCheckAnimationLatched(
