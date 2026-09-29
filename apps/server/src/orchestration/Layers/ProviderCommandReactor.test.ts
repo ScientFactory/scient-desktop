@@ -1074,6 +1074,7 @@ describe("ProviderCommandReactor", () => {
     expect(settleDelivery.mock.calls[0]?.[0].outcome).toEqual({
       type: "accepted",
       nativeThreadKey: key,
+      turnId: asTurnId("turn-1"),
     });
     prepareTurn.mockImplementation(() => Effect.succeed({ kind: "none" }));
     const session = harness.runtimeSessions[0]!;

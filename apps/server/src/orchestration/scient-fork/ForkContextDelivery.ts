@@ -18,7 +18,9 @@
  *   the user never reaches a dead end.
  * - "Accepted" is not proof: some adapters only enqueue in memory. A handoff
  *   counts as received once the provider reported the turn it carried
- *   (`projection_turns.pending_message_id`), or while that turn still runs.
+ *   (matched to the send receipt's turn id, or the pending message for older
+ *   receipts), or while that turn still runs. A send receipt alone is not proof:
+ *   the carrying turn must also exist in the durable turn projection.
  *   Completed legacy deliveries are the explicit upgrade exception: migration
  *   16 assumes continuity with their saved session, subject to durable undo checks.
  * - A revert that removes the turn which carried the handoff supersedes it
@@ -93,7 +95,12 @@ export interface NativeForkPlan {
 
 export type ForkDeliveryOutcome =
   | { readonly type: "notSent" }
-  | { readonly type: "accepted"; readonly nativeThreadKey: string | null }
+  | {
+      readonly type: "accepted";
+      readonly nativeThreadKey: string | null;
+      /** The send receipt identifies the carrying turn even if a reset cleared its pending message. */
+      readonly turnId?: TurnId;
+    }
   | { readonly type: "maybeDelivered" };
 
 export interface ScientForkContextDeliveryShape {
@@ -166,6 +173,7 @@ const HandoffRow = Schema.Struct({
   delivery_status: Schema.Literals(["pending", "inline", "superseded"]),
   message_id: Schema.NullOr(Schema.String),
   turn_id: Schema.NullOr(Schema.String),
+  accepted_turn_id: Schema.NullOr(Schema.String),
   continuity_basis: Schema.Literals(["delivery", "legacy_assumed"]),
   legacy_revert_sequence: Schema.NullOr(Schema.Number),
 });
@@ -240,7 +248,7 @@ const make = Effect.gen(function* () {
   const readActiveHandoffs = (threadId: ThreadId) =>
     sql<Record<string, unknown>>`
       SELECT
-        handoff_id, strategy, native_thread_key, rebind_pending, delivery_status, message_id, turn_id,
+        handoff_id, strategy, native_thread_key, rebind_pending, delivery_status, message_id, turn_id, accepted_turn_id,
         continuity_basis, legacy_revert_sequence
       FROM scient_context_handoffs
       WHERE thread_id = ${threadId} AND delivery_status IN ('pending', 'inline')
@@ -251,14 +259,24 @@ const make = Effect.gen(function* () {
     );
 
   /** The provider reported the turn this message started. */
-  const providerTurnFor = (threadId: ThreadId, messageId: string | null) =>
-    messageId === null
+  const providerTurnFor = (
+    threadId: ThreadId,
+    messageId: string | null,
+    acceptedTurnId: string | null = null,
+  ) =>
+    messageId === null && acceptedTurnId === null
       ? Effect.succeed<string | undefined>(undefined)
       : sql<{ readonly turn_id: string }>`
           SELECT turn_id FROM projection_turns
           WHERE thread_id = ${threadId}
-            AND pending_message_id = ${messageId}
             AND turn_id IS NOT NULL
+            AND state <> 'pending'
+            AND (
+              (${acceptedTurnId} IS NULL AND pending_message_id = ${messageId})
+              OR (turn_id = ${acceptedTurnId}
+                AND (pending_message_id = ${messageId}
+                  OR (pending_message_id IS NULL AND state IN ('running', 'completed', 'error'))))
+            )
           LIMIT 1
         `.pipe(
           Effect.map((rows) => rows[0]?.turn_id),
@@ -291,6 +309,7 @@ const make = Effect.gen(function* () {
       readonly nativeThreadKey?: string | null;
       readonly rebindPending?: boolean;
       readonly turnId?: string;
+      readonly acceptedTurnId?: string;
       /** Only update a row still in this status (a concurrent turn may have moved it). */
       readonly onlyIfStatus?: HandoffRow["delivery_status"];
     },
@@ -312,6 +331,7 @@ const make = Effect.gen(function* () {
               : sql`${fields.rebindPending ? 1 : 0}`
           },
           turn_id = COALESCE(${fields.turnId ?? null}, turn_id),
+          accepted_turn_id = COALESCE(${fields.acceptedTurnId ?? null}, accepted_turn_id),
           updated_at = ${updatedAt}
         WHERE handoff_id = ${handoffId}
           AND (${fields.onlyIfStatus ?? null} IS NULL OR delivery_status = ${fields.onlyIfStatus ?? null})
@@ -376,7 +396,11 @@ const make = Effect.gen(function* () {
       const sameThread =
         input.nativeThreadKey !== null && handoff.native_thread_key === input.nativeThreadKey;
       const native = handoff.strategy === NATIVE_FORK_STRATEGY;
-      const turnId = yield* providerTurnFor(input.threadId, handoff.message_id);
+      const turnId = yield* providerTurnFor(
+        input.threadId,
+        handoff.message_id,
+        handoff.accepted_turn_id,
+      );
 
       const legacyAssumed = handoff.continuity_basis === "legacy_assumed";
       if (legacyAssumed && handoff.turn_id === null) {
@@ -645,6 +669,7 @@ const make = Effect.gen(function* () {
         yield* updateHandoff(input.threadId, input.handoffId, {
           deliveryStatus: "inline",
           nativeThreadKey: input.outcome.nativeThreadKey,
+          ...(input.outcome.turnId === undefined ? {} : { acceptedTurnId: input.outcome.turnId }),
           rebindPending: false,
           onlyIfStatus: "pending",
         });
