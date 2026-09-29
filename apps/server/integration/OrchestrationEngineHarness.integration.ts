@@ -27,6 +27,7 @@ import * as Tracer from "effect/Tracer";
 
 import * as CheckpointStore from "../src/checkpointing/CheckpointStore.ts";
 import { TextGeneration } from "../src/textGeneration/TextGeneration.ts";
+import * as TerminalManager from "../src/terminal/Manager.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../src/persistence/Layers/OrchestrationCommandReceipts.ts";
 import { OrchestrationEventStoreLive } from "../src/persistence/Layers/OrchestrationEventStore.ts";
 import { ProjectionPendingApprovalRepositoryLive } from "../src/persistence/Layers/ProjectionPendingApprovals.ts";
@@ -62,7 +63,7 @@ import { ProviderRuntimeIngestionLive } from "../src/orchestration/Layers/Provid
 import { CheckpointReactor } from "../src/orchestration/Services/CheckpointReactor.ts";
 // SCIENT-FORK:START
 import { ScientForkReactor } from "../src/orchestration/Services/ScientForkReactor.ts";
-import { ScientForkContextBootstrapLive } from "../src/orchestration/scient-fork/ForkContextBootstrap.ts";
+import { ScientForkContextDeliveryLive } from "../src/orchestration/scient-fork/ForkContextDelivery.ts";
 // SCIENT-FORK:END
 import { ProviderRuntimeIngestionService } from "../src/orchestration/Services/ProviderRuntimeIngestion.ts";
 import {
@@ -340,12 +341,13 @@ export const makeOrchestrationIntegrationHarness = (
       generateThreadTitle: () => Effect.succeed({ title: "New thread" }),
     } as unknown as TextGeneration["Service"]);
     const providerCommandReactorLayer = ProviderCommandReactorLive.pipe(
-      Layer.provide(ScientForkContextBootstrapLive),
+      Layer.provide(ScientForkContextDeliveryLive.pipe(Layer.provide(serverSettingsLayer))),
       Layer.provide(
         Layer.mock(ProviderAuthService)({
           tryHandlePromptCommand: () => Effect.succeed(false),
         }),
       ),
+      Layer.provide(Layer.mock(TerminalManager.TerminalManager)({ closeIdle: () => Effect.void })),
       Layer.provideMerge(runtimeServicesLayer),
       Layer.provideMerge(gitWorkflowLayer),
       Layer.provideMerge(textGenerationLayer),
@@ -444,6 +446,7 @@ export const makeOrchestrationIntegrationHarness = (
       Layer.provideMerge(
         Layer.succeed(AgentAwarenessRelay.AgentAwarenessRelay, {
           publishThread: () => Effect.void,
+          requestCatchUp: () => Effect.void,
           start: () => Effect.void,
         }),
       ),

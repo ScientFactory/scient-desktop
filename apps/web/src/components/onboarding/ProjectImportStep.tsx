@@ -45,7 +45,11 @@ export function ProjectImportStep({
   readonly machineLabel: string;
   readonly onImportingChange?: (importing: boolean) => void;
   readonly onBack: () => void;
-  readonly onDone: (projectRef?: ScopedProjectRef) => Promise<boolean>;
+  readonly onDone: (
+    projectRef?: ScopedProjectRef,
+    importWarning?: string,
+    importedThreadCount?: number,
+  ) => Promise<boolean>;
 }) {
   const scan = useEnvironmentQuery(
     environmentId === null ? null : agentSessionScan({ environmentId, input: {} }),
@@ -56,7 +60,8 @@ export function ProjectImportStep({
   const [choosing, setChoosing] = useState(false);
   const [deselected, setDeselected] = useState<ReadonlySet<string>>(new Set());
   const [isImporting, setIsImporting] = useState(false);
-  const [importError, setImportError] = useState("");
+  const importWarningRef = useRef("");
+  const importedThreadCountRef = useRef(0);
   const [landingProject, setLandingProject] = useState<ScopedProjectRef | null>(null);
   useEffect(() => {
     // Hold modal dismissal only while commands or navigation are running.
@@ -78,7 +83,8 @@ export function ProjectImportStep({
     importGenerationRef.current += 1;
     setDeselected(new Set());
     setIsImporting(false);
-    setImportError("");
+    importWarningRef.current = "";
+    importedThreadCountRef.current = 0;
     setLandingProject(null);
     importedProjectsRef.current = new Map();
     projectsWithImportedHistoryRef.current = new Map();
@@ -100,9 +106,9 @@ export function ProjectImportStep({
       )
     ) {
       setLandingProject(null);
-      void onDone(landingProject).then((completed) => {
-        if (!completed) setIsImporting(false);
-      });
+      void onDone(landingProject, importWarningRef.current, importedThreadCountRef.current).finally(
+        () => setIsImporting(false),
+      );
     }
   }, [environmentId, landingProject, onDone, projects]);
 
@@ -125,7 +131,7 @@ export function ProjectImportStep({
       importedProjectsRef.current,
     );
     if (projectRef === undefined) {
-      void onDone();
+      void onDone(undefined, importWarningRef.current, importedThreadCountRef.current);
       return;
     }
     setIsImporting(true);
@@ -138,7 +144,8 @@ export function ProjectImportStep({
       return;
     }
     setIsImporting(true);
-    setImportError("");
+    importWarningRef.current = "";
+    importedThreadCountRef.current = 0;
     lastImportSelectionRef.current = selection.map((candidate) => candidate.path);
     const importGeneration = importGenerationRef.current;
     const importedProjects = importedProjectsRef.current;
@@ -231,23 +238,17 @@ export function ProjectImportStep({
     }
     if (shouldRefreshScan) scan.refresh();
     setIsImporting(false);
+    importedThreadCountRef.current = importedThreadCount;
     if (importedProjectsCount < selection.length) {
       if (importedThreadCount > 0 && skippedThreadCount > 0) {
-        setImportError(
-          `Imported ${importedThreadCount} ${importedThreadCount === 1 ? "thread" : "threads"}. ${skippedThreadCount} ${skippedThreadCount === 1 ? "thread" : "threads"} could not be imported.`,
-        );
+        importWarningRef.current = `Imported ${importedThreadCount} ${importedThreadCount === 1 ? "thread" : "threads"}. ${skippedThreadCount} ${skippedThreadCount === 1 ? "thread" : "threads"} could not be imported.`;
       } else if (skippedThreadCount > 0) {
-        setImportError(
-          `${skippedThreadCount} ${skippedThreadCount === 1 ? "thread could" : "threads could"} not be imported.`,
-        );
+        importWarningRef.current = `${skippedThreadCount} ${skippedThreadCount === 1 ? "thread could" : "threads could"} not be imported.`;
       } else if (importedThreadCount > 0) {
-        setImportError(
-          `Imported ${importedThreadCount} ${importedThreadCount === 1 ? "thread" : "threads"}. Some thread history could not be imported.`,
-        );
+        importWarningRef.current = `Imported ${importedThreadCount} ${importedThreadCount === 1 ? "thread" : "threads"}. Some thread history could not be imported.`;
       } else {
-        setImportError("Could not import thread history.");
+        importWarningRef.current = "Could not import thread history.";
       }
-      return;
     }
     finishAfterImport();
   };
@@ -342,14 +343,9 @@ export function ProjectImportStep({
             </label>
           ))}
         </div>
-        {importError ? <p className="mt-3 text-sm text-destructive">{importError}</p> : null}
         <div className="mt-7 flex flex-wrap items-center justify-between gap-3">
-          <Button
-            variant="ghost-muted"
-            disabled={isImporting}
-            onClick={importError ? finishAfterImport : () => void onDone()}
-          >
-            {importError ? "Continue without the rest" : "Skip"}
+          <Button variant="ghost-muted" disabled={isImporting} onClick={finishAfterImport}>
+            Skip
           </Button>
           <Button
             disabled={isImporting || selected.length === 0}
@@ -391,14 +387,9 @@ export function ProjectImportStep({
           </p>
         ) : null}
       </div>
-      {importError ? <p className="mt-3 text-sm text-destructive">{importError}</p> : null}
       <div className="mt-7 flex flex-wrap items-center justify-between gap-3">
-        <Button
-          variant="ghost-muted"
-          disabled={isImporting}
-          onClick={importError ? finishAfterImport : () => void onDone()}
-        >
-          {importError ? "Continue without the rest" : "Skip"}
+        <Button variant="ghost-muted" disabled={isImporting} onClick={finishAfterImport}>
+          Skip
         </Button>
         <div className="flex items-center gap-2">
           <Button variant="ghost" disabled={isImporting} onClick={() => setChoosing(true)}>

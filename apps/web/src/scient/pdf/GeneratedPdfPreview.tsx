@@ -107,7 +107,7 @@ export function GeneratedPdfPreview(props: {
           if (relation) useHtmlPdfSourceStore.getState().requestUpdate(relation.id);
         }}
       />
-      <ScientPdfReader source={props.source} />
+      <ScientPdfReader source={props.source} readerScope={props.threadRef.threadId} />
     </div>
   );
 }

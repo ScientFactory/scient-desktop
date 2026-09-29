@@ -31,6 +31,7 @@ import * as Context from "effect/Context";
 import type * as Option from "effect/Option";
 import type * as Effect from "effect/Effect";
 
+import type { HistoryReadQuery, HistoryPage } from "../scient-fork/historyRead.ts";
 import type { ProjectionRepositoryError } from "../../persistence/Errors.ts";
 
 export interface ProjectionSnapshotCounts {
@@ -64,7 +65,15 @@ export interface ProjectionFullThreadDiffContext {
   readonly toCheckpointRef: CheckpointRef | null;
 }
 
+/** The thread fields pull request sync reads, for a thread with at least one link. */
+export type ProjectionThreadPullRequests = Pick<
+  OrchestrationThreadShell,
+  "id" | "projectId" | "settledOverride" | "settledAt" | "pullRequests"
+>;
+
 export interface ProjectionThreadDetailQuery {
+  /** Internal fork hydration only; ordinary detail reads remain bounded. */
+  readonly fullHistory?: boolean;
   /**
    * Limit activities before SQLite returns and decodes their payloads.
    * Any explicit filter omits pinned-request reads. An empty list also skips
@@ -114,11 +123,15 @@ export interface ProjectionSnapshotQueryShape {
    *
    * Returns only projects and thread shell summaries so clients can bootstrap
    * lightweight navigation state without hydrating every thread body.
+   *
+   * `unsettledOnly` is for background sweeps, not clients. It skips settled
+   * threads and their sessions, PR links, and turns, and its `updatedAt`
+   * ignores those rows. It still resolves every project, which keeps
+   * repository identities cached for client connects.
    */
-  readonly getShellSnapshot: () => Effect.Effect<
-    OrchestrationShellSnapshot,
-    ProjectionRepositoryError
-  >;
+  readonly getShellSnapshot: (options?: {
+    readonly unsettledOnly?: boolean;
+  }) => Effect.Effect<OrchestrationShellSnapshot, ProjectionRepositoryError>;
 
   /**
    * Read archived thread shell summaries for the archive page.
@@ -128,6 +141,16 @@ export interface ProjectionSnapshotQueryShape {
    */
   readonly getArchivedShellSnapshot: () => Effect.Effect<
     OrchestrationShellSnapshot,
+    ProjectionRepositoryError
+  >;
+
+  /**
+   * Read active (not deleted, not archived) threads that have at least one pull
+   * request link, in shell snapshot order. Skips repository identity, so no
+   * legacy `linkedPullRequest` is derived.
+   */
+  readonly listThreadsWithPullRequests: () => Effect.Effect<
+    ReadonlyArray<ProjectionThreadPullRequests>,
     ProjectionRepositoryError
   >;
 
@@ -260,6 +283,10 @@ export interface ProjectionSnapshotQueryShape {
    * Read a single non-deleted thread detail snapshot by id, including an
    * archived thread addressed explicitly by its id.
    */
+  readonly getThreadHistoryPage: (
+    input: HistoryReadQuery,
+  ) => Effect.Effect<HistoryPage, ProjectionRepositoryError>;
+
   readonly getThreadDetailById: (
     threadId: ThreadId,
     query?: ProjectionThreadDetailQuery,

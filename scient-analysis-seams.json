@@ -31,6 +31,7 @@
     "apps/web/src/components/preview/previewImageTransition.ts",
     "apps/web/src/components/preview/previewImageZoom.ts",
     "apps/web/src/previewStaticImageSurface.ts",
+    "apps/web/src/lib/desktopReload.ts",
     "apps/web/src/scient/pdf/ScientPdfReader.tsx",
     "apps/web/src/scient/rightPanel/ScientRightPanelSurfaceIcon.tsx",
     "apps/web/src/scient/rightPanel/surfaces.ts",

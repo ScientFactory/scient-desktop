@@ -94,6 +94,7 @@ describe("orchestration projector", () => {
         updatedAt: now,
         archivedAt: null,
         activeOrderKey: null,
+        autoSettleDisabledAt: null,
         settledOverride: null,
         settledAt: null,
         unsettledAt: null,
@@ -1213,6 +1214,7 @@ describe("orchestration projector", () => {
       expect(thread?.forkLineage).toEqual({
         originThreadId: "origin-thread",
         baselineAssistantMessageId: "baseline-assistant",
+        inheritedTurnIds: ["fork-baseline"],
       });
     }),
   );
@@ -1380,6 +1382,7 @@ describe("orchestration projector", () => {
         expect(thread?.forkLineage).toEqual({
           originThreadId: "origin-marker",
           baselineAssistantMessageId: "baseline-assistant-marker",
+          inheritedTurnIds: ["baseline-marker"],
         });
         // No complete boundary array in the in-memory read model.
         expect(thread?.conversationForkBoundaries).toBeUndefined();
@@ -1560,6 +1563,7 @@ describe("orchestration projector", () => {
       expect(thread?.forkLineage).toEqual({
         originThreadId: "origin-fr",
         baselineAssistantMessageId: "baseline-assistant-fr",
+        inheritedTurnIds: ["baseline-fr"],
       });
     }),
   );

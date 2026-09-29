@@ -11,40 +11,50 @@ import {
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
-import { ProviderInstanceIcon } from "../../components/chat/ProviderInstanceIcon";
 import { Button } from "../../components/ui/button";
 import {
   AssistedSetupActions,
+  AssistedSetupDiagnostics,
   AssistedSetupFrame,
   AssistedSetupStatus,
+  AssistedSetupUpdateButton,
+  AssistedSetupUpdateStatus,
+  ProviderSetupIcon,
 } from "./AssistedProviderSetup";
 import {
-  hasExternalCursorUpdate,
-  hasManagedCursorUpdate,
   startCursorBrowserSignIn,
   startReviewedCursorRuntimeAction,
   updateCursorRuntime,
 } from "./cursorLifecycleActions";
+import {
+  externalProviderUpdate,
+  externalProviderUpdateProgress,
+  providerUpdateIssue,
+  providerUpdateOffer,
+} from "./providerLifecycleActions";
 import {
   currentOptimisticProviderValue,
   isManagedRuntimeActionDurablySettled,
   type OptimisticProviderValue,
 } from "./optimisticProviderValue";
 import {
+  cancelRuntimeActionLabel,
+  failedRuntimeOperationMessage,
   isActiveProviderConnectionOperation,
   isActiveProviderRuntimeOperation,
   isProviderRuntimePresentedAsInstalled,
+  managedRuntimeRepairMessage,
   needsManagedRuntimeRecovery,
   providerLifecycleFailureMessage,
   providerRuntimeComputerLabel,
 } from "./providerConnectionPresentation";
-import { ProviderRuntimeDiagnosticsDetails } from "./ProviderRuntimeDiagnostics";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
 
 type PendingAction =
   | "install"
   | "repair"
   | "update"
+  | "external-update"
   | "sign-in"
   | "cancel-runtime"
   | "cancel-sign-in"
@@ -60,49 +70,6 @@ function accountDescription(provider: ServerProvider): string {
   const label = provider.auth.label?.trim();
   if (email && label) return `${email} · ${label}`;
   return email ?? label ?? "Your Cursor account is connected.";
-}
-
-function CursorSetupIcon(props: {
-  readonly displayName: string;
-  readonly provider: ServerProvider;
-}) {
-  return (
-    <>
-      <ShieldCheckIcon className="size-5 text-primary in-[[data-model-picker-content=true]]:hidden" />
-      <ProviderInstanceIcon
-        className="hidden size-8 in-[[data-model-picker-content=true]]:inline-flex"
-        displayName={props.displayName}
-        driverKind={props.provider.driver}
-        iconClassName="size-8"
-      />
-    </>
-  );
-}
-
-function CursorLoadingIcon(props: {
-  readonly displayName: string;
-  readonly provider: ServerProvider;
-}) {
-  return (
-    <>
-      <LoaderIcon className="size-5 animate-spin text-primary in-[[data-model-picker-content=true]]:hidden" />
-      <ProviderInstanceIcon
-        className="hidden size-8 in-[[data-model-picker-content=true]]:inline-flex"
-        displayName={props.displayName}
-        driverKind={props.provider.driver}
-        iconClassName="size-8"
-      />
-    </>
-  );
-}
-
-function CursorLoadingTitle(props: { readonly children: ReactNode }) {
-  return (
-    <span className="inline-flex items-center gap-2">
-      <LoaderIcon className="hidden size-4.5 animate-spin text-primary in-[[data-model-picker-content=true]]:inline" />
-      {props.children}
-    </span>
-  );
 }
 
 export function CursorInlineSetup(props: {
@@ -167,12 +134,13 @@ export function CursorInlineSetup(props: {
   const isReady = props.provider.status === "ready" && hasModels;
   const supportsBrowserSignIn =
     props.provider.connection?.methods.includes("cursor_browser") ?? false;
-  const managedUpdateAvailable =
-    !props.managedRuntimePresentedExternally && hasManagedCursorUpdate(props.provider);
-  const externalUpdateAvailable = hasExternalCursorUpdate(props.provider);
-  const updateAvailable = managedUpdateAvailable || externalUpdateAvailable;
-  const updateState = props.provider.updateState;
-  const updateRunning = updateState?.status === "queued" || updateState?.status === "running";
+  const updateOffer = providerUpdateOffer(props.provider, {
+    managed: !props.managedRuntimePresentedExternally,
+  });
+  const externalUpdateProgress = externalProviderUpdateProgress(
+    props.provider,
+    pendingAction === "external-update",
+  );
   const needsRuntimeRepair =
     !props.managedRuntimePresentedExternally && needsManagedRuntimeRecovery(props.provider);
 
@@ -212,7 +180,7 @@ export function CursorInlineSetup(props: {
     );
   const update = () =>
     run(
-      "update",
+      updateOffer?.path === "external" ? "external-update" : "update",
       () => updateCursorRuntime(props.controller, props.provider),
       "Scient could not update Cursor.",
       true,
@@ -231,26 +199,6 @@ export function CursorInlineSetup(props: {
       props.onRepairSucceeded?.();
     }
   };
-
-  const canShowInlineRepair =
-    !props.managedRuntimePresentedExternally && runtime?.actions.includes("repair");
-  const connectedActions =
-    canShowInlineRepair || props.accountAction ? (
-      <div className="flex flex-wrap items-center justify-end gap-1">
-        {canShowInlineRepair ? (
-          <Button
-            disabled={pendingAction !== null}
-            onClick={() => void repair()}
-            size="sm"
-            type="button"
-            variant="ghost-muted"
-          >
-            <RefreshCwIcon aria-hidden /> Repair
-          </Button>
-        ) : null}
-        {props.accountAction}
-      </div>
-    ) : undefined;
 
   const cancelRuntime = async () => {
     if (!activeRuntimeOperation) return;
@@ -277,30 +225,38 @@ export function CursorInlineSetup(props: {
     );
   };
 
+  const runtimeDiagnostics = (
+    <AssistedSetupDiagnostics
+      displayName={props.displayName}
+      presentedExternally={props.managedRuntimePresentedExternally}
+      provider={props.provider}
+    />
+  );
   if (
     activeRuntimeOperation ||
     pendingAction === "install" ||
     pendingAction === "repair" ||
     pendingAction === "update"
   ) {
-    const action = activeRuntimeOperation?.action ?? pendingAction;
+    const action =
+      activeRuntimeOperation?.action ??
+      (pendingAction === "repair" || pendingAction === "update" ? pendingAction : "install");
     return (
       <SetupFrame>
         <AssistedSetupStatus
           body={runtimeStage(activeRuntimeOperation)}
-          icon={<CursorLoadingIcon displayName={props.displayName} provider={props.provider} />}
+          icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
           title={
-            <CursorLoadingTitle>
-              {action === "update"
-                ? "Updating Cursor"
-                : action === "repair"
-                  ? "Repairing Cursor"
-                  : "Installing Cursor"}
-            </CursorLoadingTitle>
+            action === "update"
+              ? "Updating Cursor"
+              : action === "repair"
+                ? "Repairing Cursor"
+                : "Installing Cursor"
           }
         />
         <AssistedSetupActions>
           <Button
+            aria-label={cancelRuntimeActionLabel("Cursor", action)}
             disabled={!activeRuntimeOperation || pendingAction === "cancel-runtime"}
             onClick={() => void cancelRuntime()}
             size="sm"
@@ -319,12 +275,23 @@ export function CursorInlineSetup(props: {
     );
   }
 
+  if (externalUpdateProgress) {
+    return (
+      <SetupFrame>
+        <AssistedSetupUpdateStatus
+          name="Cursor"
+          provider={props.provider}
+          trailing={props.accountAction}
+          update={externalProviderUpdate(props.provider)}
+          working={externalUpdateProgress}
+        />
+      </SetupFrame>
+    );
+  }
+
   if (needsRuntimeRepair) {
     const error =
-      localError ??
-      (runtimeOperation?.status === "failed"
-        ? runtimeOperation.message
-        : (props.provider.message ?? "Cursor's private runtime could not start."));
+      localError ?? managedRuntimeRepairMessage(props.provider, "Cursor", runtimeOperation);
     return (
       <SetupFrame>
         <AssistedSetupStatus
@@ -338,13 +305,13 @@ export function CursorInlineSetup(props: {
             <RefreshCwIcon aria-hidden /> Repair Cursor
           </Button>
         </AssistedSetupActions>
+        {runtimeDiagnostics}
       </SetupFrame>
     );
   }
 
   if (!isProviderRuntimePresentedAsInstalled(props.provider)) {
-    const error =
-      localError ?? (runtimeOperation?.status === "failed" ? runtimeOperation.message : null);
+    const error = localError ?? failedRuntimeOperationMessage(runtimeOperation, "install");
     const canInstall = runtime?.actions.includes("install") ?? false;
     return (
       <SetupFrame>
@@ -359,7 +326,7 @@ export function CursorInlineSetup(props: {
             error ? (
               <TriangleAlertIcon className="size-5 text-destructive" />
             ) : (
-              <CursorSetupIcon displayName={props.displayName} provider={props.provider} />
+              <ProviderSetupIcon displayName={props.displayName} driver={props.provider.driver} />
             )
           }
           role={error ? "alert" : undefined}
@@ -367,12 +334,19 @@ export function CursorInlineSetup(props: {
         />
         {canInstall ? (
           <AssistedSetupActions>
-            <Button onClick={() => void install()} size="sm" type="button" variant="ghost-primary">
+            <Button
+              aria-label={error ? "Retry installation of Cursor" : "Install Cursor"}
+              onClick={() => void install()}
+              size="sm"
+              type="button"
+              variant="ghost-primary"
+            >
               {error ? <RefreshCwIcon aria-hidden /> : <DownloadIcon aria-hidden />}
-              {error ? "Retry installation" : "Install Cursor"}
+              {error ? "Retry installation" : "Install"}
             </Button>
           </AssistedSetupActions>
         ) : null}
+        {error ? runtimeDiagnostics : null}
       </SetupFrame>
     );
   }
@@ -385,12 +359,8 @@ export function CursorInlineSetup(props: {
           body={
             verifying ? "Finding models for your account…" : "Complete sign-in in your browser."
           }
-          icon={<CursorLoadingIcon displayName={props.displayName} provider={props.provider} />}
-          title={
-            <CursorLoadingTitle>
-              {verifying ? "Checking your account" : "Finish signing in"}
-            </CursorLoadingTitle>
-          }
+          icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
+          title={verifying ? "Checking your account" : "Finish signing in"}
         />
         <AssistedSetupActions>
           {!verifying && activeConnectionOperation?.authorizationUrl ? (
@@ -409,6 +379,7 @@ export function CursorInlineSetup(props: {
           ) : null}
           {activeConnectionOperation ? (
             <Button
+              aria-label="Cancel Cursor sign-in"
               disabled={pendingAction === "cancel-sign-in"}
               onClick={() => void cancelSignIn()}
               size="sm"
@@ -427,7 +398,7 @@ export function CursorInlineSetup(props: {
     if (!isReady) {
       return (
         <StatusFrame
-          accountAction={connectedActions}
+          accountAction={props.accountAction}
           body={
             props.provider.message ??
             (hasModels
@@ -436,50 +407,35 @@ export function CursorInlineSetup(props: {
           }
           title="Cursor needs attention"
           warning
+          diagnostics={runtimeDiagnostics}
         />
       );
     }
-    if (updateRunning) {
-      return (
-        <StatusFrame
-          accountAction={props.accountAction}
-          body={updateState?.message ?? "Updating and verifying Cursor…"}
-          title="Updating Cursor"
-          loading
-        />
-      );
-    }
-    if (updateAvailable) {
-      const error = localError ?? (updateState?.status === "failed" ? updateState.message : null);
+    if (updateOffer) {
+      const issue = providerUpdateIssue(props.provider, updateOffer, localError);
       return (
         <SetupFrame>
-          <AssistedSetupStatus
-            body={
-              error ??
-              "Install the reviewed update when you’re ready. Your current version remains available until the update is verified."
-            }
-            icon={
-              error ? (
-                <TriangleAlertIcon className="size-5 text-destructive" />
-              ) : (
-                <RefreshCwIcon className="size-5 text-primary" />
-              )
-            }
-            role={error ? "alert" : undefined}
-            title={error ? "Cursor couldn’t be updated" : "Cursor update available"}
+          <AssistedSetupUpdateStatus
+            issue={issue}
+            name="Cursor"
+            provider={props.provider}
+            update={updateOffer}
           />
           <AssistedSetupActions>
             {props.accountAction}
-            <Button onClick={() => void update()} size="sm" type="button" variant="ghost-primary">
-              <RefreshCwIcon aria-hidden /> {error ? "Try again" : "Update Cursor"}
-            </Button>
+            <AssistedSetupUpdateButton
+              name="Cursor"
+              onClick={() => void update()}
+              retry={issue !== null}
+            />
           </AssistedSetupActions>
+          {issue ? runtimeDiagnostics : null}
         </SetupFrame>
       );
     }
     return (
       <StatusFrame
-        accountAction={connectedActions}
+        accountAction={props.accountAction}
         body={accountDescription(props.provider)}
         title="Cursor is ready"
       />
@@ -496,6 +452,7 @@ export function CursorInlineSetup(props: {
         }
         title={isReady ? "Cursor is ready" : "Cursor needs attention"}
         warning={!isReady}
+        diagnostics={isReady ? undefined : runtimeDiagnostics}
       />
     );
   }
@@ -508,12 +465,6 @@ export function CursorInlineSetup(props: {
           icon={<ShieldCheckIcon className="size-5 text-primary" />}
           title="Custom Cursor setup"
         />
-        <div className="flex justify-end">
-          <ProviderRuntimeDiagnosticsDetails
-            displayName={props.displayName}
-            provider={props.provider}
-          />
-        </div>
       </SetupFrame>
     );
   }
@@ -540,34 +491,41 @@ export function CursorInlineSetup(props: {
           signInError ? (
             <TriangleAlertIcon className="size-5 text-destructive" />
           ) : (
-            <CursorSetupIcon displayName={props.displayName} provider={props.provider} />
+            <ProviderSetupIcon displayName={props.displayName} driver={props.provider.driver} />
           )
         }
         role={signInError ? "alert" : undefined}
         title={signInError ? "Cursor sign-in didn’t finish" : "Sign in required"}
       />
       <AssistedSetupActions>
-        <Button onClick={() => void signIn()} size="sm" type="button" variant="ghost-primary">
+        <Button
+          aria-label={signInError ? "Try again to sign in to Cursor" : undefined}
+          onClick={() => void signIn()}
+          size="sm"
+          type="button"
+          variant="ghost-primary"
+        >
           {signInError ? <RefreshCwIcon aria-hidden /> : <ExternalLinkIcon aria-hidden />}
           {signInError ? "Try again" : "Sign in to Cursor"}
         </Button>
       </AssistedSetupActions>
-      <div className="flex justify-end">
-        <ProviderRuntimeDiagnosticsDetails
+      {signInError && !props.managedRuntimePresentedExternally ? (
+        <AssistedSetupDiagnostics
           displayName={props.displayName}
           managedActionBusy={pendingAction !== null}
           onUseManaged={canInstallManaged ? () => void useManaged() : undefined}
           provider={props.provider}
         />
-      </div>
+      ) : null}
     </SetupFrame>
   );
 }
 
 function StatusFrame(props: {
   readonly accountAction?: ReactNode;
+  /** Runtime diagnostics, shown only for a warning. */
+  readonly diagnostics?: ReactNode;
   readonly body: ReactNode;
-  readonly loading?: boolean;
   readonly title: string;
   readonly warning?: boolean;
 }) {
@@ -576,9 +534,7 @@ function StatusFrame(props: {
       <AssistedSetupStatus
         body={props.body}
         icon={
-          props.loading ? (
-            <LoaderIcon className="size-5 animate-spin text-primary" />
-          ) : props.warning ? (
+          props.warning ? (
             <TriangleAlertIcon className="size-5 text-warning" />
           ) : (
             <CheckCircle2Icon className="size-5 text-success" />
@@ -587,6 +543,7 @@ function StatusFrame(props: {
         title={props.title}
         trailing={props.accountAction}
       />
+      {props.diagnostics}
     </SetupFrame>
   );
 }

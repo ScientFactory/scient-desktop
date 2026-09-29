@@ -21,14 +21,6 @@ export function resolveSidebarStageBackdropVariant(
   return null;
 }
 
-export function resolveSidebarStageFocusRingOffsetClass(
-  variant: SidebarStageBackdropVariant,
-): string {
-  return variant === "nightly"
-    ? "focus-visible:ring-offset-(--stage-night-bottom)"
-    : "focus-visible:ring-offset-(--stage-art-bottom)";
-}
-
 export function resolveEnvironmentIdentificationPillLabel(
   stageLabel: string,
 ): EnvironmentIdentificationPillLabel | null {
@@ -102,10 +94,7 @@ function ScientStageArt({
 }) {
   return (
     <div
-      className={cn(
-        "scient-stage-art relative h-full w-full overflow-hidden",
-        variant === "nightly" ? "scient-stage-art-nightly" : "scient-stage-art-dev",
-      )}
+      className={cn("scient-stage-art relative h-full w-full overflow-hidden")}
       data-scient-stage={variant}
       style={SCIENT_STAGE_STYLES[variant]}
     >

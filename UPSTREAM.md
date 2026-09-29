@@ -46,28 +46,34 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current T3 alignment is recorded in
-[`docs/internals/2026-09-23-upstream-sync-d7819c1881.md`](docs/internals/2026-09-23-upstream-sync-d7819c1881.md)
-and in `upstream-state.json`. PR #350 merged this alignment into Scient `main`,
-extending it through `f5ef0ddb90a8c36584e181b1913e7b8a5df30ffc`: 72 official
-commits from `aff9318bf46beaf05cc7155b428d3f0b8711efd2`, including 42 added
-since the d781 checkpoint. The merge preserves the initial history merge
-`719f452a4633af276ed9f5e219ced8de43863d49` and later official merge commits
-`f741668a6d31ec6681d6324a0f6a7b97f205f06e` and
-`34f081f99f368f9eaca0af29266ec13530956f77`. The latest owned-main catch-up
-is `ea6af93176134c52d76eadc7a33cc5fabeb714d7`, incorporating fetched
-`origin/main` at `a86cec5fd747fe7937241649bc6a500e2d64516a` without replaying
-or replacing the official merge history.
+[`docs/internals/2026-09-29-upstream-sync-d2c9281b8.md`](docs/internals/2026-09-29-upstream-sync-d2c9281b8.md)
+and in `upstream-state.json`. It advances the integration through
+`d2c9281b8112dc3b2991642c4bdb985e4b08b9bb`: 14 official commits after
+`de251fc2971a884cb5b1305ba4daf309dc8cccb0`, merged onto owned base
+`63d9edf1b6eba1387826c8aa6ae7dfe8c292a770` as
+`eb56e78c44cb76fa37c19d0a99b099a93a69eee3`, whose second parent is the exact
+official target. Every one of the 14 donor commits is literal ancestry. The
+preceding alignment ([PR #384](docs/internals/2026-09-27-upstream-sync-a727d1d9.md))
+remains literal ancestry.
 
-The full local workspace test run had one load-sensitive Markdown performance
-threshold miss; its isolated rerun and the clean CI workspace gate both passed
-without changing the test or threshold. The final CI check and web-layout
-failures were repaired on the same branch and passed in the next CI run.
-
-Automated qualification and source review passed; release publication remains separate. The
-[preceding alignment](docs/internals/2026-09-22-upstream-sync-aff9318bf4.md),
-[earlier receipt](docs/internals/2026-09-18-upstream-sync-3fd5d643.md), and all
-earlier official ancestry remain literal history. Later observed upstream
-tips do not move `integrationBase` by themselves.
+This routine range activates no protected boundary. It carries Claude Sonnet
+5.5, the OpenCode v2 incompatibility marking, a large-transcript usage
+preservation fix, a shortcut-latency fix, the Linux URL-handler icon and
+MIME-cache refresh, Bitbucket credentials in Source Control settings, and the
+Claude/OpenCode interrupt fixes. `node-pty` stays on `^1.1.0` and no package
+manifest changed: the range does not bump the version, upstream's Windows
+readiness wait is a no-op on 1.1.0 because the process PID is assigned
+synchronously, and upstream's `node-pty@1.2.0-beta.15` patch registration was
+removed because pnpm rejects an entry for an uninstalled version — the patch
+file is retained for a future adoption. Desktop identity stays `scient` /
+`scient.desktop` / `Name=Scient`; the fork's usage-accounting secret lifecycle
+composes beside upstream's Bitbucket one behind a generalized redaction marker.
+Three upstream identity literals had auto-merged into non-conflicted test
+regions and were corrected. `docs/user/remote-access.md` keeps Scient's framing:
+upstream's replacement would have advertised T3 Connect and a hosted relay the
+product does not provide. The receipt records every conflict composition, the
+post-merge semantic findings, the full gate results, and the attributed
+env-blocked `server.test.ts` baseline.
 
 ## Receiving T3 updates
 
@@ -499,6 +505,30 @@ than infer deletion from an absent sidebar entry. See the
 [fork maintenance contract](docs/internals/scient-fork-divergence.md) for
 workspace fidelity, lineage links, provider selection, and recovery boundaries.
 
+Scient layers two sidebar divergences beside T3's thread list: user-defined
+sections with a Sections view, and a labelled New thread row below search that
+replaces the header's New thread icon. Section membership is an optional
+`sectionId` written by the Scient `thread.section.set` command (advertised by the
+`threadSections` capability); like `thread.active.reorder`, it emits
+`thread.meta-updated` with an unchanged `updatedAt`, so organizing never reads as
+activity. Migration 058 adds `projection_threads.section_id`. The catalog, the
+built-in General group's position and the opt-in empty-section cleanup live in the
+primary environment's server settings; catalog writes carry the catalog they were
+based on, and `updateSettings` applies them only while it still matches, so
+concurrent clients never overwrite each other. Scient code lives under
+`apps/web/src/scient/sections`, `apps/web/src/scient/sidebar` and
+`apps/server/src/scient/threadSections`; upstream files carry `SCIENT-FORK`-marked
+mounts. A few lines change in place: two in `Sidebar.tsx`, the search field's class
+list and the New thread icon's `hidden` attribute in `SidebarThreadHeader.tsx`, and
+the undo-action union in `showThreadUndoNotice.ts`. New thread always opens the
+"New thread in…" picker (`shouldOpenNewThreadTargetPicker` changes in place), which
+ends with Add project, so a project, including the first, can be added from New
+thread; Shift+click and ⇧⌘N still start directly in the current project. The
+Sections view reuses T3's rows, shelves and order keys and never changes pin state. If T3 ships its own
+grouping or collapsible shelves, reconcile against these seams instead of layering a
+second grouping. Decisions, invariants and the full seam list are in
+[sidebar sections](docs/internals/scient-sidebar-sections.md).
+
 Antigravity reasoning presentation is a narrow client-side divergence. The shared
 `packages/client-runtime/src/antigravityModelPresentation.ts` groups recognized
 Google Gemini effort variants for the existing model and reasoning controls.
@@ -575,6 +605,15 @@ subscription label on its own line above the email/visibility control. Preserve
 this hierarchy rather than joining both with an inline separator. Providers without
 a label retain the account row without an empty subscription row. The shared
 `ProviderInstanceCard.test.ts` covers the layout independently of provider kind.
+
+The same card carries two more narrow divergences, each marked `Scient:` in place.
+Its version label renders through the Scient-owned `ProviderVersionLabel`, which
+fades a clipped version and shows the full text on hover or keyboard focus instead
+of truncating it. A Scient-managed runtime renders as a `row` of the card's Runtime
+section rather than inside an extra padded wrapper. Pi's mark is Pi's own colour
+mark in both web `Icons.tsx` (`PiIcon`) and mobile `ProviderIcon.tsx`, replacing
+T3's monochrome glyph. When T3 changes these spots, keep its surrounding layout and
+reapply only the marked lines.
 
 Scient keeps ordinary browser interaction visually quiet: `PreviewView` shows
 the control badge only during agent control. Preserve the underlying human-input

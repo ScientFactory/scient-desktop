@@ -362,7 +362,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       );
     }
     const contents = yield* fs.readFileString(filePath);
-    return yield* Schema.decodeUnknownEffect(Schema.fromJsonString(schema))(contents);
+    return yield* Schema.decodeEffect(Schema.fromJsonString(schema))(contents);
   });
 
   const executableFile = Effect.fn("AntigravityInstallation.executableFile")(function* (
@@ -524,6 +524,9 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           profileDirectory,
           platform,
           baseEnv: environment,
+          // The profile is scoped, so it cleans up the unpack; a shallow
+          // root keeps it under Windows' path limit.
+          tempDirectory: profileDirectory,
         });
         const runtime = yield* makeAntigravityAcpRuntime({
           spawn: buildAntigravityAcpSpawnInput({

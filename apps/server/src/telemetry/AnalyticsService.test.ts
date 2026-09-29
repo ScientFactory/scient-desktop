@@ -98,7 +98,10 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
       const serverConfigLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
         prefix: "scient-analytics-base-",
       });
-      const analyticsLayer = AnalyticsService.layer.pipe(Layer.provideMerge(serverConfigLayer));
+      const analyticsLayer = AnalyticsService.layer.pipe(
+        Layer.provideMerge(serverConfigLayer),
+        Layer.provideMerge(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
+      );
 
       yield* Effect.gen(function* () {
         const serverConfig = yield* ServerConfig.ServerConfig;

@@ -23,6 +23,7 @@ export function MarkdownCodeBlock({
   className,
   fallback,
   onCopyFailure,
+  onRunShellCommand,
 }: {
   code: string;
   language: string;
@@ -33,6 +34,7 @@ export function MarkdownCodeBlock({
   className?: string;
   fallback?: ReactNode;
   onCopyFailure?: (cause: unknown) => void;
+  onRunShellCommand?: ((command: string) => void) | undefined;
 }) {
   const [wrapped, setWrapped] = useCodeBlockWordWrap();
   const themeName = resolveDiffThemeName(theme);
@@ -61,6 +63,8 @@ export function MarkdownCodeBlock({
           wrapped={wrapped}
           onWrapChange={setWrapped}
           readCode={() => code}
+          isStreaming={isStreaming}
+          {...(onRunShellCommand ? { onRunShellCommand } : {})}
           {...(onCopyFailure ? { onCopyFailure } : {})}
         />
       </div>

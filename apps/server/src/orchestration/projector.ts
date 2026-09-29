@@ -27,6 +27,8 @@ import * as Schema from "effect/Schema";
 import * as Predicate from "effect/Predicate";
 
 import { toProjectorDecodeError, type OrchestrationProjectorDecodeError } from "./Errors.ts";
+// SCIENT-FORK: inherited transcript turns survive revert.
+import { inheritedTurnIdsOf } from "./scient-fork/inheritedTurns.ts";
 import {
   MessageSentPayloadSchema,
   ProjectCreatedPayload,
@@ -43,6 +45,7 @@ import {
   ThreadSettledPayload,
   ThreadPinnedPayload,
   ThreadPinReorderedPayload,
+  ThreadAutoSettleSetPayload,
   ThreadPullRequestLinkedPayload,
   ThreadPullRequestSyncedPayload,
   ThreadPullRequestUnlinkedPayload,
@@ -117,12 +120,26 @@ function settledTurnStateForSessionStatus(
   }
 }
 
+// Runs for every thread event (including streaming deltas) against every
+// thread the server has ever seen, so copy the array rather than map it.
 function updateThread(
   threads: ReadonlyArray<OrchestrationThread>,
   threadId: ThreadId,
   patch: ThreadPatch,
-): OrchestrationThread[] {
-  return threads.map((thread) => (thread.id === threadId ? { ...thread, ...patch } : thread));
+): ReadonlyArray<OrchestrationThread> {
+  const index = threads.findIndex((thread) => thread.id === threadId);
+  return index === -1 ? threads : patchThreadAt(threads, index, patch);
+}
+
+/** For callers that already located the thread and must not scan again. */
+function patchThreadAt(
+  threads: ReadonlyArray<OrchestrationThread>,
+  index: number,
+  patch: ThreadPatch,
+): ReadonlyArray<OrchestrationThread> {
+  const next = threads.slice();
+  next[index] = { ...threads[index]!, ...patch };
+  return next;
 }
 
 /** Patch that swaps a thread's links and re-derives the legacy single-PR field from them. */
@@ -442,6 +459,7 @@ export function projectEvent(
             settledAt: null,
             unsettledAt: null,
             activeOrderKey: null,
+            autoSettleDisabledAt: null,
             snoozedUntil: null,
             snoozedAt: null,
             deletedAt: null,
@@ -582,6 +600,17 @@ export function projectEvent(
         })),
       );
 
+    case "thread.auto-settle-set":
+      return decodeForEvent(ThreadAutoSettleSetPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            autoSettleDisabledAt: payload.autoSettleDisabledAt,
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
     case "thread.pin-reordered":
       return decodeForEvent(ThreadPinReorderedPayload, event.payload, event.type, "payload").pipe(
         Effect.map((payload) => ({
@@ -628,6 +657,9 @@ export function projectEvent(
               ...(payload.activeOrderKey !== undefined
                 ? { activeOrderKey: payload.activeOrderKey }
                 : {}),
+              // SCIENT-FORK:START — thread sections
+              ...(payload.sectionId !== undefined ? { sectionId: payload.sectionId } : {}),
+              // SCIENT-FORK:END
               ...(payload.branchPullRequest !== undefined
                 ? { branchPullRequest: payload.branchPullRequest }
                 : {}),
@@ -761,7 +793,8 @@ export function projectEvent(
           event.type,
           "payload",
         );
-        const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+        const threadIndex = nextBase.threads.findIndex((entry) => entry.id === payload.threadId);
+        const thread = nextBase.threads[threadIndex];
         if (!thread) {
           return nextBase;
         }
@@ -809,7 +842,7 @@ export function projectEvent(
 
         return {
           ...nextBase,
-          threads: updateThread(nextBase.threads, payload.threadId, {
+          threads: patchThreadAt(nextBase.threads, threadIndex, {
             messages: cappedMessages,
             updatedAt: event.occurredAt,
           }),
@@ -928,6 +961,7 @@ export function projectEvent(
               forkLineage: {
                 originThreadId: payload.originThreadId,
                 baselineAssistantMessageId: payload.baselineAssistantMessageId,
+                inheritedTurnIds: inheritedTurnIdsOf(payload),
               },
               latestTurn: {
                 turnId: payload.baselineTurnId,
@@ -1040,6 +1074,9 @@ export function projectEvent(
           // baseline assistant message via the narrow forkLineage marker.
           // The baseline (count 0) must survive reverts to any count ≥ 0.
           const forkLineage = thread.forkLineage ?? null;
+          // SCIENT-FORK: every inherited transcript turn survives, not only the
+          // selected boundary turn.
+          for (const turnId of forkLineage?.inheritedTurnIds ?? []) retainedTurnIds.add(turnId);
           if (forkLineage !== null && forkLineage.baselineAssistantMessageId !== null) {
             const baselineMessage = thread.messages.find(
               (message) => message.id === forkLineage.baselineAssistantMessageId,
@@ -1094,7 +1131,8 @@ export function projectEvent(
         "payload",
       ).pipe(
         Effect.map((payload) => {
-          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          const threadIndex = nextBase.threads.findIndex((entry) => entry.id === payload.threadId);
+          const thread = nextBase.threads[threadIndex];
           if (!thread) {
             return nextBase;
           }
@@ -1108,7 +1146,7 @@ export function projectEvent(
 
           return {
             ...nextBase,
-            threads: updateThread(nextBase.threads, payload.threadId, {
+            threads: patchThreadAt(nextBase.threads, threadIndex, {
               activities,
               updatedAt: event.occurredAt,
             }),

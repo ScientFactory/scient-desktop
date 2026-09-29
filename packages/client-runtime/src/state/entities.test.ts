@@ -3,6 +3,8 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  TurnId,
+  type OrchestrationSession,
   type OrchestrationShellSnapshot,
   type OrchestrationThread,
 } from "@t3tools/contracts";
@@ -205,6 +207,62 @@ function makeHarness(
 }
 
 describe("environment entity projections", () => {
+  it("uses the newest session across independently delivered shell and detail updates", () => {
+    const running: OrchestrationSession = {
+      threadId: THREAD_ID,
+      status: "running",
+      providerName: "codex",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      runtimeMode: "full-access",
+      activeTurnId: TurnId.make("turn-1"),
+      lastError: null,
+      updatedAt: "2026-09-24T09:17:22.251Z",
+    };
+    const ready: OrchestrationSession = {
+      ...running,
+      status: "ready",
+      activeTurnId: null,
+      updatedAt: "2026-09-24T09:17:35.800Z",
+    };
+    const detail = {
+      ...THREAD_SHELL,
+      environmentId: ENVIRONMENT_ID,
+      deletedAt: null,
+      messages: [],
+      proposedPlans: [],
+      activities: [],
+      checkpoints: [],
+      session: ready,
+    };
+    const shell = { ...THREAD_SHELL, environmentId: ENVIRONMENT_ID, session: running };
+    // Completed detail must survive repeated, stale sidebar snapshots.
+    for (let index = 0; index < 20; index++) {
+      expect(mergeEnvironmentThread(detail, shell)?.session).toBe(ready);
+    }
+    // Either stream may win; a newer running turn must not be hidden by old completion.
+    expect(
+      mergeEnvironmentThread({ ...detail, session: running }, { ...shell, session: ready })
+        ?.session,
+    ).toBe(ready);
+    const next = {
+      ...running,
+      activeTurnId: TurnId.make("turn-2"),
+      updatedAt: "2026-09-24T09:19:12.562Z",
+    };
+    expect(mergeEnvironmentThread(detail, { ...shell, session: next })?.session).toBe(next);
+    expect(
+      mergeEnvironmentThread({ ...detail, session: next }, { ...shell, session: ready })?.session,
+    ).toBe(next);
+    // Equal timestamps and cleared sessions keep the existing shell authority.
+    expect(
+      mergeEnvironmentThread(detail, {
+        ...shell,
+        session: { ...running, updatedAt: ready.updatedAt },
+      })?.session?.status,
+    ).toBe("running");
+    expect(mergeEnvironmentThread(detail, { ...shell, session: null })?.session).toBeNull();
+  });
+
   it("composes detail collections with authoritative shell workspace metadata", () => {
     const messages: OrchestrationThread["messages"] = [];
     const detail = {

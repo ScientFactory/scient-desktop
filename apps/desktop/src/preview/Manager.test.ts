@@ -61,12 +61,13 @@ describe("isPreviewRefreshShortcut", () => {
       ...overrides,
     }) as Electron.Input;
 
-  it("recognizes the platform refresh chord without matching modified variants", () => {
+  it("recognizes normal and hard refresh without matching unrelated chords", () => {
     expect(PreviewManager.isPreviewRefreshShortcut(input())).toBe(true);
     expect(PreviewManager.isPreviewRefreshShortcut(input({ meta: false, control: true }))).toBe(
       true,
     );
-    expect(PreviewManager.isPreviewRefreshShortcut(input({ shift: true }))).toBe(false);
+    expect(PreviewManager.isPreviewRefreshShortcut(input({ shift: true }))).toBe(true);
+    expect(PreviewManager.isPreviewRefreshShortcut(input({ alt: true }))).toBe(false);
     expect(PreviewManager.isPreviewRefreshShortcut(input({ type: "keyUp" }))).toBe(false);
   });
 });

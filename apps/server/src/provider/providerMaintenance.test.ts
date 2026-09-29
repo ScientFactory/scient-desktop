@@ -11,7 +11,7 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { HttpClient } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   createProviderVersionAdvisory,
@@ -23,6 +23,7 @@ import {
   makeProviderMaintenanceCapabilities,
   normalizeCommandPath,
   npmGlobalPrefixFromCommandPath,
+  homebrewApiUrl,
   parseHomebrewLatestVersion,
   ProviderVersionCache,
   resolveLatestProviderVersion,
@@ -159,6 +160,49 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       ),
       Effect.map((version) => {
         expect(version).toBe("1.2.0");
+      }),
+    ),
+  );
+
+  it.effect("prefers Homebrew's published version over the stale local brew metadata", () =>
+    resolveLatestProviderVersion({
+      ...manualPackageTool,
+      latestVersion: "0.155.1",
+      homebrewApiUrl: "https://formulae.brew.sh/api/cask/codex.json",
+    }).pipe(
+      Effect.provideService(ProviderVersionCache, new Map()),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(JSON.stringify({ version: "0.157.1" }), { status: 200 }),
+            ),
+          ),
+        ),
+      ),
+      Effect.map((version) => {
+        expect(version).toBe("0.157.1");
+      }),
+    ),
+  );
+
+  it.effect("falls back to brew info when Homebrew's API is unreachable", () =>
+    resolveLatestProviderVersion({
+      ...manualPackageTool,
+      latestVersion: "0.155.1",
+      homebrewApiUrl: "https://formulae.brew.sh/api/cask/codex.json",
+    }).pipe(
+      Effect.provideService(ProviderVersionCache, new Map()),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response("", { status: 503 }))),
+        ),
+      ),
+      Effect.map((version) => {
+        expect(version).toBe("0.155.1");
       }),
     ),
   );
@@ -741,6 +785,32 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         expect(capabilities).toEqual(manualPackageTool);
       }),
   );
+
+  it("uses Homebrew's published metadata only when brew upgrade would", () => {
+    const cask = { kind: "cask", name: "codex", prefix: "/opt/homebrew" } as const;
+    const info = (tap: string) => JSON.stringify({ casks: [{ tap, version: "0.155.1" }] });
+    expect(homebrewApiUrl(info("homebrew/cask"), cask, {})).toBe(
+      "https://formulae.brew.sh/api/cask/codex.json",
+    );
+    expect(
+      homebrewApiUrl(info("homebrew/cask"), cask, { HOMEBREW_API_DOMAIN: "https://mirror/api/" }),
+    ).toBe("https://mirror/api/cask/codex.json");
+    expect(homebrewApiUrl(info("someone/tap"), cask, {})).toBeUndefined();
+    expect(
+      homebrewApiUrl(info("homebrew/cask"), cask, { HOMEBREW_NO_INSTALL_FROM_API: "1" }),
+    ).toBeUndefined();
+    expect(
+      homebrewApiUrl(info("homebrew/cask"), cask, { HOMEBREW_NO_AUTO_UPDATE: "1" }),
+    ).toBeUndefined();
+    const formula = { kind: "formula", name: "claude-code", prefix: "/opt/homebrew" } as const;
+    expect(
+      homebrewApiUrl(
+        JSON.stringify({ formulae: [{ tap: "homebrew/core", versions: { stable: "2.1.5" } }] }),
+        formula,
+        {},
+      ),
+    ).toBe("https://formulae.brew.sh/api/formula/claude-code.json");
+  });
 
   it("reads the stable formula version from brew info", () => {
     const info = JSON.stringify({ formulae: [{ versions: { stable: "2.1.5" } }] });

@@ -206,3 +206,65 @@ export function removeDevelopmentLaunchFiles(...filePaths) {
     if (filePath) NodeFS.rmSync(filePath, { force: true });
   }
 }
+
+// A launcher terminated by a signal keeps exitCode null and sets signalCode,
+// so exitCode alone would report it as still running forever.
+export function developmentLauncherIsActive(launcher) {
+  return (
+    typeof launcher.pid === "number" &&
+    launcher.exitCode === null &&
+    (launcher.signalCode === null || launcher.signalCode === undefined)
+  );
+}
+
+// Debounces restart requests and never overlaps restarts: requests made while
+// a restart is running collapse into one follow-up restart. close() cancels
+// pending requests and resolves once any running restart has finished, so a
+// shutdown never races a half-finished stop/start.
+export function createCoalescedRestartScheduler({
+  restart,
+  debounceMs,
+  setTimer = setTimeout,
+  clearTimer = clearTimeout,
+  onError = (error) => console.error(error instanceof Error ? error.message : String(error)),
+}) {
+  let closed = false;
+  let requested = false;
+  let timer = null;
+  let activeRestart = null;
+
+  const arm = () => {
+    if (closed || activeRestart || !requested) return;
+    if (timer) clearTimer(timer);
+    timer = setTimer(() => {
+      timer = null;
+      if (closed || activeRestart || !requested) return;
+      requested = false;
+      const running = Promise.resolve()
+        .then(restart)
+        .catch(onError)
+        .finally(() => {
+          activeRestart = null;
+          arm();
+        });
+      activeRestart = running;
+    }, debounceMs);
+  };
+
+  return {
+    request() {
+      if (closed) return;
+      requested = true;
+      arm();
+    },
+    async close() {
+      closed = true;
+      requested = false;
+      if (timer) {
+        clearTimer(timer);
+        timer = null;
+      }
+      await activeRestart;
+    },
+  };
+}

@@ -1,3 +1,4 @@
+import { writeForkLiveImages } from "../scient-fork/liveImages.ts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { finalizeQueueTurn } from "../../scient/threadQueue/Ledger.ts";
 import {
@@ -32,6 +33,7 @@ import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -79,6 +81,9 @@ import {
 } from "../../generatedImageAttachments.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { canReplaceThreadTitle } from "../threadTitles.ts";
+// SCIENT-FORK: running-turn forks flush buffered text through ingestion.
+import { nativeThreadKey } from "../scient-fork/context/nativeThreadKey.ts";
+import { ScientLiveTurnFlush, ScientLiveTurnFlushError } from "../scient-fork/liveTurnFlush.ts";
 import {
   canRenderProviderCitationMarkdown,
   renderProviderCitationMarkdown,
@@ -185,6 +190,12 @@ type RuntimeIngestionInput =
       source: "runtime";
       event: ProviderRuntimeEvent;
     }
+  // SCIENT-FORK: persist a running turn's buffered text before it is forked.
+  | {
+      source: "fork-flush";
+      threadId: ThreadId;
+      done: Deferred.Deferred<void, ScientLiveTurnFlushError>;
+    }
   | {
       source: "domain";
       event: TurnStartRequestedDomainEvent;
@@ -262,6 +273,12 @@ const BLANK_LINE_PATTERN = /^[ \t]*$/;
 // nested items count. The trailing space is required, so a partial `-` or
 // `1.` never matches before the model finishes the marker.
 const LIST_ITEM_START_PATTERN = /^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]/;
+// A section title: an ATX heading, or a line of only bold text, which models
+// often use as a heading.
+const SECTION_TITLE_PATTERN = /^ {0,3}(?:#{1,6}(?:[ \t]|$)|\*\*(?:[^*]|\*(?!\*))+\*\*:?$)/;
+// An unindented ATX heading ends the paragraph or list above it, even with no
+// blank line between them. A bold line would continue the paragraph instead.
+const TOP_LEVEL_HEADING_PATTERN = /^#{1,6}(?:[ \t]|$)/;
 
 /**
  * Splits buffered assistant text at the last blank line, closing code fence,
@@ -272,17 +289,26 @@ const LIST_ITEM_START_PATTERN = /^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]/;
  * never leaks; a list item start is the one lookahead that may sit on the
  * partial line, since tight lists have no blank lines between items and would
  * otherwise land all at once.
+ *
+ * A section title holds the boundary until a content line follows it, so a
+ * title never lands alone and waits above a block that is still streaming.
  */
 export function splitBufferedAssistantText(text: string): { ready: string; rest: string } {
   let openFence: { marker: string; indent: number } | null = null;
   let boundary = -1;
   let lineStart = 0;
+  let titleAwaitingContent = false;
   for (;;) {
     const newline = text.indexOf("\n", lineStart);
     const line = text
       .slice(lineStart, newline === -1 ? text.length : newline)
       .replace(/[ \t\r]+$/, "");
-    if (openFence === null && lineStart > 0 && LIST_ITEM_START_PATTERN.test(line)) {
+    if (
+      openFence === null &&
+      lineStart > 0 &&
+      !titleAwaitingContent &&
+      LIST_ITEM_START_PATTERN.test(line)
+    ) {
       boundary = lineStart;
     }
     if (newline === -1) {
@@ -294,6 +320,7 @@ export function splitBufferedAssistantText(text: string): { ready: string; rest:
       const marker = fenceMatch[2]!;
       if (openFence === null) {
         openFence = { marker, indent };
+        titleAwaitingContent = false;
       } else if (
         marker[0] === openFence.marker[0] &&
         marker.length >= openFence.marker.length &&
@@ -305,7 +332,14 @@ export function splitBufferedAssistantText(text: string): { ready: string; rest:
         boundary = newline + 1;
       }
     } else if (openFence === null && BLANK_LINE_PATTERN.test(line) && lineStart > 0) {
-      boundary = newline + 1;
+      if (!titleAwaitingContent) {
+        boundary = newline + 1;
+      }
+    } else if (openFence === null) {
+      if (lineStart > 0 && !titleAwaitingContent && TOP_LEVEL_HEADING_PATTERN.test(line)) {
+        boundary = lineStart;
+      }
+      titleAwaitingContent = SECTION_TITLE_PATTERN.test(line);
     }
     lineStart = newline + 1;
   }
@@ -1094,6 +1128,57 @@ const make = Effect.gen(function* () {
   const threadBackgroundLiveness = yield* ThreadBackgroundLivenessService;
   const threadPlanProgress = yield* ThreadPlanProgressService;
   const crypto = yield* Crypto.Crypto;
+  const clock = yield* Clock.Clock;
+
+  /**
+   * Rate limit for refused terminal turn events. A provider that repeats a
+   * late event must not turn diagnostics into a log flood. Write the first
+   * refusal in each window and count repeats for the next report.
+   */
+  const REJECTED_TERMINAL_EVENT_LOG_WINDOW_MS = Duration.toMillis(Duration.seconds(30));
+  const lastRejectedTerminalEventLog = new Map<string, number>();
+  const rejectedTerminalEventCounts = new Map<string, number>();
+  const MAX_TRACKED_REJECTION_KEYS = 512;
+
+  const logRejectedTerminalTurnEvent = (input: {
+    readonly threadId: string;
+    readonly reason: string;
+    readonly eventType: string;
+    readonly eventId: string;
+    readonly eventTurnId: string | null;
+    readonly activeTurnId: string | null;
+  }) =>
+    Effect.gen(function* () {
+      const key = `${input.threadId}\u0000${input.reason}`;
+      const now = yield* clock.currentTimeMillis;
+      const previous = lastRejectedTerminalEventLog.get(key);
+      if (previous !== undefined && now - previous < REJECTED_TERMINAL_EVENT_LOG_WINDOW_MS) {
+        yield* Effect.sync(() => {
+          rejectedTerminalEventCounts.set(key, (rejectedTerminalEventCounts.get(key) ?? 0) + 1);
+        });
+        return;
+      }
+      const suppressed = rejectedTerminalEventCounts.get(key) ?? 0;
+      if (lastRejectedTerminalEventLog.size >= MAX_TRACKED_REJECTION_KEYS) {
+        lastRejectedTerminalEventLog.clear();
+        rejectedTerminalEventCounts.clear();
+      }
+      yield* Effect.sync(() => {
+        lastRejectedTerminalEventLog.set(key, now);
+        if (suppressed > 0) {
+          rejectedTerminalEventCounts.delete(key);
+        }
+      });
+      yield* Effect.logWarning("provider terminal turn event was not applied", {
+        threadId: input.threadId,
+        reason: input.reason,
+        eventType: input.eventType,
+        eventId: input.eventId,
+        eventTurnId: input.eventTurnId,
+        activeTurnId: input.activeTurnId,
+        ...(suppressed > 0 ? { suppressedRepetitions: suppressed } : {}),
+      });
+    });
   const orchestrationEngine = yield* OrchestrationEngineService;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerService = yield* ProviderService;
@@ -2254,6 +2339,58 @@ const make = Effect.gen(function* () {
             return true;
         }
       })();
+
+      // Record rejected terminal events without weakening stale-turn protection.
+      if (
+        !shouldApplyThreadLifecycle &&
+        (event.type === "turn.completed" || event.type === "turn.aborted")
+      ) {
+        const reason = missingTurnForActiveTurn
+          ? "terminal-event-without-turn-id"
+          : conflictsWithActiveTurn
+            ? "terminal-event-for-another-turn"
+            : "terminal-event-without-an-active-turn";
+        yield* logRejectedTerminalTurnEvent({
+          threadId: thread.id,
+          reason,
+          eventType: event.type,
+          eventId: event.eventId,
+          eventTurnId: eventTurnId ?? null,
+          activeTurnId,
+        });
+      }
+      // Capture native ownership only while this exact turn is active in the
+      // instance that emitted it. Missing evidence disables native fork safely.
+      if (
+        event.type === "turn.started" &&
+        shouldApplyThreadLifecycle &&
+        eventTurnId !== undefined
+      ) {
+        const session = (yield* providerService.listSessions()).find(
+          (candidate) =>
+            candidate.threadId === thread.id &&
+            candidate.activeTurnId === eventTurnId &&
+            candidate.providerInstanceId === event.providerInstanceId,
+        );
+        const key =
+          session === undefined
+            ? null
+            : nativeThreadKey(
+                session.provider,
+                session.resumeCursor,
+                session.providerInstanceId,
+                session.nativeSessionId,
+              );
+        if (key !== null && event.providerInstanceId !== undefined) {
+          yield* queueSql`INSERT OR IGNORE INTO scient_native_turn_sources
+            (thread_id, turn_id, provider_instance_id, native_thread_key)
+            VALUES (${thread.id}, ${eventTurnId}, ${event.providerInstanceId}, ${key})`.pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Could not record native turn coverage", { cause }),
+            ),
+          );
+        }
+      }
       const acceptedTurnStartedSourcePlan =
         event.type === "turn.started" && shouldApplyThreadLifecycle
           ? yield* getSourceProposedPlanReferenceForAcceptedTurnStart(thread.id, eventTurnId)
@@ -3229,8 +3366,111 @@ const make = Effect.gen(function* () {
     });
   });
 
+  // SCIENT-FORK:START — write every buffered assistant/reasoning segment of
+  // the thread's open turns, in queue order with the provider events. Segments
+  // stay open, so the running turn keeps streaming into the same messages.
+  const flushThreadForFork = (threadId: ThreadId) =>
+    Effect.gen(function* () {
+      const prefix = `${threadId}:`;
+      const createdAt = DateTime.formatIso(yield* DateTime.now);
+      // Snapshot the keys: reading a cache entry refreshes its recency, which
+      // would otherwise revisit the same key in a live iteration.
+      const turnKeys = Array.from(yield* Cache.keys(turnMessageIdsByTurnKey)).filter((key) =>
+        key.startsWith(prefix),
+      );
+      for (const key of turnKeys) {
+        const turnId = TurnId.make(key.slice(prefix.length));
+        const messageIds = yield* Cache.getOption(turnMessageIdsByTurnKey, key);
+        if (Option.isNone(messageIds)) continue;
+        for (const messageId of Array.from(messageIds.value)) {
+          const bufferedText = Option.getOrElse(
+            yield* Cache.getOption(bufferedAssistantTextByMessageId, messageId),
+            () => "",
+          );
+          if (!hasRenderableAssistantText(bufferedText)) continue;
+          const isReasoning = messageStreamRoleOf(messageId) === "reasoning";
+          yield* orchestrationEngine.dispatch({
+            type: isReasoning ? "thread.message.reasoning.delta" : "thread.message.assistant.delta",
+            commandId: CommandId.make(
+              `server:scient-fork-flush:${messageId}:${yield* crypto.randomUUIDv4}`,
+            ),
+            threadId,
+            messageId,
+            delta: bufferedText,
+            turnId,
+            createdAt: isReasoning ? yield* reasoningStartedAt(messageId, createdAt) : createdAt,
+          });
+          yield* Cache.invalidate(bufferedAssistantTextByMessageId, messageId);
+        }
+      }
+      const planPrefix = `plan:${threadId}:`;
+      for (const planId of Array.from(yield* Cache.keys(bufferedProposedPlanById)).filter((id) =>
+        id.startsWith(planPrefix),
+      )) {
+        const buffered = Option.getOrUndefined(
+          yield* Cache.getOption(bufferedProposedPlanById, planId),
+        );
+        if (!buffered?.text) continue;
+        const turnPrefix = `${planPrefix}turn:`;
+        const turnId = planId.startsWith(turnPrefix)
+          ? TurnId.make(planId.slice(turnPrefix.length))
+          : null;
+        const existing = Option.getOrUndefined(
+          yield* projectionThreadProposedPlans.getByPlanId({
+            threadId,
+            planId: OrchestrationProposedPlanId.make(planId),
+          }),
+        );
+        yield* orchestrationEngine.dispatch({
+          type: "thread.proposed-plan.upsert",
+          commandId: CommandId.make(`server:scient-fork-plan:${yield* crypto.randomUUIDv4}`),
+          threadId,
+          proposedPlan: {
+            id: planId,
+            turnId,
+            planMarkdown: buffered.text,
+            implementedAt: existing?.implementedAt ?? null,
+            implementationThreadId: existing?.implementationThreadId ?? null,
+            createdAt: existing?.createdAt ?? (buffered.createdAt || createdAt),
+            updatedAt: createdAt,
+          },
+          createdAt,
+        });
+      }
+      yield* queueSql`DELETE FROM scient_fork_live_images WHERE thread_id = ${threadId}`;
+      for (const key of Array.from(yield* Cache.keys(pendingGeneratedImagesByTurnKey)).filter(
+        (id) => id.startsWith(prefix),
+      )) {
+        const pending = Option.getOrUndefined(
+          yield* Cache.getOption(pendingGeneratedImagesByTurnKey, key),
+        );
+        if (!pending || pending.attachments.length === 0) continue;
+        const turnId = TurnId.make(key.slice(prefix.length));
+        yield* writeForkLiveImages(queueSql, {
+          threadId,
+          turnId,
+          attachments: pending.attachments,
+          createdAt,
+        });
+      }
+    });
+  // SCIENT-FORK:END
+
   const processInput = (input: RuntimeIngestionInput) => {
     switch (input.source) {
+      case "fork-flush":
+        return flushThreadForFork(input.threadId).pipe(
+          Effect.matchCauseEffect({
+            onFailure: (cause) =>
+              Deferred.fail(
+                input.done,
+                new ScientLiveTurnFlushError({
+                  detail: `The running turn could not be persisted: ${Cause.pretty(cause)}`,
+                }),
+              ),
+            onSuccess: () => Deferred.succeed(input.done, undefined),
+          }),
+        );
       case "runtime":
         return processRuntimeEvent(input.event);
       case "domain":
@@ -3244,22 +3484,41 @@ const make = Effect.gen(function* () {
     (source: string, event: { readonly eventId: string; readonly type: string }) =>
     <E, R>(effect: Effect.Effect<void, E, R>) =>
       effect.pipe(
-        Effect.catchCause((cause) => {
-          if (Cause.hasInterruptsOnly(cause)) {
-            return Effect.failCause(cause);
-          }
-          return Effect.logWarning("provider runtime ingestion failed to process event", {
-            source,
-            eventId: event.eventId,
-            eventType: event.type,
-            cause: Cause.pretty(cause),
-          });
-        }),
+        Effect.catchCauseIf(
+          (cause) => !Cause.hasInterruptsOnly(cause),
+          (cause) =>
+            Effect.logWarning("provider runtime ingestion failed to process event", {
+              source,
+              eventId: event.eventId,
+              eventType: event.type,
+              cause: Cause.pretty(cause),
+            }),
+        ),
       );
 
   const worker = yield* makeDrainableWorker((input: RuntimeIngestionInput) =>
-    processInput(input).pipe(logIngestionFailure(input.source, input.event)),
+    processInput(input).pipe(
+      logIngestionFailure(
+        input.source,
+        input.source === "fork-flush"
+          ? { eventId: `fork-flush:${input.threadId}`, type: "fork-flush" }
+          : input.event,
+      ),
+    ),
   );
+  // SCIENT-FORK: fork requests flush through this worker's ordered queue.
+  const liveTurnFlush = yield* Effect.serviceOption(ScientLiveTurnFlush);
+  if (Option.isSome(liveTurnFlush)) {
+    yield* liveTurnFlush.value.register((threadId) =>
+      Deferred.make<void, ScientLiveTurnFlushError>().pipe(
+        Effect.flatMap((done) =>
+          worker
+            .enqueue({ source: "fork-flush", threadId, done })
+            .pipe(Effect.andThen(Deferred.await(done))),
+        ),
+      ),
+    );
+  }
 
   // Repository detection for a diff goes through VCS subprocesses, which can
   // stall behind slow or hung git. It runs on its own worker so a stuck diff

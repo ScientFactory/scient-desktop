@@ -37,6 +37,9 @@ import { useRemoteOpenState, type RemoteOpenMode } from "../../remoteOpen";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useT3ProjectFileScripts } from "~/hooks/useT3ProjectFileScripts";
 import { useThreadActionMenu } from "~/hooks/useThreadActionMenu";
+// SCIENT-FORK:START
+import { useNewSectionForThreads } from "~/scient/sections/useNewSectionForThreads";
+// SCIENT-FORK:END
 import { readLocalApi } from "~/localApi";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -253,8 +256,14 @@ export const ChatHeader = memo(function ChatHeader({
     },
     [activeThreadEnvironmentId, activeThreadId, activeThreadTitle, updateThreadMetadata],
   );
+  // SCIENT-FORK:START
+  const newSection = useNewSectionForThreads();
+  // SCIENT-FORK:END
   const { openMenu, closeMenu } = useThreadActionMenu({
     threadRef: isServerThread ? activeThreadRef : null,
+    // SCIENT-FORK:START
+    onRequestNewSection: newSection.request,
+    // SCIENT-FORK:END
     projectCwd: activeProjectCwd,
     onStartRename: startRename,
   });
@@ -494,8 +503,8 @@ export const ChatHeader = memo(function ChatHeader({
           "flex shrink-0 items-center justify-end gap-2 @3xl/header-actions:gap-3",
           // Reserve two panel toggles plus their 4px gaps and 1px edge inset.
           // The page header adds 8px more right padding at sm.
-          rightPanelOpen ? "pr-0" : "pr-[calc(--spacing(18)+1px)] sm:pr-[calc(--spacing(14)+1px)]",
-          "[[data-panel-animations=true]_&]:motion-safe:transition-[padding-right] [[data-panel-animations=true]_&]:motion-safe:[transition-duration:var(--panel-animation-duration)] [[data-panel-animations=true]_&]:motion-safe:ease-out",
+          rightPanelOpen ? "pr-0" : "pr-18.25 sm:pr-14.25",
+          "[[data-panel-animations=true]_&]:motion-safe:transition-[padding-right] [[data-panel-animations=true]_&]:motion-safe:duration-(--panel-animation-duration) [[data-panel-animations=true]_&]:motion-safe:ease-out",
         )}
       >
         <Menu open={actionsCollapsed && actionsOpen} onOpenChange={setActionsOpen}>
@@ -523,6 +532,9 @@ export const ChatHeader = memo(function ChatHeader({
           </MenuPopup>
         </Menu>
       </div>
+      {/* SCIENT-FORK:START */}
+      {newSection.dialog}
+      {/* SCIENT-FORK:END */}
     </div>
   );
 });

@@ -218,10 +218,13 @@ describe("Markdown source persistence integration", () => {
     mocks.editors.length = 0;
     mocks.lateChanges.length = 0;
     mocks.attached.mockReset();
+    // SCIENT-FORK: `@types/three` pulls `@webgpu/types`, which adds a WebGPU
+    // `getContext` overload. Cast to the mocked method's return type so the
+    // 2D-context double satisfies every overload.
     vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
       font: "12px monospace",
       measureText: (text: string) => ({ width: text.length * 8 }),
-    } as CanvasRenderingContext2D);
+    } as unknown as ReturnType<HTMLCanvasElement["getContext"]>);
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
       x: 0,
       y: 0,

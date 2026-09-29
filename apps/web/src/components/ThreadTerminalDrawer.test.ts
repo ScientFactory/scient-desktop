@@ -47,7 +47,8 @@ describe("terminalThemeFromApp", () => {
     vi.stubGlobal("document", {
       documentElement: root,
       body,
-      querySelector: () => drawer,
+      querySelector: (selector: string) =>
+        selector === "[data-thread-terminal-drawer]" ? drawer : null,
       createElement: () => ({
         width: 0,
         height: 0,

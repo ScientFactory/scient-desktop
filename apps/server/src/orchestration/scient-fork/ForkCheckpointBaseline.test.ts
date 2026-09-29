@@ -9,6 +9,9 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
+import * as ServerConfig from "../../config.ts";
+import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
 import { VcsProcess } from "../../vcs/VcsProcess.ts";
 import * as VcsProcessLive from "../../vcs/VcsProcess.ts";
 import {
@@ -16,8 +19,17 @@ import {
   ScientForkCheckpointBaselineLive,
 } from "./ForkCheckpointBaseline.ts";
 
+const vcsProcessLayer = VcsProcessLive.layer.pipe(Layer.provide(NodeServices.layer));
 const layer = ScientForkCheckpointBaselineLive.pipe(
-  Layer.provideMerge(VcsProcessLive.layer),
+  Layer.provideMerge(
+    CheckpointStore.layer.pipe(
+      Layer.provideMerge(VcsDriverRegistry.layer.pipe(Layer.provide(vcsProcessLayer))),
+    ),
+  ),
+  Layer.provideMerge(vcsProcessLayer),
+  Layer.provideMerge(
+    ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "scient-fork-baseline-test-" }),
+  ),
   Layer.provideMerge(NodeServices.layer),
 );
 
@@ -103,6 +115,44 @@ it.layer(layer)("ScientForkCheckpointBaseline", (it) => {
     ),
   );
 
+  it.effect("snapshots the working tree, uncommitted changes included, into the fork ref", () =>
+    withRepository((cwd) =>
+      Effect.gen(function* () {
+        const process = yield* VcsProcess;
+        const baseline = yield* ScientForkCheckpointBaseline;
+        const target = CheckpointRef.make("refs/t3/checkpoints/live-fork/turn/0");
+        // The running agent has edited a tracked file and created a new one.
+        NodeFS.writeFileSync(NodePath.join(cwd, "evidence.txt"), "edited mid-turn\n");
+        NodeFS.writeFileSync(NodePath.join(cwd, "new.txt"), "created mid-turn\n");
+
+        assert.isTrue(yield* baseline.capture({ cwd, toCheckpointRef: target }));
+        const edited = yield* process.run({
+          operation: "ForkCheckpointBaseline.test.showEdited",
+          command: "git",
+          args: ["show", `${target}:evidence.txt`],
+          cwd,
+        });
+        const created = yield* process.run({
+          operation: "ForkCheckpointBaseline.test.showCreated",
+          command: "git",
+          args: ["show", `${target}:new.txt`],
+          cwd,
+        });
+        assert.strictEqual(edited.stdout, "edited mid-turn\n");
+        assert.strictEqual(created.stdout, "created mid-turn\n");
+        // The user's own index is untouched.
+        const status = yield* process.run({
+          operation: "ForkCheckpointBaseline.test.status",
+          command: "git",
+          args: ["status", "--porcelain"],
+          cwd,
+        });
+        assert.include(status.stdout, " M evidence.txt");
+        assert.include(status.stdout, "?? new.txt");
+      }),
+    ),
+  );
+
   it.effect("returns false without writing a target when the source is missing", () =>
     withRepository((cwd) =>
       Effect.gen(function* () {
@@ -113,6 +163,28 @@ it.layer(layer)("ScientForkCheckpointBaseline", (it) => {
           toCheckpointRef: CheckpointRef.make("refs/t3/checkpoints/fork/turn/0"),
         });
         assert.isFalse(copied);
+      }),
+    ),
+  );
+  it.effect("keeps the same frozen commit when the source advances before a retry", () =>
+    withRepository((cwd) =>
+      Effect.gen(function* () {
+        const baseline = yield* ScientForkCheckpointBaseline;
+        const process = yield* VcsProcess;
+        const from = CheckpointRef.make("HEAD");
+        const to = CheckpointRef.make("refs/t3/checkpoints/frozen/turn/0");
+        assert.isTrue(yield* baseline.copy({ cwd, fromCheckpointRef: from, toCheckpointRef: to }));
+        const frozen = yield* baseline.resolveCheckpoint(cwd, to);
+        NodeFS.writeFileSync(NodePath.join(cwd, "evidence.txt"), "later revision\n");
+        yield* process.run({
+          operation: "test.advance",
+          command: "git",
+          args: ["commit", "-am", "advance"],
+          cwd,
+        });
+        assert.notStrictEqual(yield* baseline.resolveCheckpoint(cwd, from), frozen);
+        assert.isTrue(yield* baseline.copy({ cwd, fromCheckpointRef: from, toCheckpointRef: to }));
+        assert.strictEqual(yield* baseline.resolveCheckpoint(cwd, to), frozen);
       }),
     ),
   );

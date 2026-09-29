@@ -66,14 +66,29 @@ When provider update checks are enabled, Scient checks its qualified stable-rele
 app starts, periodically while it remains open, and when you click **Install**, **Update**, or **Repair**.
 A newly qualified release can appear as **Update** without restarting Scient. **Refresh providers** in
 Settings also checks the catalog immediately without changing its normal automatic schedule. If a
-Scient-managed runtime has an update, Scient shows a notice that opens that provider in the correct
-environment in Settings; installing remains your choice. Clicking **Install** or
+Scient-managed runtime has an update, Scient shows a notice with **Update** and **Settings**.
+**Update** installs it in place and reports when the verified version is active or why it failed,
+with **Retry**. **Settings** opens the provider in the correct environment. Clicking **Install** or
 **Update** starts the operation directly, without a second confirmation. In Settings, it runs without
 opening the management card: the button shows **Installing**, **Updating**, or **Verifying**, with a
-small download percentage when available. Click that button to open details. A **Failed** button opens
-the existing error and recovery controls; errors before an operation starts appear as notifications.
-The local computer independently verifies and tests the release before activation.
-Scient never installs a provider update without your action. Repair also uses the latest qualified release and can restore it
+small download percentage when available. Click that button to open details. A **Failed** button
+opens the existing error and recovery controls; errors before an operation starts appear as
+notifications. The local computer independently verifies and tests the release before activation.
+
+Scient downloads, verifies, and tests a new runtime while you keep working. Switching to it restarts
+that provider, so while one of its turns or background tasks (subagents, workflows, monitors) is
+running, the button shows **Waiting**; your conversations continue on the next message. Cancel a
+waiting change from its details. While a change waits, that provider's sign-in actions are
+unavailable.
+
+Scient never installs a provider update without your action. If the private Codex copy fails its
+startup check, Scient keeps working with Codex from your PATH and marks the card **Using system
+Codex** with the reason. Scient checks the private copy again when you refresh providers and every 10
+minutes, and switches back once it passes and no Codex work is running; **Repair** or **Update** also
+restores it. While the PATH copy stands in, Scient offers updates only for the private copy. When
+the Codex in use is a version this Scient release does not support, the card offers **Install** of
+the verified private copy beside it.
+Repair also uses the latest qualified release and can restore it
 when you already have that version. Offline, Scient uses the latest qualified release it already
 knows about; it does not claim to have checked for newer releases.
 

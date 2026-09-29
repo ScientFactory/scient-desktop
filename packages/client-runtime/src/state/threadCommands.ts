@@ -30,6 +30,10 @@ import {
   type PinThreadInput,
   type ReorderPinnedThreadInput,
   type ReorderActiveThreadInput,
+  // SCIENT-FORK:START
+  type SetThreadSectionInput,
+  // SCIENT-FORK:END
+  type SetThreadAutoSettleInput,
   type SettleThreadInput,
   type SnoozeThreadInput,
   type StartThreadTurnInput,
@@ -58,6 +62,10 @@ import {
   pinThread,
   reorderPinnedThread,
   reorderActiveThread,
+  // SCIENT-FORK:START
+  setThreadSection,
+  // SCIENT-FORK:END
+  setThreadAutoSettle,
   settleThread,
   snoozeThread,
   startThreadTurn,
@@ -86,6 +94,10 @@ export type {
   PinThreadInput,
   ReorderPinnedThreadInput,
   ReorderActiveThreadInput,
+  // SCIENT-FORK:START
+  SetThreadSectionInput,
+  // SCIENT-FORK:END
+  SetThreadAutoSettleInput,
   SettleThreadInput,
   SnoozeThreadInput,
   StartThreadTurnInput,
@@ -178,12 +190,26 @@ export function createThreadEnvironmentAtoms<R, E>(
       scheduler,
       concurrency,
     }),
+    setAutoSettle: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:set-auto-settle",
+      execute: (input: SetThreadAutoSettleInput) => setThreadAutoSettle(input),
+      scheduler,
+      concurrency,
+    }),
     reorderActive: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:reorder-active",
       execute: (input: ReorderActiveThreadInput) => reorderActiveThread(input),
       scheduler,
       concurrency,
     }),
+    // SCIENT-FORK:START
+    setSection: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:set-section",
+      execute: (input: SetThreadSectionInput) => setThreadSection(input),
+      scheduler,
+      concurrency,
+    }),
+    // SCIENT-FORK:END
     updateMetadata: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:update-metadata",
       execute: (input: UpdateThreadMetadataInput) => updateThreadMetadata(input),
@@ -354,5 +380,11 @@ export function createThreadEnvironmentAtoms<R, E>(
       ...thread,
       activeOrderKey: input.orderKey,
     })),
+    // SCIENT-FORK:START
+    setSection: optimistic.wrap(commands.setSection, (thread, input) => ({
+      ...thread,
+      sectionId: input.sectionId,
+    })),
+    // SCIENT-FORK:END
   };
 }

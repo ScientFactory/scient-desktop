@@ -4,6 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import {
+  type InternalOrchestrationCommand,
   ModelSelection,
   ProviderRuntimeEvent,
   ProviderSession,
@@ -26,6 +27,8 @@ import {
 } from "@t3tools/contracts";
 import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import * as Effect from "effect/Effect";
+
+import { TestClock } from "effect/testing";
 import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -52,9 +55,12 @@ import {
   ProviderService,
   type ProviderServiceShape,
 } from "../../provider/Services/ProviderService.ts";
+import type { ProviderTurnEndConfirmation } from "../../provider/Services/ProviderAdapter.ts";
+
 import { ProviderAuthService } from "../../provider/Services/ProviderAuthService.ts";
 import { makeProviderRegistryLayer } from "../../provider/testUtils/providerRegistryMock.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
+import { TerminalManager } from "../../terminal/Manager.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
@@ -75,9 +81,11 @@ import { ServerActivation } from "../../serverActivation.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import * as GitWorkflowService from "../../git/GitWorkflowService.ts";
 import {
-  testLayer as ScientForkContextBootstrapTest,
-  type ScientForkContextBootstrapShape,
-} from "../scient-fork/ForkContextBootstrap.ts";
+  testLayer as ScientForkContextDeliveryTest,
+  type ForkTurnContext,
+  type ScientForkContextDeliveryShape,
+} from "../scient-fork/ForkContextDelivery.ts";
+import { markTurnDispatchAttempted } from "../../provider/turnDispatchPhase.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asApprovalRequestId = (value: string): ApprovalRequestId => ApprovalRequestId.make(value);
@@ -171,6 +179,8 @@ describe("ProviderCommandReactor", () => {
   });
 
   async function createHarness(input?: {
+    readonly clock?: Clock.Clock;
+    readonly confirmTurnEndEffect?: () => Effect.Effect<ProviderTurnEndConfirmation>;
     readonly baseDir?: string;
     readonly initialTitle?: string;
     readonly deferReactorStart?: boolean;
@@ -187,11 +197,14 @@ describe("ProviderCommandReactor", () => {
     readonly afterTurnStartDispatch?: () => Effect.Effect<void>;
     readonly compactThreadEffect?: () => Effect.Effect<void, ProviderAdapterRequestError>;
     readonly interruptTurnEffect?: () => Effect.Effect<void, ProviderAdapterRequestError>;
+    /** Provider-side answer for turn-end verification; omitted means "unknown". */
+    readonly confirmTurnEnd?: ProviderTurnEndConfirmation;
     readonly stopSessionEffect?: () => Effect.Effect<void, ProviderAdapterRequestError>;
     readonly startSessionEffect?: (
       session: ProviderSession,
     ) => Effect.Effect<ProviderSession, ProviderServiceError>;
-    readonly forkContextBootstrap?: Partial<ScientForkContextBootstrapShape>;
+    readonly forkContextDelivery?: Partial<ScientForkContextDeliveryShape>;
+    readonly nativeFork?: boolean;
     readonly sendTurnEffect?: ProviderServiceShape["sendTurn"];
     readonly tryHandlePromptCommandEffect?: ProviderAuthService["Service"]["tryHandlePromptCommand"];
   }) {
@@ -283,6 +296,9 @@ describe("ProviderCommandReactor", () => {
     );
     const compactThread = vi.fn((_: ThreadId) => input?.compactThreadEffect?.() ?? Effect.void);
     const interruptTurn = vi.fn((_: unknown) => input?.interruptTurnEffect?.() ?? Effect.void);
+    const confirmTurnEnd = vi.fn(
+      () => input?.confirmTurnEndEffect?.() ?? Effect.succeed(input?.confirmTurnEnd ?? "unknown"),
+    );
     const respondToRequest = vi.fn<ProviderServiceShape["respondToRequest"]>(() => Effect.void);
     const respondToUserInput = vi.fn<ProviderServiceShape["respondToUserInput"]>(() => Effect.void);
     const stopSession = vi.fn((stopInput: unknown) =>
@@ -316,6 +332,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
     const pruneWorktrees = vi.fn((_: { readonly cwd: string }) => Effect.void);
+    const closeIdleTerminals = vi.fn((_: { readonly threadId: string }) => Effect.void);
     const createWorktree = vi.fn(
       (input: { readonly refName: string; readonly path: string | null }) =>
         Effect.succeed({ worktree: { path: input.path ?? "", refName: input.refName } }),
@@ -364,18 +381,29 @@ describe("ProviderCommandReactor", () => {
     ];
 
     const unsupported = () => Effect.die(new Error("Unsupported provider call in test")) as never;
+    const discardSessionContinuity = vi.fn<
+      NonNullable<ProviderServiceShape["discardSessionContinuity"]>
+    >(() => Effect.void);
     const service: ProviderServiceShape = {
       startSession: startSession as ProviderServiceShape["startSession"],
       sendTurn: sendTurn as ProviderServiceShape["sendTurn"],
       compactThread,
       interruptTurn: interruptTurn as ProviderServiceShape["interruptTurn"],
+      captureTurnStop: ({ threadId }) =>
+        Effect.succeed({
+          interrupt: Effect.suspend(() => interruptTurn({ threadId })),
+          confirm: Effect.suspend(() => confirmTurnEnd()),
+          stop: () => Effect.suspend(() => stopSession({ threadId })).pipe(Effect.as(true)),
+        }),
       respondToRequest: respondToRequest as ProviderServiceShape["respondToRequest"],
       respondToUserInput: respondToUserInput as ProviderServiceShape["respondToUserInput"],
       stopSession: stopSession as ProviderServiceShape["stopSession"],
+      discardSessionContinuity,
       listSessions: () => Effect.succeed(runtimeSessions),
       getCapabilities: (_provider) =>
         Effect.succeed({
           sessionModelSwitch: input?.sessionModelSwitch ?? "in-session",
+          ...(input?.nativeFork ? { nativeFork: true as const } : {}),
         }),
       assertConversationRollbackSupported: () => unsupported(),
       getInstanceInfo: (instanceId) => {
@@ -470,7 +498,7 @@ describe("ProviderCommandReactor", () => {
       }),
     ).pipe(Layer.provide(orchestrationLayer));
     const layer = ProviderCommandReactorLive.pipe(
-      Layer.provide(ScientForkContextBootstrapTest(input?.forkContextBootstrap)),
+      Layer.provide(ScientForkContextDeliveryTest(input?.forkContextDelivery)),
       Layer.provideMerge(reactorOrchestrationLayer),
       Layer.provideMerge(projectionSnapshotLayer),
       Layer.provideMerge(Layer.succeed(ProviderService, service)),
@@ -500,10 +528,13 @@ describe("ProviderCommandReactor", () => {
           generateThreadTitle,
         }),
       ),
+      Layer.provideMerge(Layer.mock(TerminalManager)({ closeIdle: closeIdleTerminals })),
       Layer.provideMerge(ServerSettingsService.layerTest()),
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
+      (layer) =>
+        input?.clock ? Layer.provide(layer, Layer.succeed(Clock.Clock, input.clock)) : layer,
     );
     runtime = ManagedRuntime.make(layer);
 
@@ -640,6 +671,8 @@ describe("ProviderCommandReactor", () => {
           .pipe(
             Scope.provide(reactorScope),
             Effect.provideService(ServerActivation, input?.serverActivation),
+            (effect) =>
+              input?.clock ? Effect.provideService(effect, Clock.Clock, input.clock) : effect,
           ),
       );
     if (!input?.deferReactorStart) await startReactor();
@@ -648,6 +681,7 @@ describe("ProviderCommandReactor", () => {
     return {
       engine,
       snapshotQuery,
+      confirmTurnEnd,
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
       readPendingTurnStarts: () =>
         runtime!.runPromise(
@@ -663,6 +697,7 @@ describe("ProviderCommandReactor", () => {
       tryHandlePromptCommand,
       startSession,
       sendTurn,
+      discardSessionContinuity,
       compactThread,
       interruptTurn,
       respondToRequest,
@@ -671,6 +706,7 @@ describe("ProviderCommandReactor", () => {
       renameBranch,
       pruneWorktrees,
       createWorktree,
+      closeIdleTerminals,
       refreshStatus,
       generateBranchName,
       generateThreadTitle,
@@ -939,109 +975,33 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.status).toBe("starting");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
+    expect(harness.startSession.mock.calls[0]?.[1]).not.toHaveProperty("title");
   });
 
-  it("sends the prepared fork context and records it only after provider acceptance", async () => {
-    const callOrder: string[] = [];
-    const prepareTurn = vi.fn<ScientForkContextBootstrapShape["prepareTurn"]>((input) =>
-      Effect.sync(() => {
-        callOrder.push("prepare");
-        return {
-          input: `retained-context\n${input.messageText}`,
-          attachments: input.attachments,
-          bootstrapPending: true,
-          omittedMessageCount: 0,
-          omittedAttachmentCount: 0,
-        };
-      }),
-    );
-    const beginAttempt = vi.fn<ScientForkContextBootstrapShape["beginAttempt"]>(() =>
-      Effect.sync(() => {
-        callOrder.push("reserved");
-      }),
-    );
-    const markAccepted = vi.fn<ScientForkContextBootstrapShape["markAccepted"]>(() =>
-      Effect.sync(() => {
-        callOrder.push("accepted");
-      }),
-    );
-    const harness = await createHarness({
-      forkLineage: true,
-      forkContextBootstrap: { prepareTurn, beginAttempt, markAccepted },
-      sendTurnEffect: () =>
-        Effect.sync(() => {
-          callOrder.push("send");
-          return {
-            threadId: ThreadId.make("thread-1"),
-            turnId: asTurnId("turn-1"),
-          };
-        }),
-    });
-    const now = "2026-01-01T00:00:00.000Z";
+  const deliverContext = (
+    overrides?: Partial<Extract<ForkTurnContext, { kind: "deliver" }>>,
+  ): ForkTurnContext => ({
+    kind: "deliver",
+    handoffId: "handoff:test",
+    contextPreamble: "SCIENT_CONTEXT_HANDOFF_JSON\n{}\nEND_SCIENT_CONTEXT_HANDOFF",
+    attachments: [],
+    requireFreshSession: false,
+    includedItemCount: 3,
+    omittedItemCount: 0,
+    budgetTokens: 1000,
+    requestTokenBudget: 96000,
+    ...overrides,
+  });
 
-    await harness.runEffect(
+  const startForkTurn = (harness: Awaited<ReturnType<typeof createHarness>>, messageId: string) =>
+    harness.runEffect(
       harness.engine.dispatch({
         type: "thread.turn.start",
-        commandId: CommandId.make("cmd-fork-bootstrap-turn"),
+        commandId: CommandId.make(`cmd-${messageId}`),
         selectedScientSkillNames: ["pdf-authoring"],
         threadId: ThreadId.make("thread-1"),
         message: {
-          messageId: asMessageId("fork-user-message"),
-          role: "user",
-          text: "continue from here",
-          attachments: [],
-        },
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        createdAt: now,
-      }),
-    );
-
-    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
-    await waitFor(() => markAccepted.mock.calls.length === 1);
-    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
-      input: "retained-context\ncontinue from here",
-      selectedScientSkillNames: ["pdf-authoring"],
-    });
-    expect(callOrder).toEqual(["prepare", "reserved", "send", "accepted"]);
-  });
-
-  it("marks fork context ambiguous when provider acceptance cannot be proven", async () => {
-    const markAccepted = vi.fn<ScientForkContextBootstrapShape["markAccepted"]>(() => Effect.void);
-    const markAmbiguous = vi.fn<ScientForkContextBootstrapShape["markAmbiguous"]>(
-      () => Effect.void,
-    );
-    const harness = await createHarness({
-      forkLineage: true,
-      forkContextBootstrap: {
-        prepareTurn: (input) =>
-          Effect.succeed({
-            input: `retained-context\n${input.messageText}`,
-            attachments: input.attachments,
-            bootstrapPending: true,
-            omittedMessageCount: 0,
-            omittedAttachmentCount: 0,
-          }),
-        markAccepted,
-        markAmbiguous,
-      },
-      sendTurnEffect: () =>
-        Effect.fail(
-          new ProviderAdapterRequestError({
-            provider: "codex",
-            method: "thread.send",
-            detail: "deterministic send rejection",
-          }),
-        ),
-    });
-
-    await harness.runEffect(
-      harness.engine.dispatch({
-        type: "thread.turn.start",
-        commandId: CommandId.make("cmd-fork-bootstrap-rejected-turn"),
-        threadId: ThreadId.make("thread-1"),
-        message: {
-          messageId: asMessageId("fork-rejected-user-message"),
+          messageId: asMessageId(messageId),
           role: "user",
           text: "continue from here",
           attachments: [],
@@ -1051,16 +1011,414 @@ describe("ProviderCommandReactor", () => {
         createdAt: "2026-01-01T00:00:00.000Z",
       }),
     );
-    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
-    await waitFor(() => markAmbiguous.mock.calls.length === 1);
 
-    expect(harness.sendTurn).toHaveBeenCalledTimes(1);
-    expect(markAccepted).not.toHaveBeenCalled();
-    expect(markAmbiguous).toHaveBeenCalledWith({
+  it("sends fork context beside the user's message and settles it after acceptance", async () => {
+    const callOrder: string[] = [];
+    const settleDelivery = vi.fn<ScientForkContextDeliveryShape["settleDelivery"]>((input) =>
+      Effect.sync(() => {
+        callOrder.push(`settle:${input.outcome.type}`);
+      }),
+    );
+    const harness = await createHarness({
+      forkLineage: true,
+      forkContextDelivery: {
+        prepareTurn: () =>
+          Effect.sync(() => {
+            callOrder.push("prepare");
+            return deliverContext();
+          }),
+        beginDelivery: () =>
+          Effect.sync(() => {
+            callOrder.push("begin");
+          }),
+        settleDelivery,
+      },
+      sendTurnEffect: () =>
+        Effect.sync(() => {
+          callOrder.push("send");
+          return { threadId: ThreadId.make("thread-1"), turnId: asTurnId("turn-1") };
+        }),
+    });
+
+    await startForkTurn(harness, "fork-user-message");
+    await waitFor(() => settleDelivery.mock.calls.length === 1);
+
+    // The user's message keeps its own input limit; context travels separately.
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+      input: "continue from here",
+      contextPreamble: "SCIENT_CONTEXT_HANDOFF_JSON\n{}\nEND_SCIENT_CONTEXT_HANDOFF",
+      selectedScientSkillNames: ["pdf-authoring"],
+    });
+    expect(callOrder).toEqual(["prepare", "begin", "send", "settle:accepted"]);
+  });
+
+  it("keeps a fork attached to its live native session before a resume cursor exists", async () => {
+    const prepareTurn = vi.fn<ScientForkContextDeliveryShape["prepareTurn"]>(() =>
+      Effect.succeed(deliverContext()),
+    );
+    const beginDelivery = vi.fn<ScientForkContextDeliveryShape["beginDelivery"]>(() => Effect.void);
+    const settleDelivery = vi.fn<ScientForkContextDeliveryShape["settleDelivery"]>(
+      () => Effect.void,
+    );
+    const harness = await createHarness({
+      forkLineage: true,
+      startSessionEffect: ({ resumeCursor: _cursor, ...session }) =>
+        Effect.succeed({ ...session, nativeSessionId: "native-before-file" }),
+      forkContextDelivery: { prepareTurn, beginDelivery, settleDelivery },
+    });
+    await startForkTurn(harness, "first-delayed-cursor");
+    await waitFor(() => settleDelivery.mock.calls.length === 1);
+    const key = "codex@codex:native-before-file";
+    expect(prepareTurn.mock.calls[0]?.[0].nativeThreadKey).toBe(key);
+    expect(beginDelivery.mock.calls[0]?.[0].nativeThreadKey).toBe(key);
+    expect(settleDelivery.mock.calls[0]?.[0].outcome).toEqual({
+      type: "accepted",
+      nativeThreadKey: key,
+    });
+    prepareTurn.mockImplementation(() => Effect.succeed({ kind: "none" }));
+    const session = harness.runtimeSessions[0]!;
+    harness.runtimeSessions[0] = { ...session, resumeCursor: { threadId: "native-before-file" } };
+    await startForkTurn(harness, "second-delayed-cursor");
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+    expect(prepareTurn.mock.calls[1]?.[0].nativeThreadKey).toBe(key);
+    expect(harness.sendTurn.mock.calls[1]?.[0].contextPreamble).toBeUndefined();
+    expect(harness.startSession).toHaveBeenCalledTimes(1);
+    expect(harness.discardSessionContinuity).not.toHaveBeenCalled();
+  });
+
+  effectIt.effect("allows a Droid fork send to remain active beyond two minutes", () =>
+    Effect.gen(function* () {
+      const clock = yield* Clock.Clock;
+      const entered = yield* Deferred.make<void>();
+      const complete = yield* Deferred.make<void>();
+      const settled = yield* Deferred.make<void>();
+      let sendExited = false;
+      const settleDelivery = vi.fn<ScientForkContextDeliveryShape["settleDelivery"]>(() =>
+        Deferred.succeed(settled, undefined).pipe(Effect.asVoid),
+      );
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          clock,
+          threadModelSelection: {
+            instanceId: ProviderInstanceId.make("droid"),
+            model: "droid-model",
+          },
+          forkLineage: true,
+          forkContextDelivery: {
+            prepareTurn: () => Effect.succeed(deliverContext()),
+            settleDelivery,
+          },
+          // Droid's prompt RPC returns at turn completion, not acknowledgement.
+          sendTurnEffect: () =>
+            Deferred.succeed(entered, undefined).pipe(
+              Effect.andThen(Deferred.await(complete)),
+              Effect.as({ threadId: ThreadId.make("thread-1"), turnId: asTurnId("turn-1") }),
+              Effect.ensuring(
+                Effect.sync(() => {
+                  sendExited = true;
+                }),
+              ),
+            ),
+        }),
+      );
+      yield* Effect.promise(() => startForkTurn(harness, "long-droid-fork"));
+      yield* Deferred.await(entered);
+      yield* TestClock.adjust("2 minutes");
+      expect(sendExited).toBe(false);
+      expect(settleDelivery).not.toHaveBeenCalled();
+
+      yield* Deferred.succeed(complete, undefined);
+      yield* Deferred.await(settled);
+      expect(sendExited).toBe(true);
+      expect(settleDelivery.mock.calls.map(([input]) => input.outcome.type)).toEqual(["accepted"]);
+      expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+    }),
+  );
+
+  it("settles an interruption immediately after recording the pending handoff", async () => {
+    const settleDelivery = vi.fn<ScientForkContextDeliveryShape["settleDelivery"]>(
+      () => Effect.void,
+    );
+    const harness = await createHarness({
+      forkLineage: true,
+      forkContextDelivery: {
+        prepareTurn: () => Effect.succeed(deliverContext()),
+        beginDelivery: () => Effect.interrupt,
+        settleDelivery,
+      },
+    });
+    await startForkTurn(harness, "fork-interrupted-after-record");
+    await waitFor(() => settleDelivery.mock.calls.length === 1);
+    expect(settleDelivery.mock.calls[0]?.[0].outcome).toEqual({ type: "maybeDelivered" });
+    expect(harness.sendTurn).not.toHaveBeenCalled();
+  });
+
+  it("settles a rejection that sent nothing as notSent, so the next message can retry", async () => {
+    const settleDelivery = vi.fn<ScientForkContextDeliveryShape["settleDelivery"]>(
+      () => Effect.void,
+    );
+    const harness = await createHarness({
+      forkLineage: true,
+      forkContextDelivery: { prepareTurn: () => Effect.succeed(deliverContext()), settleDelivery },
+      sendTurnEffect: () =>
+        Effect.fail(
+          new ProviderAdapterRequestError({
+            provider: "codex",
+            method: "thread.send",
+            detail: "rejected before dispatch",
+          }),
+        ),
+    });
+
+    await startForkTurn(harness, "fork-rejected-user-message");
+    await waitFor(() => settleDelivery.mock.calls.length === 1);
+
+    expect(settleDelivery).toHaveBeenCalledWith({
       threadId: ThreadId.make("thread-1"),
-      messageId: asMessageId("fork-rejected-user-message"),
+      handoffId: "handoff:test",
+      outcome: { type: "notSent" },
     });
   });
+
+  it("keeps a failure after dispatch uncertain instead of claiming it was not sent", async () => {
+    const settleDelivery = vi.fn<ScientForkContextDeliveryShape["settleDelivery"]>(
+      () => Effect.void,
+    );
+    const harness = await createHarness({
+      forkLineage: true,
+      forkContextDelivery: { prepareTurn: () => Effect.succeed(deliverContext()), settleDelivery },
+      sendTurnEffect: () =>
+        Effect.suspend(() => {
+          const error = new ProviderAdapterRequestError({
+            provider: "codex",
+            method: "thread.send",
+            detail: "connection lost after dispatch",
+          });
+          markTurnDispatchAttempted(error);
+          return Effect.fail(error);
+        }),
+    });
+
+    await startForkTurn(harness, "fork-uncertain-user-message");
+    await waitFor(() => settleDelivery.mock.calls.length === 1);
+
+    expect(settleDelivery.mock.calls[0]?.[0].outcome).toEqual({ type: "maybeDelivered" });
+  });
+
+  it("starts a fresh provider session before re-delivering uncertain context", async () => {
+    const harness = await createHarness({
+      forkLineage: true,
+      forkContextDelivery: {
+        prepareTurn: () => Effect.succeed(deliverContext({ requireFreshSession: true })),
+      },
+    });
+
+    await startForkTurn(harness, "fork-fresh-session-message");
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    expect(harness.discardSessionContinuity).toHaveBeenCalledWith({
+      threadId: ThreadId.make("thread-1"),
+    });
+  });
+
+  const nativePlan = {
+    resumeCursor: { threadId: "source-native" },
+    throughTurnId: asTurnId("source-turn"),
+  };
+
+  it("starts a fork's first session as a native provider fork", async () => {
+    const recordNativeFork = vi.fn<ScientForkContextDeliveryShape["recordNativeFork"]>(
+      () => Effect.void,
+    );
+    const harness = await createHarness({
+      forkLineage: true,
+      nativeFork: true,
+      forkContextDelivery: {
+        planNativeFork: () => Effect.succeed(nativePlan),
+        recordNativeFork,
+      },
+      startSessionEffect: (session) =>
+        Effect.succeed({ ...session, resumeCursor: { threadId: "forked-native" } }),
+    });
+
+    await startForkTurn(harness, "fork-native-message");
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({ forkFrom: nativePlan });
+    expect(recordNativeFork).toHaveBeenCalledWith({
+      threadId: ThreadId.make("thread-1"),
+      nativeThreadKey: "codex@codex:forked-native",
+    });
+  });
+
+  it("never continues a fork inside the source's own provider thread", async () => {
+    const recordNativeFork = vi.fn<ScientForkContextDeliveryShape["recordNativeFork"]>(
+      () => Effect.void,
+    );
+    const recordNativeForkUnavailable = vi.fn<
+      ScientForkContextDeliveryShape["recordNativeForkUnavailable"]
+    >(() => Effect.void);
+    const harness = await createHarness({
+      forkLineage: true,
+      nativeFork: true,
+      forkContextDelivery: {
+        planNativeFork: () => Effect.succeed(nativePlan),
+        recordNativeFork,
+        recordNativeForkUnavailable,
+        prepareTurn: () => Effect.succeed(deliverContext()),
+      },
+      // The provider handed back the source thread instead of a fork.
+      startSessionEffect: (session) =>
+        Effect.succeed({ ...session, resumeCursor: nativePlan.resumeCursor }),
+    });
+
+    await startForkTurn(harness, "fork-native-same-thread-message");
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    expect(recordNativeFork).not.toHaveBeenCalled();
+    expect(recordNativeForkUnavailable).toHaveBeenCalled();
+    expect(harness.discardSessionContinuity).toHaveBeenCalledWith({
+      threadId: ThreadId.make("thread-1"),
+    });
+  });
+
+  it("records an unavailable native fork and continues with the portable handoff", async () => {
+    let attempts = 0;
+    const recordNativeForkUnavailable = vi.fn<
+      ScientForkContextDeliveryShape["recordNativeForkUnavailable"]
+    >(() => Effect.void);
+    const recordNativeFork = vi.fn<ScientForkContextDeliveryShape["recordNativeFork"]>(
+      () => Effect.void,
+    );
+    const harness = await createHarness({
+      forkLineage: true,
+      nativeFork: true,
+      forkContextDelivery: {
+        planNativeFork: () => Effect.succeed(nativePlan),
+        recordNativeFork,
+        recordNativeForkUnavailable,
+        prepareTurn: () => Effect.succeed(deliverContext()),
+      },
+      startSessionEffect: (session) =>
+        attempts++ === 0
+          ? Effect.fail(
+              new ProviderAdapterRequestError({
+                provider: "codex",
+                method: "thread/fork",
+                detail: "turn not found",
+              }),
+            )
+          : Effect.succeed(session),
+    });
+
+    await startForkTurn(harness, "fork-native-fallback-message");
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    expect(recordNativeForkUnavailable).toHaveBeenCalledWith({
+      threadId: ThreadId.make("thread-1"),
+      reason: "turn not found",
+    });
+    expect(recordNativeFork).not.toHaveBeenCalled();
+    expect(harness.startSession.mock.calls.at(-1)?.[1]).not.toHaveProperty("forkFrom");
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toHaveProperty("contextPreamble");
+  });
+
+  it("sends a plain turn when the fork already holds its context", async () => {
+    const beginDelivery = vi.fn<ScientForkContextDeliveryShape["beginDelivery"]>(() => Effect.void);
+    const harness = await createHarness({
+      forkLineage: true,
+      forkContextDelivery: { beginDelivery },
+    });
+
+    await startForkTurn(harness, "fork-delivered-message");
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    expect(harness.sendTurn.mock.calls[0]?.[0]).not.toHaveProperty("contextPreamble");
+    expect(beginDelivery).not.toHaveBeenCalled();
+  });
+
+  effectIt.effect("forwards only a user-renamed title when starting a provider session", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() =>
+        createHarness({ initialTitle: "Add a progressive blur as you scroll" }),
+      );
+      const now = "2026-01-01T00:00:00.000Z";
+      const modelSelection = {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5-codex",
+      };
+      const startTurn = (threadId: string, text: string, titleSeed: string) =>
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make(`cmd-title-${threadId}`),
+          threadId: ThreadId.make(threadId),
+          message: {
+            messageId: asMessageId(`message-${threadId}`),
+            role: "user",
+            text,
+            attachments: [],
+          },
+          titleSeed,
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: now,
+        });
+
+      yield* startTurn(
+        "thread-1",
+        "Add a progressive blur as you scroll",
+        "Add a progressive blur as you scroll",
+      );
+      yield* Effect.promise(() => waitFor(() => harness.startSession.mock.calls.length === 1));
+      expect(harness.startSession.mock.calls[0]?.[1]).not.toHaveProperty("title");
+
+      yield* harness.engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-thread-create-renamed"),
+        threadId: ThreadId.make("thread-renamed"),
+        projectId: asProjectId("project-1"),
+        title: "New thread",
+        modelSelection,
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        createdAt: now,
+      });
+      yield* harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-rename"),
+        threadId: ThreadId.make("thread-renamed"),
+        title: "Keep this name",
+      });
+      yield* startTurn("thread-renamed", "hello there", "hello there");
+      yield* Effect.promise(() => waitFor(() => harness.startSession.mock.calls.length === 2));
+      expect(harness.startSession.mock.calls[1]?.[1]).toMatchObject({ title: "Keep this name" });
+
+      yield* harness.engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-thread-create-seeded"),
+        threadId: ThreadId.make("thread-seeded"),
+        projectId: asProjectId("project-1"),
+        title: "New thread",
+        modelSelection,
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        createdAt: now,
+      });
+      yield* harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-autotitle"),
+        threadId: ThreadId.make("thread-seeded"),
+        title: "hello there",
+      });
+      yield* startTurn("thread-seeded", "hello there", "hello there");
+      yield* Effect.promise(() => waitFor(() => harness.startSession.mock.calls.length === 3));
+      expect(harness.startSession.mock.calls[2]?.[1]).not.toHaveProperty("title");
+    }),
+  );
 
   effectIt.effect("projects inline context before sending the provider turn", () =>
     Effect.gen(function* () {
@@ -3816,7 +4174,7 @@ describe("ProviderCommandReactor", () => {
   });
 
   effectIt.effect(
-    "stops a running session and records the failure when provider interrupt fails",
+    "does not claim a stopped session when both the interrupt and the shutdown fail",
     () =>
       Effect.gen(function* () {
         const harness = yield* Effect.promise(() =>
@@ -3865,6 +4223,82 @@ describe("ProviderCommandReactor", () => {
           createdAt: now,
         });
 
+        // The recovery notice is the last thing this operation publishes, so
+        // waiting for it is waiting for the operation's outcome.
+        yield* Effect.promise(() =>
+          waitFor(async () => {
+            const thread = (await harness.readModel()).threads.find(
+              (entry) => entry.id === ThreadId.make("thread-1"),
+            );
+            return (
+              thread?.activities.some(
+                (activity) => activity.kind === "provider.turn.interrupt.failed",
+              ) ?? false
+            );
+          }),
+        );
+
+        const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
+          (entry) => entry.id === ThreadId.make("thread-1"),
+        );
+        // Neither the interrupt nor the shutdown could be confirmed, so the
+        // session must keep saying it is running rather than claim a stop that
+        // may not have happened.
+        expect(thread?.session).toMatchObject({
+          status: "running",
+          activeTurnId: asTurnId("turn-1"),
+        });
+        expect(
+          thread?.activities.find((activity) => activity.kind === "provider.turn.interrupt.failed"),
+        ).toMatchObject({
+          summary: "Could not confirm the agent stopped",
+        });
+        expect(harness.stopSession).toHaveBeenCalledWith({ threadId: ThreadId.make("thread-1") });
+      }),
+  );
+
+  effectIt.effect(
+    "settles a running session when the shutdown succeeds after a failed interrupt",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() =>
+          createHarness({
+            interruptTurnEffect: () =>
+              Effect.fail(
+                new ProviderAdapterRequestError({
+                  provider: "codex",
+                  method: "thread.interrupt",
+                  detail: "provider session disappeared",
+                }),
+              ),
+          }),
+        );
+        const now = "2026-01-01T00:00:00.000Z";
+
+        yield* harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("cmd-session-set-interrupt-failed-stop-ok"),
+          threadId: ThreadId.make("thread-1"),
+          session: {
+            threadId: ThreadId.make("thread-1"),
+            status: "running",
+            providerName: "codex",
+            runtimeMode: "approval-required",
+            activeTurnId: asTurnId("turn-1"),
+            lastError: null,
+            updatedAt: now,
+          },
+          createdAt: now,
+        });
+
+        yield* harness.engine.dispatch({
+          type: "thread.turn.interrupt",
+          commandId: CommandId.make("cmd-turn-interrupt-failed-stop-ok"),
+          threadId: ThreadId.make("thread-1"),
+          turnId: asTurnId("turn-1"),
+          createdAt: now,
+        });
+
         yield* Effect.promise(() =>
           waitFor(async () => {
             const thread = (await harness.readModel()).threads.find(
@@ -3880,14 +4314,9 @@ describe("ProviderCommandReactor", () => {
         expect(thread?.session).toMatchObject({
           status: "stopped",
           activeTurnId: null,
-          lastError: "provider session disappeared",
+          lastError: null,
         });
-        expect(
-          thread?.activities.find((activity) => activity.kind === "provider.turn.interrupt.failed"),
-        ).toMatchObject({
-          summary: "Provider turn interrupt failed",
-          payload: { detail: "provider session disappeared" },
-        });
+
         expect(harness.stopSession).toHaveBeenCalledWith({ threadId: ThreadId.make("thread-1") });
       }),
   );
@@ -3931,7 +4360,14 @@ describe("ProviderCommandReactor", () => {
         createdAt: now,
       });
 
-      yield* Effect.promise(() => harness.drain());
+      yield* Effect.promise(() =>
+        waitFor(async () => {
+          const thread = (await harness.readModel()).threads.find(
+            (entry) => entry.id === ThreadId.make("thread-1"),
+          );
+          return thread?.session?.status === "stopped";
+        }),
+      );
 
       const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
         (entry) => entry.id === ThreadId.make("thread-1"),
@@ -3939,14 +4375,359 @@ describe("ProviderCommandReactor", () => {
       expect(thread?.session).toMatchObject({
         status: "stopped",
         activeTurnId: null,
-        lastError: "provider session disappeared",
+        lastError: null,
       });
       expect(harness.stopSession).toHaveBeenCalledWith({ threadId: ThreadId.make("thread-1") });
-      expect(
-        thread?.activities.find((activity) => activity.kind === "provider.turn.interrupt.failed"),
-      ).toMatchObject({ payload: { detail: "provider session disappeared" } });
     }),
   );
+
+  describe("stop operation convergence", () => {
+    const createStopHarness = Effect.fnUntraced(function* (
+      input?: Parameters<typeof createHarness>[0],
+    ) {
+      const clock = yield* Clock.Clock;
+      return yield* Effect.promise(() => createHarness({ ...input, clock }));
+    });
+
+    const runningSessionCommand = (commandId: string, turnId: TurnId) => {
+      const now = "2026-01-01T00:00:00.000Z";
+      return {
+        type: "thread.session.set",
+        commandId: CommandId.make(commandId),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: turnId,
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      } as const satisfies InternalOrchestrationCommand;
+    };
+
+    effectIt.effect("does not escalate a stale probe against a newer turn, or drop its Stop", () =>
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<ProviderTurnEndConfirmation>();
+        let probes = 0;
+        const harness = yield* createStopHarness({
+          interruptTurnEffect: () =>
+            Effect.fail(
+              new ProviderAdapterRequestError({
+                provider: "codex",
+                method: "turn/interrupt",
+                detail: "transport failed",
+              }),
+            ),
+          confirmTurnEndEffect: () =>
+            ++probes === 1
+              ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release)))
+              : Effect.succeed("ended"),
+        });
+        yield* harness.engine.dispatch(runningSessionCommand("race-running-1", asTurnId("turn-1")));
+        yield* harness.engine.dispatch({
+          type: "thread.turn.interrupt",
+          commandId: CommandId.make("race-stop-1"),
+          threadId: ThreadId.make("thread-1"),
+          turnId: asTurnId("turn-1"),
+          createdAt: "2026-01-01T00:00:00.000Z",
+        });
+        yield* Deferred.await(entered);
+        yield* harness.engine.dispatch(runningSessionCommand("race-running-2", asTurnId("turn-2")));
+        yield* harness.engine.dispatch({
+          type: "thread.turn.interrupt",
+          commandId: CommandId.make("race-stop-2"),
+          threadId: ThreadId.make("thread-1"),
+          turnId: asTurnId("turn-2"),
+          createdAt: "2026-01-01T00:00:00.000Z",
+        });
+        yield* Effect.promise(() => waitFor(() => harness.interruptTurn.mock.calls.length === 2));
+        yield* Deferred.succeed(release, "active");
+        yield* TestClock.adjust(30_000);
+        yield* Effect.promise(() =>
+          waitFor(async () => (await harness.readModel()).threads[0]?.session?.status === "ready"),
+        );
+        expect(harness.stopSession).not.toHaveBeenCalled();
+      }),
+    );
+
+    effectIt.effect("conditionally rejects recovery queued behind a newer session update", () =>
+      Effect.gen(function* () {
+        let replace = Effect.void;
+        const harness = yield* createStopHarness({
+          interruptTurnEffect: () =>
+            Effect.fail(
+              new ProviderAdapterRequestError({
+                provider: "codex",
+                method: "turn/interrupt",
+                detail: "transport failed",
+              }),
+            ),
+          confirmTurnEnd: "ended",
+          beforeReadySessionDispatch: () => replace,
+        });
+        replace = harness.engine
+          .dispatch(runningSessionCommand("cas-running-2", asTurnId("turn-2")))
+          .pipe(Effect.orDie, Effect.asVoid);
+        yield* harness.engine.dispatch(runningSessionCommand("cas-running-1", asTurnId("turn-1")));
+        yield* harness.engine.dispatch({
+          type: "thread.turn.interrupt",
+          commandId: CommandId.make("cas-stop"),
+          threadId: ThreadId.make("thread-1"),
+          turnId: asTurnId("turn-1"),
+          createdAt: "2026-01-01T00:00:00.000Z",
+        });
+        yield* Effect.promise(() =>
+          waitFor(
+            async () =>
+              (await harness.readModel()).threads[0]?.session?.activeTurnId === asTurnId("turn-2"),
+          ),
+        );
+        yield* TestClock.adjust(30_000);
+        expect(
+          (yield* Effect.promise(() => harness.readModel())).threads[0]?.session,
+        ).toMatchObject({
+          status: "running",
+          activeTurnId: asTurnId("turn-2"),
+        });
+        expect(harness.stopSession).not.toHaveBeenCalled();
+      }),
+    );
+
+    effectIt.effect("ignores a Stop explicitly addressed to an older turn", () =>
+      Effect.gen(function* () {
+        const harness = yield* createStopHarness();
+        yield* harness.engine.dispatch(runningSessionCommand("stale-running", asTurnId("turn-2")));
+        yield* harness.engine.dispatch({
+          type: "thread.turn.interrupt",
+          commandId: CommandId.make("stale-stop"),
+          threadId: ThreadId.make("thread-1"),
+          turnId: asTurnId("turn-1"),
+          createdAt: "2026-01-01T00:00:00.000Z",
+        });
+        yield* Effect.promise(() => harness.drain());
+        expect(harness.interruptTurn).not.toHaveBeenCalled();
+        expect(harness.stopSession).not.toHaveBeenCalled();
+      }),
+    );
+
+    effectIt.effect("settles without stopping the session when the turn ends on its own", () =>
+      Effect.gen(function* () {
+        const harness = yield* createStopHarness();
+        yield* harness.engine.dispatch(
+          runningSessionCommand("cmd-session-set-stop-op-1", asTurnId("turn-1")),
+        );
+        const now = "2026-01-01T00:00:00.000Z";
+
+        yield* harness.engine.dispatch({
+          type: "thread.turn.interrupt",
+          commandId: CommandId.make("cmd-turn-interrupt-natural"),
+          threadId: ThreadId.make("thread-1"),
+          turnId: asTurnId("turn-1"),
+          createdAt: now,
+        });
+        yield* Effect.promise(() => waitFor(() => harness.interruptTurn.mock.calls.length === 1));
+        // The provider reports the turn end the normal way.
+        yield* harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("cmd-session-set-natural-end"),
+          threadId: ThreadId.make("thread-1"),
+          session: {
+            threadId: ThreadId.make("thread-1"),
+            status: "ready",
+            providerName: "codex",
+            runtimeMode: "approval-required",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: now,
+          },
+          createdAt: now,
+        });
+
+        const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
+          (entry) => entry.id === ThreadId.make("thread-1"),
+        );
+        yield* TestClock.adjust(30_000);
+        expect(thread?.session?.status).toBe("ready");
+        // A turn that finished by itself must never be escalated against.
+        expect(harness.stopSession).not.toHaveBeenCalled();
+      }),
+    );
+
+    effectIt.effect("settles from provider confirmation without stopping the session", () =>
+      Effect.gen(function* () {
+        const harness = yield* createStopHarness({ confirmTurnEnd: "ended" });
+        yield* harness.engine.dispatch(
+          runningSessionCommand("cmd-session-set-stop-op-2", asTurnId("turn-1")),
+        );
+        const now = "2026-01-01T00:00:00.000Z";
+
+        yield* harness.engine.dispatch({
+          type: "thread.turn.interrupt",
+          commandId: CommandId.make("cmd-turn-interrupt-confirmed"),
+          threadId: ThreadId.make("thread-1"),
+          turnId: asTurnId("turn-1"),
+          createdAt: now,
+        });
+        yield* Effect.promise(() => waitFor(() => harness.interruptTurn.mock.calls.length === 1));
+        yield* TestClock.adjust(30_000);
+
+        yield* Effect.promise(() =>
+          waitFor(async () => {
+            const thread = (await harness.readModel()).threads.find(
+              (entry) => entry.id === ThreadId.make("thread-1"),
+            );
+            return thread?.session?.status === "ready";
+          }),
+        );
+
+        const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
+          (entry) => entry.id === ThreadId.make("thread-1"),
+        );
+        expect(thread?.session).toMatchObject({ status: "ready", activeTurnId: null });
+        // The provider said the turn was gone; tearing the session down would
+        // be a stronger action than the evidence supports.
+        expect(harness.stopSession).not.toHaveBeenCalled();
+      }),
+    );
+
+    effectIt.effect("escalates when the provider still reports the turn as active", () =>
+      Effect.gen(function* () {
+        const harness = yield* createStopHarness({ confirmTurnEnd: "active" });
+        yield* harness.engine.dispatch(
+          runningSessionCommand("cmd-session-set-stop-op-3", asTurnId("turn-1")),
+        );
+        const now = "2026-01-01T00:00:00.000Z";
+
+        yield* harness.engine.dispatch({
+          type: "thread.turn.interrupt",
+          commandId: CommandId.make("cmd-turn-interrupt-still-active"),
+          threadId: ThreadId.make("thread-1"),
+          turnId: asTurnId("turn-1"),
+          createdAt: now,
+        });
+        yield* Effect.promise(() => waitFor(() => harness.interruptTurn.mock.calls.length === 1));
+        yield* TestClock.adjust(30_000);
+
+        yield* Effect.promise(() => waitFor(() => harness.stopSession.mock.calls.length === 1));
+        expect(harness.stopSession).toHaveBeenCalledWith({ threadId: ThreadId.make("thread-1") });
+      }),
+    );
+
+    effectIt.effect("does not stop a session that was replaced while waiting", () =>
+      Effect.gen(function* () {
+        const harness = yield* createStopHarness();
+        yield* harness.engine.dispatch(
+          runningSessionCommand("cmd-session-set-stop-op-4", asTurnId("turn-1")),
+        );
+        const now = "2026-01-01T00:00:00.000Z";
+
+        yield* harness.engine.dispatch({
+          type: "thread.turn.interrupt",
+          commandId: CommandId.make("cmd-turn-interrupt-replaced"),
+          threadId: ThreadId.make("thread-1"),
+          turnId: asTurnId("turn-1"),
+          createdAt: now,
+        });
+        yield* Effect.promise(() => waitFor(() => harness.interruptTurn.mock.calls.length === 1));
+
+        // A newer turn takes the thread while the stop operation waits.
+        yield* harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("cmd-session-set-replacement"),
+          threadId: ThreadId.make("thread-1"),
+          session: {
+            threadId: ThreadId.make("thread-1"),
+            status: "running",
+            providerName: "codex",
+            runtimeMode: "approval-required",
+            activeTurnId: asTurnId("turn-2"),
+            lastError: null,
+            updatedAt: now,
+          },
+          createdAt: now,
+        });
+
+        // Advance the operation to its deadline so it can stand down.
+        yield* TestClock.adjust(30_000);
+        const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
+          (entry) => entry.id === ThreadId.make("thread-1"),
+        );
+        expect(thread?.session).toMatchObject({
+          status: "running",
+          activeTurnId: asTurnId("turn-2"),
+        });
+        expect(harness.stopSession).not.toHaveBeenCalled();
+      }),
+    );
+
+    effectIt.effect("joins repeated Stops instead of escalating twice", () =>
+      Effect.gen(function* () {
+        const harness = yield* createStopHarness();
+        yield* harness.engine.dispatch(
+          runningSessionCommand("cmd-session-set-stop-op-5", asTurnId("turn-1")),
+        );
+        const now = "2026-01-01T00:00:00.000Z";
+
+        yield* harness.engine.dispatch({
+          type: "thread.turn.interrupt",
+          commandId: CommandId.make("cmd-turn-interrupt-repeat-1"),
+          threadId: ThreadId.make("thread-1"),
+          turnId: asTurnId("turn-1"),
+          createdAt: now,
+        });
+        yield* Effect.promise(() => waitFor(() => harness.interruptTurn.mock.calls.length === 1));
+        yield* harness.engine.dispatch({
+          type: "thread.turn.interrupt",
+          commandId: CommandId.make("cmd-turn-interrupt-repeat-2"),
+          threadId: ThreadId.make("thread-1"),
+          turnId: asTurnId("turn-1"),
+          createdAt: now,
+        });
+        yield* TestClock.adjust(30_000);
+
+        // The second Stop joined the first operation instead of starting its
+        // own, so there is still exactly one interrupt and at most one
+        // escalation.
+        expect(harness.interruptTurn).toHaveBeenCalledTimes(1);
+        expect(harness.stopSession.mock.calls.length).toBeLessThanOrEqual(1);
+      }),
+    );
+
+    effectIt.effect("still converges when the interrupt request never answers", () =>
+      Effect.gen(function* () {
+        const harness = yield* createStopHarness({ interruptTurnEffect: () => Effect.never });
+        yield* harness.engine.dispatch(
+          runningSessionCommand("cmd-session-set-stop-op-6", asTurnId("turn-1")),
+        );
+        const now = "2026-01-01T00:00:00.000Z";
+
+        yield* harness.engine.dispatch({
+          type: "thread.turn.interrupt",
+          commandId: CommandId.make("cmd-turn-interrupt-never-answers"),
+          threadId: ThreadId.make("thread-1"),
+          turnId: asTurnId("turn-1"),
+          createdAt: now,
+        });
+        yield* Effect.promise(() => waitFor(() => harness.interruptTurn.mock.calls.length === 1));
+        yield* TestClock.adjust(30_000);
+
+        // The hung request must not outlive the operation's bound.
+        yield* Effect.promise(() =>
+          waitFor(async () => {
+            const thread = (await harness.readModel()).threads.find(
+              (entry) => entry.id === ThreadId.make("thread-1"),
+            );
+            return thread?.session?.status === "stopped";
+          }),
+        );
+        expect(harness.stopSession).toHaveBeenCalledWith({ threadId: ThreadId.make("thread-1") });
+      }),
+    );
+  });
 
   effectIt.effect("does not overwrite a session that became ready while an interrupt failed", () =>
     Effect.gen(function* () {
@@ -4009,6 +4790,17 @@ describe("ProviderCommandReactor", () => {
         createdAt: now,
       });
 
+      // The stop operation owns the interrupt call now, so wait for the turn to
+      // actually settle before asserting that nothing overwrote it.
+      yield* Effect.promise(() =>
+        waitFor(async () => {
+          const thread = (await harness.readModel()).threads.find(
+            (entry) => entry.id === ThreadId.make("thread-1"),
+          );
+          return thread?.session?.status === "ready";
+        }),
+      );
+      // Give the operation its chance to (wrongly) act on the settled session.
       yield* Effect.promise(() => harness.drain());
 
       const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
@@ -4528,6 +5320,77 @@ describe("ProviderCommandReactor", () => {
       expect(thread?.settledOverride).toBe("settled");
       expect(thread?.session?.status).toBe("stopped");
       expect(thread?.session?.providerInstanceId).toBe(ProviderInstanceId.make("codex_work"));
+      expect(harness.closeIdleTerminals).toHaveBeenCalledWith({
+        threadId: ThreadId.make("thread-1"),
+      });
     }),
+  );
+
+  effectIt.effect("closes idle terminals when a thread without a session settles", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      const terminalsClosed = yield* Deferred.make<void>();
+      harness.closeIdleTerminals.mockImplementation(() =>
+        Deferred.succeed(terminalsClosed, undefined).pipe(Effect.asVoid),
+      );
+
+      yield* harness.engine.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make("cmd-settle-without-session"),
+        threadId: ThreadId.make("thread-1"),
+      });
+      yield* Deferred.await(terminalsClosed);
+      yield* Effect.promise(() => harness.drain());
+
+      expect(harness.closeIdleTerminals).toHaveBeenCalledWith({
+        threadId: ThreadId.make("thread-1"),
+      });
+      expect(harness.stopSession).not.toHaveBeenCalled();
+    }),
+  );
+
+  effectIt.effect(
+    "keeps terminals when the thread is un-settled before its settle event runs",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() => createHarness());
+        const threadId = ThreadId.make("thread-1");
+        const firstCloseStarted = yield* Deferred.make<void>();
+        const releaseFirstClose = yield* Deferred.make<void>();
+        harness.closeIdleTerminals.mockImplementationOnce(() =>
+          Deferred.succeed(firstCloseStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseFirstClose)),
+          ),
+        );
+
+        yield* harness.engine.dispatch({
+          type: "thread.settle",
+          commandId: CommandId.make("cmd-settle-first"),
+          threadId,
+        });
+        // The reactor is busy with the first settle while the user changes their mind.
+        yield* Deferred.await(firstCloseStarted);
+        yield* harness.engine.dispatch({
+          type: "thread.unsettle",
+          commandId: CommandId.make("cmd-unsettle-first"),
+          threadId,
+          reason: "user",
+        });
+        yield* harness.engine.dispatch({
+          type: "thread.settle",
+          commandId: CommandId.make("cmd-settle-second"),
+          threadId,
+        });
+        yield* harness.engine.dispatch({
+          type: "thread.unsettle",
+          commandId: CommandId.make("cmd-unsettle-second"),
+          threadId,
+          reason: "user",
+        });
+        yield* Deferred.succeed(releaseFirstClose, undefined);
+        yield* Effect.promise(() => harness.drain());
+
+        expect(harness.closeIdleTerminals).toHaveBeenCalledTimes(1);
+      }),
   );
 });

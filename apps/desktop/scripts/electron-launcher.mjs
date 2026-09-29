@@ -14,6 +14,15 @@ import {
   SCIENT_DEV_APP_PID_FILE_ENV,
 } from "./dev-app-process.mjs";
 import { ensureElectronRuntime } from "./ensure-electron-runtime.mjs";
+// SCIENT-DEV-APP: per-bundle records, a stable signed bundle, staged rebuilds.
+import {
+  assertForegroundSigning,
+  makeDevelopmentStartCommandStub,
+  replaceAppBundleAtomically,
+  resolveBundleMetadataPath,
+  resolveBundleStartCommandPath,
+  signInForeground,
+} from "./dev-app-bundle.mjs";
 
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
@@ -30,7 +39,7 @@ const APP_BUNDLE_ID = isDevelopment
   ? `com.scientfactory.scient.next.dev.${devBundleIdSuffix || "local"}`
   : "com.scientfactory.scient.next";
 const APP_PROTOCOL_SCHEMES = isDevelopment ? ["scient-next-dev"] : ["scient-next"];
-const LAUNCHER_VERSION = 19;
+const LAUNCHER_VERSION = 20;
 const developmentMacIconPngPath = NodePath.join(
   repoRoot,
   "assets",
@@ -232,10 +241,12 @@ function signDevelopmentAppBundle(appBundlePath, identity) {
     identity,
     signerScriptPath: NodePath.join(__dirname, "sign-development-app.mjs"),
   });
-  runChecked(signing.command, signing.args);
-  if (!hasValidDevelopmentCodeIdentity(appBundlePath)) {
-    throw new Error(`Failed to establish a valid development identity for ${appBundlePath}.`);
-  }
+  signInForeground(appBundlePath, () => {
+    runChecked(signing.command, signing.args);
+    if (!hasValidDevelopmentCodeIdentity(appBundlePath)) {
+      throw new Error(`Failed to establish a valid development identity for ${appBundlePath}.`);
+    }
+  });
 }
 
 export function makeDevelopmentCommandScript({ desktopRoot, environment }) {
@@ -282,7 +293,22 @@ function writeDevelopmentEnvironmentScript() {
   );
 }
 
-export function writeDevelopmentLauncherScript(targetBinaryPath, electronBinaryPath) {
+/**
+ * Writes the bundle's launcher and start command. Returns whether a signed
+ * file inside the bundle changed. The start command's launch-dependent body
+ * (Node and pnpm paths, role) lives beside the bundle at `startCommandPath`,
+ * so a different launch environment never invalidates the signature.
+ */
+export function writeDevelopmentLauncherScript(
+  targetBinaryPath,
+  electronBinaryPath,
+  {
+    startCommandPath = resolveBundleStartCommandPath(
+      NodePath.join(desktopDir, ".electron-runtime"),
+      NodePath.basename(NodePath.resolve(targetBinaryPath, "..", "..", "..")),
+    ),
+  } = {},
+) {
   const script = makeDevelopmentLauncherScript({
     electronBinaryPath,
     mainEntryPath: NodePath.join(desktopDir, "dist-electron", "main.cjs"),
@@ -300,10 +326,18 @@ export function writeDevelopmentLauncherScript(targetBinaryPath, electronBinaryP
     desktopRoot: desktopDir,
     environment: process.env,
   });
+  NodeFS.mkdirSync(NodePath.dirname(startCommandPath), { recursive: true });
+  if (
+    !NodeFS.existsSync(startCommandPath) ||
+    NodeFS.readFileSync(startCommandPath, "utf8") !== command
+  ) {
+    NodeFS.writeFileSync(startCommandPath, command);
+  }
+  NodeFS.chmodSync(startCommandPath, 0o755);
   let changed = false;
   for (const [path, contents] of [
     [targetBinaryPath, script],
-    [commandPath, command],
+    [commandPath, makeDevelopmentStartCommandStub(startCommandPath)],
   ]) {
     if (!NodeFS.existsSync(path) || NodeFS.readFileSync(path, "utf8") !== contents) {
       NodeFS.mkdirSync(NodePath.dirname(path), { recursive: true });
@@ -490,7 +524,9 @@ function buildMacLauncher(electronBinaryPath) {
     ? developmentPaths.launcherBinaryPath
     : runtimeElectronBinaryPath;
   const iconPath = ensureMacIconIcns(runtimeDir);
-  const metadataPath = NodePath.join(runtimeDir, "metadata.json");
+  const appBundleName = NodePath.basename(targetAppBundlePath);
+  const metadataPath = resolveBundleMetadataPath(runtimeDir, appBundleName);
+  const startCommandPath = resolveBundleStartCommandPath(runtimeDir, appBundleName);
   const signingIdentity = isDevelopment ? resolveDevelopmentCodeSigningIdentity() : undefined;
 
   NodeFS.mkdirSync(runtimeDir, { recursive: true });
@@ -518,7 +554,11 @@ function buildMacLauncher(electronBinaryPath) {
       // so refresh its fallback environment on every launch. Never let a value
       // captured by an older parent app override the live dev-runner environment.
       writeDevelopmentEnvironmentScript();
-      if (writeDevelopmentLauncherScript(launcherBinaryPath, runtimeElectronBinaryPath)) {
+      if (
+        writeDevelopmentLauncherScript(launcherBinaryPath, runtimeElectronBinaryPath, {
+          startCommandPath,
+        })
+      ) {
         signDevelopmentAppBundle(targetAppBundlePath, signingIdentity ?? "-");
       }
     }
@@ -526,32 +566,41 @@ function buildMacLauncher(electronBinaryPath) {
     return launcherBinaryPath;
   }
 
-  NodeFS.rmSync(targetAppBundlePath, { recursive: true, force: true });
-  // verbatimSymlinks keeps the framework's relative symlinks intact
-  // (e.g. Resources -> Versions/Current/Resources). Without it cpSync
-  // rewrites them to absolute paths into node_modules, which escape the
-  // bundle and crash sandboxed helper processes (icudtl.dat not found).
-  NodeFS.cpSync(sourceAppBundlePath, targetAppBundlePath, {
-    recursive: true,
-    verbatimSymlinks: true,
+  // The background service never rebuilds: refuse before copying Electron.
+  if (isDevelopment) assertForegroundSigning(targetAppBundlePath);
+  // Build and sign beside the current bundle; it is replaced only on success.
+  replaceAppBundleAtomically(targetAppBundlePath, (stagedAppBundlePath) => {
+    // verbatimSymlinks keeps the framework's relative symlinks intact
+    // (e.g. Resources -> Versions/Current/Resources). Without it cpSync
+    // rewrites them to absolute paths into node_modules, which escape the
+    // bundle and crash sandboxed helper processes (icudtl.dat not found).
+    NodeFS.cpSync(sourceAppBundlePath, stagedAppBundlePath, {
+      recursive: true,
+      verbatimSymlinks: true,
+    });
+    patchMainBundleInfoPlist(
+      stagedAppBundlePath,
+      iconPath,
+      isDevelopment ? developmentPaths.launcherExecutableName : "Electron",
+    );
+    patchHelperBundleInfoPlists(stagedAppBundlePath);
+    if (isDevelopment) {
+      // Keep Electron's native executable inside the branded bundle. Launching the
+      // node_modules copy makes macOS associate the process (and Dock label) with
+      // Electron.app even though this bundle's Info.plist has the Scient name.
+      // Its conventional executable name also keeps Electron's default-app runtime
+      // in development mode instead of making app.isPackaged report true.
+      // Scripts point at the final bundle path, which the staged copy becomes.
+      writeDevelopmentEnvironmentScript();
+      writeDevelopmentLauncherScript(
+        resolveMacLauncherPaths(stagedAppBundlePath).launcherBinaryPath,
+        runtimeElectronBinaryPath,
+        { startCommandPath },
+      );
+      signDevelopmentAppBundle(stagedAppBundlePath, signingIdentity ?? "-");
+    }
+    if (!isDevelopment) signMacLauncherBundle(stagedAppBundlePath);
   });
-  patchMainBundleInfoPlist(
-    targetAppBundlePath,
-    iconPath,
-    isDevelopment ? developmentPaths.launcherExecutableName : "Electron",
-  );
-  patchHelperBundleInfoPlists(targetAppBundlePath);
-  if (isDevelopment) {
-    // Keep Electron's native executable inside the branded bundle. Launching the
-    // node_modules copy makes macOS associate the process (and Dock label) with
-    // Electron.app even though this bundle's Info.plist has the Scient name.
-    // Its conventional executable name also keeps Electron's default-app runtime
-    // in development mode instead of making app.isPackaged report true.
-    writeDevelopmentEnvironmentScript();
-    writeDevelopmentLauncherScript(launcherBinaryPath, runtimeElectronBinaryPath);
-    signDevelopmentAppBundle(targetAppBundlePath, signingIdentity ?? "-");
-  }
-  if (!isDevelopment) signMacLauncherBundle(targetAppBundlePath);
   NodeFS.writeFileSync(metadataPath, `${JSON.stringify(expectedMetadata, null, 2)}\n`);
   registerMacLauncherBundle(targetAppBundlePath);
 

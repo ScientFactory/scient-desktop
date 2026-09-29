@@ -306,7 +306,14 @@ These are common guarantees, not requirements for every provider to display the 
   verification or commit boundary. A late request cannot overwrite a truthful connected, failed, or
   committed-runtime result with `cancelled`.
 - Runtime mutation and credential revocation stop affected sessions before changing executable or
-  account state.
+  account state. Runtime mutation stages downloads while sessions run, then waits for the provider's
+  running turns to finish before stopping its sessions, activating, and reloading
+  (`awaitActivationWindow`); a staged change remains cancellable while it waits. Busy means a
+  session starting or running a turn, or a thread with background liveness (`ProviderActivity`).
+  The wait holds the provider's lifecycle reservation, so connection actions for that provider
+  wait too. After commit, a turn started during activation delays the reload, which is no longer
+  cancellable. A Codex runtime standing in after a failed capability check is re-checked on
+  explicit refresh and every 10 minutes, and reloaded under the same idle rule.
 - Starting sign-in first refreshes provider state so an existing account does not enter another login
   flow unnecessarily.
 - Successful login is followed by fresh-process verification where the provider permits it.

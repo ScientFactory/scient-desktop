@@ -65,7 +65,8 @@ interface PdfReaderSessionStoreOptions {
 
 export interface PdfReaderSessionStore {
   readonly get: (documentKey: string) => PdfReaderSession;
-  readonly copy: (sourceDocumentKey: string, destinationDocumentKey: string) => void;
+  readonly seed: (documentKey: string, session: PdfReaderSession) => void;
+  readonly forkScope: (authority: string, originScope: string, destinationScope: string) => void;
   readonly updateViewport: (documentKey: string, viewport: PdfReaderViewport) => void;
   readonly updateSidebar: (documentKey: string, sidebar: PdfSidebarMode) => void;
   readonly flush: () => void;
@@ -83,11 +84,18 @@ export function registerPdfReaderSessionTeardownFlush(
   register("beforeunload", flush);
 }
 
-export function pdfReaderSessionDocumentKey(input: {
-  readonly authority: string;
-  readonly logicalDocumentKey: string;
-}): string {
-  return JSON.stringify([input.authority, input.logicalDocumentKey]);
+export function pdfReaderSessionDocumentKey(
+  input: {
+    readonly authority: string;
+    readonly logicalDocumentKey: string;
+  },
+  threadId?: string,
+): string {
+  return JSON.stringify(
+    threadId === undefined
+      ? [input.authority, input.logicalDocumentKey]
+      : [input.authority, input.logicalDocumentKey, threadId],
+  );
 }
 
 const EMPTY_SESSION: PdfReaderSession = {
@@ -167,7 +175,7 @@ export function normalizePdfReaderViewport(value: unknown): PdfReaderViewport | 
   return { page, left, top, scaleValue, rotation };
 }
 
-function normalizeSession(value: unknown): PdfReaderSession | null {
+export function normalizePdfReaderSession(value: unknown): PdfReaderSession | null {
   if (!isRecord(value)) return null;
   const viewport = value.viewport === null ? null : normalizePdfReaderViewport(value.viewport);
   const sidebar = normalizeSidebar(value.sidebar);
@@ -209,7 +217,7 @@ export function decodePdfReaderSessions(
     const sessions = Object.fromEntries(
       Object.entries(parsed.sessions).flatMap(([documentKey, value]) => {
         if (!isDocumentKey(documentKey)) return [];
-        const session = normalizeSession(value);
+        const session = normalizePdfReaderSession(value);
         return session === null ? [] : [[documentKey, session] as const];
       }),
     );
@@ -355,14 +363,30 @@ export function createPdfReaderSessionStore(
 
   return {
     get: (documentKey) => sessions[documentKey] ?? EMPTY_SESSION,
-    copy: (sourceDocumentKey, destinationDocumentKey) => {
-      if (!isDocumentKey(sourceDocumentKey) || !isDocumentKey(destinationDocumentKey)) return;
-      const source = sessions[sourceDocumentKey];
-      if (source === undefined || sourceDocumentKey === destinationDocumentKey) return;
-      update(destinationDocumentKey, () => ({
-        viewport: source.viewport,
-        sidebar: source.sidebar,
-      }));
+    seed: (documentKey, session) => {
+      if (Object.hasOwn(sessions, documentKey)) return;
+      const normalized = normalizePdfReaderSession(session);
+      if (normalized === null) return;
+      update(documentKey, () => normalized);
+    },
+    forkScope: (authority, originScope, destinationScope) => {
+      for (const [key, session] of Object.entries(sessions)) {
+        let parts: unknown;
+        try {
+          parts = JSON.parse(key);
+        } catch {
+          continue;
+        }
+        if (
+          !Array.isArray(parts) ||
+          parts.length !== 3 ||
+          parts[0] !== authority ||
+          parts[2] !== originScope
+        )
+          continue;
+        const destinationKey = JSON.stringify([authority, parts[1], destinationScope]);
+        if (!Object.hasOwn(sessions, destinationKey)) update(destinationKey, () => session);
+      }
     },
     updateViewport: (documentKey, viewport) => {
       const normalized = normalizePdfReaderViewport(viewport);

@@ -1013,6 +1013,7 @@ interface StagePackageJson {
   readonly private: true;
   readonly packageManager: string;
   readonly description: string;
+  readonly homepage: string;
   readonly author: string;
   readonly main: string;
   readonly build: Record<string, unknown>;
@@ -2914,6 +2915,11 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
 
   if (platform === "linux") {
     buildConfig.linux = {
+      // Scient publishes an AppImage for Linux and holds the `.deb` channel. The
+      // target is deliberately not enabled: electron-builder lists every built
+      // format in `latest-linux.yml`, and the release pipeline copies only the
+      // AppImage into `release-publish/`, so a `.deb` would leave the attestation
+      // step demanding an update payload that is never published.
       target: [target],
       executableName: "scient",
       icon: "icons",
@@ -3572,6 +3578,11 @@ export const validateWindowsPackagedPayload = Effect.fn(
       );
     }
     const wslArch = resolveWslPrebuildArch(input.targetArch);
+    // Upstream #13867 also validates the bundled Linux node-pty here. This
+    // check is already stricter: when a prebuild is expected it requires both
+    // `pty.node` and its staging marker, and when none was supplied
+    // `stageWslNodePtyPrebuild` has already warned that the backend will not
+    // start, rather than packaging an unusable runtime silently.
     const requiredMembers = [
       "apps/server/dist/bin.mjs",
       "node_modules/node-pty/package.json",
@@ -3986,8 +3997,11 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     private: true,
     packageManager: rootPackageJson.packageManager,
     description: "Scient desktop build",
+    homepage: "https://scientfactory.com",
     author: "ScientFactory",
-    main: "apps/desktop/dist-electron/main.cjs",
+    // boot.cjs enables the compile cache before loading the main bundle, so
+    // the cache covers main.cjs too.
+    main: "apps/desktop/dist-electron/boot.cjs",
     build: yield* createBuildConfig(
       options.platform,
       options.target,

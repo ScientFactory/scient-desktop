@@ -1,0 +1,108 @@
+{
+  "$comment": "Compatibility that Scient 0.6.17 and earlier resolve from the manifest on main. Those releases predate release scoping and apply every fetched policy, so a manifest change that alters these entries changes shipped builds.",
+  "policies": [
+    {
+      "driver": "codex",
+      "recommendedRange": ">=0.129.0",
+      "ranges": [
+        {
+          "range": ">=0.129.0",
+          "status": "supported"
+        },
+        {
+          "range": "<0.129.0",
+          "status": "broken"
+        }
+      ]
+    },
+    {
+      "driver": "claudeAgent",
+      "recommendedRange": ">=2.1.280",
+      "ranges": [
+        {
+          "range": ">=2.1.280",
+          "status": "supported"
+        },
+        {
+          "range": ">=2.1.111 <2.1.280",
+          "status": "graceful"
+        },
+        {
+          "range": "<2.1.111",
+          "status": "unsupported"
+        }
+      ]
+    },
+    {
+      "driver": "cursor",
+      "recommendedRange": ">=2026.05.09",
+      "ranges": [
+        {
+          "range": ">=2026.05.09",
+          "status": "supported"
+        },
+        {
+          "range": "<2026.05.09",
+          "status": "unknown"
+        }
+      ]
+    },
+    {
+      "driver": "grok",
+      "recommendedRange": ">=1.0.13",
+      "ranges": [
+        {
+          "range": ">=1.0.13",
+          "status": "supported"
+        },
+        {
+          "range": "<1.0.13",
+          "status": "unknown"
+        }
+      ]
+    },
+    {
+      "driver": "opencode",
+      "recommendedRange": ">=1.14.19 <2.0.0",
+      "recommendedVersion": "1.14.19",
+      "ranges": [
+        {
+          "range": ">=2.0.0",
+          "status": "broken"
+        },
+        {
+          "range": ">=1.14.19 <2.0.0",
+          "status": "supported"
+        },
+        {
+          "range": "<1.14.19",
+          "status": "broken"
+        }
+      ]
+    },
+    {
+      "driver": "antigravity",
+      "recommendedRange": "=1.1.1",
+      "ranges": [
+        {
+          "range": "=1.1.1",
+          "status": "supported"
+        }
+      ]
+    },
+    {
+      "driver": "pi",
+      "recommendedRange": ">=0.84.4",
+      "ranges": [
+        {
+          "range": ">=0.84.4",
+          "status": "supported"
+        },
+        {
+          "range": "<0.84.4",
+          "status": "unsupported"
+        }
+      ]
+    }
+  ]
+}

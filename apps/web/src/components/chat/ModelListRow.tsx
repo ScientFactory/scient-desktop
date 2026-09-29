@@ -70,7 +70,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
           </div>
           {props.showNewBadge ? (
             <span
-              className="shrink-0 rounded border border-update/35 bg-update/15 px-0.5 py-px text-[10px] font-bold uppercase leading-none tracking-wide text-update-foreground"
+              className="shrink-0 rounded border border-update/35 bg-update/15 px-0.5 py-px text-3xs font-bold uppercase leading-none tracking-wide text-update-foreground"
               aria-label="New model"
             >
               New
@@ -80,7 +80,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
             <Tooltip>
               <TooltipTrigger
                 render={
-                  <span className="shrink-0 text-[10px] font-medium leading-none text-muted-foreground/70" />
+                  <span className="shrink-0 text-3xs font-medium leading-none text-muted-foreground/70" />
                 }
               >
                 {props.model.providerCostLabel}
@@ -131,7 +131,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
                 <StarIcon
                   className={cn(
                     "size-3.5 sm:size-3",
-                    props.isFavorite && "fill-current text-yellow-500",
+                    props.isFavorite && "fill-current text-warning",
                   )}
                 />
               </Button>

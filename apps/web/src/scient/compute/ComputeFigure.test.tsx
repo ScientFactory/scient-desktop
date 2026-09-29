@@ -212,7 +212,7 @@ describe("compute figure presentation", () => {
     expect(button("More image actions").classList.contains("size-5.5")).toBe(true);
     for (const label of ["Open Figure 1 in viewer", "More image actions"]) {
       const classes = button(label).classList;
-      expect(classes.contains("rounded-[4px]")).toBe(true);
+      expect(classes.contains("rounded-xs")).toBe(true);
       expect(classes.contains("text-muted-foreground")).toBe(true);
       expect(button(label).dataset.variant).toBe("ghost-muted");
       expect(classes.contains("sm:size-6")).toBe(false);

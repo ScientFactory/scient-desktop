@@ -15,12 +15,14 @@ import {
   type ProviderTurnStartResult,
   type ProviderUserInputAnswers,
   RuntimeMode,
+  type ServerProviderModel,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { normalizeModelSlug } from "@t3tools/shared/model";
 import type { McpCapability } from "../../mcp/McpInvocationContext.ts";
+import type { ProviderTurnEndConfirmation } from "../Services/ProviderAdapter.ts";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -41,7 +43,10 @@ import * as EffectCodexSchema from "effect-codex-app-server/schema";
 import { buildCodexInitializeParams } from "./CodexProvider.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
-import { buildCodexDeveloperInstructions } from "../CodexDeveloperInstructions.ts";
+import {
+  buildCodexAdditionalContext,
+  buildCodexDeveloperInstructions,
+} from "../CodexDeveloperInstructions.ts";
 const decodeV2TurnStartResponse = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnStartResponse);
 
 const PROVIDER = ProviderDriverKind.make("codex");
@@ -108,7 +113,7 @@ const McpElicitationFormField = Schema.Struct({
   type: Schema.optionalKey(NullableMcpElicitationString),
   title: Schema.optionalKey(NullableMcpElicitationString),
   description: Schema.optionalKey(NullableMcpElicitationString),
-  default: Schema.optionalKey(Schema.Unknown),
+  default: Schema.optionalKey(Schema.Json),
   enum: Schema.optionalKey(Schema.NullOr(Schema.Array(Schema.String))),
   enumNames: Schema.optionalKey(Schema.NullOr(Schema.Array(Schema.String))),
   oneOf: Schema.optionalKey(
@@ -130,10 +135,13 @@ const isMcpElicitationMetadata = Schema.is(McpElicitationMetadata);
 const isMcpElicitationForm = Schema.is(McpElicitationForm);
 
 // TODO: Verify `packages/effect-codex-app-server/scripts/generate.ts` so the generated
-// `V2TurnStartParams` schema includes `collaborationMode` directly.
+// `V2TurnStartParams` schema includes its experimental fields directly.
 const CodexTurnStartParamsWithCollaborationMode = EffectCodexSchema.V2TurnStartParams.pipe(
   Schema.fieldsAssign({
     collaborationMode: Schema.optionalKey(EffectCodexSchema.V2TurnStartParams__CollaborationMode),
+    additionalContext: Schema.optionalKey(
+      Schema.Record(Schema.String, EffectCodexSchema.V2TurnStartParams__AdditionalContextEntry),
+    ),
   }),
 );
 const decodeCodexTurnStartParamsWithCollaborationMode = Schema.decodeUnknownEffect(
@@ -152,8 +160,7 @@ export type CodexTurnStartParamsWithCollaborationMode =
 export type CodexResumeCursor = typeof CodexResumeCursorSchema.Type;
 type CodexServiceTier = NonNullable<EffectCodexSchema.V2ThreadStartParams["serviceTier"]>;
 type CodexThreadItem =
-  | EffectCodexSchema.V2ThreadReadResponse["thread"]["turns"][number]["items"][number]
-  | EffectCodexSchema.V2ThreadRollbackResponse["thread"]["turns"][number]["items"][number];
+  EffectCodexSchema.V2ThreadReadResponse["thread"]["turns"][number]["items"][number];
 
 export interface CodexSessionRuntimeOptions {
   readonly threadId: ThreadId;
@@ -167,8 +174,12 @@ export interface CodexSessionRuntimeOptions {
   readonly model?: string;
   readonly serviceTier?: CodexServiceTier | undefined;
   readonly resumeCursor?: CodexResumeCursor;
+  /** SCIENT-FORK: open as a native fork of another Codex thread instead of a new one. */
+  readonly forkFrom?: { readonly threadId: string; readonly lastTurnId: string };
   readonly appServerArgs?: ReadonlyArray<string>;
   readonly scientAwarenessCapabilities?: ReadonlySet<McpCapability>;
+  /** The provider's model list; supplies the display name for runtime info. */
+  readonly models?: Effect.Effect<ReadonlyArray<ServerProviderModel>>;
 }
 
 export interface CodexSessionRuntimeSendTurnInput {
@@ -202,6 +213,11 @@ export interface CodexSessionRuntimeShape {
   readonly compactThread: Effect.Effect<void, CodexSessionRuntimeError>;
   readonly interruptTurn: (turnId?: TurnId) => Effect.Effect<void, CodexSessionRuntimeError>;
   readonly readThread: Effect.Effect<CodexThreadSnapshot, CodexSessionRuntimeError>;
+  /**
+   * Provider-side answer to "is this thread still executing a turn?".
+   * Distinct from `getSession`, which only mirrors ingested notifications.
+   */
+  readonly readThreadActivity: Effect.Effect<ProviderTurnEndConfirmation, CodexSessionRuntimeError>;
   readonly rollbackThread: (
     numTurns: number,
   ) => Effect.Effect<CodexThreadSnapshot, CodexSessionRuntimeError>;
@@ -430,7 +446,7 @@ export function toMcpElicitationResponse(
         ? "always"
         : undefined;
   const form = mcpElicitationFormFields(payload);
-  const content: Record<string, unknown> = {};
+  const content: Record<string, Schema.Json> = {};
 
   for (const [key, field] of Object.entries(form?.properties ?? {})) {
     const options = mcpElicitationFieldOptions(field);
@@ -568,26 +584,29 @@ function runtimeModeToTurnSandboxPolicy(
   }
 }
 
-function buildCodexCollaborationMode(input: {
+function buildCodexTurnInstructions(input: {
   readonly interactionMode?: ProviderInteractionMode;
   readonly model?: string;
+  readonly modelName?: string;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort;
   readonly scientAwarenessCapabilities?: ReadonlySet<McpCapability>;
-}): EffectCodexSchema.V2TurnStartParams__CollaborationMode {
+}): Pick<CodexTurnStartParamsWithCollaborationMode, "collaborationMode" | "additionalContext"> {
   const interactionMode = input.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE;
   const model = normalizeCodexModelSlug(input.model) ?? DEFAULT_MODEL;
   const reasoningEffort = input.effort ?? "medium";
   return {
-    mode: interactionMode,
-    settings: {
-      model,
-      reasoning_effort: reasoningEffort,
-      developer_instructions: buildCodexDeveloperInstructions(
-        interactionMode,
-        { model, reasoningEffort },
-        input.scientAwarenessCapabilities,
-      ),
+    collaborationMode: {
+      mode: interactionMode,
+      settings: {
+        model,
+        reasoning_effort: reasoningEffort,
+        developer_instructions: buildCodexDeveloperInstructions(interactionMode),
+      },
     },
+    additionalContext: buildCodexAdditionalContext(
+      { model, modelName: input.modelName, reasoningEffort },
+      input.scientAwarenessCapabilities,
+    ),
   };
 }
 
@@ -604,6 +623,8 @@ export function buildTurnStartParams(input: {
     readonly path: string;
   }>;
   readonly model?: string;
+  /** Display name of `model`, for runtime info. */
+  readonly modelName?: string;
   readonly serviceTier?: CodexServiceTier;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort;
   readonly interactionMode?: ProviderInteractionMode;
@@ -624,9 +645,10 @@ export function buildTurnStartParams(input: {
   }
 
   const config = runtimeModeToThreadConfig(input.runtimeMode);
-  const collaborationMode = buildCodexCollaborationMode({
+  const turnInstructions = buildCodexTurnInstructions({
     ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
     ...(input.model ? { model: input.model } : {}),
+    ...(input.modelName ? { modelName: input.modelName } : {}),
     ...(input.effort ? { effort: input.effort } : {}),
     ...(input.scientAwarenessCapabilities
       ? { scientAwarenessCapabilities: input.scientAwarenessCapabilities }
@@ -642,7 +664,7 @@ export function buildTurnStartParams(input: {
     ...(input.model ? { model: input.model } : {}),
     ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
     ...(input.effort ? { effort: input.effort } : {}),
-    collaborationMode,
+    ...turnInstructions,
   }).pipe(
     Effect.mapError((cause) =>
       CodexErrors.CodexAppServerProtocolParseError.fromSchemaError(
@@ -691,12 +713,16 @@ const decodeCodexThreadResumeMetadata = Schema.decodeUnknownEffect(CodexThreadRe
 
 interface CodexThreadOpenClient {
   readonly raw: {
-    readonly request: (
-      method: "thread/resume",
-      payload: CodexRpc.ClientRequestParamsByMethod["thread/resume"] & {
-        readonly excludeTurns?: boolean;
-      },
-    ) => Effect.Effect<unknown, CodexErrors.CodexAppServerError>;
+    // SCIENT-FORK: also thread/fork (native fork, inclusive through lastTurnId).
+    // Method syntax keeps single-method test fakes assignable.
+    request(
+      method: "thread/resume" | "thread/fork",
+      payload:
+        | (CodexRpc.ClientRequestParamsByMethod["thread/resume"] & {
+            readonly excludeTurns?: boolean;
+          })
+        | CodexRpc.ClientRequestParamsByMethod["thread/fork"],
+    ): Effect.Effect<unknown, CodexErrors.CodexAppServerError>;
   };
   readonly request: (
     method: "thread/start",
@@ -715,6 +741,7 @@ export const openCodexThread = (input: {
   readonly requestedModel: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
   readonly resumeThreadId: string | undefined;
+  readonly forkFrom?: { readonly threadId: string; readonly lastTurnId: string } | undefined;
 }): Effect.Effect<typeof CodexThreadResumeMetadata.Type, CodexErrors.CodexAppServerError> => {
   const resumeThreadId = input.resumeThreadId;
   const startParams = buildThreadStartParams({
@@ -723,6 +750,32 @@ export const openCodexThread = (input: {
     model: input.requestedModel,
     serviceTier: input.serviceTier,
   });
+
+  // SCIENT-FORK: a fork's first session clones the source conversation through
+  // the forked turn. Failure is surfaced, never silently replaced by a fresh
+  // thread: the caller then falls back to a recorded portable handoff.
+  if (resumeThreadId === undefined && input.forkFrom !== undefined) {
+    return input.client.raw
+      .request("thread/fork", {
+        threadId: input.forkFrom.threadId,
+        lastTurnId: input.forkFrom.lastTurnId,
+        ...startParams,
+        excludeTurns: true,
+      })
+      .pipe(
+        Effect.flatMap((response) =>
+          decodeCodexThreadResumeMetadata(response).pipe(
+            Effect.mapError((error) =>
+              CodexErrors.CodexAppServerRequestError.invalidPayload(
+                "thread/fork",
+                "decode-payload",
+                error,
+              ),
+            ),
+          ),
+        ),
+      );
+  }
 
   if (resumeThreadId === undefined) {
     return input.client.request("thread/start", startParams);
@@ -1172,7 +1225,7 @@ function updateSession(
 }
 
 function parseThreadSnapshot(
-  response: EffectCodexSchema.V2ThreadReadResponse | EffectCodexSchema.V2ThreadRollbackResponse,
+  response: EffectCodexSchema.V2ThreadReadResponse,
 ): CodexThreadSnapshot {
   return {
     threadId: response.thread.id,
@@ -1188,6 +1241,19 @@ const CodexThreadHistoryMetadata = Schema.Struct({
     historyMode: Schema.optionalKey(Schema.Literals(["legacy", "paginated"])),
   }),
 });
+
+/**
+ * Thread status as the app-server reports it. `active` is the only value that
+ * proves a turn is still running; `idle` and `notLoaded` both mean this
+ * provider is not executing a turn for the thread. `systemError` proves
+ * nothing, so it stays unknown.
+ */
+const CodexThreadActivity = Schema.Struct({
+  thread: Schema.Struct({
+    status: EffectCodexSchema.V2ThreadReadResponse__ThreadStatus,
+  }),
+});
+const decodeCodexThreadActivity = Schema.decodeUnknownEffect(CodexThreadActivity);
 const CodexTurnsPage = Schema.Struct({
   data: Schema.Array(EffectCodexSchema.V2ThreadReadResponse__Turn),
   nextCursor: Schema.NullOr(Schema.String),
@@ -1210,6 +1276,35 @@ const readCodexHistoryMode = Effect.fn("readCodexHistoryMode")(function* (
     ),
   );
   return metadata.thread.historyMode;
+});
+
+/**
+ * Ask the app-server whether it is still executing a turn for this thread.
+ *
+ * This deliberately crosses the process boundary instead of reading the
+ * runtime's mirrored session state: a cancellation is only "confirmed" when
+ * the provider itself says so. Callers bound this call and treat a failure as
+ * unknown.
+ */
+export const readCodexThreadActivity = Effect.fn("readCodexThreadActivity")(function* (
+  client: CodexHistoryClient,
+  threadId: string,
+): Effect.fn.Return<ProviderTurnEndConfirmation, CodexErrors.CodexAppServerError> {
+  const response = yield* client.raw.request("thread/read", { threadId, includeTurns: false });
+  const activity = yield* decodeCodexThreadActivity(response).pipe(
+    Effect.mapError((error) =>
+      CodexErrors.CodexAppServerRequestError.invalidPayload("thread/read", "decode-payload", error),
+    ),
+  );
+  switch (activity.thread.status.type) {
+    case "active":
+      return "active";
+    case "idle":
+    case "notLoaded":
+      return "ended";
+    default:
+      return "unknown";
+  }
 });
 
 export const readCodexThread = Effect.fn("readCodexThread")(function* (
@@ -1260,11 +1355,8 @@ export const rollbackCodexThread = Effect.fn("rollbackCodexThread")(function* (
   threadId: string,
   numTurns: number,
 ): Effect.fn.Return<CodexThreadSnapshot, CodexErrors.CodexAppServerError> {
-  if ((yield* readCodexHistoryMode(client, threadId)) !== "paginated") {
-    return parseThreadSnapshot(yield* client.request("thread/rollback", { threadId, numTurns }));
-  }
-  // Paginated threads replace history at a turn boundary instead of supporting
-  // the legacy count-based rollback endpoint.
+  // Codex replaces history at a turn boundary. It rejects threads that still
+  // use legacy history, which have no rollback API since Codex 0.156.
   const snapshot = yield* readCodexThread(client, threadId);
   const retainedCount = Math.max(0, snapshot.turns.length - numTurns);
   const firstRemoved = snapshot.turns[retainedCount];
@@ -1283,7 +1375,7 @@ export const makeCodexSessionRuntime = (
 > =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const runtimeScope = yield* Scope.Scope;
+    const runtimeScope = yield* Scope.fork(yield* Scope.Scope, "sequential");
     const crypto = yield* Crypto.Crypto;
     const events = yield* Queue.unbounded<ProviderEvent>();
     const pendingApprovalsRef = yield* Ref.make(new Map<ApprovalRequestId, PendingApproval>());
@@ -1296,6 +1388,9 @@ export const makeCodexSessionRuntime = (
     const collabChildLiveTurnsRef = yield* Ref.make(new Map<string, string>());
     const suppressMemoryConsolidationNotification = makeMemoryConsolidationNotificationFilter();
     const closedRef = yield* Ref.make(false);
+    /** The `additionalContext` of the latest `turn/start`, restored after compaction. */
+    const lastAdditionalContextRef =
+      yield* Ref.make<CodexTurnStartParamsWithCollaborationMode["additionalContext"]>(undefined);
 
     // `~` is not shell-expanded when env vars are set via
     // `child_process.spawn`; `expandHomePath` lets a configured
@@ -1509,7 +1604,7 @@ export const makeCodexSessionRuntime = (
               }
             }),
           ),
-          Effect.catch(() => Effect.void),
+          Effect.ignore,
           Effect.forkIn(runtimeScope),
         );
     });
@@ -1847,6 +1942,35 @@ export const makeCodexSessionRuntime = (
         }
       });
 
+    /**
+     * Compaction rebuilds history from user messages and Codex's own context,
+     * which drops our `additionalContext` messages. Codex only resends an
+     * entry when its value changes, so without this the T3 context would stay
+     * lost until the model or effort changed. Awaited so the context is back
+     * before later notifications from the same turn are handled. Drop this if
+     * Codex enables its `retain_client_developer_messages` feature by default.
+     */
+    const restoreAdditionalContext = (threadId: string) =>
+      Effect.gen(function* () {
+        const context = yield* Ref.get(lastAdditionalContextRef);
+        if (!context) return;
+        yield* client.request("thread/inject_items", {
+          threadId,
+          items: Object.entries(context).map(([key, entry]) => ({
+            type: "message",
+            role: "developer",
+            content: [{ type: "input_text", text: `<${key}>${entry.value}</${key}>` }],
+          })),
+        });
+      }).pipe(
+        Effect.timeout("10 seconds"),
+        Effect.catch((cause) =>
+          Effect.logWarning("Failed to restore Codex additional context after compaction.", {
+            cause,
+          }),
+        ),
+      );
+
     const handleRawNotification = (notification: CodexServerNotification) =>
       Effect.gen(function* () {
         const isMemoryConsolidationNotification =
@@ -1931,6 +2055,14 @@ export const makeCodexSessionRuntime = (
 
         if (isMemoryConsolidationNotification) {
           return;
+        }
+
+        if (
+          notification.method === "item/completed" &&
+          notification.params.item.type === "contextCompaction" &&
+          notification.params.threadId === suppressRootId
+        ) {
+          yield* restoreAdditionalContext(notification.params.threadId);
         }
 
         let requestId: ApprovalRequestId | undefined;
@@ -2431,6 +2563,7 @@ export const makeCodexSessionRuntime = (
         requestedModel,
         serviceTier: options.serviceTier,
         resumeThreadId: readResumeCursorThreadId(options.resumeCursor),
+        forkFrom: options.forkFrom,
       });
 
       const providerThreadId = opened.thread.id;
@@ -2458,12 +2591,20 @@ export const makeCodexSessionRuntime = (
     });
 
     const close = Effect.gen(function* () {
-      const alreadyClosed = yield* Ref.getAndSet(closedRef, true);
-      if (alreadyClosed) {
-        return;
-      }
+      yield* Ref.set(closedRef, true);
       yield* settlePendingApprovals("cancel");
       yield* settlePendingUserInputs({});
+      yield* Scope.close(runtimeScope, Exit.void);
+      yield* child.exitCode.pipe(
+        // Signal termination has no numeric exit code. It still proves shutdown
+        // when the process handle has observed exit; a live/unknown child does not.
+        Effect.catch((error) =>
+          child.isRunning.pipe(
+            Effect.flatMap((running) => (running ? Effect.fail(error) : Effect.void)),
+          ),
+        ),
+        Effect.orDie,
+      );
       yield* updateSession(sessionRef, {
         status: "closed",
         activeTurnId: undefined,
@@ -2473,7 +2614,6 @@ export const makeCodexSessionRuntime = (
           Effect.logError("Failed to emit Codex session closed event.", { cause }),
         ),
       );
-      yield* Scope.close(runtimeScope, Exit.void);
       yield* Queue.shutdown(serverNotifications);
       yield* Queue.shutdown(events);
     });
@@ -2500,12 +2640,15 @@ export const makeCodexSessionRuntime = (
           const normalizedModel = normalizeCodexModelSlug(
             input.model ?? (yield* Ref.get(sessionRef)).model,
           );
+          const models = options.models ? yield* options.models : [];
+          const modelName = models.find((model) => model.slug === normalizedModel)?.name;
           const params = yield* buildTurnStartParams({
             threadId: providerThreadId,
             runtimeMode: options.runtimeMode,
             ...(input.input ? { prompt: input.input } : {}),
             ...(input.attachments ? { attachments: input.attachments } : {}),
             ...(normalizedModel ? { model: normalizedModel } : {}),
+            ...(modelName ? { modelName } : {}),
             ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
             ...(input.effort ? { effort: input.effort } : {}),
             ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
@@ -2513,6 +2656,7 @@ export const makeCodexSessionRuntime = (
               ? { scientAwarenessCapabilities: options.scientAwarenessCapabilities }
               : {}),
           });
+          yield* Ref.set(lastAdditionalContextRef, params.additionalContext);
           const rawResponse = yield* client.raw.request("turn/start", params);
           const response = yield* decodeV2TurnStartResponse(rawResponse).pipe(
             Effect.mapError((error) =>
@@ -2587,6 +2731,10 @@ export const makeCodexSessionRuntime = (
       readThread: Effect.gen(function* () {
         const providerThreadId = yield* readProviderThreadId;
         return yield* readCodexThread(client, providerThreadId);
+      }),
+      readThreadActivity: Effect.gen(function* () {
+        const providerThreadId = yield* readProviderThreadId;
+        return yield* readCodexThreadActivity(client, providerThreadId);
       }),
       rollbackThread: (numTurns) =>
         Effect.gen(function* () {

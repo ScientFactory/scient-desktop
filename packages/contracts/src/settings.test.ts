@@ -24,6 +24,31 @@ const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
+// SCIENT-FORK:START
+describe("ServerSettings thread sections", () => {
+  it("defaults to an empty catalog with General first, and round-trips a layout", () => {
+    const decoded = decodeServerSettings({});
+    expect(decoded.threadSections).toEqual([]);
+    expect(decoded.threadSectionsGeneralIndex).toBe(0);
+    expect(decoded.threadSectionsDeleteEmptyAfterDays).toBeNull();
+    const input = {
+      threadSections: [
+        { id: "research", name: "Research", order: 0 },
+        { id: "perma", name: "Perma", order: 1 },
+      ],
+      threadSectionsGeneralIndex: 1,
+      threadSectionsDeleteEmptyAfterDays: 7,
+    };
+    expect(encodeServerSettings(decodeServerSettings(input))).toMatchObject(input);
+    expect(decodeServerSettingsPatch(input)).toEqual(input);
+  });
+
+  it("leaves the layout alone when a patch omits it", () => {
+    expect(decodeServerSettingsPatch({})).toEqual({});
+  });
+});
+// SCIENT-FORK:END
+
 describe("storage cleanup settings", () => {
   it("keeps cleanup disabled for existing installations", () => {
     expect(decodeServerSettings({}).worktreeCleanup).toBeNull();
@@ -107,6 +132,19 @@ describe("ServerSettings default permissions", () => {
         projectSettingsOverrides: { project: { defaultRuntimeMode: "unsupported" } },
       }),
     ).toThrow();
+  });
+});
+
+describe("ServerSettings Cursor account usage", () => {
+  it("enables Keychain usage by default while preserving an explicit opt-out", () => {
+    expect(decodeServerSettings({}).cursorKeychainUsageEnabled).toBe(true);
+    expect(DEFAULT_SERVER_SETTINGS.cursorKeychainUsageEnabled).toBe(true);
+    expect(
+      decodeServerSettings({ cursorKeychainUsageEnabled: false }).cursorKeychainUsageEnabled,
+    ).toBe(false);
+    expect(decodeServerSettingsPatch({ cursorKeychainUsageEnabled: false })).toEqual({
+      cursorKeychainUsageEnabled: false,
+    });
   });
 });
 
@@ -357,6 +395,23 @@ describe("ClientSettings diff colors", () => {
   it("rejects unsupported palettes", () => {
     expect(() => decodeClientSettings({ diffColorScheme: "purple-yellow" })).toThrow();
     expect(() => decodeClientSettingsPatch({ diffColorScheme: "purple-yellow" })).toThrow();
+  });
+});
+
+describe("ClientSettings chat width", () => {
+  it("keeps the comfortable width for existing settings without a saved width", () => {
+    expect(decodeClientSettings({}).chatWidth).toBe("comfortable");
+  });
+
+  it.each(["comfortable", "wide", "full"])("round-trips the %s width", (chatWidth) => {
+    const settings = decodeClientSettings({ chatWidth });
+    expect(encodeClientSettings(settings).chatWidth).toBe(chatWidth);
+    expect(decodeClientSettingsPatch({ chatWidth }).chatWidth).toBe(chatWidth);
+  });
+
+  it("rejects unsupported widths", () => {
+    expect(() => decodeClientSettings({ chatWidth: "huge" })).toThrow();
+    expect(() => decodeClientSettingsPatch({ chatWidth: "huge" })).toThrow();
   });
 });
 

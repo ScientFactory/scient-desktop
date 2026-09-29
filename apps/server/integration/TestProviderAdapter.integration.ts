@@ -27,6 +27,7 @@ import type {
 
 export interface TestTurnResponse {
   readonly events: ReadonlyArray<FixtureProviderRuntimeEvent>;
+  readonly keepTurnOpen?: boolean;
   readonly mutateWorkspace?: (input: {
     readonly cwd: string;
     readonly turnCount: number;
@@ -367,7 +368,9 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
           turns: [...state.snapshot.turns, nextTurn],
         };
 
-        if (deferredTurnCompletedEvents.length === 0) {
+        if (response.keepTurnOpen) {
+          // Leave execution active for interrupt/recovery integration tests.
+        } else if (deferredTurnCompletedEvents.length === 0) {
           yield* emit({
             type: "turn.completed",
             eventId: nextEventId(input.threadId),

@@ -20,7 +20,9 @@ export type OperationCapability =
   | "compute:inventory"
   | "skills:read"
   | "sources:read"
-  | "sources:write";
+  | "sources:write"
+  /** Read-only access to threads in the calling thread's project. */
+  | "threads:read";
 
 /** Behavior and ownership, independent of MCP names or provider runtimes. */
 export interface OperationDefinition {

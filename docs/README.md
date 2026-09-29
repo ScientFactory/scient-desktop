@@ -99,6 +99,7 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Scient skills core](./internals/scient-skills.md)
 - [Scient Sources foundation](./internals/scient-sources.md)
 - [Scient thread queue and upstream retirement seam](./internals/scient-thread-queue.md)
+- [Scient sidebar sections and New thread row](./internals/scient-sidebar-sections.md)
 - [Scient voice architecture](./internals/scient-voice.md)
 - [Custom model connections](./internals/custom-models.md)
 - [Scient mobile release hold](./internals/scient-mobile-release-hold.md)

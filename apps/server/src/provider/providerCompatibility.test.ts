@@ -15,17 +15,22 @@ import { ProviderRegistry } from "./Services/ProviderRegistry.ts";
 import { ProviderInstanceRegistry } from "./Services/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "./ProviderDriver.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "./providerMaintenance.ts";
+import { BUILT_IN_DRIVERS } from "./builtInDrivers.ts";
 import * as Schema from "effect/Schema";
+import { satisfiesSemverRange } from "@t3tools/shared/semver";
 import {
   applyProviderCompatibility,
   ProviderCompatibilityPolicy,
+  releaseScopedCompatibilityPolicies,
+  resolveManifestProviderCompatibility,
   resolveProviderCompatibility,
 } from "./providerCompatibility.ts";
+import preReleaseScopingCompatibility from "./testFixtures/pre-release-scoping-compatibility.json" with { type: "json" };
 
 const driver = ProviderDriverKind.make("codex");
 const policy: ProviderCompatibilityPolicy = {
   driver,
-  t3CodeRange: ">=0.0.42 <0.1.0",
+  t3CodeRange: ">=0.0.42",
   recommendedVersion: "2.0.0",
   recommendedRange: ">=2.0.0 <3.0.0",
   ranges: [
@@ -51,6 +56,207 @@ const provider: ServerProvider = {
 };
 
 describe("provider compatibility", () => {
+  it("bundles a compatibility policy for every versioned built-in harness", () => {
+    for (const builtIn of BUILT_IN_DRIVERS) {
+      // Droid is an arbitrary external ACP runtime. Its native release channel
+      // does not have a stable semver contract that can be classified here.
+      if (builtIn.driverKind === "droid") continue;
+      assert.isDefined(
+        resolveProviderCompatibility(
+          ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
+          builtIn.driverKind,
+          null,
+        ),
+        `Missing bundled compatibility policy for ${builtIn.driverKind}`,
+      );
+    }
+  });
+
+  it("uses Scient's documented Pi runtime floor", () => {
+    const pi = ProviderDriverKind.make("pi");
+    for (const [version, expected] of [
+      ["0.84.3", "unsupported"],
+      ["0.84.4", "supported"],
+      ["0.85.1", "supported"],
+    ] as const) {
+      assert.strictEqual(
+        resolveProviderCompatibility(
+          ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
+          pi,
+          version,
+        )?.status,
+        expected,
+      );
+    }
+  });
+
+  it("supports Codex 0.156 and marks Codex without Thread.projectId broken", () => {
+    const bundled = ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility;
+    for (const [t3CodeVersion, codexVersion, expected] of [
+      ["0.0.42", "0.148.0", "broken"],
+      ["0.0.42", "0.149.0", "unsupported"],
+      ["0.0.42", "0.155.0", "unsupported"],
+      ["0.0.42", "0.156.0", "supported"],
+      ["0.0.43-nightly.20260924.2200", "0.153.3", "unsupported"],
+      ["0.0.43-nightly.20260924.2200", "0.156.1", "supported"],
+      ["0.6.18", "0.155.1", "unsupported"],
+      ["0.6.18", "0.156.0", "supported"],
+    ] as const) {
+      assert.strictEqual(
+        resolveProviderCompatibility(bundled, driver, codexVersion, t3CodeVersion)?.status,
+        expected,
+        `T3 Code ${t3CodeVersion} with Codex ${codexVersion}`,
+      );
+    }
+  });
+
+  it("keeps the Codex protocol floor of releases that predate the 0.156 protocol", () => {
+    const bundled = ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility;
+    for (const [t3CodeVersion, codexVersion, expected] of [
+      ["0.6.17", "0.128.0", "broken"],
+      ["0.6.17", "0.129.0", "supported"],
+      ["0.6.17", "0.155.1", "supported"],
+      ["0.6.17", "0.157.1", "supported"],
+    ] as const) {
+      assert.strictEqual(
+        resolveProviderCompatibility(bundled, driver, codexVersion, t3CodeVersion)?.status,
+        expected,
+        `Scient ${t3CodeVersion} with Codex ${codexVersion}`,
+      );
+    }
+  });
+
+  it("keeps what releases before release scoping resolve from main unchanged", () => {
+    // 0.6.17 and earlier apply every fetched policy by literal version match.
+    // Changing this fixture changes installed builds; do it only on purpose.
+    const resolved = preReleaseScopingCompatibility.policies.map(({ driver }) => {
+      const policy = ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility?.find(
+        (entry) => entry.driver === driver && satisfiesSemverRange("0.6.17", entry.t3CodeRange),
+      );
+      if (!policy) return { driver };
+      const { t3CodeRange: _range, ...rest } = policy;
+      return rest;
+    });
+    assert.deepStrictEqual(resolved, preReleaseScopingCompatibility.policies);
+  });
+
+  it("applies only fetched policies that name a Scient release to release builds", () => {
+    const upstream = { ...policy, t3CodeRange: ">=0.0.42" };
+    const upstreamBounded = { ...policy, t3CodeRange: ">=0.0.42 <1.0.0" };
+    const scoped = { ...policy, t3CodeRange: ">=0.6.17 <0.7.0" };
+    const unscopedUpper = { ...policy, t3CodeRange: "<0.6.18" };
+    const upstreamUpper = { ...policy, t3CodeRange: "<0.1.0" };
+    assert.deepStrictEqual(
+      releaseScopedCompatibilityPolicies(
+        [upstream, upstreamBounded, scoped, unscopedUpper, upstreamUpper],
+        "0.6.18",
+      ),
+      [scoped, unscopedUpper],
+    );
+    assert.deepStrictEqual(releaseScopedCompatibilityPolicies([upstream, scoped], "0.0.42"), [
+      upstream,
+      scoped,
+    ]);
+  });
+
+  it("lets a release keep its bundled policy when main changes an upstream policy", () => {
+    const bundled = [{ ...policy, t3CodeRange: ">=0.0.42" }];
+    const fetched = [
+      {
+        ...policy,
+        t3CodeRange: ">=0.0.42",
+        ranges: [{ range: ">=0.0.0", status: "broken" as const }],
+        recommendedVersion: undefined,
+        recommendedRange: undefined,
+      },
+    ].map(({ recommendedVersion: _version, recommendedRange: _range, ...entry }) => entry);
+    const resolve = (t3CodeVersion: string) =>
+      resolveManifestProviderCompatibility({
+        manifest: fetched,
+        bundled,
+        driver,
+        version: "2.0.0",
+        t3CodeVersion,
+      })?.status;
+    assert.strictEqual(resolve("0.6.18"), "supported");
+    assert.strictEqual(resolve("0.0.42"), "broken");
+  });
+
+  it("matches development builds as newer than every Scient release", () => {
+    const scoped = (t3CodeRange: string, status: "supported" | "broken") => ({
+      ...policy,
+      t3CodeRange,
+      recommendedVersion: undefined,
+      recommendedRange: undefined,
+      ranges: [{ range: ">=0.0.0", status }],
+    });
+    const policies = [scoped("<0.6.18", "supported"), scoped(">=0.6.18", "broken")].map(
+      ({ recommendedVersion: _version, recommendedRange: _range, ...entry }) => entry,
+    );
+    for (const [t3CodeVersion, expected] of [
+      ["0.0.42", "broken"],
+      ["0.0.43-nightly.20260924.2200", "broken"],
+      ["0.6.17", "supported"],
+      ["0.6.18", "broken"],
+      ["0.7.0", "broken"],
+    ] as const) {
+      assert.strictEqual(
+        resolveProviderCompatibility(policies, driver, "1.0.0", t3CodeVersion)?.status,
+        expected,
+        `build ${t3CodeVersion}`,
+      );
+    }
+  });
+
+  it("compares Cursor build dates without treating semver prereleases as stable", () => {
+    const cursor = ProviderDriverKind.make("cursor");
+    const cursorPolicy: ProviderCompatibilityPolicy = {
+      driver: cursor,
+      t3CodeRange: policy.t3CodeRange,
+      ranges: [
+        { range: "<2026.05.09", status: "unsupported" },
+        { range: ">=2026.05.09", status: "supported" },
+      ],
+    };
+    for (const [version, expected] of [
+      ["2026.05.08-a1b2c3d", "unsupported"],
+      ["2026.05.09-a1b2c3d", "supported"],
+      ["2026.09.22-f2b0fcd", "supported"],
+      ["2026.05.09", "supported"],
+      ["2026.05.09-beta.1", "unknown"],
+    ] as const) {
+      assert.strictEqual(
+        resolveProviderCompatibility([cursorPolicy], cursor, version)?.status,
+        expected,
+      );
+    }
+    assert.strictEqual(
+      resolveProviderCompatibility([policy], driver, "2.0.0-a1b2c3d")?.status,
+      "unknown",
+    );
+  });
+
+  it("recognizes Antigravity semver release tags while keeping dated candidates unknown", () => {
+    const antigravity = ProviderDriverKind.make("antigravity");
+    const taggedPolicy = {
+      ...policy,
+      driver: antigravity,
+      ranges: [{ range: "=2.0.0", status: "supported" as const }],
+    };
+    for (const [version, expected] of [
+      ["agy_acp_server_2.0.0", "supported"],
+      ["2.0.0", "supported"],
+      ["agy_acp_server_2.0.1", "unknown"],
+      ["agy_acp_server_2.0.0-beta.1", "unknown"],
+      ["agy_acp_server_20260818_01_RC01", "unknown"],
+    ] as const) {
+      assert.strictEqual(
+        resolveProviderCompatibility([taggedPolicy], antigravity, version)?.status,
+        expected,
+      );
+    }
+  });
+
   it("classifies boundaries and treats unlisted versions and release tags as unknown", () => {
     for (const [version, expected] of [
       ["0.9.9", "broken"],
@@ -69,7 +275,14 @@ describe("provider compatibility", () => {
       resolveProviderCompatibility([policy], driver, "0.9.0")?.message,
       "This provider version is known to be incompatible with this Scient release. Use 2.0.0.",
     );
-    assert.isUndefined(resolveProviderCompatibility([policy], driver, "0.9.0", "0.1.0"));
+    assert.isUndefined(
+      resolveProviderCompatibility(
+        [{ ...policy, t3CodeRange: ">=0.7.0" }],
+        driver,
+        "0.9.0",
+        "0.6.17",
+      ),
+    );
   });
 
   it("supports every driver without inventing policies for uncovered adapters", () => {
@@ -100,7 +313,7 @@ describe("provider compatibility", () => {
     assert.strictEqual(supported.status, "error");
     assert.strictEqual(supported.message, "Authentication failed");
     assert.strictEqual(
-      applyProviderCompatibility(supported, [{ ...policy, t3CodeRange: ">=9.0.0" }], [policy])
+      applyProviderCompatibility(supported, [{ ...policy, t3CodeRange: "<0.0.42" }], [policy])
         .compatibilityAdvisory?.status,
       "broken",
     );
@@ -122,7 +335,7 @@ describe("provider compatibility", () => {
     assert.doesNotThrow(() => decode(policy));
     const prefixed = decode({
       ...policy,
-      t3CodeRange: ">=v0.0.42 <v0.1",
+      t3CodeRange: ">=v0.6 || <v0.1",
       recommendedRange: "^v2",
       ranges: [{ range: ">=v2.0 <v3", status: "supported" }],
     });

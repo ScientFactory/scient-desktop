@@ -12,6 +12,8 @@ import {
   syncDocumentWindowControlsOverlayClass,
 } from "./lib/windowControlsOverlay";
 import { AppRoot } from "./AppRoot";
+import { requestDesktopReload } from "./lib/desktopReload";
+import { toastManager } from "./components/ui/toast";
 import { clearChunkReloadGuard, reloadOnceForChunkLoadError } from "./lib/chunkReloadGuard";
 
 // Electron loads the app from a file-backed shell, so hash history avoids path resolution issues.
@@ -22,6 +24,18 @@ const router = getRouter(history);
 if (isElectron) {
   syncDocumentElectronPlatformClasses(navigator.platform);
   syncDocumentWindowControlsOverlayClass();
+  window.desktopBridge?.onMenuAction((action) => {
+    if (action === "reload-main" || action === "force-reload-main") {
+      requestDesktopReload(action === "force-reload-main");
+    }
+  });
+  window.desktopBridge?.onReloadBlocked?.(() => {
+    toastManager.add({
+      type: "warning",
+      title: "Reload paused",
+      description: "A file has pending changes. Save or resolve them, then try again.",
+    });
+  });
 }
 
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined;

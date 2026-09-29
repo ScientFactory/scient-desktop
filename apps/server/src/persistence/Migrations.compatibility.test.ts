@@ -33,6 +33,10 @@ for (const previousId of [49, 50, 52] as const) {
                   [54, "ProjectionThreadMessageContext"],
                   [55, "ProjectionThreadTitleState"],
                   [56, "PullRequestFilesViewed"],
+                  [57, "ProjectionThreadsAutoSettleDisabledAt"],
+                  // SCIENT-FORK:START
+                  [58, "ProjectionThreadSections"],
+                  // SCIENT-FORK:END
                 ]
               : [
                   [51, "ProjectionThreadBranchPullRequest"],
@@ -41,6 +45,10 @@ for (const previousId of [49, 50, 52] as const) {
                   [54, "ProjectionThreadMessageContext"],
                   [55, "ProjectionThreadTitleState"],
                   [56, "PullRequestFilesViewed"],
+                  [57, "ProjectionThreadsAutoSettleDisabledAt"],
+                  // SCIENT-FORK:START
+                  [58, "ProjectionThreadSections"],
+                  // SCIENT-FORK:END
                 ],
           );
           assert.deepStrictEqual(
@@ -57,6 +65,9 @@ for (const previousId of [49, 50, 52] as const) {
           assert.ok(columns.some((column) => column.name === "branch_pull_request_json"));
           assert.ok(columns.some((column) => column.name === "active_order_key"));
           assert.ok(columns.some((column) => column.name === "title_state_json"));
+          // SCIENT-FORK:START
+          assert.ok(columns.some((column) => column.name === "section_id"));
+          // SCIENT-FORK:END
           assert.deepStrictEqual(yield* sql`SELECT * FROM projection_thread_pull_requests`, []);
           const viewedFileColumns = yield* sql<{
             name: string;
@@ -86,6 +97,10 @@ it.layer(Layer.fresh(NodeSqliteClient.layerMemory()))("fresh migration compatibi
         { migration_id: 54, name: "ProjectionThreadMessageContext" },
         { migration_id: 55, name: "ProjectionThreadTitleState" },
         { migration_id: 56, name: "PullRequestFilesViewed" },
+        { migration_id: 57, name: "ProjectionThreadsAutoSettleDisabledAt" },
+        // SCIENT-FORK:START
+        { migration_id: 58, name: "ProjectionThreadSections" },
+        // SCIENT-FORK:END
       ]);
       assert.deepStrictEqual(yield* sql`SELECT * FROM projection_thread_pull_requests`, []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM pull_request_files_viewed`, []);

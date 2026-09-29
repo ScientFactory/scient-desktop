@@ -17,6 +17,7 @@ import {
 import { resolveWorktreeScientDevHome } from "@t3tools/shared/devHome";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
+import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import {
   buildTailscaleHttpsBaseUrl,
   DEFAULT_TAILSCALE_SERVE_PORT,
@@ -325,7 +326,7 @@ const makePairServerConfig = Effect.fn(function* (input: {
     otlpTracesExport: DEFAULT_SIGNAL_EXPORT,
     otlpMetricsExport: DEFAULT_SIGNAL_EXPORT,
     otlpLogsExport: DEFAULT_SIGNAL_EXPORT,
-    otlpServiceName: "t3-server",
+    otelEnvironment: OtelEnvironment.none,
     mode: "web",
     port: state.port,
     host: state.host,

@@ -387,7 +387,7 @@ describe("ClaudeInlineSetup", () => {
     expect(markup).not.toContain("Sign in to Claude");
   });
 
-  it("offers optional repair for a healthy managed Claude runtime", () => {
+  it("leaves repair of a healthy managed Claude runtime to Settings", () => {
     const markup = render(
       provider({
         status: "ready",
@@ -418,7 +418,8 @@ describe("ClaudeInlineSetup", () => {
       }),
     );
 
-    expect(markup).toContain("Repair</button>");
+    expect(markup).toContain("Claude is ready");
+    expect(markup).not.toContain("Repair</button>");
   });
 
   it("retries the account type that actually failed and offers the other route", () => {

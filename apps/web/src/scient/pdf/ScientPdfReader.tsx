@@ -144,6 +144,7 @@ function PdfPasswordPrompt(props: {
 }
 
 export function ScientPdfReader(props: {
+  readonly readerScope?: string | undefined;
   readonly actions?: PdfSourceActions;
   readonly refreshKey?: number;
   readonly resolver?: PdfSourceResolver;
@@ -179,11 +180,12 @@ export function ScientPdfReader(props: {
       </div>
     );
   }
-  const documentKey = pdfReaderSessionDocumentKey(props.source);
+  const documentKey = pdfReaderSessionDocumentKey(props.source, props.readerScope);
   return (
     <LoadedScientPdfReader
       key={documentKey}
       documentKey={documentKey}
+      legacyDocumentKey={pdfReaderSessionDocumentKey(props.source)}
       source={props.source}
       sourceUrl={asset.url}
       sourceExpiresAt={asset.expiresAt}
@@ -197,6 +199,7 @@ export function ScientPdfReader(props: {
 function LoadedScientPdfReader(props: {
   readonly actions: PdfSourceActions;
   readonly documentKey: string;
+  readonly legacyDocumentKey: string;
   readonly source: PdfSourceDescriptor;
   readonly refreshSource: () => void;
   readonly sourceExpiresAt: number;
@@ -205,9 +208,14 @@ function LoadedScientPdfReader(props: {
 }) {
   const [container, setContainer] = useState<HTMLDivElement | null>(null);
   const [viewerElement, setViewerElement] = useState<HTMLDivElement | null>(null);
-  const [sidebar, setSidebarState] = useState<PdfSidebarMode>(
-    () => pdfReaderSessionStore.get(props.documentKey).sidebar,
-  );
+  const [sidebar, setSidebarState] = useState<PdfSidebarMode>(() => {
+    // Adopt the old document-wide position once, then keep this view independent.
+    pdfReaderSessionStore.seed(
+      props.documentKey,
+      pdfReaderSessionStore.get(props.legacyDocumentKey),
+    );
+    return pdfReaderSessionStore.get(props.documentKey).sidebar;
+  });
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [savingCopy, setSavingCopy] = useState(false);

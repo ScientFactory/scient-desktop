@@ -46,6 +46,48 @@ import {
   wslUncPathToLinuxPath,
 } from "../../wsl/wslPathParsing.ts";
 
+/** Only the app renderer may request a reload of its owning window. */
+export const reloadMainWindow = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.RELOAD_MAIN_WINDOW_CHANNEL,
+  payload: Schema.Boolean,
+  result: Schema.Boolean,
+  handler: Effect.fn("desktop.ipc.window.reloadMainWindow")(function* (ignoreCache, event) {
+    const electronWindow = yield* ElectronWindow.ElectronWindow;
+    const main = yield* electronWindow.main;
+    if (
+      Option.isNone(main) ||
+      main.value.isDestroyed() ||
+      main.value.webContents.isDestroyed() ||
+      main.value.webContents.id !== event?.sender.id
+    ) {
+      return false;
+    }
+    const contents = main.value.webContents;
+    // A save can become pending after the renderer's last check. Leave the
+    // beforeunload veto intact and report it instead of discarding local edits.
+    const blocked = () => {
+      contents.send(IpcChannels.RELOAD_BLOCKED_CHANNEL);
+      cleanup();
+    };
+    const finished = () => cleanup();
+    const cleanup = () => {
+      contents.off("will-prevent-unload", blocked);
+      contents.off("did-finish-load", finished);
+    };
+    contents.on("will-prevent-unload", blocked);
+    contents.on("did-finish-load", finished);
+    yield* Effect.forkDetach(Effect.sleep("5 seconds").pipe(Effect.tap(Effect.sync(cleanup))));
+    try {
+      if (ignoreCache) contents.reloadIgnoringCache();
+      else contents.reload();
+    } catch (error) {
+      cleanup();
+      throw error;
+    }
+    return true;
+  }),
+});
+
 const ContextMenuPosition = Schema.Struct({
   x: Schema.Number,
   y: Schema.Number,

@@ -15,6 +15,7 @@ import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import type {
   ProviderManagedRuntimeActions,
@@ -27,6 +28,7 @@ import {
   ProviderRegistryRefreshError,
   type ProviderRegistryShape,
 } from "../../provider/Services/ProviderRegistry.ts";
+import { ProviderActivity, type ProviderActivityShape } from "./ProviderActivity.ts";
 import {
   make as makeLifecycleCoordinator,
   ProviderLifecycleCoordinator,
@@ -85,6 +87,16 @@ const systemProvider: ServerProvider = {
   connection: { ...provider.connection!, runtime: systemRuntime },
 };
 
+const ACTIVE_STATUSES = new Set([
+  "preparing",
+  "downloading",
+  "verifying",
+  "installing",
+  "testing",
+  "activating",
+  "removing",
+]);
+
 const yieldUntil = <A>(
   effect: Effect.Effect<A>,
   predicate: (value: A) => boolean,
@@ -108,6 +120,7 @@ function makeHarness(
     readonly beforeSetRuntime?: (runtime: ProviderRuntimeSummary | null) => Effect.Effect<void>;
     readonly afterSetRuntime?: (runtime: ProviderRuntimeSummary | null) => Effect.Effect<void>;
     readonly useProductionLayer?: boolean;
+    readonly isBusy?: ProviderActivityShape["isBusy"];
   } = {},
 ) {
   return Effect.gen(function* () {
@@ -181,6 +194,9 @@ function makeHarness(
           Effect.andThen(coordinator.release(input)),
         ),
     });
+    const activity = ProviderActivity.of({
+      isBusy: hooks.isBusy ?? (() => Effect.succeed(false)),
+    });
     const managerScope = yield* Scope.make();
     yield* Effect.addFinalizer(() => Scope.close(managerScope, Exit.void));
     const manager = hooks.useProductionLayer
@@ -190,6 +206,7 @@ function makeHarness(
               Layer.mergeAll(
                 Layer.succeed(ProviderRegistry, registry),
                 Layer.succeed(ProviderLifecycleCoordinator, trackedCoordinator),
+                Layer.succeed(ProviderActivity, activity),
                 NodeServices.layer,
               ),
             ),
@@ -201,6 +218,7 @@ function makeHarness(
       : yield* make().pipe(
           Effect.provideService(ProviderRegistry, registry),
           Effect.provideService(ProviderLifecycleCoordinator, trackedCoordinator),
+          Effect.provideService(ProviderActivity, activity),
           Effect.provide(NodeServices.layer),
           Scope.provide(managerScope),
         );
@@ -248,13 +266,13 @@ describe("ProviderRuntimeManager", () => {
           ),
         ),
         plan: () => Effect.succeed(installPlan()),
-        run: (_action, _revision, report) =>
+        run: (_action, _revision, report, awaitActivationWindow = Effect.void) =>
           report({
             status: "downloading",
             message: "Downloading.",
             downloadedBytes: 50,
             totalBytes: 100,
-          }).pipe(Effect.andThen(Ref.set(installed, true))),
+          }).pipe(Effect.andThen(awaitActivationWindow), Effect.andThen(Ref.set(installed, true))),
       };
       const secondProvider: ServerProvider = {
         ...provider,
@@ -450,13 +468,263 @@ describe("ProviderRuntimeManager", () => {
     }),
   );
 
+  it.effect("stages while turns run and switches only once the provider is idle", () =>
+    Effect.gen(function* () {
+      const busy = yield* Ref.make(true);
+      const installed = yield* Ref.make(false);
+      const actions: ProviderManagedRuntimeActions = {
+        getSummary: Effect.succeed(systemRuntime),
+        plan: () => Effect.succeed(installPlan()),
+        run: (_action, _revision, report, awaitActivationWindow = Effect.void) =>
+          report({ status: "testing", message: "Testing." }).pipe(
+            Effect.andThen(awaitActivationWindow),
+            Effect.andThen(Ref.set(installed, true)),
+          ),
+      };
+      const { manager, providersRef, stopCountRef } = yield* makeHarness(
+        actions,
+        [systemProvider],
+        undefined,
+        undefined,
+        undefined,
+        { isBusy: () => Ref.get(busy) },
+      );
+      yield* manager.start({
+        instanceId: INSTANCE,
+        action: "install",
+        catalogRevision: "reviewed:1",
+      });
+
+      const waiting = yield* yieldUntil(
+        Ref.get(providersRef),
+        (providers) => providers[0]?.connection?.runtime?.operation?.waitingForIdle === true,
+      );
+      assert.strictEqual(waiting[0]?.connection?.runtime?.operation?.status, "activating");
+      assert.match(
+        waiting[0]?.connection?.runtime?.operation?.message ?? "",
+        /finish its running work/u,
+      );
+      yield* TestClock.adjust("5 seconds");
+      assert.strictEqual(yield* Ref.get(installed), false);
+      assert.strictEqual(yield* Ref.get(stopCountRef), 0);
+
+      yield* Ref.set(busy, false);
+      yield* TestClock.adjust("1 second");
+      yield* TestClock.adjust("1 second");
+      yield* yieldUntil(
+        Ref.get(providersRef),
+        (providers) => providers[0]?.connection?.runtime?.operation?.status === "succeeded",
+      );
+      assert.strictEqual(yield* Ref.get(installed), true);
+      assert.strictEqual(yield* Ref.get(stopCountRef), 1);
+    }),
+  );
+
+  it.effect("cancels a staged runtime that is still waiting for idle", () =>
+    Effect.gen(function* () {
+      const installed = yield* Ref.make(false);
+      const actions: ProviderManagedRuntimeActions = {
+        getSummary: Effect.succeed(systemRuntime),
+        plan: () => Effect.succeed(installPlan()),
+        run: (_action, _revision, _report, awaitActivationWindow = Effect.void) =>
+          awaitActivationWindow.pipe(Effect.andThen(Ref.set(installed, true))),
+      };
+      const { manager, providersRef, stopCountRef } = yield* makeHarness(
+        actions,
+        [systemProvider],
+        undefined,
+        undefined,
+        undefined,
+        { isBusy: () => Effect.succeed(true) },
+      );
+      const started = yield* manager.start({
+        instanceId: INSTANCE,
+        action: "install",
+        catalogRevision: "reviewed:1",
+      });
+      const waiting = yield* yieldUntil(
+        Ref.get(providersRef),
+        (providers) => providers[0]?.connection?.runtime?.operation?.waitingForIdle === true,
+      );
+      const operationId = waiting[0]?.connection?.runtime?.operation?.operationId ?? "";
+      assert.isDefined(started);
+      yield* manager.cancel({ instanceId: INSTANCE, operationId });
+      yield* yieldUntil(
+        Ref.get(providersRef),
+        (providers) => providers[0]?.connection?.runtime?.operation?.status === "cancelled",
+      );
+      assert.strictEqual(yield* Ref.get(installed), false);
+      assert.strictEqual(yield* Ref.get(stopCountRef), 0);
+    }),
+  );
+
+  it.effect("switches back to a recovered runtime only once the provider is idle", () =>
+    Effect.gen(function* () {
+      const busy = yield* Ref.make(true);
+      const recovered = yield* Ref.make(true);
+      const actions: ProviderManagedRuntimeActions = {
+        getSummary: Effect.succeed(systemRuntime),
+        plan: () => Effect.succeed(installPlan()),
+        run: () => Effect.die("must not run"),
+        selectionChanged: Ref.get(recovered),
+      };
+      const { manager, reloadCountRef } = yield* makeHarness(
+        actions,
+        [systemProvider],
+        undefined,
+        undefined,
+        undefined,
+        { isBusy: () => Ref.get(busy) },
+      );
+      const reselecting = yield* manager.reselect(INSTANCE).pipe(Effect.forkChild);
+      yield* TestClock.adjust("5 seconds");
+      assert.strictEqual(yield* Ref.get(reloadCountRef), 0);
+
+      yield* Ref.set(busy, false);
+      yield* TestClock.adjust("1 second");
+      yield* TestClock.adjust("1 second");
+      assert.strictEqual(yield* Fiber.join(reselecting), true);
+      assert.strictEqual(yield* Ref.get(reloadCountRef), 1);
+
+      yield* Ref.set(recovered, false);
+      assert.strictEqual(yield* manager.reselect(INSTANCE), false);
+      assert.strictEqual(yield* Ref.get(reloadCountRef), 1);
+    }),
+  );
+
+  it.effect("reselects a shared runtime once when several accounts ask at once", () =>
+    Effect.gen(function* () {
+      const busy = yield* Ref.make(true);
+      const actions: ProviderManagedRuntimeActions = {
+        getSummary: Effect.succeed(systemRuntime),
+        plan: () => Effect.succeed(installPlan()),
+        run: () => Effect.die("must not run"),
+        selectionChanged: Effect.succeed(true),
+      };
+      const { manager, reloadCountRef } = yield* makeHarness(
+        actions,
+        [systemProvider],
+        undefined,
+        undefined,
+        undefined,
+        { isBusy: () => Ref.get(busy) },
+      );
+      const first = yield* manager.reselect(INSTANCE).pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      assert.strictEqual(yield* manager.reselect(INSTANCE), false);
+      yield* Ref.set(busy, false);
+      yield* TestClock.adjust("1 second");
+      yield* TestClock.adjust("1 second");
+      assert.strictEqual(yield* Fiber.join(first), true);
+      assert.strictEqual(yield* Ref.get(reloadCountRef), 1);
+    }),
+  );
+
+  it.effect("never interrupts running work across random interleavings", () =>
+    Effect.gen(function* () {
+      const iterations = Number(process.env.SCIENT_RUNTIME_STRESS_ITERATIONS ?? 40);
+      for (let seed = 1; seed <= iterations; seed += 1) {
+        // mulberry32: deterministic per seed, so a failure names its seed.
+        let state = seed;
+        const random = () => {
+          state = (state + 0x6d2b79f5) | 0;
+          let t = Math.imul(state ^ (state >>> 15), 1 | state);
+          t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+          return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+        const busy = yield* Ref.make(random() < 0.5);
+        const violations = yield* Ref.make<ReadonlyArray<string>>([]);
+        const violate = (what: string) =>
+          Ref.get(busy).pipe(
+            Effect.flatMap((isBusy) =>
+              isBusy
+                ? Ref.update(violations, (all) => [...all, `seed ${seed}: ${what}`])
+                : Effect.void,
+            ),
+          );
+        const actions: ProviderManagedRuntimeActions = {
+          getSummary: Effect.succeed(systemRuntime),
+          plan: () => Effect.succeed(installPlan()),
+          run: (_action, _revision, report, awaitActivationWindow = Effect.void) =>
+            Effect.gen(function* () {
+              yield* report({ status: "downloading", message: "Downloading." });
+              for (let step = Math.floor(random() * 3); step > 0; step -= 1) yield* Effect.yieldNow;
+              yield* awaitActivationWindow;
+              yield* violate("activated while busy");
+            }),
+          selectionChanged: Effect.sync(() => random() < 0.5),
+        };
+        const { manager, providersRef } = yield* makeHarness(
+          actions,
+          [systemProvider],
+          () => violate("stopped sessions while busy"),
+          undefined,
+          violate("reloaded while busy"),
+          { isBusy: () => Ref.get(busy) },
+        );
+        const operationId = () =>
+          Ref.get(providersRef).pipe(
+            Effect.map((providers) => providers[0]?.connection?.runtime?.operation?.operationId),
+          );
+        for (let step = 0; step < 14; step += 1) {
+          const choice = random();
+          if (choice < 0.2) {
+            yield* manager
+              .start({ instanceId: INSTANCE, action: "install", catalogRevision: "reviewed:1" })
+              .pipe(Effect.ignore);
+          } else if (choice < 0.3) {
+            const id = yield* operationId();
+            if (id)
+              yield* manager.cancel({ instanceId: INSTANCE, operationId: id }).pipe(Effect.ignore);
+          } else if (choice < 0.4) {
+            yield* manager.reselect(INSTANCE).pipe(Effect.forkChild);
+          } else if (choice < 0.65) {
+            yield* Ref.update(busy, (isBusy) => !isBusy);
+          } else if (choice < 0.85) {
+            yield* TestClock.adjust("1 second");
+          } else {
+            yield* Effect.yieldNow;
+          }
+        }
+        // Once the provider goes idle, everything settles and releases.
+        yield* Ref.set(busy, false);
+        for (let step = 0; step < 6; step += 1) yield* TestClock.adjust("1 second");
+        const settled = yield* yieldUntil(Ref.get(providersRef), (providers) => {
+          const status = providers[0]?.connection?.runtime?.operation?.status;
+          return status === undefined || !ACTIVE_STATUSES.has(status);
+        });
+        assert.deepStrictEqual(yield* Ref.get(violations), [], `seed ${seed}`);
+        assert.isDefined(settled);
+        const next = yield* manager
+          .start({ instanceId: INSTANCE, action: "install", catalogRevision: "reviewed:1" })
+          .pipe(Effect.result);
+        assert.strictEqual(next._tag, "Success", `seed ${seed}: lifecycle reservation leaked`);
+        yield* TestClock.adjust("1 second");
+      }
+    }),
+  );
+
+  it.effect("leaves runtimes without a selection check alone", () =>
+    Effect.gen(function* () {
+      const actions: ProviderManagedRuntimeActions = {
+        getSummary: Effect.succeed(systemRuntime),
+        plan: () => Effect.succeed(installPlan()),
+        run: () => Effect.die("must not run"),
+      };
+      const { manager, reloadCountRef } = yield* makeHarness(actions, [systemProvider]);
+      assert.strictEqual(yield* manager.reselect(INSTANCE), false);
+      assert.strictEqual(yield* Ref.get(reloadCountRef), 0);
+    }),
+  );
+
   it.effect("does not mutate a shared runtime when active sessions cannot stop", () =>
     Effect.gen(function* () {
       const runCount = yield* Ref.make(0);
       const actions: ProviderManagedRuntimeActions = {
         getSummary: Effect.succeed(systemRuntime),
         plan: () => Effect.succeed(installPlan()),
-        run: () => Ref.update(runCount, (count) => count + 1),
+        run: (_action, _revision, _report, awaitActivationWindow = Effect.void) =>
+          awaitActivationWindow.pipe(Effect.andThen(Ref.update(runCount, (count) => count + 1))),
       };
       const { manager, providersRef } = yield* makeHarness(actions, [systemProvider], () =>
         Effect.fail(
@@ -481,7 +749,7 @@ describe("ProviderRuntimeManager", () => {
       assert.strictEqual(completed[0]?.connection?.runtime?.source, "system");
       assert.match(
         completed[0]?.connection?.runtime?.operation?.message ?? "",
-        /could not stop active codex sessions/u,
+        /could not stop idle Codex sessions/u,
       );
     }),
   );

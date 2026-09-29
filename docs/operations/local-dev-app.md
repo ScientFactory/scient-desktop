@@ -179,9 +179,11 @@ pnpm dev:app:status
 pnpm dev:app:stop
 ```
 
-`dev:app:start` asks the per-worktree macOS service to launch and returns
-immediately; compilation continues in the background. The initial cold build
-can still take tens of seconds. Use status and logs instead of keeping an agent
+`dev:app:start` first builds and signs the macOS app bundle in the calling
+terminal when it needs it (the first launch, or after Electron, the icon or the
+app identity changes), then asks the per-worktree macOS service to launch and
+returns; compilation continues in the background. The initial cold build can
+still take tens of seconds. Use status and logs instead of keeping an agent
 shell or terminal open. `pnpm dev:app` remains available when a maintainer
 explicitly wants the same lifecycle attached to the foreground terminal.
 
@@ -201,7 +203,9 @@ concurrently, while a second instance of the same worktree is refused.
 `dev:app:logs` prints the last 200 background-launch lines. `dev:app:stop`
 validates and stops only that checkout's recorded service, runner, Electron
 app, and backend PIDs, waits for those processes to exit, and removes its launch
-files. Never stop Electron, Node, pnpm, or ports by name or pattern.
+files. If any of them is still running after the forced stop, it fails with an
+error and keeps the launch records instead of reporting success. Never stop
+Electron, Node, pnpm, or ports by name or pattern.
 
 The desktop renderer hot-reloads, but its local backend runs from the server
 bundle built when the candidate starts. After changing `apps/server`, an HTTP
@@ -255,6 +259,17 @@ which microphone permission can be attached. Set
 required. If no development identity exists, the launcher falls back to ad hoc
 signing and warns that macOS may request microphone permission again after the
 bundle changes.
+
+The bundle is signed only in the foreground: by `dev:app:start` before it hands
+off, or by `pnpm dev:app`. macOS can refuse the background service permission
+to sign it (`Operation not permitted`), so the service never signs. If it finds
+the bundle needs rebuilding, it stops before copying anything and
+`dev:app:status` reports what to run. The signed bundle stays identical between
+launches: its start command only runs a script kept beside it in
+`apps/desktop/.electron-runtime/`, where the Node and pnpm paths live. Each
+bundle there has its own build record, so a production-mode smoke build in the
+same checkout does not invalidate the dev app. A rebuild is staged beside the
+bundle and replaces it only after signing succeeds.
 
 Grant microphone access to the visible `Scient (Dev) · <label>` entry in
 System Settings when macOS asks. Reloading the renderer cannot repair an
@@ -339,6 +354,10 @@ pause reasons and update events under
 If the launcher opens but the Electron app does not appear, inspect the
 managed log with `pnpm dev:app:logs`. It identifies dependency, build, port,
 and backend startup failures without guessing.
+
+If the desktop app cannot launch (for example its bundle must be re-signed),
+the runner stops and `dev:app:status` prints the recorded reason and the command
+that fixes it.
 
 If a shell, service, or app exits abnormally, `dev:app:status` validates the
 recorded command and checkout before treating state as live. A later
