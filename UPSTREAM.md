@@ -711,6 +711,7 @@ validation, and publication must stay outside inherited T3 files. See
 [Scient document PDF export](docs/internals/scient-document-pdf-export.md).
 
 The rich Markdown editor is isolated under `packages/scient-markdown`,
+`packages/scient-document` (its format-neutral session and persistence coordinator),
 `apps/web/src/scient/markdownEditor`, `apps/web/src/scient/presentation`, and
 `apps/server/src/scient/markdown`, with `packages/contracts/src/scientMarkdown.ts`
 and `packages/client-runtime/src/state/scientMarkdownHttp.ts` as the owned files

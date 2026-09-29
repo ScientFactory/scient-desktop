@@ -1,20 +1,20 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  applyUserMarkdownSource,
-  beginMarkdownSave,
-  confirmMarkdownSave,
-  createMarkdownDocumentSession,
-  receiveExternalMarkdownSource,
-  rebaseLocalMarkdownDraft,
-  resolveMarkdownConflictWithDisk,
-  resolveMarkdownConflictWithLocal,
-  setMarkdownDocumentMode,
+  applyUserDocumentSource,
+  beginDocumentSave,
+  confirmDocumentSave,
+  createDocumentSession,
+  receiveExternalDocumentSource,
+  rebaseLocalDocumentDraft,
+  resolveDocumentConflictWithDisk,
+  resolveDocumentConflictWithLocal,
+  setDocumentMode,
 } from "./session.ts";
 
-describe("Markdown document session", () => {
+describe("Document session", () => {
   it("restores a local draft without mislabeling it as the disk baseline", () => {
-    const session = createMarkdownDocumentSession({
+    const session = createDocumentSession({
       source: "Disk",
       revision: "r1",
       draftSource: "Local draft",
@@ -27,7 +27,7 @@ describe("Markdown document session", () => {
       editVersion: 1,
       confirmedEditVersion: 0,
     });
-    expect(beginMarkdownSave(session)).toEqual({
+    expect(beginDocumentSave(session)).toEqual({
       source: "Local draft",
       expectedRevision: "r1",
       editVersion: 1,
@@ -36,24 +36,24 @@ describe("Markdown document session", () => {
 
   it("changes rich-document editability without creating a save intent", () => {
     const source = "- one\n  - two\n";
-    let session = createMarkdownDocumentSession({ source, revision: "sha256:before" });
+    let session = createDocumentSession({ source, revision: "sha256:before" });
 
     for (let index = 0; index < 100; index += 1) {
-      session = setMarkdownDocumentMode(session, "write");
-      session = setMarkdownDocumentMode(session, "read");
+      session = setDocumentMode(session, "write");
+      session = setDocumentMode(session, "read");
     }
 
     expect(session.draftSource).toBe(source);
     expect(session.editVersion).toBe(0);
-    expect(beginMarkdownSave(session)).toBeNull();
+    expect(beginDocumentSave(session)).toBeNull();
   });
 
   it("creates save intent only for an actual source change", () => {
-    const initial = createMarkdownDocumentSession({ source: "before\n", revision: "r1" });
-    expect(applyUserMarkdownSource(initial, "before\n")).toBe(initial);
+    const initial = createDocumentSession({ source: "before\n", revision: "r1" });
+    expect(applyUserDocumentSource(initial, "before\n")).toBe(initial);
 
-    const changed = applyUserMarkdownSource(initial, "after\n");
-    expect(beginMarkdownSave(changed)).toEqual({
+    const changed = applyUserDocumentSource(initial, "after\n");
+    expect(beginDocumentSave(changed)).toEqual({
       source: "after\n",
       expectedRevision: "r1",
       editVersion: 1,
@@ -61,15 +61,15 @@ describe("Markdown document session", () => {
   });
 
   it("confirms one snapshot while retaining newer typing as dirty", () => {
-    const initial = createMarkdownDocumentSession({ source: "zero", revision: "r0" });
-    const one = applyUserMarkdownSource(initial, "one");
-    const intent = beginMarkdownSave(one)!;
-    const two = applyUserMarkdownSource(one, "two");
-    const confirmed = confirmMarkdownSave(two, intent, "r1");
+    const initial = createDocumentSession({ source: "zero", revision: "r0" });
+    const one = applyUserDocumentSource(initial, "one");
+    const intent = beginDocumentSave(one)!;
+    const two = applyUserDocumentSource(one, "two");
+    const confirmed = confirmDocumentSave(two, intent, "r1");
 
     expect(confirmed.baselineSource).toBe("one");
     expect(confirmed.draftSource).toBe("two");
-    expect(beginMarkdownSave(confirmed)).toEqual({
+    expect(beginDocumentSave(confirmed)).toEqual({
       source: "two",
       expectedRevision: "r1",
       editVersion: 2,
@@ -77,13 +77,13 @@ describe("Markdown document session", () => {
   });
 
   it("adopts external edits when clean and exposes conflicts when dirty", () => {
-    const clean = createMarkdownDocumentSession({ source: "disk one", revision: "r1" });
-    const refreshed = receiveExternalMarkdownSource(clean, { source: "disk two", revision: "r2" });
+    const clean = createDocumentSession({ source: "disk one", revision: "r1" });
+    const refreshed = receiveExternalDocumentSource(clean, { source: "disk two", revision: "r2" });
     expect(refreshed.draftSource).toBe("disk two");
     expect(refreshed.conflict).toBeNull();
 
-    const dirty = applyUserMarkdownSource(refreshed, "local three");
-    const conflicted = receiveExternalMarkdownSource(dirty, {
+    const dirty = applyUserDocumentSource(refreshed, "local three");
+    const conflicted = receiveExternalDocumentSource(dirty, {
       source: "agent three",
       revision: "r3",
     });
@@ -92,15 +92,15 @@ describe("Markdown document session", () => {
       externalSource: "agent three",
       externalRevision: "r3",
     });
-    expect(beginMarkdownSave(conflicted)).toBeNull();
+    expect(beginDocumentSave(conflicted)).toBeNull();
 
-    const keepDisk = resolveMarkdownConflictWithDisk(conflicted);
+    const keepDisk = resolveDocumentConflictWithDisk(conflicted);
     expect(keepDisk.draftSource).toBe("agent three");
-    expect(beginMarkdownSave(keepDisk)).toBeNull();
+    expect(beginDocumentSave(keepDisk)).toBeNull();
 
-    const keepLocal = resolveMarkdownConflictWithLocal(conflicted);
+    const keepLocal = resolveDocumentConflictWithLocal(conflicted);
     expect(keepLocal.draftSource).toBe("local three");
-    expect(beginMarkdownSave(keepLocal)).toEqual({
+    expect(beginDocumentSave(keepLocal)).toEqual({
       source: "local three",
       expectedRevision: "r3",
       editVersion: 1,
@@ -108,9 +108,9 @@ describe("Markdown document session", () => {
   });
 
   it("rebases a local draft onto a complete host snapshot before a session conflict arrives", () => {
-    const initial = createMarkdownDocumentSession({ source: "disk zero", revision: "r0" });
-    const dirty = applyUserMarkdownSource(initial, "local one");
-    const rebased = rebaseLocalMarkdownDraft(dirty, {
+    const initial = createDocumentSession({ source: "disk zero", revision: "r0" });
+    const dirty = applyUserDocumentSource(initial, "local one");
+    const rebased = rebaseLocalDocumentDraft(dirty, {
       source: "agent one",
       revision: "r1",
     });
@@ -119,7 +119,7 @@ describe("Markdown document session", () => {
     expect(rebased.baselineSource).toBe("agent one");
     expect(rebased.baselineRevision).toBe("r1");
     expect(rebased.conflict).toBeNull();
-    expect(beginMarkdownSave(rebased)).toEqual({
+    expect(beginDocumentSave(rebased)).toEqual({
       source: "local one",
       expectedRevision: "r1",
       editVersion: 1,

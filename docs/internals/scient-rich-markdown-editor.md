@@ -573,10 +573,15 @@ large-document latency.
 ### Module boundaries
 
 ```text
+packages/scient-document/
+  session.ts       Baseline, draft, revision, and explicit save intent (format-neutral)
+  persistenceCoordinator.ts  Serial publication, ordered verification, retry and recovery,
+                   with reconciliation injected by the document format
+
 packages/scient-markdown/
   sourceLedger.ts  Reuses untouched source ranges and applies bounded patches
-  session.ts       Baseline, draft, revision, and explicit save intent
-  persistenceCoordinator.ts  Serial publication, ordered verification, retry and recovery
+  reconciliation.ts  Markdown block-level three-way merge for the coordinator
+  session.ts, persistenceCoordinator.ts  Markdown names and wiring for the shared session
 
 apps/web/src/scient/markdownEditor/
   prosemirror/   Schema, source projection, commands, plugins, session, controller
