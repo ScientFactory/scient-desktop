@@ -134,6 +134,25 @@ function getDescriptorStringValue(
   return typeof value === "string" ? value : null;
 }
 
+/**
+ * Drop prompt-injected choices (ultrathink). They work only by editing a
+ * prompt, so a picker without one (settings defaults) must not offer them.
+ */
+export function withoutPromptInjectedOptions(
+  descriptors: ReadonlyArray<ProviderOptionDescriptor>,
+): ReadonlyArray<ProviderOptionDescriptor> {
+  return descriptors.map((descriptor) =>
+    descriptor.type === "select" && descriptor.promptInjectedValues?.length
+      ? {
+          ...descriptor,
+          options: descriptor.options.filter(
+            (option) => !descriptor.promptInjectedValues?.includes(option.id),
+          ),
+        }
+      : descriptor,
+  );
+}
+
 function getSelectedTraits(
   provider: ProviderDriverKind,
   models: ReadonlyArray<ServerProviderModel>,
@@ -151,7 +170,7 @@ function getSelectedTraits(
     getAntigravityModelGroups(provider, models),
     model,
   );
-  const descriptors = nativeModelControl
+  const allDescriptors = nativeModelControl
     ? [nativeModelControl]
     : modelIsUnavailable
       ? buildUnavailableModelOptionDescriptors(
@@ -163,6 +182,9 @@ function getSelectedTraits(
           caps,
           selections: modelOptions,
         });
+  const descriptors = allowPromptInjectedEffort
+    ? allDescriptors
+    : withoutPromptInjectedOptions(allDescriptors);
   const selectDescriptors = descriptors.filter(
     (descriptor): descriptor is Extract<ProviderOptionDescriptor, { type: "select" }> =>
       descriptor.type === "select" &&
