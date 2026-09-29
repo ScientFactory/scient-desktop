@@ -41,7 +41,7 @@ import {
 } from "./MatlabRuntimeAdapter.ts";
 import {
   BRIDGE_SCRIPT_NAME,
-  STAGED_BRIDGE_DIRECTORY,
+  bridgePathCandidates,
   moduleDirectory,
 } from "./PythonComputeRuntime.ts";
 
@@ -101,10 +101,9 @@ export function pathIsInside(directory: string, candidate: string): boolean {
 }
 
 export function matlabBridgePathCandidates(directory: string): ReadonlyArray<string> {
-  return [
-    NodePath.join(directory, "bridge", MATLAB_BRIDGE_SCRIPT_NAME),
-    NodePath.join(directory, STAGED_BRIDGE_DIRECTORY, MATLAB_BRIDGE_SCRIPT_NAME),
-  ];
+  return bridgePathCandidates(directory).map((candidate) =>
+    NodePath.join(NodePath.dirname(candidate), MATLAB_BRIDGE_SCRIPT_NAME),
+  );
 }
 
 export const resolveMatlabBridgePath = (

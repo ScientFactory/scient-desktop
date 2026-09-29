@@ -183,6 +183,9 @@ it stops before restarting and that the documented manual update path succeeds.
 - Windows x64 install, SmartScreen/signature, launch, and update;
 - Linux AppImage launch and update behavior;
 - provider setup and a real Codex/Claude turn on every claimed platform;
+- fresh-profile Python setup and execution from the packaged app, plus MATLAB
+  helper setup and execution on each supported licensed target, following
+  [packaged Compute acceptance](./compute-backend-qualification.md#packaged-application-acceptance);
 - current installed app updates without relocating its data;
 - retired-app data remains intact unless separately archived or deleted;
 - website downloads target the new release and retain a rollback path.

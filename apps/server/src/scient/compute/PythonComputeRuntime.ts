@@ -138,9 +138,12 @@ export function moduleDirectory(): string {
  * earlier build left behind.
  */
 export function bridgePathCandidates(directory: string): ReadonlyArray<string> {
+  // External interpreters cannot read Electron's virtual ASAR filesystem.
+  // Packaging puts both bridge scripts in the archive's physical sibling.
+  const physicalDirectory = directory.replace(/\.asar([\\/])/u, ".asar.unpacked$1");
   return [
-    NodePath.join(directory, "bridge", BRIDGE_SCRIPT_NAME),
-    NodePath.join(directory, STAGED_BRIDGE_DIRECTORY, BRIDGE_SCRIPT_NAME),
+    NodePath.join(physicalDirectory, "bridge", BRIDGE_SCRIPT_NAME),
+    NodePath.join(physicalDirectory, STAGED_BRIDGE_DIRECTORY, BRIDGE_SCRIPT_NAME),
   ];
 }
 
