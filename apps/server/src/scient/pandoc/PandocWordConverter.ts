@@ -57,6 +57,7 @@ import {
   type PandocRunError,
 } from "./pandocProcess.ts";
 import { securePandocDocument } from "./pandocResources.ts";
+import { spaceTextAroundTables } from "./pandocTableSpacing.ts";
 import { scientReferenceDocument } from "./scientReferenceDocument.ts";
 import type { PreparedLatexProject } from "./latexProjectPreparation.ts";
 import type { CapturedWorkspaceImage } from "./wordImageSnapshot.ts";
@@ -400,6 +401,7 @@ const make = Effect.gen(function* () {
           ...(input.imageSnapshot === undefined ? {} : { imageSnapshot: input.imageSnapshot }),
         });
         const direction = applyDirection(document, input.bundle.metadata.direction);
+        spaceTextAroundTables(document.blocks);
         if (input.bundle.metadata.language !== null) {
           document.meta.lang = { t: "MetaString", c: input.bundle.metadata.language };
         }
@@ -424,7 +426,6 @@ const make = Effect.gen(function* () {
           ...bibliographyWarnings,
           ...citations.warnings,
           ...security.warnings,
-          ...direction.warnings,
           ...pandocWarnings(read.warnings),
         ];
         const preparedBlocks = [...document.blocks];

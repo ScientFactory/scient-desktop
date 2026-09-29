@@ -207,7 +207,7 @@ describe("ConversationExportDialog", () => {
     expect(button("Save .md")).toBeUndefined();
   });
 
-  it("is operated by keyboard, cautions only while a toggle is on, and resets when reopened", async () => {
+  it("is operated by keyboard, shows caution above the activated switch, and resets when reopened", async () => {
     prepareConversationExport.mockResolvedValue(preparation);
     await renderHost();
     await open();
@@ -219,7 +219,18 @@ describe("ConversationExportDialog", () => {
 
     await pressKey(workLog!, " ");
     expect(document.body.textContent).toContain(INCLUDE_CAUTION);
+    const workLogCaution = document.querySelector<HTMLElement>("#export-work-log-caution");
+    expect(workLogCaution?.parentElement).toBe(dialog());
+    expect(workLogCaution?.className).toContain("absolute");
+    expect(workLogCaution?.className).toContain("w-80");
+    expect(workLogCaution?.className).toContain("bg-popover");
+    expect(workLogCaution?.querySelector("svg")?.getAttribute("class")).toContain("text-warning");
+    expect(workLog?.closest("label")?.parentElement?.querySelectorAll("label")).toHaveLength(2);
+    expect(workLog?.getAttribute("aria-describedby")).toBe("export-work-log-caution");
     await pressKey(reasoning!, "Enter");
+    expect(document.querySelector("#export-work-log-caution")).toBeNull();
+    expect(document.querySelector("#export-reasoning-caution")?.parentElement).toBe(dialog());
+    expect(reasoning?.getAttribute("aria-describedby")).toBe("export-reasoning-caution");
     expect(switches().map((element) => element.getAttribute("aria-checked"))).toEqual([
       "true",
       "true",
@@ -240,6 +251,36 @@ describe("ConversationExportDialog", () => {
     ]);
     expect(document.body.textContent).not.toContain(INCLUDE_CAUTION);
     expect(prepareConversationExport).toHaveBeenCalledTimes(2);
+  });
+
+  it("moves the caution to the next activated switch and dismisses it four seconds later", async () => {
+    prepareConversationExport.mockResolvedValue(preparation);
+    await renderHost();
+    await open();
+
+    vi.useFakeTimers();
+    try {
+      await pressKey(switches()[0]!, " ");
+      const caution = document.querySelector<HTMLElement>("#export-work-log-caution");
+      expect(caution?.getAttribute("role")).toBe("status");
+      expect(caution?.textContent).toContain(INCLUDE_CAUTION);
+
+      await act(async () => vi.advanceTimersByTime(3_999));
+      expect(document.querySelector("#export-work-log-caution")).not.toBeNull();
+      await pressKey(switches()[1]!, "Enter");
+      expect(document.querySelector("#export-work-log-caution")).toBeNull();
+      expect(document.querySelector("#export-reasoning-caution")).not.toBeNull();
+      await act(async () => vi.advanceTimersByTime(3_999));
+      expect(document.querySelector("#export-reasoning-caution")).not.toBeNull();
+      await act(async () => vi.advanceTimersByTime(1));
+      expect(document.querySelector("#export-reasoning-caution")).toBeNull();
+      expect(switches().map((element) => element.getAttribute("aria-checked"))).toEqual([
+        "true",
+        "true",
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("announces preparing and exporting progress", async () => {

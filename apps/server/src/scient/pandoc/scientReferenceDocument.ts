@@ -12,7 +12,7 @@
  * fixed name.
  *
  * Styles: body text and headings, speaker labels (one colour per speaker), a
- * compact table style that copes with wide tables, captions, footnotes, code,
+ * editable, text-width table style, captions, footnotes, code,
  * and the Scient block styles `Scient Work Log`, `Scient Reasoning`,
  * `Scient Alert`, `Scient Task List`, and `Scient Placeholder`, so each can be
  * restyled or removed in Word in one place.
@@ -72,8 +72,8 @@ function headingStyles(): Array<StyleSpec> {
   }));
 }
 
-const TABLE_BORDER = (edge: string, val: string) =>
-  `<w:${edge} w:val="${val}" w:sz="4" w:space="0" w:color="A6A6A6"/>`;
+const TABLE_BORDER = (edge: string) =>
+  `<w:${edge} w:val="single" w:sz="4" w:space="0" w:color="D0D7DE"/>`;
 
 export const SCIENT_REFERENCE_STYLES: ReadonlyArray<StyleSpec> = [
   {
@@ -89,6 +89,30 @@ export const SCIENT_REFERENCE_STYLES: ReadonlyArray<StyleSpec> = [
     name: "Body Text",
     basedOn: "Normal",
     pPr: `<w:spacing w:before="0" w:after="140"/>`,
+  },
+  {
+    type: "paragraph",
+    id: "ScientBeforeTable",
+    name: "Scient Before Table",
+    basedOn: "BodyText",
+    custom: true,
+    pPr: `<w:spacing w:before="0" w:after="180"/>`,
+  },
+  {
+    type: "paragraph",
+    id: "ScientAfterTable",
+    name: "Scient After Table",
+    basedOn: "BodyText",
+    custom: true,
+    pPr: `<w:spacing w:before="180" w:after="140"/>`,
+  },
+  {
+    type: "paragraph",
+    id: "ScientBetweenTables",
+    name: "Scient Between Tables",
+    basedOn: "BodyText",
+    custom: true,
+    pPr: `<w:spacing w:before="180" w:after="180"/>`,
   },
   {
     type: "paragraph",
@@ -266,14 +290,13 @@ export const SCIENT_REFERENCE_STYLES: ReadonlyArray<StyleSpec> = [
     id: "Table",
     name: "Table",
     custom: true,
-    rPr: size(9),
     pPr: `<w:spacing w:before="20" w:after="20" w:line="240" w:lineRule="auto"/>`,
     extra: [
       `<w:tblPr><w:tblInd w:w="0" w:type="dxa"/>`,
-      `<w:tblBorders>${TABLE_BORDER("top", "single")}${TABLE_BORDER("bottom", "single")}${TABLE_BORDER("insideH", "single")}</w:tblBorders>`,
-      `<w:tblCellMar><w:top w:w="29" w:type="dxa"/><w:left w:w="72" w:type="dxa"/><w:bottom w:w="29" w:type="dxa"/><w:right w:w="72" w:type="dxa"/></w:tblCellMar></w:tblPr>`,
+      `<w:tblBorders>${["top", "bottom", "left", "right", "insideH", "insideV"].map(TABLE_BORDER).join("")}</w:tblBorders>`,
+      `<w:tblCellMar><w:top w:w="54" w:type="dxa"/><w:left w:w="90" w:type="dxa"/><w:bottom w:w="54" w:type="dxa"/><w:right w:w="90" w:type="dxa"/></w:tblCellMar></w:tblPr>`,
       `<w:tblStylePr w:type="firstRow"><w:pPr><w:keepNext/></w:pPr><w:rPr><w:b/><w:bCs/></w:rPr>`,
-      `<w:tcPr><w:tcBorders><w:bottom w:val="single" w:sz="8" w:space="0" w:color="595959"/></w:tcBorders><w:shd w:val="clear" w:color="auto" w:fill="F2F2F2"/></w:tcPr></w:tblStylePr>`,
+      `<w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="F6F8FA"/></w:tcPr></w:tblStylePr>`,
     ].join(""),
   },
   {

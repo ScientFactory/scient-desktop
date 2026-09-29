@@ -803,8 +803,8 @@ thread and a lineage row. An import has neither, so the model is extended explic
 
 ### Entry points
 
-- Thread menu (sidebar row and chat header) → **Export ▸** `Markdown (.md)…`, `PDF (.pdf)…`,
-  `Word (.docx)…`, `Scient file (.scic)…`. Each entry opens the export dialog for that format. Every
+- Thread menu (sidebar row and chat header) → **Export ▸** `Markdown (.md)`, `PDF (.pdf)`,
+  `Word (.docx)`, `Scient file (.scic)`. Each entry opens the export dialog for that format. Every
   entry is always enabled; a format this host cannot produce says why inside its dialog.
 - Thread menu → **Copy ▸ Conversation as Markdown** copies the whole conversation as text-only
   Markdown with the default options (no work log, no reasoning) and confirms with a toast.
@@ -836,9 +836,9 @@ switcher. The Markdown dialog:
 │  ( ) Text only (.md)                                            │
 │  ( ) With attachments (.zip)                                    │
 │                                                                 │
-│  Include  [ ] Work log — tools, commands, results               │
+│  Include                                                        │
+│           [ ] Work log — tools, commands, results               │
 │           [ ] Reasoning — the thinking shown in chat            │
-│           ⚠ May include file paths, commands and their output.  │
 │                                                                 │
 │  ⚠ The current turn is still running; it will be left out.      │
 │                                        [ Cancel ]  [ Save .md ] │
@@ -850,7 +850,9 @@ switcher. The Markdown dialog:
 - The Markdown packaging choice appears only when the conversation has images or attachments.
 - The primary button names what is saved: **Save .md** / **Save .zip**, **Save PDF**,
   **Save .docx**, **Save .scic**. There is no Copy button; copying lives in the thread menu.
-- The caution line appears only while the work log or reasoning is on.
+- Enabling work log or reasoning floats a small caution card over the dialog, anchored above the
+  activated switch for four seconds. The overlay does not move the controls. Enabling the other
+  switch moves the card there and restarts the timer.
 - Word without Pandoc shows, in place of the options, "Word export needs Pandoc (N MB, one-time
   download)." with **Install Pandoc** and inline progress; the install control is disabled while an
   export runs. Once Pandoc is installed the normal options appear, with no Pandoc mention. When Pandoc
@@ -893,7 +895,7 @@ expose (some send summaries), and the export includes only what Scient received 
 **Why the work log is opt-in even for `.scic`:** it would help the recipient's agent, but bounded tool
 output can still contain private paths, source code, environment details, or secrets, and a `.scic`
 goes to another person. "Nothing executable" does not mean "safe to share". When either option is
-turned on, the dialog shows the caution line under the toggles.
+turned on, the dialog briefly shows the caution card above the activated switch.
 
 Long tool output is bounded to a head and tail by the export projection, with an "N lines omitted"
 marker, so a single command cannot swamp a document. Nothing executable (approvals, questions awaiting

@@ -136,7 +136,7 @@ outline are enabled; headings become bookmarks.
 - **Markdown editor → More actions → Export ▸ PDF.** Available only in the Scient desktop app.
   A browser client, or a desktop too old to have the document page, shows the item disabled with
   the reason. The PDF is saved through the Save dialog; **Open** shows it in the editor's thread.
-- **Thread menu → Export → PDF (.pdf)….** The dialog's work-log and reasoning options select the
+- **Thread menu → Export → PDF (.pdf).** The dialog's work-log and reasoning options select the
   snapshot of the whole conversation; `documents.prepareConversationPdf` builds the conversation's bundle with the
   conversation package and captures it; the desktop prints it and the client saves it. The format
   is registered in the export format registry, whose `produce` saves the file itself and resolves

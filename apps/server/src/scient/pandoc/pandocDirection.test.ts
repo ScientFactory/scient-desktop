@@ -64,7 +64,6 @@ describe("applyDirection", () => {
     expect(dirOf(items[0]![0]!)).toBe("rtl");
     expect(dirOf(items[1]![0]!)).toBeNull();
     expect(report.markedBlocks).toBe(3);
-    expect(report.warnings[0]?.message).toContain("column order");
   });
 
   it("makes a right-to-left document rtl and marks its left-to-right blocks", () => {

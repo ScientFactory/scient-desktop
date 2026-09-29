@@ -9,7 +9,7 @@ import { WordPandocRequirement } from "./WordPandocRequirement";
 registerConversationExportFormat({
   format: "markdown",
   label: "Markdown",
-  menuLabel: "Markdown (.md)…",
+  menuLabel: "Markdown (.md)",
   about:
     "Plain text that opens anywhere. With attachments, images and files are saved next to it in a .zip.",
   saveLabel: "Save .md",
@@ -31,7 +31,7 @@ registerConversationExportFormat({
 registerConversationExportFormat({
   format: "pdf",
   label: "PDF",
-  menuLabel: "PDF (.pdf)…",
+  menuLabel: "PDF (.pdf)",
   about: "A print-ready document with images, math and diagrams inside.",
   saveLabel: "Save PDF",
   clientAvailability: conversationPdfAvailability,
@@ -41,7 +41,7 @@ registerConversationExportFormat({
 registerConversationExportFormat({
   format: "docx",
   label: "Word",
-  menuLabel: "Word (.docx)…",
+  menuLabel: "Word (.docx)",
   about: "Equations stay editable. Images, tables, footnotes and citations are kept.",
   saveLabel: "Save .docx",
   UnavailableAction: WordPandocRequirement,
@@ -50,7 +50,7 @@ registerConversationExportFormat({
 registerConversationExportFormat({
   format: "scic",
   label: "Scient file",
-  menuLabel: "Scient file (.scic)…",
+  menuLabel: "Scient file (.scic)",
   about: "Another Scient can open this file and continue the conversation.",
   saveLabel: "Save .scic",
 });

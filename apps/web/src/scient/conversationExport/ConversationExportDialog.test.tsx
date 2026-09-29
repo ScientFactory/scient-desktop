@@ -63,9 +63,9 @@ describe("ConversationExportForm", () => {
     expect(render({ attachmentCount: 2 })).toContain("With attachments (.zip)");
   });
 
-  it("shows the caution line only while a toggle is on, and the running-turn warning", () => {
-    expect(render({}, { includeWorkLog: true })).toContain(INCLUDE_CAUTION);
-    expect(render({}, { includeReasoning: true })).toContain(INCLUDE_CAUTION);
+  it("shows the caution only after the user enables a switch, and reports a running turn", () => {
+    expect(render({}, { includeWorkLog: true })).not.toContain(INCLUDE_CAUTION);
+    expect(render({}, { includeReasoning: true })).not.toContain(INCLUDE_CAUTION);
     const markup = render({ runningTurnOmitted: true });
     expect(markup).not.toContain(INCLUDE_CAUTION);
     expect(markup).toContain(RUNNING_TURN_WARNING);

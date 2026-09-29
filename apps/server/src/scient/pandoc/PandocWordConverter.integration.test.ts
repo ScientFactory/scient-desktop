@@ -312,6 +312,18 @@ describe.skipIf(binary === null)("Word export with the real Pandoc (local integr
         const tablesXml = tables.docx.text("word/document.xml");
         expect(count(tablesXml, /<w:tbl>/gu)).toBe(3);
         expect(tablesXml).toContain('<w:tblStyle w:val="Table" />');
+        expect(tablesXml).toContain('<w:pStyle w:val="ScientBeforeTable" />');
+        expect(tablesXml).toContain('<w:pStyle w:val="ScientBetweenTables" />');
+        expect(count(tablesXml, /<w:tblW w:type="pct" w:w="5000" \/>/gu)).toBe(3);
+        const tableStyles = tables.docx.text("word/styles.xml");
+        const afterTableStyle =
+          /<w:style\b[^>]*w:styleId="ScientAfterTable"[^>]*>(.*?)<\/w:style>/u.exec(
+            tableStyles,
+          )?.[1];
+        expect(afterTableStyle).toContain('w:before="180"');
+        expect(afterTableStyle).toContain('w:after="140"');
+        expect(tableStyles).toMatch(/<w:insideV\b[^>]*w:color="D0D7DE"/u);
+        expect(tableStyles).toContain('w:fill="F6F8FA"');
         // The wide table gets proportional, not equal, columns.
         const wideGrid = /<w:tblGrid>((?:<w:gridCol w:w="\d+" \/>){12})<\/w:tblGrid>/u.exec(
           tablesXml,
@@ -324,7 +336,7 @@ describe.skipIf(binary === null)("Word export with the real Pandoc (local integr
         // Hebrew paragraph, heading, two Hebrew list items, and the Hebrew table cells.
         expect(count(hebrewXml, /<w:bidi \/>/gu)).toBeGreaterThanOrEqual(6);
         expect(hebrew.result.summary.rtlDocument).toBe(false);
-        expect(hebrew.result.warnings.map((warning) => warning.message).join("\n")).toContain(
+        expect(hebrew.result.warnings.map((warning) => warning.message).join("\n")).not.toContain(
           "keep left-to-right column order",
         );
 
@@ -378,6 +390,8 @@ describe.skipIf(binary === null)("Word export with the real Pandoc (local integr
 
         const conversation = yield* convert("08-conversation");
         const conversationXml = conversation.docx.text("word/document.xml");
+        expect(conversationXml).toContain('<w:pStyle w:val="ScientAfterTable" />');
+        expect(conversationXml).toContain('<w:tblW w:type="pct" w:w="5000" />');
         expect(conversationXml).toContain('<w:pStyle w:val="ScientWorkLog" />');
         expect(conversationXml).toContain('<w:pStyle w:val="ScientReasoning" />');
         expect(conversationXml).toContain("Work log · ");

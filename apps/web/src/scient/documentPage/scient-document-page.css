@@ -201,6 +201,9 @@ body {
   padding: 0.3em 0.5em;
   vertical-align: top;
   text-align: start;
+  /* Keep ordinary words intact when the browser sizes columns; break only as a fallback. */
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .scient-document .scient-document-table th {

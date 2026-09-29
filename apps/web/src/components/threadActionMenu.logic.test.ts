@@ -82,10 +82,10 @@ describe("buildThreadActionMenuItems", () => {
         disabled: child.disabled,
       })),
     ).toEqual([
-      { id: "export-conversation:markdown", label: "Markdown (.md)…", disabled: undefined },
-      { id: "export-conversation:pdf", label: "PDF (.pdf)…", disabled: undefined },
-      { id: "export-conversation:docx", label: "Word (.docx)…", disabled: undefined },
-      { id: "export-conversation:scic", label: "Scient file (.scic)…", disabled: undefined },
+      { id: "export-conversation:markdown", label: "Markdown (.md)", disabled: undefined },
+      { id: "export-conversation:pdf", label: "PDF (.pdf)", disabled: undefined },
+      { id: "export-conversation:docx", label: "Word (.docx)", disabled: undefined },
+      { id: "export-conversation:scic", label: "Scient file (.scic)", disabled: undefined },
     ]);
     const copyItem = items.find((item) => item.id === "copy");
     expect(copyItem?.children?.map((child) => child.id)).toEqual([

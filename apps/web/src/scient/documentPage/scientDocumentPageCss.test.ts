@@ -20,6 +20,14 @@ function keptWhole(css: string): ReadonlyArray<string> {
 }
 
 describe("document page print stylesheet", () => {
+  it("keeps words intact when sizing table columns", () => {
+    const tableCells = stylesheet.match(
+      /\.scient-document \.scient-document-table :where\(th, td\) \{([^}]*)\}/u,
+    )?.[1];
+    expect(tableCells).toMatch(/overflow-wrap:\s*break-word/u);
+    expect(tableCells).toMatch(/word-break:\s*normal/u);
+  });
+
   // The desktop prints this page without the HTML-export pagination defaults,
   // so this sheet alone decides what may split across pages.
   it("keeps only small units whole, so work logs, reasoning, and quotes flow", () => {

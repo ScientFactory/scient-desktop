@@ -8,7 +8,7 @@ import type {
 
 import type { ConversationExportFormatRegistration } from "./formatRegistry";
 
-/** Shown under the Include toggles while either is on. */
+/** Shown briefly above the Include switch the user just enabled. */
 export const INCLUDE_CAUTION = "May include file paths, commands and their output.";
 export const RUNNING_TURN_WARNING = "The current turn is still running; it will be left out.";
 const UNAVAILABLE_REASON = "Not available on this Scient.";
@@ -68,11 +68,6 @@ export function offeredVariant(
 ) {
   const variant = selectedRegistration(state, registrations)?.variant;
   return variant && variant.isOffered(preparation) ? variant : null;
-}
-
-/** Whether the Include caution line shows. */
-export function showsIncludeCaution(state: ExportDialogState): boolean {
-  return state.includeWorkLog || state.includeReasoning;
 }
 
 export function exportDialogWarnings(

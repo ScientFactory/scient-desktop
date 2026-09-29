@@ -18,7 +18,8 @@
  * - task lists become `Scient Task List` paragraphs with ☐ / ☑ boxes;
  * - Mermaid fences become the bundle's rendered diagram image, or a clearly
  *   labelled, complete Mermaid source block when no image was captured;
- * - wide tables get content-proportional column widths.
+ * - tables get full-text-width, content-proportional columns without starving
+ *   short-label columns; authored widths are preserved.
  *
  * Citations and text direction live in their own modules.
  */
@@ -114,7 +115,7 @@ const DETAILS_OMIT_TAGS = new Set(["iframe", "object", "script", "style", "svg",
 type HtmlNode = DefaultTreeAdapterMap["node"];
 type HtmlElement = DefaultTreeAdapterMap["element"];
 const ALERT_KINDS = new Set(["note", "tip", "important", "warning", "caution"]);
-/** Tables this wide get proportional columns; narrower ones fit as Pandoc lays them out. */
+/** Narrow tables can afford wider minimum columns than landscape-sized ones. */
 const WIDE_TABLE_COLUMNS = 6;
 
 function parseMarker(text: string): { kind: string; fields: Map<string, string> } | null {
@@ -256,22 +257,27 @@ function alertDiv(block: PandocNode): PandocNode | null {
   return customStyleDiv(SCIENT_WORD_STYLES.alert, [para([strong(titleInlines)]), ...rest]);
 }
 
-/** Proportional widths for wide tables whose columns are all default width. */
-function sizeWideTable(table: PandocNode): void {
+/** Full-width columns for simple tables whose source does not specify widths. */
+function sizeDefaultTable(table: PandocNode): void {
   const specs = tableColumnSpecs(table);
-  if (specs === null || specs.length < WIDE_TABLE_COLUMNS) return;
+  if (specs === null || specs.length === 0) return;
   if (!specs.every((spec) => spec[1]?.t === "ColWidthDefault")) return;
-  const weights = specs.map(() => 4);
+  const cells = tableCells(table);
+  if (cells.length === 0) return;
+  if (cells.length % specs.length !== 0 || cells.some((cell) => cell[2] !== 1 || cell[3] !== 1)) {
+    for (const spec of specs) spec[1] = { t: "ColWidth", c: 1 / specs.length };
+    return;
+  }
+  const narrow = specs.length < WIDE_TABLE_COLUMNS;
+  const weights: Array<number> = specs.map(() => (narrow ? 12 : 4));
   const cellsPerRow = specs.length;
-  for (const [index, cell] of tableCells(table).entries()) {
+  for (const [index, cell] of cells.entries()) {
     const column = index % cellsPerRow;
-    const longest = Math.max(
-      0,
-      ...inlineText(cell[4].map((block) => inlinesOf(block) ?? []))
-        .split(/\s+/u)
-        .map((word) => word.length),
-    );
-    weights[column] = Math.min(40, Math.max(weights[column] ?? 4, longest));
+    const content = inlineText(cell[4].map((block) => inlinesOf(block) ?? [])).trim();
+    const measured = narrow
+      ? content.length
+      : Math.max(0, ...content.split(/\s+/u).map((word) => word.length));
+    weights[column] = Math.min(narrow ? 30 : 40, Math.max(weights[column] ?? 0, measured));
   }
   const total = weights.reduce((sum, weight) => sum + weight, 0);
   for (const [index, spec] of specs.entries()) {
@@ -422,7 +428,7 @@ export function applyScientStructure(
         }
         continue;
       }
-      if (block.t === "Table") sizeWideTable(block);
+      if (block.t === "Table") sizeDefaultTable(block);
       const replacement = taskList(block) ?? alertDiv(block) ?? block;
       for (const child of childBlockLists(replacement)) shape(child, false);
       // Footnote bodies are block lists inside inlines.

@@ -12,10 +12,11 @@
  * - any other document keeps left-to-right, and its right-to-left paragraphs,
  *   headings, list items, quotes, table cells, and footnotes get `dir=rtl`.
  *
- * Known gap: Word tables keep left-to-right column order (no `bidiVisual`);
- * the export says so when a table carries right-to-left text.
+ * Word tables keep left-to-right column order (no `bidiVisual`), while their
+ * right-to-left cell text is marked. This expected mixed-direction layout is
+ * not a conversion warning.
  */
-import type { DocumentDirection, DocumentWarning } from "@t3tools/contracts";
+import type { DocumentDirection } from "@t3tools/contracts";
 
 import {
   attr,
@@ -27,7 +28,6 @@ import {
   isPandocNode,
   span,
   str,
-  tableCells,
   type PandocDocument,
   type PandocNode,
 } from "./pandocAst.ts";
@@ -89,7 +89,6 @@ function notesIn(inlines: ReadonlyArray<PandocNode>): Array<Array<PandocNode>> {
 export interface DirectionReport {
   readonly rtlDocument: boolean;
   readonly markedBlocks: number;
-  readonly warnings: ReadonlyArray<DocumentWarning>;
 }
 
 /**
@@ -107,7 +106,6 @@ export function applyDirection(
     rtlDocument = counts.rtl > counts.ltr;
   }
   let markedBlocks = 0;
-  let rtlTable = false;
 
   /**
    * Marks blocks whose own direction differs from the direction they sit in.
@@ -137,13 +135,6 @@ export function applyDirection(
       } else if (explicit === "rtl" || explicit === "ltr") {
         for (const child of childBlockLists(block)) wrap(child, explicit, inNote);
       } else {
-        if (block.t === "Table") {
-          rtlTable ||=
-            rtlDocument ||
-            tableCells(block).some((cell) =>
-              cell[4].some((cellBlock) => blockDirection(cellBlock) === "rtl"),
-            );
-        }
         for (const child of childBlockLists(block)) wrap(child, context, inNote);
       }
       // A footnote body sits in the direction of the paragraph that calls it.
@@ -153,14 +144,5 @@ export function applyDirection(
   wrap(document.blocks, rtlDocument ? "rtl" : "ltr");
 
   if (rtlDocument) document.meta.dir = { t: "MetaString", c: "rtl" };
-  const warnings: Array<DocumentWarning> = rtlTable
-    ? [
-        {
-          code: "unsupported-construct",
-          message:
-            "Tables with right-to-left text keep left-to-right column order in Word; their cell text is marked right-to-left.",
-        },
-      ]
-    : [];
-  return { rtlDocument, markedBlocks, warnings };
+  return { rtlDocument, markedBlocks };
 }

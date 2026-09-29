@@ -10,7 +10,6 @@ import {
   exportSaveLabel,
   initialExportDialogState,
   offeredVariant,
-  showsIncludeCaution,
 } from "./exportDialog.logic";
 import {
   registerConversationExportFormat,
@@ -50,10 +49,10 @@ const registrations = registeredConversationExportFormats();
 describe("export dialog", () => {
   it("registers Markdown, PDF, Word, and Scient file in menu order", () => {
     expect(registrations.map((entry) => [entry.format, entry.menuLabel])).toEqual([
-      ["markdown", "Markdown (.md)…"],
-      ["pdf", "PDF (.pdf)…"],
-      ["docx", "Word (.docx)…"],
-      ["scic", "Scient file (.scic)…"],
+      ["markdown", "Markdown (.md)"],
+      ["pdf", "PDF (.pdf)"],
+      ["docx", "Word (.docx)"],
+      ["scic", "Scient file (.scic)"],
     ]);
     // Word offers its install where it is unavailable.
     expect(registrations[2]?.UnavailableAction).toBeDefined();
@@ -93,7 +92,7 @@ describe("export dialog", () => {
     const pdf: ConversationExportFormatRegistration = {
       format: "pdf",
       label: "PDF",
-      menuLabel: "PDF (.pdf)…",
+      menuLabel: "PDF (.pdf)",
       about: "About.",
       saveLabel: "Save PDF",
       clientAvailability: () => ({ available: false, reason: "Needs the desktop app." }),
@@ -147,11 +146,7 @@ describe("export dialog", () => {
     expect(labels).toEqual(["Save PDF", "Save .docx", "Save .scic"]);
   });
 
-  it("shows the caution only while the work log or reasoning is included", () => {
-    const state = initialExportDialogState(registrations, "markdown");
-    expect(showsIncludeCaution(state)).toBe(false);
-    expect(showsIncludeCaution({ ...state, includeWorkLog: true })).toBe(true);
-    expect(showsIncludeCaution({ ...state, includeReasoning: true })).toBe(true);
+  it("reports a running turn without changing the include choices", () => {
     expect(exportDialogWarnings(preparation)).toEqual([]);
     expect(exportDialogWarnings({ ...preparation, runningTurnOmitted: true })).toEqual([
       RUNNING_TURN_WARNING,

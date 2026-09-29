@@ -324,13 +324,21 @@ describe("applyScientStructure", () => {
     expect(report.warnings[0]?.code).toBe("resource-unresolved");
   });
 
-  it("gives wide tables proportional column widths", () => {
+  it("gives default-width tables full-width columns without starving short labels", () => {
     const wide = table(6, [
       ["a", "b", "c", "d", "e", "f"],
       ["x", "a-much-longer-cell-value", "y", "z", "w", "v"],
     ]);
-    const narrow = table(2, [["a", "b"]]);
-    applyScientStructure([wide, narrow], { profile: "document", assets: [] });
+    const narrow = table(3, [
+      ["Item", "Description", "Example"],
+      ["Language", "English and Hebrew", "A longer example to show the layout"],
+    ]);
+    const authored = table(2, [["a", "b"]]);
+    ((authored.c as Array<unknown>)[2] as Array<[PandocNode, PandocNode]>)[0]![1] = {
+      t: "ColWidth",
+      c: 0.25,
+    };
+    applyScientStructure([wide, narrow, authored], { profile: "document", assets: [] });
     const widths = ((wide.c as Array<unknown>)[2] as Array<[PandocNode, PandocNode]>).map(
       (spec) => spec[1],
     );
@@ -338,9 +346,15 @@ describe("applyScientStructure", () => {
     const values = widths.map((width) => Number(width.c));
     expect(values.reduce((sum, value) => sum + value, 0)).toBeCloseTo(1, 6);
     expect(values[1]!).toBeGreaterThan(values[0]!);
-    expect(((narrow.c as Array<unknown>)[2] as Array<[PandocNode, PandocNode]>)[0]![1].t).toBe(
-      "ColWidthDefault",
+    const narrowWidths = ((narrow.c as Array<unknown>)[2] as Array<[PandocNode, PandocNode]>).map(
+      (spec) => Number(spec[1].c),
     );
+    expect(narrowWidths.reduce((sum, value) => sum + value, 0)).toBeCloseTo(1, 6);
+    expect(narrowWidths[0]!).toBeGreaterThan(0.15);
+    expect(narrowWidths[2]!).toBeGreaterThan(narrowWidths[0]!);
+    expect(
+      ((authored.c as Array<unknown>)[2] as Array<[PandocNode, PandocNode]>).map((spec) => spec[1]),
+    ).toEqual([{ t: "ColWidth", c: 0.25 }, { t: "ColWidthDefault" }]);
   });
 });
 

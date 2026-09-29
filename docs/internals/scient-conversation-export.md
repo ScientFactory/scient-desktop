@@ -351,7 +351,7 @@ offers **Open** on the notice; resolving `null` means the save was cancelled), a
 place of the options). A format this host cannot produce shows its reason and no Save button.
 Work log and reasoning start off on every opening, every export covers the whole conversation (the
 request's message range is not offered in the UI), and the text-only or `.zip` choice appears only
-when the conversation has attachments. The dialog shows a caution line while work log or reasoning is included and warns
+when the conversation has attachments. Enabling work log or reasoning briefly floats a caution card above that switch without moving the controls, and the dialog warns
 when a turn is running; the file's own warnings are shown after export and written into the file.
 **Copy ▸ Conversation as Markdown** in the thread menu copies text-only Markdown with the default
 options through the same export request with `delivery: "clipboard"`.

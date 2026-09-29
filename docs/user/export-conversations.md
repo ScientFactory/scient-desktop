@@ -5,8 +5,8 @@ portable `.scic` file.
 
 1. Open the thread's menu: right-click the thread in the sidebar, or use the menu in the chat
    header.
-2. Choose **Export**, then the format: **Markdown (.md)…**, **PDF (.pdf)…**, **Word (.docx)…**, or
-   **Scient file (.scic)…**.
+2. Choose **Export**, then the format: **Markdown (.md)**, **PDF (.pdf)**, **Word (.docx)**, or
+   **Scient file (.scic)**.
 3. Choose what to include, then press the Save button (**Save .md**, **Save PDF**, **Save .docx**,
    or **Save .scic**).
 
@@ -17,7 +17,7 @@ To put the conversation on the clipboard instead, choose **Copy ▸ Conversation
 thread's menu. It copies the whole conversation as text-only Markdown, without the work log or
 reasoning.
 
-Choose **Export ▸ PDF (.pdf)…** for a print-ready document with a heading for each speaker and the
+Choose **Export ▸ PDF (.pdf)** for a print-ready document with a heading for each speaker and the
 images, math, and diagrams inside the file. Like the other formats, it opens a save dialog; when it is saved, choose **Open** on the
 notice to read it in Scient's PDF reader. The options below apply to PDF too: the work log and
 reasoning appear as indented blocks under each answer, and long ones continue onto the next page.
@@ -45,8 +45,8 @@ If a response is still being written, that turn is left out and the file says so
 - **Work log** adds the tools, commands, and results under each answer, in collapsible sections.
 - **Reasoning** adds the thinking chat shows in its collapsed blocks.
 
-Both are off each time you open the dialog. While either is on, the dialog reminds you that the
-export may include file paths, commands, and their output, so check the file before you share it.
+Both are off each time you open the dialog. Turning either on briefly shows a reminder above that
+switch: the export may include file paths, commands, and their output. Check the file before sharing.
 
 When the conversation has images or attachments, the Markdown dialog offers **Text only (.md)**,
 which lists attachments by name, or **With attachments (.zip)**, which keeps the files next to the

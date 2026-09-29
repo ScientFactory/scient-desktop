@@ -5,7 +5,8 @@ import type {
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { TriangleAlertIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { create } from "zustand";
 
 import { Button } from "../../components/ui/button";
@@ -37,7 +38,6 @@ import {
   exportSaveLabel,
   initialExportDialogState,
   offeredVariant,
-  showsIncludeCaution,
   type ExportDialogState,
 } from "./exportDialog.logic";
 import {
@@ -318,7 +318,40 @@ function ConversationExportDialog({ request }: { readonly request: OpenRequest }
   );
 }
 
-/** The export choices. Stateless: the dialog owns the state and resets it on every opening. */
+const INCLUDE_CAUTION_MS = 4_000;
+const INCLUDE_CAUTION_GAP_PX = 8;
+
+type CautionTarget = "workLog" | "reasoning";
+type CautionPosition = {
+  readonly target: CautionTarget;
+  readonly popup: HTMLElement;
+  readonly top: number;
+  readonly left: number;
+  readonly maxWidth: number;
+};
+
+function IncludeCaution({
+  id,
+  position,
+}: {
+  readonly id: string;
+  readonly position: CautionPosition;
+}) {
+  return createPortal(
+    <p
+      id={id}
+      role="status"
+      className="pointer-events-none absolute z-10 flex w-80 -translate-y-full items-start gap-2 rounded-lg border bg-popover px-3 py-2 text-xs leading-5 text-muted-foreground shadow-lg"
+      style={{ top: position.top, left: position.left, maxWidth: position.maxWidth }}
+    >
+      <TriangleAlertIcon aria-hidden className="mt-px size-3.5 shrink-0 text-warning" />
+      {INCLUDE_CAUTION}
+    </p>,
+    position.popup,
+  );
+}
+
+/** The export choices. Inclusion choices live in the dialog; the caution is local and temporary. */
 export function ConversationExportForm(props: {
   readonly preparation: ScientConversationExportPreparation;
   readonly registrations: ReadonlyArray<ConversationExportFormatRegistration>;
@@ -330,6 +363,55 @@ export function ConversationExportForm(props: {
   const variant = offeredVariant(state, preparation, registrations);
   const warnings = exportDialogWarnings(preparation);
   const update = (patch: Partial<ExportDialogState>) => onChange({ ...state, ...patch });
+  const [cautionFor, setCautionFor] = useState<CautionTarget | null>(null);
+  const [cautionPosition, setCautionPosition] = useState<CautionPosition | null>(null);
+  const workLogRef = useRef<HTMLLabelElement>(null);
+  const reasoningRef = useRef<HTMLLabelElement>(null);
+
+  useEffect(() => {
+    if (cautionFor === null) return;
+    const timeout = window.setTimeout(() => setCautionFor(null), INCLUDE_CAUTION_MS);
+    return () => window.clearTimeout(timeout);
+  }, [cautionFor]);
+
+  useLayoutEffect(() => {
+    if (cautionFor === null) return;
+    const anchor = (cautionFor === "workLog" ? workLogRef : reasoningRef).current;
+    const popup = anchor?.closest<HTMLElement>('[data-slot="dialog-popup"]');
+    if (!anchor || !popup) return;
+
+    const updatePosition = () => {
+      const anchorRect = anchor.getBoundingClientRect();
+      const popupRect = popup.getBoundingClientRect();
+      const scaleX = popup.offsetWidth > 0 ? popupRect.width / popup.offsetWidth : 1;
+      const scaleY = popup.offsetHeight > 0 ? popupRect.height / popup.offsetHeight : 1;
+      const left = Math.max(12, (anchorRect.left - popupRect.left) / (scaleX || 1));
+      setCautionPosition({
+        target: cautionFor,
+        popup,
+        top: (anchorRect.top - popupRect.top) / (scaleY || 1) - INCLUDE_CAUTION_GAP_PX,
+        left,
+        maxWidth: Math.max(1, popup.offsetWidth - left - 12),
+      });
+    };
+
+    updatePosition();
+    const scrollArea = anchor.closest('[data-slot="scroll-area-viewport"]');
+    scrollArea?.addEventListener("scroll", updatePosition, { passive: true });
+    window.addEventListener("resize", updatePosition);
+    return () => {
+      scrollArea?.removeEventListener("scroll", updatePosition);
+      window.removeEventListener("resize", updatePosition);
+    };
+  }, [cautionFor]);
+
+  const changeInclude = (field: "includeWorkLog" | "includeReasoning", checked: boolean) => {
+    const target = field === "includeWorkLog" ? "workLog" : "reasoning";
+    setCautionFor((current) => (checked ? target : current === target ? null : current));
+    update({ [field]: checked });
+  };
+
+  const shownCaution = cautionPosition?.target === cautionFor ? cautionPosition : null;
 
   return (
     <div className="flex flex-col gap-4">
@@ -351,29 +433,40 @@ export function ConversationExportForm(props: {
 
       <div className="flex flex-col gap-2">
         <span className="text-sm font-medium">Include</span>
-        <Label>
+        <Label ref={workLogRef}>
           <Switch
             checked={state.includeWorkLog}
             disabled={disabled}
-            onCheckedChange={(checked) => update({ includeWorkLog: checked })}
+            aria-describedby={
+              shownCaution?.target === "workLog" ? "export-work-log-caution" : undefined
+            }
+            onCheckedChange={(checked) => changeInclude("includeWorkLog", checked)}
           />
           Work log — tools, commands, results
         </Label>
-        <Label>
+        <Label ref={reasoningRef}>
           <Switch
             checked={state.includeReasoning}
             disabled={disabled}
-            onCheckedChange={(checked) => update({ includeReasoning: checked })}
+            aria-describedby={
+              shownCaution?.target === "reasoning" ? "export-reasoning-caution" : undefined
+            }
+            onCheckedChange={(checked) => changeInclude("includeReasoning", checked)}
           />
           Reasoning — the thinking shown in chat
         </Label>
-        {showsIncludeCaution(state) ? (
-          <p className="flex items-start gap-1.5 text-warning text-xs">
-            <TriangleAlertIcon aria-hidden className="mt-px size-3.5 shrink-0" />
-            {INCLUDE_CAUTION}
-          </p>
-        ) : null}
       </div>
+
+      {shownCaution ? (
+        <IncludeCaution
+          id={
+            shownCaution.target === "workLog"
+              ? "export-work-log-caution"
+              : "export-reasoning-caution"
+          }
+          position={shownCaution}
+        />
+      ) : null}
 
       {warnings.length > 0 ? (
         <ul className="flex flex-col gap-1" aria-label="Export warnings">
