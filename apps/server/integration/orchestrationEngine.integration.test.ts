@@ -1188,7 +1188,7 @@ it.live("forwards claudeAgent approval responses to the provider session", () =>
   ),
 );
 
-it.live("forwards thread.turn.interrupt to claudeAgent provider sessions", () =>
+it.live("settles an interrupted claudeAgent turn and its graceful session exit", () =>
   withHarness(
     (harness) =>
       Effect.gen(function* () {
@@ -1254,6 +1254,55 @@ it.live("forwards thread.turn.interrupt to claudeAgent provider sessions", () =>
           "claude provider interrupt call",
         );
         assert.equal(interruptCalls.length, 1);
+
+        const snapshot = yield* harness.snapshotQuery.getSnapshot();
+        const interruptingThread = snapshot.threads.find((entry) => entry.id === THREAD_ID);
+        assert.equal(interruptingThread?.session?.status, "running");
+        const turnId = interruptingThread?.session?.activeTurnId;
+        assert.ok(turnId);
+
+        yield* harness.adapterHarness!.emitEvent({
+          type: "turn.completed",
+          ...runtimeBase(
+            "evt-claude-interrupted",
+            "2026-05-01T00:00:01.000Z",
+            CLAUDE_AGENT_PROVIDER,
+          ),
+          threadId: THREAD_ID,
+          turnId,
+          payload: { state: "interrupted" },
+        });
+        yield* harness.waitForReceipt(
+          (receipt): receipt is TurnProcessingQuiescedReceipt =>
+            receipt.type === "turn.processing.quiesced" &&
+            receipt.threadId === THREAD_ID &&
+            receipt.turnId === turnId &&
+            receipt.checkpointTurnCount === 1,
+        );
+        const interruptedThread = yield* harness.waitForThread(
+          THREAD_ID,
+          (entry) => entry.session?.status === "ready",
+        );
+        assert.equal(interruptedThread.session?.activeTurnId, null);
+        assert.equal(interruptedThread.session?.lastError, null);
+        assert.equal(interruptedThread.latestTurn?.state, "completed");
+        assert.ok(interruptedThread.messages.some((message) => message.role === "assistant"));
+        assert.ok(interruptedThread.messages.every((message) => !message.streaming));
+
+        yield* harness.adapterHarness!.emitEvent({
+          type: "session.exited",
+          ...runtimeBase("evt-claude-exited", "2026-05-01T00:00:02.000Z", CLAUDE_AGENT_PROVIDER),
+          threadId: THREAD_ID,
+          payload: { exitKind: "graceful", reason: "Session stopped" },
+        });
+        const stoppedThread = yield* harness.waitForThread(
+          THREAD_ID,
+          (entry) => entry.session?.status === "stopped",
+        );
+        assert.equal(stoppedThread.session?.activeTurnId, null);
+        assert.equal(stoppedThread.session?.lastError, null);
+        assert.equal(stoppedThread.latestTurn?.state, "completed");
+        assert.ok(stoppedThread.messages.every((message) => !message.streaming));
       }),
     CLAUDE_AGENT_PROVIDER,
   ),
