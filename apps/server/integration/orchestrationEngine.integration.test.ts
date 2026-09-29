@@ -1406,3 +1406,83 @@ it.live("reverts claudeAgent turns and rolls back provider conversation state", 
     CLAUDE_AGENT_PROVIDER,
   ),
 );
+
+it.live(
+  "preserves stable reading identities through burst-streamed turns and snapshot rehydration",
+  () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        yield* seedProjectAndThread(harness);
+        const savedAnswers: Array<{ id: MessageId; turnId: string | null; text: string }> = [];
+        for (let turn = 0; turn < 12; turn++) {
+          const turnId = `reader-stress-${turn}`;
+          const createdAt = `2026-09-29T00:${String(turn).padStart(2, "0")}:00.000Z`;
+          const chunks = Array.from(
+            { length: 40 },
+            (_, chunk) => `Turn ${turn}, paragraph ${chunk}.\n\n`,
+          );
+          const response: TestTurnResponse = {
+            events: [
+              {
+                type: "turn.started",
+                ...runtimeBase(`${turnId}-start`, createdAt),
+                threadId: THREAD_ID,
+                turnId,
+              },
+              ...chunks.map((delta, chunk) => ({
+                type: "message.delta",
+                ...runtimeBase(`${turnId}-${chunk}`, createdAt),
+                threadId: THREAD_ID,
+                turnId,
+                delta,
+              })),
+              {
+                type: "turn.completed",
+                ...runtimeBase(`${turnId}-done`, createdAt),
+                threadId: THREAD_ID,
+                turnId,
+                status: "completed",
+              },
+            ],
+          };
+          if (turn === 0) yield* harness.adapterHarness!.queueTurnResponseForNextSession(response);
+          else yield* harness.adapterHarness!.queueTurnResponse(THREAD_ID, response);
+          yield* startTurn({
+            harness,
+            commandId: `reader-command-${turn}`,
+            messageId: `reader-prompt-${turn}`,
+            text: `Stress turn ${turn}`,
+            createdAt,
+          });
+          yield* harness.waitForReceipt(
+            (receipt): receipt is TurnProcessingQuiescedReceipt =>
+              receipt.type === "turn.processing.quiesced" &&
+              receipt.threadId === THREAD_ID &&
+              receipt.checkpointTurnCount === turn + 1,
+          );
+          const thread = yield* harness.waitForThread(
+            THREAD_ID,
+            (entry) =>
+              entry.messages.filter((message) => message.role === "assistant" && !message.streaming)
+                .length ===
+              turn + 1,
+          );
+          const answer = thread.messages.findLast((message) => message.role === "assistant")!;
+          assert.equal(answer.text, chunks.join(""));
+          savedAnswers.push({ id: answer.id, turnId: answer.turnId, text: answer.text });
+        }
+        // This query rehydrates from SQLite, as a newly connected/reloaded client does.
+        const snapshot = yield* harness.snapshotQuery.getSnapshot();
+        const rehydrated = snapshot.threads.find((thread) => thread.id === THREAD_ID)!;
+        for (const saved of savedAnswers) {
+          const message = rehydrated.messages.find((message) => message.id === saved.id);
+          assert.deepEqual(
+            message && { id: message.id, turnId: message.turnId, text: message.text },
+            saved,
+          );
+        }
+        assert.equal(new Set(savedAnswers.map((answer) => answer.id)).size, 12);
+        assert.equal(new Set(savedAnswers.map((answer) => answer.turnId)).size, 12);
+      }),
+    ),
+);

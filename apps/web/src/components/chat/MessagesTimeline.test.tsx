@@ -219,7 +219,6 @@ function buildProps() {
     anchorMessageId: null,
     onAnchorReady: () => {},
     contentInsetEndAdjustment: 0,
-    liveFollowEnabled: true,
     onIsAtEndChange: () => {},
     onManualNavigation: () => {},
   };
@@ -808,10 +807,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-content-inset-end="144"');
     expect(markup).toContain("[overflow-anchor:none]");
     expect(markup).not.toContain('data-maintain-scroll-at-end="enabled"');
-    expect(markup).toContain('data-maintain-visible-content-position="object"');
-    expect(markup).toContain('data-maintain-visible-content-position-data="true"');
-    expect(markup).toContain('data-maintain-visible-content-position-size="true"');
-    expect(markup).toContain('data-maintain-visible-content-position-restore="true"');
+    expect(markup).toContain('data-maintain-visible-content-position="false"');
     expect(markup).toContain("Terminal");
     expect(markup).toContain("t3code — Tests");
     expect(markup).toContain('src="data:image/png;base64,aWNvbg=="');
@@ -834,7 +830,7 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("h-28 w-52 max-w-full");
   });
 
-  it("does not reserve end space for a follow-up user message", () => {
+  it("does not push follow-up messages to the top", () => {
     const onAnchorReady = vi.fn();
     const firstEntry = buildUserTimelineEntry("First prompt.");
     const secondEntry = {
@@ -855,7 +851,7 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).not.toContain("data-anchor-index=");
-    expect(markup).toContain('data-maintain-scroll-at-end="enabled"');
+    expect(markup).not.toContain('data-maintain-scroll-at-end="enabled"');
     expect(onAnchorReady).not.toHaveBeenCalled();
   });
 
@@ -1020,20 +1016,20 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("<a href=");
   });
 
-  it("glides to the end while a turn is running and snaps otherwise", () => {
+  it("never follows row growth in running or idle turns", () => {
     const entries = [buildUserTimelineEntry("Hello")];
     const working = renderToStaticMarkup(
       <MessagesTimeline {...buildProps()} isWorking timelineEntries={entries} />,
     );
-    expect(working).toContain('data-maintain-scroll-at-end-animated="true"');
+    expect(working).not.toContain('data-maintain-scroll-at-end="enabled"');
 
     const idle = renderToStaticMarkup(
       <MessagesTimeline {...buildProps()} timelineEntries={entries} />,
     );
-    expect(idle).toContain('data-maintain-scroll-at-end-animated="false"');
+    expect(idle).not.toContain('data-maintain-scroll-at-end="enabled"');
   });
 
-  it("snaps to the end while a thread switch settles, even mid-turn", async () => {
+  it("does not enable following before or after a thread switch", async () => {
     const frames = new Map<number, FrameRequestCallback>();
     let nextFrame = 0;
     vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
@@ -1083,7 +1079,7 @@ describe("MessagesTimeline", () => {
           />,
         );
       });
-      expect(animatedAttr(renderer)).toBe(true);
+      expect(animatedAttr(renderer)).toBeUndefined();
 
       act(() => {
         renderer.update(
@@ -1095,12 +1091,12 @@ describe("MessagesTimeline", () => {
           />,
         );
       });
-      expect(animatedAttr(renderer)).toBe(false);
+      expect(animatedAttr(renderer)).toBeUndefined();
 
       // Two frames later the switch has settled and gliding resumes.
       flushFrame();
       flushFrame();
-      expect(animatedAttr(renderer)).toBe(true);
+      expect(animatedAttr(renderer)).toBeUndefined();
     } finally {
       act(() => renderer?.unmount());
       vi.unstubAllGlobals();
@@ -1123,7 +1119,6 @@ describe("MessagesTimeline", () => {
         }}
         runningTurnId={turnId}
         anchorMessageId={firstEntry.message.id}
-        liveFollowEnabled={false}
         timelineEntries={[
           firstEntry,
           {
@@ -1150,7 +1145,7 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain('data-maintain-scroll-at-end="enabled"');
   });
 
-  it("hands end-following back to the list once the send anchor is released", () => {
+  it("keeps following disabled after the send anchor is released", () => {
     const firstEntry = buildUserTimelineEntry("First prompt.");
     const secondEntry = {
       ...buildUserTimelineEntry("Newest prompt."),
@@ -1185,7 +1180,7 @@ describe("MessagesTimeline", () => {
           timelineEntries={timelineEntries}
         />,
       ),
-    ).toContain('data-maintain-scroll-at-end="enabled"');
+    ).not.toContain('data-maintain-scroll-at-end="enabled"');
 
     // Reading history still wins over both.
     expect(
@@ -1193,7 +1188,6 @@ describe("MessagesTimeline", () => {
         <MessagesTimeline
           {...buildProps()}
           anchorMessageId={null}
-          liveFollowEnabled={false}
           timelineEntries={timelineEntries}
         />,
       ),
@@ -1209,12 +1203,7 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("Show full message");
-    expect(markup).toContain('data-maintain-scroll-at-end="enabled"');
-    expect(markup).toContain('data-maintain-scroll-at-end-animated="false"');
-    expect(markup).toContain('data-maintain-scroll-at-end-data-change="true"');
-    expect(markup).toContain('data-maintain-scroll-at-end-footer-layout="false"');
-    expect(markup).toContain('data-maintain-scroll-at-end-item-layout="true"');
-    expect(markup).toContain('data-maintain-scroll-at-end-layout="true"');
+    expect(markup).not.toContain('data-maintain-scroll-at-end="enabled"');
     expect(markup).toContain('data-user-message-collapsed="true"');
     expect(markup).toContain('data-user-message-fade="true"');
     expect(markup).toContain('data-user-message-footer="true"');

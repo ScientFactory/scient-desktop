@@ -1,9 +1,9 @@
-import type { TurnId } from "@t3tools/contracts";
+import { TurnId } from "@t3tools/contracts";
 
 // Match the titlebar fade inset so draft promotion preserves the first row's position.
 export const CHAT_TIMELINE_ANCHOR_OFFSET = 24;
 
-export type TimelineScrollMode = "following-end" | "anchoring-new-turn" | "free-scrolling";
+export type TimelineScrollMode = "anchoring-new-turn" | "free-scrolling";
 
 export interface TimelineListMeasurementState {
   readonly data: readonly unknown[];
@@ -109,6 +109,11 @@ export function getAnchoredTurnMetrics({
 
 export interface RememberedTimelinePosition {
   readonly rowId: string;
+  readonly messageId?: string;
+  readonly turnId?: string;
+  readonly createdAt?: string;
+  readonly neighborMessageIds?: readonly string[];
+  readonly anchorMessageId?: string;
   readonly offsetWithinRow: number;
   readonly scrollOffset: number;
   readonly atEnd: boolean;
@@ -124,18 +129,122 @@ export interface RememberedTimelinePosition {
   };
 }
 
-// Scoped thread keys keep separate environments independent. Bound the session cache.
+// Only identifiers and layout metadata are persisted, never message text. Session
+// storage survives renderer reloads and remains isolated per window/environment.
+const POSITION_STORAGE_KEY = "scient:timeline-reading-position:v1";
 const rememberedTimelinePositions = new Map<string, RememberedTimelinePosition>();
+let positionsLoaded = false;
+
+function readDisclosures(
+  value: Record<string, unknown>,
+): NonNullable<RememberedTimelinePosition["disclosures"]> {
+  const strings = (input: unknown): string[] =>
+    Array.isArray(input)
+      ? input.filter((id): id is string => typeof id === "string").slice(0, 1000)
+      : [];
+  return {
+    turns: new Set(strings(value.turns).map((id) => TurnId.make(id))),
+    workGroups: new Set(strings(value.workGroups)),
+    spawnEntries: new Set(strings(value.spawnEntries)),
+    reasoningMessages: new Set(strings(value.reasoningMessages)),
+    workGroupState: {
+      scrollPositions: new Map(),
+      expandedEntries: new Set(strings(value.expandedEntries)),
+    },
+  };
+}
+
+function loadPositions() {
+  if (positionsLoaded || typeof sessionStorage === "undefined") return;
+  positionsLoaded = true;
+  try {
+    const stored: unknown = JSON.parse(sessionStorage.getItem(POSITION_STORAGE_KEY) ?? "[]");
+    if (!Array.isArray(stored)) return;
+    for (const entry of stored.slice(-100)) {
+      if (!Array.isArray(entry) || entry.length !== 2) continue;
+      const [key, value] = entry;
+      if (typeof key !== "string" || !value || typeof value !== "object") continue;
+      const p = value as Record<string, unknown>;
+      if (
+        typeof p.rowId !== "string" ||
+        typeof p.offsetWithinRow !== "number" ||
+        !Number.isFinite(p.offsetWithinRow) ||
+        typeof p.atEnd !== "boolean"
+      )
+        continue;
+      if (
+        ["messageId", "turnId", "createdAt", "anchorMessageId"].some(
+          (field) => p[field] !== undefined && typeof p[field] !== "string",
+        )
+      )
+        continue;
+      if (
+        p.neighborMessageIds !== undefined &&
+        (!Array.isArray(p.neighborMessageIds) ||
+          !p.neighborMessageIds.every((id) => typeof id === "string"))
+      )
+        continue;
+      rememberedTimelinePositions.set(key, {
+        rowId: p.rowId,
+        offsetWithinRow: p.offsetWithinRow,
+        scrollOffset: 0,
+        atEnd: p.atEnd,
+        ...(typeof p.messageId === "string" ? { messageId: p.messageId } : {}),
+        ...(typeof p.turnId === "string" ? { turnId: p.turnId } : {}),
+        ...(typeof p.createdAt === "string" ? { createdAt: p.createdAt } : {}),
+        ...(typeof p.anchorMessageId === "string" ? { anchorMessageId: p.anchorMessageId } : {}),
+        ...(p.disclosures && typeof p.disclosures === "object"
+          ? { disclosures: readDisclosures(p.disclosures as Record<string, unknown>) }
+          : {}),
+        ...(Array.isArray(p.neighborMessageIds)
+          ? { neighborMessageIds: p.neighborMessageIds }
+          : {}),
+      });
+    }
+  } catch {
+    /* Storage may be unavailable or contain an older/corrupt record. */
+  }
+}
 
 export function readTimelinePosition(threadKey: string) {
+  loadPositions();
   return rememberedTimelinePositions.get(threadKey);
 }
 
 export function rememberTimelinePosition(threadKey: string, position: RememberedTimelinePosition) {
+  loadPositions();
   rememberedTimelinePositions.delete(threadKey);
   rememberedTimelinePositions.set(threadKey, position);
   if (rememberedTimelinePositions.size > 100) {
     const oldest = rememberedTimelinePositions.keys().next().value;
     if (oldest !== undefined) rememberedTimelinePositions.delete(oldest);
+  }
+  try {
+    sessionStorage.setItem(
+      POSITION_STORAGE_KEY,
+      JSON.stringify(
+        [...rememberedTimelinePositions].map(
+          ([key, { disclosures, scrollOffset: _offset, ...value }]) => [
+            key,
+            {
+              ...value,
+              ...(disclosures
+                ? {
+                    disclosures: {
+                      turns: [...disclosures.turns],
+                      workGroups: [...disclosures.workGroups],
+                      spawnEntries: [...disclosures.spawnEntries],
+                      reasoningMessages: [...disclosures.reasoningMessages],
+                      expandedEntries: [...disclosures.workGroupState.expandedEntries],
+                    },
+                  }
+                : {}),
+            },
+          ],
+        ),
+      ),
+    );
+  } catch {
+    /* In-memory navigation still works when storage is unavailable. */
   }
 }

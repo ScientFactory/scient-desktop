@@ -1,5 +1,18 @@
 # Upstream maintenance
 
+Scient owns desktop/web reader-position policy in `ChatView.tsx`,
+`MessagesTimeline.tsx`, and `chat/readerScrollPolicy.ts`. The outer timeline never
+maintains the live end during streaming, tool activity, completion, or queued
+sends. Preserve the existing first-message framing and the inherited 40-pixel
+near-bottom band. Eligible sends reveal the prompt and its answer through
+`chat/useBoundedAnswerFollow.ts`, capped at the sent prompt's first line reaching
+the top margin. Manual navigation cancels pending placement and bounded following.
+The existing Scroll to end button is a one-shot action with an
+unread-message badge, not a follow toggle. Do not add a second navigation button.
+Reading positions resolve by message/turn identity, load missing history, and
+survive same-window reloads; never restore an unrelated absolute pixel offset.
+Nested tool-output scrolling and the shared mobile scroll policy are unchanged.
+
 Scient's local Preview discovery requires an explicit web URL before sending
 HTTP(S) traffic. Preserve this deliberate boundary in `PortScanner.ts`: passive
 listener enumeration enriches ownership metadata but never authorizes a probe,
