@@ -554,6 +554,51 @@
             "digest": "cf8d34a7fe6f60de1acbe74f29c82026e4c07888e9d89f7ebceeb922159e5787"
           },
           "size": 193484176
+        },
+        "darwin-x64": {
+          "artifactName": "omp-darwin-x64",
+          "url": "https://github.com/can1357/oh-my-pi/releases/download/v18.2.8/omp-darwin-x64",
+          "checksum": {
+            "algorithm": "sha256",
+            "digest": "b385c2bbacddc09b266ec19ba95ebb2882301293d49390d7fd32cc3a12a1da41"
+          },
+          "size": 201908656
+        },
+        "linux-arm64-glibc": {
+          "artifactName": "omp-linux-arm64",
+          "url": "https://github.com/can1357/oh-my-pi/releases/download/v18.2.8/omp-linux-arm64",
+          "checksum": {
+            "algorithm": "sha256",
+            "digest": "a9aa63e43c95ccaa0683e9fed03463c401829e220ad2bbc414b341d2d49e5806"
+          },
+          "size": 214616360
+        },
+        "linux-x64-glibc": {
+          "artifactName": "omp-linux-x64",
+          "url": "https://github.com/can1357/oh-my-pi/releases/download/v18.2.8/omp-linux-x64",
+          "checksum": {
+            "algorithm": "sha256",
+            "digest": "b0c01da7339d87fd5d26d7faa7b61c131a50648399962783899fd93a6d8b1d65"
+          },
+          "size": 259003872
+        },
+        "win32-arm64": {
+          "artifactName": "omp-windows-arm64.exe",
+          "url": "https://github.com/can1357/oh-my-pi/releases/download/v18.2.8/omp-windows-arm64.exe",
+          "checksum": {
+            "algorithm": "sha256",
+            "digest": "ae4045cb1db051fa7331a37185f65370746a0d866ed1a87916da811a9192815f"
+          },
+          "size": 207932928
+        },
+        "win32-x64": {
+          "artifactName": "omp-windows-x64.exe",
+          "url": "https://github.com/can1357/oh-my-pi/releases/download/v18.2.8/omp-windows-x64.exe",
+          "checksum": {
+            "algorithm": "sha256",
+            "digest": "b95431cb63b073c36c3664f6d9e2611de8d28d6e6e21ede657c8f83f0e7034b3"
+          },
+          "size": 218729472
         }
       }
     }

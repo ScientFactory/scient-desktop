@@ -34,6 +34,7 @@ import {
   resolveManagedRuntimeCatalogCandidate,
   resolveManagedRuntimeRepairArtifact,
   resolveFetchedManagedRuntimeCatalog,
+  changedManagedRuntimeProviders,
   type ManagedRuntimeCatalogData,
 } from "./ManagedRuntimeCatalog.ts";
 
@@ -266,6 +267,32 @@ describe("managed runtime catalog resolution", () => {
     assert.deepStrictEqual(
       resolveFetchedManagedRuntimeCatalog({ schemaVersion: 1, providers: {} }, current).providers
         .codex,
+      codex,
+    );
+  });
+
+  it("accepts a same-version republish that only adds targets", () => {
+    const full = remoteCatalog();
+    const codex = full.providers.codex;
+    assert.isDefined(codex);
+    const darwin = codex.artifacts["darwin-arm64"];
+    assert.isDefined(darwin);
+    const sparse = { ...codex, artifacts: { "darwin-arm64": darwin } };
+    const cached = { schemaVersion: 1 as const, providers: { ...full.providers, codex: sparse } };
+
+    assert.deepStrictEqual(
+      resolveFetchedManagedRuntimeCatalog(full, cached).providers.codex,
+      codex,
+    );
+    // The expansion is announced so runtime actions are reconciled.
+    assert.deepStrictEqual(
+      changedManagedRuntimeProviders(cached, resolveFetchedManagedRuntimeCatalog(full, cached)),
+      ["codex"],
+    );
+    assert.deepStrictEqual(changedManagedRuntimeProviders(full, full), []);
+    // Dropping a target the cached release lists is not an extension.
+    assert.deepStrictEqual(
+      resolveFetchedManagedRuntimeCatalog(cached, full).providers.codex,
       codex,
     );
   });

@@ -15,8 +15,8 @@ You can use Oh My Pi in two ways:
   release for mise and as a fallback. A failed check is retried on the next refresh. The notice
   gives the command to run yourself, usually `omp update`, and names Scient-managed Oh My Pi when
   Scient has a qualified private runtime for your computer. Nix installations are not checked.
-- **Scient-managed Oh My Pi.** On the desktop app for macOS Apple silicon, Scient can install a
-  private copy of Oh My Pi (18.2.8 in the catalog bundled with this release) through the same
+- **Scient-managed Oh My Pi.** On the desktop app for macOS (Apple silicon and Intel), Windows
+  (x64 and ARM64) and Linux (x64 and ARM64, glibc), Scient can install a private copy of Oh My Pi (18.2.8 in the catalog bundled with this release) through the same
   install, repair, update and removal pipeline as its other managed providers. Each release in
   Scient's catalog is checksum-verified and qualified first, including an RPC handshake and a state
   request against the installed binary. The copy updates only when the catalog has a newer qualified
@@ -28,8 +28,8 @@ qualified instead of guessing.
 ## Setup
 
 Oh My Pi is off by default. In **Settings > Providers**, enable **Oh My Pi** and set the executable
-path when `omp` is not on the server's `PATH`. On the desktop app for macOS Apple silicon, you can
-instead choose **Install** to use Scient-managed Oh My Pi.
+path when `omp` is not on the server's `PATH`. On the desktop app, you can instead choose
+**Install** to use Scient-managed Oh My Pi.
 
 Scient starts one `omp --mode rpc --approval-mode yolo` process for each conversation. With the home
 and profile left empty, that process uses the Oh My Pi home and credentials the server's
@@ -69,6 +69,12 @@ A model must have usable context and output limits before OMP advertises it. Aut
 unknown limits, and models whose stored credential is unavailable, stay out of the OMP catalog.
 Image and reasoning controls are advertised only when the shared custom-model settings explicitly
 enable them or provide compatible evidence.
+
+In the model picker, an Oh My Pi instance with both kinds of models shows them in two sections:
+**Your Oh My Pi accounts** (models from Oh My Pi's own sign-ins and API keys, grouped by provider)
+and **Scient custom models**, where each model is labeled with its connection's name. Select a
+section's header to collapse or expand it; Scient remembers the choice on this device. The section
+holding the selected model opens with the picker, and searching lists every match.
 
 ## What you can do
 
@@ -216,8 +222,15 @@ The evidence covers macOS Apple silicon only:
 - recorded 18.3.1 protocol captures (success, reasoning, tool call, abort, authentication and
   unknown-model errors, retries, output-limit stop) replayed through the client and adapter.
 
-Windows process-tree cleanup, Linux process qualification, and hosted-account flows are not claimed
-by this evidence. Those platforms remain unqualified until their own matrix runs.
+The Scient-managed runtime pipeline has also been run natively on macOS arm64 and x64, Linux glibc
+arm64 and x64, and Windows x64 and ARM64 hosted runners with Oh My Pi 18.4.3: download, checksum,
+smoke test, the RPC handshake and state request after install and after repair, and removal (five
+times on each Windows runner). The bundled 18.2.8 binaries for targets other than macOS arm64 have
+not been run natively; a qualified newer release from the catalog supersedes them when update
+checks are on.
+
+Conversations on Windows and Linux (process-tree cleanup during a turn, full model turns) and
+hosted-account flows are not claimed by this evidence.
 
 Scient's shared native provider event log records Oh My Pi's notifications and every command Scient
 sends with its response, the same diagnostics other native providers produce. Before anything is

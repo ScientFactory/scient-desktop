@@ -130,6 +130,34 @@ it.effect("reports a binary missing error wrapped by the Pi RPC protocol as not 
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it.effect("labels custom-model providers with their connection name", () =>
+  Effect.gen(function* () {
+    const snapshot = yield* checkPiProviderStatus(settings, {}, () =>
+      Effect.succeed({
+        ...unusedClientMethods,
+        getState: () => Effect.succeed({}),
+        getAvailableModels: () =>
+          Effect.succeed({
+            models: [
+              { provider: "anthropic", id: "claude", name: "Claude" },
+              { provider: "scient_openrouter", id: "glm", name: "GLM" },
+            ],
+          }),
+        modelProviderLabel: (provider: string) =>
+          provider === "scient_openrouter" ? "OpenRouter" : undefined,
+      }),
+    );
+
+    assert.deepEqual(
+      snapshot.models.map((model) => [model.slug, model.subProvider]),
+      [
+        ["anthropic/claude", "anthropic"],
+        ["scient_openrouter/glm", "OpenRouter"],
+      ],
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.effect("reports discovery failure and does not spawn while disabled", () =>
   Effect.gen(function* () {
     let spawns = 0;

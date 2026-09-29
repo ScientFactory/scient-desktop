@@ -13,6 +13,8 @@ export interface PiDiscoveredModel {
   readonly provider: string;
   readonly id: string;
   readonly name: string;
+  /** Shown instead of the provider id, e.g. a Scient model connection's name. */
+  readonly providerLabel?: string | undefined;
   readonly reasoning?: boolean;
   readonly reasoningMetadata?: ModelReasoningMetadata | undefined;
   readonly defaultReasoningLevel?: string | undefined;
@@ -58,7 +60,7 @@ export function piDiscoveredModelToServerProviderModel(
   return {
     slug,
     name: model.name,
-    subProvider: model.provider,
+    subProvider: model.providerLabel?.trim() || model.provider,
     isCustom: false,
     ...(isDefault ? { isDefault: true } : {}),
     capabilities:

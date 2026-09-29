@@ -473,9 +473,9 @@ orchestration types. The adapter owns the process and the turn mapping.
 
 - The executable is `omp` 18.2.8 or newer and below major 19; a newer major is refused until it is
   qualified. Launch arguments are `--mode rpc` and
-  `--approval-mode yolo`. Scient does not call `login` during discovery. A desktop macOS Apple
-  silicon app can install the qualified private binary. Other machines use an executable the user
-  installed.
+  `--approval-mode yolo`. Scient does not call `login` during discovery. The desktop app can
+  install the qualified private binary on every approved target (below); otherwise Scient uses an
+  executable the user installed.
   Scient never runs `omp update`: it cannot pin a version, follows npm `latest` across majors,
   and has no rollback. The maintenance capabilities are manual-only for every channel. The
   advisory compares the running version with the latest stable release in the supported major,
@@ -484,8 +484,9 @@ orchestration types. The adapter owns the process and the turn mapping.
   not publish third-party taps), and GitHub `releases/latest` for mise and as the fallback. Only
   successful lookups are cached. Nix installations are not checked. The notice carries the
   copyable `omp update` command and names Scient-managed Oh My Pi when a managed artifact exists
-  for the target. A desktop
-  macOS Apple silicon app can install a private Oh My Pi from the qualified catalog. That copy is
+  for the target. The desktop
+  app can install a private Oh My Pi from the qualified catalog on macOS arm64/x64, Linux glibc
+  arm64/x64 and Windows arm64/x64 (`ompManifest.ts`); OMP's musl builds are not approved. That copy is
   updated only through the managed-runtime actions. Managed activation also runs an isolated
   RPC-v2 handshake and state probe after staging; a binary that only answers `--version` is
   rejected and the previous runtime is restored.

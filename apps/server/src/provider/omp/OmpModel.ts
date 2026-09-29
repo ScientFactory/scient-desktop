@@ -76,6 +76,8 @@ const ompModelDefaultThinkingLevel = (model: OmpRpcModel): string | undefined =>
 export const ompModelToServerModel = (
   model: OmpRpcModel,
   selected?: { readonly provider: string; readonly modelId: string },
+  /** Shown instead of the provider id, e.g. a Scient model connection's name. */
+  providerLabel?: string,
 ): ServerProviderModel | undefined => {
   const slug = encodeOmpModelSlug(model.provider, model.id);
   const name = model.name?.trim() || model.id;
@@ -84,7 +86,7 @@ export const ompModelToServerModel = (
   return {
     slug,
     name,
-    subProvider: model.provider,
+    subProvider: providerLabel?.trim() || model.provider,
     isCustom: false,
     ...(selected?.provider === model.provider && selected.modelId === model.id
       ? { isDefault: true }

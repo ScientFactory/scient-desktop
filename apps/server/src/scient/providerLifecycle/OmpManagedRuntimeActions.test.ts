@@ -23,9 +23,11 @@ import {
   OmpExecutableGate,
   type OmpExecutableGateShape,
 } from "../../provider/omp/OmpExecutableGate.ts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import {
   makeOmpManagedRuntimeResolution,
   makeQualifiedManagedOmpRuntime,
+  qualifyManagedOmpRuntime,
 } from "./OmpManagedRuntimeActions.ts";
 
 const artifact = resolveReviewedOmpArtifact({ platform: "darwin", arch: "arm64" })!;
@@ -319,5 +321,77 @@ describe("configured Oh My Pi health probe", () => {
         NodeFS.rmSync(baseDir, { recursive: true, force: true });
       }
     }),
+  );
+});
+
+/**
+ * Stands in for Oh My Pi's RPC startup: like the real binary, it exits with
+ * "No models available" unless its agent directory defines a model.
+ */
+const FAKE_OMP_WITHOUT_LOGINS = `
+const fs = require("node:fs");
+const path = require("node:path");
+if (process.argv.includes("--version")) {
+  process.stdout.write("omp/18.2.8\\n");
+  process.exit(0);
+}
+const agent = process.env.PI_CODING_AGENT_DIR ?? "";
+if (!fs.existsSync(path.join(agent, "models.yml"))) {
+  process.stderr.write("No models available. Use /login or set an API key environment variable.\\n");
+  process.exit(1);
+}
+process.stdout.write(JSON.stringify({ type: "ready", protocolVersion: 1, supportedProtocolVersions: [1, 2], maxFrameBytes: 1048576, maxReassembledFrameBytes: 67108864 }) + "\\n");
+let buffer = "";
+process.stdin.on("data", (chunk) => {
+  buffer += chunk;
+  let newline;
+  while ((newline = buffer.indexOf("\\n")) >= 0) {
+    const line = buffer.slice(0, newline);
+    buffer = buffer.slice(newline + 1);
+    if (!line.trim()) continue;
+    const request = JSON.parse(line);
+    const data = request.type === "negotiate_protocol"
+      ? { protocolVersion: 2, maxFrameBytes: 1048576, maxReassembledFrameBytes: 67108864 }
+      : { isStreaming: false, isCompacting: false };
+    process.stdout.write(JSON.stringify({ id: request.id, type: "response", command: request.type, success: true, data }) + "\\n");
+  }
+});
+process.stdin.on("end", () => process.exit(0));
+`;
+
+describe("managed Oh My Pi activation check", () => {
+  it.live.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    "gives Oh My Pi a model in its isolated home, so a machine without sign-ins qualifies",
+    () =>
+      Effect.gen(function* () {
+        const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-omp-qualify-"));
+        try {
+          const executable = NodePath.join(root, "omp");
+          NodeFS.writeFileSync(executable, `#!${process.execPath}\n${FAKE_OMP_WITHOUT_LOGINS}`, {
+            mode: 0o755,
+          });
+          const cwd = NodePath.join(root, "work");
+          NodeFS.mkdirSync(cwd);
+          yield* qualifyManagedOmpRuntime({
+            executablePath: executable,
+            expectedVersion: "18.2.8",
+            cwd,
+            environment: { PATH: process.env.PATH ?? "", HOME: root },
+            activations: [],
+          }).pipe(
+            Effect.provideServiceEffect(OmpExecutableGate, makeOmpExecutableGate()),
+            Effect.provide(NodeServices.layer),
+          );
+          const agent = NodePath.join(cwd, "qualification-home", "agent");
+          expect(NodeFS.readFileSync(NodePath.join(agent, "models.yml"), "utf8")).toContain(
+            "auth: none",
+          );
+          expect(NodeFS.readFileSync(NodePath.join(agent, "config.yml"), "utf8")).toContain(
+            "- ollama",
+          );
+        } finally {
+          NodeFS.rmSync(root, { recursive: true, force: true });
+        }
+      }),
   );
 });

@@ -56,6 +56,20 @@ import {
   shortcutLabelForCommand,
 } from "../../keybindings";
 import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
+import { useLocalStorage } from "~/hooks/useLocalStorage";
+import {
+  buildModelSourceSectionRows,
+  COLLAPSED_MODEL_SOURCES_STORAGE_KEY,
+  CollapsedModelSources,
+  groupModelsBySource,
+  hasModelSourceSections,
+  modelSourceSection,
+  modelSourceSectionKey,
+  modelSourceSectionLabel,
+  modelSourceSectionsApply,
+  NO_COLLAPSED_MODEL_SOURCES,
+  parseModelSourceSectionKey,
+} from "~/scient/modelPicker/modelSourceSections";
 import { cn } from "~/lib/utils";
 import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
 import { TooltipProvider } from "../ui/tooltip";
@@ -404,6 +418,20 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                 : model.isLegacy),
           )
           ? [props.activeInstanceId]
+          : [],
+      ),
+  );
+  const [collapsedModelSources, setCollapsedModelSources] = useLocalStorage(
+    COLLAPSED_MODEL_SOURCES_STORAGE_KEY,
+    NO_COLLAPSED_MODEL_SOURCES,
+    CollapsedModelSources,
+  );
+  // The section holding the selected model opens with the picker.
+  const [revealedModelSources, setRevealedModelSources] = useState(
+    () =>
+      new Set<string>(
+        activeModelSlug && hasModelSourceSections(activeEntry?.driverKind)
+          ? [modelSourceSectionKey(props.activeInstanceId, modelSourceSection(activeModelSlug))]
           : [],
       ),
   );
@@ -764,8 +792,55 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     return groupDroidModelRows(filteredModels);
   }, [isSearching, selectedInstanceId, instanceEntries, filteredModels]);
 
+  const sourceSectionRows = useMemo(() => {
+    const showsFavorites = selectedInstanceId === "favorites";
+    if (
+      showsFavorites ||
+      !modelSourceSectionsApply({
+        isSearching,
+        showsFavorites,
+        driverKind: entryByInstanceId.get(selectedInstanceId)?.driverKind,
+      })
+    )
+      return null;
+    const groups = groupModelsBySource(filteredModels);
+    return groups
+      ? buildModelSourceSectionRows({
+          instanceId: selectedInstanceId,
+          groups,
+          collapsed: new Set(collapsedModelSources),
+          revealed: revealedModelSources,
+          modelKey: (model) => modelPickerModelKey(model.instanceId, model.slug),
+        })
+      : null;
+  }, [
+    collapsedModelSources,
+    entryByInstanceId,
+    filteredModels,
+    isSearching,
+    revealedModelSources,
+    selectedInstanceId,
+  ]);
+
+  const toggleModelSourceSection = useCallback(
+    (key: string) => {
+      const expanded = sourceSectionRows?.sections.get(key)?.expanded ?? true;
+      setRevealedModelSources((revealed) => {
+        const next = new Set(revealed);
+        next.delete(key);
+        return next;
+      });
+      setCollapsedModelSources((collapsed) =>
+        expanded
+          ? [...collapsed.filter((entry) => entry !== key), key]
+          : collapsed.filter((entry) => entry !== key),
+      );
+    },
+    [setCollapsedModelSources, sourceSectionRows],
+  );
+
   const legacySection = useMemo(() => {
-    if (isSearching || selectedInstanceId === "favorites") {
+    if (isSearching || selectedInstanceId === "favorites" || sourceSectionRows) {
       return null;
     }
     const currentModels = droidGroups
@@ -781,9 +856,17 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       legacyModels,
       isExpanded: expandedLegacyInstances.has(selectedInstanceId),
     };
-  }, [droidGroups, expandedLegacyInstances, filteredModels, isSearching, selectedInstanceId]);
+  }, [
+    droidGroups,
+    expandedLegacyInstances,
+    filteredModels,
+    isSearching,
+    selectedInstanceId,
+    sourceSectionRows,
+  ]);
 
   const visibleModels = useMemo(() => {
+    if (sourceSectionRows) return sourceSectionRows.visibleModels;
     if (!legacySection) {
       return droidGroups ? [...droidGroups.models, ...droidGroups.custom] : filteredModels;
     }
@@ -791,7 +874,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       ...legacySection.currentModels,
       ...(legacySection.isExpanded ? legacySection.legacyModels : []),
     ];
-  }, [droidGroups, filteredModels, legacySection]);
+  }, [droidGroups, filteredModels, legacySection, sourceSectionRows]);
 
   const toggleLegacySection = useCallback((instanceId: ProviderInstanceId) => {
     setExpandedLegacyInstances((expanded) => {
@@ -892,10 +975,21 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           )
           .map((model) => modelPickerLegacySectionKey(model.instanceId)),
       ),
+      ...new Set(
+        flatModels.flatMap((model) =>
+          hasModelSourceSections(model.driverKind)
+            ? [
+                modelSourceSectionKey(model.instanceId, "accounts"),
+                modelSourceSectionKey(model.instanceId, "custom"),
+              ]
+            : [],
+        ),
+      ),
     ],
     [flatModels],
   );
   const filteredItemKeys = useMemo((): string[] => {
+    if (sourceSectionRows) return [...sourceSectionRows.itemKeys];
     const modelKeys = visibleModels.map((model) =>
       modelPickerModelKey(model.instanceId, model.slug),
     );
@@ -904,7 +998,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     }
     modelKeys.splice(legacySection.currentModels.length, 0, legacySection.key);
     return modelKeys;
-  }, [legacySection, visibleModels]);
+  }, [legacySection, sourceSectionRows, visibleModels]);
   const filteredModelByKey = useMemo(
     (): ReadonlyMap<string, ModelPickerItem> =>
       new Map(
@@ -950,8 +1044,14 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     return mapping.size > 0 ? mapping : EMPTY_MODEL_JUMP_LABELS;
   }, [keybindings, modelJumpCommandByKey, modelJumpShortcutContext]);
   const modelListExtraData = useMemo(
-    () => ({ favoritesSet, modelJumpLabelByKey, activeModelKey, selectedModelKeySet }),
-    [favoritesSet, modelJumpLabelByKey, activeModelKey, selectedModelKeySet],
+    () => ({
+      favoritesSet,
+      modelJumpLabelByKey,
+      activeModelKey,
+      selectedModelKeySet,
+      sourceSections: sourceSectionRows?.sections,
+    }),
+    [favoritesSet, modelJumpLabelByKey, activeModelKey, selectedModelKeySet, sourceSectionRows],
   );
 
   useEffect(() => {
@@ -1086,6 +1186,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               toggleLegacySection(legacyInstanceId);
               return;
             }
+            if (parseModelSourceSectionKey(modelKey)) {
+              toggleModelSourceSection(modelKey);
+              return;
+            }
             const model = parseModelPickerModelKey(modelKey);
             if (model) {
               handleModelSelect(
@@ -1152,6 +1256,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                       toggleLegacySection(legacyInstanceId);
                       return;
                     }
+                    if (parseModelSourceSectionKey(highlightedModelKeyRef.current)) {
+                      toggleModelSourceSection(highlightedModelKeyRef.current);
+                      return;
+                    }
                     const model = parseModelPickerModelKey(highlightedModelKeyRef.current);
                     if (model) {
                       handleModelSelect(model.slug, model.instanceId, e.shiftKey);
@@ -1192,6 +1300,27 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                             label={droidGroups ? "More models" : "Legacy models"}
                             count={legacySection.legacyModels.length}
                             expanded={legacySection.isExpanded}
+                          />
+                        </ComboboxItem>
+                      );
+                    }
+                    const sourceSection = sourceSectionRows?.sections.get(modelKey);
+                    if (sourceSection) {
+                      return (
+                        <ComboboxItem
+                          hideIndicator
+                          index={index}
+                          value={modelKey}
+                          aria-expanded={sourceSection.expanded}
+                          className="group w-full cursor-pointer"
+                        >
+                          <ModelListDisclosureContent
+                            label={modelSourceSectionLabel(
+                              sourceSection.section,
+                              selectedEntry?.displayName ?? "provider",
+                            )}
+                            count={sourceSection.count}
+                            expanded={sourceSection.expanded}
                           />
                         </ComboboxItem>
                       );

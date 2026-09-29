@@ -104,6 +104,8 @@ export const makePendingPiProvider = (settings: PiSettings): Effect.Effect<Serve
     ),
   );
 
+const providerLabelField = (label: string | undefined) => (label ? { providerLabel: label } : {});
+
 export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function* (
   settings: PiSettings,
   environment: NodeJS.ProcessEnv = process.env,
@@ -136,6 +138,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
       return {
         ...result,
         modelConnections: client.assessModelConnections?.(result.inventory.models),
+        providerLabel: client.modelProviderLabel,
       };
     }),
   ).pipe(Effect.exit);
@@ -160,6 +163,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
       provider: model.provider,
       id: model.id,
       name: model.name?.trim() || model.id,
+      ...providerLabelField(discovery.value.providerLabel?.(model.provider)),
       ...(model.reasoning === undefined ? {} : { reasoning: model.reasoning }),
       ...(model.reasoningMetadata ? { reasoningMetadata: model.reasoningMetadata } : {}),
       ...(model.defaultReasoningLevel
