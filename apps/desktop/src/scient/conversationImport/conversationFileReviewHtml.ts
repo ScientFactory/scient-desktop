@@ -30,10 +30,10 @@ export function conversationFileReviewHtml(
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
 <meta name="color-scheme" content="light dark"><title>Open conversation — Scient</title>
 <style>
-*{box-sizing:border-box}body{margin:0;background:Canvas;color:CanvasText;font:15px/1.55 system-ui,sans-serif}
+*{box-sizing:border-box}body{margin:0;height:100vh;display:flex;flex-direction:column;background:Canvas;color:CanvasText;font:15px/1.55 system-ui,sans-serif}
 header{padding:24px 28px 16px;border-bottom:1px solid color-mix(in srgb,CanvasText 16%,transparent)}
 h1{font-size:23px;line-height:1.25;margin:0 0 8px;overflow-wrap:anywhere}p{margin:8px 0;color:GrayText}
-main{height:calc(100vh - 235px);min-height:150px;overflow:auto;padding:12px 28px}
+main{flex:1;min-height:0;overflow:auto;padding:12px 28px}header,footer{flex:none}summary{cursor:pointer;font-weight:500;padding:8px 0}
 article{padding:16px 0;border-bottom:1px solid color-mix(in srgb,CanvasText 12%,transparent)}
 article h2{font-size:14px;margin:0 0 8px}article div{white-space:pre-wrap;overflow-wrap:anywhere;unicode-bidi:plaintext}
 footer{padding:16px 28px;border-top:1px solid color-mix(in srgb,CanvasText 16%,transparent)}
@@ -44,7 +44,8 @@ button.primary{background:Highlight;color:HighlightText;border-color:Highlight}b
 <p>${content ? escapeHtml(content.summary ?? `${content.messageCount} messages · ${content.attachmentCount} attachments · Unverified file`) : error ? "Unable to preview this conversation" : "Checking this file locally…"}</p></header>
 <main aria-label="Conversation preview" tabindex="0">${
     content
-      ? content.messages
+      ? (readOnly ? "" : "<details><summary>Read conversation (optional)</summary>") +
+        content.messages
           .map(
             (message) =>
               `<article><h2>${escapeHtml(message.role)}</h2><div dir="auto">${escapeHtml(message.text)}</div></article>`,
@@ -52,7 +53,8 @@ button.primary{background:Highlight;color:HighlightText;border-color:Highlight}b
           .join("") +
         (content.truncated
           ? "<p>Preview shortened. Import checks the complete conversation.</p>"
-          : "")
+          : "") +
+        (readOnly ? "" : "</details>")
       : `<p role="status">${escapeHtml(error ?? "Nothing is imported or sent to a server while you preview.")}</p>`
   }</main>
 <footer><p>${readOnly ? "Read-only preview. Nothing is imported or sent to a server." : content ? "Continue to choose where to import. No agent runs automatically." : "Close this window to leave your workspace unchanged."}</p>

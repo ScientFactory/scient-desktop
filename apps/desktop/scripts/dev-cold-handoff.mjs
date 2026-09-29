@@ -3,12 +3,12 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
-export const COLD_HANDOFF_SCHEMA = "scient-next.dev-cold-handoff/v1";
-export const COLD_HANDOFF_MAX_AGE_MS = 45_000;
-export const COLD_HANDOFF_CLAIM_MAX_AGE_MS = 10 * 60_000;
-export const APPROVED_HANDOFF_MAX_AGE_MS = 30 * 60_000;
-export const COLD_HANDOFF_MAX_FILES = 8;
-export const APPROVED_HANDOFF_SCHEMA = "scient-next.dev-approved-handoff/v1";
+const COLD_HANDOFF_SCHEMA = "scient-next.dev-cold-handoff/v1";
+const COLD_HANDOFF_MAX_AGE_MS = 45_000;
+const COLD_HANDOFF_CLAIM_MAX_AGE_MS = 10 * 60_000;
+const APPROVED_HANDOFF_MAX_AGE_MS = 30 * 60_000;
+const COLD_HANDOFF_MAX_FILES = 8;
+const APPROVED_HANDOFF_SCHEMA = "scient-next.dev-approved-handoff/v1";
 const decimal = /^(?:0|[1-9][0-9]*)$/u;
 const noncePattern = /^[a-f0-9]{64}$/u;
 

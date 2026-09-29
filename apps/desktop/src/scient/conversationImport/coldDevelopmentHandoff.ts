@@ -39,7 +39,7 @@ function bootstrapIdentity() {
 }
 
 /** Finder cold launch cannot start the managed stack until local review accepts. */
-export function yieldColdDevelopmentApp(files: readonly ApprovedColdFile[]): void {
+function yieldColdDevelopmentApp(files: readonly ApprovedColdFile[]): void {
   const { root, stateRoot, role } = bootstrapIdentity();
   const nodePath = process.env.SCIENT_DEV_BOOTSTRAP_NODE;
   if (!nodePath || !NodePath.isAbsolute(nodePath)) {
@@ -103,7 +103,7 @@ export function yieldColdDevelopmentAppOrShowError(
 }
 
 /** Consumed once by the supervised Electron process, before workspace startup. */
-export function takeSupervisedDevelopmentHandoff(): readonly ApprovedColdFile[] {
+function takeSupervisedDevelopmentHandoff(): readonly ApprovedColdFile[] {
   const path = process.env.SCIENT_DEV_APPROVED_HANDOFF_PATH;
   delete process.env.SCIENT_DEV_APPROVED_HANDOFF_PATH;
   if (!path) return [];

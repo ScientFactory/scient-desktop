@@ -64,9 +64,10 @@ Open a conversation file in any of these ways:
   are still attached to your message, and so is a Markdown file; a Markdown file dropped
   elsewhere opens for import.
 - Open a `.scic` file with the desktop app, for example by double-clicking it or choosing
-  **Open with Scient**. Scient first shows a local, read-only conversation window. Nothing is
-  imported or uploaded while you read. **Cancel** leaves your workspace unchanged;
-  **Continue to import** opens the destination/project chooser. Import happens only when you
+  **Open with Scient**. Scient first shows a compact local confirmation with the conversation's
+  title and counts. Expand **Read conversation (optional)** if you want to read it first.
+  Nothing is imported or uploaded in this window. **Cancel** leaves your workspace unchanged;
+  **Continue to import** opens the project chooser. Import happens only when you
   confirm there, and no agent runs automatically. During first-time setup, the accepted file
   waits until setup is finished. Very large conversations may not fit the local preview;
   you can still continue to have the complete file checked for import.
@@ -83,26 +84,23 @@ preferred application remains your operating system's decision. Native file-mana
 (Quick Look or Explorer's Preview pane) require separately built preview components; the file
 association alone does not provide them.
 
-Scient sends the file to the destination and checks it straight away; the dialog shows its
-progress, and **Cancel** or Esc stops it at any point before you import. If you have more than
-one connected environment, choose where the conversation goes under **Destination**; this device
-is chosen first. If the destination stops being available or loses its connection while the
-dialog is open, Scient stops and asks you to choose another; after a lost connection you can
-also choose **Try again** once it reconnects. It never sends the file somewhere else on its own.
+Inside Scient, choose a file and a **Project**, then press **Import**. Scient sends the file to
+the project's environment and checks it in the background. Projects are grouped by environment
+when more than one is available; there is no separate destination selector. **Cancel** or Esc
+stops the check before import. If the chosen project's environment becomes unavailable,
+Scient asks you to choose another project or try again after reconnecting. It never switches
+the destination on its own.
 Dropping another file on the open dialog checks that file instead.
 
-The check shows what is in the file without showing its messages: how many messages and
-attachments it has, which provider and model it came from, what was left out when it was made
-(such as the work log or reasoning), and any notes about it. Nothing is added until you choose
-**Import**. Choose the project and the model for your next message; Scient suggests the model
-new conversations in that project use. **Import** creates a new, separate conversation there,
+Nothing is added until you choose **Import**. The conversation uses the model a new chat in the
+chosen project would use; you do not need to choose a model in the import dialog.
+**Import** creates a new, separate conversation there,
 marked **Imported — unverified**, because anyone can edit a conversation file. Your next message
-starts a fresh session with the model you chose. The file never carries the sender's
+starts a fresh session with that model. The file never carries the sender's
 credentials, running agent, tool permissions, approval decisions, or workspace files, so
 importing into a different project does not bring the sender's files with it.
 
 Imported conversations start in Supervised mode, which asks before commands and file changes.
-The dialog says so when your usual mode is different.
 
 If the connection drops after you choose **Import**, the import may still finish. Scient waits
 for the connection to return, checks, and then either opens the new conversation or lets you try
@@ -113,17 +111,17 @@ the import stops without an error.
 
 You can also import a `.md` file. A Markdown file exported by Scient comes back as a
 conversation with its messages as text. If some of its message markers are damaged, the dialog
-says **Some messages couldn't be read**: tick the box to import the messages Scient could read,
-or start a conversation with the whole file instead. Any other Markdown file is attached to a new
+says **Some messages couldn't be read**. Choose **Import readable messages** or **Start with
+the whole file** instead. Any other Markdown file is attached to a new
 conversation as a document, not turned into messages; the dialog then offers
-**Start conversation**.
+**Start**.
 
 One import holds up to 5,000 messages, work-log entries, and other items. For a longer
 conversation, export it again with **Work log** and **Reasoning** turned off: its messages still
 come across, without the tool details and thinking. If it is still too long, Scient can't import
 it as a conversation; export it as PDF or Markdown to keep a copy you can read. A Markdown
-transcript that is too long can still start a conversation: choose **Start with the whole file
-instead** to attach the file as a document. Anything an import
+transcript that is too long can still start a conversation: choose **Start with the whole file**
+to attach the file as a document. Anything an import
 leaves out, such as damaged Markdown sections, is noted on the imported conversation. If the
 file's times are later than the moment you import it, because the other computer's clock was ahead,
 Scient moves all of them back by the same amount so that the conversation stays in order, and the

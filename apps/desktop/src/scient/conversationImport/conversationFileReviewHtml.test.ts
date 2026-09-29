@@ -2,6 +2,23 @@ import { describe, expect, it } from "vite-plus/test";
 import { conversationFileReviewHtml } from "./conversationFileReviewHtml.ts";
 
 describe("local conversation preview document", () => {
+  it("keeps reading optional for an OS open and expanded for a read-only preview", () => {
+    const content = {
+      title: "Example",
+      messageCount: 1,
+      attachmentCount: 0,
+      truncated: false,
+      messages: [{ role: "user", text: "Hello" }],
+    };
+    const opening = conversationFileReviewHtml(content);
+    expect(opening).toContain("<details><summary>Read conversation (optional)</summary>");
+    expect(opening).not.toContain("<details open");
+    expect(opening).toContain('id="continue"');
+    const preview = conversationFileReviewHtml(content, undefined, true);
+    expect(preview).not.toContain("<details");
+    expect(preview).toContain("Hello");
+    expect(preview).not.toContain('id="continue"');
+  });
   it("never treats conversation contents or failures as HTML", () => {
     const html = conversationFileReviewHtml({
       title: "<script>bad()</script>",

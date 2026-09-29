@@ -20,8 +20,8 @@ export async function reviewOpenedConversation(
 ): Promise<ReviewedFileIdentity | null> {
   const abort = new AbortController();
   const window = new Electron.BrowserWindow({
-    width: 680,
-    height: 660,
+    width: readOnly ? 680 : 600,
+    height: readOnly ? 660 : 460,
     minWidth: 440,
     minHeight: 400,
     title: "Open conversation — Scient",

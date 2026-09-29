@@ -139,7 +139,13 @@ const unpackerLayer = (input: {
           }
           const target = NodePath.join(request.destination, EXECUTABLE);
           NodeFS.mkdirSync(NodePath.dirname(target), { recursive: true });
-          NodeFS.writeFileSync(target, `#!/bin/sh\necho "${input.banner}"\n`, { mode: 0o644 });
+          // The runner pipes stdin even for --version; consume it before exiting
+          // so the fixture cannot trigger an EPIPE while Node closes the pipe.
+          NodeFS.writeFileSync(
+            target,
+            `#!/bin/sh\nwhile IFS= read -r _; do :; done\necho "${input.banner}"\n`,
+            { mode: 0o644 },
+          );
         }),
     }),
   );
