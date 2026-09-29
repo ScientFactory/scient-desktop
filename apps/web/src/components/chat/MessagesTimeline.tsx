@@ -1324,30 +1324,30 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     reportContentOverflow,
   ]);
 
-  useEffect(() => {
-    const frame = requestAnimationFrame(handleScroll);
-    return () => cancelAnimationFrame(frame);
-  }, [handleScroll, rows.length]);
-  // Row size changes arrive many times per frame while an answer streams. The
-  // position, unread and end bookkeeping runs once per frame, not per change.
+  // Row size changes arrive many times per frame while an answer streams, and
+  // new rows or state arrive on top of them. The position, unread and end
+  // bookkeeping runs at most once per frame, with the latest state.
   const handleScrollRef = useRef(handleScroll);
   useLayoutEffect(() => {
     handleScrollRef.current = handleScroll;
   });
-  const sizeChangeFrameRef = useRef<number | null>(null);
+  const bookkeepingFrameRef = useRef<number | null>(null);
   const handleScrollOnNextFrame = useCallback(() => {
-    if (sizeChangeFrameRef.current !== null) return;
-    sizeChangeFrameRef.current = requestAnimationFrame(() => {
-      sizeChangeFrameRef.current = null;
+    if (bookkeepingFrameRef.current !== null) return;
+    bookkeepingFrameRef.current = requestAnimationFrame(() => {
+      bookkeepingFrameRef.current = null;
       handleScrollRef.current();
     });
   }, []);
   useEffect(
     () => () => {
-      if (sizeChangeFrameRef.current !== null) cancelAnimationFrame(sizeChangeFrameRef.current);
+      if (bookkeepingFrameRef.current !== null) cancelAnimationFrame(bookkeepingFrameRef.current);
     },
     [],
   );
+  useEffect(() => {
+    handleScrollOnNextFrame();
+  }, [handleScroll, handleScrollOnNextFrame, rows.length]);
 
   useEffect(() => {
     if (!timelineViewportElement) {
