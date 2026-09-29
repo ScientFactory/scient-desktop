@@ -28,6 +28,7 @@ import {
   SelectValue,
 } from "../../components/ui/select";
 import { Spinner } from "../../components/ui/spinner";
+import { useComposerDraftStore } from "../../composerDraftStore";
 import { toastManager } from "../../components/ui/toast";
 import { useHandleNewThread } from "../../hooks/useHandleNewThread";
 import { mergeEnvironmentSettings, useClientSettings } from "../../hooks/useSettings";
@@ -56,6 +57,7 @@ import {
   isMarkdownFileName,
   isRecordLimitRefusal,
 } from "./importDialog.logic";
+import { readCarriedModelSelection } from "../newThread/carriedModelSelection";
 import { defaultImportProject, newChatModelSelection } from "./importDestination.logic";
 import {
   dismissConversationImportRequest,
@@ -192,8 +194,9 @@ function stageStatus(stage: Stage): string | null {
   }
 }
 
-/** Refusals that sending the same file again would repeat. */
-function isUnreadableRefusal(cause: unknown): boolean {
+/** Failures that sending the same file again would repeat. */
+function isTerminalFailure(cause: unknown): boolean {
+  if (cause instanceof ConversationImportNotice) return cause.terminal;
   return (
     isConversationImportError(cause) &&
     (cause.reason === "package-rejected" || cause.reason === "package-too-large")
@@ -245,7 +248,8 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
   const clientSettings = useClientSettings();
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const { activeDraftThread, activeThread, handleNewThread } = useHandleNewThread();
+  const { activeDraftThread, activeThread, handleNewThread, routeDraftId, routeThreadRef } =
+    useHandleNewThread();
 
   const environmentOptions = useMemo(
     () =>
@@ -346,8 +350,31 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
     () => (config === undefined ? null : mergeEnvironmentSettings(config.settings, clientSettings)),
     [clientSettings, config],
   );
+  // What a new chat opened now would carry: the chat in view, and the
+  // composer's remembered choices.
+  const stickyModelSelectionByProvider = useComposerDraftStore(
+    (store) => store.stickyModelSelectionByProvider,
+  );
+  const stickyActiveProvider = useComposerDraftStore((store) => store.stickyActiveProvider);
   const modelSelection =
-    settings === null ? null : newChatModelSelection({ config, settings, project });
+    settings === null
+      ? null
+      : newChatModelSelection({
+          config,
+          settings,
+          project,
+          carrySelection: readCarriedModelSelection(
+            routeThreadRef
+              ? { kind: "server", threadRef: routeThreadRef }
+              : routeDraftId
+                ? { kind: "draft", draftId: routeDraftId }
+                : null,
+          ),
+          sticky: {
+            modelSelectionByProvider: stickyModelSelectionByProvider,
+            activeProvider: stickyActiveProvider,
+          },
+        });
 
   const file = sourceFile(source);
   const fileProblem = file === null ? null : importFileProblem(file.name, file.sizeBytes);
@@ -489,7 +516,7 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
         setStage({
           _tag: "failed",
           message: importFailureMessage(cause, "This file couldn't be read."),
-          retryable: !wholeFile && !isUnreadableRefusal(cause),
+          retryable: !wholeFile && !isTerminalFailure(cause),
           ...(wholeFile ? { wholeFile: true as const } : {}),
         });
       }

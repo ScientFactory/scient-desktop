@@ -17,8 +17,18 @@ export const IMPORT_RUNTIME_MODE = "approval-required";
 /** The server's limit for a Markdown import (`MarkdownConversationReader`). */
 const MARKDOWN_IMPORT_MAX_BYTES = 16 * 1024 * 1024;
 
-/** A failure whose message is already written for the person importing. */
-export class ConversationImportNotice extends Error {}
+/**
+ * A failure whose message is already written for the person importing.
+ * `terminal`: sending the same file again cannot succeed; it has to be opened again.
+ */
+export class ConversationImportNotice extends Error {
+  constructor(
+    message: string,
+    readonly terminal = false,
+  ) {
+    super(message);
+  }
+}
 
 /** Why a chosen file cannot be sent at all, or null when it can. */
 export function importFileProblem(fileName: string, sizeBytes: number): string | null {
@@ -140,9 +150,8 @@ export function desktopUploadOutcome(
     case "rejected":
       return new ConversationImportNotice("The destination didn't accept the file. Try again.");
     case "file-unavailable":
-      return new ConversationImportNotice("Scient can no longer read this file. Open it again.");
     case "file-changed":
-      return new ConversationImportNotice("The file changed after it was opened. Open it again.");
+      return new ConversationImportNotice("Open the file again to import it.", true);
     case "invalid-url":
     case "network-failed":
       return new ConversationImportNotice(

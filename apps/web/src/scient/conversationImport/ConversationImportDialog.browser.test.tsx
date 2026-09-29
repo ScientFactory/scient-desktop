@@ -29,6 +29,8 @@ vi.mock("../../hooks/useHandleNewThread", () => ({
     activeDraftThread: null,
     activeThread: undefined,
     handleNewThread: async () => null,
+    routeDraftId: null,
+    routeThreadRef: null,
   }),
 }));
 

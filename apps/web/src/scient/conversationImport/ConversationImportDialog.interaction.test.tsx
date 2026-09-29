@@ -42,8 +42,10 @@ const state = vi.hoisted(() => ({
   environmentIds: [] as EnvironmentId[],
   offline: [] as EnvironmentId[],
   projectModel: "codex/gpt-5-mini",
-  providers: "ready" as "ready" | "none",
+  providers: "ready" as "ready" | "none" | "codex-and-claude",
   currentProject: null as { environmentId: string; projectId: string } | null,
+  /** The model of the conversation in view, if any. */
+  viewedModel: null as { instanceId: string; model: string } | null,
 }));
 const connected = vi.hoisted(() => ({ listeners: new Set<() => void>() }));
 function setConnectedEnvironments(ids: EnvironmentId[]) {
@@ -74,9 +76,31 @@ function provider(): ServerProvider {
   };
 }
 
+function claudeProvider(): ServerProvider {
+  return {
+    ...provider(),
+    instanceId: ProviderInstanceId.make("claudeAgent"),
+    driver: ProviderDriverKind.make("claudeAgent"),
+    models: [
+      {
+        slug: "claude-opus",
+        name: "Claude Opus",
+        isCustom: false,
+        isDefault: true,
+        capabilities: null,
+      },
+    ],
+  };
+}
+
 function config(): ServerConfig {
   return {
-    providers: state.providers === "ready" ? [provider()] : [],
+    providers:
+      state.providers === "none"
+        ? []
+        : state.providers === "codex-and-claude"
+          ? [provider(), claudeProvider()]
+          : [provider()],
     settings: DEFAULT_SERVER_SETTINGS,
   } as unknown as ServerConfig;
 }
@@ -92,6 +116,9 @@ vi.mock("../../hooks/useHandleNewThread", () => ({
             projectId: state.currentProject.projectId,
           },
     handleNewThread: async () => null,
+    routeDraftId: null,
+    routeThreadRef:
+      state.viewedModel === null ? null : { environmentId: local, threadId: "viewed-thread" },
   }),
 }));
 
@@ -120,6 +147,15 @@ vi.mock("../../state/entities", () => ({
     },
   ],
   useThreadShells: () => [],
+  readThreadShell: () =>
+    state.viewedModel === null
+      ? null
+      : {
+          modelSelection: {
+            instanceId: ProviderInstanceId.make(state.viewedModel.instanceId),
+            model: state.viewedModel.model,
+          },
+        },
   // Connected environments are a subscription, as the real atom is.
   useServerConfigs: () => {
     const ids = useSyncExternalStore(
@@ -222,6 +258,7 @@ beforeEach(() => {
   state.projectModel = "codex/gpt-5-mini";
   state.providers = "ready";
   state.currentProject = null;
+  state.viewedModel = null;
   useConversationImportRequests.setState({ nextId: 0, queue: [], replaceable: false });
   for (const mock of [
     createConversationImportUpload,
@@ -426,6 +463,25 @@ describe("ConversationImportDialog", () => {
         destination: expect.objectContaining({
           projectId: "project-2",
           modelSelection: { instanceId: "codex", model: "gpt-5" },
+        }),
+      }),
+    );
+  });
+
+  it("carries the model of the conversation in view, as a new chat would", async () => {
+    state.providers = "codex-and-claude";
+    state.viewedModel = { instanceId: "claudeAgent", model: "claude-opus" };
+    await openWith(scic());
+    await chooseProject("Lab notes");
+    await act(async () => button("Import")!.click());
+    await flush();
+    // Lab notes and the environment set no default: the viewed Claude chat decides.
+    expect(confirmConversationImport).toHaveBeenCalledWith(
+      local,
+      expect.objectContaining({
+        destination: expect.objectContaining({
+          projectId: "project-2",
+          modelSelection: { instanceId: "claudeAgent", model: "claude-opus" },
         }),
       }),
     );
@@ -767,6 +823,24 @@ describe("ConversationImportDialog", () => {
     expect(alerts()).toEqual(["The destination didn't accept the file. Try again."]);
     expect(dialog()?.textContent).not.toContain("rejected");
   });
+
+  it.each(["file-unavailable", "file-changed"])(
+    "asks for the file to be opened again, with only Cancel, when the desktop answers %s",
+    async (reason) => {
+      Object.assign(window, {
+        desktopBridge: {
+          uploadOpenedConversationFile: vi.fn().mockResolvedValue({ _tag: "failed", reason }),
+        },
+      });
+      await act(async () => root.render(<ConversationImportDialogHost />));
+      await act(async () => requestConversationImport({ _tag: "desktop-file", file: opened }));
+      await flush();
+
+      expect(alerts()).toEqual(["Open the file again to import it."]);
+      expect(visibleButtons()).toEqual(["Cancel"]);
+      expect(dialog()?.textContent).not.toContain(reason);
+    },
+  );
 
   it("words other desktop failures plainly", async () => {
     Object.assign(window, {

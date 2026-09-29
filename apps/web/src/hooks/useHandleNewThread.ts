@@ -46,6 +46,7 @@ import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore"
 import { useClientSettings } from "./useSettings";
 import { toastManager } from "../components/ui/toast";
 // SCIENT-FORK:START
+import { readCarriedModelSelection } from "../scient/newThread/carriedModelSelection";
 import { forgetSectionForNewThread } from "../scient/sections/pendingNewThreadSections";
 // SCIENT-FORK:END
 
@@ -152,12 +153,10 @@ export function useNewThreadHandler() {
               : currentRouteTarget.draftId,
           )
         : null;
-      const composerActiveProvider = carrySourceComposer?.activeProvider ?? null;
-      const composerModelSelection = composerActiveProvider
-        ? (carrySourceComposer?.modelSelectionByProvider[composerActiveProvider] ?? null)
-        : null;
-      const carryModelSelection =
-        composerModelSelection ?? carrySourceShell?.modelSelection ?? null;
+      // SCIENT-FORK:START — shared with the conversation import, which opens
+      // on the model a new chat would.
+      const carryModelSelection = readCarriedModelSelection(currentRouteTarget);
+      // SCIENT-FORK:END
       const carryInteractionMode =
         carrySourceComposer?.interactionMode ??
         carrySourceShell?.interactionMode ??

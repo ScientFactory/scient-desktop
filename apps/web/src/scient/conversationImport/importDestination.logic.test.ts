@@ -54,15 +54,25 @@ const project = { id: ProjectId.make("project-1") };
 
 describe("newChatModelSelection", () => {
   // A new chat reads the environment's settings merged with this client's.
+  const noSticky = { modelSelectionByProvider: {}, activeProvider: null };
   const modelFor = (
     config: ServerConfig,
     target: Parameters<typeof newChatModelSelection>[0]["project"] = project,
+    carry: Pick<Parameters<typeof newChatModelSelection>[0], "carrySelection" | "sticky"> = {
+      carrySelection: null,
+      sticky: noSticky,
+    },
   ) =>
     newChatModelSelection({
       config,
       settings: { ...DEFAULT_UNIFIED_SETTINGS, ...config.settings },
       project: target,
+      ...carry,
     });
+  const claudeOpus = {
+    instanceId: ProviderInstanceId.make("claudeAgent"),
+    model: "claude-opus",
+  };
   const claudeDefault = {
     defaultModelSelection: {
       instanceId: ProviderInstanceId.make("claudeAgent"),
@@ -93,6 +103,38 @@ describe("newChatModelSelection", () => {
       claudeDefault,
     );
     expect(modelFor(claudeOff)).toEqual({ instanceId: "codex", model: "gpt-5" });
+  });
+
+  it("carries the chat in view's model when neither the project nor the environment sets one", () => {
+    const config = testConfig([codex, claude]);
+    // A new chat opened from a Claude conversation opens on Claude; so does the import.
+    expect(modelFor(config, project, { carrySelection: claudeOpus, sticky: noSticky })).toEqual(
+      claudeOpus,
+    );
+    // The composer's remembered choice applies when nothing is carried.
+    expect(
+      modelFor(config, project, {
+        carrySelection: null,
+        sticky: {
+          modelSelectionByProvider: { [claudeOpus.instanceId]: claudeOpus },
+          activeProvider: claudeOpus.instanceId,
+        },
+      }),
+    ).toEqual(claudeOpus);
+    // A project default still wins over what is carried.
+    expect(
+      modelFor(
+        config,
+        {
+          ...project,
+          defaultModelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-mini",
+          },
+        },
+        { carrySelection: claudeOpus, sticky: noSticky },
+      ),
+    ).toEqual({ instanceId: "codex", model: "gpt-5-mini" });
   });
 
   it("finds no model when no provider can run a chat, or before a project is known", () => {
