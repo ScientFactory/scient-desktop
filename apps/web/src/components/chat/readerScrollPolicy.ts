@@ -99,3 +99,25 @@ export function resolveReadingRow(
   }
   return null;
 }
+
+/** Send intent tolerates two body-text lines; other end controls retain their existing band. */
+export function readSendScrollAllowance(
+  viewport: HTMLElement | null | undefined,
+): number | undefined {
+  const bodies = viewport?.querySelectorAll<HTMLElement>(
+    '[data-timeline-row-kind="message"] .chat-markdown',
+  );
+  // Virtualized containers can be recycled out of DOM order.
+  const body = bodies
+    ? Array.from(bodies).reduce<HTMLElement | undefined>(
+        (last, candidate) =>
+          !last || candidate.getBoundingClientRect().top > last.getBoundingClientRect().top
+            ? candidate
+            : last,
+        undefined,
+      )
+    : undefined;
+  if (!body) return undefined;
+  const lineHeight = Number.parseFloat(getComputedStyle(body).lineHeight);
+  return Number.isFinite(lineHeight) && lineHeight > 0 ? lineHeight * 2 : undefined;
+}

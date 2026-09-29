@@ -6,6 +6,7 @@ import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { resolveTimelineIsAtEnd } from "./MessagesTimeline.logic";
+import { readSendScrollAllowance } from "./readerScrollPolicy";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { readTimelinePosition, rememberTimelinePosition } from "./timelineScrollAnchoring";
 
@@ -517,4 +518,37 @@ it("retains the reading position when the same thread briefly has no loaded rows
       { timeout: 5000 },
     )
     .toBeLessThanOrEqual(2);
+});
+
+it("allows two rendered lines on send, but not more, at different text sizes", async () => {
+  render(
+    "geometry:two-line-send",
+    Array.from({ length: 20 }, (_, i) => entry(i)),
+  );
+  await expect.poll(() => readTimelinePosition("geometry:two-line-send")).toBeDefined();
+  const list = listRef.current!;
+  const node = list.getScrollableNode()!;
+  for (const lineHeight of [20, 28, 36]) {
+    const body = node.querySelector<HTMLElement>('[data-message-id="message-19"] .chat-markdown')!;
+    body.style.fontSize = `${lineHeight / 1.5}px`;
+    body.style.lineHeight = `${lineHeight}px`;
+    await frames(6);
+    expect(readSendScrollAllowance(node)).toBe(lineHeight * 2);
+    const state = list.getState();
+    const bottom = state.contentLength - state.scrollLength;
+    for (const hiddenLines of [0, 1, 2, 2.1, 3]) {
+      await list.scrollToOffset({ offset: bottom - lineHeight * hiddenLines, animated: false });
+      await frames(2);
+      expect(
+        resolveTimelineIsAtEnd(list.getState(), readSendScrollAllowance(node)),
+        JSON.stringify({
+          lineHeight,
+          hiddenLines,
+          allowance: readSendScrollAllowance(node),
+          gap:
+            list.getState().contentLength - list.getState().scroll - list.getState().scrollLength,
+        }),
+      ).toBe(hiddenLines <= 2);
+    }
+  }
 });

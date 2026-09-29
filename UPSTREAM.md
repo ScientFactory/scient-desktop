@@ -3,8 +3,9 @@
 Scient owns desktop/web reader-position policy in `ChatView.tsx`,
 `MessagesTimeline.tsx`, and `chat/readerScrollPolicy.ts`. The outer timeline never
 maintains the live end during streaming, tool activity, completion, or queued
-sends. Preserve the existing first-message framing and the inherited 40-pixel
-near-bottom band. Eligible sends reveal the prompt and its answer through
+sends. Preserve the existing first-message framing. Send eligibility allows at most two
+rendered body-text lines below the reading edge; other end controls retain the
+inherited 40-pixel band. Eligible sends reveal the prompt and its answer through
 `chat/useBoundedAnswerFollow.ts`, capped at the sent prompt's first line reaching
 the top margin. Manual navigation cancels pending placement and bounded following.
 The existing Scroll to end button is a one-shot action with an

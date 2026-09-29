@@ -158,7 +158,10 @@ export interface TimelineEndState {
  */
 const TIMELINE_FOLLOW_REARM_THRESHOLD_PX = 40;
 
-export function resolveTimelineIsAtEnd(state: TimelineEndState | undefined): boolean | undefined {
+export function resolveTimelineIsAtEnd(
+  state: TimelineEndState | undefined,
+  allowancePx = TIMELINE_FOLLOW_REARM_THRESHOLD_PX,
+): boolean | undefined {
   if (!state) {
     return undefined;
   }
@@ -172,7 +175,7 @@ export function resolveTimelineIsAtEnd(state: TimelineEndState | undefined): boo
   // and the visible edge above the composer. LegendList's own isAtEnd subtracts
   // the inset and is true anywhere in the bottom composer-height band, so it is
   // only a fallback here, never a short-circuit.
-  return contentLength - scroll - scrollLength <= TIMELINE_FOLLOW_REARM_THRESHOLD_PX;
+  return contentLength - scroll - scrollLength <= allowancePx;
 }
 
 export function shouldPreserveAssistantLineBreaks(text: string): boolean {

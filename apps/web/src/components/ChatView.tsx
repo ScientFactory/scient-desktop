@@ -1,4 +1,4 @@
-import { canApplySendAnchor } from "./chat/readerScrollPolicy";
+import { canApplySendAnchor, readSendScrollAllowance } from "./chat/readerScrollPolicy";
 import { useAcknowledgeAnswer } from "../scient/answerAttention/useAcknowledgeAnswer";
 import { collectSelectedScientSkillNames } from "@t3tools/shared/composerInlineTokens";
 import {
@@ -6089,13 +6089,19 @@ function ChatViewContent(props: ChatViewProps) {
 
   const captureSendReadingPosition = useCallback(
     () => ({
-      atEnd: isDraftHeroState || isTimelineAtLogicalEnd(),
+      atEnd:
+        isDraftHeroState ||
+        (resolveTimelineIsAtEnd(
+          legendListRef.current?.getState(),
+          readSendScrollAllowance(legendListRef.current?.getScrollableNode()),
+        ) ??
+          isAtEndRef.current),
       firstMessage:
         activeLatestTurn === null && !timelineMessages.some((message) => message.role === "user"),
       threadKey: routeThreadKey,
       navigationGeneration: anchorUserScrollGenerationRef.current,
     }),
-    [isDraftHeroState, isTimelineAtLogicalEnd, routeThreadKey, timelineMessages, activeLatestTurn],
+    [isDraftHeroState, routeThreadKey, timelineMessages, activeLatestTurn],
   );
   const frameSubmittedMessage = useCallback(
     (messageId: MessageId, snapshot: ReturnType<typeof captureSendReadingPosition>) => {

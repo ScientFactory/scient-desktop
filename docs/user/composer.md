@@ -571,8 +571,8 @@ By default, an answer grows below your reading position. Reaching the bottom
 or clicking Scroll to end does not enable automatic following. Tool activity
 and queued messages do not pull the conversation downward.
 
-Sending near the bottom gently reveals your message and its answer, allowing the
-existing small near-bottom margin. The first message retains its existing placement
+Sending near the bottom gently reveals your message and its answer, allowing
+a margin of at most two rendered body-text lines. The first message retains its existing placement
 near the top. Movement stops when your sent message's first line reaches the top
 of the reading area; only the bubble's padding may pass above it. It then stays there
 while the rest grows below the screen. If you were reading earlier content,
