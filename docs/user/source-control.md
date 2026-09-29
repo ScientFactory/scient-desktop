@@ -146,24 +146,32 @@ checking accounts. Git clone and push still require Git credentials or an SSH ke
 
 ### For Bitbucket
 
-Bitbucket uses tokens instead of a CLI tool. Two options, both set as environment variables on the
-machine running the Scient environment.
+Bitbucket uses tokens instead of a CLI tool. Save them in **Settings → Source Control**, or set them
+as environment variables on the machine running the Scient environment.
 
 The `T3CODE_` variable prefix below is a retained upstream compatibility
 identifier. It does not send credentials to T3, but changing the prefix would
 break existing configurations and requires a separate migration.
 
-Recommended, a Bitbucket access token:
+Open **Settings → Source Control**, expand **Bitbucket**, and choose how to sign in:
+
+- **Access token**: a token created for one repository, project, or workspace. It can only reach
+  what it was created for.
+- **API token**: an Atlassian API token for your account, used with your account email. It can
+  reach every repository you can. Give it read/write access to repositories and pull requests, plus
+  user read access (`read:user:bitbucket`).
+
+Choose **Save**; the change applies right away and replaces any credential saved with the other
+method. Credentials are stored on the environment's server, so select a remote environment to
+configure it. Saved tokens can't be viewed again: enter a new one to replace it, or choose
+**Remove**.
+
+If no credentials are saved, Scient falls back to these environment variables on the machine running
+the environment. Restart the Scient environment after changing them:
 
 ```bash
 export T3CODE_BITBUCKET_ACCESS_TOKEN="your-access-token"
-```
-
-Or an Atlassian account email plus API token, with read/write access to pull requests and
-repositories, plus read access to your user account (`read:user:bitbucket`, used to verify the
-connection):
-
-```bash
+# or
 export T3CODE_BITBUCKET_EMAIL="you@example.com"
 export T3CODE_BITBUCKET_API_TOKEN="your-token"
 ```
@@ -255,6 +263,17 @@ server, but the host's own site will not show them, and the count reads **viewed
 
 The **Code** tab is a web and desktop surface. The mobile app reports a pull request's status but
 does not show its diff, so marks are made and read on web and desktop.
+
+## Troubleshooting
+
+- **Not authenticated:** run the provider's login command on the server, then rescan. For Bitbucket,
+  check the credentials saved in Settings → Source Control, or confirm the running server received
+  the environment variables.
+- **GitHub sign-in cannot be verified:** update GitHub CLI to at least 2.81.0.
+- **Push fails despite a connected account:** check the Git remote's credentials. SSH and HTTPS
+  remotes can require separate setup from the hosting provider's API access.
+- **A review cannot load:** open it on the host website while resolving connectivity, permissions,
+  or rate limits.
 
 ## Linked pull requests
 
