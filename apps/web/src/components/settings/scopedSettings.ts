@@ -48,6 +48,16 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+const MODEL_SELECTION_KEYS = new Set<string>([
+  "defaultModelSelection",
+  "textGenerationModelSelection",
+  "sourceControlWriterModelSelection",
+] satisfies ProjectScopedServerSettingKey[]);
+
+function isModelSelectionReplacement(value: unknown): boolean {
+  return isPlainObject(value) && (value.instanceId !== undefined || value.model !== undefined);
+}
+
 /** The representative supplies display values, never the set of write targets. */
 export function selectScopedSettingsEnvironments<T extends ScopedSettingsEnvironment>(
   scope: ResolvedSettingsScope,
@@ -256,6 +266,13 @@ export function planScopedSettingsPatch(
                   !isNullableProjectSettingsOverride(key as ProjectScopedServerSettingKey)
                 ) {
                   delete next[key];
+                  continue;
+                }
+                // A model selection naming its instance or model replaces the
+                // whole value, as environment-scope writes do on the server, so
+                // the previous model's options never ride along to the new one.
+                if (MODEL_SELECTION_KEYS.has(key) && isModelSelectionReplacement(value)) {
+                  next[key] = value;
                   continue;
                 }
                 const base = effective[key as keyof ServerSettings];

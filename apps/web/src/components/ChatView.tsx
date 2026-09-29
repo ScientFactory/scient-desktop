@@ -349,7 +349,10 @@ import {
   preventRepeatedTerminalCloseShortcut,
   preventTerminalCloseShortcut,
 } from "../lib/terminalCloseShortcut";
-import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
+import {
+  resolveNewDraftStartFromOrigin,
+  resolveStaleDraftDefaultModelSelection,
+} from "../lib/chatThreadActions";
 import {
   derivePhysicalProjectKey,
   deriveLogicalProjectKeyFromSettings,
@@ -2583,6 +2586,18 @@ function ChatViewContent(props: ChatViewProps) {
     runProjectCloneAction,
   ]);
   const activeProjectDefaultModelSelection = activeProjectSettings.settings.defaultModelSelection;
+  // An unpicked draft follows a default changed in Settings. ChatView
+  // remounts on return, so this compares state rather than watching changes.
+  useEffect(() => {
+    if (draftId === null || isServerThread) return;
+    const nextSelection = resolveStaleDraftDefaultModelSelection(
+      useComposerDraftStore.getState().getComposerDraft(draftId),
+      activeProjectDefaultModelSelection,
+    );
+    if (nextSelection) {
+      setComposerDraftModelSelection(draftId, nextSelection, { replaceOptions: true });
+    }
+  }, [activeProjectDefaultModelSelection, draftId, isServerThread, setComposerDraftModelSelection]);
   const handleNewThreadInActiveProject = useCallback(() => {
     startNewThreadForProject(activeThreadTargetRef, handleNewThread);
   }, [activeThreadTargetRef, handleNewThread]);
