@@ -7,6 +7,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  ThreadSectionId,
   TurnId,
   type OrchestrationCheckpointSummary,
   type OrchestrationForkBoundary,
@@ -297,6 +298,36 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
       if (error._tag === "OrchestrationCommandInvariantError") {
         expect(error.detail).toContain("Authoritative fork boundaries are required");
       }
+    }),
+  );
+
+  it.effect("files the fork into its origin's section right after creating it", () =>
+    Effect.gen(function* () {
+      const sectionId = ThreadSectionId.make("section-research");
+      const events = yield* forkThreadForTest({
+        command: forkCommand(),
+        readModel: makeReadModel({ origin: makeOriginThread({ sectionId }) }),
+      });
+
+      expect(events.map((event) => event.type).slice(0, 2)).toEqual([
+        "thread.created",
+        "thread.meta-updated",
+      ]);
+      const filed = events[1];
+      expect(filed?.aggregateId).toBe(NEW);
+      if (filed?.type === "thread.meta-updated") {
+        expect(filed.payload).toMatchObject({ threadId: NEW, sectionId });
+      }
+    }),
+  );
+
+  it.effect("leaves the fork of an unsectioned origin unsectioned", () =>
+    Effect.gen(function* () {
+      const events = yield* forkThreadForTest({
+        command: forkCommand(),
+        readModel: makeReadModel({ origin: makeOriginThread({ sectionId: null }) }),
+      });
+      expect(events.some((event) => event.type === "thread.meta-updated")).toBe(false);
     }),
   );
 

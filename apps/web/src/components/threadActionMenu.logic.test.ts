@@ -72,6 +72,35 @@ describe("buildThreadActionMenuItems", () => {
   });
 
   // SCIENT-FORK:START
+  it("places Section in the first group, after pin, settle and snooze", () => {
+    const sectionMenu = {
+      id: "section" as const,
+      label: "Section",
+      children: [{ id: "section:new" as const, label: "New section…" }],
+    };
+    const items = buildThreadActionMenuItems({ ...baseState, sectionMenu });
+    expect(items.map((item) => item.id).slice(0, 5)).toEqual([
+      "pin",
+      "settle",
+      "snooze",
+      "section",
+      "rename",
+    ]);
+    expect(items[3]?.separatorBefore).toBeFalsy();
+    expect(items[4]?.separatorBefore).toBe(true);
+  });
+
+  it("leaves no gap in the first group when sections are unavailable", () => {
+    expect(ids({ ...baseState, sectionMenu: null }).slice(0, 4)).toEqual([
+      "pin",
+      "settle",
+      "snooze",
+      "rename",
+    ]);
+  });
+  // SCIENT-FORK:END
+
+  // SCIENT-FORK:START
   it("offers one Export entry per format and copies the conversation from the Copy submenu", () => {
     const items = buildThreadActionMenuItems(baseState);
     const exportItem = items.find((item) => item.id === "export-conversation");

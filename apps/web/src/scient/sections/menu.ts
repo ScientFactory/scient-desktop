@@ -42,7 +42,6 @@ export function buildSectionSubmenu(input: {
     id: "section",
     label: count > 1 ? `Move to section (${count})` : "Section",
     icon: "list-filter",
-    separatorBefore: true,
     children: [
       ...choices,
       { id: "section:new" as const, label: "New section…", separatorBefore: true },

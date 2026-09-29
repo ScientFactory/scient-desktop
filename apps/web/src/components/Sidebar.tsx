@@ -2830,6 +2830,7 @@ export default function Sidebar() {
   }, [isMobile, setOpenMobile]);
   const sections = useSidebarSections({
     threads,
+    scopeProjectRefs: scopedProjectGroup?.memberProjectRefs ?? null,
     pinnedThreads,
     activeThreads,
     routeThreadKey,
@@ -3925,10 +3926,10 @@ export default function Sidebar() {
                   },
                 ]
               : []),
-            ...(titleRegenerationMenuItem ? [titleRegenerationMenuItem] : []),
             // SCIENT-FORK:START
             ...(bulkSectionMenu ? [bulkSectionMenu] : []),
             // SCIENT-FORK:END
+            ...(titleRegenerationMenuItem ? [titleRegenerationMenuItem] : []),
             { id: "mark-unread", label: `Mark unread (${count})` },
             { id: "delete", label: `Delete (${count})`, destructive: true },
           ],

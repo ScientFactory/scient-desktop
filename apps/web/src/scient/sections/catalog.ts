@@ -22,8 +22,11 @@ import {
   catalogWithRestoredSection,
   catalogWithoutSection,
   layoutFromGroupOrder,
+  mergeListedGroupOrder,
   readThreadSections,
   type SectionOccupancy,
+  type SectionOrigin,
+  sectionLayoutOrder,
   sweepEmptySections,
 } from "./logic";
 import { type CatalogEdit, type LiveLayout, writeCatalog } from "./catalogWrite";
@@ -45,7 +48,7 @@ export interface ThreadSectionCatalog {
   /** Whether the primary environment is connected and can store sections. */
   readonly available: boolean;
   /** Creates a section, or returns the existing one with that name. */
-  readonly create: (name: string) => Promise<ThreadSection | null>;
+  readonly create: (name: string, origin?: SectionOrigin) => Promise<ThreadSection | null>;
   readonly rename: (sectionId: string, name: string) => Promise<CatalogRenameResult | null>;
   /** Removes the entry; its threads join General until it is restored. */
   readonly remove: (sectionId: string) => Promise<RemovedSection | null>;
@@ -64,8 +67,12 @@ export interface ThreadSectionCatalog {
     sectionId: string,
     environmentIds: readonly string[],
   ) => Promise<boolean>;
-  /** Applies a group order that may include General. */
-  readonly reorder: (orderedGroupIds: readonly string[]) => Promise<boolean>;
+  /**
+   * Applies a new order of the listed groups (General included). Sections not
+   * listed, such as those hidden by a project scope or created elsewhere
+   * meanwhile, keep their slots.
+   */
+  readonly reorder: (listedGroupIds: readonly string[]) => Promise<boolean>;
 }
 
 export function useThreadSectionCatalog(): ThreadSectionCatalog {
@@ -111,15 +118,16 @@ export function useThreadSectionCatalog(): ThreadSectionCatalog {
   );
 
   const create = useCallback(
-    async (name: string) => {
+    async (name: string, origin?: SectionOrigin) => {
       const { ok, result } = await write((layout) => {
         const created = catalogWithCreatedSection(
           layout.sections,
           name,
           ThreadSectionId.make(randomUUID()),
+          origin,
         );
         return {
-          layout: created.created
+          layout: created.changed
             ? { catalog: created.catalog, generalIndex: layout.generalIndex }
             : null,
           result: created.section,
@@ -140,6 +148,7 @@ export function useThreadSectionCatalog(): ThreadSectionCatalog {
               ? { catalog: renamed.catalog, generalIndex: layout.generalIndex }
               : null,
           result: renamed,
+          needsCurrentLayout: renamed.kind === "missing",
         };
       });
       return ok ? result : null;
@@ -151,7 +160,11 @@ export function useThreadSectionCatalog(): ThreadSectionCatalog {
     async (sectionId: string) => {
       const { ok, result } = await write((layout) => {
         const removed = catalogWithoutSection(layout.sections, layout.generalIndex, sectionId);
-        return { layout: removed.removed ? removed : null, result: removed.removed };
+        return {
+          layout: removed.removed ? removed : null,
+          result: removed.removed,
+          needsCurrentLayout: removed.removed === null,
+        };
       });
       return ok ? result : null;
     },
@@ -213,7 +226,7 @@ export function useThreadSectionCatalog(): ThreadSectionCatalog {
     async (sectionId: string, environmentIds: readonly string[]) => {
       const { ok, result } = await write((layout) => {
         if (!layout.sections.some((section) => section.id === sectionId)) {
-          return { layout: null, result: false };
+          return { layout: null, result: false, needsCurrentLayout: true };
         }
         const catalog = catalogWithEnvironments(layout.sections, sectionId, environmentIds);
         return {
@@ -227,10 +240,18 @@ export function useThreadSectionCatalog(): ThreadSectionCatalog {
   );
 
   const reorder = useCallback(
-    async (orderedGroupIds: readonly string[]) =>
+    async (listedGroupIds: readonly string[]) =>
+      // Merged against each attempt's catalog, so a retry after another
+      // client's edit still leaves unlisted sections where that edit put them.
       (
         await write((layout) => ({
-          layout: layoutFromGroupOrder(layout.sections, orderedGroupIds),
+          layout: layoutFromGroupOrder(
+            layout.sections,
+            mergeListedGroupOrder(
+              sectionLayoutOrder(layout.sections, layout.generalIndex),
+              listedGroupIds,
+            ),
+          ),
           result: true,
         }))
       ).ok,

@@ -10,6 +10,10 @@ import {
   catalogWithoutSection,
   groupThreadsBySection,
   layoutFromGroupOrder,
+  mergeListedGroupOrder,
+  newSectionTitle,
+  sectionIdsInProjectScope,
+  sectionLayoutOrder,
   capitalizeSectionName,
   normalizeSectionName,
   readThreadSections,
@@ -19,6 +23,8 @@ import {
   sectionShifts,
   resolveSectionsDropTarget,
   sectionHeaderItemId,
+  sectionsDropIndex,
+  expandSectionDropOrder,
   type SectionsLifecycle,
   type SectionsListItem,
 } from "./logic";
@@ -235,28 +241,151 @@ describe("Sections view drops", () => {
     expect(key > "g" && key < "m").toBe(true);
   });
 
-  it("lands a row dropped above the first header at the top of the first section", () => {
+  it("lands a row dropped on the first header at the top of the first section's own rows", () => {
+    // An active row goes below the section's pinned rows: a drop never pins.
     expect(resolveSectionsDropTarget(items, "o1", sectionHeaderItemId("research"))).toEqual({
       kind: "section",
       groupId: "research",
-      order: ["o1", "r-pin", "r1", "r2"],
+      order: ["r-pin", "o1", "r1", "r2"],
     });
   });
 
-  it("lands a row dragged up onto a header where the list shows it: above that header", () => {
-    // Moving up over Perma's header slides the header down, so the gap (and
-    // the drop) is at the end of Research, not inside Perma.
-    expect(resolveSectionsDropTarget(items, "o1", sectionHeaderItemId("perma"))).toEqual({
+  it("keeps the dropped row on its own side of the pinned rows, as the preview shows it", () => {
+    const research = items.findIndex((item) => item.id === sectionHeaderItemId("research"));
+    const o1 = items.findIndex((item) => item.id === "o1");
+    // Over the header an active row slides in below the pin, not above it.
+    expect(sectionsDropIndex(items, o1, research)).toBe(research + 2);
+    // A pinned row dragged below active rows stays with the pinned rows.
+    const withPinBelow: SectionsListItem[] = [
+      header("research"),
+      row("r1", "active", "research"),
+      row("r2", "active", "research"),
+      header("perma"),
+      row("p-pin", "pinned", "perma"),
+    ];
+    expect(resolveSectionsDropTarget(withPinBelow, "p-pin", "r2")).toEqual({
       kind: "section",
       groupId: "research",
-      order: ["r-pin", "r1", "r2", "o1"],
+      order: ["p-pin", "r1", "r2"],
     });
-    // Moving down over it lands at the top of Perma.
+  });
+
+  it("places a drop into a collapsed section among all of its rows", () => {
+    expect(
+      expandSectionDropOrder({ shownOrder: ["x"], fullOrder: ["a", "b", "c"], droppedId: "x" }),
+    ).toEqual(["x", "a", "b", "c"]);
+    // A collapsed section still shows the open thread: land relative to it.
+    expect(
+      expandSectionDropOrder({
+        shownOrder: ["x", "b"],
+        fullOrder: ["a", "b", "c"],
+        droppedId: "x",
+      }),
+    ).toEqual(["a", "x", "b", "c"]);
+    expect(
+      expandSectionDropOrder({
+        shownOrder: ["b", "x"],
+        fullOrder: ["a", "b", "c"],
+        droppedId: "x",
+      }),
+    ).toEqual(["a", "b", "x", "c"]);
+    // On the header, the top, even above rows hidden above the open thread.
+    expect(
+      expandSectionDropOrder({
+        shownOrder: ["x", "b"],
+        fullOrder: ["a", "b", "c"],
+        droppedId: "x",
+        onHeader: true,
+      }),
+    ).toEqual(["x", "a", "b", "c"]);
+    // Moving within the section: the row is taken out of its old place.
+    expect(
+      expandSectionDropOrder({ shownOrder: ["c"], fullOrder: ["a", "b", "c"], droppedId: "c" }),
+    ).toEqual(["c", "a", "b"]);
+  });
+
+  it("drops only the part of a move whose order keys can be written", () => {
+    const base = {
+      lifecycleByKey,
+      pinnedKeysById: new Map(),
+      activeKeysById: keys,
+      toSectionId: (groupId: string) => sid(groupId),
+      canWriteOrderKeys: () => false,
+    };
+    // A pure reorder that cannot be written is no drop at all.
+    expect(
+      planSectionsThreadDrop({
+        ...base,
+        source: { key: "r2", lifecycle: "active", groupId: "research", pinned: false },
+        target: { kind: "section", groupId: "research", order: ["r-pin", "r2", "r1"] },
+        targetOrderBefore: ["r-pin", "r1", "r2"],
+      }),
+    ).toEqual({ kind: "none" });
+    // A move into another section still files the thread, without keys.
+    expect(
+      planSectionsThreadDrop({
+        ...base,
+        source: {
+          key: "o1",
+          lifecycle: "active",
+          groupId: GENERAL_SECTION_GROUP_ID,
+          pinned: false,
+        },
+        target: { kind: "section", groupId: "research", order: ["r-pin", "r1", "o1", "r2"] },
+        targetOrderBefore: ["r-pin", "r1", "r2"],
+      }),
+    ).toMatchObject({ kind: "move", sectionId: "research", assignments: [] });
+  });
+
+  it("files a row dropped on a header into that section, at its top, from either side", () => {
+    // Dragged up onto Perma's header: into Perma, not the end of Research.
+    expect(resolveSectionsDropTarget(items, "o1", sectionHeaderItemId("perma"))).toEqual({
+      kind: "section",
+      groupId: "perma",
+      order: ["o1", "p1"],
+    });
+    expect(plan("o1", sectionHeaderItemId("perma"))).toMatchObject({
+      kind: "move",
+      sectionId: "perma",
+    });
+    // Dragged down onto it: the same place.
     expect(resolveSectionsDropTarget(items, "r2", sectionHeaderItemId("perma"))).toEqual({
       kind: "section",
       groupId: "perma",
       order: ["r2", "p1"],
     });
+  });
+
+  it("reaches a header-only (empty or collapsed) section from below", () => {
+    const withEmpty: SectionsListItem[] = [
+      header("research"),
+      row("r1", "active", "research"),
+      header("empty"),
+      header(GENERAL_SECTION_GROUP_ID),
+      row("o1", "active", GENERAL_SECTION_GROUP_ID),
+    ];
+    expect(resolveSectionsDropTarget(withEmpty, "o1", sectionHeaderItemId("empty"))).toEqual({
+      kind: "section",
+      groupId: "empty",
+      order: ["o1"],
+    });
+  });
+
+  it("places the row just below a header it is dragged up onto", () => {
+    // The list slides rows to this index while dragging, so the preview
+    // matches the drop.
+    const perma = items.findIndex((item) => item.id === sectionHeaderItemId("perma"));
+    const o1 = items.findIndex((item) => item.id === "o1");
+    expect(sectionsDropIndex(items, o1, perma)).toBe(perma + 1);
+    const r2 = items.findIndex((item) => item.id === "r2");
+    expect(sectionsDropIndex(items, r2, perma)).toBe(perma);
+    // Over a row, the row's own slot.
+    const r1 = items.findIndex((item) => item.id === "r1");
+    expect(sectionsDropIndex(items, o1, r1)).toBe(r1);
+  });
+
+  it("does nothing when a row is dropped on its own section's header while already on top", () => {
+    expect(plan("p1", sectionHeaderItemId("perma"))).toEqual({ kind: "none" });
   });
 
   it("files a thread in General and reorders within a section", () => {
@@ -460,5 +589,167 @@ describe("catalogWithEnvironments", () => {
     expect(recorded?.[1]?.environmentIds).toEqual(["a"]);
     expect(catalogWithEnvironments(recorded!, "perma", ["a"])).toBeNull();
     expect(catalogWithEnvironments(recorded!, "gone", ["a"])).toBeNull();
+  });
+});
+
+describe("creating a section for threads", () => {
+  const A = { environmentId: "local", projectId: "project-a" };
+  const B = { environmentId: "local", projectId: "project-b" };
+
+  it("records the threads' environments and the projects it was made for", () => {
+    const created = catalogWithCreatedSection([RESEARCH], "Design", sid("design"), {
+      environmentIds: ["local", "local"],
+      createdInProjects: [A, A],
+    });
+    expect(created.changed).toBe(true);
+    expect(created.section).toEqual({
+      id: "design",
+      name: "Design",
+      order: 1,
+      environmentIds: ["local"],
+      createdInProjects: [A],
+    });
+  });
+
+  it("reuses a name without a write unless there is something new to record", () => {
+    const existing = { ...RESEARCH, createdInProjects: [A] };
+    const same = catalogWithCreatedSection([existing], "research", sid("x"), {
+      createdInProjects: [A],
+    });
+    expect(same).toMatchObject({ created: false, changed: false, section: existing });
+    const wider = catalogWithCreatedSection([existing], "research", sid("x"), {
+      createdInProjects: [B],
+    });
+    expect(wider.created).toBe(false);
+    expect(wider.changed).toBe(true);
+    expect(wider.section.createdInProjects).toEqual([A, B]);
+    expect(wider.section.id).toBe("research");
+  });
+
+  it("names what the section is for", () => {
+    expect(newSectionTitle(0)).toBe("New section");
+    expect(newSectionTitle(1)).toBe("New section for this thread");
+    expect(newSectionTitle(3)).toBe("New section for 3 threads");
+  });
+});
+
+describe("sections in a project scope", () => {
+  const A = { environmentId: "local", projectId: "project-a" };
+  const scopeA = new Set(["local:project-a"]);
+  const loaded = new Set(["local"]);
+  const thread = (
+    projectId: string,
+    sectionId: string | null,
+    archivedAt: string | null = null,
+  ) => ({
+    environmentId: "local",
+    projectId,
+    sectionId,
+    archivedAt,
+  });
+  const sections = [
+    section("mine", "Mine", 0),
+    section("theirs", "Theirs", 1),
+    section("shared", "Shared", 2),
+    { ...section("fresh", "Fresh", 3), createdInProjects: [A] },
+    section("orphan", "Orphan", 4),
+    { ...section("moved", "Moved", 5), createdInProjects: [A] },
+  ];
+  const threads = [
+    thread("project-a", "mine"),
+    thread("project-b", "theirs"),
+    thread("project-a", "shared"),
+    thread("project-b", "shared"),
+    // Created in A, but its only thread now lives in B.
+    thread("project-b", "moved"),
+    // Archived threads don't keep a section listed.
+    thread("project-a", "orphan", "2026-09-01T00:00:00.000Z"),
+  ];
+
+  it("lists every section under All projects", () => {
+    expect(
+      sectionIdsInProjectScope({
+        sections,
+        scopeProjectKeys: null,
+        loadedEnvironmentIds: loaded,
+        threads,
+      }),
+    ).toBeNull();
+  });
+
+  it("lists sections with the project's threads, and its own empty ones", () => {
+    const listed = sectionIdsInProjectScope({
+      sections,
+      scopeProjectKeys: scopeA,
+      loadedEnvironmentIds: loaded,
+      threads,
+    });
+    expect([...(listed ?? [])].toSorted()).toEqual(["fresh", "mine", "shared"]);
+  });
+
+  it("lists a section with threads in two projects under both", () => {
+    const listedB = sectionIdsInProjectScope({
+      sections,
+      scopeProjectKeys: new Set(["local:project-b"]),
+      loadedEnvironmentIds: loaded,
+      threads,
+    });
+    expect([...(listedB ?? [])].toSorted()).toEqual(["moved", "shared", "theirs"]);
+  });
+
+  it("does not call a section empty while an environment that held its threads is not loaded", () => {
+    const remoteOnly = {
+      ...section("remote", "Remote", 0),
+      createdInProjects: [A],
+      environmentIds: ["remote-env"],
+    };
+    const args = { sections: [remoteOnly], scopeProjectKeys: scopeA, threads: [] };
+    expect([
+      ...(sectionIdsInProjectScope({ ...args, loadedEnvironmentIds: loaded }) ?? []),
+    ]).toEqual([]);
+    expect([
+      ...(sectionIdsInProjectScope({
+        ...args,
+        loadedEnvironmentIds: new Set(["local", "remote-env"]),
+      }) ?? []),
+    ]).toEqual(["remote"]);
+  });
+
+  it("counts snoozed and settled threads, which the sections list does not show", () => {
+    // The grouping only sees pinned and active threads; visibility sees all.
+    const listed = sectionIdsInProjectScope({
+      sections: [section("later", "Later", 0)],
+      scopeProjectKeys: scopeA,
+      loadedEnvironmentIds: loaded,
+      threads: [thread("project-a", "later")],
+    });
+    expect([...(listed ?? [])]).toEqual(["later"]);
+  });
+
+  it("hides unlisted sections but never General or a section holding a shown thread", () => {
+    const groups = groupThreadsBySection({
+      sections: [section("mine", "Mine", 0), section("theirs", "Theirs", 1)],
+      generalIndex: 1,
+      pinned: [],
+      active: [{ id: "t1", sectionId: "theirs" }],
+      listedSectionIds: new Set(["mine"]),
+    });
+    expect(groups.map((group) => group.id)).toEqual(["mine", GENERAL_SECTION_GROUP_ID, "theirs"]);
+  });
+
+  it("keeps hidden sections in their slots when the listed ones are reordered", () => {
+    const full = sectionLayoutOrder(
+      [section("a", "A", 0), section("h1", "H1", 1), section("b", "B", 2), section("h2", "H2", 3)],
+      4,
+    );
+    expect(full).toEqual(["a", "h1", "b", "h2", GENERAL_SECTION_GROUP_ID]);
+    // The scope lists a, b and General; the user drags General to the top.
+    expect(mergeListedGroupOrder(full, [GENERAL_SECTION_GROUP_ID, "a", "b"])).toEqual([
+      GENERAL_SECTION_GROUP_ID,
+      "h1",
+      "a",
+      "h2",
+      "b",
+    ]);
   });
 });

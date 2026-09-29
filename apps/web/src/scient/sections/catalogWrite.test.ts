@@ -77,4 +77,43 @@ describe("writeCatalog", () => {
       await writeCatalog({ stored: server.read(), edit: create("Alpha"), send: async () => null }),
     ).toEqual({ ok: false, result: null });
   });
+
+  // A write resolves before the settings stream delivers it, so the local
+  // copy can miss a section this client just created.
+  const recordIfPresent = (sectionId: string) => (layout: LiveLayout) => {
+    const present = layout.sections.some((section) => section.id === sectionId);
+    return present
+      ? { layout: null, result: "present" as const }
+      : { layout: null, result: "missing" as const, needsCurrentLayout: true };
+  };
+
+  it("rereads a stale copy instead of trusting a missing section", async () => {
+    const server = makeServer();
+    const staleCopy = server.read();
+    await writeCatalog({ stored: staleCopy, edit: create("Alpha"), send: server.send });
+    const result = await writeCatalog({
+      stored: staleCopy,
+      edit: recordIfPresent("Alpha"),
+      send: server.send,
+    });
+    expect(result).toEqual({ ok: true, result: "present" });
+    expect(server.read().sections.map((section) => section.name)).toEqual(["Alpha"]);
+  });
+
+  it("trusts a missing section once the server confirms the copy is current", async () => {
+    const server = makeServer();
+    let sends = 0;
+    const result = await writeCatalog({
+      stored: server.read(),
+      edit: recordIfPresent("Gone"),
+      send: async (patch) => {
+        sends += 1;
+        return server.send(patch);
+      },
+    });
+    expect(result).toEqual({ ok: true, result: "missing" });
+    // One confirming write that changes nothing.
+    expect(sends).toBe(1);
+    expect(server.read().sections).toEqual([]);
+  });
 });
