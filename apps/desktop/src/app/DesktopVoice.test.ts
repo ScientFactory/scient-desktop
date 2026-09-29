@@ -464,3 +464,95 @@ describe("DesktopVoice model lifecycle", () => {
     );
   });
 });
+
+describe("DesktopVoice transcription ownership", () => {
+  const clip = {
+    audioBase64:
+      "UklGRlQAAABXQVZFZm10IBAAAAABAAEAwF0AAIC7AAACABAAZGF0YTAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+    mimeType: "audio/wav",
+    sampleRateHz: 24000,
+    durationMs: 1,
+  } as const;
+  it.effect("old, unknown, and legacy cancellation cannot abort a replacement request", () => {
+    const harness = makeFakeEngine({ states: { [SMALL_MODEL_ID]: ready(SMALL_MODEL_ID) } });
+    const started = [Promise.withResolvers<AbortSignal>(), Promise.withResolvers<AbortSignal>()];
+    const queuedStarts = [...started];
+    harness.transcribe.mockImplementation(
+      (...args: Parameters<TranscriptionEngine["transcribe"]>) => {
+        const signal = args[2].signal;
+        queuedStarts.shift()!.resolve(signal);
+        return new Promise<never>((_resolve, reject) => {
+          signal.addEventListener(
+            "abort",
+            () => reject(new DOMException("Aborted", "AbortError")),
+            { once: true },
+          );
+        });
+      },
+    );
+    return withVoice(dependencies(harness), (voice) =>
+      Effect.gen(function* () {
+        const first = yield* voice.transcribe({ ...clip, requestId: "first" }).pipe(
+          Effect.orElseSucceed(() => null),
+          Effect.forkChild,
+        );
+        const firstSignal = yield* Effect.promise(() => started[0]!.promise);
+        yield* voice.cancelTranscription({ requestId: "unknown" });
+        yield* voice.cancelTranscription(undefined);
+        expect(firstSignal.aborted).toBe(false);
+        const second = yield* voice.transcribe({ ...clip, requestId: "second" }).pipe(
+          Effect.orElseSucceed(() => null),
+          Effect.forkChild,
+        );
+        const secondSignal = yield* Effect.promise(() => started[1]!.promise);
+        expect(firstSignal.aborted).toBe(true);
+        yield* Fiber.join(first);
+        yield* voice.cancelTranscription({ requestId: "first" });
+        yield* voice.cancelTranscription(undefined);
+        expect(secondSignal.aborted).toBe(false);
+        yield* voice.cancelTranscription({ requestId: "second" });
+        expect(secondSignal.aborted).toBe(true);
+        yield* Fiber.join(second);
+        yield* voice.cancelTranscription({ requestId: "second" });
+      }),
+    );
+  });
+});
+
+it.effect("legacy cancellation still stops identity-less transcription", () => {
+  const harness = makeFakeEngine({ states: { [SMALL_MODEL_ID]: ready(SMALL_MODEL_ID) } });
+  const started = Promise.withResolvers<AbortSignal>();
+  harness.transcribe.mockImplementation(
+    (...args: Parameters<TranscriptionEngine["transcribe"]>) => {
+      const signal = args[2].signal;
+      started.resolve(signal);
+      return new Promise<never>((_resolve, reject) =>
+        signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), {
+          once: true,
+        }),
+      );
+    },
+  );
+  const clip = {
+    audioBase64:
+      "UklGRlQAAABXQVZFZm10IBAAAAABAAEAwF0AAIC7AAACABAAZGF0YTAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+    mimeType: "audio/wav",
+    sampleRateHz: 24000,
+    durationMs: 1,
+  } as const;
+
+  return withVoice(dependencies(harness), (voice) =>
+    Effect.gen(function* () {
+      const transcription = yield* voice.transcribe(clip).pipe(
+        Effect.orElseSucceed(() => null),
+        Effect.forkChild,
+      );
+      const signal = yield* Effect.promise(() => started.promise);
+      yield* voice.cancelTranscription({ requestId: "unknown" });
+      expect(signal.aborted).toBe(false);
+      yield* voice.cancelTranscription(undefined);
+      expect(signal.aborted).toBe(true);
+      yield* Fiber.join(transcription);
+    }),
+  );
+});

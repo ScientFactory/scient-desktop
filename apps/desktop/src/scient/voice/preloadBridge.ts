@@ -22,6 +22,8 @@ export function makeDesktopVoiceBridge(
     removeModel: (request) => ipcRenderer.invoke(IpcChannels.VOICE_REMOVE_MODEL_CHANNEL, request),
     transcribe: (request) => ipcRenderer.invoke(IpcChannels.VOICE_TRANSCRIBE_CHANNEL, request),
     cancelTranscription: () => ipcRenderer.invoke(IpcChannels.VOICE_CANCEL_TRANSCRIPTION_CHANNEL),
+    cancelTranscriptionRequest: (request) =>
+      ipcRenderer.invoke(IpcChannels.VOICE_CANCEL_TRANSCRIPTION_CHANNEL, request),
     onModelDownloadProgress: (listener) => {
       let cancelled = false;
       const poll = () => {
