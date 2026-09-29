@@ -134,7 +134,7 @@ import { resolveDiffThemeName } from "../lib/diffRendering";
 import { GitHubIcon } from "./Icons";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
 import { useTheme } from "../hooks/useTheme";
-import { getClientSettings, useClientSettings } from "../hooks/useSettings";
+import { useClientSettings } from "../hooks/useSettings";
 import {
   chatMarkdownClipboardPayload,
   serializeTableElementToCsv,
@@ -756,14 +756,12 @@ function extractCodeBlock(
   };
 }
 
-function readInitialWordWrapSetting(): boolean {
-  return getClientSettings().wordWrap;
-}
-
 function MarkdownTable({ children, dir, ...props }: React.ComponentProps<"table">) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const tableRef = useRef<HTMLTableElement | null>(null);
-  const [expanded, setExpanded] = useState(readInitialWordWrapSetting);
+  // Tables open with wrapped cells so every value is readable in place. The
+  // global word-wrap preference is a code/diff setting and does not apply here;
+  // the footer toggle switches this table to single-line cells that scroll.
+  const [expanded, setExpanded] = useState(true);
   const [copied, setCopied] = useState(false);
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tableDirection = dir === "rtl" ? "rtl" : "ltr";
@@ -771,26 +769,6 @@ function MarkdownTable({ children, dir, ...props }: React.ComponentProps<"table"
   const copyLabel = copied ? "Copied" : "Copy table";
 
   function toggleExpanded() {
-    const table = tableRef.current;
-    if (!table) return;
-
-    if (!expanded) {
-      const rows = [...table.rows];
-      const columnWidths = rows.reduce<number[]>((widths, row) => {
-        [...row.cells].forEach((cell, columnIndex) => {
-          widths[columnIndex] = Math.max(
-            widths[columnIndex] ?? 0,
-            cell.getBoundingClientRect().width,
-          );
-        });
-        return widths;
-      }, []);
-
-      [...(table.tHead?.rows[0]?.cells ?? [])].forEach((cell, columnIndex) => {
-        cell.style.minWidth = `${columnWidths[columnIndex] ?? cell.getBoundingClientRect().width}px`;
-      });
-    }
-
     setExpanded((value) => !value);
   }
 
@@ -844,7 +822,7 @@ function MarkdownTable({ children, dir, ...props }: React.ComponentProps<"table"
         className="w-full max-w-full"
         dir={tableDirection}
       >
-        <table ref={tableRef} {...props} dir={tableDirection}>
+        <table {...props} dir={tableDirection}>
           {children}
         </table>
       </ScrollArea>
