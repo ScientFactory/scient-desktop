@@ -1210,6 +1210,40 @@ describe("ConversationImporter", () => {
       ),
     );
 
+    it.effect("counts a hundred thousand warnings of one kind in one line, in linear time", () =>
+      withImporter(
+        Effect.gen(function* () {
+          const fixture = importFixture({ turns: 1 });
+          const many = (count: number) =>
+            Array.from({ length: count }, (_, index) =>
+              warning(
+                "resource-unresolved",
+                `The linked image figure-${index + 1}.png was unavailable.`,
+              ),
+            );
+          const warnings = many(100_000);
+          const startedAt = performance.now();
+          const notices = yield* noticesOf({ ...fixture.input, warnings });
+          const elapsedMs = performance.now() - startedAt;
+          assert.deepStrictEqual(notices, ["100000 linked files or images were not included."]);
+          // Copying the grouped warnings on every step took minutes here.
+          assert.isBelow(elapsedMs, 1_000);
+          // A kind first listed after the warnings read in full is still counted.
+          const late = yield* noticesOf({
+            ...fixture.input,
+            warnings: [
+              ...many(1_000),
+              warning("unsupported-construct", "A table was kept as plain text."),
+            ],
+          });
+          assert.deepStrictEqual(late, [
+            "1000 linked files or images were not included.",
+            "…and 1 more note.",
+          ]);
+        }),
+      ),
+    );
+
     it.effect("shares the room between earlier and new notes and counts the rest", () =>
       withImporter(
         Effect.gen(function* () {

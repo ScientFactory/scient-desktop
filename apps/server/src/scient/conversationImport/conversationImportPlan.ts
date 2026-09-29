@@ -652,26 +652,45 @@ function plainNotice(text: string): string | null {
     : `${line.slice(0, NOTICE_MAX_CHARS - 1).trimEnd()}…`;
 }
 
-/** This file's notices: one line per kind, with a count when a kind repeats. */
-function currentNotices(input: ValidatedConversationImport): ReadonlyArray<string> {
-  const byKind = new Map<DocumentWarningCode, string[]>();
+/**
+ * How many of a file's warnings are read in full. A kind first seen among
+ * them gets its line, and later warnings of that kind only add to its count;
+ * a kind first seen after them is counted among the "more notes".
+ */
+const NOTICE_WARNINGS_READ = 1_000;
+
+/**
+ * This file's notices, one line per kind with a count when a kind repeats,
+ * and how many further notes were not read. One pass, constant work per
+ * warning, whatever the file lists.
+ */
+function currentNotices(input: ValidatedConversationImport): {
+  readonly lines: ReadonlyArray<string>;
+  readonly unread: number;
+} {
+  const byKind = new Map<DocumentWarningCode, { count: number; readonly first: string }>();
   let newerVersion = false;
+  let unread = 0;
+  let index = 0;
   for (const warning of input.warnings) {
+    const read = index++ < NOTICE_WARNINGS_READ;
     if (warning._tag === "newer-minor-version") {
-      newerVersion = true;
+      if (read) newerVersion = true;
+      else if (!newerVersion) unread += 1;
       continue;
     }
     const { code, message } = warning.warning;
     if (NOTICE_KINDS[code] === undefined) continue;
-    byKind.set(code, [...(byKind.get(code) ?? []), message]);
+    const seen = byKind.get(code);
+    if (seen !== undefined) seen.count += 1;
+    else if (read) byKind.set(code, { count: 1, first: message });
+    else unread += 1;
   }
-  const lines = [...byKind].map(([code, messages]) => {
+  const lines = [...byKind].map(([code, { count, first }]) => {
     const kind = NOTICE_KINDS[code]!;
-    return messages.length === 1
-      ? (plainNotice(messages[0]!) ?? kind.one)
-      : kind.many(messages.length);
+    return count === 1 ? (plainNotice(first) ?? kind.one) : kind.many(count);
   });
-  return newerVersion ? [...lines, NEWER_VERSION_NOTICE] : lines;
+  return { lines: newerVersion ? [...lines, NEWER_VERSION_NOTICE] : lines, unread };
 }
 
 /**
@@ -692,9 +711,9 @@ function importNotices(
         ? (provenance.sourceImport?.notices ?? [])
         : []
   ).flatMap((notice) => plainNotice(notice) ?? []);
-  const current = currentNotices(input);
+  const { lines: current, unread } = currentNotices(input);
   const all = [...new Set([...earlier, ...current])];
-  if (all.length <= CONVERSATION_IMPORT_MAX_NOTICES) return all;
+  if (all.length <= CONVERSATION_IMPORT_MAX_NOTICES && unread === 0) return all;
   const room = CONVERSATION_IMPORT_MAX_NOTICES - 1;
   const queues = [
     [...new Set(earlier)],
@@ -706,7 +725,8 @@ function importNotices(
     if (line === undefined) break;
     kept.push(line);
   }
-  return [...kept, `…and ${all.length - kept.length} more notes.`];
+  const more = all.length - kept.length + unread;
+  return [...kept, `…and ${more} more ${more === 1 ? "note" : "notes"}.`];
 }
 
 type ImportedSnapshot = ValidatedConversationImport["snapshot"];
