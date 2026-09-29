@@ -1570,6 +1570,7 @@ export default function FilePreviewPanel({
       ? {
           ...queriedFile,
           error: null,
+          failure: null,
           isPending: false,
           data: {
             relativePath,
