@@ -5,8 +5,9 @@ Scient owns desktop/web reader-position policy in `ChatView.tsx`,
 maintains the live end during streaming, tool activity, completion, or queued
 sends (LegendList `maintainScrollAtEnd` stays off). While idle and resting at the reading
 end, `MessagesTimeline` itself keeps that end in place through size changes of existing
-rows and viewport resizes, never for new rows, paused during disclosure toggles and
-briefly after any click or key in the timeline. Scroll bookkeeping runs once per frame. The end is the last message's text
+rows and viewport resizes (measured on screen, reacting only when content moves the
+text end), never for new rows or while the reader's own scrolling input is in motion,
+paused during disclosure toggles and briefly after any click or key in the timeline. Scroll bookkeeping runs once per frame. The end is the last message's text
 (`withReadingEnd`), not trailing changed files, tool groups or meta rows. Preserve
 the existing first-message framing. Send eligibility allows at most two
 rendered body-text lines below the reading edge; other end controls retain the
