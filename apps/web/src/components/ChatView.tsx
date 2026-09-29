@@ -6282,9 +6282,26 @@ function ChatViewContent(props: ChatViewProps) {
             handleManualNavigation();
           }
         };
-        // Pointer presses (content clicks, selection, padding, the scrollbar)
-        // never cancel on their own: a scrollbar drag upward is caught as an
-        // upward scroll by the reveal itself.
+        // Pointer presses (content clicks, selection, padding) never cancel on
+        // their own. A scrollbar drag is a press on the scroll node itself;
+        // once it actually moves toward older content, it is scrolling up.
+        let scrollbarDrag: { top: number } | null = null;
+        const handlePointerDown = (event: PointerEvent) => {
+          scrollbarDrag = event.target === scrollNode ? { top: scrollNode.scrollTop } : null;
+        };
+        const handlePointerUp = () => {
+          scrollbarDrag = null;
+        };
+        const handleScrollbarScroll = () => {
+          if (!scrollbarDrag) return;
+          if (scrollNode.scrollTop < scrollbarDrag.top - 2) {
+            scrollbarDrag = null;
+            timelineScrollIntentRef.current = "away-from-end";
+            handleManualNavigation();
+          } else {
+            scrollbarDrag.top = Math.max(scrollbarDrag.top, scrollNode.scrollTop);
+          }
+        };
 
         // Keyboard scrolling (PageUp/Home/ArrowUp) bypasses wheel and
         // pointer events entirely; without this the timeline yanks back to
@@ -6342,6 +6359,10 @@ function ChatViewContent(props: ChatViewProps) {
         scrollNode.addEventListener("wheel", handleWheel, {
           passive: true,
         });
+        scrollNode.addEventListener("pointerdown", handlePointerDown, { passive: true });
+        scrollNode.ownerDocument.addEventListener("pointerup", handlePointerUp);
+        scrollNode.ownerDocument.addEventListener("pointercancel", handlePointerUp);
+        scrollNode.addEventListener("scroll", handleScrollbarScroll, { passive: true });
         scrollNode.addEventListener("touchstart", handleTouchStart, {
           passive: true,
         });
@@ -6351,6 +6372,10 @@ function ChatViewContent(props: ChatViewProps) {
         document.addEventListener("keydown", handleKeyDown);
         removeListeners = () => {
           scrollNode.removeEventListener("wheel", handleWheel);
+          scrollNode.removeEventListener("pointerdown", handlePointerDown);
+          scrollNode.ownerDocument.removeEventListener("pointerup", handlePointerUp);
+          scrollNode.ownerDocument.removeEventListener("pointercancel", handlePointerUp);
+          scrollNode.removeEventListener("scroll", handleScrollbarScroll);
           scrollNode.removeEventListener("touchstart", handleTouchStart);
           scrollNode.removeEventListener("touchmove", handleTouchMove);
           document.removeEventListener("keydown", handleKeyDown);

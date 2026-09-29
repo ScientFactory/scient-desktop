@@ -109,8 +109,11 @@ function firstLinesVisible(messageId: string) {
   const rect = rowRect(messageId);
   if (!rect) return false;
   const view = node().getBoundingClientRect();
+  // Its first lines, or all of it when it is shorter than that.
+  const firstLinesBottom = Math.min(rect.top + 40, rect.bottom);
   return (
-    rect.top >= view.top + 20 && rect.top + 40 <= view.top + node().clientHeight - COMPOSER_INSET
+    rect.top >= view.top + 20 &&
+    firstLinesBottom <= view.top + node().clientHeight - COMPOSER_INSET + 1
   );
 }
 
@@ -279,7 +282,12 @@ it("reveals the latest message after very tall notes", async () => {
   render(key, entries);
   await expect.poll(() => readTimelinePosition(key)).toBeDefined();
   const prompt = message(20, "user", "A question with a long investigation");
-  const running = { isWorking: true, readingFollowPromptId: prompt.message.id };
+  // A running turn keeps its notes as rows; a settled one would fold them.
+  const running = {
+    isWorking: true,
+    runningTurnId: TurnId.make("turn-20"),
+    readingFollowPromptId: prompt.message.id,
+  };
   render(key, [...entries, prompt], running);
   await frames(8);
   // Several very tall notes push the next message far past the rendered window.
@@ -297,6 +305,9 @@ it("reveals the latest message after very tall notes", async () => {
   render(key, [...entries, prompt, ...tallNotes], running);
   await frames(12);
   render(key, [...entries, prompt, ...tallNotes, latest], running);
+  await frames(1);
+  // Precondition: the latest message has never been rendered.
+  expect(rowRect(latest.message.id)).toBeNull();
   await expect.poll(() => firstLinesVisible(latest.message.id), { timeout: 8000 }).toBe(true);
 });
 
@@ -395,6 +406,32 @@ it("keeps the end of the answer's text in view while idle, not the end of what f
   const before = readingGap();
   // The answer's content grows late (an image or diagram finishing its render).
   render(key, [...entries, answer(paragraph(30).repeat(3))]);
+  await expect
+    .poll(() => Math.abs(readingGap() - before), { timeout: 4000 })
+    .toBeLessThanOrEqual(2);
+});
+
+it("keeps the answer's end in view when content above it grows in the same layout", async () => {
+  const key = "reading-end:grow-above";
+  const earlier = message(28, "assistant", "Earlier short answer.", "turn-28");
+  const answer = message(30, "assistant", `Answer. ${"Text. ".repeat(40)}`, "turn-30");
+  const entries = [...history(8), earlier, message(29, "user", "Question", "turn-30")];
+  render(key, [...entries, answer]);
+  await expect.poll(() => readTimelinePosition(key)).toBeDefined();
+  await listRef.current!.scrollToEnd({ animated: false });
+  await frames(8);
+  const readingGap = () => {
+    const now = listRef.current!.getState();
+    return withReadingEnd(now, COMPOSER_INSET)!.contentLength - now.scroll - now.scrollLength;
+  };
+  const before = readingGap();
+  // Both an earlier answer (above, still rendered) and the last answer grow at once.
+  render(key, [
+    ...history(8),
+    message(28, "assistant", paragraph(28).repeat(2), "turn-28"),
+    message(29, "user", "Question", "turn-30"),
+    message(30, "assistant", paragraph(30).repeat(3), "turn-30"),
+  ]);
   await expect
     .poll(() => Math.abs(readingGap() - before), { timeout: 4000 })
     .toBeLessThanOrEqual(2);

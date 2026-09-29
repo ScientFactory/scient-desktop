@@ -2,7 +2,12 @@ import { activityIssuePolicy } from "@t3tools/client-runtime/work-log/issue-pres
 import { useBoundedAnswerFollow } from "./useBoundedAnswerFollow";
 import { deriveTerminalAssistantMessageIds } from "@scientfactory/conversation/work-log-grouping";
 import { countUnreadBelow, unreadMessagesForThread } from "./unreadTimelineMessages";
-import { readingIdentity, resolveReadingRow, withReadingEnd } from "./readerScrollPolicy";
+import {
+  readingEndGapOnScreen,
+  readingIdentity,
+  resolveReadingRow,
+  withReadingEnd,
+} from "./readerScrollPolicy";
 import { ReadOnlySourcePreview } from "../files/AttachmentFilePreview";
 import { useRightPanelStore } from "~/rightPanelStore";
 import {
@@ -379,6 +384,8 @@ function timelineRowsKey(data: readonly unknown[]) {
   const last = data.at(-1) as { id?: string } | undefined;
   return `${data.length}:${last?.id ?? ""}`;
 }
+/** How close the text end must be to the visible bottom for the reader to rest at it. */
+const READING_END_REST_PX = 40;
 /** Older-history pages a missing saved message may load before falling back. */
 const MAX_READING_HISTORY_PAGES = 2;
 // ---------------------------------------------------------------------------
@@ -1213,11 +1220,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     () => deriveTerminalAssistantMessageIds(timelineEntries),
     [timelineEntries],
   );
-  // Where the reader last rested at the reading end: the scroll offset and the
-  // distance left to the end of the last message's text. Null when not at the end.
+  // Where the reader last rested at the reading end: the on-screen distance
+  // to the end of the last message's text, and where that end sat in the
+  // content. Null when not at the end.
   const restingAtReadingEndRef = useRef<{
-    scroll: number;
     gap: number;
+    contentEnd: number;
     /** The rows at rest (count and last row): only their size changes are kept in view. */
     rowsKey: string;
   } | null>(null);
@@ -1266,11 +1274,16 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     const readingState = withReadingEnd(state, contentInsetEndAdjustment);
     const isAtEnd = resolveTimelineIsAtEnd(readingState);
     if (isAtEnd !== undefined && !citationPositioning) onIsAtEndChange(isAtEnd);
+    // Whether the reader rests at the reading end, measured on screen (the
+    // list's positions can trail the rendered rows by a frame).
+    const restingGap = viewport
+      ? readingEndGapOnScreen(state, viewport, contentInsetEndAdjustment)
+      : null;
     restingAtReadingEndRef.current =
-      isAtEnd === true && readingState?.contentLength !== undefined
+      restingGap !== null && viewport && restingGap <= READING_END_REST_PX
         ? {
-            scroll: state.scroll,
-            gap: readingState.contentLength - state.scroll - state.scrollLength,
+            gap: restingGap,
+            contentEnd: restingGap + viewport.scrollTop,
             rowsKey: timelineRowsKey(state.data),
           }
         : null;
@@ -1365,16 +1378,18 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     const viewport = list?.getScrollableNode();
     if (!idleEndKeepingRef.current || !resting || !list || !viewport) return;
     const state = list.getState();
-    // The reader moved since resting at the end, or rows arrived or left:
-    // new rows grow below the reader and never move them.
-    if (
-      Math.abs(state.scroll - resting.scroll) > 1 ||
-      timelineRowsKey(state.data) !== resting.rowsKey
-    )
-      return;
-    const reading = withReadingEnd(state, contentInsetEndAdjustment);
-    if (reading?.contentLength === undefined) return;
-    const grown = reading.contentLength - state.scroll - state.scrollLength - resting.gap;
+    // New rows grow below the reader and never move them.
+    if (timelineRowsKey(state.data) !== resting.rowsKey) return;
+    // Measured on screen: the list's own positions can trail the rendered rows.
+    const gap = readingEndGapOnScreen(state, viewport, contentInsetEndAdjustment);
+    if (gap === null) return;
+    // Only content moving the text end counts. A scroll alone (the reader, a
+    // minimap or citation jump, find in page) leaves the text end where it is
+    // in the content, and is the reader's new position; content above that
+    // the list already compensated for leaves the on-screen gap unchanged.
+    const contentEnd = gap + viewport.scrollTop;
+    if (Math.abs(contentEnd - resting.contentEnd) <= 1) return;
+    const grown = gap - resting.gap;
     if (grown > 1) viewport.scrollTop += grown;
   }, [contentInsetEndAdjustment, listRef]);
   const keepReadingEndInViewRef = useRef(keepReadingEndInView);

@@ -18,6 +18,35 @@ function isReadingRow(row: MessagesTimelineRow | undefined) {
 }
 
 /**
+ * How far the end of the last message's text sits below the visible area
+ * above the composer, measured on screen (negative when it is in view). Uses
+ * the rendered rows directly, so it holds while the list's own position
+ * bookkeeping catches up. Null when that row is not rendered.
+ */
+export function readingEndGapOnScreen(
+  state: {
+    readonly data: readonly unknown[];
+    readonly elementAtIndex?: (index: number) => Element | null | undefined;
+  },
+  viewport: Element,
+  composerInset: number,
+): number | null {
+  const rows = state.data as readonly MessagesTimelineRow[];
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    if (!isReadingRow(rows[index])) continue;
+    const element = state.elementAtIndex?.(index);
+    if (!element?.isConnected) return null;
+    const markers = element.querySelectorAll(READING_END_SELECTOR);
+    const end = (
+      markers.length > 0 ? markers[markers.length - 1]! : element
+    ).getBoundingClientRect().bottom;
+    const view = viewport.getBoundingClientRect();
+    return end - (view.top + viewport.clientHeight - composerInset);
+  }
+  return null;
+}
+
+/**
  * The timeline state with its end at the last conversational content: the
  * text of the last message or plan. Trailing changed-file lists, tool groups,
  * timestamps and working indicators are not something the reader has left to

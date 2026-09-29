@@ -6,6 +6,8 @@ import { isTimelineScrollTarget } from "./timelineScrollTarget";
 
 /** How much of a newly arrived message the reveal shows: its first lines. */
 const FIRST_LINES_PX = 48;
+/** The timeline's estimated row height, for a row not yet measured. */
+const ESTIMATED_ROW_SIZE = 90;
 
 /**
  * How far the reveal may scroll now. Growth is revealed only while the sent
@@ -123,9 +125,17 @@ export function useBoundedAnswerFollow({
             top: element.getBoundingClientRect().top,
             rect: element.getBoundingClientRect(),
           };
-        const position = measuredState.positionAtIndex(index);
-        const size = measuredState.sizeAtIndex(index);
-        if (position === undefined || size === undefined) return null;
+        // A row never rendered has no measured size yet: place it from its
+        // position (or right after the row before it) with the list's estimate.
+        const previous = index > 0 ? index - 1 : undefined;
+        const position =
+          measuredState.positionAtIndex(index) ??
+          (previous === undefined
+            ? undefined
+            : (measuredState.positionAtIndex(previous) ?? NaN) +
+              (measuredState.sizeAtIndex(previous) ?? NaN));
+        const size = measuredState.sizeAtIndex(index) ?? ESTIMATED_ROW_SIZE;
+        if (position === undefined || !Number.isFinite(position)) return null;
         const top = viewportRect.top + position - measuredState.scroll;
         return { element: null, top, rect: { top, bottom: top + size } };
       };
@@ -161,6 +171,15 @@ export function useBoundedAnswerFollow({
         return;
       }
       const before = viewport.scrollTop;
+      // Far below (long runs of notes or tool output): skip all but the last
+      // screen at once, then ease the rest, instead of a long slow glide.
+      const screen = viewport.clientHeight;
+      if (!reducedMotion && delta > screen) {
+        viewport.scrollTop += delta - screen;
+        revealTop = Math.max(revealTop, viewport.scrollTop);
+        frame = requestAnimationFrame(tick);
+        return;
+      }
       // A bounded animation only while content actually needs revealing; never an idle loop.
       const eased = delta * (1 - Math.exp(-elapsed / 90));
       viewport.scrollTop += reducedMotion
