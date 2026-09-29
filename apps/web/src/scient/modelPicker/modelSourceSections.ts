@@ -24,6 +24,18 @@ export function hasModelSourceSections(driverKind: string | undefined): boolean 
   return driverKind !== undefined && SOURCE_SECTION_DRIVERS.has(driverKind);
 }
 
+/**
+ * Sections apply to one selected Oh My Pi or Pi instance. Search and Favorites
+ * list plain matches, including models in collapsed sections.
+ */
+export function modelSourceSectionsApply(input: {
+  readonly isSearching: boolean;
+  readonly showsFavorites: boolean;
+  readonly driverKind: string | undefined;
+}): boolean {
+  return !input.isSearching && !input.showsFavorites && hasModelSourceSections(input.driverKind);
+}
+
 export function modelSourceSection(slug: string): ModelSourceSection {
   return slug.startsWith(SCIENT_CUSTOM_PROVIDER_PREFIX) ? "custom" : "accounts";
 }

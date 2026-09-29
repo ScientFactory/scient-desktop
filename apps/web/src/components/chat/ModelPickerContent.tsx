@@ -66,6 +66,7 @@ import {
   modelSourceSection,
   modelSourceSectionKey,
   modelSourceSectionLabel,
+  modelSourceSectionsApply,
   NO_COLLAPSED_MODEL_SOURCES,
   parseModelSourceSectionKey,
 } from "~/scient/modelPicker/modelSourceSections";
@@ -792,10 +793,14 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   }, [isSearching, selectedInstanceId, instanceEntries, filteredModels]);
 
   const sourceSectionRows = useMemo(() => {
+    const showsFavorites = selectedInstanceId === "favorites";
     if (
-      isSearching ||
-      selectedInstanceId === "favorites" ||
-      !hasModelSourceSections(entryByInstanceId.get(selectedInstanceId)?.driverKind)
+      showsFavorites ||
+      !modelSourceSectionsApply({
+        isSearching,
+        showsFavorites,
+        driverKind: entryByInstanceId.get(selectedInstanceId)?.driverKind,
+      })
     )
       return null;
     const groups = groupModelsBySource(filteredModels);

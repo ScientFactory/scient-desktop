@@ -145,7 +145,9 @@ export function mergeManagedRuntimeCatalogs(
   return { schemaVersion: 1, providers };
 }
 
-function normalizedProviderRelease(release: ManagedRuntimeCatalogData["providers"][string]) {
+function normalizedProviderRelease(
+  release: ManagedRuntimeCatalogData["providers"][string] | undefined,
+) {
   if (!release) return null;
   return {
     contractRevision: release.contractRevision,
@@ -190,6 +192,21 @@ function extendsProviderRelease(
     Object.entries(base.artifacts).every(
       ([target, artifact]) => JSON.stringify(next.artifacts[target]) === JSON.stringify(artifact),
     )
+  );
+}
+
+/**
+ * Providers whose release differs between two catalogs, by version or by
+ * artifacts, so a same-version republish that adds a target is announced too.
+ */
+export function changedManagedRuntimeProviders(
+  previous: ManagedRuntimeCatalogData,
+  next: ManagedRuntimeCatalogData,
+): ReadonlyArray<ManagedRuntimeCatalogProvider> {
+  return managedProviders.filter(
+    (provider) =>
+      JSON.stringify(normalizedProviderRelease(previous.providers[provider])) !==
+      JSON.stringify(normalizedProviderRelease(next.providers[provider])),
   );
 }
 
@@ -487,9 +504,7 @@ export const makeWithOptions = (options?: { readonly startBackgroundRefresh?: bo
 
       const previous = catalog;
       const next = resolveFetchedManagedRuntimeCatalog(fetched.data, catalog);
-      const changedProviders = managedProviders.filter(
-        (provider) => previous.providers[provider]?.version !== next.providers[provider]?.version,
-      );
+      const changedProviders = changedManagedRuntimeProviders(previous, next);
       catalog = next;
       etag = fetched.response.headers.etag?.trim() || null;
       fetchedAtMs = now;

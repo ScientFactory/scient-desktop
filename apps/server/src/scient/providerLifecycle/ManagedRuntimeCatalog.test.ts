@@ -34,6 +34,7 @@ import {
   resolveManagedRuntimeCatalogCandidate,
   resolveManagedRuntimeRepairArtifact,
   resolveFetchedManagedRuntimeCatalog,
+  changedManagedRuntimeProviders,
   type ManagedRuntimeCatalogData,
 } from "./ManagedRuntimeCatalog.ts";
 
@@ -283,6 +284,12 @@ describe("managed runtime catalog resolution", () => {
       resolveFetchedManagedRuntimeCatalog(full, cached).providers.codex,
       codex,
     );
+    // The expansion is announced so runtime actions are reconciled.
+    assert.deepStrictEqual(
+      changedManagedRuntimeProviders(cached, resolveFetchedManagedRuntimeCatalog(full, cached)),
+      ["codex"],
+    );
+    assert.deepStrictEqual(changedManagedRuntimeProviders(full, full), []);
     // Dropping a target the cached release lists is not an extension.
     assert.deepStrictEqual(
       resolveFetchedManagedRuntimeCatalog(cached, full).providers.codex,

@@ -10,6 +10,7 @@ import {
   modelSourceSection,
   modelSourceSectionKey,
   modelSourceSectionLabel,
+  modelSourceSectionsApply,
   parseModelSourceSectionKey,
 } from "./modelSourceSections";
 
@@ -25,6 +26,14 @@ describe("model source sections", () => {
     expect(hasModelSourceSections("pi")).toBe(true);
     expect(hasModelSourceSections("droid")).toBe(false);
     expect(hasModelSourceSections(undefined)).toBe(false);
+  });
+
+  it("steps aside for search and Favorites, which list plain matches", () => {
+    const base = { isSearching: false, showsFavorites: false, driverKind: "omp" };
+    expect(modelSourceSectionsApply(base)).toBe(true);
+    expect(modelSourceSectionsApply({ ...base, isSearching: true })).toBe(false);
+    expect(modelSourceSectionsApply({ ...base, showsFavorites: true })).toBe(false);
+    expect(modelSourceSectionsApply({ ...base, driverKind: "codex" })).toBe(false);
   });
 
   it("puts models registered under a Scient connection in the custom section", () => {
