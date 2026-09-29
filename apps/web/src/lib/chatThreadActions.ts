@@ -5,6 +5,7 @@ import type {
   ProjectId,
   ScopedProjectRef,
 } from "@t3tools/contracts";
+import * as Equal from "effect/Equal";
 import type { ComposerThreadDraftState, DraftThreadEnvMode } from "../composerDraftStore";
 
 type ComposerModelSelectionState = Pick<
@@ -66,6 +67,25 @@ export function hasExplicitComposerModelSelection(
     activeProvider !== undefined &&
     draft.modelSelectionByProvider[activeProvider] !== undefined
   );
+}
+
+/**
+ * The saved default an open draft should switch to, or null when it already
+ * uses it, nobody saved one, or a human pick stands. New-thread seeding puts
+ * a non-null default on every unpicked draft, so a mismatch means the default
+ * changed (in Settings, usually) after the draft was seeded.
+ */
+export function resolveStaleDraftDefaultModelSelection(
+  draft: ComposerModelSelectionState | null | undefined,
+  projectDefaultSelection: ModelSelection | null,
+): ModelSelection | null {
+  if (!draft || !projectDefaultSelection || hasExplicitComposerModelSelection(draft)) return null;
+  const current = draft.modelSelectionByProvider[projectDefaultSelection.instanceId];
+  return draft.activeProvider === projectDefaultSelection.instanceId &&
+    current !== undefined &&
+    Equal.equals(current, projectDefaultSelection)
+    ? null
+    : projectDefaultSelection;
 }
 
 export function resolveThreadActionProjectRef(
