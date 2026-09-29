@@ -1,6 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Bounded reads use an open file handle so growth cannot allocate unbounded memory.
-import * as NodeFS from "node:fs";
-
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -27,7 +24,8 @@ export type CapturedWorkspaceImage =
         | "not-a-file"
         | "too-large"
         | "budget-exceeded"
-        | "changed-during-capture";
+        | "changed-during-capture"
+        | "unverifiable-platform";
     };
 
 export class WordImageSnapshotError extends Schema.TaggedError<WordImageSnapshotError>()(
@@ -47,57 +45,11 @@ const inside = (path: Path.Path, root: string, candidate: string) => {
 };
 
 /**
- * Reads an image by path on a platform where the open file cannot be bound to
- * the project, then confirms the path still names the file it read.
- */
-const readImageByPath = (real: string, lexical: string) =>
-  Effect.tryPromise({
-    try: async () => {
-      const handle = await NodeFS.promises.open(
-        real,
-        NodeFS.constants.O_RDONLY | (NodeFS.constants.O_NOFOLLOW ?? 0),
-      );
-      try {
-        const before = await handle.stat();
-        if (!before.isFile()) return { ok: false, refusal: "not-a-file" } as const;
-        if (before.size > WORD_IMAGE_MAX_BYTES) return { ok: false, refusal: "too-large" } as const;
-        const bytes = Buffer.allocUnsafe(before.size + 1);
-        let length = 0;
-        while (length < bytes.byteLength) {
-          const result = await handle.read(bytes, length, bytes.byteLength - length, null);
-          if (result.bytesRead === 0) break;
-          length += result.bytesRead;
-        }
-        const after = await handle.stat();
-        const currentReal = await NodeFS.promises.realpath(lexical);
-        const current = await NodeFS.promises.stat(lexical);
-        if (
-          length > WORD_IMAGE_MAX_BYTES ||
-          before.size !== length ||
-          after.size !== before.size ||
-          after.mtimeMs !== before.mtimeMs ||
-          after.dev !== before.dev ||
-          after.ino !== before.ino ||
-          currentReal !== real ||
-          current.dev !== before.dev ||
-          current.ino !== before.ino
-        ) {
-          return { ok: false, refusal: "changed-during-capture" } as const;
-        }
-        return { ok: true, bytes: new Uint8Array(bytes.subarray(0, length)) } as const;
-      } finally {
-        await handle.close();
-      }
-    },
-    catch: () => null,
-  }).pipe(Effect.orElseSucceed(() => ({ ok: false, refusal: "changed-during-capture" }) as const));
-
-/**
  * The converter receives this map and never opens a workspace image itself.
  * Each image is read through a handle bound to the file its path check saw
  * (`verifiedWorkspaceRead.ts`). Where that is not possible (Windows), a
  * caller that sets `requireVerifiedReads` is refused; otherwise the image is
- * read by path and rechecked.
+ * left out, as PDF export leaves it out there, and the document still converts.
  */
 export const captureWordImages = Effect.fn("scient.pandoc.captureWordImages")(function* (
   references: ReadonlyArray<string>,
@@ -157,7 +109,7 @@ export const captureWordImages = Effect.fn("scient.pandoc.captureWordImages")(fu
               message: "This platform cannot confirm which image files were read.",
             });
           }
-          return yield* readImageByPath(real, lexical);
+          return { ok: false, refusal: "unverifiable-platform" } as const;
       }
     });
 

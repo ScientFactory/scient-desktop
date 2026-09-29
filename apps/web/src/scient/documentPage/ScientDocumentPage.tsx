@@ -213,6 +213,13 @@ function PrintMermaid({ source }: { readonly source: string }) {
     // The document page already runs with no network access, so it draws in place.
     renderMermaidDiagram(source, "light", "page").then(
       (rendered) => {
+        // The page never loads what the capture does not hold; the diagram prints without it.
+        for (const address of rendered.blocked ?? []) {
+          tracker.warn(
+            "remote-image-omitted",
+            `Outside content "${address}" named by a Mermaid diagram was not loaded into the PDF.`,
+          );
+        }
         if (active) setState({ status: "rendered", svg: rendered.svg });
       },
       (cause: unknown) => {

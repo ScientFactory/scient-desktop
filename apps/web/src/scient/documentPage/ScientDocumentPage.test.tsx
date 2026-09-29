@@ -24,6 +24,13 @@ vi.mock("../diagrams/mermaidRuntime", async (importOriginal) => {
           new TypeError("Failed to fetch dynamically imported module: /assets/mermaid.js"),
         );
       }
+      if (source.includes("remote-picture")) {
+        return {
+          svg: '<svg data-test-diagram="yes"><text>Picture node</text></svg>',
+          diagramType: "flowchart-v2",
+          blocked: ["https://example.com/picture.png"],
+        };
+      }
       return { svg: '<svg data-test-diagram="yes"><text>Rendered diagram</text></svg>' };
     }),
   };
@@ -372,6 +379,22 @@ describe("ScientDocumentPage", () => {
     expect(article.querySelector("[data-scient-diagram='error']")).not.toBeNull();
     expect(tracker.diagnostics).toEqual([
       expect.objectContaining({ severity: "fatal", code: "diagram-incomplete" }),
+    ]);
+  });
+
+  it("prints a diagram whose outside picture was left out, with an export note", async () => {
+    const { article, tracker } = await renderPage(input("```mermaid\nremote-picture\n```\n"));
+    expect(article.querySelector("[data-scient-diagram='rendered']")?.textContent).toBe(
+      "Picture node",
+    );
+    expect(tracker.failed).toBe(false);
+    expect(tracker.diagnostics).toEqual([
+      {
+        severity: "warning",
+        code: "remote-image-omitted",
+        detail:
+          'Outside content "https://example.com/picture.png" named by a Mermaid diagram was not loaded into the PDF.',
+      },
     ]);
   });
 

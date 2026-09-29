@@ -244,7 +244,7 @@ describe("securePandocDocument", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
-  it.effect("on Windows refuses LaTeX figures and still reads Markdown images", () =>
+  it.effect("on Windows leaves Markdown images out with a note and refuses LaTeX figures", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const project = yield* fs.makeTempDirectoryScoped({ prefix: "scient-word-windows-" });
@@ -253,7 +253,16 @@ describe("securePandocDocument", () => {
       const markdown = yield* captureWordImages(["plot.png"], files).pipe(
         Effect.provideService(HostProcessPlatform, "win32"),
       );
-      expect(markdown.get("plot.png")).toEqual({ ok: true, bytes: PNG_BYTES, png: null });
+      expect(markdown.get("plot.png")).toEqual({ ok: false, refusal: "unverifiable-platform" });
+      // The rest of the document still converts; the image becomes a labelled placeholder.
+      const document = doc([para([str("Kept text"), image("plot.png", "plot")])]);
+      const report = yield* secure(document, { files, imageSnapshot: markdown });
+      expect(serialize(document)).toContain("Kept text");
+      expect(serialize(document)).not.toContain("data:image/png");
+      expect(report.placeholders).toBe(1);
+      expect(report.warnings.map((warning) => warning.message)).toContain(
+        "Image “plot” was not embedded: this platform cannot safely verify workspace image paths during Word export.",
+      );
       const latex = yield* captureWordImages(["plot.png"], {
         ...files,
         requireVerifiedReads: true,

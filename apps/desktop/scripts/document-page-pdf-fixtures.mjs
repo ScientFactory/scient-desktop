@@ -139,6 +139,13 @@ function fixtures(png) {
     "  A -->",
     "```",
     "",
+    "## A picture from outside the capture",
+    "",
+    "```mermaid",
+    "flowchart LR",
+    '  Picture@{ img: "https://example.com/figure.png", label: "Picture node", h: 40 } --> Done',
+    "```",
+    "",
     "DIAGRAM_END_MARKER",
   ].join("\n");
 
@@ -323,10 +330,24 @@ function fixtures(png) {
       name: "mermaid",
       markdown: mermaid,
       expect: {
-        order: ["DIAGRAM_INTRO_MARKER", "Capture source", "Print PDF", "DIAGRAM_END_MARKER"],
-        blocks: { diagrams: 3 },
-        warnings: ["diagram-failed"],
-        outline: ["Diagrams", "Sequence", "A diagram with a syntax error"],
+        order: [
+          "DIAGRAM_INTRO_MARKER",
+          "Capture source",
+          "Print PDF",
+          "Picture node",
+          "DIAGRAM_END_MARKER",
+          "Export notes",
+          'Outside content "https://example.com/figure.png"',
+        ],
+        blocks: { diagrams: 4 },
+        // The picture is never requested: it draws without it and is noted.
+        warnings: ["diagram-failed", "remote-image-omitted"],
+        outline: [
+          "Diagrams",
+          "Sequence",
+          "A diagram with a syntax error",
+          "A picture from outside the capture",
+        ],
       },
     },
     {

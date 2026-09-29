@@ -1,9 +1,10 @@
 // @effect-diagnostics nodeBuiltinImport:off preferSchemaOverJson:off -- Builds a synthetic project and serializes its known test fixture.
 import * as NodeFS from "node:fs";
+import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it, vi } from "@effect/vitest";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -340,6 +341,104 @@ describe("WordFileExport", () => {
       { seen },
     );
   });
+  describe("a bibliography swapped for a link out of the project just before it is opened", () => {
+    /**
+     * Runs `swap` when `target` is about to be opened, as a concurrent writer
+     * acting after every path check. Covers opens through `node:fs/promises` too.
+     */
+    const swapBeforeOpen = (target: string, swap: () => void) => {
+      const promises = NodeFS.promises;
+      const open = promises.open.bind(promises);
+      let swapped = false;
+      const spy = vi.spyOn(promises, "open").mockImplementation((file, ...rest) => {
+        if (!swapped && file === target) {
+          swapped = true;
+          swap();
+        }
+        return open(file, ...rest);
+      });
+      NodeModule.syncBuiltinESMExports();
+      return Effect.sync(() => {
+        spy.mockRestore();
+        NodeModule.syncBuiltinESMExports();
+      });
+    };
+    const exportWithSwap = (swapParent: boolean) => {
+      const seen: Array<WordConversionInput> = [];
+      return run(
+        ({ service, project, revisionOf }) =>
+          Effect.gen(function* () {
+            const outside = NodePath.join(project, "..", "outside");
+            NodeFS.mkdirSync(outside);
+            NodeFS.writeFileSync(
+              NodePath.join(outside, "refs.bib"),
+              "@article{secret, title={SECRET OUTSIDE}}\n",
+            );
+            const references = NodePath.join(project, "notes", "references");
+            NodeFS.mkdirSync(references);
+            const refs = NodePath.join(references, "refs.bib");
+            NodeFS.writeFileSync(refs, "@article{local, title={Local}}\n");
+            NodeFS.writeFileSync(
+              NodePath.join(project, "notes", "report.md"),
+              "---\nbibliography: references/refs.bib\n---\nSee [@local].\n",
+            );
+            const revision = yield* revisionOf("notes/report.md");
+            const restore = swapBeforeOpen(NodeFS.realpathSync(refs), () => {
+              if (swapParent) {
+                NodeFS.renameSync(references, NodePath.join(project, "notes", "original"));
+                NodeFS.symlinkSync(outside, references);
+              } else {
+                NodeFS.unlinkSync(refs);
+                NodeFS.symlinkSync(NodePath.join(outside, "refs.bib"), refs);
+              }
+            });
+            const produced = yield* service
+              .export({ cwd: project, relativePath: "notes/report.md", revision })
+              .pipe(Effect.ensuring(restore));
+            expect(seen[0]?.bibliographySources).toEqual([]);
+            expect(produced.warnings.map((warning) => warning.message)).toContain(
+              "Bibliography “refs.bib” could not be read inside this project; its citation keys remain as written.",
+            );
+          }),
+        { seen },
+      );
+    };
+
+    it.live("refuses the swapped file", () => exportWithSwap(false));
+    it.live("refuses a swapped parent folder", () => exportWithSwap(true));
+  });
+
+  it.live("on Windows leaves a project bibliography out with a note and still exports", () => {
+    const seen: Array<WordConversionInput> = [];
+    return run(
+      ({ service, project, revisionOf }) =>
+        Effect.gen(function* () {
+          NodeFS.writeFileSync(
+            NodePath.join(project, "notes", "refs.bib"),
+            "@article{local, title={Local}}\n",
+          );
+          NodeFS.writeFileSync(
+            NodePath.join(project, "notes", "report.md"),
+            "---\nbibliography: refs.bib\n---\nSee [@local].\n",
+          );
+          const produced = yield* service
+            .export({
+              cwd: project,
+              relativePath: "notes/report.md",
+              revision: yield* revisionOf("notes/report.md"),
+            })
+            .pipe(Effect.provideService(HostProcessPlatform, "win32"));
+          expect(produced.fileName).toBe("report.docx");
+          expect(seen[0]?.bundle.markdown).toContain("See [@local].");
+          expect(seen[0]?.bibliographySources).toEqual([]);
+          expect(produced.warnings.map((warning) => warning.message)).toContain(
+            "Bibliography “refs.bib” was not used: this platform cannot safely verify workspace file paths during Word export; its citation keys remain as written.",
+          );
+        }),
+      { seen },
+    );
+  });
+
   it.live("exports the selected LaTeX root and validates the editor revision", () => {
     const seen: Array<WordConversionInput> = [];
     return run(
@@ -412,7 +511,7 @@ describe("WordFileExport", () => {
     );
   });
   it.live(
-    "on Windows exports a single open LaTeX file, refuses other project files, and keeps Markdown images",
+    "on Windows exports a single open LaTeX file, refuses other project files, and leaves Markdown images out",
     () => {
       const seen: Array<WordConversionInput> = [];
       return run(
@@ -453,9 +552,12 @@ describe("WordFileExport", () => {
                 revision: yield* revisionOf("notes/report.md"),
               })
               .pipe(Effect.provideService(HostProcessPlatform, "win32"));
-            const image = seen[1]?.imageSnapshot?.get("plot.png");
-            expect(image?.ok).toBe(true);
-            if (image?.ok) expect(image.bytes).toEqual(PNG_BYTES);
+            // The Markdown file still exports; its image is left out, as in PDF on Windows.
+            expect(seen[1]?.bundle.markdown).toContain("# Report");
+            expect(seen[1]?.imageSnapshot?.get("plot.png")).toEqual({
+              ok: false,
+              refusal: "unverifiable-platform",
+            });
           }),
         { seen },
       );

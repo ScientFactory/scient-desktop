@@ -146,6 +146,7 @@ type ImageRefusal =
   | "too-large"
   | "budget-exceeded"
   | "changed-during-capture"
+  | "unverifiable-platform"
   | "not-in-snapshot";
 
 const REFUSAL_TEXT: Record<ImageRefusal, string> = {
@@ -163,6 +164,8 @@ const REFUSAL_TEXT: Record<ImageRefusal, string> = {
   "too-large": "larger than 25 MB",
   "budget-exceeded": "the export's image size limit was reached",
   "changed-during-capture": "the file changed while its bytes were being captured",
+  "unverifiable-platform":
+    "this platform cannot safely verify workspace image paths during Word export",
   "not-in-snapshot": "not found in the project folder",
 };
 
