@@ -1,3 +1,5 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off - FileSystem.stat follows symlinks; checkpoint accounting needs lstat.
+import * as NodeFSP from "node:fs/promises";
 import * as NodeCrypto from "node:crypto";
 import * as NodeBuffer from "node:buffer";
 
@@ -13,6 +15,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   GitCommandError,
   VcsExecutableUnavailableError,
+  VcsCheckpointUnavailableError,
   VcsProcessExitError,
   VcsProcessTimeoutError,
   type VcsSwitchRefInput,
@@ -784,13 +787,16 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       return path.isAbsolute(gitCommonDir) ? gitCommonDir : path.resolve(cwd, gitCommonDir);
     });
 
-  const checkpointFileError = (cwd: string, command: string, error: { readonly message: string }) =>
-    new VcsProcessExitError({
+  const checkpointFileError = (
+    cwd: string,
+    operation: string,
+    error: { readonly message: string },
+  ) =>
+    new VcsCheckpointUnavailableError({
       operation: VcsProcess.CHECKPOINT_CAPTURE_OPERATION,
-      command,
       cwd,
-      exitCode: 1,
-      detail: error.message,
+      reason: "filesystem-error",
+      detail: `${operation}: ${error.message}`,
     });
 
   // Reject captures that would have to hash unusually large changed files.
@@ -801,20 +807,22 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     env: NodeJS.ProcessEnv,
   ) {
     const operation = VcsProcess.CHECKPOINT_CAPTURE_OPERATION;
+    // Porcelain v1 paths are repository-relative even when cwd is a subdirectory.
+    // Scope enumeration to the same pathspec used by checkpoint staging.
+    const root = yield* execute({ operation, cwd, args: ["rev-parse", "--show-toplevel"], env });
     const status = yield* execute({
       operation,
       cwd,
-      args: ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+      args: ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", "."],
       env: { ...env, GIT_OPTIONAL_LOCKS: "0" },
       maxOutputBytes: 16 * 1024 * 1024,
       outputMode: "truncate",
     });
     if (status.stdoutTruncated) {
-      return yield* new VcsProcessExitError({
+      return yield* new VcsCheckpointUnavailableError({
         operation,
-        command: "git status",
         cwd,
-        exitCode: 1,
+        reason: "path-limit",
         detail: "Too many changed paths to safely capture a checkpoint.",
       });
     }
@@ -825,24 +833,39 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       if (!record || record.length < 4) continue;
       // Porcelain -z adds the old path as a second record for renames/copies.
       if (/[RC]/.test(record.slice(0, 2))) index++;
-      const filePath = path.join(cwd, record.slice(3));
-      const exists = yield* fileSystem
-        .exists(filePath)
-        .pipe(Effect.mapError((error) => checkpointFileError(cwd, "checkpoint size check", error)));
-      if (!exists) continue; // deletion
-      const { size } = yield* fileSystem
-        .stat(filePath)
-        .pipe(Effect.mapError((error) => checkpointFileError(cwd, "checkpoint size check", error)));
+      const filePath = path.join(root.stdout.replace(/\r?\n$/, ""), record.slice(3));
+      // Git stores the link text, not the target bytes. lstat also preserves
+      // dangling links; a following exists/stat pair incorrectly treats them as deletions.
+      const info = yield* Effect.tryPromise({
+        try: () =>
+          NodeFSP.lstat(filePath, { bigint: true }).catch((error: NodeJS.ErrnoException) => {
+            if (error.code === "ENOENT") return null; // Deleted while enumerating.
+            throw error;
+          }),
+        catch: (error) =>
+          checkpointFileError(cwd, "checkpoint size check", {
+            message: error instanceof Error ? error.message : String(error),
+          }),
+      });
+      if (info === null || info.isDirectory()) continue; // Gitlinks contain no file payload.
+      if (!info.isFile() && !info.isSymbolicLink()) {
+        return yield* new VcsCheckpointUnavailableError({
+          operation,
+          cwd,
+          reason: "unsupported-file",
+          detail: "A changed special file cannot be included in file history.",
+        });
+      }
+      const size = info.size;
       changedBytes += size;
       if (
         size > CHECKPOINT_CAPTURE_MAX_FILE_BYTES ||
         changedBytes > CHECKPOINT_CAPTURE_MAX_CHANGED_BYTES
       ) {
-        return yield* new VcsProcessExitError({
+        return yield* new VcsCheckpointUnavailableError({
           operation,
-          command: "git status",
           cwd,
-          exitCode: 1,
+          reason: "size-limit",
           detail:
             "Changed files exceed the checkpoint capture size limit (512 MiB per file, 1 GiB total).",
         });

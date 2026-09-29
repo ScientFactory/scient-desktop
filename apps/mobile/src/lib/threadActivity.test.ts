@@ -829,9 +829,13 @@ describe("buildThreadFeed", () => {
       if (group?.type !== "activity-group") return;
       const row = group.activities[0]!;
       expect(row.canExpand).toBe(true);
-      expect(workEntryRowLabel(row.workEntry, true)).toBe(message);
-      expect(row.getFullDetail()).toBeNull();
-      expect(row.getCopyText()).toBe(`Runtime error\n${message}`);
+      const summary =
+        kind === "runtime.error" ? "The agent encountered a problem" : "Runtime error";
+      expect(workEntryRowLabel(row.workEntry, true)).toBe(
+        kind === "runtime.error" ? summary : message,
+      );
+      expect(row.getFullDetail()).toBe(kind === "runtime.error" ? message : null);
+      expect(row.getCopyText()).toBe(`${summary}\n${message}`);
     },
   );
 
@@ -899,10 +903,14 @@ describe("buildThreadFeed", () => {
     if (group?.type !== "activity-group") return;
     const row = group.activities[0]!;
     expect(row.canExpand).toBe(true);
-    expect(workEntryRowLabel(row.workEntry)).toBe(input.detail.replace(/\s+/g, " "));
-    expect(workEntryRowLabel(row.workEntry, true)).toBe(input.detail);
-    expect(row.getFullDetail()).toBeNull();
-    expect(row.getCopyText()).toBe(`${input.summary}\n${input.detail}`);
+    const isIssue = input.kind === "runtime.error";
+    const summary = isIssue ? "The agent encountered a problem" : input.summary;
+    expect(workEntryRowLabel(row.workEntry)).toBe(
+      isIssue ? summary : input.detail.replace(/\s+/g, " "),
+    );
+    expect(workEntryRowLabel(row.workEntry, true)).toBe(isIssue ? summary : input.detail);
+    expect(row.getFullDetail()).toBe(isIssue ? input.detail : null);
+    expect(row.getCopyText()).toBe(`${summary}\n${input.detail}`);
   });
 
   it("drops a truncated Claude echo of a long command", () => {
@@ -3882,4 +3890,58 @@ it("keeps attachment-only question answers expandable outside mobile work groups
   expect(running[0]?.type).toBe("work-toggle");
   expect(running[1]).toBe(group);
   expect(running[2]?.type).toBe("work-toggle");
+});
+
+describe("issue ownership on mobile", () => {
+  it.each(["checkpoint.capture.failed", "checkpoint.diff.failed"])(
+    "omits historical %s while preserving the answer",
+    (kind) => {
+      const date = "2026-09-29T00:00:00.000Z";
+      const thread = makeThread({
+        id: ThreadId.make("history"),
+        projectId: ProjectId.make("project"),
+        title: "History",
+        activities: [
+          makeActivity({
+            id: EventId.make("background"),
+            kind,
+            summary: "Checkpoint failed",
+            tone: "error",
+            payload: { detail: "git status exited with 1" },
+            createdAt: date,
+          }),
+        ],
+        messages: [
+          {
+            id: MessageId.make("answer"),
+            role: "assistant",
+            text: "Here. What do you need?",
+            turnId: TurnId.make("turn"),
+            createdAt: date,
+            updatedAt: date,
+            streaming: false,
+          },
+        ],
+      });
+      const feed = buildThreadFeed(thread);
+      expect(feed).toHaveLength(1);
+      expect(feed[0]).toMatchObject({
+        type: "message",
+        message: { text: "Here. What do you need?" },
+      });
+    },
+  );
+  it("keeps technical details out of the main issue label", () => {
+    expect(
+      workEntryRowLabel({
+        id: "failure",
+        turnId: null,
+        createdAt: "2026-09-29T00:00:00.000Z",
+        tone: "error",
+        label: "Message could not be sent",
+        sourceActivityKind: "provider.turn.start.failed",
+        detail: "Internal transport failure",
+      }),
+    ).toBe("Message could not be sent");
+  });
 });

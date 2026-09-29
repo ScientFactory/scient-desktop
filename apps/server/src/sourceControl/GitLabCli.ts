@@ -155,6 +155,7 @@ export class GitLabCliCommandError extends Schema.TaggedError<GitLabCliCommandEr
       VcsExecutableUnavailableError: (cause) => new GitLabCliCommandError({ ...context, cause }),
       VcsRepositoryDetectionError: (cause) => new GitLabCliCommandError({ ...context, cause }),
       VcsUnsupportedOperationError: (cause) => new GitLabCliCommandError({ ...context, cause }),
+      VcsCheckpointUnavailableError: (cause) => new GitLabCliCommandError({ ...context, cause }),
     });
   }
 }

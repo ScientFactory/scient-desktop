@@ -1,3 +1,9 @@
+import {
+  activityIssuePolicy,
+  isBackgroundActivityIssue,
+  isRequestIssueOwnedByCard,
+} from "@t3tools/client-runtime/work-log/issue-presentation";
+import { deriveRequestIssueOwnerIds } from "@t3tools/client-runtime/pending-requests";
 import * as Option from "effect/Option";
 import { foldUserInputActivities } from "@t3tools/client-runtime/work-log/user-input";
 import * as Schema from "effect/Schema";
@@ -428,8 +434,16 @@ function deriveWorkLogEntries(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
 ): DerivedWorkLogEntry[] {
   const ordered = Arr.sort(activities, activityOrder);
+  const pendingRequestIds = deriveRequestIssueOwnerIds(activities);
+  const hasSetupCard = activities.some((activity) => activity.kind === "worktree-setup");
   const entries: DerivedWorkLogEntry[] = [];
   for (const activity of foldUserInputActivities(ordered)) {
+    if (
+      (activity.kind === "setup-script.failed" && hasSetupCard) ||
+      isBackgroundActivityIssue(activity.kind) ||
+      isRequestIssueOwnedByCard(activity, pendingRequestIds)
+    )
+      continue;
     // The setup card owns its snapshot, including failed and cancelled outcomes.
     if (
       isWorktreeSetupActivity(activity.kind) &&
@@ -516,7 +530,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     createdAt: activity.createdAt,
     turnId: activity.turnId,
     ...(taskId ? { taskId } : {}),
-    label: taskLabel || activity.summary,
+    label: activityIssuePolicy(activity.kind)?.summary ?? (taskLabel || activity.summary),
     tone:
       activity.kind === "task.progress"
         ? "thinking"
@@ -1039,6 +1053,7 @@ function stripShellWrapper(value: string): string {
 
 /** Expanded rows retain detail formatting; commands stay in the separate body. */
 export function workEntryRowLabel(entry: WorkLogEntry, expanded = false): string {
+  if (activityIssuePolicy(entry.sourceActivityKind)) return entry.label;
   if (entry.agentSpawn) return agentSpawnLabel(entry.agentSpawn);
   const presentation = resolveWorkEntryToolPresentation(entry);
   if (presentation) return presentation.displayName;

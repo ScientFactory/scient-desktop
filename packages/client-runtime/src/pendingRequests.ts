@@ -10,6 +10,7 @@ import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
 export interface PendingApproval {
+  readonly responseError?: string;
   readonly requestId: ApprovalRequestId;
   readonly requestKind: ProviderRequestKind;
   readonly createdAt: string;
@@ -19,6 +20,7 @@ export interface PendingApproval {
 }
 
 export interface PendingUserInput {
+  readonly responseError?: string;
   readonly requestId: ApprovalRequestId;
   readonly createdAt: string;
   readonly questions: ReadonlyArray<UserInputQuestion>;
@@ -131,6 +133,7 @@ function isStaleRequestFailure(
 export function derivePendingRequests(activities: ReadonlyArray<OrchestrationThreadActivity>) {
   const approvals = new Map<ApprovalRequestId, PendingApproval>();
   const userInputs = new Map<ApprovalRequestId, PendingUserInput>();
+  const responseErrors = new Map<ApprovalRequestId, string>();
   const closedApprovals = new Set<ApprovalRequestId>();
   const closedUserInputs = new Set<ApprovalRequestId>();
 
@@ -141,6 +144,11 @@ export function derivePendingRequests(activities: ReadonlyArray<OrchestrationThr
     const payload = Predicate.isObject(activity.payload) ? activity.payload : undefined;
     if (!payload || !isRequestId(payload.requestId)) continue;
     const requestId = payload.requestId;
+    if (activity.kind === "provider.approval.respond.failed") {
+      responseErrors.set(requestId, "Approval could not be sent. Try again.");
+    } else if (activity.kind === "provider.user-input.respond.failed") {
+      responseErrors.set(requestId, "Your response could not be sent. Try again.");
+    }
 
     if (activity.kind === "approval.requested") {
       if (
@@ -198,8 +206,30 @@ export function derivePendingRequests(activities: ReadonlyArray<OrchestrationThr
     left: { readonly createdAt: string },
     right: { readonly createdAt: string },
   ) => left.createdAt.localeCompare(right.createdAt);
-  return {
-    approvals: [...approvals.values()].sort(byCreatedAt),
-    userInputs: [...userInputs.values()].sort(byCreatedAt),
+  const withResponseError = <T extends { readonly requestId: ApprovalRequestId }>(
+    request: T,
+  ): T & { readonly responseError?: string } => {
+    const responseError = responseErrors.get(request.requestId);
+    return responseError ? { ...request, responseError } : request;
   };
+  return {
+    approvals: [...approvals.values()].map(withResponseError).sort(byCreatedAt),
+    userInputs: [...userInputs.values()].map(withResponseError).sort(byCreatedAt),
+  };
+}
+
+/** Resolved requests keep old failed attempts out of chat after a successful retry. */
+export function deriveRequestIssueOwnerIds(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+): ReadonlySet<string> {
+  const requests = derivePendingRequests(activities);
+  const ids = new Set<string>(
+    [...requests.approvals, ...requests.userInputs].map((request) => request.requestId),
+  );
+  for (const activity of activities) {
+    if (activity.kind !== "approval.resolved" && activity.kind !== "user-input.resolved") continue;
+    const payload = activity.payload;
+    if (Predicate.isObject(payload) && isRequestId(payload.requestId)) ids.add(payload.requestId);
+  }
+  return ids;
 }

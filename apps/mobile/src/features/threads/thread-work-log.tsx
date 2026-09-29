@@ -1,3 +1,4 @@
+import { activityIssuePolicy } from "@t3tools/client-runtime/work-log/issue-presentation";
 import { QuestionAnswerHistory } from "./QuestionAnswerHistory";
 import {
   getQuestionAnswerPreview,
@@ -756,8 +757,13 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
     : null;
   const accessiblePreview = [previewText, answerPreview].filter(Boolean).join(": ");
   const displayText = workEntryRowLabel(row.workEntry, expanded);
-  const iconIsDestructive = row.icon === "alert" || row.icon === "warning";
+  const iconIsDestructive =
+    row.icon === "warning" ||
+    activityIssuePolicy(row.workEntry.sourceActivityKind)?.severe === true;
   const failed = row.status === "failure";
+  const failureLabel = activityIssuePolicy(row.workEntry.sourceActivityKind)
+    ? "operation failed"
+    : "tool call failed";
   const toolIcon = row.workEntry.toolIcon ?? row.workEntry.toolSource?.icon;
   const icon = toolPresentation?.icon ?? workRowSymbolName(row.icon);
 
@@ -769,7 +775,7 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
     >
       <Pressable
         accessibilityRole={canExpand ? "button" : undefined}
-        accessibilityLabel={failed ? `${accessiblePreview}, tool call failed` : accessiblePreview}
+        accessibilityLabel={failed ? `${accessiblePreview}, ${failureLabel}` : accessiblePreview}
         accessibilityHint={
           canExpand
             ? `Double tap to ${expanded ? "hide" : "show"} full details. Long press to copy.`

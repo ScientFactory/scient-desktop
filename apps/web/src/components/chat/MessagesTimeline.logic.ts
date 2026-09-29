@@ -1,3 +1,4 @@
+import { activityIssuePolicy } from "@t3tools/client-runtime/work-log/issue-presentation";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 export { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import * as Equal from "effect/Equal";
@@ -68,10 +69,13 @@ function singleToolCallLabel(entry: WorkLogEntry): string {
 }
 
 export function workEntryDisplayLabel(entry: WorkLogEntry, workspaceRoot: string | undefined) {
+  const issue = activityIssuePolicy(entry.sourceActivityKind);
+  if (issue) return issue.summary;
   const toolPresentation = resolveWorkEntryToolPresentation(entry);
   if (toolPresentation) return toolPresentation.displayName;
   if (entry.command) return entry.command;
-  if (entry.detail) return entry.detail;
+  if (entry.detail && (entry.tone !== "error" || workLogEntryIsToolLike(entry)))
+    return entry.detail;
   const [firstPath] = entry.changedFiles ?? [];
   if (firstPath) {
     const path = formatWorkspaceRelativePath(firstPath, workspaceRoot);

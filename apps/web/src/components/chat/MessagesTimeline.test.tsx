@@ -2421,3 +2421,29 @@ describe("MessagesTimeline", () => {
     }
   });
 });
+
+it("announces a runtime failure as an operation, preserving the concise label", () => {
+  const markup = renderToStaticMarkup(
+    <MessagesTimeline
+      {...buildProps()}
+      timelineEntries={[
+        {
+          id: "runtime-failure",
+          kind: "work",
+          createdAt: "2026-09-29T00:00:00.000Z",
+          entry: {
+            id: "runtime-failure",
+            createdAt: "2026-09-29T00:00:00.000Z",
+            label: "The agent encountered a problem",
+            tone: "error",
+            sourceActivityKind: "runtime.error",
+            detail: "Internal diagnostic details",
+          },
+        },
+      ]}
+    />,
+  );
+  expect(markup).toContain('aria-label="Operation failed"');
+  expect(markup).not.toContain("tool call failed");
+  expect(markup).toContain("The agent encountered a problem");
+});

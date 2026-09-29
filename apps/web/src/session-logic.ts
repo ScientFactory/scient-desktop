@@ -1,4 +1,10 @@
 import {
+  activityIssuePolicy,
+  isBackgroundActivityIssue,
+  isRequestIssueOwnedByCard,
+} from "@t3tools/client-runtime/work-log/issue-presentation";
+import { deriveRequestIssueOwnerIds } from "@t3tools/client-runtime/pending-requests";
+import {
   requestKindFromRequestType,
   type PendingApproval,
 } from "@t3tools/client-runtime/pending-requests";
@@ -222,15 +228,9 @@ export interface TimelineEntriesProjection {
   readonly entries: TimelineEntry[];
 }
 
-/** Severe failures keep the red treatment ordinary tool failures lost: runtime
- *  errors and orchestration `*.failed` activities (provider.turn.start.failed,
- *  checkpoint.capture.failed, ...) mean the turn or a core side effect broke,
- *  not that a command exited nonzero. */
+/** Only known failures of the requested turn/session warrant a severe chat row. */
 export function workEntrySignalsSevereFailure(entry: WorkLogEntry): boolean {
-  return (
-    entry.sourceActivityKind === "runtime.error" ||
-    entry.sourceActivityKind?.endsWith(".failed") === true
-  );
+  return activityIssuePolicy(entry.sourceActivityKind)?.severe === true;
 }
 
 /** Tool-like row with neither clear success nor failure (empty, incomplete, in progress, etc.). */
@@ -566,6 +566,8 @@ function isAgentInternalActivity(activity: OrchestrationThreadActivity): boolean
 export function deriveWorkLogEntries(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
 ): WorkLogEntry[] {
+  const pendingRequestIds = deriveRequestIssueOwnerIds(activities);
+  const hasSetupCard = activities.some((activity) => activity.kind === "worktree-setup");
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
   // A launch tool and its task lifecycle describe the same run. Only hide
   // launch rows once their tool-use id has an agent row to replace them.
@@ -583,6 +585,12 @@ export function deriveWorkLogEntries(
   }
   const entries: DerivedWorkLogEntry[] = [];
   for (const activity of foldUserInputActivities(ordered)) {
+    if (
+      (activity.kind === "setup-script.failed" && hasSetupCard) ||
+      isBackgroundActivityIssue(activity.kind) ||
+      isRequestIssueOwnedByCard(activity, pendingRequestIds)
+    )
+      continue;
     if (
       isWorktreeSetupActivity(activity.kind) &&
       (activity.tone !== "error" || activity.kind === "worktree-setup")
@@ -751,7 +759,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     id: activity.id,
     createdAt: activity.createdAt,
     turnId: activity.turnId,
-    label: taskLabel || activity.summary,
+    label: activityIssuePolicy(activity.kind)?.summary ?? (taskLabel || activity.summary),
     tone:
       activity.kind === "task.progress"
         ? "thinking"

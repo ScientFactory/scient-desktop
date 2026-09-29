@@ -533,3 +533,57 @@ describe.each(["approval", "user-input"])("%s request completion", (requestKind)
     });
   });
 });
+
+describe("request-local failure feedback", () => {
+  it("keeps retryable approvals open with safe feedback across reordered replay, then clears on resolution", () => {
+    const requested = makeActivity({
+      kind: "approval.requested",
+      payload: { requestId: "retry", requestKind: "command" },
+    });
+    const failed = makeActivity({
+      kind: "provider.approval.respond.failed",
+      tone: "error",
+      payload: { requestId: "retry", detail: "Internal transport path /private/workspace" },
+    });
+    for (const events of [
+      [requested, failed],
+      [failed, requested],
+    ]) {
+      expect(derivePendingRequests(events).approvals[0]).toMatchObject({
+        requestId: "retry",
+        responseError: "Approval could not be sent. Try again.",
+      });
+      expect(
+        derivePendingRequests([
+          ...events,
+          makeActivity({ kind: "approval.resolved", payload: { requestId: "retry" } }),
+        ]).approvals,
+      ).toEqual([]);
+    }
+  });
+});
+
+it("keeps a failed question and its choices available for retry after replay", () => {
+  const questions = [
+    {
+      id: "choice",
+      header: "Choice",
+      question: "Which option?",
+      options: [{ label: "Keep", description: "Keep the current files" }],
+      multiSelect: false,
+    },
+  ];
+  const requested = makeActivity({
+    kind: "user-input.requested",
+    payload: { requestId: "question", questions },
+  });
+  const failed = makeActivity({
+    kind: "provider.user-input.respond.failed",
+    payload: { requestId: "question", detail: "transport failed" },
+  });
+  expect(derivePendingRequests([failed, requested]).userInputs[0]).toMatchObject({
+    requestId: "question",
+    questions,
+    responseError: "Your response could not be sent. Try again.",
+  });
+});

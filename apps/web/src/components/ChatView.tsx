@@ -631,8 +631,6 @@ import {
 import { useComputeFilePresentationStore } from "~/scient/compute/computeFilePresentationStore";
 import { computeSourceLanguageForPath } from "~/scient/compute/computeSourceLanguage";
 
-const INSTALL_GIT_AGENT_PROMPT =
-  "Install Git in this execution environment using its standard trusted package manager. Verify that `git --version` works afterward. Ask before taking any action that requires administrator privileges. Do not initialize a repository or modify project files.";
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_USAGE_LIMIT_SOURCES: UsageLimitSourceSnapshots = [];
@@ -3294,7 +3292,34 @@ function ChatViewContent(props: ChatViewProps) {
       ? null
       : JSON.stringify([activityId, latestCheckpointCompletedAt]);
   }, [latestCheckpointCompletedAt, threadActivities]);
-  const workLogEntries = useMemo(() => deriveWorkLogEntries(threadActivities), [threadActivities]);
+  const [pendingRevert, setPendingRevert] = useState<{
+    turnCount: number;
+    messageId: MessageId;
+    routeThreadKey: string;
+    error?: string;
+  } | null>(null);
+  const workLogEntries = useMemo(
+    () =>
+      deriveWorkLogEntries(threadActivities).filter(
+        (entry) =>
+          !(
+            pendingRevert?.routeThreadKey === routeThreadKey &&
+            entry.sourceActivityKind === "checkpoint.revert.failed"
+          ),
+      ),
+    [threadActivities, pendingRevert, routeThreadKey],
+  );
+  const fileHistoryIssue = useMemo(
+    () =>
+      threadActivities
+        .toReversed()
+        .find(
+          (activity) =>
+            activity.kind === "checkpoint.capture.failed" ||
+            activity.kind === "checkpoint.diff.failed",
+        ),
+    [threadActivities],
+  );
   const turnPlans = useMemo(() => deriveTurnPlans(threadActivities), [threadActivities]);
   // Native subagent fold: memoized by activity-list identity, shared by the
   // Agents surface, live strip, and workflow cards. v2Projection is null
@@ -3308,10 +3333,26 @@ function ChatViewContent(props: ChatViewProps) {
       }),
     [agentSessionLive, threadActivities],
   );
-  const { approvals: pendingApprovals, userInputs: pendingUserInputs } = useMemo(
-    () => derivePendingRequests(threadActivities),
-    [threadActivities],
+  const [requestResponseErrors, setRequestResponseErrors] = useState<Record<string, string>>({});
+  const setRequestResponseError = useCallback(
+    (requestId: ApprovalRequestId, message: string) => {
+      const key = JSON.stringify([environmentId, activeThreadId, requestId]);
+      setRequestResponseErrors((errors) => ({ ...errors, [key]: message }));
+    },
+    [environmentId, activeThreadId],
   );
+  const { approvals: pendingApprovals, userInputs: pendingUserInputs } = useMemo(() => {
+    const requests = derivePendingRequests(threadActivities);
+    const withLocalError = <T extends { requestId: ApprovalRequestId }>(request: T) => {
+      const responseError =
+        requestResponseErrors[JSON.stringify([environmentId, activeThreadId, request.requestId])];
+      return responseError ? { ...request, responseError } : request;
+    };
+    return {
+      approvals: requests.approvals.map(withLocalError),
+      userInputs: requests.userInputs.map(withLocalError),
+    };
+  }, [threadActivities, requestResponseErrors, environmentId, activeThreadId]);
   const activePendingUserInput = pendingUserInputs[0] ?? null;
   const activePendingRequestKey = JSON.stringify([
     environmentId,
@@ -4076,12 +4117,6 @@ function ChatViewContent(props: ChatViewProps) {
           input: { cwd: gitStatusCwd },
         }),
   );
-  const gitNoticeKey = gitStatusCwd === null ? null : `${environmentId}:${gitStatusCwd}`;
-  const [dismissedGitNoticeKey, setDismissedGitNoticeKey] = useState<string | null>(null);
-  const gitInstallRefreshStateRef = useRef<{
-    readonly key: string;
-    sawWorking: boolean;
-  } | null>(null);
   useWorkspaceMutationRefresh({
     enabled: gitStatusCwd !== null,
     mutationId: workspaceMutationId,
@@ -7186,60 +7221,11 @@ function ChatViewContent(props: ChatViewProps) {
     // The user asked for this one, so it leads the notice tier instead of trailing it.
     const usageLimitsItems = usageLimitsBanner === null ? [] : [usageLimitsBanner];
     const projectCloneItems = projectCloneBannerItem === null ? [] : [projectCloneBannerItem];
-    const gitUnavailableItems: ComposerBannerStackItem[] =
-      gitUnavailable && gitNoticeKey !== null && dismissedGitNoticeKey !== gitNoticeKey
-        ? [
-            {
-              id: `git-unavailable:${gitNoticeKey}`,
-              variant: "info",
-              icon: <GitBranchIcon />,
-              title: "Git isn’t installed",
-              description:
-                "Git features are unavailable, but you can continue using Scient normally.",
-              actions: (
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  disabled={
-                    !activeThread ||
-                    !queueEditsReady ||
-                    queueEdit !== undefined ||
-                    isWorking ||
-                    isSendBusy ||
-                    isConnecting ||
-                    isRevertingCheckpoint ||
-                    !clientSettingsHydrated ||
-                    threadDetailLoading ||
-                    activeEnvironmentUnavailable ||
-                    activePendingProgress !== null ||
-                    !selectedProviderEntry?.enabled ||
-                    !selectedProviderEntry.isAvailable ||
-                    selectedProviderEntry.status !== "ready"
-                  }
-                  onClick={() => {
-                    gitInstallRefreshStateRef.current = {
-                      key: gitNoticeKey,
-                      sawWorking: isWorking,
-                    };
-                    void onSend(undefined, "foreground", undefined, {
-                      directPrompt: INSTALL_GIT_AGENT_PROMPT,
-                    });
-                  }}
-                >
-                  Ask agent to install
-                </Button>
-              ),
-              dismissLabel: "Dismiss Git notice",
-              onDismiss: () => setDismissedGitNoticeKey(gitNoticeKey),
-            },
-          ]
-        : [];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
         ...feedbackBannerItems,
         ...usageLimitsItems,
         ...projectCloneItems,
-        ...gitUnavailableItems,
         ...systemComposerBannerItems,
         ...tokenLimitItems,
         ...backgroundLivenessItems,
@@ -7254,7 +7240,6 @@ function ChatViewContent(props: ChatViewProps) {
       ...feedbackBannerItems,
       ...usageLimitsItems,
       ...projectCloneItems,
-      ...gitUnavailableItems,
       ...systemComposerBannerItems,
       ...tokenLimitItems,
       ...backgroundLivenessItems,
@@ -7311,7 +7296,6 @@ function ChatViewContent(props: ChatViewProps) {
     hasTokenLimitNotice,
     tokenLimitNoticeKey,
     feedbackBannerItems,
-    gitNoticeKey,
     gitUnavailable,
     handleRestoreThreadBranch,
     isRestoringThreadBranch,
@@ -7329,7 +7313,6 @@ function ChatViewContent(props: ChatViewProps) {
     systemComposerBannerItems,
     threadDetailLoading,
     usageLimitsBanner,
-    dismissedGitNoticeKey,
     wokeThreadBannerItem,
   ]);
   useEffect(() => {
@@ -7751,12 +7734,6 @@ function ChatViewContent(props: ChatViewProps) {
     };
   }, [activeThreadId, composerRef]);
 
-  const [pendingRevert, setPendingRevert] = useState<{
-    turnCount: number;
-    messageId: MessageId;
-    routeThreadKey: string;
-  } | null>(null);
-
   if (pendingRevert && pendingRevert.routeThreadKey !== routeThreadKey) {
     setPendingRevert(null);
   }
@@ -7771,21 +7748,31 @@ function ChatViewContent(props: ChatViewProps) {
       if (!message || message.role !== "user") return;
 
       if (!supportsConversationRollback) {
-        setThreadError(
-          activeThread.id,
-          "This provider does not support reverting conversation history. Start a new thread instead.",
-        );
+        setPendingRevert({
+          turnCount,
+          messageId,
+          routeThreadKey,
+          error:
+            "This provider does not support reverting conversation history. Start a new thread instead.",
+        });
         return;
       }
       if (activeEnvironmentUnavailable && activeEnvironmentUnavailableLabel) {
-        setThreadError(
-          activeThread.id,
-          `Reconnect ${activeEnvironmentUnavailableLabel} before reverting checkpoints.`,
-        );
+        setPendingRevert({
+          turnCount,
+          messageId,
+          routeThreadKey,
+          error: `Reconnect ${activeEnvironmentUnavailableLabel} before rewinding.`,
+        });
         return;
       }
       if (phase === "running" || isSendBusy || isConnecting) {
-        setThreadError(activeThread.id, "Interrupt the current turn before reverting checkpoints.");
+        setPendingRevert({
+          turnCount,
+          messageId,
+          routeThreadKey,
+          error: "Stop the current turn before rewinding.",
+        });
         return;
       }
       if (restoreFiles === undefined) {
@@ -7793,6 +7780,7 @@ function ChatViewContent(props: ChatViewProps) {
         return;
       }
 
+      setPendingRevert({ turnCount, messageId, routeThreadKey });
       useComposerDraftStore.setState((store) => ({
         rewindingThreadKeys: new Set(store.rewindingThreadKeys).add(routeThreadKey),
       }));
@@ -7861,10 +7849,18 @@ function ChatViewContent(props: ChatViewProps) {
               composerRef.current?.focusAtEnd();
           });
         }
+        setPendingRevert((current) =>
+          current?.routeThreadKey === routeThreadKey ? null : current,
+        );
       } catch (error) {
-        setThreadError(
-          activeThread.id,
-          error instanceof Error ? error.message : "Failed to revert thread state.",
+        setPendingRevert((current) =>
+          current?.routeThreadKey === routeThreadKey
+            ? {
+                ...current,
+                error:
+                  error instanceof Error ? error.message : "Could not rewind this conversation.",
+              }
+            : current,
         );
       } finally {
         useComposerDraftStore.setState((store) => {
@@ -9388,21 +9384,6 @@ function ChatViewContent(props: ChatViewProps) {
       resetLocalDispatch();
     }
   }
-  useEffect(() => {
-    const refreshState = gitInstallRefreshStateRef.current;
-    if (refreshState === null) return;
-    if (refreshState.key !== gitNoticeKey) {
-      gitInstallRefreshStateRef.current = null;
-      return;
-    }
-    if (isWorking) {
-      refreshState.sawWorking = true;
-      return;
-    }
-    if (!refreshState.sawWorking) return;
-    gitStatusQuery.refresh();
-    gitInstallRefreshStateRef.current = null;
-  }, [gitNoticeKey, gitStatusQuery, isWorking]);
 
   // SCIENT-FORK:START — actions mutate the captured thread queue. Only the
   // server worker admits queued messages into orchestration.
@@ -9461,16 +9442,12 @@ function ChatViewContent(props: ChatViewProps) {
         },
       });
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-        const error = squashAtomCommandFailure(result);
-        setThreadError(
-          activeThreadId,
-          error instanceof Error ? error.message : "Failed to submit approval decision.",
-        );
+        setRequestResponseError(requestId, "Approval could not be sent. Try again.");
       }
       setRespondingRequestIds((existing) => existing.filter((id) => id !== requestId));
       return result;
     },
-    [activeThreadId, environmentId, respondToThreadApproval, setThreadError],
+    [activeThreadId, environmentId, respondToThreadApproval, setRequestResponseError],
   );
 
   const onRespondToUserInput = useCallback(
@@ -9495,8 +9472,8 @@ function ChatViewContent(props: ChatViewProps) {
         if (attachments.length === 0) continue;
         const uploaded = getUploadedAttachments({ environmentId, images: attachments });
         if (!uploaded) {
-          setThreadError(
-            activeThreadId,
+          setRequestResponseError(
+            requestId,
             "Wait for attachments to finish uploading, or remove failed uploads.",
           );
           return;
@@ -9522,11 +9499,7 @@ function ChatViewContent(props: ChatViewProps) {
         },
       });
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-        const error = squashAtomCommandFailure(result);
-        setThreadError(
-          activeThreadId,
-          error instanceof Error ? error.message : "Failed to submit user input.",
-        );
+        setRequestResponseError(requestId, "Your response could not be sent. Try again.");
       }
       userInputResponsesInFlight.current.delete(responseKey);
       setRespondingUserInputRequestIds((existing) => existing.filter((id) => id !== requestId));
@@ -9538,7 +9511,7 @@ function ChatViewContent(props: ChatViewProps) {
       activePendingIsResponding,
       environmentId,
       respondToThreadUserInput,
-      setThreadError,
+      setRequestResponseError,
     ],
   );
 
@@ -9556,16 +9529,12 @@ function ChatViewContent(props: ChatViewProps) {
         input: { threadId: activeThreadId, requestId },
       });
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-        const error = squashAtomCommandFailure(result);
-        setThreadError(
-          activeThreadId,
-          error instanceof Error ? error.message : "Failed to dismiss the question.",
-        );
+        setRequestResponseError(requestId, "The question could not be dismissed. Try again.");
       }
       setRespondingUserInputRequestIds((existing) => existing.filter((id) => id !== requestId));
       return result;
     },
-    [activeThreadId, dismissThreadUserInput, environmentId, setThreadError],
+    [activeThreadId, dismissThreadUserInput, environmentId, setRequestResponseError],
   );
 
   const setActivePendingUserInputQuestionIndex = useCallback(
@@ -11445,7 +11414,7 @@ function ChatViewContent(props: ChatViewProps) {
       <AlertDialog
         open={pendingRevert !== null && pendingRevert.routeThreadKey === routeThreadKey}
         onOpenChange={(open) => {
-          if (!open) setPendingRevert(null);
+          if (!open && !isRevertingCheckpoint) setPendingRevert(null);
         }}
       >
         <AlertDialogPopup>
@@ -11459,14 +11428,42 @@ function ChatViewContent(props: ChatViewProps) {
                 : null}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {fileHistoryIssue ? (
+            <details className="text-sm text-muted-foreground">
+              <summary>File history diagnostics</summary>
+              <p>
+                Some file history or change comparisons were unavailable in this conversation. This
+                does not affect the agent’s answers.
+              </p>
+              <pre className="whitespace-pre-wrap break-words">
+                {JSON.stringify(fileHistoryIssue.payload, null, 2)}
+              </pre>
+            </details>
+          ) : null}
+          {pendingRevert?.error ? (
+            <div role="alert" className="space-y-2 text-sm">
+              <p>
+                Could not rewind this conversation. Your current conversation and files may need
+                review before retrying.
+              </p>
+              <details>
+                <summary>Details</summary>
+                <pre className="whitespace-pre-wrap break-words">{pendingRevert.error}</pre>
+              </details>
+            </div>
+          ) : null}
           <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <AlertDialogClose
+              render={<Button variant="outline" disabled={isRevertingCheckpoint} />}
+            >
+              Cancel
+            </AlertDialogClose>
             {activeWorktreePath !== null ? (
               <Button
                 variant="destructive"
+                disabled={isRevertingCheckpoint}
                 onClick={() => {
                   if (!pendingRevert || pendingRevert.routeThreadKey !== routeThreadKey) return;
-                  setPendingRevert(null);
                   void onRevertToTurnCount(pendingRevert.turnCount, pendingRevert.messageId, true);
                 }}
               >
@@ -11474,9 +11471,9 @@ function ChatViewContent(props: ChatViewProps) {
               </Button>
             ) : null}
             <Button
+              disabled={isRevertingCheckpoint}
               onClick={() => {
                 if (!pendingRevert || pendingRevert.routeThreadKey !== routeThreadKey) return;
-                setPendingRevert(null);
                 void onRevertToTurnCount(pendingRevert.turnCount, pendingRevert.messageId, false);
               }}
             >
