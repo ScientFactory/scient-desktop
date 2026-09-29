@@ -6362,6 +6362,8 @@ function ChatViewContent(props: ChatViewProps) {
         scrollNode.addEventListener("pointerdown", handlePointerDown, { passive: true });
         scrollNode.ownerDocument.addEventListener("pointerup", handlePointerUp);
         scrollNode.ownerDocument.addEventListener("pointercancel", handlePointerUp);
+        // Some engines end a scrollbar drag with mouseup and no pointerup.
+        scrollNode.ownerDocument.addEventListener("mouseup", handlePointerUp);
         scrollNode.addEventListener("scroll", handleScrollbarScroll, { passive: true });
         scrollNode.addEventListener("touchstart", handleTouchStart, {
           passive: true,
@@ -6375,6 +6377,7 @@ function ChatViewContent(props: ChatViewProps) {
           scrollNode.removeEventListener("pointerdown", handlePointerDown);
           scrollNode.ownerDocument.removeEventListener("pointerup", handlePointerUp);
           scrollNode.ownerDocument.removeEventListener("pointercancel", handlePointerUp);
+          scrollNode.ownerDocument.removeEventListener("mouseup", handlePointerUp);
           scrollNode.removeEventListener("scroll", handleScrollbarScroll);
           scrollNode.removeEventListener("touchstart", handleTouchStart);
           scrollNode.removeEventListener("touchmove", handleTouchMove);

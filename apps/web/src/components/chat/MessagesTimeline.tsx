@@ -617,6 +617,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   // message, a plan, tool output). Idle end pinning pauses briefly after one,
   // so the toggled content keeps its place instead of being pinned to its end.
   const [interactionSettling, setInteractionSettling] = useState(false);
+  // The reader's own scrolling input since the last bookkeeping pass.
+  const readerInputRef = useRef(false);
   const disclosureAnchorKeyRef = useRef<string | null>(null);
   const disclosureSettleFrameRef = useRef<number | null>(null);
   const disclosureSettleSecondFrameRef = useRef<number | null>(null);
@@ -1050,14 +1052,34 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         setInteractionSettling(false);
       }, 400);
     };
+    // The reader's own scrolling input; idle end keeping never acts on it.
+    const input = () => {
+      readerInputRef.current = true;
+    };
+    const pressed = (event: PointerEvent) => {
+      if (event.target === listRef.current?.getScrollableNode()) input();
+    };
+    const keyed = (event: globalThis.KeyboardEvent) => {
+      if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key))
+        input();
+    };
+    const ownerDocument = timelineViewportElement.ownerDocument;
     timelineViewportElement.addEventListener("click", settle, { capture: true });
     timelineViewportElement.addEventListener("keydown", settle, { capture: true });
+    timelineViewportElement.addEventListener("wheel", input, { capture: true, passive: true });
+    timelineViewportElement.addEventListener("touchmove", input, { capture: true, passive: true });
+    timelineViewportElement.addEventListener("pointerdown", pressed, { capture: true });
+    ownerDocument.addEventListener("keydown", keyed, { capture: true });
     return () => {
       if (timer !== null) clearTimeout(timer);
       timelineViewportElement.removeEventListener("click", settle, { capture: true });
       timelineViewportElement.removeEventListener("keydown", settle, { capture: true });
+      timelineViewportElement.removeEventListener("wheel", input, { capture: true });
+      timelineViewportElement.removeEventListener("touchmove", input, { capture: true });
+      timelineViewportElement.removeEventListener("pointerdown", pressed, { capture: true });
+      ownerDocument.removeEventListener("keydown", keyed, { capture: true });
     };
-  }, [timelineViewportElement]);
+  }, [listRef, timelineViewportElement]);
   // Re-measure the minimap gutter when the chat column changes width without a viewport resize.
   const chatWidth = useClientSettings((settings) => settings.chatWidth);
   const {
@@ -1287,6 +1309,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             rowsKey: timelineRowsKey(state.data),
           }
         : null;
+    readerInputRef.current = false;
     reportContentOverflow();
     if (!state || minimapItems.length === 0) {
       return;
@@ -1378,8 +1401,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     const viewport = list?.getScrollableNode();
     if (!idleEndKeepingRef.current || !resting || !list || !viewport) return;
     const state = list.getState();
-    // New rows grow below the reader and never move them.
-    if (timelineRowsKey(state.data) !== resting.rowsKey) return;
+    // New rows grow below the reader and never move them; a frame with the
+    // reader's own scrolling input is theirs, whatever else changed in it.
+    if (readerInputRef.current || timelineRowsKey(state.data) !== resting.rowsKey) return;
     // Measured on screen: the list's own positions can trail the rendered rows.
     const gap = readingEndGapOnScreen(state, viewport, contentInsetEndAdjustment);
     if (gap === null) return;

@@ -436,3 +436,19 @@ it("keeps the answer's end in view when content above it grows in the same layou
     .poll(() => Math.abs(readingGap() - before), { timeout: 4000 })
     .toBeLessThanOrEqual(2);
 });
+
+it("never pulls the reader back when they scroll in the same frame the answer grows", async () => {
+  const key = "reading-end:scroll-and-grow";
+  const entries = [...history(11), message(11, "assistant", "Short answer.")];
+  render(key, entries);
+  await expect.poll(() => readTimelinePosition(key)).toBeDefined();
+  await listRef.current!.scrollToEnd({ animated: false });
+  await frames(10);
+  // The reader scrolls up, and the answer grows before the next frame.
+  node().dispatchEvent(new WheelEvent("wheel", { deltaY: -120, bubbles: true }));
+  node().scrollTop -= 120;
+  const readerTop = node().scrollTop;
+  render(key, [...entries.slice(0, -1), message(11, "assistant", paragraph(11).repeat(3))]);
+  await frames(8);
+  expect(Math.abs(node().scrollTop - readerTop)).toBeLessThanOrEqual(1);
+});
