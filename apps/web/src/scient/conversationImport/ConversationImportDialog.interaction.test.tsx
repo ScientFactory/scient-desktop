@@ -41,8 +41,9 @@ const remote = EnvironmentId.make("9f0e1d2c-3b4a-4596-8778-695a4b3c2d1e");
 const state = vi.hoisted(() => ({
   environmentIds: [] as EnvironmentId[],
   offline: [] as EnvironmentId[],
-  runtimeMode: "approval-required" as string,
   projectModel: "codex/gpt-5-mini",
+  providers: "ready" as "ready" | "none",
+  currentProject: null as { environmentId: string; projectId: string } | null,
 }));
 const connected = vi.hoisted(() => ({ listeners: new Set<() => void>() }));
 function setConnectedEnvironments(ids: EnvironmentId[]) {
@@ -75,10 +76,24 @@ function provider(): ServerProvider {
 
 function config(): ServerConfig {
   return {
-    providers: [provider()],
-    settings: { ...DEFAULT_SERVER_SETTINGS, defaultRuntimeMode: state.runtimeMode },
+    providers: state.providers === "ready" ? [provider()] : [],
+    settings: DEFAULT_SERVER_SETTINGS,
   } as unknown as ServerConfig;
 }
+
+vi.mock("../../hooks/useHandleNewThread", () => ({
+  useHandleNewThread: () => ({
+    activeDraftThread: null,
+    activeThread:
+      state.currentProject === null
+        ? undefined
+        : {
+            environmentId: state.currentProject.environmentId,
+            projectId: state.currentProject.projectId,
+          },
+    handleNewThread: async () => null,
+  }),
+}));
 
 vi.mock("../../state/entities", () => ({
   useProjects: () => [
@@ -91,7 +106,20 @@ vi.mock("../../state/entities", () => ({
         model: state.projectModel.split("/")[1]!,
       },
     },
+    {
+      id: ProjectId.make("project-2"),
+      environmentId: local,
+      title: "Lab notes",
+      defaultModelSelection: null,
+    },
+    {
+      id: ProjectId.make("project-3"),
+      environmentId: remote,
+      title: "Survey",
+      defaultModelSelection: null,
+    },
   ],
+  useThreadShells: () => [],
   // Connected environments are a subscription, as the real atom is.
   useServerConfigs: () => {
     const ids = useSyncExternalStore(
@@ -191,8 +219,9 @@ beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   state.environmentIds = [local];
   state.offline = [];
-  state.runtimeMode = "approval-required";
   state.projectModel = "codex/gpt-5-mini";
+  state.providers = "ready";
+  state.currentProject = null;
   useConversationImportRequests.setState({ nextId: 0, queue: [], replaceable: false });
   for (const mock of [
     createConversationImportUpload,
@@ -253,6 +282,8 @@ const button = (label: string) =>
   [...document.querySelectorAll("button")].find((candidate) => candidate.textContent === label);
 const alerts = () =>
   [...document.querySelectorAll('[role="alert"]')].map((element) => element.textContent);
+const title = () => dialog()?.querySelector("[data-slot='dialog-title']")?.textContent;
+const statusText = () => document.querySelector('p[role="status"]')?.textContent;
 
 /**
  * A desktop that keeps the real contract: each upload is an attempt; a cancel
@@ -295,7 +326,7 @@ function fakeDesktop() {
   return desktop;
 }
 
-async function chooseDestination(label: string) {
+async function chooseProject(label: string) {
   const trigger = dialog()!.querySelector<HTMLElement>('[data-slot="select-trigger"]')!;
   await act(async () => trigger.click());
   const item = [...document.querySelectorAll<HTMLElement>('[data-slot="select-item"]')].find(
@@ -317,8 +348,13 @@ async function pressKey(target: HTMLElement, key: string) {
   });
 }
 
+const visibleButtons = () =>
+  [...dialog()!.querySelectorAll("button")]
+    .filter((candidate) => !candidate.closest("[data-slot='select-trigger']"))
+    .map((candidate) => candidate.textContent);
+
 describe("ConversationImportDialog", () => {
-  it("checks a file as soon as it arrives and imports it with the project's model", async () => {
+  it("shows only the title, the project, Cancel and Import", async () => {
     await openWith(scic());
 
     expect(button("Preview")).toBeUndefined();
@@ -330,15 +366,33 @@ describe("ConversationImportDialog", () => {
     );
     expect(uploadConversationFile).toHaveBeenCalledOnce();
     expect(previewConversationImport).toHaveBeenCalledWith(local, importId);
-    expect(dialog()?.textContent).toContain("Check what's in this file.");
-    expect(dialog()?.textContent).toContain("1 message · 2 attachments · from Codex · GPT-5");
-    expect(document.activeElement?.getAttribute("aria-label")).toBe("What's in this file");
-    // One environment: nothing to choose, and no ID anywhere.
-    expect(dialog()?.textContent).not.toContain("Destination");
-    expect(dialog()?.textContent).not.toContain(local);
-    expect(dialog()?.textContent).toContain("GPT-5 mini");
-    expect(dialog()?.textContent).not.toContain("Supervised mode");
+    expect(title()).toBe("Import “Field notes”");
+    expect(dialog()!.querySelectorAll('[data-slot="select-trigger"]')).toHaveLength(1);
+    expect(dialog()!.querySelector('[data-slot="select-trigger"]')?.textContent).toContain(
+      "Field study",
+    );
+    expect(visibleButtons()).toEqual(["Cancel", "Import"]);
+    expect(alerts()).toEqual([]);
+    const text = dialog()!.textContent ?? "";
+    for (const removed of [
+      "Check what's in this file",
+      "message",
+      "Codex",
+      "GPT-5",
+      "confirm who made this file",
+      "Not included",
+      "Supervised",
+      "Destination",
+      "Choose another file",
+    ]) {
+      expect(text).not.toContain(removed);
+    }
+    // The check is done: Import takes focus, so Enter imports.
+    expect(document.activeElement).toBe(button("Import"));
+  });
 
+  it("imports on the model a new chat in that project would use, then opens it", async () => {
+    await openWith(scic());
     await act(async () => button("Import")!.click());
     await flush();
     expect(confirmConversationImport).toHaveBeenCalledWith(local, {
@@ -351,74 +405,79 @@ describe("ConversationImportDialog", () => {
         interactionMode: "default",
       },
     });
-    expect(toastAdd).toHaveBeenCalledWith({
-      type: "success",
-      title: "Conversation imported",
-      description: "Your next message continues it with GPT-5 mini.",
+    expect(toastAdd).toHaveBeenCalledWith({ type: "success", title: "Conversation imported" });
+    expect(navigate).toHaveBeenCalledWith({
+      to: "/$environmentId/$threadId",
+      params: expect.objectContaining({ threadId: "thread-9" }),
     });
-    expect(navigate).toHaveBeenCalledOnce();
     expect(dialog()).toBeNull();
     expect(cancelConversationImport).not.toHaveBeenCalled();
   });
 
-  it("leaves the model to the person when the project's default is not available here", async () => {
-    // Claude is the project's default, but only Codex is ready on this environment.
-    state.projectModel = "claudeAgent/claude-opus";
+  it("follows the chosen project's default model", async () => {
     await openWith(scic());
-
-    const trigger = dialog()!.querySelector<HTMLElement>(
-      '[data-slot="select-trigger"][aria-labelledby$="-model"]',
-    )!;
-    expect(trigger.textContent).toContain("Choose a model");
-    expect(dialog()?.textContent).toContain(
-      "Your default model, claude-opus, isn't available here. Choose a model.",
-    );
-    expect(button("Import")?.disabled).toBe(true);
-    await act(async () => button("Import")!.click());
-    expect(confirmConversationImport).not.toHaveBeenCalled();
-
-    await act(async () => trigger.click());
-    const item = [...document.querySelectorAll<HTMLElement>('[data-slot="select-item"]')].find(
-      (candidate) => candidate.textContent === "GPT-5",
-    );
-    await act(async () => {
-      item!.click();
-      await Promise.resolve();
-    });
-    await flush();
-    expect(dialog()?.textContent).not.toContain("isn't available here");
-    expect(button("Import")?.disabled).toBe(false);
+    await chooseProject("Lab notes");
     await act(async () => button("Import")!.click());
     await flush();
+    // Lab notes sets no default: a new chat there opens on the provider's own.
     expect(confirmConversationImport).toHaveBeenCalledWith(
       local,
       expect.objectContaining({
         destination: expect.objectContaining({
+          projectId: "project-2",
           modelSelection: { instanceId: "codex", model: "gpt-5" },
         }),
       }),
     );
   });
 
-  it("names destination environments instead of showing their IDs", async () => {
-    state.environmentIds = [local, remote];
-    state.runtimeMode = "full-access";
+  it("defaults to the project in view", async () => {
+    state.currentProject = { environmentId: local, projectId: "project-2" };
     await openWith(scic());
-
-    const trigger = dialog()?.querySelector('[data-slot="select-trigger"]');
-    expect(dialog()?.textContent).toContain("Destination");
-    expect(trigger?.textContent).toContain("This device");
-    expect(dialog()?.textContent).not.toContain(local);
-    expect(dialog()?.textContent).toContain(
-      "Imported conversations start in Supervised mode, which asks before commands and file changes.",
+    expect(dialog()!.querySelector('[data-slot="select-trigger"]')?.textContent).toContain(
+      "Lab notes",
     );
+  });
+
+  it("disables Import when no model is available", async () => {
+    state.providers = "none";
+    await openWith(scic());
+    expect(alerts()).toEqual(["No model is available. Connect a provider to import."]);
+    expect(button("Import")?.disabled).toBe(true);
+    await act(async () => button("Import")!.click());
+    expect(confirmConversationImport).not.toHaveBeenCalled();
+  });
+
+  it("spins the Import button while the file is sent and checked", async () => {
+    previewConversationImport.mockReturnValue(new Promise(() => {}));
+    await openWith(scic());
+    expect(title()).toBe("Import “field-notes.scic”");
+    expect(statusText()).toBe("Checking the file…");
+    const importButton = button("Import")!;
+    expect(importButton.disabled).toBe(true);
+    expect(importButton.getAttribute("aria-busy")).toBe("true");
+    expect(importButton.querySelector("svg")).not.toBeNull();
+  });
+
+  it("groups projects by environment only when several environments have some", async () => {
+    state.environmentIds = [local, remote];
+    await openWith(scic());
+    const trigger = dialog()!.querySelector<HTMLElement>('[data-slot="select-trigger"]')!;
+    await act(async () => trigger.click());
+    const labels = [...document.querySelectorAll("[data-slot='select-item']")].map(
+      (item) => item.textContent,
+    );
+    expect(labels).toEqual(["Field study", "Lab notes", "Survey"]);
+    expect(document.body.textContent).toContain("This device");
+    expect(document.body.textContent).toContain("Lab workstation");
+    expect(document.body.textContent).not.toContain(local);
   });
 
   it("stops, and never sends the file elsewhere, when the destination disappears", async () => {
     state.environmentIds = [local, remote];
     previewConversationImport.mockReturnValue(new Promise(() => {}));
     await openWith(scic());
-    expect(document.querySelector('[role="status"]')?.textContent).toBe("Checking the file…");
+    expect(statusText()).toBe("Checking the file…");
 
     await act(async () => setConnectedEnvironments([remote]));
     await flush();
@@ -426,9 +485,10 @@ describe("ConversationImportDialog", () => {
     expect(createConversationImportUpload).toHaveBeenCalledOnce();
     expect(uploadConversationFile).toHaveBeenCalledOnce();
     expect(cancelConversationImport).toHaveBeenCalledWith(local, importId);
-    expect(alerts()).toEqual(["That destination is no longer available. Choose another."]);
+    expect(alerts()).toEqual([
+      "That project's environment is no longer available. Choose another project.",
+    ]);
     expect(button("Try again")).toBeUndefined();
-    expect(dialog()?.textContent).toContain("Destination");
     expect(button("Import")?.disabled).toBe(true);
 
     // It stays stopped when the remaining environments change again.
@@ -449,17 +509,15 @@ describe("ConversationImportDialog", () => {
         }),
     );
     await openWith(scic());
-    expect(document.querySelector('[role="status"]')?.textContent).toBe("Sending the file…");
+    expect(statusText()).toBe("Sending the file…");
 
     // The config stays cached while the connection is down.
     await act(async () => setOffline([local]));
     await flush();
     expect(signal?.aborted).toBe(true);
     expect(cancelConversationImport).toHaveBeenCalledWith(local, importId);
-    expect(alerts()).toEqual([
-      "Lost the connection to that destination. Choose another or try again.",
-    ]);
-    expect(dialog()?.textContent).toContain("Destination");
+    const lost = "Lost the connection to This device. Choose another project or try again.";
+    expect(alerts()).toEqual([lost]);
     expect(button("Try again")).toBeUndefined();
 
     // Reconnecting offers Try again but does not resend by itself.
@@ -467,9 +525,7 @@ describe("ConversationImportDialog", () => {
     await act(async () => setOffline([]));
     await flush();
     expect(createConversationImportUpload).toHaveBeenCalledOnce();
-    expect(alerts()).toEqual([
-      "Lost the connection to that destination. Choose another or try again.",
-    ]);
+    expect(alerts()).toEqual([lost]);
 
     await act(async () => button("Try again")!.click());
     await flush();
@@ -491,7 +547,6 @@ describe("ConversationImportDialog", () => {
     await flush();
     expect(cancelConversationImport).toHaveBeenCalledWith(local, importId);
     expect(button("Import")?.disabled).toBe(true);
-    expect(dialog()?.textContent).not.toContain("1 message · 2 attachments");
   });
 
   it("stops the upload and releases the staged import when cancelled", async () => {
@@ -506,7 +561,7 @@ describe("ConversationImportDialog", () => {
         }),
     );
     await openWith(scic());
-    expect(document.querySelector('[role="status"]')?.textContent).toBe("Sending the file…");
+    expect(statusText()).toBe("Sending the file…");
 
     await act(async () => button("Cancel")!.click());
     await flush();
@@ -519,14 +574,13 @@ describe("ConversationImportDialog", () => {
   it("releases the staged import when Escape is pressed while checking", async () => {
     previewConversationImport.mockReturnValue(new Promise(() => {}));
     await openWith(scic());
-    expect(document.querySelector('[role="status"]')?.textContent).toBe("Checking the file…");
+    expect(statusText()).toBe("Checking the file…");
 
     await pressKey(dialog()!, "Escape");
     await flush();
     expect(cancelConversationImport).toHaveBeenCalledWith(local, importId);
     expect(dialog()).toBeNull();
   });
-
   it("closes quietly when the desktop's send prompt is declined", async () => {
     const uploadOpenedConversationFile = vi
       .fn()
@@ -586,10 +640,10 @@ describe("ConversationImportDialog", () => {
     await act(async () => requestConversationImport({ _tag: "desktop-file", file: opened }));
     await flush();
     expect(desktop.uploads).toHaveLength(1);
-    expect(document.querySelector('[role="status"]')?.textContent).toBe("Sending the file…");
+    expect(statusText()).toBe("Sending the file…");
 
     desktop.holding = false;
-    await chooseDestination("Lab workstation");
+    await chooseProject("Survey");
 
     const [first, second] = desktop.uploads;
     expect(desktop.uploads).toHaveLength(2);
@@ -607,9 +661,8 @@ describe("ConversationImportDialog", () => {
       undefined,
     );
     expect(previewConversationImport).toHaveBeenCalledWith(remote, secondImportId);
-    expect(dialog()?.textContent).toContain("1 message · 2 attachments");
-    // Checked there; only the destination's missing project remains.
-    expect(alerts()).toEqual(["Add a project on Lab workstation before importing."]);
+    expect(title()).toBe("Import “Field notes”");
+    expect(alerts()).toEqual([]);
     expect(desktop.bridge.releaseOpenedConversationFile).not.toHaveBeenCalled();
   });
 
@@ -624,7 +677,7 @@ describe("ConversationImportDialog", () => {
     await flush();
     expect(desktop.bridge.cancelOpenedConversationFileUpload).toHaveBeenCalledOnce();
     expect(alerts()).toEqual([
-      "Lost the connection to that destination. Choose another or try again.",
+      "Lost the connection to This device. Choose another project or try again.",
     ]);
 
     desktop.holding = false;
@@ -731,7 +784,7 @@ describe("ConversationImportDialog", () => {
     expect(dialog()?.textContent).not.toContain("network-failed");
   });
 
-  it("shows why a file was rejected without codes or entry paths, and can try again", async () => {
+  it("shows one plain line, and only Cancel, for a file that cannot be read", async () => {
     previewConversationImport.mockRejectedValueOnce(
       new ScientConversationImportError({
         reason: "package-rejected",
@@ -743,8 +796,36 @@ describe("ConversationImportDialog", () => {
     expect(alerts()).toEqual(["This file is damaged."]);
     expect(dialog()?.textContent).not.toContain("corrupt-archive");
     expect(dialog()?.textContent).not.toContain("attachments/../x");
+    expect(dialog()!.querySelector('[data-slot="select-trigger"]')).toBeNull();
+    expect(visibleButtons()).toEqual(["Cancel"]);
     expect(cancelConversationImport).toHaveBeenCalledWith(local, importId);
+  });
 
+  it("says plainly that a file couldn't be read when there is no specific reason", async () => {
+    previewConversationImport.mockRejectedValueOnce(
+      new ScientConversationImportError({
+        reason: "package-rejected",
+        rejection: { reason: "unsafe-path", entry: null },
+        message: "Rejected: unsafe-path",
+      }),
+    );
+    await openWith(scic());
+    expect(alerts()).toEqual(["This file can't be imported. It didn't pass Scient's checks."]);
+    expect(visibleButtons()).toEqual(["Cancel"]);
+  });
+
+  it("offers Try again after a failure that sending again can fix", async () => {
+    previewConversationImport.mockRejectedValueOnce(
+      new ScientConversationImportError({
+        reason: "staging-full",
+        rejection: null,
+        message: "There is not enough room for this import right now. Try again later.",
+      }),
+    );
+    await openWith(scic());
+    expect(alerts()).toEqual([
+      "There is not enough room for this import right now. Try again later.",
+    ]);
     await act(async () => button("Try again")!.click());
     await flush();
     expect(createConversationImportUpload).toHaveBeenCalledTimes(2);
@@ -760,13 +841,12 @@ describe("ConversationImportDialog", () => {
       }),
     );
     await openWith(new File(["# Notes"], "notes.md"));
-    expect(dialog()?.querySelector("h2, [data-slot='dialog-title']")?.textContent).toBe(
-      "Start a conversation from this document",
-    );
-    expect(button("Start conversation")?.disabled).toBe(false);
+    expect(title()).toBe("Start a conversation from notes.md");
+    expect(visibleButtons()).toEqual(["Cancel", "Start"]);
+    expect(button("Start")?.disabled).toBe(false);
   });
 
-  it("asks before importing only the readable messages, by keyboard", async () => {
+  it("offers one compact choice when some messages couldn't be read", async () => {
     previewConversationImport.mockResolvedValueOnce(
       previewOf({
         kind: "markdown",
@@ -781,14 +861,15 @@ describe("ConversationImportDialog", () => {
       }),
     );
     await openWith(new File(["# Notes"], "notes.md"));
-    expect(dialog()?.textContent).toContain("Some messages couldn't be read");
-    expect(dialog()?.textContent).toContain("Line 4: The marker repeats an attribute.");
-    expect(button("Import")?.disabled).toBe(true);
+    expect(dialog()?.textContent).toContain("Some messages couldn't be read.");
+    expect(dialog()?.textContent).not.toContain("Line 4");
+    expect(visibleButtons()).toEqual([
+      "Import readable messages",
+      "Start with the whole file",
+      "Cancel",
+    ]);
 
-    await pressKey(document.querySelector<HTMLElement>('[role="checkbox"]')!, " ");
-    expect(button("Import")?.disabled).toBe(false);
-
-    await act(async () => button("Start with the whole file instead")!.click());
+    await act(async () => button("Start with the whole file")!.click());
     await flush();
     expect(cancelConversationImport).toHaveBeenCalledWith(local, importId);
     expect(createConversationImportUpload).toHaveBeenLastCalledWith(
@@ -797,6 +878,25 @@ describe("ConversationImportDialog", () => {
       7,
       "document",
     );
+  });
+
+  it("imports the readable messages when asked", async () => {
+    previewConversationImport.mockResolvedValueOnce(
+      previewOf({
+        kind: "markdown",
+        markdownIssues: [
+          { kind: "malformed-marker", startLine: 4, endLine: 4, detail: "Bad marker." },
+        ],
+      }),
+    );
+    await openWith(new File(["# Notes"], "notes.md"));
+    await act(async () => button("Import readable messages")!.click());
+    await flush();
+    expect(confirmConversationImport).toHaveBeenCalledWith(
+      local,
+      expect.objectContaining({ importId, acknowledgeMarkdownIssues: true }),
+    );
+    expect(dialog()).toBeNull();
   });
 
   it("offers the whole file as a document when a Markdown transcript is too long", async () => {
@@ -820,7 +920,7 @@ describe("ConversationImportDialog", () => {
     expect(alerts()).toEqual([tooLong]);
     expect(button("Try again")).toBeUndefined();
 
-    await act(async () => button("Start with the whole file instead")!.click());
+    await act(async () => button("Start with the whole file")!.click());
     await flush();
     expect(createConversationImportUpload).toHaveBeenLastCalledWith(
       local,
@@ -829,15 +929,13 @@ describe("ConversationImportDialog", () => {
       "document",
     );
     expect(alerts()).toEqual([]);
-    await act(async () => button("Start conversation")!.click());
+    await act(async () => button("Start")!.click());
     await flush();
     expect(confirmConversationImport).toHaveBeenCalledWith(
       local,
       expect.objectContaining({ importId: secondImportId }),
     );
-    expect(toastAdd).toHaveBeenCalledWith(
-      expect.objectContaining({ title: "Conversation started" }),
-    );
+    expect(toastAdd).toHaveBeenCalledWith({ type: "success", title: "Conversation imported" });
   });
 
   it("offers no document choice when a file is refused for its size", async () => {
@@ -850,7 +948,7 @@ describe("ConversationImportDialog", () => {
     );
     await openWith(new File(["# Notes"], "notes.md"));
     expect(alerts()).toEqual(["This file is larger than Scient can import."]);
-    expect(button("Start with the whole file instead")).toBeUndefined();
+    expect(button("Start with the whole file")).toBeUndefined();
   });
 
   it("uses a file dropped on the open dialog instead of opening another", async () => {
@@ -867,7 +965,7 @@ describe("ConversationImportDialog", () => {
       7,
       undefined,
     );
-    expect(dialog()?.textContent).toContain("second.scic");
+    expect(title()).toBe("Import “Field notes”");
   });
 
   it("treats an unanswered confirm as unknown, without connection details", async () => {
@@ -903,7 +1001,9 @@ describe("ConversationImportDialog", () => {
     expect(alerts()).toEqual([
       "Lost the connection while importing. Scient will check whether the import finished when the connection returns.",
     ]);
-    expect(dialog()?.textContent).not.toContain("Destination");
+    expect(
+      dialog()!.querySelector('[data-slot="select-trigger"]')?.hasAttribute("data-disabled"),
+    ).toBe(true);
     expect(cancelConversationImport).not.toHaveBeenCalled();
     expect(createConversationImportUpload).toHaveBeenCalledOnce();
 
@@ -980,54 +1080,7 @@ describe("ConversationImportDialog", () => {
     await flush();
 
     expect(cancelConversationImport).toHaveBeenCalledWith(local, importId);
-    expect(toastAdd).toHaveBeenCalledWith({
-      type: "success",
-      title: "Conversation imported",
-      description: "Your next message continues it with GPT-5.",
-    });
-    expect(navigate).toHaveBeenCalledWith({
-      to: "/$environmentId/$threadId",
-      params: expect.objectContaining({ threadId: "thread-committed" }),
-    });
-    expect(dialog()).toBeNull();
-    expect(createConversationImportUpload).toHaveBeenCalledOnce();
-    expect(button("Try again")).toBeUndefined();
-  });
-
-  it("never names the retry's model when the committed one is not listed", async () => {
-    confirmConversationImport.mockReturnValueOnce(new Promise(() => {}));
-    confirmConversationImport.mockRejectedValueOnce(
-      new ScientConversationImportError({
-        reason: "already-imported",
-        rejection: null,
-        message: "This conversation was already imported to another project or model.",
-      }),
-    );
-    cancelConversationImport.mockImplementation(async () => ({
-      _tag: "already-imported",
-      result: {
-        ...committedResult(confirmConversationImport.mock.calls[0]![1]),
-        threadId: ThreadId.make("thread-committed"),
-        destination: {
-          ...confirmConversationImport.mock.calls[0]![1].destination,
-          modelSelection: { instanceId: ProviderInstanceId.make("retired"), model: "old-model" },
-        },
-      },
-    }));
-    await openWith(scic());
-    await act(async () => button("Import")!.click());
-    await flush();
-    await act(async () => setOffline([local]));
-    await flush();
-    await act(async () => setOffline([]));
-    await flush();
-
-    expect(cancelConversationImport).toHaveBeenCalledWith(local, importId);
-    expect(toastAdd).toHaveBeenCalledWith({
-      type: "success",
-      title: "Conversation imported",
-      description: "Your next message continues it.",
-    });
+    expect(toastAdd).toHaveBeenCalledWith({ type: "success", title: "Conversation imported" });
     expect(navigate).toHaveBeenCalledWith({
       to: "/$environmentId/$threadId",
       params: expect.objectContaining({ threadId: "thread-committed" }),
@@ -1129,10 +1182,15 @@ describe("ConversationImportDialog", () => {
 
     await act(async () => root.render(<ConversationImportDialogHost />));
     await flush();
-    expect(dialog()?.textContent).toContain("field-notes.scic");
+    expect(createConversationImportUpload).toHaveBeenLastCalledWith(
+      local,
+      "field-notes.scic",
+      7,
+      undefined,
+    );
     await act(async () => button("Cancel")!.click());
     await flush();
-    expect(dialog()?.textContent).toContain("second.scic");
+    expect(dialog()).not.toBeNull();
     expect(createConversationImportUpload).toHaveBeenLastCalledWith(
       local,
       "second.scic",
@@ -1146,7 +1204,7 @@ describe("ConversationImportDialog", () => {
     await act(async () => requestConversationImport());
     await flush();
     expect(createConversationImportUpload).not.toHaveBeenCalled();
-    expect(button("Import")?.disabled).toBe(true);
+    expect(visibleButtons()).toEqual(["Choose file…", "Cancel"]);
 
     const input = dialog()!.querySelector<HTMLInputElement>('input[type="file"]')!;
     expect(input.accept).toBe(".scic,.md");
@@ -1162,7 +1220,7 @@ describe("ConversationImportDialog", () => {
       undefined,
     );
     expect(uploadConversationFile.mock.calls[0]?.[1]).toBe(chosen);
-    expect(dialog()?.textContent).toContain("1 message · 2 attachments");
-    expect(document.activeElement?.getAttribute("aria-label")).toBe("What's in this file");
+    expect(title()).toBe("Import “Field notes”");
+    expect(document.activeElement).toBe(button("Import"));
   });
 });

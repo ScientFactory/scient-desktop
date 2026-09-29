@@ -7,20 +7,17 @@ import type {
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { FileUpIcon, ImportIcon } from "lucide-react";
-import { useEffect, useEffectEvent, useId, useMemo, useRef, useState, type DragEvent } from "react";
+import { useEffect, useEffectEvent, useId, useMemo, useRef, useState } from "react";
 
 import { Button } from "../../components/ui/button";
-import { Checkbox } from "../../components/ui/checkbox";
 import {
   Dialog,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogPanel,
   DialogPopup,
   DialogTitle,
 } from "../../components/ui/dialog";
-import { Label } from "../../components/ui/label";
 import {
   Select,
   SelectGroup,
@@ -30,9 +27,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../../components/ui/select";
+import { Spinner } from "../../components/ui/spinner";
 import { toastManager } from "../../components/ui/toast";
-import { cn, randomUUID } from "../../lib/utils";
-import { useProjects, useServerConfigs } from "../../state/entities";
+import { useHandleNewThread } from "../../hooks/useHandleNewThread";
+import { mergeEnvironmentSettings, useClientSettings } from "../../hooks/useSettings";
+import { resolveThreadActionProjectRef } from "../../lib/chatThreadActions";
+import { randomUUID } from "../../lib/utils";
+import { useProjects, useServerConfigs, useThreadShells } from "../../state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import {
@@ -42,26 +43,20 @@ import {
   previewConversationImport,
   uploadConversationFile,
 } from "./client";
-import { ConversationImportPreviewDetails } from "./ConversationImportPreviewDetails";
 import { installConversationImportDropTarget, type ConversationFileDrag } from "./drop";
 import {
   ConversationImportNotice,
   IMPORT_RUNTIME_MODE,
-  defaultImportModelKey,
-  unavailableDefaultModelHint,
   desktopUploadOutcome,
   importEnvironmentOptions,
   importFailureMessage,
   importFileProblem,
-  importModelGroups,
-  importRuntimeModeNote,
   isAbort,
+  isConversationImportError,
   isMarkdownFileName,
   isRecordLimitRefusal,
-  isConversationImportError,
-  modelDisplayName,
-  selectedModelName,
 } from "./importDialog.logic";
+import { defaultImportProject, newChatModelSelection } from "./importDestination.logic";
 import {
   dismissConversationImportRequest,
   replaceConversationImportSource,
@@ -177,10 +172,13 @@ type Stage =
   | {
       readonly _tag: "failed";
       readonly message: string;
+      /** A transient failure; the same file can be sent again. */
+      readonly retryable: boolean;
       /** A Markdown transcript too long to import can still start a conversation as a document. */
       readonly wholeFile?: true;
     };
 
+/** Announced to assistive technology while the Import button spins. */
 function stageStatus(stage: Stage): string | null {
   switch (stage._tag) {
     case "sending":
@@ -192,6 +190,14 @@ function stageStatus(stage: Stage): string | null {
     default:
       return null;
   }
+}
+
+/** Refusals that sending the same file again would repeat. */
+function isUnreadableRefusal(cause: unknown): boolean {
+  return (
+    isConversationImportError(cause) &&
+    (cause.reason === "package-rejected" || cause.reason === "package-too-large")
+  );
 }
 
 /** One staged import: where it lives, and its ID while the server holds it. */
@@ -212,7 +218,6 @@ interface StagedAttempt {
 interface Confirmation {
   readonly staged: StagedAttempt;
   readonly request: ScientConversationImportConfirmRequest;
-  readonly isDocument: boolean;
   /** `unknown`: the answer never arrived; the server may still have committed it. */
   readonly phase: "sending" | "unknown";
   /** The destination's connection dropped since the confirm was sent. */
@@ -221,13 +226,26 @@ interface Confirmation {
   readonly checks: number;
 }
 
+function projectKey(project: { readonly environmentId: EnvironmentId; readonly id: string }) {
+  return `${project.environmentId}/${project.id}`;
+}
+
+/**
+ * A file, a project, and Import. The file is sent and checked in the
+ * background; the conversation opens on the model a new chat in that project
+ * would use, in approval-required mode. What the file leaves out is shown
+ * after import, on the thread.
+ */
 function ConversationImportDialog({ source }: { readonly source: ConversationImportSource }) {
   const id = useId();
   const navigate = useNavigate();
   const projects = useProjects();
+  const threads = useThreadShells();
   const configs = useServerConfigs();
+  const clientSettings = useClientSettings();
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const { activeDraftThread, activeThread, handleNewThread } = useHandleNewThread();
 
   const environmentOptions = useMemo(
     () =>
@@ -245,12 +263,32 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
       }),
     [configs, environments, primaryEnvironmentId],
   );
+  const environmentLabel = (environmentId: EnvironmentId | null) =>
+    environmentOptions.find((option) => option.environmentId === environmentId)?.label ?? null;
+  // Projects the file can go to: those of connected environments.
+  const connectedProjects = projects.filter((project) =>
+    environmentOptions.some(
+      (option) => option.environmentId === project.environmentId && option.connected,
+    ),
+  );
+  const currentProjectRef = resolveThreadActionProjectRef({
+    activeDraftThread,
+    activeThread: activeThread ?? undefined,
+    defaultProjectRef: null,
+    handleNewThread,
+  });
+  const defaultProject = defaultImportProject({
+    available: connectedProjects,
+    current: currentProjectRef,
+    threads,
+  });
+
   const [retries, setRetries] = useState(0);
-  // The destination is fixed once a file is sent there, or once the person
-  // picks one. Until then the first connected option (this device) is used.
-  // The file is never sent to a destination nobody chose: one that
-  // disappears stops the import, and so does losing its connection, which
-  // only "Try again" resumes, even after it reconnects.
+  // The destination environment is the chosen project's. It is fixed once a
+  // file is sent there, or once the person picks a project. Until then the
+  // default project's environment is used. The file is never sent to a
+  // destination nobody chose: one that disappears stops the import, and so
+  // does losing its connection, which only "Try again" resumes.
   const [destination, setDestination] = useState<EnvironmentId | null>(null);
   const destinationOption = environmentOptions.find(
     (option) => option.environmentId === destination,
@@ -290,25 +328,26 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
     confirmation !== null
       ? confirmation.staged.environmentId
       : destination === null
-        ? (environmentOptions.find((option) => option.connected)?.environmentId ?? null)
+        ? (defaultProject?.environmentId ??
+          environmentOptions.find((option) => option.connected)?.environmentId ??
+          null)
         : destinationOption?.connected === true && !connectionLost
           ? destination
           : null;
   const config = environmentId === null ? undefined : configs.get(environmentId);
-  const availableProjects = projects.filter((project) => project.environmentId === environmentId);
   const [chosenProjectId, setProjectId] = useState<string | null>(null);
+  const environmentProjects = projects.filter((project) => project.environmentId === environmentId);
   const project =
-    availableProjects.find((candidate) => candidate.id === chosenProjectId) ??
-    availableProjects[0] ??
+    environmentProjects.find((candidate) => candidate.id === chosenProjectId) ??
+    (defaultProject?.environmentId === environmentId ? defaultProject : undefined) ??
+    environmentProjects[0] ??
     null;
-  const modelGroups = useMemo(() => importModelGroups(config), [config]);
-  const [chosenModelKey, setModelKey] = useState<string | null>(null);
-  const modelKey = chosenModelKey ?? defaultImportModelKey(config, project, modelGroups);
-  const selectedModel =
-    modelGroups.flatMap((group) => group.models).find((model) => model.key === modelKey) ?? null;
-  const runtimeModeNote = importRuntimeModeNote(config, project);
-  const defaultModelHint =
-    chosenModelKey === null ? unavailableDefaultModelHint(config, project, modelGroups) : null;
+  const settings = useMemo(
+    () => (config === undefined ? null : mergeEnvironmentSettings(config.settings, clientSettings)),
+    [clientSettings, config],
+  );
+  const modelSelection =
+    settings === null ? null : newChatModelSelection({ config, settings, project });
 
   const file = sourceFile(source);
   const fileProblem = file === null ? null : importFileProblem(file.name, file.sizeBytes);
@@ -331,8 +370,6 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
       : file === null || environmentId === null
         ? { _tag: "waiting" }
         : { _tag: "sending", sentBytes: null, totalBytes: file.sizeBytes };
-  const [acknowledgedFor, setAcknowledgedFor] = useState<typeof attempt | null>(null);
-  const acknowledged = acknowledgedFor === attempt;
   const importing = confirmation !== null;
   const [importError, setImportError] = useState<{
     readonly attempt: typeof attempt;
@@ -341,7 +378,9 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
   const stagedRef = useRef<StagedAttempt | null>(null);
   // The desktop streams one opened file at a time; a new attempt waits for the last.
   const desktopUploadRef = useRef<Promise<unknown>>(Promise.resolve());
-  const detailsRef = useRef<HTMLDivElement>(null);
+  const primaryRef = useRef<HTMLButtonElement>(null);
+  // Opening focuses the dialog itself; Import takes focus once the check is done.
+  const popupRef = useRef<HTMLDivElement>(null);
 
   // Every file and destination is sent and checked as soon as it is chosen.
   // Changing either, closing, or cancelling stops the transfer and releases
@@ -439,18 +478,19 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
       } catch (cause) {
         if (stopped() || isAbort(cause)) return;
         release();
-        setStage({
-          _tag: "failed",
-          message: importFailureMessage(cause, "This file couldn't be checked. Try again."),
-          // The check refused a transcript for its length; the same file as a
-          // document is one message. A file refused for its size is not offered.
-          ...(checking &&
+        // The check refused a transcript for its length; the same file as a
+        // document is one message. A file refused for its size is not offered.
+        const wholeFile =
+          checking &&
           source._tag === "browser-file" &&
           markdownMode === undefined &&
           isMarkdownFileName(name) &&
-          isRecordLimitRefusal(cause)
-            ? { wholeFile: true as const }
-            : {}),
+          isRecordLimitRefusal(cause);
+        setStage({
+          _tag: "failed",
+          message: importFailureMessage(cause, "This file couldn't be read."),
+          retryable: !wholeFile && !isUnreadableRefusal(cause),
+          ...(wholeFile ? { wholeFile: true as const } : {}),
         });
       }
     })();
@@ -467,10 +507,12 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
   }, []);
 
   const preview = stage._tag === "ready" ? stage.preview : null;
+  const isDocument = preview?.kind === "document";
+  const damagedMarkers = preview?.kind === "markdown" && preview.markdownIssues.length > 0;
+  const canImport = preview !== null && !importing && project !== null && modelSelection !== null;
 
-  // A finished check moves focus to what it found when focus is still where
-  // the file came in (the dialog itself or the file zone), never away from a
-  // choice the person is making.
+  // A finished check puts focus on Import when focus is still where the file
+  // came in (the dialog itself), never away from a choice being made.
   useEffect(() => {
     if (preview === null) return;
     const active = document.activeElement;
@@ -478,19 +520,9 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
       active === null ||
       active === document.body ||
       active.getAttribute("role") === "dialog" ||
-      active.closest("[data-conversation-file-zone]") !== null;
-    if (atEntry) detailsRef.current?.focus();
+      active.closest("[data-conversation-file-choice]") !== null;
+    if (atEntry) primaryRef.current?.focus();
   }, [preview]);
-
-  const isDocument = preview?.kind === "document";
-  const needsAcknowledgement =
-    preview?.kind === "markdown" && preview.markdownIssues.length > 0 && !acknowledged;
-  const canImport =
-    preview !== null &&
-    !importing &&
-    project !== null &&
-    selectedModel !== null &&
-    !needsAcknowledgement;
 
   // Closing while a confirm's answer is pending or lost keeps the staged
   // import; the thread appears if the server committed it.
@@ -509,20 +541,7 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
     next.staged.importId = null;
     next.staged.confirming = false;
     dismissConversationImportRequest();
-    // The committed destination is the server's, which can differ from this
-    // confirm's; name its model only when the environment lists it.
-    const modelName = selectedModelName(
-      configs.get(next.staged.environmentId),
-      result.destination.modelSelection,
-    );
-    toastManager.add({
-      type: "success",
-      title: next.isDocument ? "Conversation started" : "Conversation imported",
-      description:
-        modelName === null
-          ? "Your next message continues it."
-          : `Your next message continues it with ${modelName}.`,
-    });
+    toastManager.add({ type: "success", title: "Conversation imported" });
     void navigate({
       to: "/$environmentId/$threadId",
       params: buildThreadRouteParams({
@@ -546,6 +565,7 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
       stage: {
         _tag: "failed",
         message: "The import didn't finish. Send the file again to import it.",
+        retryable: true,
       },
     });
   };
@@ -616,17 +636,15 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
       request: {
         importId: staged.importId,
         packageSha256: preview.package.packageSha256,
-        ...(preview.kind === "markdown" && preview.markdownIssues.length > 0
-          ? { acknowledgeMarkdownIssues: acknowledged }
-          : {}),
+        // Offered only as "Import readable messages" when markers are damaged.
+        ...(damagedMarkers ? { acknowledgeMarkdownIssues: true } : {}),
         destination: {
           projectId: project.id,
-          modelSelection: selectedModel.selection,
+          modelSelection,
           runtimeMode: IMPORT_RUNTIME_MODE,
           interactionMode: "default",
         },
       },
-      isDocument,
       phase: "sending",
       interrupted: false,
       checks: 0,
@@ -635,33 +653,55 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
     void askServer(next);
   };
 
+  const busy = stage._tag === "sending" || stage._tag === "checking" || importing;
   const status = fileProblem === null ? stageStatus(stage) : null;
-  const failure =
+  const unreadable =
     fileProblem ??
-    (confirmation !== null
+    (confirmation === null && stage._tag === "failed" && !stage.retryable && !stage.wholeFile
+      ? stage.message
+      : null);
+  const notice =
+    unreadable !== null || confirmation !== null
       ? null
       : destinationGone
-        ? "That destination is no longer available. Choose another."
+        ? "That project's environment is no longer available. Choose another project."
         : connectionLost
-          ? "Lost the connection to that destination. Choose another or try again."
+          ? `Lost the connection to ${environmentLabel(destination) ?? "that environment"}. Choose another project or try again.`
           : file !== null && environmentId === null && destination === null
-            ? "No destination is connected. Reconnect one to import this file."
+            ? "Nothing to import into is connected. Reconnect to import this file."
             : stage._tag === "failed"
               ? stage.message
-              : null);
-  const offersWholeFile =
-    stage._tag === "failed" && stage.wholeFile === true && failure === stage.message;
+              : preview !== null && environmentProjects.length === 0
+                ? "Add a project to import this conversation."
+                : preview !== null && project !== null && modelSelection === null
+                  ? "No model is available. Connect a provider to import."
+                  : null;
+  const offersWholeFile = stage._tag === "failed" && stage.wholeFile === true;
   // "Try again" resends to the same destination, only once it is connected.
-  // A transcript too long to import would be refused again; it gets the
-  // document choice instead.
   const canRetry =
-    fileProblem === null &&
+    unreadable === null &&
     !destinationGone &&
     !offersWholeFile &&
-    (connectionLost ? destinationOption?.connected === true : stage._tag === "failed");
-  const environmentLabel = environmentOptions.find(
-    (option) => option.environmentId === environmentId,
-  )?.label;
+    (connectionLost
+      ? destinationOption?.connected === true
+      : stage._tag === "failed" && stage.retryable);
+  const canWholeFile = source._tag === "browser-file";
+  // Projects to choose from, grouped by environment only when several have some.
+  const projectGroups = environmentOptions
+    .filter((option) => option.connected || option.environmentId === environmentId)
+    .map((option) => ({
+      label: option.label,
+      projects: projects.filter((candidate) => candidate.environmentId === option.environmentId),
+    }))
+    .filter((group) => group.projects.length > 0);
+  const title =
+    preview === null
+      ? file === null
+        ? "Import conversation"
+        : `Import “${file.name}”`
+      : isDocument
+        ? `Start a conversation from ${file?.name ?? preview.fileName}`
+        : `Import “${preview.conversation.title}”`;
 
   return (
     <Dialog
@@ -670,196 +710,142 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
         if (!open) close();
       }}
     >
-      <DialogPopup className="sm:max-w-lg">
+      <DialogPopup
+        ref={popupRef}
+        initialFocus={popupRef}
+        className="sm:max-w-md"
+        showCloseButton={false}
+      >
         <DialogHeader>
-          <DialogTitle>
-            {isDocument ? "Start a conversation from this document" : "Import conversation"}
-          </DialogTitle>
-          <DialogDescription>
-            Check what's in this file. Nothing is added until you choose{" "}
-            {isDocument ? "Start conversation" : "Import"}.
-          </DialogDescription>
+          <DialogTitle>{title}</DialogTitle>
         </DialogHeader>
         <DialogPanel>
-          <div className="flex flex-col gap-4">
-            <ConversationFileZone file={file} disabled={importing} />
-            {confirmation === null &&
-            (environmentOptions.length > 1 || destinationGone || connectionLost) ? (
-              <div className="flex flex-col gap-2">
-                <span id={`${id}-environment`} className="text-sm font-medium">
-                  Destination
-                </span>
-                <Select
-                  value={environmentId ?? ""}
-                  items={Object.fromEntries(
-                    environmentOptions.map((option) => [option.environmentId, option.label]),
-                  )}
-                  disabled={importing}
-                  onValueChange={(value) => {
-                    const option = environmentOptions.find(
-                      (candidate) => candidate.environmentId === value,
-                    );
-                    if (!option?.connected || option.environmentId === environmentId) return;
-                    setDestination(option.environmentId);
-                    setDisconnectedAt(null);
-                    setProjectId(null);
-                    setModelKey(null);
-                  }}
-                >
-                  <SelectTrigger aria-labelledby={`${id}-environment`} className="min-w-0">
-                    <SelectValue placeholder="Choose a destination" />
-                  </SelectTrigger>
-                  <SelectPopup>
-                    {environmentOptions.map((option) => (
-                      <SelectItem
-                        key={option.environmentId}
-                        value={option.environmentId}
-                        disabled={!option.connected}
-                      >
-                        {option.connected ? option.label : `${option.label} (not connected)`}
-                      </SelectItem>
-                    ))}
-                  </SelectPopup>
-                </Select>
-              </div>
-            ) : null}
+          <div className="flex flex-col gap-3">
             {status !== null ? (
-              <p className="text-muted-foreground text-sm" role="status">
+              <p className="sr-only" role="status">
                 {status}
               </p>
             ) : null}
-            {failure !== null ? (
-              <div className="flex flex-wrap items-center gap-2">
-                <p role="alert" className="text-destructive text-sm">
-                  {failure}
-                </p>
-                {canRetry ? (
-                  <Button
-                    type="button"
-                    size="xs"
-                    variant="outline"
-                    onClick={() => setRetries((count) => count + 1)}
-                  >
-                    Try again
-                  </Button>
-                ) : null}
-                {offersWholeFile ? (
-                  <Button
-                    type="button"
-                    size="xs"
-                    variant="outline"
-                    onClick={() => setDocumentModeFor(source)}
-                  >
-                    Start with the whole file instead
-                  </Button>
-                ) : null}
-              </div>
-            ) : null}
-            {preview !== null ? (
+            {file === null ? (
+              <ConversationFileChoice />
+            ) : unreadable !== null ? (
+              <p role="alert" className="text-sm">
+                {unreadable}
+              </p>
+            ) : (
               <>
-                <div
-                  ref={detailsRef}
-                  tabIndex={-1}
-                  aria-label="What's in this file"
-                  className="rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  <ConversationImportPreviewDetails
-                    preview={preview}
-                    sourceModelName={
-                      preview.conversation.model === null
-                        ? null
-                        : modelDisplayName(
-                            config,
-                            preview.conversation.provider,
-                            preview.conversation.model,
-                          )
-                    }
-                  />
-                </div>
-                {preview.markdownIssues.length > 0 ? (
-                  <MarkdownIssues
-                    preview={preview}
-                    acknowledged={acknowledged}
-                    disabled={importing}
-                    onAcknowledgedChange={(checked) => setAcknowledgedFor(checked ? attempt : null)}
-                    {...(source._tag === "browser-file"
-                      ? { onUseWholeFile: () => setDocumentModeFor(source) }
-                      : {})}
-                  />
+                {projectGroups.length > 0 ? (
+                  <div className="flex items-center gap-3">
+                    <span id={`${id}-project`} className="shrink-0 text-sm font-medium">
+                      Project
+                    </span>
+                    <Select
+                      value={project === null ? "" : projectKey(project)}
+                      items={Object.fromEntries(
+                        projectGroups.flatMap((group) =>
+                          group.projects.map((candidate) => [
+                            projectKey(candidate),
+                            projectGroups.length > 1
+                              ? `${candidate.title} · ${group.label}`
+                              : candidate.title,
+                          ]),
+                        ),
+                      )}
+                      disabled={importing}
+                      onValueChange={(value) => {
+                        const chosen = projects.find(
+                          (candidate) => projectKey(candidate) === value,
+                        );
+                        if (!chosen) return;
+                        setProjectId(chosen.id);
+                        if (chosen.environmentId !== environmentId) {
+                          setDestination(chosen.environmentId);
+                          setDisconnectedAt(null);
+                        }
+                      }}
+                    >
+                      <SelectTrigger aria-labelledby={`${id}-project`} className="min-w-0 flex-1">
+                        <SelectValue placeholder="Choose a project" />
+                      </SelectTrigger>
+                      <SelectPopup>
+                        {projectGroups.map((group) =>
+                          projectGroups.length > 1 ? (
+                            <SelectGroup key={group.label}>
+                              <SelectGroupLabel>{group.label}</SelectGroupLabel>
+                              {group.projects.map((candidate) => (
+                                <SelectItem
+                                  key={projectKey(candidate)}
+                                  value={projectKey(candidate)}
+                                >
+                                  {candidate.title}
+                                </SelectItem>
+                              ))}
+                            </SelectGroup>
+                          ) : (
+                            group.projects.map((candidate) => (
+                              <SelectItem key={projectKey(candidate)} value={projectKey(candidate)}>
+                                {candidate.title}
+                              </SelectItem>
+                            ))
+                          ),
+                        )}
+                      </SelectPopup>
+                    </Select>
+                  </div>
                 ) : null}
-                <div className="flex flex-col gap-2">
-                  <span id={`${id}-project`} className="text-sm font-medium">
-                    Project
-                  </span>
-                  <Select
-                    value={project?.id ?? ""}
-                    items={Object.fromEntries(
-                      availableProjects.map((candidate) => [candidate.id, candidate.title]),
-                    )}
-                    disabled={importing || availableProjects.length === 0}
-                    onValueChange={(value) => {
-                      setProjectId(typeof value === "string" ? value : null);
-                      setModelKey(null);
-                    }}
-                  >
-                    <SelectTrigger aria-labelledby={`${id}-project`} className="min-w-0">
-                      <SelectValue placeholder="No projects here" />
-                    </SelectTrigger>
-                    <SelectPopup>
-                      {availableProjects.map((candidate) => (
-                        <SelectItem key={candidate.id} value={candidate.id}>
-                          {candidate.title}
-                        </SelectItem>
-                      ))}
-                    </SelectPopup>
-                  </Select>
-                </div>
-                <div className="flex flex-col gap-2">
-                  <span id={`${id}-model`} className="text-sm font-medium">
-                    Model for your next message
-                  </span>
-                  <Select
-                    value={modelKey ?? ""}
-                    items={Object.fromEntries(
-                      modelGroups.flatMap((group) =>
-                        group.models.map((model) => [model.key, `${group.label} · ${model.name}`]),
-                      ),
-                    )}
-                    disabled={importing || modelGroups.length === 0}
-                    onValueChange={(value) => setModelKey(typeof value === "string" ? value : null)}
-                  >
-                    <SelectTrigger aria-labelledby={`${id}-model`} className="min-w-0">
-                      <SelectValue placeholder="Choose a model" />
-                    </SelectTrigger>
-                    <SelectPopup>
-                      {modelGroups.map((group) => (
-                        <SelectGroup key={group.label}>
-                          <SelectGroupLabel>{group.label}</SelectGroupLabel>
-                          {group.models.map((model) => (
-                            <SelectItem key={model.key} value={model.key}>
-                              {model.name}
-                            </SelectItem>
-                          ))}
-                        </SelectGroup>
-                      ))}
-                    </SelectPopup>
-                  </Select>
-                  {defaultModelHint !== null ? (
-                    <p className="text-muted-foreground text-xs">{defaultModelHint}</p>
-                  ) : null}
-                  {runtimeModeNote !== null ? (
-                    <p className="text-muted-foreground text-xs">{runtimeModeNote}</p>
-                  ) : null}
-                </div>
-                {availableProjects.length === 0 || modelGroups.length === 0 ? (
-                  <p role="alert" className="text-sm">
-                    {availableProjects.length === 0
-                      ? `Add a project${environmentLabel ? ` on ${environmentLabel}` : ""} before importing.`
-                      : `Set up a model provider${environmentLabel ? ` on ${environmentLabel}` : ""} before importing.`}
-                  </p>
+                {notice !== null ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p role="alert" className="text-sm">
+                      {notice}
+                    </p>
+                    {canRetry ? (
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="outline"
+                        onClick={() => setRetries((count) => count + 1)}
+                      >
+                        Try again
+                      </Button>
+                    ) : null}
+                    {offersWholeFile && canWholeFile ? (
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="outline"
+                        onClick={() => setDocumentModeFor(source)}
+                      >
+                        Start with the whole file
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : null}
+                {damagedMarkers && !importing ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-sm">Some messages couldn't be read.</p>
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant="outline"
+                      disabled={!canImport}
+                      onClick={runImport}
+                    >
+                      Import readable messages
+                    </Button>
+                    {canWholeFile ? (
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="outline"
+                        onClick={() => setDocumentModeFor(source)}
+                      >
+                        Start with the whole file
+                      </Button>
+                    ) : null}
+                  </div>
                 ) : null}
               </>
-            ) : null}
+            )}
             {confirmation !== null && (confirmation.interrupted || !confirmingConnected) ? (
               <p role="alert" className="text-sm">
                 Lost the connection while importing. Scient will check whether the import finished
@@ -897,75 +883,35 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
           <Button type="button" variant="outline" disabled={!closable} onClick={close}>
             {confirmation === null ? "Cancel" : "Close"}
           </Button>
-          <Button type="button" disabled={!canImport} onClick={runImport}>
-            {importing
-              ? isDocument
-                ? "Starting…"
-                : "Importing…"
-              : importError?.attempt === attempt
-                ? "Try again"
-                : isDocument
-                  ? "Start conversation"
-                  : "Import"}
-          </Button>
+          {file !== null && unreadable === null && (!damagedMarkers || importing) ? (
+            <Button
+              ref={primaryRef}
+              type="button"
+              disabled={!canImport}
+              aria-busy={busy}
+              onClick={runImport}
+            >
+              {busy ? <Spinner aria-hidden="true" /> : null}
+              {importError?.attempt === attempt ? "Try again" : isDocument ? "Start" : "Import"}
+            </Button>
+          ) : null}
         </DialogFooter>
       </DialogPopup>
     </Dialog>
   );
 }
 
-/** The chosen file, and where to drop or choose another. */
-function ConversationFileZone({
-  file,
-  disabled,
-}: {
-  readonly file: { readonly name: string } | null;
-  readonly disabled: boolean;
-}) {
+/** Where a file is chosen when the dialog opened without one. */
+function ConversationFileChoice() {
   const inputRef = useRef<HTMLInputElement>(null);
-  const [dropTarget, setDropTarget] = useState(false);
-  const accept = (event: DragEvent<HTMLDivElement>) => {
-    if (disabled || !event.dataTransfer.types.includes("Files")) return false;
-    event.preventDefault();
-    return true;
-  };
   return (
-    <div
-      data-conversation-file-zone
-      className={cn(
-        "flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dashed px-3 py-3 transition-colors",
-        dropTarget ? "border-ring bg-accent/20" : "border-border/80 bg-muted/20",
-      )}
-      onDragEnter={(event) => setDropTarget(accept(event))}
-      onDragOver={(event) => setDropTarget(accept(event))}
-      onDragLeave={(event) => {
-        if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
-        setDropTarget(false);
-      }}
-      onDrop={(event) => {
-        setDropTarget(false);
-        if (!accept(event)) return;
-        const dropped = event.dataTransfer.files;
-        if (dropped.length === 1 && dropped[0]) {
-          replaceConversationImportSource({ _tag: "browser-file", file: dropped[0] });
-        }
-      }}
-    >
-      <div className="min-w-0">
-        <p className="text-sm font-medium">Conversation file</p>
-        <p className="truncate text-muted-foreground text-xs">
-          {file?.name ?? "Drop a Scient conversation (.scic) or Markdown (.md) file here"}
-        </p>
-      </div>
-      <Button
-        type="button"
-        size="sm"
-        variant="outline"
-        disabled={disabled}
-        onClick={() => inputRef.current?.click()}
-      >
+    <div data-conversation-file-choice className="flex flex-col items-start gap-2">
+      <p className="text-muted-foreground text-sm">
+        Choose a Scient conversation (.scic) or Markdown (.md) file, or drop one here.
+      </p>
+      <Button type="button" size="sm" variant="outline" onClick={() => inputRef.current?.click()}>
         <FileUpIcon />
-        {file === null ? "Choose file" : "Choose another file"}
+        Choose file…
       </Button>
       <input
         ref={inputRef}
@@ -981,60 +927,5 @@ function ConversationFileZone({
         }}
       />
     </div>
-  );
-}
-
-function MarkdownIssues(props: {
-  readonly preview: ScientConversationImportPreview;
-  readonly acknowledged: boolean;
-  readonly disabled: boolean;
-  readonly onAcknowledgedChange: (acknowledged: boolean) => void;
-  readonly onUseWholeFile?: () => void;
-}) {
-  const { preview } = props;
-  const hidden = preview.markdownIssues.length - 10;
-  return (
-    <section
-      aria-label="Some messages couldn't be read"
-      className="flex flex-col gap-2 rounded-md border p-3 text-sm"
-      role="alert"
-    >
-      <p className="font-medium">Some messages couldn't be read</p>
-      <p>
-        Import the messages Scient could read, or start a conversation with the whole file instead.
-      </p>
-      <ul className="list-inside list-disc text-muted-foreground text-xs">
-        {preview.markdownIssues.slice(0, 10).map((issue) => (
-          <li key={`${issue.kind}-${issue.startLine}-${issue.endLine}-${issue.detail}`}>
-            {issue.startLine === issue.endLine
-              ? `Line ${issue.startLine}`
-              : `Lines ${issue.startLine}–${issue.endLine}`}
-            : {issue.detail}
-          </li>
-        ))}
-        {hidden > 0 ? <li>{hidden === 1 ? "1 more place" : `${hidden} more places`}</li> : null}
-      </ul>
-      {preview.kind === "markdown" ? (
-        <Label>
-          <Checkbox
-            checked={props.acknowledged}
-            disabled={props.disabled}
-            onCheckedChange={(checked) => props.onAcknowledgedChange(checked === true)}
-          />
-          Import only the messages Scient could read
-        </Label>
-      ) : null}
-      {props.onUseWholeFile ? (
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          disabled={props.disabled}
-          onClick={props.onUseWholeFile}
-        >
-          Start with the whole file instead
-        </Button>
-      ) : null}
-    </section>
   );
 }

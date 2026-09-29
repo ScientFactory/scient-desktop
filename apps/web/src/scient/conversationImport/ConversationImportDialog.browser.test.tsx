@@ -24,12 +24,19 @@ const client = vi.hoisted(() => ({
 vi.mock("./client", () => client);
 vi.mock("../../components/ui/toast", () => ({ toastManager: { add: vi.fn() } }));
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => async () => {} }));
+vi.mock("../../hooks/useHandleNewThread", () => ({
+  useHandleNewThread: () => ({
+    activeDraftThread: null,
+    activeThread: undefined,
+    handleNewThread: async () => null,
+  }),
+}));
 
 const local = EnvironmentId.make("local-environment");
 const remote = EnvironmentId.make("remote-environment");
 const codex = ProviderInstanceId.make("codex");
 
-vi.mock("../../state/entities", () => {
+vi.mock("../../state/entities", async (importOriginal) => {
   const config = {
     providers: [
       {
@@ -51,29 +58,35 @@ vi.mock("../../state/entities", () => {
     ],
     settings: { ...DEFAULT_SERVER_SETTINGS, defaultRuntimeMode: "approval-required" },
   } as unknown as ServerConfig;
-  const project = (id: string, environmentId: EnvironmentId, title: string) => ({
+  const project = (id: string, environmentId: EnvironmentId, title: string, model: string) => ({
     id: ProjectId.make(id),
     environmentId,
     title,
-    defaultModelSelection: { instanceId: codex, model: "gpt-5-mini" },
+    defaultModelSelection: { instanceId: codex, model },
   });
   const projects = [
-    project("local-notes", local, "Local notes"),
-    project("field-study", remote, "Field study"),
-    project("survey", remote, "Survey"),
+    project("local-notes", local, "Local notes", "gpt-5"),
+    project("field-study", remote, "Field study", "gpt-5"),
+    project("survey", remote, "Survey", "gpt-5-mini"),
   ];
   const configs = new Map([
     [local, config],
     [remote, config],
   ]);
-  return { useProjects: () => projects, useServerConfigs: () => configs };
+  return {
+    ...(await importOriginal<object>()),
+    useProjects: () => projects,
+    useServerConfigs: () => configs,
+    useThreadShells: () => [],
+  };
 });
-vi.mock("../../state/environments", () => {
+vi.mock("../../state/environments", async (importOriginal) => {
   const environments = [
     { environmentId: local, label: "Local", connection: { phase: "connected" } },
     { environmentId: remote, label: "Lab workstation", connection: { phase: "connected" } },
   ];
   return {
+    ...(await importOriginal<object>()),
     useEnvironments: () => ({ environments }),
     usePrimaryEnvironmentId: () => local,
   };
@@ -168,41 +181,36 @@ async function chooseByKeyboard(option: string, move: "{ArrowDown}" | "{ArrowUp}
 }
 
 describe("ConversationImportDialog keyboard use", () => {
-  it("chooses a destination, project and model and imports without a pointer", async () => {
+  it("picks a project and imports without a pointer", async () => {
     root.render(<ConversationImportDialogHost />);
     requestConversationImport({
       _tag: "browser-file",
       file: new File(["archive"], "field-notes.scic"),
     });
 
-    // The finished check takes focus, so a screen reader reads it first.
-    await expect.poll(focusedLabel).toBe("What's in this file");
+    // The finished check puts focus on Import, so Enter alone would import.
+    await expect.poll(focusedLabel).toBe("Import");
+    expect(trigger("Project")?.textContent).toContain("Local notes");
 
     await userEvent.keyboard("{Shift>}{Tab}{/Shift}");
-    expect(document.activeElement).toBe(trigger("Destination"));
-    expect(trigger("Destination")?.textContent).toContain("This device");
-    await chooseByKeyboard("Lab workstation");
+    expect(focusedLabel()).toBe("Cancel");
+    await userEvent.keyboard("{Shift>}{Tab}{/Shift}");
+    expect(document.activeElement).toBe(trigger("Project"));
+    // A project in another environment sends the file there instead.
+    await chooseByKeyboard("Survey");
     await expect.poll(() => client.previewConversationImport.mock.calls.at(-1)?.[0]).toBe(remote);
     expect(client.cancelConversationImport).toHaveBeenCalledWith(
       local,
       "cimp_00000000-0000-4000-8000-000000000001",
     );
-    await expect.poll(() => trigger("Project")?.textContent ?? "").toContain("Field study");
-
-    await userEvent.tab();
-    expect(document.activeElement).toBe(trigger("Project"));
-    await chooseByKeyboard("Survey");
     expect(trigger("Project")?.textContent).toContain("Survey");
+    // Choosing kept focus on the choice; the finished check did not move it.
+    expect(document.activeElement).toBe(trigger("Project"));
 
     await userEvent.tab();
-    expect(document.activeElement).toBe(trigger("Model for your next message"));
-    expect(trigger("Model for your next message")?.textContent).toContain("GPT-5 mini");
-    await chooseByKeyboard("GPT-5", "{ArrowUp}");
-
-    for (let step = 0; step < 6 && focusedLabel() !== "Import"; step += 1) {
-      await userEvent.tab();
-    }
+    await userEvent.tab();
     expect(focusedLabel()).toBe("Import");
+    await expect.poll(() => (document.activeElement as HTMLButtonElement).disabled).toBe(false);
     await userEvent.keyboard("{Enter}");
 
     await expect.poll(() => client.confirmConversationImport.mock.calls.length).toBe(1);
@@ -212,7 +220,7 @@ describe("ConversationImportDialog keyboard use", () => {
         importId: "cimp_00000000-0000-4000-8000-000000000002",
         destination: {
           projectId: "survey",
-          modelSelection: { instanceId: "codex", model: "gpt-5" },
+          modelSelection: { instanceId: "codex", model: "gpt-5-mini" },
           runtimeMode: "approval-required",
           interactionMode: "default",
         },

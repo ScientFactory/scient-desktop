@@ -1,31 +1,15 @@
 import {
   ConversationImportRejectionReason,
-  PROVIDER_DISPLAY_NAMES,
   SCIC_FILE_EXTENSION,
   SCIENT_CONVERSATION_IMPORT_MAX_PACKAGE_BYTES,
   ScientConversationImportError,
   ScientConversationImportErrorReason,
-  isProviderDriverKind,
   type DesktopConversationFileUploadResult,
   type EnvironmentId,
-  type ModelSelection,
-  type OrchestrationProjectShell,
-  type ServerConfig,
 } from "@t3tools/contracts";
-import {
-  resolveProjectSettings,
-  type LegacyProjectSettingsFields,
-} from "@t3tools/shared/projectSettings";
 import * as Schema from "effect/Schema";
 
 import { resolveEnvironmentOptionLabel } from "../../components/BranchToolbar.logic";
-import { runtimeModeConfig } from "../../components/chat/runtimeModeConfig";
-import {
-  deriveProviderInstanceEntries,
-  isProviderInstancePickerReady,
-  resolveDefaultProviderModelSelection,
-} from "../../providerInstances";
-import { formatProviderDriverKindLabel } from "../../providerModels";
 
 /** Imports always start supervised: the history is unverified. */
 export const IMPORT_RUNTIME_MODE = "approval-required";
@@ -84,141 +68,6 @@ export function importEnvironmentOptions(input: {
     );
 }
 
-export interface ImportModelChoice {
-  readonly key: string;
-  readonly name: string;
-  readonly selection: ModelSelection;
-}
-
-export interface ImportModelGroup {
-  readonly label: string;
-  readonly models: ReadonlyArray<ImportModelChoice>;
-}
-
-function importModelKey(selection: Pick<ModelSelection, "instanceId" | "model">): string {
-  return `${selection.instanceId}/${selection.model}`;
-}
-
-/** The ready provider instances of an environment and their models. */
-export function importModelGroups(
-  config: ServerConfig | undefined,
-): ReadonlyArray<ImportModelGroup> {
-  if (config === undefined) return [];
-  return deriveProviderInstanceEntries(config.providers)
-    .filter(isProviderInstancePickerReady)
-    .map((entry) => ({
-      label: entry.displayName,
-      models: entry.models.map((model) => {
-        const selection = { instanceId: entry.instanceId, model: model.slug } as const;
-        return { key: importModelKey(selection), name: model.name, selection };
-      }),
-    }))
-    .filter((group) => group.models.length > 0);
-}
-
-type ImportProject = Pick<OrchestrationProjectShell, "id"> & LegacyProjectSettingsFields;
-
-function projectSettings(config: ServerConfig, project: ImportProject) {
-  return resolveProjectSettings(config.settings, project.id, project).settings;
-}
-
-/**
- * The model a new thread in `project` would start with, and whether it is
- * ready here: the project's default, else the environment's; only when
- * neither is set, the first ready provider's own default. A set default that
- * is not ready is never replaced by another provider's model: the person
- * chooses one.
- */
-function intendedImportModel(
-  config: ServerConfig | undefined,
-  project: ImportProject | null,
-  groups: ReadonlyArray<ImportModelGroup>,
-): { readonly selection: ModelSelection; readonly ready: boolean } | null {
-  if (config === undefined || project === null) return null;
-  // The default as set, before any availability fallback: resolved settings
-  // drop a project default whose provider is disabled or deleted, which would
-  // silently put the environment's (or another provider's) model in its place.
-  const projectDefault = resolveProjectSettings(config.settings, project.id, project).overrides
-    .defaultModelSelection;
-  const configured =
-    projectDefault !== undefined ? projectDefault : (config.settings.defaultModelSelection ?? null);
-  const selection = configured ?? resolveDefaultProviderModelSelection(config.providers, undefined);
-  if (selection === null) return null;
-  const key = importModelKey(selection);
-  return {
-    selection,
-    ready: groups.some((group) => group.models.some((model) => model.key === key)),
-  };
-}
-
-/** The intended model's key when it is ready here; null leaves the choice to the person. */
-export function defaultImportModelKey(
-  config: ServerConfig | undefined,
-  project: ImportProject | null,
-  groups: ReadonlyArray<ImportModelGroup>,
-): string | null {
-  const intended = intendedImportModel(config, project, groups);
-  return intended?.ready === true ? importModelKey(intended.selection) : null;
-}
-
-/** A short hint when the default model is set but not ready here, so none is chosen. */
-export function unavailableDefaultModelHint(
-  config: ServerConfig | undefined,
-  project: ImportProject | null,
-  groups: ReadonlyArray<ImportModelGroup>,
-): string | null {
-  const intended = intendedImportModel(config, project, groups);
-  if (intended === null || intended.ready || groups.length === 0) return null;
-  const name = selectedModelName(config, intended.selection) ?? intended.selection.model;
-  return `Your default model, ${name}, isn't available here. Choose a model.`;
-}
-
-/** A line saying imports start supervised, when new threads here would not. */
-export function importRuntimeModeNote(
-  config: ServerConfig | undefined,
-  project: ImportProject | null,
-): string | null {
-  if (config === undefined || project === null) return null;
-  if (projectSettings(config, project).defaultRuntimeMode === IMPORT_RUNTIME_MODE) return null;
-  return `Imported conversations start in ${runtimeModeConfig[IMPORT_RUNTIME_MODE].label} mode, which asks before commands and file changes.`;
-}
-
-export function providerDisplayName(driver: string): string {
-  if (!isProviderDriverKind(driver)) return driver;
-  return PROVIDER_DISPLAY_NAMES[driver] ?? formatProviderDriverKindLabel(driver);
-}
-
-/** A source model's name as this environment's provider lists it, else as the file names it. */
-export function modelDisplayName(
-  config: ServerConfig | undefined,
-  driver: string | null,
-  slug: string,
-): string {
-  const providers = config?.providers ?? [];
-  for (const provider of providers) {
-    if (driver !== null && provider.driver !== driver) continue;
-    const model = provider.models.find((candidate) => candidate.slug === slug);
-    if (model) return model.name;
-  }
-  return slug;
-}
-
-/**
- * A selection's model name from every provider the environment knows, ready
- * or not; null when the environment does not list it.
- */
-export function selectedModelName(
-  config: ServerConfig | undefined,
-  selection: Pick<ModelSelection, "instanceId" | "model">,
-): string | null {
-  const provider = config?.providers.find((entry) => entry.instanceId === selection.instanceId);
-  return provider?.models.find((model) => model.slug === selection.model)?.name ?? null;
-}
-
-export function pluralize(count: number, one: string, many: string): string {
-  return `${count} ${count === 1 ? one : many}`;
-}
-
 export const isConversationImportError = Schema.is(ScientConversationImportError);
 const INTERNAL_CODES: ReadonlyArray<string> = [
   ...ScientConversationImportErrorReason.literals,
@@ -233,7 +82,7 @@ const FALLBACK_BY_REASON: Partial<Record<ScientConversationImportErrorReason, st
   "import-not-found": "This import is no longer available. Open the file again.",
   cancelled: "This import was cancelled. Open the file again.",
   "project-not-found": "That project is no longer available. Choose another one.",
-  "provider-unavailable": "That model isn't available right now. Choose another one.",
+  "provider-unavailable": "No model is available right now. Connect a provider and try again.",
 };
 
 /** The server's own words when they are plain, never a code or a file path. */
