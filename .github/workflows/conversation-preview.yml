@@ -1,0 +1,72 @@
+name: Native conversation preview
+
+on:
+  pull_request:
+    paths:
+      - "native/conversation-preview/**"
+      - "scripts/build-conversation-preview.*"
+      - "scripts/lib/conversation-preview-build.ts"
+      - "scripts/lib/conversation-preview-build.test.ts"
+      - ".github/workflows/conversation-preview.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: conversation-preview-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unix:
+    name: Parser and Quick Look (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y zlib1g-dev libjson-c-dev libssl-dev cmake
+      - name: Build native preview without registering it
+        env:
+          SCIC_PREVIEW_BUILD_DIR: ${{ runner.temp }}/conversation-preview
+          SCIC_PREVIEW_MAC_ARCH: universal
+        run: bash scripts/build-conversation-preview.sh
+      - name: Test bounded parser
+        shell: bash
+        run: |
+          executable="${{ runner.temp }}/conversation-preview/scic-preview"
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            executable="${{ runner.temp }}/conversation-preview/macos-universal/native-build/scic-preview"
+          fi
+          python3 native/conversation-preview/tests/test_preview.py "$executable"
+
+  windows:
+    name: Windows preview DLL and parser (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check out pinned native dependency toolchain
+        uses: actions/checkout@v6
+        with:
+          repository: microsoft/vcpkg
+          ref: 9e593bb18ea69cc5095e012465dcd675a822ed0d
+          path: .native-toolchain/vcpkg
+      - name: Build preview with isolated zlib and json-c
+        shell: pwsh
+        run: |
+          $env:VCPKG_ROOT = (Resolve-Path ./.native-toolchain/vcpkg).Path
+          ./scripts/build-conversation-preview.ps1 -Triplet ${{ matrix.arch }}-windows-static -BuildDirectory "${{ runner.temp }}/conversation-preview"
+      - name: Test bounded parser
+        if: matrix.arch == 'x64'
+        shell: pwsh
+        run: python native/conversation-preview/tests/test_preview.py "${{ runner.temp }}/conversation-preview/Release/scic-preview.exe"
