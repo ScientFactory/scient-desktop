@@ -575,7 +575,7 @@ its last three lines hidden behind the composer. A changed-files list, tool
 activity, timestamps or your own message sent after that answer do not count
 as unread. While the agent is working, everything it has produced since your
 latest message is new: when its latest step or answer is below you, **Scroll
-to end** appears.
+to end** appears. The same holds if the turn stops before answering.
 
 Sending at the bottom (by that same rule) gently reveals your message and its
 answer. The first message retains its existing placement

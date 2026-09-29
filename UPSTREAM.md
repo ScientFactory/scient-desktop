@@ -9,9 +9,11 @@ rows and viewport resizes (measured on screen, reacting only when content moves 
 text end), never for new rows or while the reader's own scrolling input is in motion,
 paused during disclosure toggles and briefly after any click or key in the timeline. Scroll bookkeeping runs once per frame. The end is the latest answer's text
 (`withReadingEnd`; the reader's own latest message before any answer), not trailing
-changed files, tool groups, meta rows or the reader's own later messages. While the
-thread works, the end is the running turn's latest content row (busy indicators
-excluded), so its new activity below the reader shows the end control. One rule,
+changed files, tool groups, meta rows or the reader's own later messages. While a
+turn runs (a running turn id, not merely a busy thread), the end is its latest
+content row (busy indicators excluded), so its new activity below the reader shows
+the end control; a turn that stopped before answering keeps its latest content as
+the end. One rule,
 `readerAtReadingEnd`, decides being at the end for the end control, sending,
 navigation, saved positions and idle end keeping: at most the answer's last three
 lines hidden, in its own line height, never less than the inherited 40-pixel band.

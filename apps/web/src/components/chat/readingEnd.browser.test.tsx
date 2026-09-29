@@ -568,20 +568,73 @@ it("shows the end control while a running turn has new activity below the reader
   await listRef.current!.scrollToOffset({ offset: node().scrollTop - 200, animated: false });
   await frames(6);
   const state = listRef.current!.getState();
-  // Precondition: the previous answer's text is still in view (so judging by
-  // it alone would say "at the end"), while new activity is hidden below.
-  expect(readerAtReadingEnd(state, COMPOSER_INSET, false)).toBe(true);
+  // Precondition: the previous answer is still in view, while new activity
+  // is hidden below (judging by that answer alone would say "at the end").
+  expect(rowRect(answer.message.id)!.top).toBeLessThan(
+    node().getBoundingClientRect().top + node().clientHeight - COMPOSER_INSET,
+  );
   expect(state.contentLength - state.scroll - state.scrollLength).toBeGreaterThan(120);
   // While the turn runs, that activity is what's new: not at the end.
   expect(readerAtReadingEnd(state, COMPOSER_INSET, true)).toBe(false);
   expect(onIsAtEndChange.mock.lastCall?.[0]).toBe(false);
 });
 
-it("once the turn is finished, judges the end by the answer again", async () => {
+function toolRows(turn: string, count: number) {
+  return Array.from({ length: count }, (_, i) => ({
+    id: `${turn}-tool-${i}`,
+    kind: "work" as const,
+    createdAt: "2026-09-29T02:00:00.000Z",
+    entry: {
+      id: `${turn}-tool-${i}`,
+      createdAt: "2026-09-29T02:00:00.000Z",
+      turnId: TurnId.make(turn),
+      label: `Run command ${i}`,
+      tone: "tool" as const,
+      toolLifecycleStatus: "completed" as const,
+      detail: `Command output ${i}`,
+    },
+  }));
+}
+const isAtEndNow = (running: boolean) =>
+  readerAtReadingEnd(listRef.current!.getState(), COMPOSER_INSET, running);
+
+it("keeps an interrupted turn's unseen activity below the reader counted", async () => {
+  const key = "reading-end:interrupted";
+  const onIsAtEndChange = vi.fn();
+  const rows = [
+    ...history(8),
+    message(30, "assistant", `Previous answer. ${"Text. ".repeat(40)}`, "turn-30"),
+    message(31, "user", "A short question", "turn-40"),
+    ...toolRows("turn-40", 8),
+  ];
+  render(key, rows, { isWorking: true, runningTurnId: TurnId.make("turn-40"), onIsAtEndChange });
+  await expect.poll(() => readTimelinePosition(key)).toBeDefined();
+  await listRef.current!.scrollToEnd({ animated: false });
+  await frames(6);
+  await listRef.current!.scrollToOffset({ offset: node().scrollTop - 200, animated: false });
+  await frames(6);
+  expect(isAtEndNow(true)).toBe(false);
+  // The turn is stopped before it answers: its tool steps are still unseen.
+  render(key, rows, { isWorking: false, runningTurnId: null, onIsAtEndChange });
+  await frames(6);
+  expect(isAtEndNow(false)).toBe(false);
+  expect(onIsAtEndChange.mock.lastCall?.[0]).toBe(false);
+});
+
+it("judges a finished turn by its answer, and a busy thread without a running turn too", async () => {
   const key = "reading-end:finished-turn";
-  const answer = message(30, "assistant", `Answer. ${"Text. ".repeat(40)}`, "turn-30");
-  const sent = message(31, "user", paragraph(31).repeat(2), "turn-31");
-  render(key, [...history(8), answer, sent]);
+  const onIsAtEndChange = vi.fn();
+  const answer = message(41, "assistant", `The answer. ${"Text. ".repeat(40)}`, "turn-40");
+  const rows = [
+    ...history(8),
+    message(31, "user", "A short question", "turn-40"),
+    ...toolRows("turn-40", 3),
+    answer,
+    // What trails the finished answer (a tool summary) is not unread.
+    ...toolRows("turn-40-tail", 8),
+  ];
+  // Forking or reverting keeps the thread busy without a running turn.
+  render(key, rows, { isWorking: true, runningTurnId: null, onIsAtEndChange });
   await expect.poll(() => readTimelinePosition(key)).toBeDefined();
   await listRef.current!.scrollToEnd({ animated: false });
   await frames(6);
@@ -589,6 +642,9 @@ it("once the turn is finished, judges the end by the answer again", async () => 
   const atTextEnd = withReadingEnd(state, COMPOSER_INSET)!.contentLength - state.scrollLength;
   await listRef.current!.scrollToOffset({ offset: atTextEnd, animated: false });
   await frames(6);
-  // Idle: your own later message below the answer doesn't count.
-  expect(readerAtReadingEnd(listRef.current!.getState(), COMPOSER_INSET, false)).toBe(true);
+  const now = listRef.current!.getState();
+  // Precondition: the trailing tool rows are hidden below.
+  expect(now.contentLength - now.scroll - now.scrollLength).toBeGreaterThan(40);
+  expect(isAtEndNow(false)).toBe(true);
+  expect(onIsAtEndChange.mock.lastCall?.[0]).toBe(true);
 });

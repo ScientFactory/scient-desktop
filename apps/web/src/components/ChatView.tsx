@@ -3690,7 +3690,8 @@ function ChatViewContent(props: ChatViewProps) {
     isCompacting ||
     isForkingThread ||
     awaitingBootstrapTurn;
-  threadWorkingRef.current = isWorking;
+  // Only a turn actually running produces new content (not a fork, revert or send setup).
+  threadWorkingRef.current = activeRunningTurnId !== null;
   const isPreparingWorktree = isLocallyPreparingWorktree || awaitingBootstrapTurn;
   const activeWorkStartedAt = deriveActiveWorkStartedAt(
     activeLatestTurn,

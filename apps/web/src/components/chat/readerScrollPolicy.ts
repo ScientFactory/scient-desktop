@@ -37,17 +37,29 @@ function readingEndRowIndex(rows: readonly MessagesTimelineRow[], running = fals
     }
     return -1;
   }
-  let userIndex = -1;
+  const isAnswer = (row: MessagesTimelineRow | undefined) =>
+    row?.kind === "proposed-plan" || (row?.kind === "message" && row.message.role === "assistant");
+  let promptIndex = -1;
   for (let index = rows.length - 1; index >= 0; index -= 1) {
     const row = rows[index];
-    if (
-      row?.kind === "proposed-plan" ||
-      (row?.kind === "message" && row.message.role === "assistant")
-    )
-      return index;
-    if (userIndex < 0 && row?.kind === "message" && row.message.role === "user") userIndex = index;
+    if (row?.kind === "message" && row.message.role === "user") {
+      promptIndex = index;
+      break;
+    }
   }
-  return userIndex;
+  // The latest turn's own answer, or, when it stopped before answering (an
+  // interrupted or failed turn), its latest content: both are new below it.
+  let turnContent = -1;
+  for (let index = rows.length - 1; index > promptIndex; index -= 1) {
+    const row = rows[index];
+    if (isAnswer(row)) return index;
+    if (turnContent < 0 && row && !INDICATOR_ROW_KINDS.has(row.kind)) turnContent = index;
+  }
+  if (turnContent >= 0) return turnContent;
+  // Nothing after your latest message: the latest answer above it, or your
+  // message itself before any answer exists.
+  for (let index = promptIndex - 1; index >= 0; index -= 1) if (isAnswer(rows[index])) return index;
+  return promptIndex;
 }
 
 /** How many of the answer's last lines may be hidden while the reader counts as at the end. */
@@ -111,11 +123,11 @@ export function readingEndGapOnScreen(
 }
 
 /**
- * The timeline state with its end at the last conversational content: the
- * text of the last message or plan. Trailing changed-file lists, tool groups,
- * timestamps and working indicators are not something the reader has left to
- * read, so they never decide whether the reader is at the bottom. Falls back
- * to the last row (excluding reserved anchor padding) while unmeasured.
+ * The timeline state with its end at the reading end (readingEndRowIndex):
+ * the running turn's latest content, or the latest turn's answer. What trails
+ * a finished answer (changed-file lists, tool groups, timestamps) and busy
+ * indicators never decide whether the reader is at the bottom. Falls back to
+ * the last row (excluding reserved anchor padding) while unmeasured.
  */
 export function withReadingEnd<
   T extends TimelineListMeasurementState & {
