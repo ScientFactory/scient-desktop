@@ -13,7 +13,12 @@ import {
   useSensors,
 } from "@dnd-kit/core";
 import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-kit/modifiers";
-import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import {
+  SortableContext,
+  type SortingStrategy,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
@@ -41,7 +46,7 @@ import { stackedThreadToast, toastManager } from "../../components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { useThreadActions } from "../../hooks/useThreadActions";
 import { cn } from "../../lib/utils";
-import { useThreadSectionActions } from "./actions";
+import { readEnvironmentSupportsThreadReorder, useThreadSectionActions } from "./actions";
 import { FadeTruncate } from "./FadeTruncate";
 import {
   GENERAL_SECTION_GROUP_ID,
@@ -53,6 +58,7 @@ import {
   resolveSectionDragOrder,
   resolveSectionsDropTarget,
   type SectionBlock,
+  sectionsDropIndex,
   sectionShifts,
   sectionGroupIdFromHeaderItemId,
   sectionHeaderItemId,
@@ -276,6 +282,17 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
   const holding = items !== canonicalItems;
 
   const sortableIds = useMemo(() => items.map((item) => item.id), [items]);
+  // Rows slide to where a drop would land, so over a header the lifted row
+  // shows below it, in that header's section (see sectionsDropIndex).
+  const sortingStrategy = useCallback<SortingStrategy>(
+    (args) =>
+      verticalListSortingStrategy(
+        args.activeIndex < 0 || args.overIndex < 0 || items[args.activeIndex]?.kind !== "thread"
+          ? args
+          : { ...args, overIndex: sectionsDropIndex(items, args.activeIndex, args.overIndex) },
+      ),
+    [items],
+  );
 
   const lifecycleByKey = useMemo(
     () =>
@@ -345,20 +362,6 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
     [],
   );
 
-  const handleDragOver = useCallback(
-    (event: DragOverEvent) => {
-      const activeId = String(event.active.id);
-      if (sectionGroupIdFromHeaderItemId(activeId) !== null) return;
-      const target = event.over
-        ? resolveSectionsDropTarget(items, activeId, String(event.over.id))
-        : null;
-      setDrag((current) =>
-        current?.kind === "thread" && current.key === activeId ? { ...current, target } : current,
-      );
-    },
-    [items],
-  );
-
   const reportFailure = useCallback(
     (title: string, result: AtomCommandResult<unknown, unknown>) => {
       if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
@@ -403,12 +406,13 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
     [groups, items, onReorderSections],
   );
 
-  const dropThread = useCallback(
+  /** What dropping the lifted row over `overId` would do; null when nothing. */
+  const planThreadDrop = useCallback(
     (activeKey: string, overId: string) => {
       const thread = threadByKey.get(activeKey);
       const source = items.find((item) => item.id === activeKey);
       const target = resolveSectionsDropTarget(items, activeKey, overId);
-      if (thread === undefined || source?.kind !== "thread" || target === null) return;
+      if (thread === undefined || source?.kind !== "thread" || target === null) return null;
       const plan = planSectionsThreadDrop({
         source: {
           key: activeKey,
@@ -424,19 +428,54 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
         toSectionId: (groupId) =>
           groupId === GENERAL_SECTION_GROUP_ID ? null : ThreadSectionId.make(groupId),
       });
+      return plan.kind === "none" ? null : { thread, target, plan };
+    },
+    [activeKeysById, items, lifecycleByKey, orderOfGroup, pinnedKeysById, threadByKey],
+  );
+
+  // Only a drop that changes something highlights its section or shelf.
+  const handleDragOver = useCallback(
+    (event: DragOverEvent) => {
+      const activeId = String(event.active.id);
+      if (sectionGroupIdFromHeaderItemId(activeId) !== null) return;
+      const target = event.over
+        ? (planThreadDrop(activeId, String(event.over.id))?.target ?? null)
+        : null;
+      setDrag((current) =>
+        current?.kind === "thread" && current.key === activeId ? { ...current, target } : current,
+      );
+    },
+    [planThreadDrop],
+  );
+
+  const dropThread = useCallback(
+    (activeKey: string, overId: string) => {
+      const planned = planThreadDrop(activeKey, overId);
+      if (planned === null) return;
+      const { thread, target, plan } = planned;
       const threadRef = scopeThreadRef(thread.environmentId, thread.id);
-      if (plan.kind === "none") return;
       if (plan.kind === "settle") {
         onSettleThread(threadRef);
         return;
       }
       if (target.kind === "section") {
         // Show the drop where it landed while the writes travel.
+        const activeIndex = items.findIndex((item) => item.id === activeKey);
         const overIndex = items.findIndex((item) => item.id === overId);
         const ids = items.map((item) => item.id).filter((id) => id !== activeKey);
-        ids.splice(overIndex, 0, activeKey);
+        ids.splice(sectionsDropIndex(items, activeIndex, overIndex), 0, activeKey);
         setHeld({ ids, expiresAt: Date.now() + HELD_LAYOUT_MS });
       }
+      // Order keys are written only where every row's server takes them; the
+      // section move does not depend on them.
+      const assignments = plan.assignments.every((assignment) => {
+        const row = threadByKey.get(assignment.id);
+        return (
+          row !== undefined && readEnvironmentSupportsThreadReorder(row.environmentId, plan.group)
+        );
+      })
+        ? plan.assignments
+        : [];
       const release = () => setHeld(null);
       void (async () => {
         if (plan.unsettle) {
@@ -458,7 +497,7 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
             ? moveThreadsToSection([threadRef], plan.sectionId)
             : Promise.resolve(true);
         // Stop on failure; each successful key write remains a valid placement.
-        for (const assignment of plan.assignments) {
+        for (const assignment of assignments) {
           const target = threadByKey.get(assignment.id);
           if (target === undefined) continue;
           const result = await (
@@ -480,13 +519,10 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
       })();
     },
     [
-      activeKeysById,
       items,
-      lifecycleByKey,
       moveThreadsToSection,
       onSettleThread,
-      orderOfGroup,
-      pinnedKeysById,
+      planThreadDrop,
       reorderActiveThread,
       reorderPinnedThread,
       reportFailure,
@@ -549,7 +585,7 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
       onDragEnd={handleDragEnd}
       onDragCancel={handleDragCancel}
     >
-      <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
+      <SortableContext items={sortableIds} strategy={sortingStrategy}>
         <ul ref={listRef} role="list" className="relative flex flex-1 flex-col gap-px">
           {props.leading}
           {items.map((item, index) => {

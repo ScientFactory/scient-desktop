@@ -23,6 +23,7 @@ import {
   sectionShifts,
   resolveSectionsDropTarget,
   sectionHeaderItemId,
+  sectionsDropIndex,
   type SectionsLifecycle,
   type SectionsListItem,
 } from "./logic";
@@ -247,20 +248,55 @@ describe("Sections view drops", () => {
     });
   });
 
-  it("lands a row dragged up onto a header where the list shows it: above that header", () => {
-    // Moving up over Perma's header slides the header down, so the gap (and
-    // the drop) is at the end of Research, not inside Perma.
+  it("files a row dropped on a header into that section, at its top, from either side", () => {
+    // Dragged up onto Perma's header: into Perma, not the end of Research.
     expect(resolveSectionsDropTarget(items, "o1", sectionHeaderItemId("perma"))).toEqual({
       kind: "section",
-      groupId: "research",
-      order: ["r-pin", "r1", "r2", "o1"],
+      groupId: "perma",
+      order: ["o1", "p1"],
     });
-    // Moving down over it lands at the top of Perma.
+    expect(plan("o1", sectionHeaderItemId("perma"))).toMatchObject({
+      kind: "move",
+      sectionId: "perma",
+    });
+    // Dragged down onto it: the same place.
     expect(resolveSectionsDropTarget(items, "r2", sectionHeaderItemId("perma"))).toEqual({
       kind: "section",
       groupId: "perma",
       order: ["r2", "p1"],
     });
+  });
+
+  it("reaches a header-only (empty or collapsed) section from below", () => {
+    const withEmpty: SectionsListItem[] = [
+      header("research"),
+      row("r1", "active", "research"),
+      header("empty"),
+      header(GENERAL_SECTION_GROUP_ID),
+      row("o1", "active", GENERAL_SECTION_GROUP_ID),
+    ];
+    expect(resolveSectionsDropTarget(withEmpty, "o1", sectionHeaderItemId("empty"))).toEqual({
+      kind: "section",
+      groupId: "empty",
+      order: ["o1"],
+    });
+  });
+
+  it("places the row just below a header it is dragged up onto", () => {
+    // The list slides rows to this index while dragging, so the preview
+    // matches the drop.
+    const perma = items.findIndex((item) => item.id === sectionHeaderItemId("perma"));
+    const o1 = items.findIndex((item) => item.id === "o1");
+    expect(sectionsDropIndex(items, o1, perma)).toBe(perma + 1);
+    const r2 = items.findIndex((item) => item.id === "r2");
+    expect(sectionsDropIndex(items, r2, perma)).toBe(perma);
+    // Over a row, the row's own slot.
+    const r1 = items.findIndex((item) => item.id === "r1");
+    expect(sectionsDropIndex(items, o1, r1)).toBe(r1);
+  });
+
+  it("does nothing when a row is dropped on its own section's header while already on top", () => {
+    expect(plan("p1", sectionHeaderItemId("perma"))).toEqual({ kind: "none" });
   });
 
   it("files a thread in General and reorders within a section", () => {

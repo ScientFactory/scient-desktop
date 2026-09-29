@@ -19,6 +19,7 @@ vi.mock("../../hooks/useThreadActions", () => {
 const moveThreadsToSection = vi.fn(async () => true);
 vi.mock("./actions", () => ({
   readEnvironmentSupportsSections: () => true,
+  readEnvironmentSupportsThreadReorder: () => true,
   useThreadSectionActions: () => ({ moveThreadsToSection, setThreadSection: vi.fn() }),
 }));
 
@@ -203,6 +204,33 @@ it("still files a dragged thread into the section it is dropped in", async () =>
   expect(moveThreadsToSection).toHaveBeenCalledWith(
     [expect.objectContaining({ threadId: "g1" })],
     "b",
+  );
+});
+
+it("files a thread dragged up onto a collapsed section's header into that section", async () => {
+  moveThreadsToSection.mockClear();
+  // A is collapsed, so only its header is left to drop on.
+  renderView(vi.fn(), { collapsed: ["a"] });
+  await nextFrame();
+  const row = document.querySelector<HTMLElement>('[data-row="b2"]')!;
+  const start = row.getBoundingClientRect();
+  const x = start.left + 20;
+  let y = start.top + start.height / 2;
+  pointer("pointerdown", row, x, y);
+  const header = headerOf("a").getBoundingClientRect();
+  while (y > header.top + header.height / 2) {
+    y -= 12;
+    pointer("pointermove", document, x, y);
+    await nextFrame();
+  }
+  // The header stays put and highlights: the drop goes into A, not the
+  // section above it.
+  expect(headerOf("a").getBoundingClientRect().top).toBeCloseTo(header.top, 0);
+  pointer("pointerup", document, x, y);
+  await nextFrame();
+  expect(moveThreadsToSection).toHaveBeenCalledWith(
+    [expect.objectContaining({ threadId: "b2" })],
+    "a",
   );
 });
 

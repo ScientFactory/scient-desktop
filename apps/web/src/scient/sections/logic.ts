@@ -519,9 +519,27 @@ export type SectionsDropTarget =
   | { readonly kind: "settled" };
 
 /**
+ * The index a lifted row takes in the list without it, when dropped over the
+ * item at `overIndex`. A row lands in the over item's slot, except over a
+ * section header, where it always lands just below the header (the top of
+ * that section), whichever way it was dragged. Without that, dragging up onto
+ * a header would file the row into the section above it, and a header-only
+ * (empty or collapsed) section could never be reached from below.
+ */
+export function sectionsDropIndex(
+  items: readonly SectionsListItem[],
+  activeIndex: number,
+  overIndex: number,
+): number {
+  if (items[overIndex]?.kind !== "header" || overIndex > activeIndex) return overIndex;
+  return overIndex + 1;
+}
+
+/**
  * Where a lifted row lands if dropped over `overId`: the section whose header
  * precedes the slot (with that section's rows in their new order), the settled
- * shelf, or nowhere (the snoozed shelf is never a destination).
+ * shelf, or nowhere (the snoozed shelf is never a destination). Over a header,
+ * that header's section, at its top (see `sectionsDropIndex`).
  */
 export function resolveSectionsDropTarget(
   items: readonly SectionsListItem[],
@@ -532,10 +550,11 @@ export function resolveSectionsDropTarget(
   const overIndex = items.findIndex((item) => item.id === overId);
   const active = items[activeIndex];
   if (activeIndex === -1 || overIndex === -1 || active?.kind !== "thread") return null;
+  const dropIndex = sectionsDropIndex(items, activeIndex, overIndex);
   const moved = items.filter((_, index) => index !== activeIndex);
-  moved.splice(overIndex, 0, active);
+  moved.splice(dropIndex, 0, active);
   let owner: SectionsListItem | null = null;
-  for (let index = overIndex - 1; index >= 0; index -= 1) {
+  for (let index = dropIndex - 1; index >= 0; index -= 1) {
     const item = moved[index]!;
     if (item.kind !== "thread") {
       owner = item;
