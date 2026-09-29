@@ -268,6 +268,10 @@ export type ScientConversationImportPreview = typeof ScientConversationImportPre
 export const ConversationImportDestination = Schema.Struct({
   projectId: ProjectId,
   modelSelection: ModelSelection,
+  /**
+   * Imports always start supervised: the server makes every imported thread
+   * `approval-required` and reports that mode back; another value is ignored.
+   */
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
 });

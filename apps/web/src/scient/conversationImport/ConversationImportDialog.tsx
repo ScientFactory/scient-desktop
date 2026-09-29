@@ -56,6 +56,8 @@ import {
   importModelGroups,
   importRuntimeModeNote,
   isAbort,
+  isMarkdownFileName,
+  isRecordLimitRefusal,
   isConversationImportError,
   modelDisplayName,
   selectedModelName,
@@ -172,7 +174,12 @@ type Stage =
   | { readonly _tag: "sending"; readonly sentBytes: number | null; readonly totalBytes: number }
   | { readonly _tag: "checking" }
   | { readonly _tag: "ready"; readonly preview: ScientConversationImportPreview }
-  | { readonly _tag: "failed"; readonly message: string };
+  | {
+      readonly _tag: "failed";
+      readonly message: string;
+      /** A Markdown transcript too long to import can still start a conversation as a document. */
+      readonly wholeFile?: true;
+    };
 
 function stageStatus(stage: Stage): string | null {
   switch (stage._tag) {
@@ -383,6 +390,7 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
         .catch(() => undefined);
     };
     const { name, sizeBytes } = sourceFile(source)!;
+    let checking = false;
     void (async () => {
       setDestination((current) => current ?? environmentId);
       try {
@@ -425,6 +433,7 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
         }
         if (stopped()) return;
         setStage({ _tag: "checking" });
+        checking = true;
         const preview = await previewConversationImport(environmentId, upload.importId);
         if (!stopped()) setStage({ _tag: "ready", preview });
       } catch (cause) {
@@ -433,6 +442,15 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
         setStage({
           _tag: "failed",
           message: importFailureMessage(cause, "This file couldn't be checked. Try again."),
+          // The check refused a transcript for its length; the same file as a
+          // document is one message. A file refused for its size is not offered.
+          ...(checking &&
+          source._tag === "browser-file" &&
+          markdownMode === undefined &&
+          isMarkdownFileName(name) &&
+          isRecordLimitRefusal(cause)
+            ? { wholeFile: true as const }
+            : {}),
         });
       }
     })();
@@ -631,10 +649,15 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
             : stage._tag === "failed"
               ? stage.message
               : null);
+  const offersWholeFile =
+    stage._tag === "failed" && stage.wholeFile === true && failure === stage.message;
   // "Try again" resends to the same destination, only once it is connected.
+  // A transcript too long to import would be refused again; it gets the
+  // document choice instead.
   const canRetry =
     fileProblem === null &&
     !destinationGone &&
+    !offersWholeFile &&
     (connectionLost ? destinationOption?.connected === true : stage._tag === "failed");
   const environmentLabel = environmentOptions.find(
     (option) => option.environmentId === environmentId,
@@ -718,6 +741,16 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
                     onClick={() => setRetries((count) => count + 1)}
                   >
                     Try again
+                  </Button>
+                ) : null}
+                {offersWholeFile ? (
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="outline"
+                    onClick={() => setDocumentModeFor(source)}
+                  >
+                    Start with the whole file instead
                   </Button>
                 ) : null}
               </div>

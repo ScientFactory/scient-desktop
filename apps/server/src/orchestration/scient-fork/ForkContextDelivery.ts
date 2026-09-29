@@ -494,6 +494,9 @@ const make = Effect.gen(function* () {
       activities: thread.activities,
       proposedPlans: thread.proposedPlans,
       beforeMessageId: input.message.id,
+      // Imported history is an inherited prefix, whatever the clocks say.
+      inheritedThrough:
+        transfer.type === "import" ? thread.conversationImport?.importedAt : undefined,
       midTurnCut,
     });
     if (items.length === 0) {

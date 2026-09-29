@@ -776,11 +776,45 @@ describe("ConversationImportStaging", () => {
         assert.strictEqual(error.reason, "package-too-large");
         assert.strictEqual(
           error.message,
-          "This conversation is too long to import: it has 5,001 messages and other items, and Scient imports up to 5,000 at once. Export it again without the work log, or only up to an earlier message.",
+          "This conversation is too long to import: it has 5,001 messages and other items, and Scient imports up to 5,000 at once. Export it again with the work log and reasoning turned off.",
         );
       }
       assert.isFalse(NodeFS.existsSync(NodePath.join(stagingRoot(config), importId)));
     }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+  );
+
+  it.effect(
+    "refuses a Markdown transcript over the limit, but not the same file as a document",
+    () =>
+      Effect.gen(function* () {
+        resetImporter();
+        const staging = yield* makeStaging();
+        const markdown = [
+          "---",
+          "scient: conversation",
+          "scient-format: 1",
+          "scient-export: 7f3c9a2e41b8",
+          "title: Long transcript",
+          "---",
+          "",
+          ...Array.from({ length: CONVERSATION_IMPORT_MAX_RECORDS + 1 }, (_, index) => [
+            `<!-- scient:message export=7f3c9a2e41b8 n=${index + 1} role=user time=2026-09-27T14:05:00Z -->`,
+            `Message ${index + 1}`,
+            "",
+          ]).flat(),
+        ].join("\n");
+        const transcript = yield* uploadMarkdown(staging, markdown);
+        const error = yield* Effect.flip(staging.preview(transcript.importId));
+        assert.strictEqual(error._tag, "ScientConversationImportError");
+        if (error._tag === "ScientConversationImportError") {
+          assert.strictEqual(error.reason, "package-too-large");
+          assert.include(error.message, "Import it as a document instead.");
+        }
+        const document = yield* uploadMarkdown(staging, markdown, "document");
+        const preview = yield* staging.preview(document.importId);
+        assert.strictEqual(preview.kind, "document");
+        assert.strictEqual(preview.counts.messages, 1);
+      }).pipe(Effect.scoped, Effect.provide(TestLayer)),
   );
 
   it.effect("refuses Markdown that is not UTF-8 text in plain words", () =>
@@ -984,6 +1018,33 @@ describe("ConversationImportStaging", () => {
       fake.settleAttempt = () => Effect.succeed({ _tag: "rolled-back" });
       yield* staging.sweep;
       assert.deepStrictEqual(NodeFS.readdirSync(root), ["completions"]);
+    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+  );
+
+  it.effect("starts every import supervised, whatever mode the confirm asks for", () =>
+    Effect.gen(function* () {
+      const requested: string[] = [];
+      resetImporter({
+        importConversation: (lease, request) => {
+          requested.push(request.destination.runtimeMode);
+          return Effect.succeed(completionFor(lease, request));
+        },
+      });
+      const staging = yield* makeStaging();
+      const { importId, packageSha256 } = yield* stagedImport(staging);
+      const fullAccess = confirmRequest(importId, packageSha256, {
+        destination: { ...destination, runtimeMode: "full-access" },
+      });
+      const result = yield* staging.confirm(fullAccess, principal);
+      assert.deepStrictEqual(requested, ["approval-required"]);
+      assert.strictEqual(result.destination.runtimeMode, "approval-required");
+      // Repeating the confirm, either way, answers with the same import.
+      assert.deepStrictEqual(yield* staging.confirm(fullAccess, principal), result);
+      assert.deepStrictEqual(
+        yield* staging.confirm(confirmRequest(importId, packageSha256), principal),
+        result,
+      );
+      assert.strictEqual(fake.imports, 1);
     }).pipe(Effect.scoped, Effect.provide(TestLayer)),
   );
 

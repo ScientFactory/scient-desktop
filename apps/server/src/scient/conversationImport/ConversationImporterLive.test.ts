@@ -18,12 +18,14 @@ import {
   writeConversationMarkdown,
 } from "@scientfactory/conversation";
 import { assert, describe, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { ServerConfig } from "../../config.ts";
@@ -102,9 +104,17 @@ const leaseFor = (
     }),
   );
 
-/** Every test runs against a fresh engine, database, and state directory. */
+/**
+ * Every test runs against a fresh engine, database, and state directory, on a
+ * clock set after the fixtures' history (the test clock otherwise starts in
+ * 1970, which would date every fixture after the import).
+ */
 const withImporter = <A, E, R>(effect: Effect.Effect<A, E, R>, controls?: ImportTestControls) =>
-  createProjects.pipe(Effect.andThen(effect), Effect.provide(importTestLayer(controls)));
+  TestClock.setTime(Date.parse("2026-09-28T09:30:00.000Z")).pipe(
+    Effect.andThen(createProjects),
+    Effect.andThen(effect),
+    Effect.provide(importTestLayer(controls)),
+  );
 
 const failImport = (lease: ConversationImportLease, request = importRequest()) =>
   Effect.flatMap(ConversationImporter, (importer) =>
@@ -348,6 +358,243 @@ describe("ConversationImporter", () => {
         assert.isFalse(idsCoverImport({ ...ids, proposedPlans: {} }, input));
       }),
     ),
+  );
+
+  it.effect("starts the imported thread supervised even when full access is requested", () =>
+    withImporter(
+      Effect.gen(function* () {
+        const { lease } = yield* leaseFor(importFixture({ turns: 1 }));
+        const completion = yield* importOnce(lease, importRequest({ runtimeMode: "full-access" }));
+        assert.strictEqual(completion.result.destination.runtimeMode, "approval-required");
+        const thread = (yield* readThread(completion.result.threadId))!;
+        assert.strictEqual(thread.runtimeMode, "approval-required");
+        const journal = yield* journalOf(lease.attemptDirectory);
+        assert.strictEqual(journal.binding.destination.runtimeMode, "approval-required");
+        // The command itself never carries another mode, whatever destination it is given.
+        const command = buildConversationImportCommand({
+          validated: lease.input,
+          ids: journal.ids,
+          destination: destination({ runtimeMode: "full-access" }),
+          importedAt: journal.importedAt,
+        });
+        assert.strictEqual(command.runtimeMode, "approval-required");
+      }),
+    ),
+  );
+
+  it.effect("keeps what the sender's work log left out through import and re-export", () =>
+    withImporter(
+      Effect.gen(function* () {
+        const fixture = importFixture({ turns: 1, workLog: true });
+        const source = fixture.input.snapshot;
+        const turnId = source.workLog[0]!.turnId;
+        const at = (second: number) => `2026-09-27T10:00:1${second}.000Z`;
+        const cut = (lines: number, chars: number) => ({
+          text: `head\n[… ${lines} lines omitted …]\ntail`,
+          omittedLines: lines,
+          omittedChars: chars,
+        });
+        const workLog: typeof source.workLog = [
+          {
+            _tag: "tool",
+            id: "src-tool-cut",
+            turnId,
+            createdAt: at(1),
+            title: "Edit many files",
+            itemType: "file_change",
+            toolName: "Edit",
+            status: "completed",
+            command: cut(3, 30),
+            detail: cut(4, 40),
+            output: cut(40, 4_000),
+            changedFiles: Array.from({ length: 50 }, (_, index) => `src/file-${index + 1}.ts`),
+            omittedChangedFiles: 7,
+          },
+          {
+            _tag: "task",
+            id: "src-task-cut",
+            turnId,
+            createdAt: at(2),
+            title: "Review",
+            status: "completed",
+            agentRole: null,
+            detail: cut(5, 50),
+          },
+          {
+            _tag: "notice",
+            id: "src-notice-cut",
+            turnId,
+            createdAt: at(3),
+            level: "warning",
+            title: "Slow network",
+            detail: cut(6, 60),
+          },
+          {
+            _tag: "plan-steps",
+            id: "src-plan-cut",
+            turnId,
+            createdAt: at(4),
+            explanation: cut(8, 80),
+            steps: Array.from({ length: 100 }, (_, index) => ({
+              step: `Step ${index + 1}`,
+              status: "pending" as const,
+            })),
+            omittedSteps: 12,
+          },
+        ];
+        const input: typeof fixture.input = {
+          ...fixture.input,
+          snapshot: { ...source, workLog },
+        };
+        const { lease } = yield* leaseFor({ ...fixture, input });
+        const { result } = yield* importOnce(lease);
+        const snapshot = buildConversationSnapshot({
+          thread: (yield* readThread(result.threadId))!,
+          snapshotSequence: 1,
+          threadSequence: 1,
+          capturedAt: "2026-09-28T11:01:00.000Z",
+          selection: { workLog: true, reasoning: false, throughMessageId: null },
+          isAttachmentAvailable: () => false,
+        });
+        const withoutIdentity = (entries: typeof workLog) =>
+          entries.map(({ id: _id, turnId: _turnId, ...entry }) => entry);
+        assert.deepStrictEqual(withoutIdentity(snapshot.workLog), withoutIdentity(workLog));
+
+        const markdown = writeConversationMarkdown({
+          bundle: buildConversationDocument({
+            snapshot: { ...snapshot, contentDigest: `sha256:${"a".repeat(64)}` },
+            exportValue: "7f3c9a2e41b8",
+            timeZone: "UTC",
+            resolveAttachment: () => ({ _tag: "unavailable", reason: "missing" }),
+          }).bundle,
+          exportValue: "7f3c9a2e41b8",
+          exported: "2026-09-28T11:01:00.000Z",
+          packaging: "text",
+        });
+        assert.include(markdown, "and 7 more");
+        assert.include(markdown, "12 more steps");
+      }),
+    ),
+  );
+
+  it.effect(
+    "keeps history dated after this server's clock as an inherited prefix, with a note",
+    () =>
+      withImporter(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse("2026-09-28T10:00:00.000Z"));
+          // The sender's clock ran a day and a little ahead of this server's.
+          const isoAt = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
+          const ahead = (iso: string) => isoAt(Date.parse(iso) + 2 * 24 * 60 * 60_000);
+          const fixture = importFixture({ turns: 3, reasoning: true, workLog: true });
+          const source = fixture.input.snapshot;
+          const input: typeof fixture.input = {
+            ...fixture.input,
+            snapshot: {
+              ...source,
+              messages: source.messages.map((message) => ({
+                ...message,
+                createdAt: ahead(message.createdAt),
+                updatedAt: ahead(message.updatedAt),
+              })),
+              reasoning: source.reasoning.map((reasoning) => ({
+                ...reasoning,
+                createdAt: ahead(reasoning.createdAt),
+                updatedAt: ahead(reasoning.updatedAt),
+              })),
+              workLog: source.workLog.map((entry) => ({
+                ...entry,
+                createdAt: ahead(entry.createdAt),
+              })),
+              proposedPlans: source.proposedPlans.map((plan) => ({
+                ...plan,
+                createdAt: ahead(plan.createdAt),
+                updatedAt: ahead(plan.updatedAt),
+              })),
+            },
+          };
+          const { lease } = yield* leaseFor({ ...fixture, input });
+          const { result } = yield* importOnce(lease);
+          const imported = (yield* readThread(result.threadId))!;
+          // Moved back together by how far the latest time was ahead: no
+          // imported time is later than the import, and spacing is kept.
+          const latest = "2026-09-29T10:00:36.000Z";
+          const shift = Date.parse(latest) - Date.parse("2026-09-28T10:00:00.000Z");
+          assert.strictEqual(imported.conversationImport?.timesShiftedMs, shift);
+          assert.deepStrictEqual(
+            imported.messages.map((message) => message.createdAt).toSorted(),
+            [...input.snapshot.messages, ...input.snapshot.reasoning]
+              .map((record) => isoAt(Date.parse(record.createdAt) - shift))
+              .toSorted(),
+          );
+          for (const time of [
+            ...imported.messages.flatMap((message) => [message.createdAt, message.updatedAt]),
+            ...imported.activities.map((activity) => activity.createdAt),
+            ...imported.proposedPlans.flatMap((plan) => [plan.createdAt, plan.updatedAt]),
+          ]) {
+            assert.isAtMost(Date.parse(time), Date.parse(imported.conversationImport!.importedAt));
+          }
+
+          // A message sent after the import shows after all of it, and the
+          // agent receives all of it.
+          const engine = yield* OrchestrationEngineService;
+          const messageId = MessageId.make("after-skewed-import");
+          yield* engine.dispatch({
+            type: "thread.turn.start",
+            commandId: CommandId.make("start-after-skewed-import"),
+            threadId: result.threadId,
+            message: { messageId, role: "user", text: "Carry on", attachments: [] },
+            runtimeMode: "approval-required",
+            interactionMode: "default",
+            createdAt: "2026-09-28T10:05:00.000Z",
+          });
+          const thread = (yield* readThread(result.threadId))!;
+          assert.strictEqual(thread.messages.at(-1)?.id, messageId);
+          const prepared = yield* Effect.flatMap(ScientForkContextDelivery, (delivery) =>
+            delivery.prepareTurn({
+              thread,
+              message: thread.messages.at(-1)!,
+              userText: "Carry on",
+              attachments: [],
+              nativeThreadKey: null,
+              sessionRunning: false,
+            }),
+          );
+          assert.strictEqual(prepared.kind, "deliver");
+          if (prepared.kind !== "deliver") return;
+          assert.strictEqual(prepared.omittedItemCount, 0);
+          for (const text of ["Question 1", "Answer 3", "Thinking about 3", "ok 3", "Ship it"]) {
+            assert.include(prepared.contextPreamble, text);
+          }
+
+          // Exporting again keeps the note; a later import adds its own move.
+          const exported = buildConversationSnapshot({
+            thread,
+            snapshotSequence: 1,
+            threadSequence: 1,
+            capturedAt: "2026-09-28T10:06:00.000Z",
+            selection: { workLog: true, reasoning: true, throughMessageId: null },
+            isAttachmentAvailable: () => false,
+          });
+          assert.strictEqual(
+            exported.provenance._tag === "import" ? exported.provenance.timesShiftedMs : null,
+            shift,
+          );
+          const { ids } = yield* journalOf(lease.attemptDirectory);
+          const reimport = (importedAt: string) =>
+            buildConversationImportCommand({
+              validated: {
+                ...input,
+                snapshot: { ...input.snapshot, provenance: exported.provenance },
+              },
+              ids,
+              destination: destination(),
+              importedAt,
+            }).origin.timesShiftedMs;
+          assert.strictEqual(reimport("2027-01-01T00:00:00.000Z"), shift);
+          assert.strictEqual(reimport("2026-09-29T10:00:00.000Z"), shift + 36_000);
+        }),
+      ),
   );
 
   it.effect("imports a package as a new independent thread with fresh ids", () =>

@@ -14,10 +14,20 @@ export interface TextBounds {
   readonly tailChars: number;
 }
 
-export const OMISSION_LINE_PATTERN = /^\[… \d+ lines? omitted …\]$/u;
+/** An omission line as `boundText` writes it: a count of 1 to 9 digits, no leading zero. */
+export const OMISSION_LINE_PATTERN = /^\[… ([1-9]\d{0,8}) lines? omitted …\]$/u;
 
 function omissionLine(omittedLines: number): string {
   return `[… ${omittedLines} ${omittedLines === 1 ? "line" : "lines"} omitted …]`;
+}
+
+/** The longest omission line `boundText` can write. */
+const MAX_OMISSION_LINE_CHARS = omissionLine(999_999_999).length;
+
+/** Exactly an omission line `boundText` writes, count and wording included. */
+function isOmissionLine(line: string): boolean {
+  const count = OMISSION_LINE_PATTERN.exec(line)?.[1];
+  return count !== undefined && line === omissionLine(Number(count));
 }
 
 function countLines(text: string): number {
@@ -30,13 +40,42 @@ function countLines(text: string): number {
 }
 
 /**
+ * Whether `text` is already this function's output for `bounds`: a head and
+ * a tail within the character bounds, joined by one omission line exactly as
+ * `omissionLine` writes it, and no longer than such output can be. A cut
+ * by characters splits a line in two and the omission line adds one more, so
+ * the head and tail together may hold two lines beyond the line bounds.
+ */
+function isBoundedOutput(text: string, lines: ReadonlyArray<string>, bounds: TextBounds): boolean {
+  const maxLines = bounds.headLines + bounds.tailLines + 2;
+  if (lines.length > maxLines + 1) return false;
+  // The head, two line breaks, and the longest omission line, and the tail.
+  if (text.length > bounds.headChars + bounds.tailChars + 2 + MAX_OMISSION_LINE_CHARS) return false;
+  return lines.some((line, index) => {
+    if (!isOmissionLine(line)) return false;
+    const head = lines.slice(0, index).join("\n");
+    const tail = lines.slice(index + 1).join("\n");
+    return head.length <= bounds.headChars && tail.length <= bounds.tailChars;
+  });
+}
+
+/**
  * Bounds `text` by lines, then by characters. The kept head and tail are
  * joined by one "[… N lines omitted …]" line; `omittedLines` counts the whole
- * or partial lines removed and `omittedChars` the characters removed.
+ * or partial lines removed and `omittedChars` the characters removed. Text
+ * this function already bounded is returned as it is, with nothing further
+ * omitted, so bounding is idempotent: an exported and re-imported text keeps
+ * its own omission line and the counts recorded with it.
  */
 export function boundText(text: string, bounds: TextBounds): ConversationBoundedText {
   const normalized = text.replace(/\r\n?/gu, "\n");
   const lines = normalized.split("\n");
+  const withinBounds =
+    lines.length <= bounds.headLines + bounds.tailLines + 1 &&
+    normalized.length <= bounds.headChars + bounds.tailChars;
+  if (withinBounds || isBoundedOutput(normalized, lines, bounds)) {
+    return { text: normalized, omittedLines: 0, omittedChars: 0 };
+  }
   let head = normalized;
   let tail = "";
   let omittedLines = 0;

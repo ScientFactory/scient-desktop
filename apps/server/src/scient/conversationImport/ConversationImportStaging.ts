@@ -76,6 +76,7 @@ import {
   ConversationImportStagingError,
   conversationImportRecordCount,
   joinValidatedConversationImport,
+  conversationImportDestination,
   sameConversationImportDestination,
   type AbandonedConversationImportAttempt,
   type ConversationImportAttemptBinding,
@@ -825,7 +826,7 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
             `This conversation is too long to import: it has ${recordCount.toLocaleString("en-US")} messages and other items, and Scient imports up to ${CONVERSATION_IMPORT_MAX_RECORDS.toLocaleString("en-US")} at once. ${
               isMarkdown
                 ? "Import it as a document instead."
-                : "Export it again without the work log, or only up to an earlier message."
+                : "Export it again with the work log and reasoning turned off."
             }`,
           );
         }
@@ -1287,7 +1288,11 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
 
     const confirm: ConversationImportStaging["Service"]["confirm"] = Effect.fn(
       "ConversationImportStaging.confirm",
-    )(function* (request, principal) {
+    )(function* (requested, principal) {
+      const request = {
+        ...requested,
+        destination: conversationImportDestination(requested.destination),
+      };
       // A retried confirm (its first answer lost) hears the committed result,
       // never "not found", so the client does not import the file twice.
       return yield* withCompletion(

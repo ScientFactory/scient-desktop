@@ -254,6 +254,18 @@ export function importFailureMessage(cause: unknown, fallback: string): string {
   return fallback;
 }
 
+/**
+ * The check refused the file for holding more records than one import
+ * writes. Sent before the check, `package-too-large` means its size instead.
+ */
+export function isRecordLimitRefusal(cause: unknown): boolean {
+  return isConversationImportError(cause) && cause.reason === "package-too-large";
+}
+
+export function isMarkdownFileName(name: string): boolean {
+  return /\.md$/iu.test(name);
+}
+
 export function isAbort(cause: unknown): boolean {
   return cause instanceof DOMException && cause.name === "AbortError";
 }

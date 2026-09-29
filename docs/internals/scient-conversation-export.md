@@ -54,7 +54,10 @@ of the canonical content and excludes them, so two captures of the same state ha
   tool name, status, command, detail, changed files, bounded output). Tool lifecycle updates collapse
   per call, task progress per task, and a turn keeps its latest plan checklist. Provider payload
   objects are never copied. Approval requests and unanswered questions are never included; answered
-  questions are kept as question-and-answer interactions.
+  questions are kept as question-and-answer interactions. An imported entry's activity records what
+  its sender's export left out (`scientExportOmissions`: cut lines and characters per text, and how
+  many changed files and plan steps were dropped); the projection keeps that text as it is and those
+  counts, so exporting an imported conversation again keeps its "and N more" notices.
 - **Warnings** agree with the facts: one `attachment-unavailable` warning per attachment whose file
   was missing, carrying its name and its snapshot message number (`null` for an answer attachment),
   and none for available attachments.
@@ -290,9 +293,13 @@ The contract between staging and the importer is the header of
   about half a second, with the process growing by about 0.6 GB while it runs (macOS arm64).
 - **Record limit.** One import writes at most 5,000 records (messages, reasoning, work-log entries,
   plans, and answers) in its single `thread.conversation.import` transaction; a larger file is
-  refused at preview with a message that suggests exporting without the work log or up to an
-  earlier message. The limit comes from the benchmark's work-log-heavy import on an on-disk
+  refused at preview with a message that suggests exporting again with the work log and reasoning
+  turned off. The limit comes from the benchmark's work-log-heavy import on an on-disk
   database: about 3.5 s at 5,000 records, 14 s at 10,000, and 65 s at 20,000.
+- **Clock rollback.** An import moves times later than the import back to the import time
+  (`timesShiftedMs`); if the server's clock is later set back before that time, messages sent
+  afterwards sort before the imported history, as a thread's new messages sort before its older
+  ones whenever the clock goes backwards.
 - **Refusals and retries.** A refused file ends the import and removes its area; every rejection
   reason has its own short message, and a reported entry name is bounded, trimmed, and omitted when
   blank. Failures a retry may clear (no room yet, or an operating-system error such as a file

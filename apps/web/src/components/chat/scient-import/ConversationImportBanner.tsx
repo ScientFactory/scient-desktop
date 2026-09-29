@@ -3,6 +3,7 @@ import type {
   OrchestrationConversationImportOmission,
   OrchestrationThread,
 } from "@t3tools/contracts";
+import { importTimesShiftedNotice } from "@scientfactory/conversation";
 import { ImportIcon } from "lucide-react";
 
 import type { ComposerBannerStackItem } from "../ComposerBannerStack";
@@ -58,6 +59,9 @@ export function conversationImportNotice(
           ? "Text copied from a Scient Markdown export, which anyone can edit."
           : "Copied from a Scient conversation file, which anyone can edit.",
       omitted.length > 0 ? `Not included: ${listLabels(omitted)}.` : null,
+      conversationImport.timesShiftedMs === undefined
+        ? null
+        : importTimesShiftedNotice(conversationImport.timesShiftedMs),
       sessionStarted
         ? document
           ? "The attached document remains unverified after the new provider session starts."

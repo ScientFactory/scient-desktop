@@ -357,6 +357,8 @@ export const ConversationProvenance = Schema.Union([
     omissions: Schema.optionalKey(
       Schema.Array(OrchestrationConversationImportOmission).check(Schema.isMaxLength(16)),
     ),
+    /** How far earlier imports moved these times back; the note survives re-export too. */
+    timesShiftedMs: Schema.optionalKey(PositiveInt),
   }),
 ]);
 export type ConversationProvenance = typeof ConversationProvenance.Type;
@@ -663,6 +665,8 @@ export const DocumentWarningCode = Schema.Literals([
   "attachment-unsupported",
   "records-skipped",
   "source-history-incomplete",
+  /** Imported times were moved back because they were later than the import. */
+  "times-shifted",
   "context-reference-unresolved",
   "unsupported-construct",
   "resource-unresolved",
