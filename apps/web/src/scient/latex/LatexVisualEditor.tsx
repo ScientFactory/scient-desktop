@@ -360,6 +360,7 @@ function LatexMathView({ node, updateAttributes, editor, getPos, selected }: Nod
     wrapper: node.attrs.wrapper,
   } as const;
   const [editing, setEditing] = useState(false);
+  const [dragOutside, setDragOutside] = useState(false);
   const [sourceOpen, setSourceOpen] = useState(false);
   const [paletteRequest, setPaletteRequest] = useState(0);
   const [shortcutHint, setShortcutHint] = useState("");
@@ -535,20 +536,26 @@ function LatexMathView({ node, updateAttributes, editor, getPos, selected }: Nod
     stopPointerSelection.current?.();
     mathPointerId.current = event.pointerId;
     const pointerId = event.pointerId;
-    let crossed = false;
+    let outside = false;
     const move = (movement: PointerEvent) => {
       if (movement.pointerId !== pointerId || !(movement.buttons & 1)) return;
       const field = mathRoot.current?.querySelector("math-field");
       const rect = field?.getBoundingClientRect();
       if (!rect) return;
-      if (!crossed) {
-        if (
-          movement.clientX >= rect.left &&
-          movement.clientX <= rect.right &&
-          movement.clientY >= rect.top &&
-          movement.clientY <= rect.bottom
-        )
-          return;
+      if (
+        movement.clientX >= rect.left &&
+        movement.clientX <= rect.right &&
+        movement.clientY >= rect.top &&
+        movement.clientY <= rect.bottom
+      ) {
+        if (outside) {
+          outside = false;
+          setDragOutside(false);
+          // The math field still owns the original drag anchor. Restoring its
+          // focus lets its pointer handler derive the smaller selection again.
+          mathField.current?.focus();
+        }
+        return;
       }
       const position = getPos();
       const hit = editor.view.posAtCoords({ left: movement.clientX, top: movement.clientY });
@@ -563,39 +570,42 @@ function LatexMathView({ node, updateAttributes, editor, getPos, selected }: Nod
       const head = direction > 0 ? Math.max(hit.pos, end) : Math.min(hit.pos, position);
       const nextSelection = selectionIncludingMath(doc, position, anchor, head, direction);
       suppressSelectedActivation.current = nextSelection instanceof NodeSelection;
-      if (!crossed) mathField.current?.clearSelection();
+      if (!outside) {
+        outside = true;
+        setDragOutside(true);
+        mathField.current?.clearSelection();
+        editor.view.focus();
+      }
       movement.preventDefault();
       // MathLive captures the pointer on its field. Once the drag has left
       // that field, its own pointer tracker must not repaint a partial formula
       // selection over the document selection we just established.
       movement.stopImmediatePropagation();
       editor.view.dispatch(editor.state.tr.setSelection(nextSelection));
-      if (!crossed) {
-        activeMath.deactivate(activationId);
-        setEditing(false);
-        editor.view.focus();
-      }
-      crossed = true;
     };
     const stop = (finished: PointerEvent) => {
       if (finished.pointerId !== pointerId) return;
-      const handedOff = crossed;
+      const endedOutside = outside;
       window.removeEventListener("pointermove", move, true);
       window.removeEventListener("pointerup", stop, true);
       window.removeEventListener("pointercancel", stop, true);
       stopPointerSelection.current = null;
       mathPointerId.current = null;
-      if (handedOff)
-        queueMicrotask(() => {
-          mathField.current?.clearSelection();
-          editor.view.focus();
-        });
+      if (endedOutside) {
+        mathField.current?.cancelPointerSelection();
+        mathField.current?.clearSelection();
+        setDragOutside(false);
+        activeMath.deactivate(activationId);
+        setEditing(false);
+        editor.view.focus();
+      }
     };
     stopPointerSelection.current = () => {
       window.removeEventListener("pointermove", move, true);
       window.removeEventListener("pointerup", stop, true);
       window.removeEventListener("pointercancel", stop, true);
       mathPointerId.current = null;
+      setDragOutside(false);
     };
     window.addEventListener("pointermove", move, true);
     window.addEventListener("pointerup", stop, true);
@@ -1018,7 +1028,9 @@ function LatexMathView({ node, updateAttributes, editor, getPos, selected }: Nod
       className={display ? "scient-latex-visual-display-math" : "scient-latex-visual-inline-math"}
       contentEditable={false}
       data-selected={selected || editing || undefined}
-      data-document-selected={(!editing && (selected || selectedByDocument)) || undefined}
+      data-document-selected={
+        ((!editing || dragOutside) && (selected || selectedByDocument)) || undefined
+      }
       data-empty={!attributes.tex.trim() || undefined}
       onPointerDownCapture={startPointerSelection}
       onPointerMoveCapture={extendExternalSelection}

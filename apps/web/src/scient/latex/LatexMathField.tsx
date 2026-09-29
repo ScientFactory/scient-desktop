@@ -40,6 +40,7 @@ export interface LatexMathFieldHandle {
   readonly focus: () => void;
   readonly flush: () => boolean;
   readonly clearSelection: () => void;
+  readonly cancelPointerSelection: () => void;
   readonly insert: (latex: string) => void;
   readonly command: (
     command:
@@ -121,6 +122,7 @@ export const LatexMathField = forwardRef<
   displayMode.current = display;
   const flush = useRef<() => boolean>(() => true);
   const clearSelection = useRef<() => void>(() => {});
+  const cancelPointerSelection = useRef<() => void>(() => {});
   const lastAcknowledged = useRef(value);
   const dirty = useRef(false);
   const journalKey = useRef(draftKey);
@@ -165,6 +167,7 @@ export const LatexMathField = forwardRef<
       focus: () => field.current?.focus(),
       flush: () => flush.current(),
       clearSelection: () => clearSelection.current(),
+      cancelPointerSelection: () => cancelPointerSelection.current(),
       command: (command) => {
         const math = field.current;
         if (!math || math.readOnly) return false;
@@ -606,6 +609,7 @@ export const LatexMathField = forwardRef<
           applyingSelection = false;
         });
     };
+    cancelPointerSelection.current = () => stopPointerSelection();
     const pointerDown = (event: PointerEvent) => {
       if (math.readOnly || event.button !== 0) return;
       stopPointerSelection();
@@ -699,6 +703,7 @@ export const LatexMathField = forwardRef<
     field.current = math;
     return () => {
       stopPointerSelection();
+      cancelPointerSelection.current = () => {};
       clearTimeout(publishTimer);
       cancelPublish?.();
       journal();
