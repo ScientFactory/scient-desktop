@@ -1,3 +1,4 @@
+import * as NodeURL from "node:url";
 import * as NodeZlib from "node:zlib";
 
 import { playwright } from "@vitest/browser-playwright";
@@ -233,6 +234,8 @@ export default defineConfig(() => {
               "@base-ui/react/combobox",
               "@base-ui/react/direction-provider",
               "@base-ui/react/number-field",
+              "@base-ui/react/radio",
+              "@base-ui/react/radio-group",
               "@base-ui/react/scroll-area",
               "@base-ui/react/toggle",
               "@base-ui/react/toggle-group",
@@ -242,6 +245,14 @@ export default defineConfig(() => {
               "@pierre/trees",
               "effect/unstable/reactivity/AsyncResult",
               "heic-to/csp",
+              "@scientfactory/conversation > mdast-util-from-markdown",
+              "@scientfactory/conversation > mdast-util-frontmatter",
+              "@scientfactory/conversation > mdast-util-gfm",
+              "@scientfactory/conversation > mdast-util-math",
+              "@scientfactory/conversation > micromark-extension-frontmatter",
+              "@scientfactory/conversation > micromark-extension-gfm",
+              "@scientfactory/conversation > micromark-extension-math",
+              "@scientfactory/conversation > yaml",
               "zustand/vanilla/shallow",
             ]
           : []),
@@ -334,6 +345,17 @@ export default defineConfig(() => {
       emptyOutDir: true,
       manifest: true,
       sourcemap: buildSourcemap,
+      // SCIENT-FORK:START — the standalone document page the desktop prints
+      // for PDF export ships beside the app entry.
+      rolldownOptions: {
+        input: {
+          main: NodeURL.fileURLToPath(new URL("./index.html", import.meta.url)),
+          "scient-document": NodeURL.fileURLToPath(
+            new URL("./scient-document.html", import.meta.url),
+          ),
+        },
+      },
+      // SCIENT-FORK:END
     },
     test: {
       projects: [defineProject(unitTestProject), defineProject(layoutTestProject)],

@@ -145,6 +145,39 @@ describe("BrowserPdfRenderer", () => {
     }),
   );
 
+  it.effect("leaves pagination to a page that owns its print stylesheet", () =>
+    Effect.gen(function* () {
+      const insertCSS = vi.fn(async () => "pagination-css");
+      const removeInsertedCSS = vi.fn(async () => undefined);
+      const printToPDF = vi.fn(async () => Buffer.from("%PDF-1.7\nsynthetic"));
+      const render = createBrowserPdfRenderer({
+        marginPolicy: "source-authored",
+        paginationDefaults: false,
+        waitForReadiness: async () => ({
+          sourceUrl: "scient://app/scient-document.html",
+          title: "Report",
+          sourceSignals: signals,
+          warnings: [],
+        }),
+      });
+
+      yield* render({
+        isDestroyed: () => false,
+        isLoading: () => false,
+        getURL: () => "scient://app/scient-document.html",
+        on: vi.fn(),
+        off: vi.fn(),
+        insertCSS,
+        removeInsertedCSS,
+        printToPDF,
+      } as never);
+
+      expect(printToPDF).toHaveBeenCalledOnce();
+      expect(insertCSS).not.toHaveBeenCalled();
+      expect(removeInsertedCSS).not.toHaveBeenCalled();
+    }),
+  );
+
   it("reports lossy or incomplete source signals without rejecting the export", () => {
     expect(
       warningsForSignals(

@@ -1,4 +1,4 @@
-import { ArrowLeftIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
+import { ArrowLeftIcon, ChartNoAxesColumnIcon, ImportIcon, SettingsIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { memo, useCallback } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
@@ -32,6 +32,7 @@ import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 
 import { APP_BASE_NAME } from "../../branding";
 import { ScientReleaseNotes } from "../../scient/releaseNotes/ScientReleaseNotes";
+import { requestConversationImport } from "../../scient/conversationImport/requests";
 import { ScientSymbol } from "../ScientSymbol";
 
 export const SidebarChromeHeader = memo(function SidebarChromeHeader({
@@ -193,6 +194,14 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
         </SidebarMenuItem>
       ) : (
         <>
+          <SidebarUtilityItem
+            icon={<ImportIcon />}
+            label="Import conversation"
+            onClick={() => {
+              closeMobileSidebar();
+              requestConversationImport();
+            }}
+          />
           <SidebarUtilityItem
             icon={<SettingsIcon />}
             label="Settings"

@@ -45,6 +45,7 @@ export class DesktopClerkBridgeCleanupError extends Schema.TaggedError<DesktopCl
 export class DesktopClerk extends Context.Service<
   DesktopClerk,
   {
+    readonly isPrimaryInstance: boolean;
     readonly configure: Effect.Effect<
       void,
       never,
@@ -118,6 +119,7 @@ export const make = Effect.gen(function* () {
   );
 
   return DesktopClerk.of({
+    isPrimaryInstance: bridge.isPrimaryInstance,
     configure: Effect.gen(function* () {
       const electronApp = yield* ElectronApp.ElectronApp;
       const electronWindow = yield* ElectronWindow.ElectronWindow;

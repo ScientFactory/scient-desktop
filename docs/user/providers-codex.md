@@ -147,12 +147,12 @@ parent agent's settings.
 ## Browser and computer activity
 
 Browser and Computer Use calls show their user-facing task title when Codex provides one. Expanded
-activity groups show an icon for every call. Website calls use the active page's favicon when it is
-available, and desktop app calls use the app's native icon on macOS when available. Other hosts use
-a generic fallback glyph.
+activity groups show an icon for every call. Website calls use the page's icon only when Codex
+delivers the image itself; Scient does not download icons from websites, so other website calls
+show a generic glyph. Desktop app calls use the app's native icon on macOS when available.
 
 Collapsed activity groups are summarized by source, such as `Used Chrome integration`, instead of
-showing the underlying tool name. Website favicons and native app icons keep their original colors;
+showing the underlying tool name. Website and native app icons keep their original colors;
 integrations that provide separate light and dark logos use the logo for the current appearance.
 
 ## Approve access to other apps

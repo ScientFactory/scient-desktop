@@ -12,19 +12,28 @@ const TestLayer = ScientDocumentsToolkitRegistrationLive.pipe(
   Layer.provideMerge(McpServer.McpServer.layer),
 );
 
-it.effect("registers the HTML and LaTeX document build operations", () =>
+it.effect("registers the HTML, LaTeX, and Markdown document operations", () =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
     const documentTools = server.tools.filter(({ tool }) =>
-      ["scient_pdf_build", "scient_latex_build"].includes(tool.name),
+      ["scient_pdf_build", "scient_latex_build", "scient_document_export"].includes(tool.name),
     );
 
     expect(documentTools.map(({ tool }) => tool.name).sort()).toEqual([
+      "scient_document_export",
       "scient_latex_build",
       "scient_pdf_build",
     ]);
     expect(
       documentTools.find(({ tool }) => tool.name === "scient_pdf_build")?.tool.annotations,
+    ).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: false,
+    });
+    expect(
+      documentTools.find(({ tool }) => tool.name === "scient_document_export")?.tool.annotations,
     ).toMatchObject({
       readOnlyHint: false,
       destructiveHint: true,

@@ -125,6 +125,8 @@ describe("normalizeScientMathDelimiters", () => {
     expect(normalizeScientMathDelimiters("an unmatched \\( opener")).toBe(
       "an unmatched \\( opener",
     );
+    const manyUnmatched = "\\(".repeat(50_000);
+    expect(normalizeScientMathDelimiters(manyUnmatched)).toBe(manyUnmatched);
   });
 
   it("leaves empty pairs alone", () => {

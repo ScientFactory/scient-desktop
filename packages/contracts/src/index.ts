@@ -52,9 +52,19 @@ export * from "./scientLatex.ts";
 export * from "./latexPdfBuild.ts";
 export * from "./browserPdfExport.ts";
 export * from "./htmlPdfBuild.ts";
+export * from "./scientDocumentExport.ts";
 export * from "./scientMarkdown.ts";
 // SCIENT-FORK:START — Scient thread queue contracts (new file, no upstream edits).
 export * from "./scientThreadQueue.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — Scient conversation export contracts (new file, no upstream edits).
+export * from "./scientConversationExport.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — Scient conversation import contracts (new file, no upstream edits).
+export * from "./scientConversationImport.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — Scient managed Pandoc contracts (new file, no upstream edits).
+export * from "./scientPandoc.ts";
 // SCIENT-FORK:END
 export * from "./browserImport.ts";
 export * from "./browserProfile.ts";

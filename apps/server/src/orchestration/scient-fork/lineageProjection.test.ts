@@ -1,11 +1,24 @@
-import { CommandId, EventId, ThreadId, TurnId, type OrchestrationEvent } from "@t3tools/contracts";
+import {
+  CommandId,
+  EventId,
+  OrchestrationConversationImportSource,
+  ThreadId,
+  TurnId,
+  type OrchestrationEvent,
+} from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { applyScientThreadLineageProjection } from "./lineageProjection.ts";
+import {
+  importMarkerField,
+  makeForkLineageQueries,
+  toForkLineageMarker,
+} from "./ForkBoundaryReadModel.ts";
 import { runScientMigrations } from "./schema.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
@@ -104,7 +117,21 @@ layer("scient thread lineage projection", (it) => {
   it.effect("does not reset completed work when projection replay re-applies lineage", () =>
     Effect.gen(function* () {
       const sql = yield* prepare;
-      yield* applyScientThreadLineageProjection(forkedEvent(11), sql);
+      const sourceImport: OrchestrationConversationImportSource = {
+        source: "scic",
+        exportId: "source-export",
+        sourceThreadId: "external-thread",
+        packageDigest: `sha256:${"a".repeat(64)}`,
+        sourceFormat: "scient.conversation-file",
+        sourceFormatVersion: 1,
+        importedAt: NOW,
+        omissions: [{ _tag: "range-truncated", throughMessageN: 2 }],
+      };
+      const forked = {
+        ...forkedEvent(11),
+        payload: { ...forkedEvent(11).payload, sourceImport },
+      };
+      yield* applyScientThreadLineageProjection(forked, sql);
       const completed = {
         ...forkedEvent(12),
         type: "thread.fork-completed",
@@ -115,13 +142,28 @@ layer("scient thread lineage projection", (it) => {
         },
       } as OrchestrationEvent;
       yield* applyScientThreadLineageProjection(completed, sql);
-      yield* applyScientThreadLineageProjection(forkedEvent(11), sql);
+      yield* applyScientThreadLineageProjection(forked, sql);
 
       const rows = yield* sql<LineageRow>`SELECT * FROM scient_thread_lineage`;
       assert.strictEqual(rows.length, 1);
       assert.strictEqual(rows[0]?.status, "ready");
       assert.strictEqual(rows[0]?.checkpoint_status, "ready");
       assert.strictEqual(rows[0]?.workspace_status, "shared");
+      const [transfer] = yield* sql<{ readonly origin_json: string | null }>`
+        SELECT origin_json FROM scient_context_transfers WHERE thread_id = ${NEW}
+      `;
+      const storedSource = yield* Schema.decodeUnknownEffect(
+        Schema.fromJsonString(OrchestrationConversationImportSource),
+      )(transfer?.origin_json);
+      assert.deepStrictEqual(storedSource, sourceImport);
+      const originRow = yield* makeForkLineageQueries(sql).getForkLineageRowByThread({
+        threadId: NEW,
+      });
+      assert.isTrue(originRow._tag === "Some");
+      if (originRow._tag === "Some") {
+        assert.deepStrictEqual(toForkLineageMarker(originRow.value)?.sourceImport, sourceImport);
+        assert.deepStrictEqual(importMarkerField(originRow.value), {});
+      }
     }),
   );
 });

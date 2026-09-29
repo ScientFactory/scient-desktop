@@ -257,6 +257,9 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
       `Origin thread '${command.originThreadId}' has no project and cannot be forked.`,
     );
   }
+  const sourceImport = origin.conversationImport
+    ? (({ inheritedTurnIds: _turns, ...source }) => source)(origin.conversationImport)
+    : origin.forkLineage?.sourceImport;
 
   // The new thread id must be free.
   yield* requireThreadAbsent({
@@ -618,6 +621,10 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
       );
       requestIds.set(answer.requestId, requestId);
     }
+    // An imported answer names the message it folds; the fork names its copy.
+    const { messageId: originMessageId, ...copiedAnswer } = answer;
+    const messageId =
+      originMessageId === undefined ? undefined : messageIdRemap.get(originMessageId);
     events.push({
       ...(yield* withForkEventBase({
         commandId: command.commandId,
@@ -632,8 +639,9 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
           id,
           turnId,
           payload: {
-            ...answer,
+            ...copiedAnswer,
             requestId,
+            ...(messageId === undefined ? {} : { messageId }),
             attachmentsByQuestionId: Object.fromEntries(
               Object.entries(answer.attachmentsByQuestionId).map(([questionId, attachments]) => [
                 questionId,
@@ -768,6 +776,7 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
       providerMode: "transcript-bootstrap",
       attachmentCopies,
       inheritedTurnIds: [...new Set(importedTurnIds.values())],
+      ...(sourceImport === undefined ? {} : { sourceImport }),
       ...(liveTail === null
         ? {}
         : {

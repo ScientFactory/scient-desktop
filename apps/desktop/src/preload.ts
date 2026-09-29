@@ -74,6 +74,23 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   getClientPlatform: () => clientPlatform,
   setUnreadAnswerCount: (count) =>
     ipcRenderer.invoke(IpcChannels.SET_UNREAD_ANSWER_COUNT_CHANNEL, count),
+  // SCIENT-FORK:START — conversation files the OS opened with Scient.
+  takeOpenedConversationFiles: () =>
+    ipcRenderer.invoke(IpcChannels.TAKE_OPENED_CONVERSATION_FILES_CHANNEL),
+  onConversationFilesOpened: (listener) => {
+    const wrappedListener = () => listener();
+    ipcRenderer.on(IpcChannels.CONVERSATION_FILES_OPENED_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.CONVERSATION_FILES_OPENED_CHANNEL, wrappedListener);
+    };
+  },
+  uploadOpenedConversationFile: (request) =>
+    ipcRenderer.invoke(IpcChannels.UPLOAD_OPENED_CONVERSATION_FILE_CHANNEL, request),
+  cancelOpenedConversationFileUpload: (request) =>
+    ipcRenderer.invoke(IpcChannels.CANCEL_OPENED_CONVERSATION_FILE_UPLOAD_CHANNEL, request),
+  releaseOpenedConversationFile: (request) =>
+    ipcRenderer.invoke(IpcChannels.RELEASE_OPENED_CONVERSATION_FILE_CHANNEL, request),
+  // SCIENT-FORK:END
   setNotificationBadge: (badge) =>
     ipcRenderer.invoke(IpcChannels.SET_NOTIFICATION_BADGE_CHANNEL, badge),
   onNotificationBadgeClear: (listener) => {
@@ -179,6 +196,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.invoke(IpcChannels.PICK_PROJECT_FAVICON_CHANNEL, initialPath),
   saveAssetCopy: (request) => ipcRenderer.invoke(IpcChannels.SAVE_ASSET_COPY_CHANNEL, request),
   revealSavedAsset: (path) => ipcRenderer.invoke(IpcChannels.REVEAL_SAVED_ASSET_CHANNEL, path),
+  renderDocumentPagePdf: (input) =>
+    ipcRenderer.invoke(IpcChannels.RENDER_DOCUMENT_PAGE_PDF_CHANNEL, input),
   pickThemeFiles: () => ipcRenderer.invoke(IpcChannels.PICK_THEME_FILES_CHANNEL, undefined),
   getPathForFile: (file: File) => {
     try {

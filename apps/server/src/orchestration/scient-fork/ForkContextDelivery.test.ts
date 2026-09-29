@@ -470,6 +470,35 @@ it.layer(layer)("ScientForkContextDelivery", (it) => {
     }),
   );
 
+  it.effect("reads the full history only for a turn that must carry it", () =>
+    Effect.gen(function* () {
+      yield* reset;
+      const delivery = yield* ScientForkContextDelivery;
+      let reads = 0;
+      const prepareLazily = () =>
+        delivery.prepareTurn({
+          threadId: FORK,
+          loadThread: Effect.sync(() => {
+            reads += 1;
+            return thread();
+          }),
+          message: current,
+          userText: current.text,
+          attachments: [],
+          nativeThreadKey: "codex:thread-a",
+          sessionRunning: false,
+        });
+      const first = yield* deliver(yield* prepareLazily());
+      assert.strictEqual(reads, 1);
+      yield* settle(first.handoffId, { type: "accepted", nativeThreadKey: "codex:thread-a" });
+      yield* recordProviderTurn("provider-turn-1", 1);
+      // Delivered: later turns decide without reading the history again.
+      assert.strictEqual((yield* prepareLazily()).kind, "none");
+      assert.strictEqual((yield* prepareLazily()).kind, "none");
+      assert.strictEqual(reads, 1);
+    }),
+  );
+
   it.effect("a replaced provider-native thread receives the context again", () =>
     Effect.gen(function* () {
       yield* reset;

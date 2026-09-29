@@ -131,6 +131,10 @@
       "types": "./src/state/browserPdfExport.ts",
       "default": "./src/state/browserPdfExport.ts"
     },
+    "./state/scientDocumentPdf": {
+      "types": "./src/state/scientDocumentPdf.ts",
+      "default": "./src/state/scientDocumentPdf.ts"
+    },
     "./state/attachments": {
       "types": "./src/state/attachments.ts",
       "default": "./src/state/attachments.ts"
@@ -246,6 +250,18 @@
     "./state/scient-thread-queue": {
       "types": "./src/state/scientThreadQueueHttp.ts",
       "default": "./src/state/scientThreadQueueHttp.ts"
+    },
+    "./state/scient-conversation-export": {
+      "types": "./src/state/scientConversationExportHttp.ts",
+      "default": "./src/state/scientConversationExportHttp.ts"
+    },
+    "./state/scient-conversation-import": {
+      "types": "./src/state/scientConversationImportHttp.ts",
+      "default": "./src/state/scientConversationImportHttp.ts"
+    },
+    "./state/scient-word-export": {
+      "types": "./src/state/scientWordExportHttp.ts",
+      "default": "./src/state/scientWordExportHttp.ts"
     },
     "./state/shared-settings": {
       "types": "./src/state/sharedSettings.ts",

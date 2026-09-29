@@ -39,6 +39,10 @@ import type { FilesystemBrowseInput, FilesystemBrowseResult } from "./filesystem
 import type { EnvironmentFilePrepareInput, EnvironmentFilePrepareResult } from "./fileOpening.ts";
 import type { AssetCreateUrlInput, AssetCreateUrlResult } from "./assets.ts";
 import type {
+  DesktopDocumentPageRenderInput,
+  DesktopDocumentPageRenderOutcome,
+} from "./scientDocumentExport.ts";
+import type {
   ProjectListDirectoryInput,
   ProjectListDirectoryResult,
   ProjectListEntriesInput,
@@ -114,6 +118,15 @@ import { AdvertisedEndpoint } from "./remoteAccess.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import { type ClientSettings, type QuitConfirmationMode, SnapShotShortcut } from "./settings.ts";
 import type { EditorId } from "./editor.ts";
+// SCIENT-FORK:START — conversation files the OS opened with Scient.
+import type {
+  DesktopConversationFileReleaseRequest,
+  DesktopConversationFileUploadCancelRequest,
+  DesktopConversationFileUploadRequest,
+  DesktopConversationFileUploadResult,
+  DesktopOpenedConversationFile,
+} from "./scientConversationImport.ts";
+// SCIENT-FORK:END
 import type {
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
@@ -1345,6 +1358,22 @@ export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
 export interface DesktopBridge {
   /** Scient: macOS conversations with unread completed answers; zero clears the badge. */
   setUnreadAnswerCount?: (count: number) => Promise<boolean>;
+  // SCIENT-FORK:START — conversation files the OS opened with Scient.
+  /** Scient: removes and returns the `.scic` files opened with Scient that await import. */
+  takeOpenedConversationFiles?: () => Promise<ReadonlyArray<DesktopOpenedConversationFile>>;
+  /** Scient: called when the OS opens another `.scic` with Scient; then take them. */
+  onConversationFilesOpened?: (listener: () => void) => () => void;
+  /** Scient: streams an opened `.scic` to a signed import upload URL. */
+  uploadOpenedConversationFile?: (
+    request: DesktopConversationFileUploadRequest,
+  ) => Promise<DesktopConversationFileUploadResult>;
+  /** Scient: stops one upload attempt, or keeps it from starting; that attempt ends `cancelled`. */
+  cancelOpenedConversationFileUpload?: (
+    request: DesktopConversationFileUploadCancelRequest,
+  ) => Promise<void>;
+  /** Scient: gives up an opened `.scic`; its token then fails `file-unavailable`. */
+  releaseOpenedConversationFile?: (request: DesktopConversationFileReleaseRequest) => Promise<void>;
+  // SCIENT-FORK:END
   getAppBranding: () => DesktopAppBranding | null;
   /** The desktop client's OS platform, read from Electron's preload process. */
   getClientPlatform?: () => string;
@@ -1425,6 +1454,13 @@ export interface DesktopBridge {
   saveAssetCopy: (request: DesktopAssetCopyRequest) => Promise<DesktopAssetCopyResult>;
   /** Optional while older desktop shells can host a newer web client. */
   revealSavedAsset?: (path: string) => Promise<void>;
+  /**
+   * Print one captured Scient document page in a hidden, isolated window.
+   * Optional while older desktop shells can host a newer web client.
+   */
+  renderDocumentPagePdf?: (
+    input: DesktopDocumentPageRenderInput,
+  ) => Promise<DesktopDocumentPageRenderOutcome>;
   /**
    * Multi-select JSON file picker that opens in the VS Code extensions
    * directory when one exists. Optional: older desktop builds lack it, and

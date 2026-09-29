@@ -5,7 +5,7 @@
  * `scient_schema_migrations` ledger table. T3's `effect_sql_migrations` table
  * and numbering are never modified.
  *
- * Before delegating to the standard Migrator, the runner performs two
+ * Before delegating to the standard Migrator, the runner performs three
  * Scient-owned preflight passes:
  *
  * 1. Ledger reconciliation. Existing development databases created by the
@@ -20,7 +20,11 @@
  *    altered. Fresh databases skip reconciliation; the Migrator creates the
  *    canonical table directly.
  *
- * 2. Strict ledger integrity validation. The standard Migrator treats the
+ * 2. A narrowly guarded development-ledger reconciliation for the former
+ *    import migration 17, now 18. It runs fork migration 17 and remaps the
+ *    existing import ledger row only for the exact known 1..16 prefix.
+ *
+ * 3. Strict ledger integrity validation. The standard Migrator treats the
  *    latest recorded ID as a high-water mark and never inspects earlier rows,
  *    so a gapped, renamed, or newer-than-this-build ledger would be silently
  *    accepted. Scient additionally requires the recorded ledger to be a
@@ -54,6 +58,7 @@ import Migration014 from "./migrations/014_ContextTransfers.ts";
 import Migration015 from "./migrations/015_ForkEvidence.ts";
 import Migration016 from "./migrations/016_PreserveLegacyForkSessions.ts";
 import Migration017 from "./migrations/017_ForkAcceptedTurn.ts";
+import Migration018 from "./migrations/018_ImportContextTransfers.ts";
 // ---------------------------------------------------------------------------
 // Error types
 // ---------------------------------------------------------------------------
@@ -111,6 +116,7 @@ export const SCIENT_MIGRATIONS: ReadonlyArray<ScientMigration> = [
   { id: 15, name: "fork-evidence", effect: Migration015 },
   { id: 16, name: "preserve-legacy-fork-sessions", effect: Migration016 },
   { id: 17, name: "fork-accepted-turn", effect: Migration017 },
+  { id: 18, name: "import-context-transfers", effect: Migration018 },
 ] as const;
 
 const loader = Migrator.fromRecord(
@@ -174,6 +180,62 @@ const reconcileLedger = Effect.fn("reconcileScientLedger")(function* (sql: SqlCl
 });
 
 // ---------------------------------------------------------------------------
+// Preflight: exact former import-17 development ledger
+// ---------------------------------------------------------------------------
+
+interface LedgerRow {
+  readonly migration_id: number;
+  readonly name: string;
+}
+
+const isFormerImport17Ledger = (rows: ReadonlyArray<LedgerRow>): boolean =>
+  rows.length === 17 &&
+  SCIENT_MIGRATIONS.slice(0, 16).every(
+    (migration, index) =>
+      rows[index]?.migration_id === migration.id && rows[index]?.name === migration.name,
+  ) &&
+  rows[16]?.migration_id === 17 &&
+  rows[16]?.name === "import-context-transfers";
+
+/** Preserve the former import-17 receipt while inserting the fork-17 receipt. */
+const reconcileFormerImport17 = Effect.fn("reconcileFormerImport17")(function* (
+  sql: SqlClient.SqlClient,
+) {
+  const tables = yield* sql<{ readonly name: string }>`
+    SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'scient_schema_migrations'
+  `;
+  if (tables.length === 0) return;
+
+  const readRows = sql<LedgerRow>`
+    SELECT migration_id, name FROM scient_schema_migrations ORDER BY migration_id
+  `;
+  if (!isFormerImport17Ledger(yield* readRows)) return;
+
+  yield* sql.withTransaction(
+    Effect.gen(function* () {
+      // Recheck under the transaction: any different ledger must reach the
+      // ordinary validator unchanged and fail closed.
+      if (!isFormerImport17Ledger(yield* readRows)) {
+        return yield* new ScientMigrationError({
+          kind: "BadState",
+          message: "Scient migration ledger changed during former import-17 reconciliation.",
+        });
+      }
+      yield* Migration017.pipe(Effect.provideService(SqlClient.SqlClient, sql));
+      yield* sql`
+        UPDATE scient_schema_migrations
+        SET migration_id = 18
+        WHERE migration_id = 17 AND name = 'import-context-transfers'
+      `;
+      yield* sql`
+        INSERT INTO scient_schema_migrations (migration_id, name)
+        VALUES (17, 'fork-accepted-turn')
+      `;
+    }),
+  );
+});
+
+// ---------------------------------------------------------------------------
 // Preflight: strict ledger integrity validation
 // ---------------------------------------------------------------------------
 
@@ -194,7 +256,7 @@ const validateLedger = Effect.fn("validateScientLedger")(function* (sql: SqlClie
   `;
   if (tables.length === 0) return; // Fresh database — nothing recorded yet.
 
-  const rows = yield* sql<{ readonly migration_id: number; readonly name: string }>`
+  const rows = yield* sql<LedgerRow>`
     SELECT migration_id, name FROM scient_schema_migrations ORDER BY migration_id
   `;
 
@@ -245,9 +307,11 @@ const migrationLock = Semaphore.makeUnsafe(1);
  * Run all pending Scient schema migrations.
  *
  * 1. Reconcile a legacy `applied_at` ledger into the canonical shape.
- * 2. Validate ledger integrity (contiguous prefix, exact names, no unknown
+ * 2. Reconcile only the exact former import-17 development ledger, preserving
+ *    its receipt at 18 while applying fork migration 17 transactionally.
+ * 3. Validate ledger integrity (contiguous prefix, exact names, no unknown
  *    IDs).
- * 3. Delegate to the standard Effect SQL Migrator with the
+ * 4. Delegate to the standard Effect SQL Migrator with the
  *    `scient_schema_migrations` table. The Migrator creates the ledger on
  *    fresh databases, inserts reservation rows for all pending migrations
  *    first (doubling as the concurrent-runner lock), runs each migration in
@@ -260,6 +324,7 @@ export const runScientMigrations = Effect.fn("runScientMigrations")(function* (
   sql: SqlClient.SqlClient,
 ) {
   yield* reconcileLedger(sql);
+  yield* reconcileFormerImport17(sql);
   yield* validateLedger(sql);
 
   const executed = yield* migrator({ loader, table: LEDGER_TABLE }).pipe(

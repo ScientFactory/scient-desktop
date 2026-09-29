@@ -151,7 +151,8 @@ release acceptance or replace visual inspection of authored documents.
 
 ## Explicitly deferred
 
-Current-appearance capture, additional controlled-document adapters, page-range and paper controls,
+Current-appearance capture, further controlled-document adapters beyond the
+[document page](./scient-document-pdf-export.md), page-range and paper controls,
 Attach to Chat, a binary upload transport for exports above 64 MiB, agent-visible page inspection,
 and packaged cross-platform acceptance remain later slices. They must extend this contract rather
 than bypass the generated-document store or the PDF reader.
