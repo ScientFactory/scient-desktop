@@ -111,6 +111,8 @@ import {
   useWorkspaceFileRefresh,
 } from "~/scient/fileSurfaces/useWorkspaceFileRefresh";
 import { usePendingSurfaceDeparture } from "~/scient/fileSurfaces/usePendingSurfaceDeparture";
+import { isOutsideProjectFailure, MEDIA_FAILURE_COPY } from "~/scient/fileSurfaces/fileFailureCopy";
+import { FileReadFailure } from "~/scient/fileSurfaces/FileReadFailure";
 
 import { AttachmentFilePreview } from "./AttachmentFilePreview";
 import { AudioPreview } from "./AudioPreview";
@@ -307,7 +309,9 @@ function WorkspaceImagePreview(props: {
     [props.absolutePath, props.relativePath, props.threadRef.threadId, props.workspaceRoot],
   );
   const assetUrl = useAssetUrlState(props.environmentId, resource);
+  const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const [retrying, setRetrying] = useState(false);
   const previousRefreshKey = useRef(props.refreshKey);
 
   useEffect(() => {
@@ -332,8 +336,23 @@ function WorkspaceImagePreview(props: {
   if (assetUrl._tag === "Failure" || (imageUrl !== null && failedUrl === imageUrl)) {
     return (
       <MediaActions source={actionsSource}>
-        <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center scient-reading-ui text-xs leading-relaxed text-destructive">
-          Unable to load workspace image.
+        {/* A plain element receives the menu trigger's handlers and ref. */}
+        <div className="flex min-h-0 flex-1 flex-col">
+          <FileSurfaceFailure
+            {...MEDIA_FAILURE_COPY.image}
+            retrying={retrying || (assetUrl._tag === "Failure" && assetUrl.waiting === true)}
+            onRetry={() => {
+              // Keep the failure (busy) until renewed authorization arrives, so
+              // the old URL is not shown, and cannot fail, in the meantime.
+              setRetrying(true);
+              void refreshAssetUrl()
+                .catch(() => undefined)
+                .finally(() => {
+                  setRetrying(false);
+                  setFailedUrl(null);
+                });
+            }}
+          />
         </div>
       </MediaActions>
     );
@@ -412,9 +431,11 @@ function WorkspaceBrowserPreview(props: {
 
   if (assetUrl._tag === "Failure") {
     return (
-      <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center scient-reading-ui text-xs leading-relaxed text-destructive">
-        Unable to load file preview.
-      </div>
+      <FileSurfaceFailure
+        {...MEDIA_FAILURE_COPY.document}
+        retrying={assetUrl.waiting === true}
+        onRetry={assetUrl.refresh}
+      />
     );
   }
   if (assetUrl._tag !== "Success") {
@@ -522,6 +543,7 @@ function WorkspaceAudioPreview(props: {
   const assetUrl = useAssetUrlState(props.environmentId, resource);
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const [retrying, setRetrying] = useState(false);
   useWorkspaceMutationRefresh({
     mutationId: props.workspaceMutationId,
     resourceKey: JSON.stringify([props.environmentId, resource]),
@@ -537,10 +559,14 @@ function WorkspaceAudioPreview(props: {
   if (assetUrl._tag === "Failure" || (url !== null && failedUrl === url)) {
     return (
       <FileSurfaceFailure
-        message="Unable to load audio."
+        {...MEDIA_FAILURE_COPY.audio}
+        retrying={retrying}
         onRetry={() => {
           setFailedUrl(null);
-          void refreshAssetUrl().catch(() => undefined);
+          setRetrying(true);
+          void refreshAssetUrl()
+            .catch(() => undefined)
+            .finally(() => setRetrying(false));
         }}
       />
     );
@@ -1551,6 +1577,7 @@ export default function FilePreviewPanel({
       ? {
           ...queriedFile,
           error: null,
+          failure: null,
           isPending: false,
           data: {
             relativePath,
@@ -1889,6 +1916,7 @@ export default function FilePreviewPanel({
           saveError={saveError}
           saveRetryReady={saveRetryReady}
           hasFallbackData={file.data !== null}
+          reloading={file.isPending}
           onCancel={cancelReloadNotice}
           onReload={requestManualReload}
           onRequestOverwrite={requestOverwrite}
@@ -1923,6 +1951,14 @@ export default function FilePreviewPanel({
               mimeType={attachment.mimeType}
               sizeBytes={attachment.sizeBytes}
               asset={{ environmentId, attachmentId: attachment.id }}
+            />
+          ) : relativePath && file.data === null && isOutsideProjectFailure(file.failure) ? (
+            // Media and document previews would only fail to authorize the same path.
+            <FileReadFailure
+              failure={file.failure}
+              message={file.error}
+              retrying={false}
+              onRetry={requestManualReload}
             />
           ) : relativePath && isVideo && absolutePath ? (
             <WorkspaceVideoPreview
@@ -2017,9 +2053,12 @@ export default function FilePreviewPanel({
               aria-label="Opening Markdown editor"
             />
           ) : relativePath && file.error && file.data === null ? (
-            <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center scient-reading-ui text-xs leading-relaxed text-destructive">
-              {file.error}
-            </div>
+            <FileReadFailure
+              failure={file.failure}
+              message={file.error}
+              retrying={file.isPending}
+              onRetry={requestManualReload}
+            />
           ) : relativePath && file.data === null ? (
             <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
               <Spinner size="lg" />

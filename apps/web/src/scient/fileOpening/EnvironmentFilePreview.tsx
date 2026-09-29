@@ -12,13 +12,14 @@ import {
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { AlertTriangle, FileQuestion, Globe, LoaderCircle, Music2 } from "lucide-react";
+import { AlertTriangle, Globe, LoaderCircle, Music2 } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 
 import { useAssetUrlState } from "~/assets/assetUrls";
 import ChatMarkdown from "~/components/ChatMarkdown";
 import { OpenInPicker } from "~/components/chat/OpenInPicker";
 import { PreviewImageSurface } from "~/components/preview/PreviewImageSurface";
+import { FileSurfaceFailure, FileSurfaceMessage } from "~/components/files/fileSurfaceChrome";
 import { Button } from "~/components/ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { ScientTooltip } from "../presentation/ScientTooltip";
@@ -35,6 +36,11 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import type { ScientRightPanelSurface } from "../rightPanel/surfaces";
 import { ScientFileReloadButton } from "../fileSurfaces/ScientFileFreshnessControls";
+import {
+  fileReadFailureCopy,
+  MEDIA_FAILURE_COPY,
+  UNSUPPORTED_PREVIEW_TITLE,
+} from "../fileSurfaces/fileFailureCopy";
 import {
   environmentFileAssetResource,
   openEnvironmentFileInPreview,
@@ -75,12 +81,18 @@ function useEnvironmentTextAsset(input: {
   readonly environmentId: EnvironmentId;
   readonly file: EnvironmentFilePrepareResult;
   readonly refreshToken: number;
-}): { readonly state: TextLoadState; readonly refresh: () => void } {
+}): {
+  readonly state: TextLoadState;
+  readonly refresh: () => void;
+  readonly refreshing: boolean;
+} {
   const asset = useAssetUrlState(
     input.environmentId,
     environmentFileAssetResource({ path: input.file.canonicalPath }),
   );
   const [state, setState] = useState<TextLoadState>({ _tag: "Loading" });
+  // Bumped by a retry after a failed read, so the same URL is fetched again.
+  const [readAttempt, setReadAttempt] = useState(0);
   const previousRefreshTokenRef = useRef(input.refreshToken);
   const autoRetriedUrlRef = useRef<string | null>(null);
   const refreshAsset = asset.refresh;
@@ -142,10 +154,23 @@ function useEnvironmentTextAsset(input: {
     assetUrl,
     input.file.byteLength,
     input.file.presentation.textEncoding,
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A retry must read the same URL again.
+    readAttempt,
     refreshAsset,
   ]);
 
-  return { state, refresh: refreshAsset };
+  // A failed authorization is renewed; a failed read is simply read again,
+  // which shows loading at once, so neither can be requested twice.
+  const retry = useCallback(() => {
+    if (assetFailed) refreshAsset();
+    else setReadAttempt((attempt) => attempt + 1);
+  }, [assetFailed, refreshAsset]);
+
+  return {
+    state,
+    refresh: retry,
+    refreshing: asset._tag === "Failure" && asset.waiting === true,
+  };
 }
 
 function EnvironmentImageSurface(props: {
@@ -158,35 +183,78 @@ function EnvironmentImageSurface(props: {
     environmentFileAssetResource({ path: props.file.canonicalPath }),
   );
   const previousRefreshTokenRef = useRef(props.refreshToken);
-  const autoRetriedUrlRef = useRef<string | null>(null);
+  // One automatic reauthorization per load, even if each refresh yields a new URL.
+  const autoRetriedRef = useRef(false);
+  // The authorized URL whose image still failed after the automatic retry.
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  // A newer revision failed while the last good image stays on screen.
+  const [refreshFailed, setRefreshFailed] = useState(false);
   const refreshAsset = asset.refresh;
+  const retry = useCallback(() => {
+    autoRetriedRef.current = false;
+    setFailedUrl(null);
+    setRefreshFailed(false);
+    refreshAsset();
+  }, [refreshAsset]);
   useEffect(() => {
     if (previousRefreshTokenRef.current === props.refreshToken) return;
     previousRefreshTokenRef.current = props.refreshToken;
-    autoRetriedUrlRef.current = null;
+    autoRetriedRef.current = false;
+    setFailedUrl(null);
+    setRefreshFailed(false);
     refreshAsset();
   }, [props.refreshToken, refreshAsset]);
 
   if (asset._tag === "Failure") {
     return (
-      <CenteredFailure message="Scient could not authorize this image." onRetry={refreshAsset} />
+      <FileSurfaceFailure
+        title={MEDIA_FAILURE_COPY.image.title}
+        description="Scient could not authorize this image."
+        retrying={asset.waiting === true}
+        onRetry={refreshAsset}
+      />
     );
   }
   if (asset._tag !== "Success") return <CenteredLoading label="Preparing image…" />;
+  if (failedUrl === asset.url) {
+    return <FileSurfaceFailure {...MEDIA_FAILURE_COPY.image} onRetry={retry} />;
+  }
   return (
-    <PreviewImageSurface
-      className="absolute inset-0"
-      source={{
-        url: asset.url,
-        alt: props.file.fileName,
-        revisionKey: `${props.file.canonicalPath}:${props.file.byteLength}:${props.file.mtimeMs}`,
-      }}
-      onLoadError={() => {
-        if (autoRetriedUrlRef.current === asset.url) return;
-        autoRetriedUrlRef.current = asset.url;
-        refreshAsset();
-      }}
-    />
+    <>
+      {refreshFailed ? (
+        <div
+          className="absolute inset-x-0 top-0 z-10 flex items-center gap-2 border-b border-warning/20 bg-warning-surface px-3 py-2 text-[11px] text-warning-foreground"
+          role="status"
+        >
+          <AlertTriangle className="size-3.5 shrink-0" aria-hidden="true" />
+          <span className="min-w-0 flex-1 truncate">
+            The latest version could not be loaded. Showing the last available copy.
+          </span>
+          <Button size="xs" variant="outline" onClick={retry}>
+            Try again
+          </Button>
+        </div>
+      ) : null}
+      <PreviewImageSurface
+        className="absolute inset-0"
+        source={{
+          url: asset.url,
+          alt: props.file.fileName,
+          revisionKey: `${props.file.canonicalPath}:${props.file.byteLength}:${props.file.mtimeMs}`,
+        }}
+        onLoadError={({ hasDisplayedImage }) => {
+          if (autoRetriedRef.current) {
+            // A failed refresh keeps the last good image on screen with a caution;
+            // only an image that never displayed is replaced by the failure state.
+            if (hasDisplayedImage) setRefreshFailed(true);
+            else setFailedUrl(asset.url);
+            return;
+          }
+          autoRetriedRef.current = true;
+          refreshAsset();
+        }}
+      />
+    </>
   );
 }
 
@@ -215,8 +283,10 @@ function EnvironmentMediaSurface(props: {
   }, [props.refreshToken, refreshAsset]);
   if (asset._tag === "Failure") {
     return (
-      <CenteredFailure
-        message="Scient could not authorize this media file."
+      <FileSurfaceFailure
+        title={MEDIA_FAILURE_COPY[props.kind].title}
+        description="Scient could not authorize this media file."
+        retrying={asset.waiting === true}
         onRetry={refreshAsset}
       />
     );
@@ -224,8 +294,9 @@ function EnvironmentMediaSurface(props: {
   if (asset._tag !== "Success") return <CenteredLoading label="Preparing media…" />;
   if (failure?.url === asset.url && failure.refreshToken === props.refreshToken) {
     return (
-      <CenteredFailure
-        message="Scient could not play this media file. Its codec may not be supported."
+      <FileSurfaceFailure
+        title={MEDIA_FAILURE_COPY[props.kind].title}
+        description="Its format or codec may not be supported here."
         onRetry={() => {
           autoRetryRef.current = { refreshToken: props.refreshToken, attempted: false };
           setFailure(null);
@@ -285,17 +356,20 @@ function CenteredLoading(props: { readonly label: string }) {
   );
 }
 
-function CenteredFailure(props: { readonly message: string; readonly onRetry: () => void }) {
+function ReadFailure(props: {
+  readonly message: string;
+  readonly retrying?: boolean;
+  readonly onRetry: () => void;
+}) {
+  const copy = fileReadFailureCopy({ failure: null, message: props.message });
   return (
-    <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center">
-      <div className="flex max-w-sm flex-col items-center gap-3 text-xs text-muted-foreground">
-        <FileQuestion className="size-6" aria-hidden="true" />
-        <span>{props.message}</span>
-        <Button size="xs" variant="outline" onClick={props.onRetry}>
-          Try again
-        </Button>
-      </div>
-    </div>
+    <FileSurfaceFailure
+      title={copy.title}
+      description={copy.description}
+      details={copy.details}
+      onRetry={props.onRetry}
+      retrying={props.retrying ?? false}
+    />
   );
 }
 
@@ -332,7 +406,13 @@ function EnvironmentTextSurface(props: {
 
   if (load._tag === "Loading") return <CenteredLoading label="Reading file…" />;
   if (load._tag === "Failure") {
-    return <CenteredFailure message={load.message} onRetry={loadedAsset.refresh} />;
+    return (
+      <ReadFailure
+        message={load.message}
+        retrying={loadedAsset.refreshing}
+        onRetry={loadedAsset.refresh}
+      />
+    );
   }
   if (props.file.presentation.kind === "markdown") {
     return (
@@ -399,8 +479,9 @@ function EnvironmentFileBody(props: {
   switch (props.file.presentation.kind) {
     case "image":
       return (
-        <div className="relative min-h-0 flex-1 overflow-hidden">
-          <EnvironmentImageSurface {...props} />
+        <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+          {/* Keyed per file: a retained last-good image must never belong to another file. */}
+          <EnvironmentImageSurface key={props.file.canonicalPath} {...props} />
         </div>
       );
     case "pdf":
@@ -427,16 +508,19 @@ function EnvironmentFileBody(props: {
       return <EnvironmentMediaSurface {...props} kind="video" />;
     case "binary":
       return (
-        <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center">
-          <div className="flex max-w-sm flex-col items-center gap-2 text-xs text-muted-foreground">
-            <FileQuestion className="size-7" aria-hidden="true" />
-            <span className="font-medium text-foreground">No rich preview for this file yet</span>
-            <span>
-              {props.file.presentation.mediaType} · {formatByteLength(props.file.byteLength)}
-            </span>
-            <span>You can still open it in your preferred editor from the header.</span>
-          </div>
-        </div>
+        <FileSurfaceMessage
+          title={UNSUPPORTED_PREVIEW_TITLE}
+          description={
+            <>
+              <span className="block">
+                {props.file.presentation.mediaType} · {formatByteLength(props.file.byteLength)}
+              </span>
+              <span className="block">
+                You can still open it in your preferred editor from the header.
+              </span>
+            </>
+          }
+        />
       );
   }
 }
@@ -541,20 +625,30 @@ export default function EnvironmentFilePreview(props: {
       </div>
       {freshness.error && file ? (
         <div
-          className="flex shrink-0 items-center gap-2 border-b border-destructive/20 bg-destructive/5 px-3 py-2 text-[11px] text-destructive"
-          role="alert"
+          className="flex shrink-0 items-center gap-2 border-b border-warning/20 bg-warning-surface px-3 py-2 text-[11px] text-warning-foreground"
+          role="status"
         >
           <AlertTriangle className="size-3.5 shrink-0" aria-hidden="true" />
           <span className="min-w-0 flex-1 truncate">
             The latest version could not be loaded. Showing the last available copy.
           </span>
-          <Button size="xs" variant="outline" onClick={freshness.refresh}>
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={freshness.isPending}
+            aria-busy={freshness.isPending}
+            onClick={freshness.refresh}
+          >
             Try again
           </Button>
         </div>
       ) : null}
       {freshness.error && !file ? (
-        <CenteredFailure message={freshness.error} onRetry={freshness.refresh} />
+        <ReadFailure
+          message={freshness.error}
+          retrying={freshness.isPending}
+          onRetry={freshness.refresh}
+        />
       ) : file ? (
         <EnvironmentFileBody
           environmentId={props.environmentId}

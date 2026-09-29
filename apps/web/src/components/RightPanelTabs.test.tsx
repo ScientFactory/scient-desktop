@@ -308,7 +308,7 @@ describe("RightPanelTabs context menu", () => {
   it("offers explicit relative and full path actions for file tabs", () => {
     expect(
       buildTabContextMenuItems({
-        file: true,
+        pathCopyFormats: ["relative", "full"],
         mute: null,
         surfaceIndex: 0,
         surfaceCount: 2,
@@ -323,10 +323,21 @@ describe("RightPanelTabs context menu", () => {
     ]);
   });
 
+  it("offers only a full path for host files outside the workspace", () => {
+    expect(
+      buildTabContextMenuItems({
+        pathCopyFormats: ["full"],
+        mute: null,
+        surfaceIndex: 0,
+        surfaceCount: 1,
+      }).map((item) => item.id),
+    ).toEqual(["copy-full-path", "close", "close-others", "close-to-right", "close-all"]);
+  });
+
   it("does not add path actions to non-file tabs", () => {
     expect(
       buildTabContextMenuItems({
-        file: false,
+        pathCopyFormats: [],
         mute: null,
         surfaceIndex: 0,
         surfaceCount: 1,
@@ -337,7 +348,7 @@ describe("RightPanelTabs context menu", () => {
   it("preserves the preview mute action alongside the shared close actions", () => {
     expect(
       buildTabContextMenuItems({
-        file: false,
+        pathCopyFormats: [],
         mute: { label: "Unmute tab", disabled: false },
         surfaceIndex: 0,
         surfaceCount: 1,
