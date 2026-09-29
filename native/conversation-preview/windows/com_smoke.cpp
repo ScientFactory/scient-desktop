@@ -86,6 +86,7 @@ static bool pumpUntil(CanUnloadNow canUnloadNow, DWORD milliseconds) {
 static const char *exerciseDelayedStream(IClassFactory *factory, DelayedStream **pending) {
   IPreviewHandler *handler = nullptr;
   IInitializeWithStream *initialize = nullptr;
+  IOleWindow *oleWindow = nullptr;
   DelayedStream *delayed = nullptr;
   DelayedStream *replacement = nullptr;
   HWND parent = nullptr;
@@ -102,6 +103,11 @@ static const char *exerciseDelayedStream(IClassFactory *factory, DelayedStream *
   if (FAILED(handler->QueryInterface(IID_IInitializeWithStream,
                                      reinterpret_cast<void **>(&initialize)))) {
     failure = "No IInitializeWithStream";
+    goto done;
+  }
+  if (FAILED(handler->QueryInterface(IID_IOleWindow,
+                                     reinterpret_cast<void **>(&oleWindow)))) {
+    failure = "No IOleWindow";
     goto done;
   }
   delayed = new (std::nothrow) DelayedStream();
@@ -132,7 +138,7 @@ static const char *exerciseDelayedStream(IClassFactory *factory, DelayedStream *
     failure = "DoPreview blocked on the delayed stream";
     goto done;
   }
-  if (handler->GetWindow(&editor) != S_OK || !editor) {
+  if (oleWindow->GetWindow(&editor) != S_OK || !editor) {
     failure = "Preview placeholder was not created";
     goto done;
   }
@@ -164,7 +170,7 @@ static const char *exerciseDelayedStream(IClassFactory *factory, DelayedStream *
     DispatchMessageW(&message);
   }
   editor = nullptr;
-  if (handler->GetWindow(&editor) != S_OK || !editor ||
+  if (oleWindow->GetWindow(&editor) != S_OK || !editor ||
       !GetWindowTextW(editor, label, 80) ||
       std::wcscmp(label, L"Loading conversation preview...") != 0) {
     failure = "Cancelled preview changed a replacement window";
@@ -180,6 +186,7 @@ static const char *exerciseDelayedStream(IClassFactory *factory, DelayedStream *
  done:
   if (handler) { handler->Unload(); handler->Release(); }
   if (initialize) initialize->Release();
+  if (oleWindow) oleWindow->Release();
   if (delayed) {
     SetEvent(delayed->resume);
     delayed->Release();
