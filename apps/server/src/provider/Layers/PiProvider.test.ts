@@ -99,6 +99,7 @@ it.effect("maps Pi RPC inventory into selectable models", () =>
     assert.deepEqual(snapshot.slashCommands, [
       { name: "subagents", description: "List subagents" },
       { name: "skill:review", description: "Review changes" },
+      { name: "compact", description: "Compact conversation context" },
     ]);
     assert.deepEqual(snapshot.skills, [
       {

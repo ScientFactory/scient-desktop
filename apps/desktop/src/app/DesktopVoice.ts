@@ -29,6 +29,7 @@ import type {
   VoiceModelState,
   VoiceModelSummary,
   VoiceTranscribeRequest,
+  VoiceCancelTranscriptionRequest,
   VoiceTranscript,
   VoiceModelRecommendation,
 } from "@t3tools/contracts";
@@ -105,7 +106,9 @@ export interface DesktopVoiceService {
   readonly removeModel: (
     request: VoiceModelRemoveRequest,
   ) => Effect.Effect<VoiceModelsSnapshot, VoiceRequestError>;
-  readonly cancelTranscription: Effect.Effect<void>;
+  readonly cancelTranscription: (
+    request: VoiceCancelTranscriptionRequest | void,
+  ) => Effect.Effect<void>;
   readonly transcribe: (
     request: VoiceTranscribeRequest,
   ) => Effect.Effect<VoiceTranscript, VoiceRequestError>;
@@ -248,6 +251,7 @@ export const makeWithDependencies = (dependencies: DesktopVoiceDependencies) =>
     let downloadController: AbortController | null = null;
     let downloadModelId: VoiceModelId | null = null;
     let activeController: AbortController | null = null;
+    let activeRequestId: string | undefined;
     let activeTranscription: Promise<unknown> | null = null;
     let selectedModelId = (yield* appSettings.load).voiceSelectedModelId ?? null;
     const persistSelectedModel = (
@@ -531,9 +535,10 @@ export const makeWithDependencies = (dependencies: DesktopVoiceDependencies) =>
           );
         }),
 
-      cancelTranscription: Effect.sync(() => {
-        activeController?.abort();
-      }),
+      cancelTranscription: (request) =>
+        Effect.sync(() => {
+          if (activeRequestId === request?.requestId) activeController?.abort();
+        }),
 
       transcribe: (request) =>
         Effect.gen(function* () {
@@ -551,6 +556,7 @@ export const makeWithDependencies = (dependencies: DesktopVoiceDependencies) =>
           activeController?.abort();
           const controller = new AbortController();
           activeController = controller;
+          activeRequestId = request.requestId;
           const transcription = engine.transcribe(selectedModelId, clip, {
             signal: controller.signal,
             ...(request.language !== undefined ? { language: request.language } : {}),
@@ -563,7 +569,10 @@ export const makeWithDependencies = (dependencies: DesktopVoiceDependencies) =>
           }).pipe(
             Effect.ensuring(
               Effect.sync(() => {
-                if (activeController === controller) activeController = null;
+                if (activeController === controller) {
+                  activeController = null;
+                  activeRequestId = undefined;
+                }
                 if (activeTranscription === transcription) activeTranscription = null;
               }),
             ),

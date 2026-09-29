@@ -37,6 +37,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { readMcpProviderSession } from "../../mcp/McpProviderSession.ts";
 import { buildScientAwareness } from "../ScientAwareness.ts";
+import { piContextErrorMessage } from "../pi/PiContextError.ts";
 import { piScientExtensionSource } from "../pi/PiScientExtension.ts";
 import {
   ProviderAdapterRequestError,
@@ -100,6 +101,8 @@ interface ActiveTurn {
   messageSequence: number;
   lastStopReason: string | undefined;
   lastError: string | undefined;
+  contextBudgetError?: string;
+  contextRecoveryPending?: boolean;
 }
 
 type PiInteractiveExtensionMethod = "select" | "confirm" | "input" | "editor";
@@ -364,6 +367,22 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (options: PiAd
     const method = string(event.method);
     if (method === "notify") {
       const message = trimmedString(event.message);
+      if (message?.startsWith("scient:context-recovery:") && ctx.activeTurn) {
+        ctx.activeTurn.contextRecoveryPending = true;
+        return;
+      }
+      if (message?.startsWith("scient:context-limit:") && ctx.activeTurn) {
+        const turn = ctx.activeTurn;
+        turn.contextRecoveryPending = false;
+        turn.contextBudgetError =
+          "Pi reached this model's context limit and automatic recovery could not make room. Saved messages and completed tool results are intact. Compact this conversation and then continue, or choose a larger-context model.";
+        yield* Effect.suspend(() => handleEvent(ctx, { type: "agent_settled" }, true)).pipe(
+          Effect.orDie,
+          Effect.forkIn(ctx.scope),
+          Effect.asVoid,
+        );
+        return;
+      }
       if (message) {
         yield* offer({
           type: "runtime.warning",
@@ -605,7 +624,19 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (options: PiAd
       return;
     }
     let turn = ctx.activeTurn;
+    if (type === "extension_error" && turn?.contextRecoveryPending) {
+      turn.contextRecoveryPending = false;
+      turn.contextBudgetError =
+        "Pi could not resume after context compaction. Saved work is intact. Send a continuation message to resume.";
+      yield* Effect.suspend(() => handleEvent(ctx, { type: "agent_settled" }, true)).pipe(
+        Effect.orDie,
+        Effect.forkIn(ctx.scope),
+        Effect.asVoid,
+      );
+      return;
+    }
     if (type === "agent_start") {
+      if (turn) turn.contextRecoveryPending = false;
       // Extensions can start work without a Scient send. Invalidate any idle
       // snapshot already waiting on usage or terminal publication.
       ctx.settlementGeneration += 1;
@@ -738,6 +769,7 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (options: PiAd
       return;
     }
     if (type === "agent_settled" || type === "compaction_end") {
+      if (turn.contextRecoveryPending) return;
       if (turn.promptPending || ctx.steeringPromptsInFlight > 0) {
         ctx.deferredSettlement = native;
         return;
@@ -831,10 +863,11 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (options: PiAd
       if (ctx.activeTurn !== turn || turn.terminal || ctx.closing || ctx.stopped) return;
       // Native compaction/retry may recover a length stop before agent_settled.
       // A final length stop completes execution, retaining the native truncation reason.
-      if (turn.lastStopReason === "error") {
+      if (turn.contextBudgetError || turn.lastStopReason === "error") {
         const published = yield* failActive(
           ctx,
-          turn.lastError ?? "Pi model request failed.",
+          turn.contextBudgetError ??
+            piContextErrorMessage(turn.lastError ?? "Pi model request failed."),
           native,
           false,
           isStillSettled,
@@ -1484,6 +1517,7 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (options: PiAd
       Effect.sync(() => [...sessions.values()].map((ctx) => ({ ...ctx.session }))),
     hasSession: (threadId) => Effect.sync(() => sessions.has(threadId)),
     stopAll,
+    compaction: { type: "slash-command", command: "/compact" },
     streamEvents: Stream.fromQueue(events),
   } satisfies ProviderAdapterShape<ProviderAdapterError>;
 });

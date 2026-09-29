@@ -1,4 +1,5 @@
 // @effect-diagnostics globalFetch:off
+import { piContextExtension } from "./PiContextExtension.ts";
 /** Runs in Pi, without Scient's Effect runtime or dependencies. */
 interface PiExtensionApi {
   on(event: "before_agent_start", handler: (event: { systemPrompt: string }) => unknown): void;
@@ -211,4 +212,5 @@ async function piScientExtension(pi: PiExtensionApi): Promise<void> {
   });
 }
 
-export const piScientExtensionSource = () => `export default ${piScientExtension.toString()};\n`;
+export const piScientExtensionSource = () =>
+  `export default async function(pi) { await (${piScientExtension.toString()})(pi); (${piContextExtension.toString()})(pi); }\n`;
