@@ -26,6 +26,7 @@ const DesktopSettingsPatch = Schema.Struct({
   ),
   mainWindowMaximized: Schema.optionalKey(Schema.Boolean),
   mainWindowSizeIncreaseApplied: Schema.optionalKey(Schema.Boolean),
+  mainWindowNearFullSizeApplied: Schema.optionalKey(Schema.Boolean),
   serverExposureMode: Schema.optionalKey(Schema.Literals(["local-only", "network-accessible"])),
   tailscaleServeEnabled: Schema.optionalKey(Schema.Boolean),
   tailscaleServePort: Schema.optionalKey(Schema.Number),
@@ -138,6 +139,7 @@ describe("DesktopSettings", () => {
         mainWindowBounds: null,
         mainWindowMaximized: false,
         mainWindowSizeIncreaseApplied: true,
+        mainWindowNearFullSizeApplied: true,
         serverExposureMode: "local-only",
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
@@ -195,6 +197,7 @@ describe("DesktopSettings", () => {
           mainWindowBounds: null,
           mainWindowMaximized: false,
           mainWindowSizeIncreaseApplied: false,
+          mainWindowNearFullSizeApplied: false,
           serverExposureMode: "network-accessible",
           tailscaleServeEnabled: true,
           tailscaleServePort: 8443,
@@ -310,6 +313,7 @@ describe("DesktopSettings", () => {
           mainWindowBounds: { x: 120, y: 80, width: 1280, height: 900 },
           mainWindowMaximized: false,
           mainWindowSizeIncreaseApplied: false,
+          mainWindowNearFullSizeApplied: false,
           serverExposureMode: "network-accessible",
           tailscaleServeEnabled: true,
           tailscaleServePort: 8443,
@@ -369,6 +373,7 @@ describe("DesktopSettings", () => {
             mainWindowBounds: null,
             mainWindowMaximized: false,
             mainWindowSizeIncreaseApplied: false,
+            mainWindowNearFullSizeApplied: false,
             serverExposureMode: "network-accessible",
             tailscaleServeEnabled: true,
             tailscaleServePort: 8443,
@@ -409,6 +414,7 @@ describe("DesktopSettings", () => {
           mainWindowBounds: { x: -1200, y: 40, width: 1440, height: 960 },
           mainWindowMaximized: true,
           mainWindowSizeIncreaseApplied: true,
+          mainWindowNearFullSizeApplied: true,
           serverExposureMode: "network-accessible",
         } satisfies typeof DesktopSettingsPatch.Type);
       }),
@@ -476,6 +482,32 @@ describe("DesktopSettings", () => {
     ),
   );
 
+  it.effect("applies the near-full size once and persists its marker", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* writeSettingsPatch({
+          mainWindowBounds: { x: 15, y: 39, width: 1698, height: 977 },
+          mainWindowSizeIncreaseApplied: true,
+        });
+        assert.isFalse((yield* settings.load).mainWindowNearFullSizeApplied);
+
+        const target = { x: 8, y: 33, width: 1712, height: 989 };
+        assert.isTrue((yield* settings.applyMainWindowNearFullSize(target)).changed);
+        assert.deepEqual((yield* settings.load).mainWindowBounds, target);
+        assert.isTrue((yield* settings.get).mainWindowNearFullSizeApplied);
+        assert.isFalse((yield* settings.applyMainWindowNearFullSize(null)).changed);
+        assert.isTrue(
+          (yield* decodeDesktopSettingsPatch(
+            yield* fileSystem.readFileString(environment.desktopSettingsPath),
+          )).mainWindowNearFullSizeApplied,
+        );
+      }),
+    ),
+  );
+
   it.effect("keeps legacy bounds and retries later when the one-time write fails", () =>
     withSettings(
       Effect.gen(function* () {
@@ -515,6 +547,7 @@ describe("DesktopSettings", () => {
           mainWindowBounds: null,
           mainWindowMaximized: false,
           mainWindowSizeIncreaseApplied: false,
+          mainWindowNearFullSizeApplied: false,
           serverExposureMode: "network-accessible",
           tailscaleServeEnabled: false,
           tailscaleServePort: 443,
@@ -555,6 +588,7 @@ describe("DesktopSettings", () => {
           mainWindowBounds: null,
           mainWindowMaximized: false,
           mainWindowSizeIncreaseApplied: false,
+          mainWindowNearFullSizeApplied: false,
           serverExposureMode: "local-only",
           tailscaleServeEnabled: false,
           tailscaleServePort: 443,
@@ -592,6 +626,7 @@ describe("DesktopSettings", () => {
           mainWindowBounds: null,
           mainWindowMaximized: false,
           mainWindowSizeIncreaseApplied: false,
+          mainWindowNearFullSizeApplied: false,
           serverExposureMode: "local-only",
           tailscaleServeEnabled: true,
           tailscaleServePort: 443,
