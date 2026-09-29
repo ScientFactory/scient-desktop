@@ -18,7 +18,7 @@ import { readSidebarSectionScope } from "./sidebarScope";
  * as the projects it was created for, their projects plus the sidebar's
  * selected project (`scopeProjectRefs`, null under All projects).
  */
-export function sectionOriginForThreads(
+function sectionOriginForThreads(
   threadRefs: readonly ScopedThreadRef[],
   scopeProjectRefs: readonly ThreadSectionProjectRef[] | null,
 ): SectionOrigin {
