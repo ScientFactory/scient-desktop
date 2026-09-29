@@ -4,6 +4,7 @@ import {
   buildTraitsTriggerDisplay,
   buildUnavailableModelOptionDescriptors,
   shouldRenderTraitsControls,
+  withoutPromptInjectedOptions,
 } from "./TraitsPicker";
 import { getProviderOptionDescriptors, getProviderOptionCurrentValue } from "@t3tools/shared/model";
 
@@ -284,5 +285,35 @@ describe("buildUnavailableModelOptionDescriptors", () => {
         currentValue: true,
       },
     ]);
+  });
+});
+
+describe("withoutPromptInjectedOptions", () => {
+  it("removes ultrathink but keeps every real effort and the saved value", () => {
+    const effort: ProviderOptionDescriptor = {
+      id: "effort",
+      label: "Effort",
+      type: "select",
+      options: [
+        { id: "low", label: "Low" },
+        { id: "high", label: "High", isDefault: true },
+        { id: "ultrathink", label: "Ultrathink" },
+      ],
+      currentValue: "low",
+      promptInjectedValues: ["ultrathink"],
+    };
+
+    const [filtered] = withoutPromptInjectedOptions([
+      effort,
+      CONTEXT_WINDOW,
+      fastModeDescriptor(true),
+    ]);
+
+    expect(filtered).toMatchObject({ currentValue: "low" });
+    expect(filtered?.type === "select" && filtered.options.map((option) => option.id)).toEqual([
+      "low",
+      "high",
+    ]);
+    expect(withoutPromptInjectedOptions([CONTEXT_WINDOW])[0]).toBe(CONTEXT_WINDOW);
   });
 });
