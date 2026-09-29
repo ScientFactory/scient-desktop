@@ -1,4 +1,8 @@
+import { ChevronRightIcon, FileQuestionIcon, type LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
+
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "~/components/ui/collapsible";
+import { RefreshIcon } from "~/components/ui/refresh-icon";
 
 import { Spinner } from "~/components/ui/spinner";
 import { Button } from "~/components/ui/button";
@@ -139,25 +143,92 @@ export function FileSurfaceLoading(props: { readonly className?: string }) {
   );
 }
 
-export function FileSurfaceFailure(props: {
-  readonly message: string;
+/**
+ * The one centered state a file surface shows instead of a file: a failure, or
+ * a file that has no preview. Calm by design: a muted icon, a short title and
+ * description, one recovery action, and the raw error only behind Details.
+ */
+export function FileSurfaceMessage(props: {
+  readonly title: string;
+  readonly description?: ReactNode;
+  readonly details?: string | null;
+  readonly icon?: LucideIcon;
   readonly onRetry?: () => void;
+  readonly retrying?: boolean;
+  /** "alert" announces a failure; "status" is for a neutral no-preview state. */
+  readonly role?: "alert" | "status";
+  readonly children?: ReactNode;
 }) {
+  const Icon = props.icon ?? FileQuestionIcon;
+  const retrying = props.retrying ?? false;
   return (
     <div
-      role="alert"
-      className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-6 text-center scient-reading-ui text-xs leading-relaxed"
+      role={props.role ?? "status"}
+      className="flex min-h-0 flex-1 flex-col items-center justify-center-safe overflow-y-auto px-6 py-8"
     >
-      <p className="text-destructive">{props.message}</p>
-      {props.onRetry ? (
-        <button
-          type="button"
-          onClick={props.onRetry}
-          className="rounded-md border border-input px-2.5 py-1 scient-reading-ui text-xs text-foreground hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          Try again
-        </button>
-      ) : null}
+      <div className="flex w-full max-w-80 flex-col items-center gap-3 text-center scient-reading-ui">
+        <Icon className="size-6 shrink-0 text-muted-foreground/70" aria-hidden="true" />
+        <div className="flex flex-col gap-1">
+          <p className="text-sm font-medium text-balance text-foreground">{props.title}</p>
+          {props.description ? (
+            <p className="text-xs leading-relaxed text-balance text-muted-foreground">
+              {props.description}
+            </p>
+          ) : null}
+        </div>
+        {props.onRetry || props.children ? (
+          <div className="flex flex-wrap justify-center gap-2">
+            {props.onRetry ? (
+              <Button
+                type="button"
+                size="xs"
+                variant="outline"
+                onClick={props.onRetry}
+                disabled={retrying}
+                aria-busy={retrying}
+              >
+                <RefreshIcon size="xs" refreshing={retrying} />
+                Try again
+              </Button>
+            ) : null}
+            {props.children}
+          </div>
+        ) : null}
+        {props.details ? (
+          <div className="flex w-full flex-col items-center scient-reading-micro">
+            <Collapsible className="flex w-full flex-col items-center">
+              <CollapsibleTrigger className="group inline-flex items-center gap-1 rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+                <ChevronRightIcon
+                  className="size-3 transition-transform duration-150 group-data-panel-open:rotate-90 motion-reduce:transition-none"
+                  aria-hidden="true"
+                />
+                Details
+              </CollapsibleTrigger>
+              <CollapsiblePanel motion="fast" className="w-full">
+                <pre
+                  dir="auto"
+                  className="mt-2 max-h-40 w-full overflow-auto rounded-md bg-muted/50 px-2.5 py-2 text-start font-mono leading-relaxed break-words whitespace-pre-wrap text-muted-foreground select-text"
+                >
+                  {props.details}
+                </pre>
+              </CollapsiblePanel>
+            </Collapsible>
+          </div>
+        ) : null}
+      </div>
     </div>
   );
+}
+
+/** A file surface that failed to load; announced, and retryable when a retry can help. */
+export function FileSurfaceFailure(props: {
+  readonly title: string;
+  readonly description: ReactNode;
+  readonly details?: string | null;
+  readonly icon?: LucideIcon;
+  readonly onRetry?: () => void;
+  readonly retrying?: boolean;
+  readonly children?: ReactNode;
+}) {
+  return <FileSurfaceMessage {...props} role="alert" />;
 }

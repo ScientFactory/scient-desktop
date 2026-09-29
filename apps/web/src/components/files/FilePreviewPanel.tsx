@@ -3,6 +3,7 @@ import type {
   ChatFileAttachment,
   EditorId,
   EnvironmentId,
+  ProjectFileFailure,
   ResolvedKeybindingsConfig,
   ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -111,6 +112,7 @@ import {
   useWorkspaceFileRefresh,
 } from "~/scient/fileSurfaces/useWorkspaceFileRefresh";
 import { usePendingSurfaceDeparture } from "~/scient/fileSurfaces/usePendingSurfaceDeparture";
+import { fileReadFailureCopy, MEDIA_FAILURE_COPY } from "~/scient/fileSurfaces/fileFailureCopy";
 
 import { AttachmentFilePreview } from "./AttachmentFilePreview";
 import { AudioPreview } from "./AudioPreview";
@@ -332,9 +334,13 @@ function WorkspaceImagePreview(props: {
   if (assetUrl._tag === "Failure" || (imageUrl !== null && failedUrl === imageUrl)) {
     return (
       <MediaActions source={actionsSource}>
-        <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center scient-reading-ui text-xs leading-relaxed text-destructive">
-          Unable to load workspace image.
-        </div>
+        <FileSurfaceFailure
+          {...MEDIA_FAILURE_COPY.image}
+          onRetry={() => {
+            setFailedUrl(null);
+            assetUrl.refresh();
+          }}
+        />
       </MediaActions>
     );
   }
@@ -411,11 +417,7 @@ function WorkspaceBrowserPreview(props: {
       : `${assetUrl._tag === "Success" && assetUrl.url.includes("?") ? "&" : "?"}workspace-revision=${props.refreshKey}`;
 
   if (assetUrl._tag === "Failure") {
-    return (
-      <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center scient-reading-ui text-xs leading-relaxed text-destructive">
-        Unable to load file preview.
-      </div>
-    );
+    return <FileSurfaceFailure {...MEDIA_FAILURE_COPY.document} onRetry={assetUrl.refresh} />;
   }
   if (assetUrl._tag !== "Success") {
     return (
@@ -537,7 +539,7 @@ function WorkspaceAudioPreview(props: {
   if (assetUrl._tag === "Failure" || (url !== null && failedUrl === url)) {
     return (
       <FileSurfaceFailure
-        message="Unable to load audio."
+        {...MEDIA_FAILURE_COPY.audio}
         onRetry={() => {
           setFailedUrl(null);
           void refreshAssetUrl().catch(() => undefined);
@@ -547,6 +549,23 @@ function WorkspaceAudioPreview(props: {
   }
   if (url === null) return <FileSurfaceLoading />;
   return <AudioPreview src={url} name={props.name} onError={() => setFailedUrl(url)} />;
+}
+
+function FileReadFailure(props: {
+  readonly failure: ProjectFileFailure | null;
+  readonly message: string;
+  readonly retrying: boolean;
+  readonly onRetry: () => void;
+}) {
+  const copy = fileReadFailureCopy({ failure: props.failure, message: props.message });
+  return (
+    <FileSurfaceFailure
+      title={copy.title}
+      description={copy.description}
+      details={copy.details}
+      {...(copy.retryable ? { onRetry: props.onRetry, retrying: props.retrying } : {})}
+    />
+  );
 }
 
 function clampFileLine(contents: string, requestedLine: number): number {
@@ -2017,9 +2036,12 @@ export default function FilePreviewPanel({
               aria-label="Opening Markdown editor"
             />
           ) : relativePath && file.error && file.data === null ? (
-            <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center scient-reading-ui text-xs leading-relaxed text-destructive">
-              {file.error}
-            </div>
+            <FileReadFailure
+              failure={file.failure}
+              message={file.error}
+              retrying={file.isPending}
+              onRetry={requestManualReload}
+            />
           ) : relativePath && file.data === null ? (
             <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
               <Spinner size="lg" />
