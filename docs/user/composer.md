@@ -568,27 +568,38 @@ clients must update before sending to a server using the new queue protocol.
 ## Reading while an answer arrives
 
 By default, an answer grows below your reading position. Reaching the bottom
-or clicking Scroll to end does not enable automatic following. Tool activity
-and queued messages do not pull the conversation downward.
+or clicking Scroll to end does not enable automatic following, and tool
+activity does not pull the conversation downward. "The bottom" means the end
+of the last message's text: a changed-files list, tool activity or timestamps
+below it do not count as unread.
 
 Sending near the bottom gently reveals your message and its answer, allowing
 a margin of at most two rendered body-text lines. The first message retains its existing placement
 near the top. Movement stops when your sent message's first line reaches the top
 of the reading area; only the bubble's padding may pass above it. It then stays there
-while the rest grows below the screen. If you were reading earlier content,
-sending leaves that position alone. Manual scrolling cancels both pending
-placement and limited answer following, including during an upload.
+while the rest grows below the screen. When progress notes, reasoning or tool
+activity push the message the agent is writing below the screen, the reveal
+continues just far enough to show that message's first lines, never its end. A
+queued message that is sent while you are at the bottom is revealed the same way.
+If you were reading earlier content, sending leaves that position alone.
+Scrolling back up cancels both pending placement and limited answer following,
+including during an upload; clicking, selecting text, or scrolling down does not.
+
+While nothing is running and you are at the end, the end stays in view when the
+window resizes or a diagram or image finishes rendering.
 
 Use the existing **Scroll to end** button for a single jump. It appears when more
 content remains below you, not just blank space reserved for message placement.
 Its small count shows
-new assistant messages below your view that you have not reached yet, once per
-message, not once per streaming update. It excludes your messages and tool activity.
+new answers below your view that you have not reached yet: once per response,
+not once per progress note or streaming update. It excludes your messages and
+tool activity.
 The count tracks reading within the current app window session; opening older
 history does not mark it newly unread.
 
 Returning to a thread, or reloading the same window, restores the message you
 were reading and its position in the view. If a temporary working indicator has
 become an answer, restoration uses that turn's content. Older history loads when
-needed to find the saved message. A thread with no saved reading position opens
-at the end once. These positions are local to the window, not synced read receipts.
+needed to find the saved message; if a few pages do not contain it, the nearest
+message or the end is used instead. A thread with no saved reading position
+opens at the end once, and stays there while its rows finish rendering. These positions are local to the window, not synced read receipts.
