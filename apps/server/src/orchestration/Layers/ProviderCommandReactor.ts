@@ -663,7 +663,12 @@ const make = Effect.gen(function* () {
     const key =
       session === undefined
         ? null
-        : nativeThreadKey(session.provider, session.resumeCursor, session.providerInstanceId);
+        : nativeThreadKey(
+            session.provider,
+            session.resumeCursor,
+            session.providerInstanceId,
+            session.nativeSessionId,
+          );
     // The new provider thread must differ from the source's: otherwise the
     // adapter resumed instead of forking and the portable handoff is needed.
     if (
@@ -733,6 +738,7 @@ const make = Effect.gen(function* () {
                 liveSession.provider,
                 liveSession.resumeCursor,
                 liveSession.providerInstanceId,
+                liveSession.nativeSessionId,
               ),
         // An accepted turn is "starting" until the provider reports it.
         sessionRunning:
@@ -1848,6 +1854,7 @@ const make = Effect.gen(function* () {
                   targetSession.provider,
                   targetSession.resumeCursor,
                   targetSession.providerInstanceId,
+                  targetSession.nativeSessionId,
                 ),
           includedItemCount: forkContext.includedItemCount,
           omittedItemCount: forkContext.omittedItemCount,
@@ -1874,6 +1881,7 @@ const make = Effect.gen(function* () {
                 );
                 return settleForkContext({
                   type: "accepted",
+                  turnId: turn.turnId,
                   nativeThreadKey:
                     session === undefined
                       ? null
@@ -1881,6 +1889,7 @@ const make = Effect.gen(function* () {
                           session.provider,
                           turn.resumeCursor ?? session.resumeCursor,
                           session.providerInstanceId,
+                          session.nativeSessionId,
                         ),
                 }).pipe(
                   Effect.andThen(

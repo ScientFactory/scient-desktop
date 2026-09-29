@@ -1052,6 +1052,41 @@ describe("ProviderCommandReactor", () => {
     expect(callOrder).toEqual(["prepare", "begin", "send", "settle:accepted"]);
   });
 
+  it("keeps a fork attached to its live native session before a resume cursor exists", async () => {
+    const prepareTurn = vi.fn<ScientForkContextDeliveryShape["prepareTurn"]>(() =>
+      Effect.succeed(deliverContext()),
+    );
+    const beginDelivery = vi.fn<ScientForkContextDeliveryShape["beginDelivery"]>(() => Effect.void);
+    const settleDelivery = vi.fn<ScientForkContextDeliveryShape["settleDelivery"]>(
+      () => Effect.void,
+    );
+    const harness = await createHarness({
+      forkLineage: true,
+      startSessionEffect: ({ resumeCursor: _cursor, ...session }) =>
+        Effect.succeed({ ...session, nativeSessionId: "native-before-file" }),
+      forkContextDelivery: { prepareTurn, beginDelivery, settleDelivery },
+    });
+    await startForkTurn(harness, "first-delayed-cursor");
+    await waitFor(() => settleDelivery.mock.calls.length === 1);
+    const key = "codex@codex:native-before-file";
+    expect(prepareTurn.mock.calls[0]?.[0].nativeThreadKey).toBe(key);
+    expect(beginDelivery.mock.calls[0]?.[0].nativeThreadKey).toBe(key);
+    expect(settleDelivery.mock.calls[0]?.[0].outcome).toEqual({
+      type: "accepted",
+      nativeThreadKey: key,
+      turnId: asTurnId("turn-1"),
+    });
+    prepareTurn.mockImplementation(() => Effect.succeed({ kind: "none" }));
+    const session = harness.runtimeSessions[0]!;
+    harness.runtimeSessions[0] = { ...session, resumeCursor: { threadId: "native-before-file" } };
+    await startForkTurn(harness, "second-delayed-cursor");
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+    expect(prepareTurn.mock.calls[1]?.[0].nativeThreadKey).toBe(key);
+    expect(harness.sendTurn.mock.calls[1]?.[0].contextPreamble).toBeUndefined();
+    expect(harness.startSession).toHaveBeenCalledTimes(1);
+    expect(harness.discardSessionContinuity).not.toHaveBeenCalled();
+  });
+
   effectIt.effect("allows a Droid fork send to remain active beyond two minutes", () =>
     Effect.gen(function* () {
       const clock = yield* Clock.Clock;
