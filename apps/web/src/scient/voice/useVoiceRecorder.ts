@@ -297,7 +297,13 @@ export function useVoiceRecorder(options?: UseVoiceRecorderOptions): VoiceRecord
       gain.connect(context.destination);
 
       autoStopTimerRef.current = setTimeout(() => {
-        void finalize(true).then((clip) => onAutoStopRef.current?.(clip));
+        const finalization = finalize(true);
+        const generation = generationRef.current;
+        void finalization.then((clip) => {
+          if (mountedRef.current && generation === generationRef.current) {
+            onAutoStopRef.current?.(clip);
+          }
+        });
       }, MAX_RECORDING_MS);
       setStatus("recording");
       return true;
@@ -315,6 +321,7 @@ export function useVoiceRecorder(options?: UseVoiceRecorderOptions): VoiceRecord
 
   const stop = useCallback(() => finalize(true), [finalize]);
   const cancel = useCallback(async (): Promise<void> => {
+    generationRef.current += 1;
     await finalize(false);
   }, [finalize]);
 

@@ -6,6 +6,7 @@ import {
   VoiceMicrophoneAccessStatus,
   type VoiceMicrophoneAccessStatus as VoiceMicrophoneAccessStatusType,
   VoiceTranscribeRequest,
+  VoiceCancelTranscriptionRequest,
   VoiceTranscript,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -118,11 +119,11 @@ const transcribeVoice = DesktopIpc.makeIpcMethod({
 
 const cancelVoiceTranscription = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.VOICE_CANCEL_TRANSCRIPTION_CHANNEL,
-  payload: Schema.Void,
+  payload: Schema.Union([VoiceCancelTranscriptionRequest, Schema.Void]),
   result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.voice.cancelTranscription")(function* () {
+  handler: Effect.fn("desktop.ipc.voice.cancelTranscription")(function* (request) {
     const voice = yield* DesktopVoice.DesktopVoice;
-    yield* voice.cancelTranscription;
+    yield* voice.cancelTranscription(request);
   }),
 });
 

@@ -5,10 +5,12 @@ import {
   VOICE_AUDIO_BASE64_MAX_CHARS,
   VOICE_TRANSCRIPT_CORRECTION_MAX_CHARS,
   VoiceTranscribeRequest,
+  VoiceCancelTranscriptionRequest,
   VoiceTranscriptCorrectionRequest,
 } from "./voice.ts";
 
 const decodeVoiceRequest = Schema.decodeUnknownSync(VoiceTranscribeRequest);
+const decodeCancellationRequest = Schema.decodeUnknownSync(VoiceCancelTranscriptionRequest);
 const decodeCorrectionRequest = Schema.decodeUnknownSync(VoiceTranscriptCorrectionRequest);
 
 describe("VoiceTranscribeRequest", () => {
@@ -69,5 +71,22 @@ describe("VoiceTranscriptCorrectionRequest", () => {
       language: "he",
     });
     expect(() => decodeCorrectionRequest({ transcript: "hello", language: "auto" })).toThrow();
+  });
+});
+
+describe("voice request identity", () => {
+  it("round-trips scoped identities while accepting older transcription requests", () => {
+    const request = {
+      audioBase64: "AAAA",
+      mimeType: "audio/wav",
+      sampleRateHz: 24000,
+      durationMs: 1,
+    };
+    expect(decodeVoiceRequest(request)).toEqual(request);
+    expect(decodeVoiceRequest({ ...request, requestId: "owner" }).requestId).toBe("owner");
+    expect(decodeCancellationRequest({ requestId: "owner" })).toEqual({ requestId: "owner" });
+  });
+  it.each(["", " ", "x".repeat(129)])("rejects invalid cancellation identities", (requestId) => {
+    expect(() => decodeCancellationRequest({ requestId })).toThrow();
   });
 });

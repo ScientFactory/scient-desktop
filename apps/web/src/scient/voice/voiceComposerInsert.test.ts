@@ -11,19 +11,33 @@ describe("buildVoiceDraftReplacement", () => {
     });
   });
 
-  it("appends dictation to the current visible draft as a new line", () => {
+  it("appends dictation to the current visible draft without forcing a new line", () => {
     expect(buildVoiceDraftReplacement("Existing draft", "dictated text")).toEqual({
       rangeStart: 0,
       rangeEnd: 14,
-      replacement: "Existing draft\ndictated text",
+      replacement: "Existing draft dictated text",
     });
+  });
+
+  it.each(["Existing draft ", "Existing draft\n", "Existing draft\n\n", "  "])(
+    "preserves intentional trailing whitespace in %j",
+    (draft) => {
+      expect(buildVoiceDraftReplacement(draft, "more").replacement).toBe(`${draft}more`);
+    },
+  );
+
+  it("preserves transcript paragraphs and leaves an empty transcript unchanged", () => {
+    expect(buildVoiceDraftReplacement("שלום", "עולם\n\nNext paragraph").replacement).toBe(
+      "שלום עולם\n\nNext paragraph",
+    );
+    expect(buildVoiceDraftReplacement("Keep me\n\n", "  ").replacement).toBe("Keep me\n\n");
   });
 
   it("uses the draft current at transcription completion", () => {
     expect(buildVoiceDraftReplacement("Edited while recording", "dictated text")).toEqual({
       rangeStart: 0,
       rangeEnd: 22,
-      replacement: "Edited while recording\ndictated text",
+      replacement: "Edited while recording dictated text",
     });
   });
 
@@ -43,7 +57,7 @@ describe("buildVoiceDraftReplacement", () => {
     );
 
     expect(applied).toBe(true);
-    expect(committedText).toBe("Existing draft\ndictated text");
+    expect(committedText).toBe("Existing draft dictated text");
     expect(committedCursor).toBe(committedText.length);
   });
 });
