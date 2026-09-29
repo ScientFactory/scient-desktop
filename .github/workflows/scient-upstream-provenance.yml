@@ -2,6 +2,8 @@ name: Scient Upstream Provenance
 
 on:
   pull_request:
+  merge_group:
+    types: [checks_requested]
   push:
     branches:
       - main
@@ -26,13 +28,15 @@ jobs:
 
       - name: Verify upstream provenance and Scient seams
         env:
-          VERIFY_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          VERIFY_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
           VERIFY_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          ALLOW_QUEUE_MERGES: ${{ github.event_name == 'merge_group' && 'true' || 'false' }}
           ALLOW_OWNED_HEAD_MERGE: ${{ github.event_name == 'push' && 'true' || 'false' }}
         run: |
           node scripts/verify-upstream-provenance.mjs \
             --base "$VERIFY_BASE" \
             --head "$VERIFY_HEAD" \
+            --allow-queue-merges "$ALLOW_QUEUE_MERGES" \
             --allow-owned-head-merge "$ALLOW_OWNED_HEAD_MERGE" \
             --official-ref refs/remotes/upstream-verification/main
           # Every scient-*-seams.json manifest in one pass: each changed path

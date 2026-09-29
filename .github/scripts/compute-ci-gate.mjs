@@ -79,7 +79,7 @@ export function testGatePasses({ workspace, detection, changed, native }) {
 function detectChanges() {
   try {
     const event = JSON.parse(NodeFS.readFileSync(process.env.GITHUB_EVENT_PATH, "utf8"));
-    const base = event.pull_request?.base.sha ?? event.before;
+    const base = event.pull_request?.base.sha ?? event.merge_group?.base_sha ?? event.before;
     const head = process.env.GITHUB_SHA;
     if (![base, head].every((sha) => typeof sha === "string" && /^[a-f0-9]{40,64}$/.test(sha)))
       throw new Error("Missing comparison revision");

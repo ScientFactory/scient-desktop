@@ -34,7 +34,25 @@ function parseArgs(argv) {
 
 export function validateIntroducedMergeParents(input) {
   const failures = [];
+  const queueMerges = new Set();
+  if (input.allowQueueMerges === true) {
+    // Only the trusted merge_group workflow enables this mode. With the queue
+    // configured to MERGE, GitHub's integration commits form the first-parent
+    // chain from the event head back to its exact base. PR histories hang off
+    // second parents and remain fully checked below.
+    const parentsByCommit = new Map(input.merges.map((merge) => [merge.commit, merge.parents]));
+    let current = input.head;
+    while (current !== input.base) {
+      const parents = parentsByCommit.get(current);
+      if (parents?.length !== 2 || queueMerges.has(current)) {
+        return [`Unexpected merge queue topology at ${current}`];
+      }
+      queueMerges.add(current);
+      current = parents[0];
+    }
+  }
   for (const merge of input.merges) {
+    if (queueMerges.has(merge.commit)) continue;
     if (
       input.allowOwnedHeadMerge === true &&
       merge.commit === input.head &&
@@ -105,6 +123,7 @@ export function verifyUpstreamProvenance(argv = process.argv.slice(2)) {
             .filter((row) => row.length > 2)
             .map(([commit, ...parents]) => ({ commit, parents })),
           exceptions,
+          allowQueueMerges: args["allow-queue-merges"] === "true",
           allowOwnedHeadMerge: args["allow-owned-head-merge"] === "true",
           isOfficialAncestor: (commit) => isAncestor(commit, args["official-ref"]),
           isOwnedAncestor: (commit) => isAncestor(commit, base),
