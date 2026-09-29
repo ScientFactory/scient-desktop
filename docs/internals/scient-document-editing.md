@@ -1,7 +1,8 @@
 # Scient document editing foundation
 
 > **Status: proposal under discussion — not accepted.** First drafted 2026-09-26.
-> Revised 2026-09-29 with reviews from Claude, Codex, and Astra. Nothing here
+> Revised 2026-09-29 with reviews from Claude, Codex, and Astra. The approach and
+> the working model are agreed as direction; the rest is proposed. Nothing here
 > changes current behavior.
 >
 > Status labels used below:
@@ -19,7 +20,7 @@
 > this record is accepted, the rules shared by all formats move here, and that
 > document keeps the Markdown-specific ones.
 
-## Approach — Proposed
+## Approach — Direction
 
 Scient builds **one document-editing system through concrete Markdown
 improvements, with LaTeX involved early enough to test every important
@@ -38,9 +39,12 @@ architectural boundary.**
    each shared piece shows a wrong boundary while it is still cheap to change. We
    do not wait until the last stage to find out whether LaTeX fits.
 4. **Share by responsibility, not by visual resemblance.**
+   - Share presentation, commands, and lifecycle where behavior matches. Keep
+     format-specific and engine-specific execution where it differs.
    - Things that look alike may share controls and conventions without sharing
      one implementation. For example, a Markdown table and a LaTeX table may share
      a picker and navigation without sharing one node schema.
+   - Where behavior really does match, one implementation is the default.
    - There is no universal editor component full of per-format branches.
 5. **Consistency means the same behavior for the same intention.** Saving,
    finding, making text bold, and editing an equation behave the same wherever
@@ -115,9 +119,10 @@ These hold for every format and every view:
    breaks, and whitespace outside the edited span stay exactly as written.
 3. **Rich and source views work on the same working text.** No view keeps a
    second copy that could overwrite another.
-4. **Unsaved work survives interruption and never silently overwrites external
-   changes.** Refresh, crash, reconnect, and a second window all preserve it.
-   Agent edits to the same file are merged or surfaced as a conflict, never lost.
+4. **Unsaved work is protected to a stated level and never silently overwrites
+   external changes.** Each edit's durability level is known (see
+   [Durability levels](#durability-levels--proposed)). Agent edits to the same file
+   are merged or surfaced as a conflict, never lost.
 5. **Focus, selection, and undo stay predictable** through saves, validation, and
    external updates.
 6. **Unsupported syntax stays intact and reachable.** It becomes an exact-text
@@ -137,16 +142,62 @@ working text in the session → rich and source views → saved revision → der
 | ------------------ | ---------------------------------------------------------------------------- | --------------------------------------------------- |
 | **Working text**   | The current text, including unsaved edits. Every view is a projection of it. | The document session                                |
 | **Saved revision** | The bytes most recently published to disk, identified by a revision          | The workspace file system (compare-and-swap writes) |
-| **Built revision** | For LaTeX, the revision a PDF was compiled from                              | The build service                                   |
+| **Build inputs**   | For LaTeX, the recorded identity of every file a PDF was compiled from       | The build service's build-input evidence            |
 
 - **The session owns** the working text, revisions, persistence, recovery, and
   reconciliation.
 - **Views submit edits against an identified revision.** No view maintains its
   own saving system.
 - **Format adapters own interpretation and source-preserving updates.** Each one
-  declares which operations it supports and when a broader reparse is needed.
-- **Status reports these as distinct facts:** editing, saved, and, for LaTeX, "PDF
-  from an older revision".
+  declares which operations it supports and when broader verification is needed.
+- **Status reports these as distinct facts:** editing, saved, and, for LaTeX, the
+  PDF's freshness.
+
+**PDF freshness is a build-input state, not one file revision.** A LaTeX PDF
+depends on the root, its included chapters, bibliographies, and images. The
+build service already records every file a build read, with its hash (see
+[build-input evidence](./scient-latex.md)). Shared status consumes that evidence
+and distinguishes three states:
+
+- **current** against the known inputs;
+- **outdated**: a known input has changed since the build;
+- **unknown**: dependency discovery was incomplete or could not be verified.
+
+### Durability levels — Proposed
+
+An edit passes through three levels, and each survives different failures:
+
+| Level           | Meaning                                                    | Survives                                                             |
+| --------------- | ---------------------------------------------------------- | -------------------------------------------------------------------- |
+| **Accepted**    | The session has taken the edit into its working text       | Nothing beyond the running renderer                                  |
+| **Recoverable** | A recovery checkpoint containing the edit has committed    | Refresh, renderer crash, app restart on the same machine and profile |
+| **Published**   | A compare-and-swap write containing the edit has succeeded | Everything the workspace file system survives                        |
+
+The Markdown implementation today states its limits honestly, and extracting it
+keeps them:
+
+- recovery checkpoints are coalesced behind a short deadline, so a crash before
+  a checkpoint commits can lose the newest keystrokes;
+- there is one recovery copy per file, not an independent history per window;
+- sharing the session implementation does not create one authoritative session
+  across windows or machines.
+
+Stronger guarantees (per-edit durability, multi-window ordering) belong to the
+later server-ordered evolution and are qualified separately.
+
+### File identity and interpretation context — Proposed
+
+A LaTeX chapter is one editable file. How it is interpreted depends on the root
+document chosen for it and on that root's preamble, and the same chapter can
+belong to several roots.
+
+- **The file session owns one working source** per file, whichever root is
+  chosen.
+- **The rich projection records its interpretation context** (root and preamble
+  identity) alongside the source revision.
+- **A context change invalidates the affected projections and capabilities**
+  (package checks, references, which insertions are supported). It never creates
+  a second, competing owner of the source.
 
 ### Hard questions — Open (answered in writing in stage 1)
 
@@ -158,14 +209,17 @@ editor. Each needs a written answer before shared code depends on it.
 2. **Undo ownership.** Who owns undo across the rich view, the source view, and
    embedded editors such as math and code? Today, switching an `.md` file between
    rich and source views loses undo history.
-3. **Object editors and external edits.** What happens to an open object editor
-   when an agent changes its source?
+3. **Object-editor lifecycle.** What happens to an open object editor when its
+   source becomes unparseable while the user types, moves, is replaced by an
+   agent, or disappears?
 4. **Save acknowledgements.** How does a save acknowledgement relate to newer,
-   still-unsaved work?
-5. **Build freshness.** How is LaTeX build freshness tied to specific source
-   revisions?
+   still-unsaved work, and to each [durability level](#durability-levels--proposed)?
+5. **Build freshness.** How is the build-input state mapped to what status shows,
+   including the unknown state?
 6. **Refused edits.** How does an unsupported operation fail without losing what
    the user typed?
+7. **Interpretation context.** How are a chapter's root choice, root ambiguity,
+   and context changes represented in the projection and its capabilities?
 
 ## Product principles
 
@@ -192,13 +246,13 @@ These sit on top of the guarantees.
 
 ## Responsibility boundaries — Proposed
 
-| Layer                          | Shared responsibility                                                                                                            | Stays format-specific                                                            |
-| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| **Document session**           | Working text, revisions, save ordering, recovery, external changes, conflict state                                               | Format-aware reconciliation where a merge needs syntax knowledge                 |
-| **Format adapter**             | One interface for projecting source into an editable document and applying supported edits back as exact text changes            | Parsing, syntax preservation, which regions are editable, the construct registry |
-| **Rich-editor infrastructure** | Transaction integration, per-block verification, selection mapping, the object-editor lifecycle, command routing, source islands | Schemas and specialized blocks                                                   |
-| **Editor interface**           | Toolbar and footer components, menus, focus conventions, status presentation, find controls                                      | Which commands exist; format-specific object properties                          |
-| **Document services**          | Document creation, asset selection, document-check and navigation interfaces                                                     | TeX roots, preambles, bibliographies, builds, SyncTeX                            |
+| Layer                          | Shared responsibility                                                                                                                   | Stays format-specific                                                            |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| **Document session**           | Working text, revisions, save ordering, recovery, external changes, conflict state                                                      | Format-aware reconciliation where a merge needs syntax knowledge                 |
+| **Format adapter**             | One interface for projecting source into an editable document and applying supported edits back as exact text changes                   | Parsing, syntax preservation, which regions are editable, the construct registry |
+| **Rich-editor infrastructure** | Transaction integration, dependency-aware verification, selection mapping, the object-editor lifecycle, command routing, source islands | Schemas and specialized blocks                                                   |
+| **Editor interface**           | Toolbar and footer components, menus, focus conventions, status presentation, find controls                                             | Which commands exist; format-specific object properties                          |
+| **Document services**          | Document creation, asset selection, document-check and navigation interfaces                                                            | TeX roots, preambles, bibliographies, builds, SyncTeX                            |
 
 - **Source and rich views can share controls without sharing implementations.**
   For example, one find bar can drive ProseMirror search in the rich view and the
@@ -254,11 +308,13 @@ For each task it records:
 
 **How the visual comparison runs:**
 
-1. The same proposed header, toolbar, and footer are placed around both
-   documents first, to settle the overall identity.
-2. The canvas alternatives are then compared separately (see
+1. **Observe both editors as they are,** unchanged, to record current behavior.
+2. **Compare the proposed shared frame** (header, toolbar, footer) around both
+   documents through prototypes, such as the UX lab or mock-ups. The new
+   interface does not have to be implemented before it can be evaluated.
+3. **Compare the canvas alternatives separately** (see
    [Canvas](#canvas--proposed)).
-3. Typography is compared separately again.
+4. **Compare typography separately again.**
 
 The study covers the tasks the next stages need. Later tasks are studied when
 their stage comes up.
@@ -283,12 +339,12 @@ their stage comes up.
 
 Each zone has one job:
 
-| Zone    | Job                                                            | Holds                                                                         | Never holds                                                                    |
-| ------- | -------------------------------------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| Header  | Which file and which view                                      | File name, view switch, file actions (rename, export)                         | Status, formatting                                                             |
-| Toolbar | Document-level commands                                        | Text style, lists, link, Insert, math, undo and redo, More                    | Controls that change with the selection; it does not reflow as the caret moves |
-| Page    | Content                                                        | The document, the selection toolbar, the Insert menu, floating object editors | Controls placed in the document flow                                           |
-| Footer  | Where you are, what is selected, what state the document is in | Properties of the selected object, position, counts, checks, file state       | Document-level commands                                                        |
+| Zone    | Job                                                            | Holds                                                                         | Never holds                                                                                                                                       |
+| ------- | -------------------------------------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Header  | Which file and which view                                      | File name, view switch, file actions (rename, export)                         | Status, formatting                                                                                                                                |
+| Toolbar | Document-level commands                                        | Text style, lists, link, Insert, math, undo and redo, More                    | Object-specific controls. Its layout is stable as the caret moves; command states (bold active, heading level, availability) follow the selection |
+| Page    | Content                                                        | The document, the selection toolbar, the Insert menu, floating object editors | Controls placed in the document flow                                                                                                              |
+| Footer  | Where you are, what is selected, what state the document is in | Properties of the selected object, position, counts, checks, file state       | Document-level commands                                                                                                                           |
 
 **Placement rule:**
 
@@ -321,15 +377,20 @@ so it does not become a permanently crowded strip.
 **Right: status**, listed in priority order. Which items stay at narrow widths is
 decided by the study.
 
-1. **File state.** One quiet indicator for the three versions:
+1. **File state.** One quiet indicator:
    - hidden while routine saves are healthy;
    - shown when publishing is unusually slow;
-   - the recovery action on a conflict or an exhausted failure;
-   - for LaTeX, also build freshness ("PDF from an older revision").
+   - a summary of a conflict or exhausted failure, opening its resolution;
+   - for LaTeX, also PDF freshness (current, outdated, or unknown).
+
+   The footer summarizes a conflict but is never the only place to resolve it.
+   Resolution stays reachable in Source view and in narrow layouts.
+
 2. **Position.** The caret's context ("Heading 2", "Table · row 3, column 2",
-   "Equation"). For LaTeX, the page comes from the last built PDF through
-   SyncTeX, labeled with the revision it belongs to. It is never a simulated
-   page.
+   "Equation"). For LaTeX, the page number is optional. It appears only when the
+   last PDF's SyncTeX mapping is current for this source. A missing or stale
+   mapping shows no page number rather than a misleading one, and it is never a
+   simulated page.
 3. **Checks.** "2 issues" when the document has problems; clicking opens the list.
    Hidden when there are none.
 4. **Source islands.** "1 source block" when content is kept as exact source;
@@ -397,7 +458,8 @@ editors.
 - They are also costly: #353's pagination measures every block on each change.
 - Pagination stays only if it helps writing and navigation enough to justify
   that cost.
-- Page position comes from the real PDF (see [Footer](#footer--direction-contents-are-hypotheses)).
+- Page position comes from the real PDF when its mapping is current (see
+  [Footer](#footer--direction-contents-are-hypotheses)).
 
 **Canvas alternatives the study compares for LaTeX:**
 
@@ -416,17 +478,16 @@ or a dark page that follows the app.
 - **Conflicting keys are resolved by the study.** Today Alt+↑/↓, Cmd+Enter, and
   Cmd+Alt+F mean different things in different editors.
 - **Format-only commands** live in that format's scope.
-- **Hypothesis:** Escape moves outward in one fixed order everywhere:
-  1. nested editor;
-  2. object editor;
-  3. popover or menu;
-  4. selection.
+- **Hypothesis:** Escape dismisses the topmost active interaction first, then
+  moves outward. For example, it closes a menu opened from an object editor
+  before the object editor itself.
 
 ### Visual language — Proposed
 
-- **Shared stylesheet.** Chrome styles (toolbar, footer, menus, popovers, object
-  editors, find bar, Documents panel) move to one shared stylesheet built on app
-  tokens.
+- **Shared tokens and components.** Chrome (toolbar, footer, menus, popovers,
+  object editors, find bar, Documents panel) is built from shared components on
+  app tokens, so both editors inherit one look. How styles are organized in
+  files is an implementation choice.
 - **Per-format document styles.** Each format keeps only its _document_ styles:
   content typography, and page width for LaTeX.
 - **Shared editor typography tokens** for prose, code, and measure. One
@@ -481,11 +542,14 @@ Nothing else is asked:
 
 - **One list for both formats**, each entry marked with a format icon, with search
   at the top. Recents come first, then everything else in the project.
-- **LaTeX shows root documents only.** Included chapters are nested under their
-  root, using the existing root resolution. They are not listed as separate
-  documents.
-- **Duplicate** is an action on any document row. It replaces #353's separate
-  "use a project template" flow.
+- **LaTeX lists documents by root where resolution is clear.** Included
+  chapters are nested under their root, using the existing root resolution.
+- **Ambiguous and unresolved files stay discoverable.** A chapter that belongs to
+  several roots, or to none that can be resolved, remains in the list with a way
+  to choose its context. It never disappears.
+- **Duplicate — Proposed.** A row action replacing #353's separate "use a project
+  template" flow. **Open:** whether it copies one file or a document with its
+  dependencies (chapters, figures, bibliography).
 - **Recents** use the app's storage helpers, not raw `localStorage`.
 
 ### Templates
@@ -514,8 +578,9 @@ Nothing else is asked:
 
 ## Shared writing tools — Proposed
 
-Each of these is implemented once. The format adapter supplies the items, the
-syntax, and the rules.
+Each tool shares presentation, commands, and lifecycle where behavior matches.
+Format-specific and engine-specific execution stays where it differs. The format
+adapter supplies the items, the syntax, and the rules.
 
 1. **Insert menu.** `/` on an empty line and Cmd/Ctrl+/ open one searchable menu.
    It replaces Markdown's slash menu and #353's Insert dialog. Items come from the
@@ -544,9 +609,12 @@ syntax, and the rules.
    - Presets are per format.
    - Presets that need a package are offered only when that package is available
      or can be added.
-9. **Find and replace.** The shared find bar and search plugin. Atoms (math,
-   citations, source islands) are searched through their source text. The LaTeX
-   Write view has no find today.
+9. **Find and replace.** One find-and-replace control with the same options
+   (case, whole word, regular expression) and keys everywhere. The search runs in
+   whichever engine the view uses: ProseMirror in rich views, where atoms such as
+   math, citations, and source islands are searched through their source text,
+   and the source editor's own search in source views. The LaTeX Visual view has
+   no find today.
 10. **Cite selection to chat.** Markdown's `FileCitation` capture extends to LaTeX
     through the session's mapping from document ranges to source ranges.
 
@@ -596,8 +664,12 @@ settles when a second real consumer (the thin LaTeX path) uses it, not before.
 interface DocumentFormatAdapter<Context> {
   /** Parse source into top-level blocks with exact ranges plus a ProseMirror doc. */
   project(source: string, context: Context): Projection;
-  /** Exact text changes for the next doc, or a typed refusal. Verified per changed block. */
-  apply(previous: Projection, next: PMNode): SourceEdit | Refusal;
+  /**
+   * Exact text changes for an editor change, or a typed refusal that keeps the
+   * user's input. The change says which document ranges changed, against which
+   * source revision and interpretation context.
+   */
+  apply(previous: Projection, change: EditorChange): SourceEdit | Refusal;
   /** Incremental adoption of an external source change, reusing unchanged nodes. */
   adoptExternal(previous: Projection, source: string): Projection | null;
   /** Merge of baseline/local/disk for the session's reconciliation step. */
@@ -612,16 +684,31 @@ interface DocumentFormatAdapter<Context> {
 The rules every adapter follows:
 
 - **Blocks carry exact source ranges.** Unchanged blocks are copied byte for byte.
-- **Verification is local.** Only the changed blocks are re-serialized and
-  reparsed. The whole document is never converted or checked on each keystroke.
+- **Verification is dependency-aware.** Verify the smallest affected region,
+  including its dependent context. Broaden verification when boundaries or
+  dependencies change: closing a brace, adding a `\newcommand`, or editing a
+  reference definition can change how surrounding content is read. That is
+  expected, not an architectural failure. What is avoided is unconditional
+  whole-document work on ordinary keystrokes.
+- **The change carries what verification needs.** An `EditorChange` identifies
+  the changed ranges, the base source revision, and the interpretation-context
+  identity, so an adapter does not have to diff whole documents to rediscover
+  them.
+- **Text-change units are defined once.** Offsets are UTF-16 code units, which is
+  what ProseMirror and JavaScript strings use. Line endings (LF or CRLF),
+  encoding, and the final-newline state are preserved.
 - **Minimal patch first.**
   - An edit inside a block becomes the smallest text patch, verified by
     reparsing that block. This is what Markdown's `minimallyPatchedTextBlock`
     does.
   - Re-serializing a whole block is the fallback for real structural changes.
 - **Source islands** are one shared rich-editor facility with a per-format label.
-- **Construct adapters.** Inside a format, each supported construct (heading,
-  list, figure, table, theorem, citation, …) registers:
+- **Capability reporting.** Every adapter reports consistently which constructs
+  and operations it supports, and where. How a format organizes its parser
+  internally stays its own choice.
+- **Construct adapters — Proposed, provisional.** One possible organization:
+  each supported construct (heading, list, figure, table, theorem, citation, …)
+  registers:
   - how it is recognized, and a bounded parse;
   - its node;
   - its serialization;
@@ -629,8 +716,9 @@ The rules every adapter follows:
   - when direct editing is safe;
   - its tests.
 
-  The registry feeds the Insert menu and document checks, and it replaces an
-  ever-growing parser switch.
+  Such a registry could feed the Insert menu and document checks. Whether both
+  formats' parsers should be reorganized around it is decided once the thin LaTeX
+  path has run.
 
 - **Editability is proven, not assumed.** See the
   [conformance suite](#measuring-instrument--proposed).
@@ -648,8 +736,12 @@ first.**
 - The web registry, leases, ordered transport, departure guards, and recovery UI
   move to shared code.
 - Markdown moves first, with no behavior change.
-- Markdown's stale-projection path is fixed in the move. A rejected change is
-  never pushed into the view and then corrected by a microtask.
+- **Extraction and fixes are separate, independently verified changes.** The
+  stale-projection fix, where a rejected change is pushed into the view and then
+  corrected by a microtask, lands as its own change before or after the
+  behavior-preserving extraction, never mixed into it.
+- The existing durability limits carry over unchanged (see
+  [Durability levels](#durability-levels--proposed)).
 
 **Prove it with a second consumer that is not ProseMirror: LaTeX source
 editing.** Before the LaTeX Visual view uses the session, the LaTeX source view
@@ -666,6 +758,10 @@ qualifying cases:
 
 Other source views (code, Compute) may follow once the LaTeX source view
 qualifies (**Open**).
+
+**Retiring the old LaTeX paths.** The LaTeX draft journal and the older generic
+saver are removed only after **every view that uses them** (LaTeX source,
+split, and Visual) has moved to the session and qualified.
 
 **Server-ordered operations are a separate, later evolution.** The session
 design carries explicit revisions and operation identities now, and it prefers
@@ -696,22 +792,38 @@ other objects.
   Object _properties_ are edited in the footer, not here.
 
 - **Ownership.**
-  - The node view owns source changes, validation, and its persistent input
-    instance.
-  - The layer owns which editor is open, where it is placed, collision handling,
-    dismissal, and returning focus.
+  - **The object-editing controller owns the active input and its lifecycle.**
+    It identifies the edited object independently of the rendered node, and it
+    owns which editor is open, placement, collision handling, dismissal, and
+    returning focus.
+  - **The node view supplies an anchor** and the object's rendering. Destroying
+    or re-creating the node never destroys the active editing state.
+  - **Source changes go through the document session.**
+- **Lifecycle when the source moves under the editor.** Each case needs defined
+  behavior, answered as part of the hard questions:
+  - **Unparseable:** incomplete input makes the parser stop recognizing the
+    object.
+  - **Moved:** earlier text changes shift its position.
+  - **Replaced or deleted:** an agent or another view changes it.
+
+  Keeping a recoverable input buffer is different from silently committing a
+  change that alters the surrounding source structure. The first is always
+  allowed; the second never happens without the user's intent.
+
 - **Anchoring.** The rendered object stays in place as the anchor. Opening,
   validating, resizing, or closing an editor never changes document layout.
 - **No remounting.** Attribute transactions, validation results, save
   acknowledgements, and presentation refreshes never remount the active input.
 - **Invalid input is normal.**
-  - Incomplete TeX or JSON is saved exactly as typed.
+  - Incomplete TeX or JSON is kept exactly as typed. It is saved as typed when it
+    stays within the object's source range; otherwise it is held in the
+    recoverable buffer.
   - The last valid render is only a presentation cache.
   - A small, stable error status appears only after validation, never on every
     keystroke.
 - **Hypotheses to test in stage 3:**
   - changes apply as the user types;
-  - Escape closes the editor;
+  - Escape dismisses the topmost interaction first, then closes the editor;
   - each editing session of an object is one undo step.
 
 ### Math — Open (decided in stage 3)
@@ -769,7 +881,8 @@ the options with real formulas from both formats:
   explicit geometry. The PDF is authoritative.
 - Whether builds run automatically on save (current `main`) or only on request
   (#353) is a product decision outside this record.
-- Either way, the footer's file state reports which revision the PDF shows.
+- Either way, the footer's file state reports the PDF's freshness from the
+  build-input evidence: current, outdated, or unknown.
 
 ## Proposed module layout
 
@@ -806,11 +919,16 @@ Built in stage 1 and used by every stage after it:
   formatted table cells, labels with `_`, and fragments that need root
   declarations. All fixtures are synthetic.
 - **Adapter conformance suite.** Any format adapter must pass it:
-  - projecting and applying with no edit yields identical bytes;
-  - every region marked editable accepts a representative edit, with bytes
-    outside it unchanged (property-based, over generated and corpus documents);
+  - projecting and applying with no edit yields identical bytes, including line
+    endings and final newline;
+  - **every operation the adapter advertises** is tested in the relevant contexts
+    and is either accepted with bytes outside the affected region unchanged, or
+    refused without losing the user's input (property-based, over generated and
+    corpus documents);
   - external changes are adopted without disturbing unchanged blocks;
-  - typing stays within the performance budget on a 500 KB document.
+  - typing stays within budget across documents of different structure: long
+    prose, dense equations, large tables, heavy raw source, and multi-file
+    documents, up to at least 500 KB.
 - **Baselines.** The suite runs against the Markdown adapter and against #353's
   current LaTeX translator, so every later step reports a before and after.
 
@@ -840,17 +958,18 @@ work stays in **one PR (#353) for now**, organized into clear commits and
 checkpoints and regularly merged with `main`. How PRs are split is not the
 organizing concern.
 
-| Stage                               | Shared and Markdown work (owner)                                                                                                                                                                                                                                                                                   | LaTeX work (contributor, by assignment)                                                                                                                                                |
+| Stage                               | Shared and Markdown work (owner and assigned implementers)                                                                                                                                                                                                                                                         | LaTeX work (contributor, by assignment)                                                                                                                                                |
 | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **0. Agreement**                    | Agree this record; refresh the implementation baseline on `main` and #353, and check existing work and ownership before creating branches                                                                                                                                                                          | —                                                                                                                                                                                      |
 | **1. Baseline and contracts**       | Answer the [hard questions](#hard-questions--open-answered-in-writing-in-stage-1) in writing; define minimal revision, change, and adapter contracts; build the [measuring instrument](#measuring-instrument--proposed) and record baselines. **In parallel:** the [experience study](#experience-study--proposed) | Preserve regression cases; identify capability and fidelity gaps; harden the LaTeX translator against the minimal contract and conformance suite (local verification, minimal patches) |
-| **2. Session foundation**           | Extract the session through Markdown with no behavior change; validate it with LaTeX source editing as the second consumer                                                                                                                                                                                         | Help connect LaTeX source; remove the separate draft journal once the replacement is verified                                                                                          |
+| **2. Session foundation**           | Extract the session through Markdown with no behavior change; validate it with LaTeX source editing as the second consumer                                                                                                                                                                                         | Help connect LaTeX source. Remove the separate draft journal only after every view that uses it has migrated and qualified                                                             |
 | **3. First shared interaction**     | Complete floating math editing in Markdown: focus, selection, undo, validation, placement, and the math input decision. Starts once the study has answered its questions                                                                                                                                           | Exercise the same object-editor lifecycle with LaTeX math                                                                                                                              |
 | **4. Early rich LaTeX integration** | Adjust shared boundaries based on actual use                                                                                                                                                                                                                                                                       | Thin LaTeX path on the shared core: open, prose and math, raw source, edit, save, switch to source, reopen. Includes an unsupported command and an included chapter. Measured.         |
 | **5. Broader writing experience**   | Footer (after narrow-panel testing), commands, find, Insert, outline, keyboard, document creation                                                                                                                                                                                                                  | Format-specific controls; migrate the remaining constructs one by one: tables, figures, references, title, layout, and pagination if kept                                              |
 | **6. Qualification**                | Recovery, external changes, responsiveness, and the owner's visual review                                                                                                                                                                                                                                          | The same checks, plus root context, builds, and multi-file behavior                                                                                                                    |
 
-The session work and the experience study progress independently. Floating math
+Moving to the next stage needs that stage's evidence, not every future UX
+decision. The session work and the experience study progress independently. Floating math
 is the first visible shared improvement, and it starts when the study has
 settled its interaction questions. Existing useful LaTeX behavior is preserved
 while its implementation is replaced. Small, self-contained fixes land whenever
@@ -860,9 +979,9 @@ convenient.
 
 - **Direction.** The product owner sets the direction for everything, including
   the LaTeX branch.
-- **Ownership of work.**
-  - The owner drives the shared foundation, the Markdown work, and part of the
-    LaTeX work.
+- **Ownership of work — Direction.**
+  - The owner, with the implementers the owner assigns, builds the shared
+    foundation, the Markdown work, and part of the LaTeX work.
   - #353's author continues LaTeX work through clearly assigned tasks.
 - **This record explains the system; assignments define the next deliverable.**
   Each assignment states:
@@ -954,25 +1073,33 @@ conformance suite; none is assumed to move unchanged.
 - The development-launcher and PID-handoff files; those fixes are handled on
   `main` by #377.
 
-## Decisions to discuss
+## Decisions
 
-1. **Approach.** One document-editing system, developed through Markdown
-   improvements and validated early against LaTeX.
-2. **Editing framework.** ProseMirror directly for document editors, as a
-   recommendation validated by the thin LaTeX path in stage 4.
-3. **Roles and assignments.** The owner and Claude on shared and Markdown work;
-   the contributor on LaTeX through assignments.
-4. **Stage order.** Session foundation and study in parallel first; floating math
+**Agreed as direction:**
+
+- **Approach.** One document-editing system, developed through Markdown
+  improvements and validated early against LaTeX.
+- **Working model.** The owner sets direction for everything; the owner and
+  assigned implementers build the shared foundation, the Markdown work, and part
+  of the LaTeX work; #353's author works on LaTeX through assignments. The LaTeX
+  work stays in one PR for now.
+- **Surface anatomy, footer concept, and Documents panel concept.**
+
+**Still to decide:**
+
+1. **Editing framework — Proposed.** ProseMirror directly for document editors,
+   validated by the thin LaTeX path in stage 4.
+2. **Stage order.** Session foundation and study in parallel first; floating math
    as the first visible improvement.
-5. **Hard questions.** Selection, undo ownership, object editors under external
-   edits, save acknowledgements, build freshness, refused edits.
-6. **Math input.** Option A, B, or C, decided in stage 3.
-7. **Views.** The shared Write/Source/PDF vocabulary in the header; LaTeX's
+3. **Hard questions.** Answered in writing in stage 1.
+4. **Math input.** Option A, B, or C, decided in stage 3.
+5. **Views.** The shared Write/Source/PDF vocabulary in the header; LaTeX's
    default view; whether Markdown gets a side-by-side view.
-8. **Canvas.** Continuous versus paged for LaTeX; how much document typography
+6. **Canvas.** Continuous versus paged for LaTeX; how much document typography
    the LaTeX canvas reflects; LaTeX in dark mode.
-9. **Footer contents** at narrow widths.
-10. **New LaTeX documents.** Use the `<title>/main.tex` folder layout or not.
-11. **Session scope.** Package name and boundary; which source views follow LaTeX
-    source.
-12. **Build policy.** Automatic or on request (outside this record).
+7. **Footer contents** at narrow widths.
+8. **Documents panel details.** The `<title>/main.tex` folder layout for new LaTeX
+   documents; what Duplicate copies.
+9. **Session scope.** Package name and boundary; which source views follow LaTeX
+   source.
+10. **Build policy.** Automatic or on request (outside this record).
