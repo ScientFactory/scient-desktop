@@ -140,8 +140,8 @@ Pi uses its own multi-provider model and credential configuration. Scient can ma
 on a qualified target, but does not offer a universal Pi account sign-in or sign-out action. Model
 discovery is not proof that a particular credential or subscription works.
 
-Oh My Pi uses the `omp` executable you install or, on the macOS Apple silicon desktop app, a
-Scient-managed private copy. Scient never runs `omp update` on your installation; it shows the
+Oh My Pi uses the `omp` executable you install or, on the desktop app for macOS, Windows and
+Linux, a Scient-managed private copy. Scient never runs `omp update` on your installation; it shows the
 command when a newer release is available. Scient does not sign in to Oh My Pi. Full access is the
 only runtime mode, and Oh My Pi's own approval mode is explicit `yolo`.
 

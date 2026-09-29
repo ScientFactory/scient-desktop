@@ -87,7 +87,7 @@ Grok, Pi, and Oh My Pi. The nine release-family runs are intentionally independe
    Pi binary runs the isolated live Pi integration suites once against synthetic local
    model endpoints. Those suites verify runtime/RPC behavior, custom-model protocols,
    secret isolation, and preservation of Pi-owned configuration before repair and removal.
-   Oh My Pi runs only on the macOS Apple-silicon runner, its only approved target. After
+   Oh My Pi uses all six runners; its musl builds are not approved. After
    install and after repair, `apps/server/scripts/qualify-omp-rpc.ts` runs the app's own
    managed-activation check against the installed binary: the RPC v2 handshake, the
    reported version, and `get_state`, in an isolated home without a session, tools,

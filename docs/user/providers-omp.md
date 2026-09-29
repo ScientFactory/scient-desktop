@@ -15,8 +15,8 @@ You can use Oh My Pi in two ways:
   release for mise and as a fallback. A failed check is retried on the next refresh. The notice
   gives the command to run yourself, usually `omp update`, and names Scient-managed Oh My Pi when
   Scient has a qualified private runtime for your computer. Nix installations are not checked.
-- **Scient-managed Oh My Pi.** On the desktop app for macOS Apple silicon, Scient can install a
-  private copy of Oh My Pi (18.2.8 in the catalog bundled with this release) through the same
+- **Scient-managed Oh My Pi.** On the desktop app for macOS (Apple silicon and Intel), Windows
+  (x64 and ARM64) and Linux (x64 and ARM64, glibc), Scient can install a private copy of Oh My Pi (18.2.8 in the catalog bundled with this release) through the same
   install, repair, update and removal pipeline as its other managed providers. Each release in
   Scient's catalog is checksum-verified and qualified first, including an RPC handshake and a state
   request against the installed binary. The copy updates only when the catalog has a newer qualified
@@ -28,8 +28,8 @@ qualified instead of guessing.
 ## Setup
 
 Oh My Pi is off by default. In **Settings > Providers**, enable **Oh My Pi** and set the executable
-path when `omp` is not on the server's `PATH`. On the desktop app for macOS Apple silicon, you can
-instead choose **Install** to use Scient-managed Oh My Pi.
+path when `omp` is not on the server's `PATH`. On the desktop app, you can instead choose
+**Install** to use Scient-managed Oh My Pi.
 
 Scient starts one `omp --mode rpc --approval-mode yolo` process for each conversation. With the home
 and profile left empty, that process uses the Oh My Pi home and credentials the server's
