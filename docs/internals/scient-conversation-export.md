@@ -369,9 +369,15 @@ opens the same window without an import action, providing a read-only fallback i
 file-manager preview extensions. Native extension compilation, installation, signing, and
 file-manager activation require platform-specific qualification.
 
-Native Quick Look and Explorer preview adapters are a separate capability, not shipped by
-this core import/export implementation. Linux's desktop Preview action uses the local
-read-only window. Installing a file association alone does not install a shell preview handler.
+The optional native adapters live under `native/conversation-preview`: a macOS data-based
+Quick Look extension and a Windows stream-based preview-handler DLL. Both display bounded
+plain text from the authoritative snapshot; neither evaluates markup, imports a conversation,
+or starts Scient's backend. Linux's desktop Preview action opens the same local read-only
+window, while its primary Open action retains the import confirmation flow.
+Native build CI compiles the macOS universal extension, Windows x64/ARM64 components, and Linux
+parser. Host installation, signing, activation, and uninstall tests remain separate gates;
+compilation is not proof of Finder or Explorer integration. See the
+[native build qualification contract](../../scripts/lib/conversation-preview-build.md).
 
 ## Dialog
 
