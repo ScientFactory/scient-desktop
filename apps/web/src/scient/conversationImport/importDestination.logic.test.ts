@@ -8,7 +8,10 @@ import {
   type ServerConfig,
   type ServerProvider,
 } from "@t3tools/contracts";
+import { createModelSelection } from "@t3tools/shared/model";
 import { describe, expect, it } from "vite-plus/test";
+
+import { resolveAntigravityDraftSelection } from "../providerConnection/antigravityDraftSelection";
 
 import { defaultImportProject, newChatModelSelection } from "./importDestination.logic";
 
@@ -135,6 +138,43 @@ describe("newChatModelSelection", () => {
         { carrySelection: claudeOpus, sticky: noSticky },
       ),
     ).toEqual({ instanceId: "codex", model: "gpt-5-mini" });
+  });
+
+  it("turns a historical Antigravity family into its live variant, as a new chat does", () => {
+    const antigravityId = ProviderInstanceId.make("antigravity_work");
+    const antigravity: ServerProvider = {
+      ...testProvider("antigravity_work", "antigravity", []),
+      models: ["low", "medium", "high"].map((level) => ({
+        slug: `gemini-3.8-flash-${level}`,
+        name: `Gemini 3.8 Flash (${level[0]!.toUpperCase() + level.slice(1)})`,
+        isCustom: false,
+        capabilities: {},
+        isDefault: level === "high",
+      })),
+    };
+    const historical = createModelSelection(antigravityId, "gemini-3.8-flash", [
+      { id: "reasoning", value: "medium" },
+    ]);
+    const newChat = resolveAntigravityDraftSelection(historical, antigravity);
+    expect(newChat?.model).toBe("gemini-3.8-flash-medium");
+    const config = testConfig([antigravity], {
+      providerInstances: {
+        [antigravityId]: { driver: "antigravity", enabled: true },
+      } as unknown as ServerConfig["settings"]["providerInstances"],
+    });
+    // Carried from the chat in view, and remembered by the composer.
+    expect(modelFor(config, project, { carrySelection: historical, sticky: noSticky })).toEqual(
+      newChat,
+    );
+    expect(
+      modelFor(config, project, {
+        carrySelection: null,
+        sticky: {
+          modelSelectionByProvider: { [antigravityId]: historical },
+          activeProvider: antigravityId,
+        },
+      }),
+    ).toEqual(newChat);
   });
 
   it("finds no model when no provider can run a chat, or before a project is known", () => {

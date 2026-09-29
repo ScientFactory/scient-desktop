@@ -599,25 +599,31 @@ function importOmissions(
 }
 
 /**
- * Export warnings whose fact an omission (or the times-shifted note) already
- * states, and the sender's own caution about sharing: none becomes a notice.
+ * Each kind of export warning that becomes a notice: its plain line when the
+ * sender's text is unfit to show, and the line for several of that kind.
+ * Other kinds are left out: an omission or the times-shifted note already
+ * states them (a running turn, attachments, skipped records, earlier gaps,
+ * moved times), or they were the sender's own caution about sharing.
  */
-const NOTICE_EXCLUDED_CODES: ReadonlySet<DocumentWarningCode> = new Set([
-  "running-turn-omitted",
-  "attachment-unavailable",
-  "attachment-unsupported",
-  "records-skipped",
-  "source-history-incomplete",
-  "times-shifted",
-  "sensitive-content-included",
-]);
-
-/** Plain lines for the notices whose sender text is unfit to show. */
-const NOTICE_FALLBACK_BY_CODE: Partial<Record<DocumentWarningCode, string>> = {
-  "resource-unresolved": "Some linked files or images were not included.",
-  "context-reference-unresolved": "Some references to other content could not be resolved.",
-  "unsupported-construct": "Some content could not be carried over.",
-  "converter-reported": "Some content could not be converted.",
+const NOTICE_KINDS: Partial<
+  Record<DocumentWarningCode, { readonly one: string; readonly many: (count: number) => string }>
+> = {
+  "resource-unresolved": {
+    one: "A linked file or image was not included.",
+    many: (count) => `${count} linked files or images were not included.`,
+  },
+  "context-reference-unresolved": {
+    one: "A reference to other content could not be resolved.",
+    many: (count) => `${count} references to other content could not be resolved.`,
+  },
+  "unsupported-construct": {
+    one: "Some content could not be carried over.",
+    many: (count) => `${count} pieces of content could not be carried over.`,
+  },
+  "converter-reported": {
+    one: "Some content could not be converted.",
+    many: (count) => `${count} problems were reported while converting content.`,
+  },
 };
 
 const NEWER_VERSION_NOTICE =
@@ -646,29 +652,61 @@ function plainNotice(text: string): string | null {
     : `${line.slice(0, NOTICE_MAX_CHARS - 1).trimEnd()}…`;
 }
 
+/** This file's notices: one line per kind, with a count when a kind repeats. */
+function currentNotices(input: ValidatedConversationImport): ReadonlyArray<string> {
+  const byKind = new Map<DocumentWarningCode, string[]>();
+  let newerVersion = false;
+  for (const warning of input.warnings) {
+    if (warning._tag === "newer-minor-version") {
+      newerVersion = true;
+      continue;
+    }
+    const { code, message } = warning.warning;
+    if (NOTICE_KINDS[code] === undefined) continue;
+    byKind.set(code, [...(byKind.get(code) ?? []), message]);
+  }
+  const lines = [...byKind].map(([code, messages]) => {
+    const kind = NOTICE_KINDS[code]!;
+    return messages.length === 1
+      ? (plainNotice(messages[0]!) ?? kind.one)
+      : kind.many(messages.length);
+  });
+  return newerVersion ? [...lines, NEWER_VERSION_NOTICE] : lines;
+}
+
 /**
  * The import banner's notices: what the file said about itself that no
- * omission states, after any notices an earlier transfer kept. Each line is
- * plain text, repeated lines are kept once, and at most ten are kept.
+ * omission states, and the notices an earlier transfer kept. Every line,
+ * earlier ones included, is plain text; repeated lines are kept once. Past
+ * the limit, earlier and current lines share the room in turn and the last
+ * line says how many more there were, so no kind disappears silently.
  */
 function importNotices(
   input: ValidatedConversationImport,
 ): ReadonlyArray<OrchestrationConversationImportNotice> {
   const provenance = input.snapshot.provenance;
-  const earlier =
+  const earlier = (
     provenance._tag === "import"
       ? (provenance.notices ?? [])
       : provenance._tag === "fork"
         ? (provenance.sourceImport?.notices ?? [])
-        : [];
-  const current = input.warnings.flatMap((warning): ReadonlyArray<string> => {
-    if (warning._tag === "newer-minor-version") return [NEWER_VERSION_NOTICE];
-    const { code, message } = warning.warning;
-    if (NOTICE_EXCLUDED_CODES.has(code)) return [];
-    const line = plainNotice(message) ?? NOTICE_FALLBACK_BY_CODE[code];
-    return line === undefined ? [] : [line];
-  });
-  return [...new Set([...earlier, ...current])].slice(0, CONVERSATION_IMPORT_MAX_NOTICES);
+        : []
+  ).flatMap((notice) => plainNotice(notice) ?? []);
+  const current = currentNotices(input);
+  const all = [...new Set([...earlier, ...current])];
+  if (all.length <= CONVERSATION_IMPORT_MAX_NOTICES) return all;
+  const room = CONVERSATION_IMPORT_MAX_NOTICES - 1;
+  const queues = [
+    [...new Set(earlier)],
+    [...new Set(current)].filter((line) => !earlier.includes(line)),
+  ];
+  const kept: string[] = [];
+  for (let turn = 0; kept.length < room; turn += 1) {
+    const line = queues[turn % 2]!.shift() ?? queues[(turn + 1) % 2]!.shift();
+    if (line === undefined) break;
+    kept.push(line);
+  }
+  return [...kept, `…and ${all.length - kept.length} more notes.`];
 }
 
 type ImportedSnapshot = ValidatedConversationImport["snapshot"];

@@ -1069,7 +1069,6 @@ describe("ConversationImporter", () => {
               },
             },
             {
-              // A path is never shown: the notice falls back to a plain line.
               _tag: "export-warning",
               warning: {
                 code: "resource-unresolved",
@@ -1087,9 +1086,9 @@ describe("ConversationImporter", () => {
             { _tag: "newer-minor-version", formatVersion: newer },
           ],
         };
+        // Two warnings of one kind become one line with their count.
         const notices = [
-          "The linked image chart.png was unavailable.",
-          "Some linked files or images were not included.",
+          "2 linked files or images were not included.",
           "A newer version of Scient made this file. Anything this version does not recognise was skipped.",
         ];
         const { lease } = yield* leaseFor({ ...fixture, input });
@@ -1140,6 +1139,107 @@ describe("ConversationImporter", () => {
       }),
     ),
   );
+
+  describe("file notices", () => {
+    const previousImport = (notices: ReadonlyArray<string>) => ({
+      _tag: "import" as const,
+      source: "scic" as const,
+      exportId: "previous-export",
+      sourceThreadId: "previous-thread",
+      packageDigest: `sha256:${"a".repeat(64)}` as const,
+      sourceFormat: "scient.conversation-file",
+      sourceFormatVersion: 1,
+      importedAt: "2026-09-27T10:00:00.000Z",
+      notices,
+    });
+    const warning = (
+      code: "resource-unresolved" | "unsupported-construct" | "converter-reported",
+      message: string,
+    ) => ({ _tag: "export-warning" as const, warning: { code, message } });
+    const noticesOf = (input: ReturnType<typeof importFixture>["input"]) =>
+      Effect.map(mintConversationImportIds(input), (ids) =>
+        buildConversationImportCommand({
+          validated: input,
+          ids,
+          destination: destination(),
+          importedAt: "2026-09-28T10:00:00.000Z",
+        }),
+      ).pipe(Effect.map((command) => command.origin.notices));
+
+    it.effect("filters an earlier transfer's notices like this file's own", () =>
+      withImporter(
+        Effect.gen(function* () {
+          const fixture = importFixture({ turns: 1 });
+          const notices = yield* noticesOf({
+            ...fixture.input,
+            snapshot: {
+              ...fixture.input.snapshot,
+              provenance: previousImport([
+                "Read /Users/sender/notes/secret.txt before sharing.",
+                "The resource-unresolved check failed.",
+                "Some diagrams were drawn as plain text.",
+              ]),
+            },
+          });
+          assert.deepStrictEqual(notices, ["Some diagrams were drawn as plain text."]);
+        }),
+      ),
+    );
+
+    it.effect("keeps every kind of warning, counting repeats of one kind in one line", () =>
+      withImporter(
+        Effect.gen(function* () {
+          const fixture = importFixture({ turns: 1 });
+          const notices = yield* noticesOf({
+            ...fixture.input,
+            warnings: [
+              ...Array.from({ length: 10 }, (_, index) =>
+                warning(
+                  "resource-unresolved",
+                  `The linked image figure-${index + 1}.png was unavailable.`,
+                ),
+              ),
+              warning("unsupported-construct", "A table was kept as plain text."),
+            ],
+          });
+          assert.deepStrictEqual(notices, [
+            "10 linked files or images were not included.",
+            "A table was kept as plain text.",
+          ]);
+        }),
+      ),
+    );
+
+    it.effect("shares the room between earlier and new notes and counts the rest", () =>
+      withImporter(
+        Effect.gen(function* () {
+          const fixture = importFixture({ turns: 1 });
+          const earlier = Array.from({ length: 10 }, (_, index) => `Earlier note ${index + 1}.`);
+          const notices = yield* noticesOf({
+            ...fixture.input,
+            snapshot: { ...fixture.input.snapshot, provenance: previousImport(earlier) },
+            warnings: [
+              warning("resource-unresolved", "The linked image chart.png was unavailable."),
+              warning("unsupported-construct", "A table was kept as plain text."),
+              warning("converter-reported", "A formula was kept as its source."),
+            ],
+          });
+          assert.deepStrictEqual(notices, [
+            "Earlier note 1.",
+            "The linked image chart.png was unavailable.",
+            "Earlier note 2.",
+            "A table was kept as plain text.",
+            "Earlier note 3.",
+            "A formula was kept as its source.",
+            "Earlier note 4.",
+            "Earlier note 5.",
+            "Earlier note 6.",
+            "…and 4 more notes.",
+          ]);
+        }),
+      ),
+    );
+  });
 
   it.effect("a fork of an imported folded answer names the fork's copy of its message", () =>
     withImporter(

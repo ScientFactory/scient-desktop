@@ -20,7 +20,9 @@ import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
   sortProviderInstanceEntries,
+  type ProviderInstanceEntry,
 } from "../../providerInstances";
+import { resolveAntigravityDraftSelection } from "../providerConnection/antigravityDraftSelection";
 
 /**
  * Where an import goes and what continues it: the project (the one in view
@@ -63,7 +65,7 @@ export function newChatModelSelection(input: {
     destinationDraftId: "",
   });
   // `applyStickyState`, then `setModelSelection` with the override.
-  const draft = {
+  const seeded = {
     modelSelectionByProvider:
       override === null
         ? sticky.modelSelectionByProvider
@@ -78,7 +80,7 @@ export function newChatModelSelection(input: {
   const { selectedProviderEntry } = resolveComposerProviderSelection({
     entries,
     candidateInstanceIds: [
-      draft.activeProvider,
+      seeded.activeProvider,
       threadModelSelection.instanceId,
       projectDefault?.instanceId,
     ],
@@ -86,6 +88,12 @@ export function newChatModelSelection(input: {
     lockedInstanceId: null,
   });
   if (selectedProviderEntry === undefined) return null;
+  const draft = reconciledAntigravityDraft(
+    seeded,
+    selectedProviderEntry,
+    threadModelSelection,
+    settings,
+  );
   const { selectedModel } = deriveEffectiveComposerModelState({
     draft,
     providers: config.providers,
@@ -100,6 +108,40 @@ export function newChatModelSelection(input: {
   return drafted?.model === selectedModel
     ? drafted
     : { instanceId: selectedProviderEntry.instanceId, model: selectedModel };
+}
+
+type SeededDraft = {
+  readonly modelSelectionByProvider: StickyModelSelection["modelSelectionByProvider"];
+  readonly activeProvider: ProviderInstanceId | null;
+};
+
+/**
+ * The composer's Antigravity step for a new draft
+ * (`reconcileAntigravityDraftSelection`): a historical family slug, carried
+ * or remembered, becomes this instance's live variant. An imported thread has
+ * history, so the composer never takes this step for it later.
+ */
+function reconciledAntigravityDraft(
+  draft: SeededDraft,
+  entry: ProviderInstanceEntry,
+  fallbackSelection: ModelSelection,
+  settings: UnifiedSettings,
+): SeededDraft {
+  const instanceId = entry.instanceId;
+  if (entry.driverKind !== "antigravity") return draft;
+  if (draft.activeProvider && draft.activeProvider !== instanceId) return draft;
+  const source = draft.modelSelectionByProvider[instanceId] ?? fallbackSelection;
+  const next = resolveAntigravityDraftSelection(
+    source,
+    entry.snapshot,
+    settings.providerModelPreferences[instanceId]?.hiddenModels,
+  );
+  return next === null
+    ? draft
+    : {
+        activeProvider: instanceId,
+        modelSelectionByProvider: { ...draft.modelSelectionByProvider, [instanceId]: next },
+      };
 }
 
 /** A project, identified in the environment that holds it. */
