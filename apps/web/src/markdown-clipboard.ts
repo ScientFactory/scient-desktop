@@ -6,6 +6,15 @@
  * copy of the rendered fragment for rich-paste targets.
  */
 
+// SCIENT-FORK:START — right-to-left copies carry explicit direction in `text/html`
+import type { FixedContentDirection } from "./scient/bidi/contentDirection";
+import {
+  clipboardSourceDirection,
+  hasStrongRtl,
+  markClipboardDirection,
+} from "./scient/clipboard/clipboardDirection";
+// SCIENT-FORK:END
+
 const SKIPPED_TAGS = new Set(["BUTTON", "INPUT", "SCRIPT", "STYLE", "TEMPLATE"]);
 const SKIPPED_CLASS_NAMES = ["select-none", "sr-only"];
 const SANITIZED_HTML_SELECTOR = [
@@ -381,7 +390,9 @@ function mathAwareRange(source: Range): Range {
   return range;
 }
 
-function sanitizedHtmlFrom(container: Element): string {
+// SCIENT-FORK:START — `direction` is set only when the copy contains right-to-left text
+function sanitizedHtmlFrom(container: Element, direction?: FixedContentDirection): string {
+  // SCIENT-FORK:END
   // Export portable source once, rather than KaTeX's visual + accessibility DOM.
   // The live document retains its MathML; only this detached copy is changed.
   for (const math of container.querySelectorAll(MATH_COPY_SELECTOR)) {
@@ -402,14 +413,32 @@ function sanitizedHtmlFrom(container: Element): string {
     }
     node.remove();
   }
+  // SCIENT-FORK:START
+  if (direction) markClipboardDirection(container, direction);
+  // SCIENT-FORK:END
   return `<meta charset="utf-8">${container.innerHTML}`;
 }
+
+// SCIENT-FORK:START — the Copy message button's rich flavour
+/**
+ * Sanitized rich HTML for a detached copy of rendered chat Markdown, with the
+ * same direction marks as a selection copy. The element is modified in place.
+ */
+export function renderedMarkdownClipboardHtml(detached: Element): string {
+  return sanitizedHtmlFrom(
+    detached,
+    clipboardSourceDirection(detached, detached.textContent ?? ""),
+  );
+}
+// SCIENT-FORK:END
 
 export function chatMarkdownClipboardPayload(
   selection: Selection,
 ): MarkdownClipboardPayload | null {
   const texts: string[] = [];
-  const htmls: string[] = [];
+  // SCIENT-FORK:START — HTML is built once the whole copy is known to hold RTL text or not
+  const fragments: Array<{ container: Element; source: Element | null; text: string }> = [];
+  // SCIENT-FORK:END
   for (let index = 0; index < selection.rangeCount; index += 1) {
     const selectedRange = selection.getRangeAt(index);
     if (selectedRange.collapsed) continue;
@@ -423,15 +452,27 @@ export function chatMarkdownClipboardPayload(
       const text = range.toString();
       if (text) {
         texts.push(text);
-        htmls.push(sanitizedHtmlFrom(container));
+        fragments.push({ container, source: ancestorElement, text });
       }
       continue;
     }
     const text = serializeRenderedMarkdownFragment(container);
     if (!text) continue;
     texts.push(text);
-    htmls.push(sanitizedHtmlFrom(container));
+    fragments.push({ container, source: ancestorElement, text });
   }
   if (texts.length === 0) return null;
-  return { text: texts.join("\n\n"), html: htmls.join("") };
+  const text = texts.join("\n\n");
+  // SCIENT-FORK:START
+  const rtl = hasStrongRtl(text);
+  const html = fragments
+    .map((fragment) =>
+      sanitizedHtmlFrom(
+        fragment.container,
+        rtl ? clipboardSourceDirection(fragment.source, fragment.text) : undefined,
+      ),
+    )
+    .join("");
+  // SCIENT-FORK:END
+  return { text, html };
 }
