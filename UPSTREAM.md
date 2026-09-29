@@ -32,9 +32,18 @@ actions. Its active states use a compact primary-colored button with Update,
 download percentage, Restart, or Retry copy. The labeled button is 28px tall and
 uses plain download/restart icons without status badges. Preserve the marked presentation
 seam in `SidebarUpdatePill.tsx` and `getScientDesktopUpdateLabel` in
-`desktopUpdate.logic.ts`; updater state, IPC, confirmation, release-note focus,
-and Electron installation remain inherited. Do not copy the updater into a
-second component or restore upstream's muted active-state styling during alignment.
+`desktopUpdate.logic.ts`; updater state, IPC, release-note focus, and Electron
+installation remain inherited. Do not copy the updater into a second component
+or restore upstream's muted active-state styling during alignment.
+Scient replaces upstream's restart flow: a finished download shows a notice
+anchored above the update control, with a **Restart now** action and a 5-second
+timeout, falling back to the corner stack when the control is off screen; and
+Restart installs without the confirmation dialog in the sidebar, the legacy
+sidebar and Settings. The notice and the shared install call live in
+`apps/web/src/scient/desktopUpdate/updateReadyNotice.tsx`; the three callers
+carry `SCIENT-FORK` markers. Upstream's `showDesktopUpdateDownloadedToast` and
+`getDesktopUpdateInstallConfirmationMessage` stay in place but unused by these
+callers; do not reintroduce the confirmation during alignment.
 `DesktopUpdates.ts` forwards every real download progress event to the UI instead
 of filtering at 10% boundaries; only logging retains the 10% milestones. Preserve
 this small marked exception without changing the downloader's event cadence.
