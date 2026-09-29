@@ -177,12 +177,16 @@ function pageStyleSignature(): string {
 const fontKey = (face: FontFace) =>
   [face.family, face.style, face.weight, face.stretch, face.unicodeRange].join("|");
 
+const loadedFontKeys = (fontSet: FontFaceSet): Set<string> =>
+  new Set(
+    Array.from(fontSet, (face) => (face.status === "loaded" ? fontKey(face) : null)).filter(
+      (key): key is string => key !== null,
+    ),
+  );
+
 /** Loads, in the frame, each font face the page has already loaded, so text measures alike. */
 async function mirrorLoadedFonts(frameDocument: Document): Promise<void> {
-  const loaded = new Set<string>();
-  document.fonts.forEach((face) => {
-    if (face.status === "loaded") loaded.add(fontKey(face));
-  });
+  const loaded = loadedFontKeys(document.fonts);
   const pending: Promise<unknown>[] = [];
   frameDocument.fonts.forEach((face) => {
     if (face.status === "unloaded" && loaded.has(fontKey(face))) {
@@ -190,6 +194,21 @@ async function mirrorLoadedFonts(frameDocument: Document): Promise<void> {
     }
   });
   if (pending.length > 0) await Promise.all(pending);
+}
+
+/** A diagram can be the first use of a math face; load that face on the page as well. */
+async function mirrorRenderedFontsToPage(frameDocument: Document): Promise<void> {
+  await frameDocument.fonts.ready;
+  const loaded = loadedFontKeys(frameDocument.fonts);
+  const pending: Promise<unknown>[] = [];
+  document.fonts.forEach((face) => {
+    if (face.status === "unloaded" && loaded.has(fontKey(face))) {
+      pending.push(face.load().catch(() => undefined));
+    }
+  });
+  if (pending.length > 0) await Promise.all(pending);
+  await document.fonts.ready;
+  await mirrorLoadedFonts(frameDocument);
 }
 
 function mirrorAttributes(source: Element, target: Element): void {
@@ -298,9 +317,25 @@ export async function openIsolatedMermaid(
         const before = refused;
         sequence += 1;
         try {
-          const { svg, diagramType } = await mermaid.render(`${idPrefix}-${sequence}`, source);
+          const frameFontsBefore = options.measureLikePage
+            ? loadedFontKeys(frameDocument.fonts)
+            : null;
+          const pageFontsBefore = options.measureLikePage ? loadedFontKeys(document.fonts) : null;
+          let result = await mermaid.render(`${idPrefix}-${sequence}`, source);
+          if (frameFontsBefore !== null && pageFontsBefore !== null) {
+            // Math labels can start loading a face while Mermaid measures them. Sync that
+            // face in both documents and redraw before caching fallback-font geometry.
+            await mirrorRenderedFontsToPage(frameDocument);
+            if (
+              [...loadedFontKeys(frameDocument.fonts)].some((key) => !frameFontsBefore.has(key)) ||
+              [...loadedFontKeys(document.fonts)].some((key) => !pageFontsBefore.has(key))
+            ) {
+              sequence += 1;
+              result = await mermaid.render(`${idPrefix}-${sequence}`, source);
+            }
+          }
           if (renderOptions.awaitRefusals ?? true) await settle();
-          return { svg, diagramType, refused: refused - before };
+          return { svg: result.svg, diagramType: result.diagramType, refused: refused - before };
         } catch (cause) {
           throw asPageError(cause);
         }
