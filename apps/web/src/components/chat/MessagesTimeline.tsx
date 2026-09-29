@@ -153,6 +153,8 @@ import { useProject, useThread } from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
 import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
+  flushTimelinePositions,
+  withRealTimelineEnd,
   readTimelinePosition,
   rememberTimelinePosition,
   timelineContentOverflowsViewport,
@@ -424,7 +426,7 @@ interface MessagesTimelineProps {
   anchorMessageId: MessageId | null;
   onAnchorReady: (messageId: MessageId, anchorIndex: number) => void;
   contentInsetEndAdjustment: number;
-  sendAnchorPending?: boolean;
+  timelinePositioningPending?: boolean;
   readingFollowPromptId?: string | null;
   onReleaseUnusedAnchor?: () => void;
   onIsAtEndChange: (isAtEnd: boolean) => void;
@@ -494,7 +496,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   anchorMessageId,
   onAnchorReady,
   contentInsetEndAdjustment,
-  sendAnchorPending = false,
+  timelinePositioningPending = false,
   readingFollowPromptId = null,
   onReleaseUnusedAnchor,
   onIsAtEndChange,
@@ -779,7 +781,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     listRef,
     rows,
     promptMessageId: readingFollowPromptId,
-    suspended: sendAnchorPending || restoringThreadPosition || positionHistoryLoading,
+    suspended: timelinePositioningPending || restoringThreadPosition || positionHistoryLoading,
     composerInset: contentInsetEndAdjustment,
   });
   const minimapItems = useMemo(() => deriveTimelineMinimapItems(rows), [rows]);
@@ -1031,23 +1033,26 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     onContentOverflowChange?.(measureContentOverflow());
   }, [cancelContentOverflowFrame, measureContentOverflow, onContentOverflowChange, rows.length]);
 
-  const saveReadingFrameRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveReadingPosition = useCallback(() => {
     const state = listRef.current?.getState?.();
     if (
       restoringThreadPosition ||
+      !readingListLoaded ||
       positionHistoryLoading ||
       citationPositioning ||
-      sendAnchorPending ||
+      timelinePositioningPending ||
       state?.data !== rows
     )
       return;
-    const position = state?.data?.length ? resolveWorkGroupScrollAnchor(state) : undefined;
+    const element = listRef.current?.getScrollableNode();
+    const position =
+      state?.data?.length && element
+        ? resolveWorkGroupScrollAnchor({ ...state, scroll: element.scrollTop })
+        : undefined;
     if (!position || !state) return;
     const index = rows.findIndex((row) => row.id === position.rowId);
     const identity = readingIdentity(rows, index, runningTurnId);
     const row = state.elementAtIndex(index);
-    const element = listRef.current?.getScrollableNode();
     if (!identity || !row || !element) return;
     rememberTimelinePosition(listIdentityKey, {
       ...position,
@@ -1068,9 +1073,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   }, [
     listRef,
     restoringThreadPosition,
+    readingListLoaded,
     positionHistoryLoading,
     citationPositioning,
-    sendAnchorPending,
+    timelinePositioningPending,
     runningTurnId,
     rows,
     listIdentityKey,
@@ -1087,22 +1093,20 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     saveReadingPositionRef.current = saveReadingPosition;
   });
   useLayoutEffect(() => {
-    const save = () => saveReadingPositionRef.current();
+    const save = () => {
+      saveReadingPositionRef.current();
+      flushTimelinePositions();
+    };
     window.addEventListener("pagehide", save);
     return () => {
       save();
       window.removeEventListener("pagehide", save);
-      if (saveReadingFrameRef.current !== null) clearTimeout(saveReadingFrameRef.current);
     };
   }, [listIdentityKey]);
-  const scheduleReadingSave = useCallback(() => {
-    if (saveReadingFrameRef.current !== null) clearTimeout(saveReadingFrameRef.current);
-    saveReadingFrameRef.current = setTimeout(() => saveReadingPositionRef.current(), 120);
-  }, []);
   const handleScroll = useCallback(() => {
     const state = listRef.current?.getState?.();
     if (restoringThreadPosition || positionHistoryLoading || state?.data !== rows) return;
-    scheduleReadingSave();
+    saveReadingPosition();
     const viewport = listRef.current?.getScrollableNode();
     if (state && viewport && onUnreadBelowChange) {
       const messages = timelineEntries.flatMap((entry) =>
@@ -1132,13 +1136,17 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         ),
       );
     }
-    if (state && anchorMessageId && !sendAnchorPending) {
+    if (state && anchorMessageId && !timelinePositioningPending) {
       const last = state.data.length - 1;
       const bottom = (state.positionAtIndex(last) ?? 0) + (state.sizeAtIndex(last) ?? 0);
       // Removing a tail wholly below the viewport cannot clamp the reading position.
       if (bottom >= state.scroll + state.scrollLength) onReleaseUnusedAnchor?.();
     }
-    const isAtEnd = resolveTimelineIsAtEnd(state);
+    // Reserved anchor space is not unread content. Only real rows can make the
+    // existing end control appear; overflowing answers still do.
+    const isAtEnd = resolveTimelineIsAtEnd(
+      anchorMessageId ? withRealTimelineEnd(state, contentInsetEndAdjustment) : state,
+    );
     if (isAtEnd !== undefined && !citationPositioning) onIsAtEndChange(isAtEnd);
     reportContentOverflow();
     if (!state || minimapItems.length === 0) {
@@ -1187,11 +1195,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     restoringThreadPosition,
     listRef,
     positionHistoryLoading,
-    scheduleReadingSave,
+    saveReadingPosition,
     timelineEntries,
     onUnreadBelowChange,
     anchorMessageId,
-    sendAnchorPending,
+    timelinePositioningPending,
     onReleaseUnusedAnchor,
     contentInsetEndAdjustment,
     minimapItems,
@@ -1367,6 +1375,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   );
 
   if (rows.length === 0 && !isWorking) {
+    // The inner list will remount. Block captures until its new onLoad and
+    // restoration complete, so layout at offset zero cannot overwrite the receipt.
+    if (readingListLoaded) {
+      setReadingListLoaded(false);
+      setPositionedThreadKey(null);
+    }
     if (hideEmptyPlaceholder) {
       // Occupy the pane with the theme surface so a thread switch cannot
       // punch a hole through to the window chrome (white in light mode).
@@ -1386,6 +1400,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           ref={setTimelineViewportElement}
           className="scient-reading-ui relative h-full min-h-0"
           data-assistant-citation-viewport="true"
+          onScrollCapture={(event) => {
+            // Legend coalesces public scroll callbacks into a later frame. Capture
+            // the native event now, before a same-frame thread switch can replace rows.
+            if (event.target === listRef.current?.getScrollableNode()) saveReadingPosition();
+          }}
         >
           {onCiteAssistantText && citationThreadRef ? (
             <AssistantSelectionToolbar

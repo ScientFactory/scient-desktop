@@ -15,7 +15,7 @@ export function canApplySendAnchor(input: {
   );
 }
 
-export function readingRowTurnId(row: MessagesTimelineRow): string | undefined {
+function readingRowTurnId(row: MessagesTimelineRow): string | undefined {
   if ("message" in row) return row.message.turnId ?? undefined;
   if ("turnId" in row) return row.turnId ?? undefined;
   if (row.kind === "work-live") return row.entry.turnId ?? undefined;

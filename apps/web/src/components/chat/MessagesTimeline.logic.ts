@@ -149,18 +149,13 @@ export interface TimelineEndState {
   readonly scrollLength?: number;
 }
 
-/**
- * Follow re-arm band above the hard bottom. Strict on purpose: LegendList's
- * isNearEnd fires within half a viewport, which re-armed live-follow while the
- * user was reading history and yanked them back down on the next stream chunk.
- * A small pixel band (instead of the 1px isAtEnd epsilon alone) keeps re-arming
- * reliable while streaming content is still growing under the viewport.
- */
-const TIMELINE_FOLLOW_REARM_THRESHOLD_PX = 40;
+// Preserve the inherited near-bottom band for end controls. Sending passes its
+// own allowance based on rendered text height; reaching either band never arms following.
+const TIMELINE_END_THRESHOLD_PX = 40;
 
 export function resolveTimelineIsAtEnd(
   state: TimelineEndState | undefined,
-  allowancePx = TIMELINE_FOLLOW_REARM_THRESHOLD_PX,
+  allowancePx = TIMELINE_END_THRESHOLD_PX,
 ): boolean | undefined {
   if (!state) {
     return undefined;

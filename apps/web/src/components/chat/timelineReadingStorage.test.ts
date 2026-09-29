@@ -9,13 +9,15 @@ function storage(initial?: string) {
   return values;
 }
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.resetModules();
 });
 it("restores semantic identity after a renderer reload without persisting a bare scroll offset", async () => {
   const values = storage();
   vi.resetModules();
-  const { rememberTimelinePosition } = await import("./timelineScrollAnchoring");
+  const { rememberTimelinePosition, flushTimelinePositions } =
+    await import("./timelineScrollAnchoring");
   rememberTimelinePosition("environment:thread", {
     rowId: "message:answer",
     messageId: "answer",
@@ -25,6 +27,7 @@ it("restores semantic identity after a renderer reload without persisting a bare
     atEnd: true,
     neighborMessageIds: ["prompt"],
   });
+  flushTimelinePositions();
   expect(values.get(key)).not.toContain("scrollOffset");
   vi.resetModules();
   const { readTimelinePosition } = await import("./timelineScrollAnchoring");
@@ -39,7 +42,7 @@ it("restores semantic identity after a renderer reload without persisting a bare
 it("ignores corrupt records and bounds retained thread positions", async () => {
   storage(JSON.stringify([["broken", { rowId: "row", offsetWithinRow: "bad", atEnd: false }]]));
   vi.resetModules();
-  const { readTimelinePosition, rememberTimelinePosition } =
+  const { readTimelinePosition, rememberTimelinePosition, flushTimelinePositions } =
     await import("./timelineScrollAnchoring");
   expect(readTimelinePosition("broken")).toBeUndefined();
   for (let i = 0; i < 105; i++)
@@ -50,8 +53,31 @@ it("ignores corrupt records and bounds retained thread positions", async () => {
       atEnd: false,
     });
   expect(readTimelinePosition("thread-0")).toBeUndefined();
+  flushTimelinePositions();
   vi.resetModules();
   const reloaded = await import("./timelineScrollAnchoring");
   expect(reloaded.readTimelinePosition("thread-4")).toBeUndefined();
   expect(reloaded.readTimelinePosition("thread-104")?.rowId).toBe("row-104");
+});
+
+it("captures immediately, coalesces storage writes, and flushes before page exit", async () => {
+  vi.useFakeTimers();
+  const values = storage();
+  const { readTimelinePosition, rememberTimelinePosition, flushTimelinePositions } =
+    await import("./timelineScrollAnchoring");
+  const position = { rowId: "answer", offsetWithinRow: 10, scrollOffset: 500, atEnd: false };
+  rememberTimelinePosition("quick", position);
+  expect(readTimelinePosition("quick")).toEqual(position);
+  expect(values.has(key)).toBe(false);
+  vi.advanceTimersByTime(100);
+  rememberTimelinePosition("quick", { ...position, offsetWithinRow: 30 });
+  vi.advanceTimersByTime(119);
+  expect(values.has(key)).toBe(false);
+  vi.advanceTimersByTime(1);
+  expect(JSON.parse(values.get(key)!)[0][1].offsetWithinRow).toBe(30);
+  rememberTimelinePosition("quick", { ...position, offsetWithinRow: 40 });
+  flushTimelinePositions();
+  vi.resetModules();
+  const reloaded = await import("./timelineScrollAnchoring");
+  expect(reloaded.readTimelinePosition("quick")?.offsetWithinRow).toBe(40);
 });

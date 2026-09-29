@@ -579,7 +579,9 @@ while the rest grows below the screen. If you were reading earlier content,
 sending leaves that position alone. Manual scrolling cancels both pending
 placement and limited answer following, including during an upload.
 
-Use the existing **Scroll to end** button for a single jump. Its small count shows
+Use the existing **Scroll to end** button for a single jump. It appears when more
+content remains below you, not just blank space reserved for message placement.
+Its small count shows
 new assistant messages below your view that you have not reached yet, once per
 message, not once per streaming update. It excludes your messages and tool activity.
 The count tracks reading within the current app window session; opening older

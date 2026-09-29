@@ -170,6 +170,7 @@ import {
 import { type LegendListRef } from "@legendapp/list/react";
 import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
+  withRealTimelineEnd,
   readTimelinePosition,
   timelineContentOverflowsViewport,
   type TimelineScrollMode,
@@ -1942,10 +1943,6 @@ function ChatViewContent(props: ChatViewProps) {
   const composerOverlayHeightRef = useRef(0);
   const [scrollToEndClearance, setScrollToEndClearance] = useState(0);
   const isAtEndRef = useRef(true);
-  const isTimelineAtLogicalEnd = useCallback(
-    () => resolveTimelineIsAtEnd(legendListRef.current?.getState()) ?? isAtEndRef.current,
-    [],
-  );
   // Whether the timeline's rows extend past the viewport above the composer.
   // The composer only rests when there is reading space to give back.
   const [timelineOverflows, setTimelineOverflows] = useState(false);
@@ -2275,6 +2272,14 @@ function ChatViewContent(props: ChatViewProps) {
     });
   }
   const timelineAnchorMessageId = timelineAnchor.messageId;
+  const getTimelineReadingState = useCallback(() => {
+    const state = legendListRef.current?.getState();
+    return timelineAnchorMessageId ? withRealTimelineEnd(state, composerTimelineInset) : state;
+  }, [timelineAnchorMessageId, composerTimelineInset]);
+  const isTimelineAtLogicalEnd = useCallback(
+    () => resolveTimelineIsAtEnd(getTimelineReadingState()) ?? isAtEndRef.current,
+    [getTimelineReadingState],
+  );
   const activeRightPanelKind = useRightPanelStore((state) =>
     selectActiveRightPanel(state.byThreadKey, activeThreadRef),
   );
@@ -5992,7 +5997,7 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const timelineScrollIntentRef = useRef<"toward-end" | "away-from-end" | null>(null);
   const timelineScrollModeRef = useRef<TimelineScrollMode>("free-scrolling");
-  const [sendAnchorPending, setSendAnchorPending] = useState(false);
+  const [timelinePositioningPending, setTimelinePositioningPending] = useState(false);
   const [readingFollowPromptId, setReadingFollowPromptId] = useState<MessageId | null>(null);
   const positionedTimelineAnchorRef = useRef<MessageId | null>(null);
   const programmaticScrollPendingRef = useRef(false);
@@ -6018,7 +6023,7 @@ function ChatViewContent(props: ChatViewProps) {
     }
     timelineScrollModeRef.current = "free-scrolling";
     setReadingFollowPromptId(null);
-    setSendAnchorPending(false);
+    setTimelinePositioningPending(false);
     programmaticScrollPendingRef.current = false;
     positionedTimelineAnchorRef.current = null;
   }, []);
@@ -6073,13 +6078,13 @@ function ChatViewContent(props: ChatViewProps) {
       const generation = anchorUserScrollGenerationRef.current;
       setTimelineAnchor(releaseChatTimelineAnchor);
       programmaticScrollPendingRef.current = true;
-      setSendAnchorPending(true);
+      setTimelinePositioningPending(true);
       requestAnimationFrame(() => {
         if (generation !== anchorUserScrollGenerationRef.current) return;
         void Promise.resolve(legendListRef.current?.scrollToEnd({ animated })).then(() => {
           if (generation !== anchorUserScrollGenerationRef.current) return;
           programmaticScrollPendingRef.current = false;
-          setSendAnchorPending(false);
+          setTimelinePositioningPending(false);
           legendListRef.current?.getScrollableNode()?.dispatchEvent(new Event("scroll"));
         });
       });
@@ -6092,7 +6097,7 @@ function ChatViewContent(props: ChatViewProps) {
       atEnd:
         isDraftHeroState ||
         (resolveTimelineIsAtEnd(
-          legendListRef.current?.getState(),
+          getTimelineReadingState(),
           readSendScrollAllowance(legendListRef.current?.getScrollableNode()),
         ) ??
           isAtEndRef.current),
@@ -6101,7 +6106,7 @@ function ChatViewContent(props: ChatViewProps) {
       threadKey: routeThreadKey,
       navigationGeneration: anchorUserScrollGenerationRef.current,
     }),
-    [isDraftHeroState, routeThreadKey, timelineMessages, activeLatestTurn],
+    [isDraftHeroState, routeThreadKey, timelineMessages, activeLatestTurn, getTimelineReadingState],
   );
   const frameSubmittedMessage = useCallback(
     (messageId: MessageId, snapshot: ReturnType<typeof captureSendReadingPosition>) => {
@@ -6123,7 +6128,7 @@ function ChatViewContent(props: ChatViewProps) {
       cancelPositionRestoreRef.current?.();
       setReadingFollowPromptId(messageId);
       timelineScrollModeRef.current = "anchoring-new-turn";
-      setSendAnchorPending(true);
+      setTimelinePositioningPending(true);
       positionedTimelineAnchorRef.current = null;
       setTimelineAnchor({ threadKey: activeThreadKey, messageId });
     },
@@ -6303,7 +6308,7 @@ function ChatViewContent(props: ChatViewProps) {
             if (positionedTimelineAnchorRef.current !== messageId) {
               return;
             }
-            setSendAnchorPending(false);
+            setTimelinePositioningPending(false);
             positionedTimelineAnchorRef.current = null;
             timelineScrollModeRef.current = "free-scrolling";
             legendListRef.current?.getScrollableNode()?.dispatchEvent(new Event("scroll"));
@@ -6340,7 +6345,7 @@ function ChatViewContent(props: ChatViewProps) {
     timelineScrollIntentRef.current = null;
     timelineScrollModeRef.current = "free-scrolling";
     setReadingFollowPromptId(null);
-    setSendAnchorPending(false);
+    setTimelinePositioningPending(false);
     programmaticScrollPendingRef.current = false;
     positionedTimelineAnchorRef.current = null;
     showScrollDebouncer.current.cancel();
@@ -10847,7 +10852,7 @@ function ChatViewContent(props: ChatViewProps) {
                 anchorMessageId={paintOnlyDisplayedTimeline ? null : timelineAnchorMessageId}
                 onAnchorReady={onTimelineAnchorReady}
                 contentInsetEndAdjustment={composerTimelineInset}
-                sendAnchorPending={sendAnchorPending}
+                timelinePositioningPending={timelinePositioningPending}
                 readingFollowPromptId={readingFollowPromptId}
                 onReleaseUnusedAnchor={releaseUnusedTimelineAnchor}
                 onIsAtEndChange={onIsAtEndChange}

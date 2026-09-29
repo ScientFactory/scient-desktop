@@ -13,17 +13,6 @@ export interface TimelineListMeasurementState {
   readonly sizeAtIndex: (index: number) => number | undefined;
 }
 
-export interface AnchoredTurnMetrics {
-  readonly anchorTop: number;
-  readonly lastBottom: number;
-  readonly turnHeight: number;
-  readonly usableViewportHeight: number;
-  readonly visibleUsableBottom: number;
-  readonly overflowsUsableViewport: boolean;
-  readonly targetScrollToRevealEnd: number;
-  readonly scrollDeltaToRevealEnd: number;
-}
-
 export function getRowBottom(state: TimelineListMeasurementState, index: number): number | null {
   const top = state.positionAtIndex(index);
   const height = state.sizeAtIndex(index);
@@ -37,6 +26,16 @@ export function getRowBottom(state: TimelineListMeasurementState, index: number)
   }
 
   return top + Math.max(1, height);
+}
+
+/** Exclude reserved anchor padding when deciding whether real content is below the reader. */
+export function withRealTimelineEnd<T extends TimelineListMeasurementState>(
+  state: T | undefined,
+  composerInset: number,
+): T | undefined {
+  if (!state) return state;
+  const bottom = getRowBottom(state, state.data.length - 1);
+  return bottom === null ? state : { ...state, contentLength: bottom + composerInset };
 }
 
 /**
@@ -62,49 +61,6 @@ export function timelineContentOverflowsViewport(
   }
   const visibleScrollLength = Math.max(0, scrollLength - input.composerInset - input.anchorOffset);
   return lastBottom > visibleScrollLength;
-}
-
-export function getAnchoredTurnMetrics({
-  state,
-  anchorIndex,
-  composerOverlayHeight,
-  anchorOffset,
-}: {
-  readonly state: TimelineListMeasurementState;
-  readonly anchorIndex: number;
-  readonly composerOverlayHeight: number;
-  readonly anchorOffset: number;
-}): AnchoredTurnMetrics | null {
-  if (state.data.length === 0) {
-    return null;
-  }
-
-  const boundedAnchorIndex = Math.max(0, Math.min(anchorIndex, state.data.length - 1));
-  const anchorTop = state.positionAtIndex(boundedAnchorIndex);
-  const lastBottom = getRowBottom(state, state.data.length - 1);
-  if (typeof anchorTop !== "number" || !Number.isFinite(anchorTop) || lastBottom === null) {
-    return null;
-  }
-
-  const usableViewportHeight = Math.max(
-    0,
-    state.scrollLength - composerOverlayHeight - anchorOffset,
-  );
-  const turnHeight = Math.max(0, lastBottom - anchorTop);
-  const visibleUsableBottom = state.scroll + usableViewportHeight;
-  const targetScrollToRevealEnd = Math.max(0, lastBottom - usableViewportHeight);
-  const scrollDeltaToRevealEnd = Math.max(0, targetScrollToRevealEnd - state.scroll);
-
-  return {
-    anchorTop,
-    lastBottom,
-    turnHeight,
-    usableViewportHeight,
-    visibleUsableBottom,
-    overflowsUsableViewport: turnHeight > usableViewportHeight,
-    targetScrollToRevealEnd,
-    scrollDeltaToRevealEnd,
-  };
 }
 
 export interface RememberedTimelinePosition {
@@ -134,6 +90,7 @@ export interface RememberedTimelinePosition {
 const POSITION_STORAGE_KEY = "scient:timeline-reading-position:v1";
 const rememberedTimelinePositions = new Map<string, RememberedTimelinePosition>();
 let positionsLoaded = false;
+let persistenceTimer: ReturnType<typeof setTimeout> | undefined;
 
 function readDisclosures(
   value: Record<string, unknown>,
@@ -219,6 +176,16 @@ export function rememberTimelinePosition(threadKey: string, position: Remembered
     const oldest = rememberedTimelinePositions.keys().next().value;
     if (oldest !== undefined) rememberedTimelinePositions.delete(oldest);
   }
+  // Capture while this thread still owns the list. Only storage I/O is deferred.
+  if (persistenceTimer !== undefined) clearTimeout(persistenceTimer);
+  persistenceTimer = setTimeout(flushTimelinePositions, 120);
+}
+
+/** Persist already captured positions even after the list has switched threads. */
+export function flushTimelinePositions() {
+  if (persistenceTimer === undefined) return;
+  clearTimeout(persistenceTimer);
+  persistenceTimer = undefined;
   try {
     sessionStorage.setItem(
       POSITION_STORAGE_KEY,

@@ -4,7 +4,7 @@ import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
 import { CHAT_TIMELINE_ANCHOR_OFFSET } from "./timelineScrollAnchoring";
 
 /** Reveal growth only while the sent prompt's text remains visible. */
-export function boundedAnswerScrollDelta(input: {
+function boundedAnswerScrollDelta(input: {
   promptTextTop: number;
   answerBottom: number;
   viewportTop: number;

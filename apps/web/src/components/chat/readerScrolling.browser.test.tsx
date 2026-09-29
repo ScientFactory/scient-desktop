@@ -8,7 +8,11 @@ import { afterEach, expect, it, vi } from "vite-plus/test";
 import { resolveTimelineIsAtEnd } from "./MessagesTimeline.logic";
 import { readSendScrollAllowance } from "./readerScrollPolicy";
 import { MessagesTimeline } from "./MessagesTimeline";
-import { readTimelinePosition, rememberTimelinePosition } from "./timelineScrollAnchoring";
+import {
+  readTimelinePosition,
+  rememberTimelinePosition,
+  withRealTimelineEnd,
+} from "./timelineScrollAnchoring";
 
 let root: Root | undefined;
 let host: HTMLDivElement | undefined;
@@ -135,6 +139,99 @@ it("restores the same message after switching threads with a saved at-end positi
       { timeout: 5000 },
     )
     .toBeLessThanOrEqual(2);
+});
+
+it("captures the last scroll before an immediate thread switch", async () => {
+  const entries = Array.from({ length: 20 }, (_, i) => entry(i));
+  render("geometry:quick-switch", entries);
+  await expect.poll(() => readTimelinePosition("geometry:quick-switch")).toBeDefined();
+  await listRef.current!.scrollToOffset({ offset: 300, animated: false });
+  await frames();
+  const node = listRef.current!.getScrollableNode()!;
+  // No timer, polling, or animation frame between this gesture and navigation.
+  node.scrollTop += 35;
+  node.dispatchEvent(new Event("scroll"));
+  const expectedOffset = node.scrollTop;
+  render("geometry:quick-other", [entry(100)]);
+  await frames(8);
+  render("geometry:quick-switch", entries);
+  await frames(16);
+  expect(listRef.current!.getScrollableNode()!.scrollTop).toBeCloseTo(expectedOffset, 0);
+});
+
+it("flushes the latest captured position on pagehide before the storage debounce", async () => {
+  render(
+    "geometry:pagehide",
+    Array.from({ length: 20 }, (_, i) => entry(i)),
+  );
+  await expect.poll(() => readTimelinePosition("geometry:pagehide")).toBeDefined();
+  await listRef.current!.scrollToOffset({ offset: 300, animated: false });
+  await frames();
+  const node = listRef.current!.getScrollableNode()!;
+  node.scrollTop += 35;
+  node.dispatchEvent(new Event("scroll"));
+  window.dispatchEvent(new Event("pagehide"));
+  const records = JSON.parse(sessionStorage.getItem("scient:timeline-reading-position:v1")!);
+  const saved = records.find(([key]: [string]) => key === "geometry:pagehide")[1];
+  const receipt = readTimelinePosition("geometry:pagehide")!;
+  expect(receipt.scrollOffset).toBe(node.scrollTop);
+  expect(saved.rowId).toBe(receipt.rowId);
+  expect(saved.offsetWithinRow).toBe(receipt.offsetWithinRow);
+});
+
+it("does not offer a jump into reserved blank space but reports a hidden answer", async () => {
+  const prompt = entry(0, "Short prompt");
+  const onIsAtEndChange = vi.fn();
+  const answer = (text: string) => ({
+    ...entry(1, text),
+    message: { ...entry(1, text).message, role: "assistant" as const },
+  });
+  const extra = {
+    anchorMessageId: prompt.message.id,
+    onAnchorReady: (_id: MessageId, index: number) => {
+      void listRef.current!.scrollToIndex({
+        index,
+        viewPosition: 0,
+        viewOffset: 24,
+        animated: false,
+      });
+    },
+    onIsAtEndChange,
+  };
+  render("geometry:reserved-end", [prompt], extra);
+  await frames(16);
+  expect(onIsAtEndChange.mock.lastCall?.[0]).toBe(true);
+  render("geometry:reserved-end", [prompt, answer("Short answer")], extra);
+  await frames(8);
+  expect(onIsAtEndChange.mock.lastCall?.[0]).toBe(true);
+  // The send gate must agree with the end control even while padding remains.
+  expect(
+    resolveTimelineIsAtEnd(
+      withRealTimelineEnd(listRef.current!.getState(), base.contentInsetEndAdjustment),
+      readSendScrollAllowance(listRef.current!.getScrollableNode()),
+    ),
+  ).toBe(true);
+  render("geometry:reserved-end", [prompt, answer("Long answer\n\n".repeat(100))], extra);
+  await frames(8);
+  expect(onIsAtEndChange.mock.lastCall?.[0]).toBe(false);
+});
+
+it("never paints a cold thread at the beginning before positioning at its end", async () => {
+  render(
+    "geometry:first-paint",
+    Array.from({ length: 25 }, (_, i) => entry(i)),
+  );
+  let visibleFrames = 0;
+  for (let i = 0; i < 16; i++) {
+    await frames(1);
+    const node = listRef.current!.getScrollableNode()!;
+    if (getComputedStyle(node).visibility !== "hidden") {
+      visibleFrames++;
+      expect(node.scrollTop).toBeGreaterThan(0);
+      expect(resolveTimelineIsAtEnd(listRef.current!.getState())).toBe(true);
+    }
+  }
+  expect(visibleFrames).toBeGreaterThan(0);
 });
 
 it("does not apply an unrelated offset when a transient saved row disappeared", async () => {
@@ -455,7 +552,7 @@ it("keeps the sent prompt visible even when a full answer arrives before layout 
   const extra = { readingFollowPromptId: prompt.message.id };
   render("geometry:fast-answer", [...entries, prompt, answer], {
     ...extra,
-    sendAnchorPending: true,
+    timelinePositioningPending: true,
   });
   await frames(4);
   const list = listRef.current!;

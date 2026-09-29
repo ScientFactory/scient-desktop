@@ -12,6 +12,10 @@ The existing Scroll to end button is a one-shot action with an
 unread-message badge, not a follow toggle. Do not add a second navigation button.
 Reading positions resolve by message/turn identity, load missing history, and
 survive same-window reloads; never restore an unrelated absolute pixel offset.
+Capture native scroll positions synchronously before Legend's deferred callbacks;
+debounce only session storage and flush captured positions on navigation/page exit.
+A remounted list must finish restoration before saving again. Reserved anchor padding
+is excluded from both end-control visibility and send eligibility.
 Nested tool-output scrolling and the shared mobile scroll policy are unchanged.
 
 Scient's local Preview discovery requires an explicit web URL before sending
