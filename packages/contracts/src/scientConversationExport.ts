@@ -665,6 +665,8 @@ export const DocumentWarningCode = Schema.Literals([
   "attachment-unsupported",
   "records-skipped",
   "source-history-incomplete",
+  /** Imported times were moved back because they were later than the import. */
+  "times-shifted",
   "context-reference-unresolved",
   "unsupported-construct",
   "resource-unresolved",

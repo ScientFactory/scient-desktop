@@ -228,6 +228,37 @@ function warningMessage(
   }
 }
 
+const SHIFT_UNITS = [
+  { ms: 86_400_000, one: "day", many: "days" },
+  { ms: 3_600_000, one: "hour", many: "hours" },
+  { ms: 60_000, one: "minute", many: "minutes" },
+  { ms: 1_000, one: "second", many: "seconds" },
+] as const;
+
+/**
+ * The sentence the import notice and every readable export use when an
+ * import moved its times back (`timesShiftedMs`). The move is given in its
+ * two largest units, such as "1 day 36 seconds".
+ */
+export function importTimesShiftedNotice(timesShiftedMs: number): string {
+  let rest = timesShiftedMs;
+  const parts: string[] = [];
+  for (const unit of SHIFT_UNITS) {
+    const count = Math.floor(rest / unit.ms);
+    rest -= count * unit.ms;
+    if (count > 0) parts.push(`${count} ${count === 1 ? unit.one : unit.many}`);
+  }
+  const shift = parts.length === 0 ? "less than a second" : parts.slice(0, 2).join(" ");
+  return `Times are shown ${shift} earlier than in the file, because the file's times were later than the moment it was imported.`;
+}
+
+/** The shown times differ from the file's; readable exports say so, as the thread does. */
+function timesShiftedWarning(timesShiftedMs: number | undefined): ReadonlyArray<DocumentWarning> {
+  return timesShiftedMs === undefined || timesShiftedMs <= 0
+    ? []
+    : [{ code: "times-shifted", message: importTimesShiftedNotice(timesShiftedMs) }];
+}
+
 function sourceOmissionWarning(omission: OrchestrationConversationImportOmission): DocumentWarning {
   const message = (() => {
     switch (omission._tag) {
@@ -410,6 +441,13 @@ export function buildConversationDocument(
       : snapshot.provenance._tag === "fork"
         ? (snapshot.provenance.sourceImport?.omissions ?? []).map(sourceOmissionWarning)
         : []),
+    ...timesShiftedWarning(
+      snapshot.provenance._tag === "import"
+        ? snapshot.provenance.timesShiftedMs
+        : snapshot.provenance._tag === "fork"
+          ? snapshot.provenance.sourceImport?.timesShiftedMs
+          : undefined,
+    ),
   ];
   const assets: ConversationDocumentAsset[] = [];
   const citations: DocumentCitation[] = [];

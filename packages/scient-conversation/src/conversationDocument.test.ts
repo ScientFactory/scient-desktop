@@ -360,6 +360,54 @@ describe("conversation document", () => {
     expect(markdown).toContain("earlier transfer stopped at message 1");
   });
 
+  it("says in every readable export when imported times were moved back", () => {
+    const conversationImport = {
+      source: "scic" as const,
+      exportId: "earlier-export",
+      sourceThreadId: "other-installation-thread",
+      packageDigest: `sha256:${"a".repeat(64)}`,
+      sourceFormat: "scient-conversation",
+      sourceFormatVersion: 1,
+      importedAt: "2026-09-27T14:00:00.000Z",
+      omissions: [],
+      timesShiftedMs: 86_436_000,
+    };
+    const note =
+      "Times are shown 1 day 36 seconds earlier than in the file, because the file's times were later than the moment it was imported.";
+    const messages = [message({ id: "m1", role: "user", text: "moved history" })];
+    const imported = snapshotOf({ ...thread({ messages }), conversationImport });
+    // The transfer file keeps the field; readable exports say it in words.
+    expect(imported.provenance).toMatchObject({ _tag: "import", timesShiftedMs: 86_436_000 });
+    const { markdown, document } = exportMarkdown(imported);
+    // PDF and Word are made from this bundle; its notes go into their preamble.
+    expect(document.bundle.warnings).toContainEqual({ code: "times-shifted", message: note });
+    const shown = "Times are shown 1 day 36 seconds earlier than in the file";
+    expect(document.bundle.markdown).toContain(shown);
+    expect(markdown).toContain("**Export notes**");
+    expect(markdown).toContain(shown);
+
+    const forked = exportMarkdown(
+      snapshotOf({
+        ...thread({ messages }),
+        forkLineage: {
+          originThreadId: "origin" as never,
+          baselineAssistantMessageId: null,
+          sourceImport: conversationImport,
+        },
+      }),
+    );
+    expect(forked.document.bundle.warnings).toContainEqual({
+      code: "times-shifted",
+      message: note,
+    });
+
+    const { timesShiftedMs: _moved, ...unmovedImport } = conversationImport;
+    const unmoved = exportMarkdown(
+      snapshotOf({ ...thread({ messages }), conversationImport: unmovedImport }),
+    );
+    expect(unmoved.markdown).not.toContain("Times are shown");
+  });
+
   it("skips async answer messages chat folds into their question", () => {
     const { markdown } = exportMarkdown(
       snapshotOf(

@@ -3,6 +3,7 @@ import type {
   OrchestrationConversationImportOmission,
   OrchestrationThread,
 } from "@t3tools/contracts";
+import { importTimesShiftedNotice } from "@scientfactory/conversation";
 import { ImportIcon } from "lucide-react";
 
 import type { ComposerBannerStackItem } from "../ComposerBannerStack";
@@ -27,26 +28,6 @@ function omissionLabel(omission: OrchestrationConversationImportOmission): strin
     case "records-skipped":
       return plural(omission.count, "unsupported record", "unsupported records");
   }
-}
-
-const SHIFT_UNITS = [
-  { ms: 86_400_000, one: "day", many: "days" },
-  { ms: 3_600_000, one: "hour", many: "hours" },
-  { ms: 60_000, one: "minute", many: "minutes" },
-  { ms: 1_000, one: "second", many: "seconds" },
-] as const;
-
-/** A move of imported times, in its two largest units: "1 day 36 seconds". */
-function shiftLabel(ms: number): string {
-  if (ms < 1_000) return "less than a second";
-  let rest = ms;
-  const parts: string[] = [];
-  for (const unit of SHIFT_UNITS) {
-    const count = Math.floor(rest / unit.ms);
-    rest -= count * unit.ms;
-    if (count > 0) parts.push(plural(count, unit.one, unit.many));
-  }
-  return parts.slice(0, 2).join(" ");
 }
 
 function listLabels(labels: ReadonlyArray<string>): string {
@@ -80,7 +61,7 @@ export function conversationImportNotice(
       omitted.length > 0 ? `Not included: ${listLabels(omitted)}.` : null,
       conversationImport.timesShiftedMs === undefined
         ? null
-        : `Times are shown ${shiftLabel(conversationImport.timesShiftedMs)} earlier than in the file, because the file's times were later than the moment it was imported.`,
+        : importTimesShiftedNotice(conversationImport.timesShiftedMs),
       sessionStarted
         ? document
           ? "The attached document remains unverified after the new provider session starts."

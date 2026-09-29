@@ -762,7 +762,7 @@ thread and a lineage row. An import has neither, so the model is extended explic
   amount, so the latest equals the import time: order and spacing are kept, and every message sent
   afterwards shows after the imported history. The import origin records the move
   (`timesShiftedMs`, summed with earlier transfers' moves and kept through re-export), and the
-  import notice says "Times are shown <duration> earlier than in the file, because the file's times
+  import notice, and the export notes of Markdown, PDF, and Word exports, say "Times are shown <duration> earlier than in the file, because the file's times
   were later than the moment it was imported." The continuation handoff also treats every record
   dated at or before the import as prior to the current message, even if that message is dated
   earlier.
