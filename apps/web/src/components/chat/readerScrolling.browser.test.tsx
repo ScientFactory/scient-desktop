@@ -6,7 +6,7 @@ import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { resolveTimelineIsAtEnd } from "./MessagesTimeline.logic";
-import { readSendScrollAllowance } from "./readerScrollPolicy";
+import { readerAtReadingEnd, withReadingEnd } from "./readerScrollPolicy";
 import { MessagesTimeline } from "./MessagesTimeline";
 import {
   readTimelinePosition,
@@ -205,12 +205,9 @@ it("does not offer a jump into reserved blank space but reports a hidden answer"
   await frames(8);
   expect(onIsAtEndChange.mock.lastCall?.[0]).toBe(true);
   // The send gate must agree with the end control even while padding remains.
-  expect(
-    resolveTimelineIsAtEnd(
-      withRealTimelineEnd(listRef.current!.getState(), base.contentInsetEndAdjustment),
-      readSendScrollAllowance(listRef.current!.getScrollableNode()),
-    ),
-  ).toBe(true);
+  expect(readerAtReadingEnd(listRef.current!.getState(), base.contentInsetEndAdjustment)).toBe(
+    true,
+  );
   render("geometry:reserved-end", [prompt, answer("Long answer\n\n".repeat(100))], extra);
   await frames(8);
   expect(onIsAtEndChange.mock.lastCall?.[0]).toBe(false);
@@ -617,35 +614,35 @@ it("retains the reading position when the same thread briefly has no loaded rows
     .toBeLessThanOrEqual(2);
 });
 
-it("allows two rendered lines on send, but not more, at different text sizes", async () => {
-  render(
-    "geometry:two-line-send",
-    Array.from({ length: 20 }, (_, i) => entry(i)),
-  );
-  await expect.poll(() => readTimelinePosition("geometry:two-line-send")).toBeDefined();
+it("allows three of the answer's lines hidden, but not more, at different text sizes", async () => {
+  const answer = {
+    ...entry(20),
+    message: {
+      ...entry(20).message,
+      role: "assistant" as const,
+      text: "Answer paragraph. ".repeat(60),
+    },
+  };
+  render("geometry:three-line-end", [...Array.from({ length: 20 }, (_, i) => entry(i)), answer]);
+  await expect.poll(() => readTimelinePosition("geometry:three-line-end")).toBeDefined();
   const list = listRef.current!;
   const node = list.getScrollableNode()!;
+  const inset = base.contentInsetEndAdjustment;
   for (const lineHeight of [20, 28, 36]) {
-    const body = node.querySelector<HTMLElement>('[data-message-id="message-19"] .chat-markdown')!;
+    const body = node.querySelector<HTMLElement>('[data-message-id="message-20"] .chat-markdown')!;
     body.style.fontSize = `${lineHeight / 1.5}px`;
     body.style.lineHeight = `${lineHeight}px`;
     await frames(6);
-    expect(readSendScrollAllowance(node)).toBe(lineHeight * 2);
+    // Scroll offset at which the answer's text end sits exactly at the visible bottom.
     const state = list.getState();
-    const bottom = state.contentLength - state.scrollLength;
-    for (const hiddenLines of [0, 1, 2, 2.1, 3]) {
-      await list.scrollToOffset({ offset: bottom - lineHeight * hiddenLines, animated: false });
+    const atTextEnd = withReadingEnd(state, inset)!.contentLength - state.scrollLength;
+    for (const hiddenLines of [0, 1, 2, 3, 3.3, 4]) {
+      await list.scrollToOffset({ offset: atTextEnd - lineHeight * hiddenLines, animated: false });
       await frames(2);
       expect(
-        resolveTimelineIsAtEnd(list.getState(), readSendScrollAllowance(node)),
-        JSON.stringify({
-          lineHeight,
-          hiddenLines,
-          allowance: readSendScrollAllowance(node),
-          gap:
-            list.getState().contentLength - list.getState().scroll - list.getState().scrollLength,
-        }),
-      ).toBe(hiddenLines <= 2);
+        readerAtReadingEnd(list.getState(), inset),
+        JSON.stringify({ lineHeight, hiddenLines }),
+      ).toBe(hiddenLines <= 3);
     }
   }
 });

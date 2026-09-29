@@ -7,7 +7,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { resolveTimelineIsAtEnd } from "./MessagesTimeline.logic";
 import { MessagesTimeline } from "./MessagesTimeline";
-import { withReadingEnd } from "./readerScrollPolicy";
+import { readerAtReadingEnd, withReadingEnd } from "./readerScrollPolicy";
 import { readTimelinePosition, rememberTimelinePosition } from "./timelineScrollAnchoring";
 
 // Real-Chromium geometry for DF-047 and the #396 follow-ups: where the bottom
@@ -488,4 +488,39 @@ it("still keeps the end after typing in the composer", async () => {
   await frames(2);
   render(key, [...entries.slice(0, -1), message(11, "assistant", paragraph(11).repeat(3))]);
   await expect.poll(() => gapToListEnd(), { timeout: 4000 }).toBeLessThanOrEqual(1);
+});
+
+it("counts the reader at the end when only their own latest message is hidden below the answer", async () => {
+  const key = "reading-end:own-message-below";
+  const onIsAtEndChange = vi.fn();
+  const answer = message(30, "assistant", `Answer. ${"Text. ".repeat(60)}`, "turn-30");
+  // A message the reader sent (or queued) after the answer, tall enough to hide.
+  const sent = message(31, "user", paragraph(31).repeat(2), "turn-31");
+  render(key, [...history(8), answer, sent], { onIsAtEndChange });
+  await expect.poll(() => readTimelinePosition(key)).toBeDefined();
+  await listRef.current!.scrollToEnd({ animated: false });
+  await frames(6);
+  // Scroll up until the answer's text ends exactly at the visible bottom.
+  const state = listRef.current!.getState();
+  const atTextEnd = withReadingEnd(state, COMPOSER_INSET)!.contentLength - state.scrollLength;
+  await listRef.current!.scrollToOffset({ offset: atTextEnd, animated: false });
+  await frames(6);
+  expect(rowRect(sent.message.id)?.top ?? Infinity).toBeGreaterThan(
+    node().getBoundingClientRect().top + node().clientHeight - COMPOSER_INSET,
+  );
+  expect(readerAtReadingEnd(listRef.current!.getState(), COMPOSER_INSET)).toBe(true);
+  expect(onIsAtEndChange.mock.lastCall?.[0]).toBe(true);
+});
+
+it("still judges a thread with no answer yet by the reader's own latest message", async () => {
+  const key = "reading-end:no-answer";
+  render(key, history(12));
+  await expect.poll(() => readTimelinePosition(key)).toBeDefined();
+  await listRef.current!.scrollToEnd({ animated: false });
+  await frames(6);
+  expect(readerAtReadingEnd(listRef.current!.getState(), COMPOSER_INSET)).toBe(true);
+  // Well above the end (far more than three lines) is not the end.
+  await listRef.current!.scrollToOffset({ offset: node().scrollTop - 400, animated: false });
+  await frames(4);
+  expect(readerAtReadingEnd(listRef.current!.getState(), COMPOSER_INSET)).toBe(false);
 });

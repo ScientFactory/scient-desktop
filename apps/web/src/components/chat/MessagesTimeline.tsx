@@ -3,10 +3,11 @@ import { useBoundedAnswerFollow } from "./useBoundedAnswerFollow";
 import { deriveTerminalAssistantMessageIds } from "@scientfactory/conversation/work-log-grouping";
 import { countUnreadBelow, unreadMessagesForThread } from "./unreadTimelineMessages";
 import {
+  readerAtReadingEnd,
+  readingEndAllowance,
   readingEndGapOnScreen,
   readingIdentity,
   resolveReadingRow,
-  withReadingEnd,
 } from "./readerScrollPolicy";
 import { ReadOnlySourcePreview } from "../files/AttachmentFilePreview";
 import { useRightPanelStore } from "~/rightPanelStore";
@@ -187,7 +188,6 @@ import {
   liveWorkEntryLabel,
   workEntryIsActiveTurnActivity,
   resolveAssistantMessageCopyState,
-  resolveTimelineIsAtEnd,
   resolveTimelineMinimapHasPersistentGutter,
   resolveTimelineMinimapCurrentIndex,
   resolveTimelineMinimapHeightStyle,
@@ -384,8 +384,6 @@ function timelineRowsKey(data: readonly unknown[]) {
   const last = data.at(-1) as { id?: string } | undefined;
   return `${data.length}:${last?.id ?? ""}`;
 }
-/** How close the text end must be to the visible bottom for the reader to rest at it. */
-const READING_END_REST_PX = 40;
 /** Older-history pages a missing saved message may load before falling back. */
 const MAX_READING_HISTORY_PAGES = 2;
 // ---------------------------------------------------------------------------
@@ -659,9 +657,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           // Closing output can reveal the end without a scroll event.
           if (
             collapsed &&
-            resolveTimelineIsAtEnd(
-              withReadingEnd(listRef.current?.getState(), contentInsetEndAdjustment),
-            ) === true
+            readerAtReadingEnd(listRef.current?.getState(), contentInsetEndAdjustment) === true
           ) {
             onToolOutputCollapsedAtEnd?.();
           }
@@ -1220,7 +1216,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       offsetWithinRow: identity.rowId
         ? element.getBoundingClientRect().top - row.getBoundingClientRect().top
         : 0,
-      atEnd: resolveTimelineIsAtEnd(withReadingEnd(state, contentInsetEndAdjustment)) ?? false,
+      atEnd: readerAtReadingEnd(state, contentInsetEndAdjustment) ?? false,
       ...(anchorMessageId ? { anchorMessageId } : {}),
       disclosures: {
         turns: paintedExpandedTurnIds,
@@ -1316,11 +1312,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       // Removing a tail wholly below the viewport cannot clamp the reading position.
       if (bottom >= state.scroll + state.scrollLength) onReleaseUnusedAnchor?.();
     }
-    // The reader is at the bottom once the last message's text is in view:
-    // reserved anchor space and trailing file lists or tool groups are not
-    // unread content. Overflowing answers still show the end control.
-    const readingState = withReadingEnd(state, contentInsetEndAdjustment);
-    const isAtEnd = resolveTimelineIsAtEnd(readingState);
+    // The reader is at the bottom once the latest answer's text is in view,
+    // but for at most its last three lines: reserved anchor space, trailing
+    // file lists or tool groups and your own latest message are not unread
+    // content. Overflowing answers still show the end control.
+    const isAtEnd = readerAtReadingEnd(state, contentInsetEndAdjustment);
     if (isAtEnd !== undefined && !citationPositioning) onIsAtEndChange(isAtEnd);
     // Whether the reader rests at the reading end, measured on screen (the
     // list's positions can trail the rendered rows by a frame).
@@ -1328,7 +1324,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       ? readingEndGapOnScreen(state, viewport, contentInsetEndAdjustment)
       : null;
     restingAtReadingEndRef.current =
-      restingGap !== null && viewport && restingGap <= READING_END_REST_PX
+      restingGap !== null && viewport && restingGap <= readingEndAllowance(state)
         ? {
             gap: restingGap,
             contentEnd: restingGap + viewport.scrollTop,

@@ -1,4 +1,4 @@
-import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
+import { type MessagesTimelineRow, resolveTimelineIsAtEnd } from "./MessagesTimeline.logic";
 import {
   getRowBottom,
   type RememberedTimelinePosition,
@@ -9,12 +9,49 @@ import {
 /** Where a row's readable content ends; trailing file lists and controls come after it. */
 const READING_END_SELECTOR = '[data-reading-end], [data-user-message-body="true"]';
 
-function isReadingRow(row: MessagesTimelineRow | undefined) {
-  return (
-    (row?.kind === "message" &&
-      (row.message.role === "assistant" || row.message.role === "user")) ||
-    row?.kind === "proposed-plan"
-  );
+/**
+ * The row whose text marks the end of the conversation: the latest answer
+ * (the agent's message or plan). Your own messages below it, like one just
+ * sent or queued, don't count as unread. Before any answer exists, your
+ * latest message is the end. -1 when there is neither.
+ */
+function readingEndRowIndex(rows: readonly MessagesTimelineRow[]): number {
+  let userIndex = -1;
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    const row = rows[index];
+    if (
+      row?.kind === "proposed-plan" ||
+      (row?.kind === "message" && row.message.role === "assistant")
+    )
+      return index;
+    if (userIndex < 0 && row?.kind === "message" && row.message.role === "user") userIndex = index;
+  }
+  return userIndex;
+}
+
+/** How many of the answer's last lines may be hidden while the reader counts as at the end. */
+const READING_END_HIDDEN_LINES = 3;
+/** The tolerance never falls below the timeline's inherited 40px end band. */
+const READING_END_MIN_ALLOWANCE_PX = 40;
+
+/**
+ * How far below the visible area the answer's text may end while the reader
+ * still counts as at the end: its last three lines, in its own line height
+ * so it holds at any text size.
+ */
+export function readingEndAllowance(state: {
+  readonly data: readonly unknown[];
+  readonly elementAtIndex?: (index: number) => Element | null | undefined;
+}): number {
+  if (!state.data) return READING_END_MIN_ALLOWANCE_PX;
+  const index = readingEndRowIndex(state.data as readonly MessagesTimelineRow[]);
+  const element = index < 0 ? undefined : state.elementAtIndex?.(index);
+  const bodies = element?.isConnected ? element.querySelectorAll(".chat-markdown") : [];
+  const body = bodies.length > 0 ? bodies[bodies.length - 1] : undefined;
+  const lineHeight = body ? Number.parseFloat(getComputedStyle(body).lineHeight) : Number.NaN;
+  return Number.isFinite(lineHeight) && lineHeight > 0
+    ? Math.max(READING_END_MIN_ALLOWANCE_PX, lineHeight * READING_END_HIDDEN_LINES)
+    : READING_END_MIN_ALLOWANCE_PX;
 }
 
 /**
@@ -31,19 +68,16 @@ export function readingEndGapOnScreen(
   viewport: Element,
   composerInset: number,
 ): number | null {
-  const rows = state.data as readonly MessagesTimelineRow[];
-  for (let index = rows.length - 1; index >= 0; index -= 1) {
-    if (!isReadingRow(rows[index])) continue;
-    const element = state.elementAtIndex?.(index);
-    if (!element?.isConnected) return null;
-    const markers = element.querySelectorAll(READING_END_SELECTOR);
-    const end = (
-      markers.length > 0 ? markers[markers.length - 1]! : element
-    ).getBoundingClientRect().bottom;
-    const view = viewport.getBoundingClientRect();
-    return end - (view.top + viewport.clientHeight - composerInset);
-  }
-  return null;
+  if (!state.data) return null;
+  const index = readingEndRowIndex(state.data as readonly MessagesTimelineRow[]);
+  if (index < 0) return null;
+  const element = state.elementAtIndex?.(index);
+  if (!element?.isConnected) return null;
+  const markers = element.querySelectorAll(READING_END_SELECTOR);
+  const end = (markers.length > 0 ? markers[markers.length - 1]! : element).getBoundingClientRect()
+    .bottom;
+  const view = viewport.getBoundingClientRect();
+  return end - (view.top + viewport.clientHeight - composerInset);
 }
 
 /**
@@ -59,22 +93,33 @@ export function withReadingEnd<
   },
 >(state: T | undefined, composerInset: number): T | undefined {
   if (!state?.data) return state;
-  const rows = state.data as readonly MessagesTimelineRow[];
-  for (let index = rows.length - 1; index >= 0; index -= 1) {
-    if (!isReadingRow(rows[index])) continue;
-    const top = state.positionAtIndex(index);
-    const bottom = getRowBottom(state, index);
-    if (top === undefined || bottom === null) break;
-    const element = state.elementAtIndex?.(index);
-    const markers = element?.isConnected ? element.querySelectorAll(READING_END_SELECTOR) : [];
-    const marker = markers.length > 0 ? markers[markers.length - 1] : undefined;
-    const end =
-      element && marker
-        ? top + marker.getBoundingClientRect().bottom - element.getBoundingClientRect().top
-        : bottom;
-    return { ...state, contentLength: Math.min(end, bottom) + composerInset };
-  }
-  return withRealTimelineEnd(state, composerInset);
+  const index = readingEndRowIndex(state.data as readonly MessagesTimelineRow[]);
+  const top = index < 0 ? undefined : state.positionAtIndex(index);
+  const bottom = index < 0 ? null : getRowBottom(state, index);
+  if (top === undefined || bottom === null) return withRealTimelineEnd(state, composerInset);
+  const element = state.elementAtIndex?.(index);
+  const markers = element?.isConnected ? element.querySelectorAll(READING_END_SELECTOR) : [];
+  const marker = markers.length > 0 ? markers[markers.length - 1] : undefined;
+  const end =
+    element && marker
+      ? top + marker.getBoundingClientRect().bottom - element.getBoundingClientRect().top
+      : bottom;
+  return { ...state, contentLength: Math.min(end, bottom) + composerInset };
+}
+
+/**
+ * Whether the reader is at the end: the latest answer's text is in view,
+ * except at most its last three lines. Anything below it (tool activity,
+ * changed files, your own latest message) doesn't count. The one rule for
+ * the end control, sending, navigation and saved positions.
+ */
+export function readerAtReadingEnd<
+  T extends TimelineListMeasurementState & {
+    readonly elementAtIndex?: (index: number) => Element | null | undefined;
+  },
+>(state: T | undefined, composerInset: number): boolean | undefined {
+  if (!state) return undefined;
+  return resolveTimelineIsAtEnd(withReadingEnd(state, composerInset), readingEndAllowance(state));
 }
 
 export function canApplySendAnchor(input: {
@@ -174,28 +219,6 @@ export function resolveReadingRow(
     }
   }
   return null;
-}
-
-/** Send intent tolerates two body-text lines; other end controls retain their existing band. */
-export function readSendScrollAllowance(
-  viewport: HTMLElement | null | undefined,
-): number | undefined {
-  const bodies = viewport?.querySelectorAll<HTMLElement>(
-    '[data-timeline-row-kind="message"] .chat-markdown',
-  );
-  // Virtualized containers can be recycled out of DOM order.
-  const body = bodies
-    ? Array.from(bodies).reduce<HTMLElement | undefined>(
-        (last, candidate) =>
-          !last || candidate.getBoundingClientRect().top > last.getBoundingClientRect().top
-            ? candidate
-            : last,
-        undefined,
-      )
-    : undefined;
-  if (!body) return undefined;
-  const lineHeight = Number.parseFloat(getComputedStyle(body).lineHeight);
-  return Number.isFinite(lineHeight) && lineHeight > 0 ? lineHeight * 2 : undefined;
 }
 
 /** The server delivers a queued prompt under this message id prefix (threadQueue Worker). */
