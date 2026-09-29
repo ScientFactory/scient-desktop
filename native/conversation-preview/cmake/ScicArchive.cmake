@@ -21,6 +21,9 @@ set(ENABLE_ZLIB ON CACHE BOOL "" FORCE)
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(MSVC_USE_STATIC_CRT ON CACHE BOOL "" FORCE)
 set(DONT_FAIL_ON_CRC_ERROR OFF CACHE BOOL "" FORCE)
+# ZIP preview does not use archive_match; do not probe optional POSIX regex
+# providers (AUTO otherwise enters libarchive's fatal libgcc branch on MSVC).
+set(POSIX_REGEX_LIB NONE CACHE STRING "" FORCE)
 find_package(ZLIB REQUIRED)
 FetchContent_MakeAvailable(scic_libarchive)
 set_target_properties(archive_static PROPERTIES POSITION_INDEPENDENT_CODE ON

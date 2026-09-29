@@ -119,4 +119,8 @@ direction marks and isolates are preserved. This changes only preview output,
 never the archive or its verified source bytes; markers count toward output limits.
 The parser checks a five-second monotonic deadline between reads and entries;
 an individual OS stream read that blocks cannot be forcibly interrupted in
-this implementation. Host cancellation/timeout behavior needs native QA.
+this implementation. Windows parsing runs on a bounded background worker with
+COM stream marshaling, cancellation and stale-result protection; unload does
+not wait for an outstanding read. An apartment-bound host stream can still
+dispatch its own I/O back to the originating thread. Actual host stream and
+cancellation behavior therefore remain part of installed Explorer QA.
