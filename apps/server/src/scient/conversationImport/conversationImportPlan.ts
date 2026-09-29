@@ -38,7 +38,7 @@ import {
   type OrchestrationThreadActivity,
   type ThreadConversationImportTurn,
 } from "@t3tools/contracts";
-import { importedMessageMarkdown } from "@scientfactory/conversation";
+import { importedMessageMarkdown, importedWorkLogOmissions } from "@scientfactory/conversation";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -430,6 +430,8 @@ function workLogActivity(
   turnId: TurnId | null,
 ): OrchestrationThreadActivity {
   const base = { id, turnId, createdAt: entry.createdAt };
+  // What the sender left out, so a re-export says so again.
+  const omissions = importedWorkLogOmissions(entry);
   switch (entry._tag) {
     case "tool":
       return {
@@ -443,6 +445,7 @@ function workLogActivity(
         tone: entry.status === "failed" ? "error" : "tool",
         summary: trimmedOr(entry.title, "Tool call"),
         payload: {
+          ...omissions,
           title: entry.title,
           ...(entry.itemType === null ? {} : { itemType: entry.itemType }),
           ...(statusText(entry.status) === undefined ? {} : { status: statusText(entry.status) }),
@@ -466,6 +469,7 @@ function workLogActivity(
         tone: entry.status === "failed" ? "error" : "info",
         summary: trimmedOr(entry.title, "Task"),
         payload: {
+          ...omissions,
           taskId: id,
           summary: entry.title,
           ...(entry.status === null ? {} : { status: entry.status }),
@@ -479,7 +483,7 @@ function workLogActivity(
         kind: entry.level === "error" ? "runtime.error" : "runtime.warning",
         tone: entry.level === "error" ? "error" : "info",
         summary: trimmedOr(entry.title, "Notice"),
-        payload: { message: entry.detail?.text ?? entry.title },
+        payload: { message: entry.detail?.text ?? entry.title, ...omissions },
       };
     case "compaction":
       return {
@@ -496,6 +500,7 @@ function workLogActivity(
         tone: "info",
         summary: "Plan updated",
         payload: {
+          ...omissions,
           ...(entry.explanation === null ? {} : { explanation: entry.explanation.text }),
           plan: entry.steps.map((step) => ({
             step: step.step,

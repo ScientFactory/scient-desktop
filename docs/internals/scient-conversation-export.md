@@ -54,7 +54,10 @@ of the canonical content and excludes them, so two captures of the same state ha
   tool name, status, command, detail, changed files, bounded output). Tool lifecycle updates collapse
   per call, task progress per task, and a turn keeps its latest plan checklist. Provider payload
   objects are never copied. Approval requests and unanswered questions are never included; answered
-  questions are kept as question-and-answer interactions.
+  questions are kept as question-and-answer interactions. An imported entry's activity records what
+  its sender's export left out (`scientExportOmissions`: cut lines and characters per text, and how
+  many changed files and plan steps were dropped); the projection keeps that text as it is and those
+  counts, so exporting an imported conversation again keeps its "and N more" notices.
 - **Warnings** agree with the facts: one `attachment-unavailable` warning per attachment whose file
   was missing, carrying its name and its snapshot message number (`null` for an answer attachment),
   and none for available attachments.

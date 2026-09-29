@@ -1,7 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
 import { beforeEach } from "vite-plus/test";
 
-import { projectQuestionAnswers, projectWorkLog } from "./workLogProjection.ts";
+import {
+  importedWorkLogOmissions,
+  projectQuestionAnswers,
+  projectWorkLog,
+} from "./workLogProjection.ts";
 import { activity, resetClock } from "./thread.test-fixtures.ts";
 
 beforeEach(resetClock);
@@ -9,6 +13,55 @@ beforeEach(resetClock);
 const SECRET = "sk-live-0123456789";
 
 describe("work-log export projection", () => {
+  it("keeps what an imported entry's sender left out, and counts any further cut", () => {
+    const sent = {
+      _tag: "tool" as const,
+      id: "src-tool",
+      turnId: null,
+      createdAt: "2026-09-27T10:00:00.000Z",
+      title: "Ran tests",
+      itemType: "command_execution" as const,
+      toolName: null,
+      status: "completed" as const,
+      command: null,
+      detail: null,
+      output: { text: "head\n[… 9 lines omitted …]\ntail", omittedLines: 9, omittedChars: 90 },
+      changedFiles: ["a.ts"],
+      omittedChangedFiles: 4,
+    };
+    const omissions = importedWorkLogOmissions(sent);
+    expect(omissions).toEqual({
+      scientExportOmissions: { output: { lines: 9, chars: 90 }, changedFiles: 4 },
+    });
+    expect(importedWorkLogOmissions({ ...sent, output: null, omittedChangedFiles: 0 })).toEqual({});
+
+    const project = (output: string, extra: unknown) =>
+      projectWorkLog([
+        activity({
+          id: "imported",
+          kind: "tool.completed",
+          payload: {
+            title: "Ran tests",
+            data: { item: { aggregatedOutput: output, changes: [{ path: "a.ts" }] } },
+            scientExportOmissions: extra,
+          },
+        }),
+      ]).entries[0];
+    expect(project(sent.output.text, omissions.scientExportOmissions)).toMatchObject({
+      output: sent.output,
+      omittedChangedFiles: 4,
+    });
+    // Longer than any bounded text: bounded again, and both cuts counted.
+    const long = Array.from({ length: 100 }, (_, index) => `line ${index}`).join("\n");
+    const recut = project(long, { output: { lines: 9, chars: 90 } });
+    expect(recut?._tag === "tool" && recut.output?.omittedLines).toBe(55 + 9);
+    // Counts that are not whole positive numbers are ignored.
+    expect(project("ok", { output: { lines: -1, chars: "x" }, changedFiles: 1.5 })).toMatchObject({
+      output: { text: "ok", omittedLines: 0, omittedChars: 0 },
+      omittedChangedFiles: 0,
+    });
+  });
+
   it("keeps allowlisted display fields and never provider payloads", () => {
     const { entries } = projectWorkLog([
       activity({

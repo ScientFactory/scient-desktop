@@ -52,8 +52,106 @@ function title(value: string): string {
   return value.length <= TITLE_MAX_CHARS ? value : `${value.slice(0, TITLE_MAX_CHARS - 1)}…`;
 }
 
-function bounded(value: string | null, bounds: TextBounds): ConversationBoundedText | null {
-  return value === null ? null : boundText(value, bounds);
+/**
+ * Where an imported activity keeps what its sender's export left out, so that
+ * exporting it again says so again: the kept text already ends in its own
+ * "[… N lines omitted …]" line, and a kept list is already cut.
+ */
+const IMPORTED_OMISSIONS_KEY = "scientExportOmissions";
+
+interface TextOmission {
+  readonly lines: number;
+  readonly chars: number;
+}
+
+interface ImportedOmissions {
+  readonly command?: TextOmission | undefined;
+  readonly detail?: TextOmission | undefined;
+  readonly output?: TextOmission | undefined;
+  readonly explanation?: TextOmission | undefined;
+  readonly changedFiles?: number | undefined;
+  readonly steps?: number | undefined;
+}
+
+function textOmission(value: ConversationBoundedText | null): TextOmission | undefined {
+  return value === null || (value.omittedLines === 0 && value.omittedChars === 0)
+    ? undefined
+    : { lines: value.omittedLines, chars: value.omittedChars };
+}
+
+/**
+ * The payload fields an imported work-log entry's activity carries for what
+ * the sender's export left out; empty when nothing was.
+ */
+export function importedWorkLogOmissions(entry: ConversationWorkLogEntry): {
+  readonly [IMPORTED_OMISSIONS_KEY]?: ImportedOmissions;
+} {
+  const candidates: ImportedOmissions = {
+    ...(entry._tag === "tool"
+      ? {
+          command: textOmission(entry.command),
+          output: textOmission(entry.output),
+          changedFiles: entry.omittedChangedFiles,
+        }
+      : {}),
+    ...("detail" in entry ? { detail: textOmission(entry.detail) } : {}),
+    ...(entry._tag === "plan-steps"
+      ? { explanation: textOmission(entry.explanation), steps: entry.omittedSteps }
+      : {}),
+  };
+  const omissions = Object.fromEntries(
+    Object.entries(candidates).filter(([, value]) => value !== undefined && value !== 0),
+  );
+  return Object.keys(omissions).length === 0 ? {} : { [IMPORTED_OMISSIONS_KEY]: omissions };
+}
+
+const count = (value: unknown): number =>
+  typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : 0;
+
+function readTextOmission(value: unknown): TextOmission | undefined {
+  const lines = count(field(value, "lines"));
+  const chars = count(field(value, "chars"));
+  return lines === 0 && chars === 0 ? undefined : { lines, chars };
+}
+
+/** What an imported activity's sender left out, as recorded at import; nothing for others. */
+function importedOmissions(payload: unknown): ImportedOmissions {
+  const value = field(payload, IMPORTED_OMISSIONS_KEY);
+  if (!Predicate.isObject(value)) return {};
+  return {
+    command: readTextOmission(field(value, "command")),
+    detail: readTextOmission(field(value, "detail")),
+    output: readTextOmission(field(value, "output")),
+    explanation: readTextOmission(field(value, "explanation")),
+    changedFiles: count(field(value, "changedFiles")),
+    steps: count(field(value, "steps")),
+  };
+}
+
+/** The longest omission line `boundText` writes, with its line breaks. */
+const OMISSION_LINE_MAX_CHARS = 48;
+
+function bounded(
+  value: string | null,
+  bounds: TextBounds,
+  earlier?: TextOmission,
+): ConversationBoundedText | null {
+  if (value === null) return null;
+  const result = boundText(value, bounds);
+  if (earlier === undefined) return result;
+  // Imported text was bounded by its sender and already holds its omission
+  // line; it is kept as it is, with the sender's counts. Text longer than any
+  // bounded text is bounded again, and what that cuts is counted too.
+  const alreadyBounded =
+    value.split("\n").length <= bounds.headLines + bounds.tailLines + 1 &&
+    value.length <= bounds.headChars + bounds.tailChars + OMISSION_LINE_MAX_CHARS;
+  return alreadyBounded
+    ? { text: value, omittedLines: earlier.lines, omittedChars: earlier.chars }
+    : {
+        ...result,
+        omittedLines: result.omittedLines + earlier.lines,
+        omittedChars: result.omittedChars + earlier.chars,
+      };
 }
 
 function commandText(value: unknown): string | null {
@@ -172,6 +270,7 @@ function toolEntry(activity: OrchestrationThreadActivity): ConversationWorkLogEn
   const output = toolOutput(payload);
   const detail = text(field(payload, "detail"));
   const files = boundItems(changedFiles(payload), MAX_CHANGED_FILES);
+  const earlier = importedOmissions(payload);
   return {
     _tag: "tool",
     id: activity.id,
@@ -185,12 +284,15 @@ function toolEntry(activity: OrchestrationThreadActivity): ConversationWorkLogEn
         ? "declined"
         : (status(field(payload, "status")) ??
           (activity.kind === "tool.completed" ? "completed" : null)),
-    command: bounded(command, COMMAND_BOUNDS),
+    command: bounded(command, COMMAND_BOUNDS, earlier.command),
     // Ingestion echoes the command or the first output line into `detail`.
-    detail: detail === command || detail === output ? null : bounded(detail, DETAIL_BOUNDS),
-    output: bounded(output, OUTPUT_BOUNDS),
+    detail:
+      detail === command || detail === output
+        ? null
+        : bounded(detail, DETAIL_BOUNDS, earlier.detail),
+    output: bounded(output, OUTPUT_BOUNDS, earlier.output),
     changedFiles: files.items,
-    omittedChangedFiles: files.omitted,
+    omittedChangedFiles: files.omitted + (earlier.changedFiles ?? 0),
   };
 }
 
@@ -238,14 +340,19 @@ function planSteps(
   });
   if (steps.length === 0) return null;
   const boundedSteps = boundItems(steps, MAX_PLAN_STEPS);
+  const earlier = importedOmissions(activity.payload);
   return {
     _tag: "plan-steps",
     id: activity.id,
     turnId: activity.turnId,
     createdAt: activity.createdAt,
-    explanation: bounded(text(field(activity.payload, "explanation")), DETAIL_BOUNDS),
+    explanation: bounded(
+      text(field(activity.payload, "explanation")),
+      DETAIL_BOUNDS,
+      earlier.explanation,
+    ),
     steps: boundedSteps.items,
-    omittedSteps: boundedSteps.omitted,
+    omittedSteps: boundedSteps.omitted + (earlier.steps ?? 0),
   };
 }
 
@@ -314,7 +421,11 @@ export function projectWorkLog(
           detail:
             text(field(payload, "detail")) === label
               ? null
-              : bounded(text(field(payload, "detail")), DETAIL_BOUNDS),
+              : bounded(
+                  text(field(payload, "detail")),
+                  DETAIL_BOUNDS,
+                  importedOmissions(payload).detail,
+                ),
         };
         const existing = taskId === null ? undefined : taskIndex.get(taskId);
         const previous = existing === undefined ? undefined : entries[existing];
@@ -343,7 +454,10 @@ export function projectWorkLog(
           createdAt: activity.createdAt,
           level: activity.kind === "runtime.error" ? "error" : "warning",
           title: title(activity.summary),
-          detail: message === activity.summary ? null : bounded(message, DETAIL_BOUNDS),
+          detail:
+            message === activity.summary
+              ? null
+              : bounded(message, DETAIL_BOUNDS, importedOmissions(payload).detail),
         });
         break;
       }

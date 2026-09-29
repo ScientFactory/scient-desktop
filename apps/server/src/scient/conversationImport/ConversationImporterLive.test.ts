@@ -372,6 +372,101 @@ describe("ConversationImporter", () => {
     ),
   );
 
+  it.effect("keeps what the sender's work log left out through import and re-export", () =>
+    withImporter(
+      Effect.gen(function* () {
+        const fixture = importFixture({ turns: 1, workLog: true });
+        const source = fixture.input.snapshot;
+        const turnId = source.workLog[0]!.turnId;
+        const at = (second: number) => `2026-09-27T10:00:1${second}.000Z`;
+        const cut = (lines: number, chars: number) => ({
+          text: `head\n[… ${lines} lines omitted …]\ntail`,
+          omittedLines: lines,
+          omittedChars: chars,
+        });
+        const workLog: typeof source.workLog = [
+          {
+            _tag: "tool",
+            id: "src-tool-cut",
+            turnId,
+            createdAt: at(1),
+            title: "Edit many files",
+            itemType: "file_change",
+            toolName: "Edit",
+            status: "completed",
+            command: cut(3, 30),
+            detail: cut(4, 40),
+            output: cut(40, 4_000),
+            changedFiles: Array.from({ length: 50 }, (_, index) => `src/file-${index + 1}.ts`),
+            omittedChangedFiles: 7,
+          },
+          {
+            _tag: "task",
+            id: "src-task-cut",
+            turnId,
+            createdAt: at(2),
+            title: "Review",
+            status: "completed",
+            agentRole: null,
+            detail: cut(5, 50),
+          },
+          {
+            _tag: "notice",
+            id: "src-notice-cut",
+            turnId,
+            createdAt: at(3),
+            level: "warning",
+            title: "Slow network",
+            detail: cut(6, 60),
+          },
+          {
+            _tag: "plan-steps",
+            id: "src-plan-cut",
+            turnId,
+            createdAt: at(4),
+            explanation: cut(8, 80),
+            steps: Array.from({ length: 100 }, (_, index) => ({
+              step: `Step ${index + 1}`,
+              status: "pending" as const,
+            })),
+            omittedSteps: 12,
+          },
+        ];
+        const input: typeof fixture.input = {
+          ...fixture.input,
+          snapshot: { ...source, workLog },
+        };
+        const { lease } = yield* leaseFor({ ...fixture, input });
+        const { result } = yield* importOnce(lease);
+        const snapshot = buildConversationSnapshot({
+          thread: (yield* readThread(result.threadId))!,
+          snapshotSequence: 1,
+          threadSequence: 1,
+          capturedAt: "2026-09-28T11:01:00.000Z",
+          selection: { workLog: true, reasoning: false, throughMessageId: null },
+          isAttachmentAvailable: () => false,
+        });
+        const withoutIdentity = (entries: typeof workLog) =>
+          entries.map(({ id: _id, turnId: _turnId, ...entry }) => entry);
+        assert.deepStrictEqual(withoutIdentity(snapshot.workLog), withoutIdentity(workLog));
+
+        const markdown = writeConversationMarkdown({
+          bundle: buildConversationDocument({
+            snapshot: { ...snapshot, contentDigest: `sha256:${"a".repeat(64)}` },
+            exportValue: "7f3c9a2e41b8",
+            timeZone: "UTC",
+            resolveAttachment: () => ({ _tag: "unavailable", reason: "missing" }),
+          }).bundle,
+          exportValue: "7f3c9a2e41b8",
+          exported: "2026-09-28T11:01:00.000Z",
+          packaging: "text",
+        });
+        assert.include(markdown, "and 7 more");
+        assert.include(markdown, "12 more steps");
+      }),
+    ),
+  );
+
   it.effect("imports a package as a new independent thread with fresh ids", () =>
     withImporter(
       Effect.gen(function* () {
