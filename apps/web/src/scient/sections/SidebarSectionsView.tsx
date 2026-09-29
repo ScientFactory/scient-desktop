@@ -437,6 +437,7 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
                 shownOrder: shown.order,
                 fullOrder,
                 droppedId: activeKey,
+                onHeader: sectionGroupIdFromHeaderItemId(overId) === shown.groupId,
               }),
             }
           : shown;

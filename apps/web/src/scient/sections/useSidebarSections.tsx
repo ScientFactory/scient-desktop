@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
@@ -17,6 +18,7 @@ import { resolveThreadActionProjectRef } from "../../lib/chatThreadActions";
 import { readLocalApi } from "../../localApi";
 import { useEnvironments } from "../../state/environments";
 import { useThreadSectionActions } from "./actions";
+import { loadedThreadEnvironmentsKeyAtom } from "./loadedEnvironments";
 import { useThreadSectionCatalog } from "./catalog";
 import { groupThreadsBySection, sectionIdsInProjectScope, SidebarViewMode } from "./logic";
 import {
@@ -119,11 +121,7 @@ export function useSidebarSections(input: {
         : new Set(scopeProjectRefs.map((ref) => `${ref.environmentId}:${ref.projectId}`)),
     [scopeProjectRefs],
   );
-  const loadedKey = environments
-    .filter((environment) => environment.connection.phase === "connected")
-    .map((environment) => environment.environmentId)
-    .toSorted()
-    .join("\n");
+  const loadedKey = useAtomValue(loadedThreadEnvironmentsKeyAtom);
   const loadedEnvironmentIds = useMemo(
     () => new Set(loadedKey.length > 0 ? loadedKey.split("\n") : []),
     [loadedKey],

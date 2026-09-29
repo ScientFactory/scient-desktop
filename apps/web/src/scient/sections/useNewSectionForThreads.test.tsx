@@ -81,6 +81,22 @@ it("creates the section for the requested thread and files it there", async () =
   expect(mocks.moveThreadsToSection).toHaveBeenCalledWith([threadRef], "design");
 });
 
+it("files every selected thread", async () => {
+  const second = {
+    environmentId: EnvironmentId.make("remote"),
+    threadId: ThreadId.make("thread-2"),
+  };
+  mocks.create.mockResolvedValue({ id: ThreadSectionId.make("design"), name: "Design", order: 0 });
+  mocks.moveThreadsToSection.mockResolvedValue(true);
+  act(() => hook.request([threadRef, second]));
+  expect(mocks.dialogProps).toMatchObject({ threadCount: 2 });
+  await act(async () => {
+    await mocks.dialogProps!.onSubmit("Design");
+  });
+  expect(mocks.create.mock.calls[0]?.[1]).toMatchObject({ environmentIds: ["local", "remote"] });
+  expect(mocks.moveThreadsToSection).toHaveBeenCalledWith([threadRef, second], "design");
+});
+
 it("files nothing and reports failure when the section cannot be created", async () => {
   mocks.create.mockResolvedValue(null);
   act(() => hook.request([threadRef]));

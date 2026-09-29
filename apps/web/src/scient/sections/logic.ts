@@ -573,7 +573,8 @@ function droppedAsPinned(item: Extract<SectionsListItem, { kind: "thread" }>): b
  * A section's full row order after a drop, from the order the list showed:
  * a collapsed section shows only some of its rows (or none), so the dropped
  * row is placed before the shown row it landed above, else after the one it
- * landed below, else at the top.
+ * landed below, else at the top. A drop on the section's header is always at
+ * the top, whatever the collapsed section still shows.
  */
 export function expandSectionDropOrder(input: {
   /** The section's rows as shown, with the dropped row in place. */
@@ -581,9 +582,11 @@ export function expandSectionDropOrder(input: {
   /** Every row of the section before the drop, in order. */
   readonly fullOrder: readonly string[];
   readonly droppedId: string;
+  readonly onHeader?: boolean;
 }): string[] {
   const { droppedId, shownOrder } = input;
   const full = input.fullOrder.filter((id) => id !== droppedId);
+  if (input.onHeader === true) return [droppedId, ...full];
   const at = shownOrder.indexOf(droppedId);
   const next = shownOrder[at + 1];
   const previous = at > 0 ? shownOrder[at - 1] : undefined;

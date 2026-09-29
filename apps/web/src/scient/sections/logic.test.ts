@@ -289,6 +289,15 @@ describe("Sections view drops", () => {
         droppedId: "x",
       }),
     ).toEqual(["a", "b", "x", "c"]);
+    // On the header, the top, even above rows hidden above the open thread.
+    expect(
+      expandSectionDropOrder({
+        shownOrder: ["x", "b"],
+        fullOrder: ["a", "b", "c"],
+        droppedId: "x",
+        onHeader: true,
+      }),
+    ).toEqual(["x", "a", "b", "c"]);
     // Moving within the section: the row is taken out of its old place.
     expect(
       expandSectionDropOrder({ shownOrder: ["c"], fullOrder: ["a", "b", "c"], droppedId: "c" }),
