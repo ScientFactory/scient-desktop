@@ -783,6 +783,40 @@ describe("ConversationImportStaging", () => {
     }).pipe(Effect.scoped, Effect.provide(TestLayer)),
   );
 
+  it.effect(
+    "refuses a Markdown transcript over the limit, but not the same file as a document",
+    () =>
+      Effect.gen(function* () {
+        resetImporter();
+        const staging = yield* makeStaging();
+        const markdown = [
+          "---",
+          "scient: conversation",
+          "scient-format: 1",
+          "scient-export: 7f3c9a2e41b8",
+          "title: Long transcript",
+          "---",
+          "",
+          ...Array.from({ length: CONVERSATION_IMPORT_MAX_RECORDS + 1 }, (_, index) => [
+            `<!-- scient:message export=7f3c9a2e41b8 n=${index + 1} role=user time=2026-09-27T14:05:00Z -->`,
+            `Message ${index + 1}`,
+            "",
+          ]).flat(),
+        ].join("\n");
+        const transcript = yield* uploadMarkdown(staging, markdown);
+        const error = yield* Effect.flip(staging.preview(transcript.importId));
+        assert.strictEqual(error._tag, "ScientConversationImportError");
+        if (error._tag === "ScientConversationImportError") {
+          assert.strictEqual(error.reason, "package-too-large");
+          assert.include(error.message, "Import it as a document instead.");
+        }
+        const document = yield* uploadMarkdown(staging, markdown, "document");
+        const preview = yield* staging.preview(document.importId);
+        assert.strictEqual(preview.kind, "document");
+        assert.strictEqual(preview.counts.messages, 1);
+      }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+  );
+
   it.effect("refuses Markdown that is not UTF-8 text in plain words", () =>
     Effect.gen(function* () {
       resetImporter();

@@ -755,6 +755,60 @@ describe("ConversationImportDialog", () => {
     );
   });
 
+  it("offers the whole file as a document when a Markdown transcript is too long", async () => {
+    const tooLong =
+      "This conversation is too long to import: it has 5,001 messages and other items, and Scient imports up to 5,000 at once. Import it as a document instead.";
+    previewConversationImport.mockRejectedValueOnce(
+      new ScientConversationImportError({
+        reason: "package-too-large",
+        rejection: null,
+        message: tooLong,
+      }),
+    );
+    previewConversationImport.mockResolvedValueOnce(
+      previewOf({
+        importId: secondImportId,
+        kind: "document",
+        conversation: { ...previewOf().conversation, provider: null, model: null },
+      }),
+    );
+    await openWith(new File(["# Notes"], "notes.md"));
+    expect(alerts()).toEqual([tooLong]);
+    expect(button("Try again")).toBeUndefined();
+
+    await act(async () => button("Start with the whole file instead")!.click());
+    await flush();
+    expect(createConversationImportUpload).toHaveBeenLastCalledWith(
+      local,
+      "notes.md",
+      7,
+      "document",
+    );
+    expect(alerts()).toEqual([]);
+    await act(async () => button("Start conversation")!.click());
+    await flush();
+    expect(confirmConversationImport).toHaveBeenCalledWith(
+      local,
+      expect.objectContaining({ importId: secondImportId }),
+    );
+    expect(toastAdd).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Conversation started" }),
+    );
+  });
+
+  it("offers no document choice when a file is refused for its size", async () => {
+    createConversationImportUpload.mockRejectedValueOnce(
+      new ScientConversationImportError({
+        reason: "package-too-large",
+        rejection: null,
+        message: "This file is larger than Scient can import.",
+      }),
+    );
+    await openWith(new File(["# Notes"], "notes.md"));
+    expect(alerts()).toEqual(["This file is larger than Scient can import."]);
+    expect(button("Start with the whole file instead")).toBeUndefined();
+  });
+
   it("uses a file dropped on the open dialog instead of opening another", async () => {
     await openWith(scic());
     const second = new File(["another"], "second.scic");
