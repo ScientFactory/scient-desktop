@@ -124,9 +124,10 @@ On web and desktop, sections let you group related threads by topic, such as **T
 **Research**, across projects. A thread belongs to at most one section. Sections only organize the
 list: filing a thread never pins, settles, snoozes, or reorders it, and does not count as activity.
 
-Right-click a thread and choose **Section** to file it. The current section is checked. Choose
-**New section…** to name a section and file the thread in one step. Choose **General** to take it
-out of its section.
+Right-click a thread and choose **Section**, next to Pin, Settle and Snooze, to file it. The
+current section is checked. Choose **New section…** to name a section and file the thread in one
+step; the name field says which threads it is for. Choose **General** to take it out of its
+section. A fork of a thread in a section starts in the same section.
 With several threads selected, **Move to section** files them together. Each move shows
 **Undo** in the sidebar, and `mod+z` restores the previous section.
 
@@ -139,16 +140,21 @@ Sections view:
   it. You can drag **General** like any section, but not rename or delete it.
 - Snoozed and settled threads stay on their own shelves. A settled or snoozed thread keeps its
   section and returns to it when you un-settle or wake it.
-- Drag a thread to a spot in any section to file it there at that position. Drag a section header
-  to reorder sections, or drag a thread onto the **Settled** header to settle it. Dragging never
-  unpins a thread.
+- Drag a thread to a spot in any section to file it there at that position, or onto a section's
+  header to file it at the top of that section, including an empty or collapsed one. Only a
+  header that the drop would change is highlighted. Drag a section header to reorder sections, or
+  drag a thread onto the **Settled** header to settle it. Dragging never unpins a thread.
 - Click a header to collapse it. A collapsed section's arrow points right; it shows a dot while
   one of its threads is working, and still shows the thread you have open. An open section's
   arrow points down and appears when you hover the header. Double-click a header to rename it.
 - Each header's buttons start a **New thread in section** and open the section menu, which also
   offers **Rename**, **Move up**, **Move down**, and **Delete section**.
-- Empty sections stay visible so you can drag threads into them. **New section**, after the last
-  section, adds one at the end.
+- With **All projects** selected, every section is listed, including empty ones, so you can drag
+  threads into them. With one project selected, only that project's sections are listed: those
+  holding any of its threads (snoozed and settled ones count), and empty sections created while
+  that project was selected. A section holding threads from two projects appears under both, each
+  time with that project's threads only.
+- **New section**, after the last section, adds one at the end.
 - Section names start with a capital letter, capitalized as you type. A first word that mixes case
   on purpose, such as _mRNA_ or _iOS_, is kept as written: paste it, or type it and then change the
   first letter back.
