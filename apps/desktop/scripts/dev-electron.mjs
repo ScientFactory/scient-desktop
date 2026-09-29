@@ -43,13 +43,17 @@ const requiredFiles = [
   "dist-electron/main.cjs",
   "dist-electron/electron/WindowsForegroundFocusWorker.cjs",
   "dist-electron/preload.cjs",
+  "dist-electron/conversation-review-preload.cjs",
   "dist-electron/snapShot/GlobalShiftShortcutWorker.cjs",
   "dist-electron/snapShot/RegionSnapShotWorker.cjs",
   "dist-electron/snapShot/SnapShotAccessibilityWorker.cjs",
   "../server/dist/bin.mjs",
 ];
 const watchedDirectories = [
-  { directory: "dist-electron", files: new Set(["main.cjs", "preload.cjs"]) },
+  {
+    directory: "dist-electron",
+    files: new Set(["main.cjs", "preload.cjs", "conversation-review-preload.cjs"]),
+  },
   {
     directory: "dist-electron/electron",
     files: new Set(["WindowsForegroundFocusWorker.cjs"]),
@@ -115,6 +119,23 @@ const appPidFilePath =
 const launchStateDir = NodePath.dirname(appPidFilePath);
 const backendPidFilePath = NodePath.join(launchStateDir, "backend.pid");
 const backendEntryPath = NodePath.resolve(desktopDir, "..", "server", "dist", "bin.mjs");
+const conversationOpenArgumentsPath = NodePath.join(
+  launchStateDir,
+  "conversation-open-arguments.bin",
+);
+
+function takeConversationOpenArguments() {
+  try {
+    const data = NodeFS.readFileSync(conversationOpenArgumentsPath);
+    NodeFS.rmSync(conversationOpenArgumentsPath);
+    return data.toString("utf8").split("\0").filter(Boolean);
+  } catch (error) {
+    if (error?.code === "ENOENT") return [];
+    throw error;
+  }
+}
+
+let pendingConversationOpenArguments = takeConversationOpenArguments();
 
 let shuttingDown = false;
 let currentApp = null;
@@ -203,9 +224,12 @@ function startApp() {
     return;
   }
 
+  const conversationOpenArguments = pendingConversationOpenArguments;
+  pendingConversationOpenArguments = [];
   const electronArgs = remoteDebuggingPort
     ? [`--remote-debugging-port=${remoteDebuggingPort}`]
     : [];
+  electronArgs.push(...conversationOpenArguments);
   const launchArgs = devProtocolClient
     ? electronArgs
     : [...electronArgs, `--t3code-dev-root=${desktopDir}`, "dist-electron/main.cjs"];

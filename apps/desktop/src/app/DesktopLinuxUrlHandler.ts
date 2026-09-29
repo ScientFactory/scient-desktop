@@ -4,9 +4,14 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
+import {
+  CONVERSATION_FILE_TYPE,
+  linuxConversationMimeXml,
+} from "../../scripts/conversation-file-type.mjs";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
@@ -25,8 +30,16 @@ const { logInfo, logWarning } = makeComponentLogger("desktop-linux-url-handler")
 export class DesktopLinuxUrlHandlerRegistrationError extends Schema.TaggedError<DesktopLinuxUrlHandlerRegistrationError>()(
   "DesktopLinuxUrlHandlerRegistrationError",
   {
-    step: Schema.Literals(["write-desktop-entry", "set-default-handler"]),
+    step: Schema.Literals([
+      "write-desktop-entry",
+      "set-default-handler",
+      "write-mime-package",
+      "install-mime-package",
+      "query-file-default",
+      "set-file-default-handler",
+    ]),
     scheme: Schema.String,
+    mimeType: Schema.optionalKey(Schema.String),
     desktopEntryPath: Schema.optionalKey(Schema.String),
     exitCode: Schema.optionalKey(Schema.Number),
     cause: Schema.optionalKey(Schema.Defect()),
@@ -34,7 +47,8 @@ export class DesktopLinuxUrlHandlerRegistrationError extends Schema.TaggedError<
 ) {
   override get message(): string {
     const exitCode = this.exitCode === undefined ? "" : `, xdg-mime exit code ${this.exitCode}`;
-    return `Failed to register the ${this.scheme}:// URL handler (step: ${this.step}${exitCode}).`;
+    const resource = this.mimeType ?? `${this.scheme}:// URL`;
+    return `Failed to register the ${resource} handler (step: ${this.step}${exitCode}).`;
   }
 }
 
@@ -78,7 +92,7 @@ export function renderUrlHandlerDesktopEntry(input: {
     "Terminal=false",
     "NoDisplay=true",
     "StartupNotify=false",
-    `MimeType=x-scheme-handler/${input.scheme};`,
+    `MimeType=x-scheme-handler/${input.scheme};${CONVERSATION_FILE_TYPE.mediaType};`,
     "",
   ].join("\n");
 }
@@ -100,6 +114,13 @@ export const make = Effect.gen(function* () {
   const desktopEntryPath = environment.path.join(
     environment.linuxApplicationsDir,
     environment.linuxDesktopEntryName,
+  );
+  // xdg-mime install copies this vendor-owned XML to the user's mime/packages
+  // directory. Keep the source for a future explicit uninstall action; cleanup
+  // must use xdg-mime uninstall and remove only this XML and our desktop entry.
+  const mimePackagePath = environment.path.join(
+    environment.linuxApplicationsDir,
+    CONVERSATION_FILE_TYPE.linuxMimePackageName,
   );
 
   const writeDesktopEntry = Effect.gen(function* () {
@@ -164,6 +185,99 @@ export const make = Effect.gen(function* () {
     ),
   );
 
+  const registerMimeType = Effect.gen(function* () {
+    const content = linuxConversationMimeXml();
+    yield* Effect.gen(function* () {
+      const existing = yield* fileSystem
+        .readFileString(mimePackagePath)
+        .pipe(Effect.orElseSucceed(() => null));
+      if (existing !== content) {
+        yield* fileSystem.makeDirectory(environment.linuxApplicationsDir, { recursive: true });
+        yield* fileSystem.writeFileString(mimePackagePath, content);
+      }
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new DesktopLinuxUrlHandlerRegistrationError({
+            step: "write-mime-package",
+            scheme,
+            mimeType: CONVERSATION_FILE_TYPE.mediaType,
+            desktopEntryPath: mimePackagePath,
+            cause,
+          }),
+      ),
+    );
+
+    const runMimeCommand = (
+      step: "install-mime-package" | "set-file-default-handler",
+      args: string[],
+    ) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const handle = yield* spawner.spawn(
+            ChildProcess.make("xdg-mime", args, {
+              stdin: "ignore",
+              stdout: "ignore",
+              stderr: "ignore",
+            }),
+          );
+          const exitCode = Number(yield* handle.exitCode);
+          if (exitCode !== 0) {
+            return yield* new DesktopLinuxUrlHandlerRegistrationError({
+              step,
+              scheme,
+              mimeType: CONVERSATION_FILE_TYPE.mediaType,
+              exitCode,
+            });
+          }
+        }),
+      );
+
+    yield* runMimeCommand("install-mime-package", ["install", "--mode", "user", mimePackagePath]);
+
+    // A user or another application may already own the default. Only seed a
+    // missing default; later launches never override an explicit choice.
+    const currentDefault = yield* Effect.scoped(
+      Effect.gen(function* () {
+        const handle = yield* spawner.spawn(
+          ChildProcess.make("xdg-mime", ["query", "default", CONVERSATION_FILE_TYPE.mediaType], {
+            stdin: "ignore",
+            stderr: "ignore",
+          }),
+        );
+        const output = yield* handle.stdout.pipe(Stream.decodeText(), Stream.mkString);
+        const exitCode = Number(yield* handle.exitCode);
+        if (exitCode !== 0) {
+          return yield* new DesktopLinuxUrlHandlerRegistrationError({
+            step: "query-file-default",
+            scheme,
+            mimeType: CONVERSATION_FILE_TYPE.mediaType,
+            exitCode,
+          });
+        }
+        return output.trim();
+      }),
+    );
+    if (currentDefault.length === 0) {
+      yield* runMimeCommand("set-file-default-handler", [
+        "default",
+        environment.linuxDesktopEntryName,
+        CONVERSATION_FILE_TYPE.mediaType,
+      ]);
+    }
+  }).pipe(
+    Effect.mapError((error) =>
+      isRegistrationError(error)
+        ? error
+        : new DesktopLinuxUrlHandlerRegistrationError({
+            step: "install-mime-package",
+            scheme,
+            mimeType: CONVERSATION_FILE_TYPE.mediaType,
+            cause: error,
+          }),
+    ),
+  );
+
   const register = Effect.gen(function* () {
     if (environment.platform !== "linux") {
       return;
@@ -171,13 +285,18 @@ export const make = Effect.gen(function* () {
     yield* writeDesktopEntry;
     if (!environment.isPackaged) return;
     yield* setDefaultHandler;
-    yield* logInfo("registered URL scheme handler", { scheme });
+    yield* registerMimeType;
+    yield* logInfo("registered URL and conversation file handlers", {
+      scheme,
+      mimeType: CONVERSATION_FILE_TYPE.mediaType,
+    });
   }).pipe(
     // Registration is best-effort: a missing xdg-mime or read-only home must
     // never block startup — the OS chooser remains as fallback.
     Effect.catch((error) =>
-      logWarning("URL scheme handler registration failed", {
+      logWarning("desktop handler registration failed", {
         scheme,
+        ...(error.mimeType === undefined ? {} : { mimeType: error.mimeType }),
         step: error.step,
         message: error.message,
         ...(error.desktopEntryPath === undefined

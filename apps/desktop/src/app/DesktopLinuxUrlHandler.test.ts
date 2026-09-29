@@ -31,7 +31,7 @@ const makeEnvironment = (overrides: Record<string, unknown> = {}) =>
     ...overrides,
   } as unknown as DesktopEnvironment.DesktopEnvironment["Service"]);
 
-const mockProcess = (exitCode: number) =>
+const mockProcess = (exitCode: number, stdout = "") =>
   ChildProcessSpawner.makeHandle({
     pid: ChildProcessSpawner.ProcessId(1),
     exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(exitCode)),
@@ -39,7 +39,7 @@ const mockProcess = (exitCode: number) =>
     kill: () => Effect.void,
     unref: Effect.succeed(Effect.void),
     stdin: Sink.drain,
-    stdout: Stream.empty,
+    stdout: stdout ? Stream.make(new TextEncoder().encode(stdout)) : Stream.empty,
     stderr: Stream.empty,
     all: Stream.empty,
     getInputFd: () => Sink.drain,
@@ -51,6 +51,7 @@ const makeHandlerLayer = (
   input: {
     readonly environment?: Record<string, unknown>;
     readonly xdgMimeExitCode?: number;
+    readonly fileDefault?: string;
     readonly writeError?: PlatformError.PlatformError;
     readonly existingEntry?: string;
   } = {},
@@ -83,7 +84,12 @@ const makeHandlerLayer = (
               command: childProcess.command,
               args: childProcess.args,
             });
-            return Effect.succeed(mockProcess(input.xdgMimeExitCode ?? 0));
+            return Effect.succeed(
+              mockProcess(
+                input.xdgMimeExitCode ?? 0,
+                childProcess.args[0] === "query" ? (input.fileDefault ?? "") : "",
+              ),
+            );
           }),
         ),
       ),
@@ -124,7 +130,10 @@ describe("DesktopLinuxUrlHandler", () => {
     );
     assert.include(entry, "NoDisplay=true");
     assert.notInclude(entry, "StartupWMClass=");
-    assert.include(entry, "MimeType=x-scheme-handler/scient-next;");
+    assert.include(
+      entry,
+      "MimeType=x-scheme-handler/scient-next;application/vnd.scient.conversation+zip;",
+    );
   });
 
   it("carries structured context on registration errors", () => {
@@ -160,20 +169,44 @@ describe("DesktopLinuxUrlHandler", () => {
     return Effect.gen(function* () {
       yield* runRegister(recorded);
 
-      assert.deepEqual(recorded.directories, ["/home/alice/.local/share/applications"]);
-      assert.equal(recorded.files.length, 1);
+      assert.deepEqual(recorded.directories, [
+        "/home/alice/.local/share/applications",
+        "/home/alice/.local/share/applications",
+      ]);
+      assert.equal(recorded.files.length, 2);
       assert.equal(recorded.files[0]?.path, "/home/alice/.local/share/applications/scient.desktop");
       assert.include(
         recorded.files[0]?.content,
         'Exec="/home/alice/Applications/T3-Code.AppImage" %U',
       );
-      assert.include(recorded.files[0]?.content, "MimeType=x-scheme-handler/scient;");
+      assert.include(
+        recorded.files[0]?.content,
+        "MimeType=x-scheme-handler/scient;application/vnd.scient.conversation+zip;",
+      );
       assert.deepEqual(recorded.commands, [
         {
           command: "xdg-mime",
           args: ["default", "scient.desktop", "x-scheme-handler/scient"],
         },
+        {
+          command: "xdg-mime",
+          args: [
+            "install",
+            "--mode",
+            "user",
+            "/home/alice/.local/share/applications/scient-conversation.xml",
+          ],
+        },
+        {
+          command: "xdg-mime",
+          args: ["query", "default", "application/vnd.scient.conversation+zip"],
+        },
+        {
+          command: "xdg-mime",
+          args: ["default", "scient.desktop", "application/vnd.scient.conversation+zip"],
+        },
       ]);
+      assert.include(recorded.files[1]?.content, '<glob pattern="*.scic" weight="80"/>');
     });
   });
 
@@ -202,9 +235,10 @@ describe("DesktopLinuxUrlHandler", () => {
         }),
       });
 
-      assert.deepEqual(recorded.files, []);
-      assert.deepEqual(recorded.directories, []);
-      assert.equal(recorded.commands.length, 1);
+      assert.isFalse(recorded.files.some(({ path }) => path.endsWith("scient.desktop")));
+      assert.equal(recorded.files.length, 1);
+      assert.equal(recorded.directories.length, 1);
+      assert.equal(recorded.commands.length, 4);
     });
   });
 
@@ -227,6 +261,19 @@ describe("DesktopLinuxUrlHandler", () => {
         "/home/alice/.local/share/applications/scient-next-dev.desktop",
       );
       assert.deepEqual(unpackaged.commands, []);
+    });
+  });
+
+  it.effect("preserves an existing .scic default", () => {
+    const recorded = emptyRecording();
+    return Effect.gen(function* () {
+      yield* runRegister(recorded, { fileDefault: "another-app.desktop\n" });
+      assert.isFalse(
+        recorded.commands.some(
+          ({ args }) =>
+            args[0] === "default" && args[2] === "application/vnd.scient.conversation+zip",
+        ),
+      );
     });
   });
 

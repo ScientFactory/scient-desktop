@@ -3,6 +3,11 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { assert, describe, it } from "vite-plus/test";
+import {
+  CONVERSATION_FILE_TYPE,
+  macConversationDocumentTypes,
+  macConversationExportedTypes,
+} from "./conversation-file-type.mjs";
 
 import {
   makeDevelopmentCommandScript,
@@ -65,6 +70,7 @@ describe("electron development launcher", () => {
     );
     assert.notInclude(script, "\nexport VITE_DEV_SERVER_URL=");
     assert.include(script, 'if [ "${SCIENT_NEXT_DEV_RUNNER_ACTIVE:-}" != "1" ]; then');
+    assert.include(script, 'run-scient-next-dev.command" "$@"');
     assert.include(script, 'if [ -n "${SCIENT_DEV_APP_ENV_FILE:-}" ]; then');
     assert.include(script, '. "$SCIENT_DEV_APP_ENV_FILE"');
     assert.include(script, 'mv -f "$dev_pid_file_tmp" "$SCIENT_DEV_APP_PID_FILE"');
@@ -134,6 +140,11 @@ describe("electron development launcher", () => {
     assert.include(script, "dev:app:start");
     assert.include(script, "export SCIENT_NEXT_HOME='/tmp/scient-dev-stable'");
     assert.include(script, "/tmp/scient-dev-stable/local-dev-app.log");
+    assert.include(
+      script,
+      "/tmp/scient-dev-stable/local-dev-app-runtime/conversation-open-arguments.bin",
+    );
+    assert.include(script, 'printf \'%s\\0\' "$@" > "$conversation_args_tmp"');
     assert.include(script, "2>&1");
   });
 
@@ -197,6 +208,28 @@ describe("electron development launcher", () => {
       values.NSDocumentsFolderUsageDescription,
       "Scient reads project files you open in the desktop app.",
     );
+  });
+
+  it("gives each macOS bundle its own .scic document type with the shared MIME identity", () => {
+    assert.deepEqual(macConversationDocumentTypes({ isDevelopment: true }), [
+      {
+        CFBundleTypeName: "Scient Conversation",
+        CFBundleTypeExtensions: ["scic"],
+        CFBundleTypeRole: "Viewer",
+        CFBundleTypeIconFile: "icon.icns",
+        LSItemContentTypes: [CONVERSATION_FILE_TYPE.macUti],
+        LSHandlerRank: "Alternate",
+      },
+    ]);
+    assert.equal(macConversationDocumentTypes()[0].LSHandlerRank, "Default");
+    assert.equal(
+      macConversationExportedTypes()[0].UTTypeIdentifier,
+      "com.scientfactory.scient.conversation",
+    );
+    assert.deepEqual(macConversationExportedTypes()[0].UTTypeTagSpecification, {
+      "public.filename-extension": ["scic"],
+      "public.mime-type": [CONVERSATION_FILE_TYPE.mediaType],
+    });
   });
 
   it("ad-hoc signs the complete development app bundle", () => {

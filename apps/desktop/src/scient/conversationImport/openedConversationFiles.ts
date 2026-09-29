@@ -40,6 +40,7 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
+import * as NodeOS from "node:os";
 import * as NodeStream from "node:stream";
 
 import {
@@ -57,9 +58,10 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Electron from "electron";
 
-import * as ElectronApp from "../../electron/ElectronApp.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
+import { conversationFilePathsFromArgv } from "./conversationFileArguments.ts";
+import { reviewOpenedConversation, type ReviewedFileIdentity } from "./reviewOpenedConversation.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import { makeIpcMethod } from "../../ipc/DesktopIpc.ts";
 import {
@@ -118,25 +120,22 @@ const waiting = new Map<string, OpenedFile>();
 /** Taken by the renderer; retained briefly so upload and preview can be retried. */
 const taken = new Map<string, TakenFile>();
 
-/** The `.scic` paths among process arguments, resolved against the working directory. */
-function conversationFilePathsFromArgv(
-  argv: ReadonlyArray<string>,
-  cwd: string,
-): ReadonlyArray<string> {
-  return argv
-    .slice(1)
-    .filter(
-      (argument) =>
-        !argument.startsWith("-") && argument.toLowerCase().endsWith(SCIC_FILE_EXTENSION),
-    )
-    .map((argument) => NodePath.resolve(cwd, argument));
-}
-
 /** Queues a regular `.scic` file for the renderer; false when it is not one. */
-export async function registerOpenedConversationFile(path: string): Promise<boolean> {
+export async function registerOpenedConversationFile(
+  path: string,
+  expected?: ReviewedFileIdentity,
+): Promise<boolean> {
   if (!path.toLowerCase().endsWith(SCIC_FILE_EXTENSION)) return false;
   const stat = await NodeFS.promises.stat(path, { bigint: true }).catch(() => null);
   if (stat === null || !stat.isFile()) return false;
+  if (
+    expected &&
+    (stat.dev.toString() !== expected.dev ||
+      stat.ino.toString() !== expected.ino ||
+      stat.size.toString() !== expected.size ||
+      stat.mtimeNs.toString() !== expected.mtimeNs)
+  )
+    return false;
   for (const [token, file] of waiting) {
     if (file.path === path) waiting.delete(token);
   }
@@ -452,6 +451,9 @@ export function makeOpenedPathRelay(limit = MAX_PENDING_CONVERSATION_FILES) {
 export type OpenedPathRelay = ReturnType<typeof makeOpenedPathRelay>;
 
 const openedPaths = makeOpenedPathRelay();
+const approvedPaths = makeOpenedPathRelay();
+const approvedIdentities = new Map<string, ReviewedFileIdentity>();
+const previewOnlyPaths = new Set<string>();
 
 /** Routes the app's `open-file` for `.scic` files to `relay`; other files keep the default. */
 export function listenForOpenedConversationFiles(
@@ -483,6 +485,77 @@ export function captureConversationFileOpens(): void {
   if (capturing || app === undefined) return;
   capturing = true;
   listenForOpenedConversationFiles(app, openedPaths);
+  // oxlint-disable-next-line t3code/no-global-process-runtime -- synchronous OS event capture precedes the Effect runtime.
+  const platform = NodeOS.platform();
+  app.on("second-instance", (_event, argv, cwd) => {
+    for (const path of conversationFilePathsFromArgv(argv, cwd, platform)) {
+      if (argv.includes("--preview-conversation")) previewOnlyPaths.add(path);
+      openedPaths.receive(path);
+    }
+  });
+  for (const path of conversationFilePathsFromArgv(process.argv, process.cwd(), platform)) {
+    if (process.argv.includes("--preview-conversation")) previewOnlyPaths.add(path);
+    openedPaths.receive(path);
+  }
+}
+
+/**
+ * Called after pre-ready setup and the single-instance lock, before building
+ * any workspace/backend services. OS requests remain local until confirmed.
+ * The listener stays installed to give warm opens the same review boundary.
+ */
+export async function prepareConversationFileOpening(): Promise<boolean> {
+  await Electron.app.whenReady();
+  const pending: string[] = [];
+  let reviewing = false;
+  let initial = true;
+  let admitted = false;
+  let settle: (startWorkspace: boolean) => void = () => {};
+  const startup = new Promise<boolean>((resolve) => {
+    settle = resolve;
+  });
+  // A review window closing must not trigger Electron's default quit while
+  // the normal lifecycle is not installed yet. That lifecycle owns warm exits.
+  const keepAlive = () => {};
+  Electron.app.on("window-all-closed", keepAlive);
+  const pump = async () => {
+    if (reviewing) return;
+    reviewing = true;
+    try {
+      while (pending.length > 0) {
+        const path = pending.shift()!;
+        const readOnly = previewOnlyPaths.delete(path);
+        const accepted = await reviewOpenedConversation(path, readOnly).catch(() => null);
+        if (accepted) {
+          approvedIdentities.set(path, accepted);
+          approvedPaths.receive(path);
+          admitted = true;
+          settle(true);
+        }
+      }
+    } finally {
+      reviewing = false;
+      if (!initial && !admitted) settle(false);
+    }
+  };
+  openedPaths.attach((path) => {
+    if (pending.includes(path)) return;
+    if (pending.length >= MAX_PENDING_CONVERSATION_FILES) {
+      Electron.dialog.showErrorBox(
+        "Too many conversations",
+        "Finish the current previews, then open the remaining files again.",
+      );
+      return;
+    }
+    pending.push(path);
+    if (!initial) void pump();
+  });
+  initial = false;
+  if (pending.length === 0) {
+    admitted = true;
+    settle(true);
+  } else void pump();
+  return startup;
 }
 
 /**
@@ -490,26 +563,29 @@ export function captureConversationFileOpens(): void {
  * module load, later ones, launch arguments, and a second instance's.
  */
 export const installConversationFileOpening = Effect.gen(function* () {
-  const electronApp = yield* ElectronApp.ElectronApp;
   const context = yield* Effect.context<ElectronWindow.ElectronWindow>();
   const runPromise = Effect.runPromiseWith(context);
   const open = (path: string) => {
-    void registerOpenedConversationFile(path).then((added) =>
-      added ? runPromise(announce) : undefined,
-    );
+    const expected = approvedIdentities.get(path);
+    approvedIdentities.delete(path);
+    if (!expected) return;
+    void registerOpenedConversationFile(path, expected)
+      .then((added) => {
+        if (added) return runPromise(announce);
+        Electron.dialog.showErrorBox(
+          "Conversation file changed",
+          "Open the file again to review its current contents.",
+        );
+      })
+      .catch(() =>
+        Electron.dialog.showErrorBox("Unable to open conversation", "Please open this file again."),
+      );
   };
   captureConversationFileOpens();
   yield* Effect.acquireRelease(
-    Effect.sync(() => openedPaths.attach(open)),
+    Effect.sync(() => approvedPaths.attach(open)),
     (detach) => Effect.sync(detach),
   );
-  yield* electronApp.on(
-    "second-instance",
-    (_event: Electron.Event, argv: ReadonlyArray<string>, workingDirectory: string) => {
-      for (const path of conversationFilePathsFromArgv(argv, workingDirectory)) open(path);
-    },
-  );
-  for (const path of conversationFilePathsFromArgv(process.argv, process.cwd())) open(path);
 }).pipe(Effect.withSpan("scient.conversationImport.installFileOpening"));
 
 export const takeOpenedConversationFiles = makeIpcMethod({

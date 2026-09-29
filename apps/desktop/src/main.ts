@@ -70,6 +70,7 @@ import * as DesktopWslBackend from "./wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "./wsl/DesktopWslEnvironment.ts";
 import * as DesktopWslServerTree from "./wsl/DesktopWslServerTree.ts";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
+import { prepareConversationFileOpening } from "./scient/conversationImport/openedConversationFiles.ts";
 
 // The candidate's safety envelope is fail-closed even when launched directly
 // from a packaged Electron bundle rather than through a dev helper. Do not
@@ -240,7 +241,23 @@ const desktopApplicationRuntimeLayer = desktopApplicationLayer.pipe(
 // yield and let Electron emit ready.
 const desktopRuntimeLayer = desktopClerkLayer.pipe(
   Layer.flatMap((clerkContext) =>
-    desktopApplicationRuntimeLayer.pipe(Layer.provideMerge(Layer.succeedContext(clerkContext))),
+    Layer.unwrap(
+      Effect.gen(function* () {
+        const clerk = yield* DesktopClerk.DesktopClerk;
+        if (!clerk.isPrimaryInstance) {
+          Electron.app.quit();
+          return yield* Effect.interrupt;
+        }
+        const start = yield* Effect.promise(prepareConversationFileOpening);
+        if (!start) {
+          Electron.app.quit();
+          return yield* Effect.interrupt;
+        }
+        return desktopApplicationRuntimeLayer.pipe(
+          Layer.provideMerge(Layer.succeedContext(clerkContext)),
+        );
+      }).pipe(Effect.provide(Layer.succeedContext(clerkContext))),
+    ),
   ),
   Layer.provideMerge(DesktopPreReadyPlatform.layer),
 );

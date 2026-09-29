@@ -14,6 +14,10 @@ import {
   SCIENT_DEV_APP_PID_FILE_ENV,
 } from "./dev-app-process.mjs";
 import { ensureElectronRuntime } from "./ensure-electron-runtime.mjs";
+import {
+  macConversationDocumentTypes,
+  macConversationExportedTypes,
+} from "./conversation-file-type.mjs";
 // SCIENT-DEV-APP: per-bundle records, a stable signed bundle, staged rebuilds.
 import {
   assertForegroundSigning,
@@ -39,7 +43,7 @@ const APP_BUNDLE_ID = isDevelopment
   ? `com.scientfactory.scient.next.dev.${devBundleIdSuffix || "local"}`
   : "com.scientfactory.scient.next";
 const APP_PROTOCOL_SCHEMES = isDevelopment ? ["scient-next-dev"] : ["scient-next"];
-const LAUNCHER_VERSION = 20;
+const LAUNCHER_VERSION = 21;
 const developmentMacIconPngPath = NodePath.join(
   repoRoot,
   "assets",
@@ -162,7 +166,7 @@ export function makeDevelopmentLauncherScript({
     "#!/bin/sh",
     'if [ "${SCIENT_NEXT_DEV_RUNNER_ACTIVE:-}" != "1" ]; then',
     '  launcher_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)',
-    '  exec "$launcher_dir/../Resources/run-scient-next-dev.command"',
+    '  exec "$launcher_dir/../Resources/run-scient-next-dev.command" "$@"',
     "fi",
     `if [ -n "\${${SCIENT_DEV_APP_ENV_FILE_ENV}:-}" ]; then`,
     `  if [ ! -f "\$${SCIENT_DEV_APP_ENV_FILE_ENV}" ]; then`,
@@ -256,6 +260,11 @@ export function makeDevelopmentCommandScript({ desktopRoot, environment }) {
       ? environment.SCIENT_NEXT_HOME
       : NodePath.join(launcherRepoRoot, ".scient-next");
   const logPath = NodePath.join(logRoot, "local-dev-app.log");
+  const openArgumentsPath = NodePath.join(
+    logRoot,
+    "local-dev-app-runtime",
+    "conversation-open-arguments.bin",
+  );
   const nodeBinDir = NodePath.dirname(process.execPath);
   const pnpmExecPath = environment.npm_execpath?.trim();
   const localDevInvocation = pnpmExecPath
@@ -274,6 +283,13 @@ export function makeDevelopmentCommandScript({ desktopRoot, environment }) {
     `cd ${shellSingleQuote(launcherRepoRoot)}`,
     roleExport,
     homeExport,
+    'if [ "$#" -gt 0 ]; then',
+    "  umask 077",
+    `  mkdir -p ${shellSingleQuote(NodePath.dirname(openArgumentsPath))}`,
+    `  conversation_args_tmp=${shellSingleQuote(openArgumentsPath)}".$$.tmp"`,
+    '  printf \'%s\\0\' "$@" > "$conversation_args_tmp"',
+    `  mv -f "$conversation_args_tmp" ${shellSingleQuote(openArgumentsPath)}`,
+    "fi",
     `exec ${localDevInvocation} >> ${shellSingleQuote(logPath)} 2>&1`,
     "",
   ].join("\n");
@@ -459,6 +475,12 @@ function patchMainBundleInfoPlist(appBundlePath, iconPath, executableName) {
       CFBundleURLSchemes: APP_PROTOCOL_SCHEMES,
     },
   ]);
+  setPlistJson(
+    infoPlistPath,
+    "CFBundleDocumentTypes",
+    macConversationDocumentTypes({ isDevelopment }),
+  );
+  setPlistJson(infoPlistPath, "UTExportedTypeDeclarations", macConversationExportedTypes());
 
   const resourcesDir = NodePath.join(appBundlePath, "Contents", "Resources");
   NodeFS.copyFileSync(iconPath, NodePath.join(resourcesDir, "icon.icns"));

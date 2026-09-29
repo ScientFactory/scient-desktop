@@ -104,7 +104,10 @@ describe("DesktopPreReadyPlatform", () => {
             assert.equal(identity.desktopName, "scient.desktop");
             assert.include(identity.desktopEntry ?? "", 'Exec="/Applications/current.AppImage" %U');
             assert.include(identity.desktopEntry ?? "", "Name=Scient");
-            assert.include(identity.desktopEntry ?? "", "MimeType=x-scheme-handler/scient;");
+            assert.include(
+              identity.desktopEntry ?? "",
+              "MimeType=x-scheme-handler/scient;application/vnd.scient.conversation+zip;",
+            );
           }),
         ).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
       },

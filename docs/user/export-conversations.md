@@ -63,8 +63,25 @@ Open a conversation file in any of these ways:
   While you drag it, Scient shows **Drop to import conversation**. Other files dropped on the chat
   are still attached to your message, and so is a Markdown file; a Markdown file dropped
   elsewhere opens for import.
-- Open a `.scic` file with the desktop app, for example by double-clicking it. During first-time
-  setup, the file waits and opens for import when setup is finished.
+- Open a `.scic` file with the desktop app, for example by double-clicking it or choosing
+  **Open with Scient**. Scient first shows a local, read-only conversation window. Nothing is
+  imported or uploaded while you read. **Cancel** leaves your workspace unchanged;
+  **Continue to import** opens the destination/project chooser. Import happens only when you
+  confirm there, and no agent runs automatically. During first-time setup, the accepted file
+  waits until setup is finished. Very large conversations may not fit the local preview;
+  you can still continue to have the complete file checked for import.
+
+The file-opening window shows a bounded text preview, not a full-fidelity rendering of every
+attachment or diagram. A packaged app launched solely to preview a file does not start its
+workspace/backend until you continue; cancelling the last preview exits that file-only session.
+An already-running app keeps its workspace. A managed development runner may already have
+started its development servers independently.
+
+On Linux, Scient's AppImage registers the conversation MIME type when run. If your file manager
+does not associate the file automatically, choose Scient using **Open with**. Changing your
+preferred application remains your operating system's decision. Native file-manager previews
+(Quick Look or Explorer's Preview pane) require separately built preview components; the file
+association alone does not provide them.
 
 Scient sends the file to the destination and checks it straight away; the dialog shows its
 progress, and **Cancel** or Esc stops it at any point before you import. If you have more than

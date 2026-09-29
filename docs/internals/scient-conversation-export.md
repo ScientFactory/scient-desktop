@@ -339,6 +339,30 @@ The contract between staging and the importer is the header of
   is the file index Node reports; where a file system has none, size and modification time alone
   are compared, but the open descriptor still keeps the original bytes.
 
+### Local file-opening boundary
+
+The desktop captures macOS open events and Windows/Linux launch arguments before the application
+runtime is built. Local file URLs are decoded with the host's path semantics; network URLs and
+UNC paths are not accepted by the file-preview entry point. The single-instance lock and
+pre-ready platform setup precede a focused, isolated review window. Only an explicit continue
+action releases that file to the normal import flow and permits cold workspace startup.
+Cancelling a file-only launch creates no conversation and starts no application backend.
+
+Local previews read the authoritative snapshot through a held descriptor with ZIP, schema,
+size, and digest checks. They do not extract attachments, evaluate markup, or make network
+requests. The renderer has a separate non-persistent session, a narrow isolated preload, no
+application bridge, and a deny-by-default content policy. The file identity is rechecked on
+continue and admission to the import queue. The server still performs full import validation.
+Preview-size limits do not prohibit importing a larger structurally acceptable file.
+
+Release packaging and the development launcher share a dependency-light document definition.
+The format UTI is stable across application identities. Development handlers are alternatives,
+not owners of the user's default. Windows registrations are channel-specific; Linux integration
+uses the persistent AppImage path and a user-level MIME definition. `--preview-conversation`
+opens the same window without an import action, providing a read-only fallback independent of
+file-manager preview extensions. Native extension compilation, installation, signing, and
+file-manager activation require platform-specific qualification.
+
 ## Dialog
 
 Thread menu (sidebar and chat header) → **Export ▸** one entry per registered format opens the
