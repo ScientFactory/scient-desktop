@@ -120,6 +120,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import { flushSync } from "react-dom";
 import { useLocation, useNavigate } from "@tanstack/react-router";
@@ -441,7 +442,11 @@ import {
 import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
 import { resolveComposerTimelineInset, resolveScrollToEndClearance } from "./composerFooterLayout";
 import { ChatHeader } from "./chat/ChatHeader";
-import { restoreForkPdfContinuity } from "./scient-fork/forkViewContinuity";
+import {
+  hasPendingForkPdfContinuity,
+  restoreForkPdfContinuity,
+  subscribeForkPdfContinuity,
+} from "./scient-fork/forkViewContinuity";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
 import { expandedImageKey, type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
@@ -2107,6 +2112,14 @@ function ChatViewContent(props: ChatViewProps) {
         readonly message: ChatMessage;
         readonly source: ScientForkSource;
       }
+    // SCIENT-FORK: the running turn with the work it has done so far.
+    | {
+        readonly threadId: ThreadId;
+        readonly environmentId: EnvironmentId;
+        readonly kind: "running-turn";
+        readonly turnId: TurnId;
+        readonly source: ScientForkSource;
+      }
     | null
   >(null);
   const forkDialogOpen =
@@ -2119,20 +2132,22 @@ function ChatViewContent(props: ChatViewProps) {
     (): ForkSource | null =>
       forkCommandTarget === null
         ? null
-        : forkCommandTarget.kind === "assistant-response"
-          ? {
-              kind: forkCommandTarget.kind,
-              messageId: forkCommandTarget.messageId,
-              latest:
-                forkCommandTarget.source === "latest-response" ||
-                forkCommandTarget.source === "switch-provider",
-            }
-          : {
-              kind: forkCommandTarget.kind,
-              messageId: forkCommandTarget.messageId,
-              prompt: forkCommandTarget.message.text,
-              attachments: forkCommandTarget.message.attachments ?? [],
-            },
+        : forkCommandTarget.kind === "running-turn"
+          ? { kind: "running-turn", turnId: forkCommandTarget.turnId }
+          : forkCommandTarget.kind === "assistant-response"
+            ? {
+                kind: forkCommandTarget.kind,
+                messageId: forkCommandTarget.messageId,
+                latest:
+                  forkCommandTarget.source === "latest-response" ||
+                  forkCommandTarget.source === "switch-provider",
+              }
+            : {
+                kind: forkCommandTarget.kind,
+                messageId: forkCommandTarget.messageId,
+                prompt: forkCommandTarget.message.text,
+                attachments: forkCommandTarget.message.attachments ?? [],
+              },
     [forkCommandTarget],
   );
   useEffect(() => {
@@ -3052,68 +3067,40 @@ function ChatViewContent(props: ChatViewProps) {
       unavailableConnection !== null &&
       (unavailableConnection.phase === "connecting" ||
         unavailableConnection.phase === "reconnecting");
-    // Reconnecting to a version-skewed server with no update in flight
-    // usually means the server is restarting mid-update and a refresh wiped
-    // the in-memory update state. Fold the reconnect and version banners
-    // into one calm line instead of stacking "Failed to connect" on
-    // "versions differ". A failed update never folds: its error and retry
-    // action must stay visible.
-    const reconnectingThroughVersionSkew =
-      serverUpdateState.status === "idle" && environmentReconnecting && versionMismatch !== null;
     // While an update runs, transient connect blips are expected (the server
     // restarts) and the update banner already shows progress. Hard failure
     // phases still surface so the Reconnect action stays reachable.
     const suppressUnavailableBanner =
-      environmentReconnecting &&
-      (updateRunning || (!reconnectingThroughVersionSkew && !reconnectWarningGraceElapsed));
+      environmentReconnecting && (updateRunning || !reconnectWarningGraceElapsed);
     if (activeEnvironmentUnavailableState && unavailableConnection && !suppressUnavailableBanner) {
-      if (reconnectingThroughVersionSkew) {
-        items.push({
-          id: `environment-unavailable:${activeEnvironmentUnavailableState.environmentId}`,
-          variant: "default",
-          // Prioritize live connection progress among the notices.
-          priority: "urgent",
-          icon: (
-            <span
-              className="size-1.5 animate-status-pulse rounded-full bg-foreground"
-              aria-hidden="true"
-            />
-          ),
-          title: `${unavailableConnection.phase === "connecting" ? "Connecting" : "Reconnecting"} to ${activeEnvironmentUnavailableState.label}`,
-          description: "Finishing an update",
-          actions: disconnectAction,
-        });
-      } else {
-        items.push({
-          id: `environment-unavailable:${activeEnvironmentUnavailableState.environmentId}`,
-          variant: unavailableConnection.phase === "error" ? "error" : "warning",
-          icon: <WifiOffIcon />,
-          title: `${activeEnvironmentUnavailableState.label} is ${environmentReconnecting ? "reconnecting" : "offline"}`,
-          actions: (
-            <>
-              {!environmentReconnecting ? (
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  onClick={() =>
-                    void handleReconnectActiveEnvironment(
-                      activeEnvironmentUnavailableState.environmentId,
-                    )
-                  }
-                >
-                  Reconnect
-                </Button>
-              ) : null}
-              {disconnectAction}
-            </>
-          ),
-        });
-      }
+      items.push({
+        id: `environment-unavailable:${activeEnvironmentUnavailableState.environmentId}`,
+        variant: unavailableConnection.phase === "error" ? "error" : "warning",
+        icon: <WifiOffIcon />,
+        title: `${activeEnvironmentUnavailableState.label} is ${environmentReconnecting ? "reconnecting" : "offline"}`,
+        actions: (
+          <>
+            {!environmentReconnecting ? (
+              <Button
+                size="xs"
+                variant="ghost"
+                onClick={() =>
+                  void handleReconnectActiveEnvironment(
+                    activeEnvironmentUnavailableState.environmentId,
+                  )
+                }
+              >
+                Reconnect
+              </Button>
+            ) : null}
+            {disconnectAction}
+          </>
+        ),
+      });
     }
     if (
       !automaticEnvironment &&
       serverUpdateEnvironmentId &&
-      !reconnectingThroughVersionSkew &&
       (serverUpdateState.status === "idle"
         ? showVersionMismatchBanner
         : !serverUpdateFailureDismissed)
@@ -4023,6 +4010,17 @@ function ChatViewContent(props: ChatViewProps) {
   const onForkConversation = useCallback(
     (options?: { readonly preserveComposerDraft?: boolean }) => {
       if (!activeThreadId || !activeThreadEnvironmentId) return;
+      // While the agent works, a fork carries its work in progress.
+      if (activeRunningTurnId !== null && !options?.preserveComposerDraft) {
+        setForkCommandTarget({
+          threadId: activeThreadId,
+          environmentId: activeThreadEnvironmentId,
+          kind: "running-turn",
+          turnId: activeRunningTurnId,
+          source: "running-turn",
+        });
+        return;
+      }
       setForkCommandTarget({
         threadId: activeThreadId,
         environmentId: activeThreadEnvironmentId,
@@ -4031,7 +4029,12 @@ function ChatViewContent(props: ChatViewProps) {
         source: options?.preserveComposerDraft ? "switch-provider" : "latest-response",
       });
     },
-    [activeThreadId, activeThreadEnvironmentId, latestCompletedAssistantMessageId],
+    [
+      activeThreadId,
+      activeThreadEnvironmentId,
+      activeRunningTurnId,
+      latestCompletedAssistantMessageId,
+    ],
   );
 
   const gitCwd = activeProject
@@ -4154,14 +4157,23 @@ function ChatViewContent(props: ChatViewProps) {
     activeWorkspaceRoot,
     runAfterPendingFileSave,
   );
-  useEffect(() => {
-    if (!activeThreadRef) return;
+  // SCIENT-FORK: a fork normally applies its PDF positions when it is created.
+  // If they are still waiting (for example the app reloaded before the fork's
+  // folder was known), hold that fork's panel until they are applied, because
+  // a PDF reader records its own position as soon as it opens. Other threads,
+  // and later folder changes, never hide or remount the panel.
+  const forkPdfContinuityPending = useSyncExternalStore(
+    subscribeForkPdfContinuity,
+    () => activeThreadRef !== null && hasPendingForkPdfContinuity(activeThreadRef),
+  );
+  useLayoutEffect(() => {
+    if (!activeThreadRef || !forkPdfContinuityPending || activeWorkspaceRoot === undefined) return;
     restoreForkPdfContinuity({
       environmentId: activeThreadRef.environmentId,
       threadId: activeThreadRef.threadId,
       destinationWorkspaceRoot: activeWorkspaceRoot,
     });
-  }, [activeThreadRef, activeWorkspaceRoot]);
+  }, [activeThreadRef, activeWorkspaceRoot, forkPdfContinuityPending]);
   const activeTerminalTarget = useMemo(
     () =>
       hasProjectWorkspace
@@ -10613,6 +10625,7 @@ function ChatViewContent(props: ChatViewProps) {
       activeWorkspaceRoot ? (
       <Suspense fallback={null}>
         <SourcePdfPreview
+          readerScope={activeThreadRef.threadId}
           attachmentId={renderedRightPanelSurface.attachmentId}
           environmentId={activeThread.environmentId}
           fileName={renderedRightPanelSurface.fileName}
@@ -11387,7 +11400,7 @@ function ChatViewContent(props: ChatViewProps) {
           deviceAvailable={activeThreadRef !== null}
           liveAgentCount={agentPanelModel.liveCount}
         >
-          {rightPanelContent}
+          {forkPdfContinuityPending ? null : rightPanelContent}
         </RightPanelTabs>
       ) : null}
       {rightPanelPresent && shouldUseRightPanelSheet && activeThreadRef ? (
@@ -11450,7 +11463,7 @@ function ChatViewContent(props: ChatViewProps) {
             deviceAvailable={activeThreadRef !== null}
             liveAgentCount={agentPanelModel.liveCount}
           >
-            {rightPanelContent}
+            {forkPdfContinuityPending ? null : rightPanelContent}
           </RightPanelTabs>
         </RightPanelSheet>
       ) : null}
@@ -11516,7 +11529,15 @@ function ChatViewContent(props: ChatViewProps) {
           forkPreview?.options && (forkRecoverySupported || forkPreview.locked)
             ? forkPreview.options.newWorktree
               ? { available: true }
-              : { available: false, reason: "no-checkpoint" }
+              : {
+                  available: false,
+                  // A running-turn fork snapshots files, so only a missing
+                  // Git repository can rule a new worktree out.
+                  reason:
+                    forkCommandTarget?.kind === "running-turn"
+                      ? "no-git-repository"
+                      : "no-checkpoint",
+                }
             : forkWorktreeAvailability
         }
         checking={forkPreview?.checking ?? true}

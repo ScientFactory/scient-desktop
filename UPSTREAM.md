@@ -46,25 +46,34 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current T3 alignment is recorded in
-[`docs/internals/2026-09-26-upstream-sync-95030dc6.md`](docs/internals/2026-09-26-upstream-sync-95030dc6.md)
-and in `upstream-state.json`. It extends the integration through
-`95030dc674883f0f2a7fd034b32ce742c8cf55d0`: 21 official commits after
-`dd8332da57355bccd7e666289267f2c94597debd`, merged onto owned base
-`01cc063c77edcad0e5110e843ebf08162bcc7013` as `f164dde1ff` (first parent owned
-base, second parent the exact official target). The alignment is prepared in
-[PR #372](https://github.com/ScientFactory/scient-desktop/pull/372). No
-owned-main catch-up was needed because the frozen base was already the current
-owned `main` tip. The
-preceding alignment ([PR #370](docs/internals/2026-09-26-upstream-sync-dd8332da.md))
+[`docs/internals/2026-09-29-upstream-sync-d2c9281b8.md`](docs/internals/2026-09-29-upstream-sync-d2c9281b8.md)
+and in `upstream-state.json`. It advances the integration through
+`d2c9281b8112dc3b2991642c4bdb985e4b08b9bb`: 14 official commits after
+`de251fc2971a884cb5b1305ba4daf309dc8cccb0`, merged onto owned base
+`63d9edf1b6eba1387826c8aa6ae7dfe8c292a770` as
+`eb56e78c44cb76fa37c19d0a99b099a93a69eee3`, whose second parent is the exact
+official target. Every one of the 14 donor commits is literal ancestry. The
+preceding alignment ([PR #384](docs/internals/2026-09-27-upstream-sync-a727d1d9.md))
 remains literal ancestry.
 
-This was a routine maintenance range that activates no protected boundary. The
-deliberate queued-messages revert is preserved whole, `node-pty` stays on `^1.1.0`
-because Scient builds its Linux arm64 artifact on arm64 hardware and does not
-consume upstream's new prebuild, and the Usage page keeps its Spend metric
-alongside upstream's new usage keybindings. Review also fixed an upstream change
-that aliased `projection_threads` in a new query and so silently broke Scient's
-`completedAnswerSql` correlation, which Git had merged without a conflict.
+This routine range activates no protected boundary. It carries Claude Sonnet
+5.5, the OpenCode v2 incompatibility marking, a large-transcript usage
+preservation fix, a shortcut-latency fix, the Linux URL-handler icon and
+MIME-cache refresh, Bitbucket credentials in Source Control settings, and the
+Claude/OpenCode interrupt fixes. `node-pty` stays on `^1.1.0` and no package
+manifest changed: the range does not bump the version, upstream's Windows
+readiness wait is a no-op on 1.1.0 because the process PID is assigned
+synchronously, and upstream's `node-pty@1.2.0-beta.15` patch registration was
+removed because pnpm rejects an entry for an uninstalled version — the patch
+file is retained for a future adoption. Desktop identity stays `scient` /
+`scient.desktop` / `Name=Scient`; the fork's usage-accounting secret lifecycle
+composes beside upstream's Bitbucket one behind a generalized redaction marker.
+Three upstream identity literals had auto-merged into non-conflicted test
+regions and were corrected. `docs/user/remote-access.md` keeps Scient's framing:
+upstream's replacement would have advertised T3 Connect and a hosted relay the
+product does not provide. The receipt records every conflict composition, the
+post-merge semantic findings, the full gate results, and the attributed
+env-blocked `server.test.ts` baseline.
 
 ## Receiving T3 updates
 
@@ -596,6 +605,15 @@ subscription label on its own line above the email/visibility control. Preserve
 this hierarchy rather than joining both with an inline separator. Providers without
 a label retain the account row without an empty subscription row. The shared
 `ProviderInstanceCard.test.ts` covers the layout independently of provider kind.
+
+The same card carries two more narrow divergences, each marked `Scient:` in place.
+Its version label renders through the Scient-owned `ProviderVersionLabel`, which
+fades a clipped version and shows the full text on hover or keyboard focus instead
+of truncating it. A Scient-managed runtime renders as a `row` of the card's Runtime
+section rather than inside an extra padded wrapper. Pi's mark is Pi's own colour
+mark in both web `Icons.tsx` (`PiIcon`) and mobile `ProviderIcon.tsx`, replacing
+T3's monochrome glyph. When T3 changes these spots, keep its surrounding layout and
+reapply only the marked lines.
 
 Scient keeps ordinary browser interaction visually quiet: `PreviewView` shows
 the control badge only during agent control. Preserve the underlying human-input

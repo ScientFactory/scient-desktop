@@ -47,6 +47,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { DriverOption } from "./providerDriverMeta";
 import { ProviderSettingsForm } from "./ProviderSettingsForm";
 import { ProviderModelsSection } from "./ProviderModelsSection";
+import { ProviderVersionLabel } from "./ProviderVersionLabel";
 import { ProviderInstanceIcon, providerInstanceInitials } from "../chat/ProviderInstanceIcon";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
@@ -628,7 +629,8 @@ export function ProviderInstanceCard({
   ) : null;
 
   const versionCodeNode = versionLabel ? (
-    <code className="min-w-0 truncate text-xs text-muted-foreground">{versionLabel}</code>
+    // Scient: a clipped version fades instead of truncating, with the full text on hover or focus.
+    <ProviderVersionLabel version={versionLabel} className="text-xs text-muted-foreground" />
   ) : null;
 
   const statusHeadline =
@@ -1022,14 +1024,14 @@ export function ProviderInstanceCard({
           aria-disabled={readOnly || undefined}
           className={readOnly ? "opacity-50 select-none" : undefined}
         >
+          {/* Scient: the managed runtime is a row of this section, not a framed card inside it. */}
           {usesScientManagedRuntime && liveProvider ? (
-            <div className="px-3 py-3 sm:px-4">
-              <ProviderRuntimeSection
-                displayName={displayName}
-                environmentId={environmentId}
-                provider={liveProvider}
-              />
-            </div>
+            <ProviderRuntimeSection
+              displayName={displayName}
+              environmentId={environmentId}
+              provider={liveProvider}
+              presentation="row"
+            />
           ) : null}
           {driverOption ? (
             <ProviderSettingsForm

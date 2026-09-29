@@ -81,9 +81,11 @@ import { ServerActivation } from "../../serverActivation.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import * as GitWorkflowService from "../../git/GitWorkflowService.ts";
 import {
-  testLayer as ScientForkContextBootstrapTest,
-  type ScientForkContextBootstrapShape,
-} from "../scient-fork/ForkContextBootstrap.ts";
+  testLayer as ScientForkContextDeliveryTest,
+  type ForkTurnContext,
+  type ScientForkContextDeliveryShape,
+} from "../scient-fork/ForkContextDelivery.ts";
+import { markTurnDispatchAttempted } from "../../provider/turnDispatchPhase.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asApprovalRequestId = (value: string): ApprovalRequestId => ApprovalRequestId.make(value);
@@ -201,7 +203,8 @@ describe("ProviderCommandReactor", () => {
     readonly startSessionEffect?: (
       session: ProviderSession,
     ) => Effect.Effect<ProviderSession, ProviderServiceError>;
-    readonly forkContextBootstrap?: Partial<ScientForkContextBootstrapShape>;
+    readonly forkContextDelivery?: Partial<ScientForkContextDeliveryShape>;
+    readonly nativeFork?: boolean;
     readonly sendTurnEffect?: ProviderServiceShape["sendTurn"];
     readonly tryHandlePromptCommandEffect?: ProviderAuthService["Service"]["tryHandlePromptCommand"];
   }) {
@@ -378,6 +381,9 @@ describe("ProviderCommandReactor", () => {
     ];
 
     const unsupported = () => Effect.die(new Error("Unsupported provider call in test")) as never;
+    const discardSessionContinuity = vi.fn<
+      NonNullable<ProviderServiceShape["discardSessionContinuity"]>
+    >(() => Effect.void);
     const service: ProviderServiceShape = {
       startSession: startSession as ProviderServiceShape["startSession"],
       sendTurn: sendTurn as ProviderServiceShape["sendTurn"],
@@ -392,10 +398,12 @@ describe("ProviderCommandReactor", () => {
       respondToRequest: respondToRequest as ProviderServiceShape["respondToRequest"],
       respondToUserInput: respondToUserInput as ProviderServiceShape["respondToUserInput"],
       stopSession: stopSession as ProviderServiceShape["stopSession"],
+      discardSessionContinuity,
       listSessions: () => Effect.succeed(runtimeSessions),
       getCapabilities: (_provider) =>
         Effect.succeed({
           sessionModelSwitch: input?.sessionModelSwitch ?? "in-session",
+          ...(input?.nativeFork ? { nativeFork: true as const } : {}),
         }),
       assertConversationRollbackSupported: () => unsupported(),
       getInstanceInfo: (instanceId) => {
@@ -490,7 +498,7 @@ describe("ProviderCommandReactor", () => {
       }),
     ).pipe(Layer.provide(orchestrationLayer));
     const layer = ProviderCommandReactorLive.pipe(
-      Layer.provide(ScientForkContextBootstrapTest(input?.forkContextBootstrap)),
+      Layer.provide(ScientForkContextDeliveryTest(input?.forkContextDelivery)),
       Layer.provideMerge(reactorOrchestrationLayer),
       Layer.provideMerge(projectionSnapshotLayer),
       Layer.provideMerge(Layer.succeed(ProviderService, service)),
@@ -689,6 +697,7 @@ describe("ProviderCommandReactor", () => {
       tryHandlePromptCommand,
       startSession,
       sendTurn,
+      discardSessionContinuity,
       compactThread,
       interruptTurn,
       respondToRequest,
@@ -969,107 +978,30 @@ describe("ProviderCommandReactor", () => {
     expect(harness.startSession.mock.calls[0]?.[1]).not.toHaveProperty("title");
   });
 
-  it("sends the prepared fork context and records it only after provider acceptance", async () => {
-    const callOrder: string[] = [];
-    const prepareTurn = vi.fn<ScientForkContextBootstrapShape["prepareTurn"]>((input) =>
-      Effect.sync(() => {
-        callOrder.push("prepare");
-        return {
-          input: `retained-context\n${input.messageText}`,
-          attachments: input.attachments,
-          bootstrapPending: true,
-          omittedMessageCount: 0,
-          omittedAttachmentCount: 0,
-        };
-      }),
-    );
-    const beginAttempt = vi.fn<ScientForkContextBootstrapShape["beginAttempt"]>(() =>
-      Effect.sync(() => {
-        callOrder.push("reserved");
-      }),
-    );
-    const markAccepted = vi.fn<ScientForkContextBootstrapShape["markAccepted"]>(() =>
-      Effect.sync(() => {
-        callOrder.push("accepted");
-      }),
-    );
-    const harness = await createHarness({
-      forkLineage: true,
-      forkContextBootstrap: { prepareTurn, beginAttempt, markAccepted },
-      sendTurnEffect: () =>
-        Effect.sync(() => {
-          callOrder.push("send");
-          return {
-            threadId: ThreadId.make("thread-1"),
-            turnId: asTurnId("turn-1"),
-          };
-        }),
-    });
-    const now = "2026-01-01T00:00:00.000Z";
+  const deliverContext = (
+    overrides?: Partial<Extract<ForkTurnContext, { kind: "deliver" }>>,
+  ): ForkTurnContext => ({
+    kind: "deliver",
+    handoffId: "handoff:test",
+    contextPreamble: "SCIENT_CONTEXT_HANDOFF_JSON\n{}\nEND_SCIENT_CONTEXT_HANDOFF",
+    attachments: [],
+    requireFreshSession: false,
+    includedItemCount: 3,
+    omittedItemCount: 0,
+    budgetTokens: 1000,
+    requestTokenBudget: 96000,
+    ...overrides,
+  });
 
-    await harness.runEffect(
+  const startForkTurn = (harness: Awaited<ReturnType<typeof createHarness>>, messageId: string) =>
+    harness.runEffect(
       harness.engine.dispatch({
         type: "thread.turn.start",
-        commandId: CommandId.make("cmd-fork-bootstrap-turn"),
+        commandId: CommandId.make(`cmd-${messageId}`),
         selectedScientSkillNames: ["pdf-authoring"],
         threadId: ThreadId.make("thread-1"),
         message: {
-          messageId: asMessageId("fork-user-message"),
-          role: "user",
-          text: "continue from here",
-          attachments: [],
-        },
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        createdAt: now,
-      }),
-    );
-
-    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
-    await waitFor(() => markAccepted.mock.calls.length === 1);
-    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
-      input: "retained-context\ncontinue from here",
-      selectedScientSkillNames: ["pdf-authoring"],
-    });
-    expect(callOrder).toEqual(["prepare", "reserved", "send", "accepted"]);
-  });
-
-  it("marks fork context ambiguous when provider acceptance cannot be proven", async () => {
-    const markAccepted = vi.fn<ScientForkContextBootstrapShape["markAccepted"]>(() => Effect.void);
-    const markAmbiguous = vi.fn<ScientForkContextBootstrapShape["markAmbiguous"]>(
-      () => Effect.void,
-    );
-    const harness = await createHarness({
-      forkLineage: true,
-      forkContextBootstrap: {
-        prepareTurn: (input) =>
-          Effect.succeed({
-            input: `retained-context\n${input.messageText}`,
-            attachments: input.attachments,
-            bootstrapPending: true,
-            omittedMessageCount: 0,
-            omittedAttachmentCount: 0,
-          }),
-        markAccepted,
-        markAmbiguous,
-      },
-      sendTurnEffect: () =>
-        Effect.fail(
-          new ProviderAdapterRequestError({
-            provider: "codex",
-            method: "thread.send",
-            detail: "deterministic send rejection",
-          }),
-        ),
-    });
-
-    await harness.runEffect(
-      harness.engine.dispatch({
-        type: "thread.turn.start",
-        commandId: CommandId.make("cmd-fork-bootstrap-rejected-turn"),
-        threadId: ThreadId.make("thread-1"),
-        message: {
-          messageId: asMessageId("fork-rejected-user-message"),
+          messageId: asMessageId(messageId),
           role: "user",
           text: "continue from here",
           attachments: [],
@@ -1079,15 +1011,330 @@ describe("ProviderCommandReactor", () => {
         createdAt: "2026-01-01T00:00:00.000Z",
       }),
     );
-    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
-    await waitFor(() => markAmbiguous.mock.calls.length === 1);
 
-    expect(harness.sendTurn).toHaveBeenCalledTimes(1);
-    expect(markAccepted).not.toHaveBeenCalled();
-    expect(markAmbiguous).toHaveBeenCalledWith({
-      threadId: ThreadId.make("thread-1"),
-      messageId: asMessageId("fork-rejected-user-message"),
+  it("sends fork context beside the user's message and settles it after acceptance", async () => {
+    const callOrder: string[] = [];
+    const settleDelivery = vi.fn<ScientForkContextDeliveryShape["settleDelivery"]>((input) =>
+      Effect.sync(() => {
+        callOrder.push(`settle:${input.outcome.type}`);
+      }),
+    );
+    const harness = await createHarness({
+      forkLineage: true,
+      forkContextDelivery: {
+        prepareTurn: () =>
+          Effect.sync(() => {
+            callOrder.push("prepare");
+            return deliverContext();
+          }),
+        beginDelivery: () =>
+          Effect.sync(() => {
+            callOrder.push("begin");
+          }),
+        settleDelivery,
+      },
+      sendTurnEffect: () =>
+        Effect.sync(() => {
+          callOrder.push("send");
+          return { threadId: ThreadId.make("thread-1"), turnId: asTurnId("turn-1") };
+        }),
     });
+
+    await startForkTurn(harness, "fork-user-message");
+    await waitFor(() => settleDelivery.mock.calls.length === 1);
+
+    // The user's message keeps its own input limit; context travels separately.
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+      input: "continue from here",
+      contextPreamble: "SCIENT_CONTEXT_HANDOFF_JSON\n{}\nEND_SCIENT_CONTEXT_HANDOFF",
+      selectedScientSkillNames: ["pdf-authoring"],
+    });
+    expect(callOrder).toEqual(["prepare", "begin", "send", "settle:accepted"]);
+  });
+
+  it("keeps a fork attached to its live native session before a resume cursor exists", async () => {
+    const prepareTurn = vi.fn<ScientForkContextDeliveryShape["prepareTurn"]>(() =>
+      Effect.succeed(deliverContext()),
+    );
+    const beginDelivery = vi.fn<ScientForkContextDeliveryShape["beginDelivery"]>(() => Effect.void);
+    const settleDelivery = vi.fn<ScientForkContextDeliveryShape["settleDelivery"]>(
+      () => Effect.void,
+    );
+    const harness = await createHarness({
+      forkLineage: true,
+      startSessionEffect: ({ resumeCursor: _cursor, ...session }) =>
+        Effect.succeed({ ...session, nativeSessionId: "native-before-file" }),
+      forkContextDelivery: { prepareTurn, beginDelivery, settleDelivery },
+    });
+    await startForkTurn(harness, "first-delayed-cursor");
+    await waitFor(() => settleDelivery.mock.calls.length === 1);
+    const key = "codex@codex:native-before-file";
+    expect(prepareTurn.mock.calls[0]?.[0].nativeThreadKey).toBe(key);
+    expect(beginDelivery.mock.calls[0]?.[0].nativeThreadKey).toBe(key);
+    expect(settleDelivery.mock.calls[0]?.[0].outcome).toEqual({
+      type: "accepted",
+      nativeThreadKey: key,
+    });
+    prepareTurn.mockImplementation(() => Effect.succeed({ kind: "none" }));
+    const session = harness.runtimeSessions[0]!;
+    harness.runtimeSessions[0] = { ...session, resumeCursor: { threadId: "native-before-file" } };
+    await startForkTurn(harness, "second-delayed-cursor");
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+    expect(prepareTurn.mock.calls[1]?.[0].nativeThreadKey).toBe(key);
+    expect(harness.sendTurn.mock.calls[1]?.[0].contextPreamble).toBeUndefined();
+    expect(harness.startSession).toHaveBeenCalledTimes(1);
+    expect(harness.discardSessionContinuity).not.toHaveBeenCalled();
+  });
+
+  effectIt.effect("allows a Droid fork send to remain active beyond two minutes", () =>
+    Effect.gen(function* () {
+      const clock = yield* Clock.Clock;
+      const entered = yield* Deferred.make<void>();
+      const complete = yield* Deferred.make<void>();
+      const settled = yield* Deferred.make<void>();
+      let sendExited = false;
+      const settleDelivery = vi.fn<ScientForkContextDeliveryShape["settleDelivery"]>(() =>
+        Deferred.succeed(settled, undefined).pipe(Effect.asVoid),
+      );
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          clock,
+          threadModelSelection: {
+            instanceId: ProviderInstanceId.make("droid"),
+            model: "droid-model",
+          },
+          forkLineage: true,
+          forkContextDelivery: {
+            prepareTurn: () => Effect.succeed(deliverContext()),
+            settleDelivery,
+          },
+          // Droid's prompt RPC returns at turn completion, not acknowledgement.
+          sendTurnEffect: () =>
+            Deferred.succeed(entered, undefined).pipe(
+              Effect.andThen(Deferred.await(complete)),
+              Effect.as({ threadId: ThreadId.make("thread-1"), turnId: asTurnId("turn-1") }),
+              Effect.ensuring(
+                Effect.sync(() => {
+                  sendExited = true;
+                }),
+              ),
+            ),
+        }),
+      );
+      yield* Effect.promise(() => startForkTurn(harness, "long-droid-fork"));
+      yield* Deferred.await(entered);
+      yield* TestClock.adjust("2 minutes");
+      expect(sendExited).toBe(false);
+      expect(settleDelivery).not.toHaveBeenCalled();
+
+      yield* Deferred.succeed(complete, undefined);
+      yield* Deferred.await(settled);
+      expect(sendExited).toBe(true);
+      expect(settleDelivery.mock.calls.map(([input]) => input.outcome.type)).toEqual(["accepted"]);
+      expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+    }),
+  );
+
+  it("settles an interruption immediately after recording the pending handoff", async () => {
+    const settleDelivery = vi.fn<ScientForkContextDeliveryShape["settleDelivery"]>(
+      () => Effect.void,
+    );
+    const harness = await createHarness({
+      forkLineage: true,
+      forkContextDelivery: {
+        prepareTurn: () => Effect.succeed(deliverContext()),
+        beginDelivery: () => Effect.interrupt,
+        settleDelivery,
+      },
+    });
+    await startForkTurn(harness, "fork-interrupted-after-record");
+    await waitFor(() => settleDelivery.mock.calls.length === 1);
+    expect(settleDelivery.mock.calls[0]?.[0].outcome).toEqual({ type: "maybeDelivered" });
+    expect(harness.sendTurn).not.toHaveBeenCalled();
+  });
+
+  it("settles a rejection that sent nothing as notSent, so the next message can retry", async () => {
+    const settleDelivery = vi.fn<ScientForkContextDeliveryShape["settleDelivery"]>(
+      () => Effect.void,
+    );
+    const harness = await createHarness({
+      forkLineage: true,
+      forkContextDelivery: { prepareTurn: () => Effect.succeed(deliverContext()), settleDelivery },
+      sendTurnEffect: () =>
+        Effect.fail(
+          new ProviderAdapterRequestError({
+            provider: "codex",
+            method: "thread.send",
+            detail: "rejected before dispatch",
+          }),
+        ),
+    });
+
+    await startForkTurn(harness, "fork-rejected-user-message");
+    await waitFor(() => settleDelivery.mock.calls.length === 1);
+
+    expect(settleDelivery).toHaveBeenCalledWith({
+      threadId: ThreadId.make("thread-1"),
+      handoffId: "handoff:test",
+      outcome: { type: "notSent" },
+    });
+  });
+
+  it("keeps a failure after dispatch uncertain instead of claiming it was not sent", async () => {
+    const settleDelivery = vi.fn<ScientForkContextDeliveryShape["settleDelivery"]>(
+      () => Effect.void,
+    );
+    const harness = await createHarness({
+      forkLineage: true,
+      forkContextDelivery: { prepareTurn: () => Effect.succeed(deliverContext()), settleDelivery },
+      sendTurnEffect: () =>
+        Effect.suspend(() => {
+          const error = new ProviderAdapterRequestError({
+            provider: "codex",
+            method: "thread.send",
+            detail: "connection lost after dispatch",
+          });
+          markTurnDispatchAttempted(error);
+          return Effect.fail(error);
+        }),
+    });
+
+    await startForkTurn(harness, "fork-uncertain-user-message");
+    await waitFor(() => settleDelivery.mock.calls.length === 1);
+
+    expect(settleDelivery.mock.calls[0]?.[0].outcome).toEqual({ type: "maybeDelivered" });
+  });
+
+  it("starts a fresh provider session before re-delivering uncertain context", async () => {
+    const harness = await createHarness({
+      forkLineage: true,
+      forkContextDelivery: {
+        prepareTurn: () => Effect.succeed(deliverContext({ requireFreshSession: true })),
+      },
+    });
+
+    await startForkTurn(harness, "fork-fresh-session-message");
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    expect(harness.discardSessionContinuity).toHaveBeenCalledWith({
+      threadId: ThreadId.make("thread-1"),
+    });
+  });
+
+  const nativePlan = {
+    resumeCursor: { threadId: "source-native" },
+    throughTurnId: asTurnId("source-turn"),
+  };
+
+  it("starts a fork's first session as a native provider fork", async () => {
+    const recordNativeFork = vi.fn<ScientForkContextDeliveryShape["recordNativeFork"]>(
+      () => Effect.void,
+    );
+    const harness = await createHarness({
+      forkLineage: true,
+      nativeFork: true,
+      forkContextDelivery: {
+        planNativeFork: () => Effect.succeed(nativePlan),
+        recordNativeFork,
+      },
+      startSessionEffect: (session) =>
+        Effect.succeed({ ...session, resumeCursor: { threadId: "forked-native" } }),
+    });
+
+    await startForkTurn(harness, "fork-native-message");
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({ forkFrom: nativePlan });
+    expect(recordNativeFork).toHaveBeenCalledWith({
+      threadId: ThreadId.make("thread-1"),
+      nativeThreadKey: "codex@codex:forked-native",
+    });
+  });
+
+  it("never continues a fork inside the source's own provider thread", async () => {
+    const recordNativeFork = vi.fn<ScientForkContextDeliveryShape["recordNativeFork"]>(
+      () => Effect.void,
+    );
+    const recordNativeForkUnavailable = vi.fn<
+      ScientForkContextDeliveryShape["recordNativeForkUnavailable"]
+    >(() => Effect.void);
+    const harness = await createHarness({
+      forkLineage: true,
+      nativeFork: true,
+      forkContextDelivery: {
+        planNativeFork: () => Effect.succeed(nativePlan),
+        recordNativeFork,
+        recordNativeForkUnavailable,
+        prepareTurn: () => Effect.succeed(deliverContext()),
+      },
+      // The provider handed back the source thread instead of a fork.
+      startSessionEffect: (session) =>
+        Effect.succeed({ ...session, resumeCursor: nativePlan.resumeCursor }),
+    });
+
+    await startForkTurn(harness, "fork-native-same-thread-message");
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    expect(recordNativeFork).not.toHaveBeenCalled();
+    expect(recordNativeForkUnavailable).toHaveBeenCalled();
+    expect(harness.discardSessionContinuity).toHaveBeenCalledWith({
+      threadId: ThreadId.make("thread-1"),
+    });
+  });
+
+  it("records an unavailable native fork and continues with the portable handoff", async () => {
+    let attempts = 0;
+    const recordNativeForkUnavailable = vi.fn<
+      ScientForkContextDeliveryShape["recordNativeForkUnavailable"]
+    >(() => Effect.void);
+    const recordNativeFork = vi.fn<ScientForkContextDeliveryShape["recordNativeFork"]>(
+      () => Effect.void,
+    );
+    const harness = await createHarness({
+      forkLineage: true,
+      nativeFork: true,
+      forkContextDelivery: {
+        planNativeFork: () => Effect.succeed(nativePlan),
+        recordNativeFork,
+        recordNativeForkUnavailable,
+        prepareTurn: () => Effect.succeed(deliverContext()),
+      },
+      startSessionEffect: (session) =>
+        attempts++ === 0
+          ? Effect.fail(
+              new ProviderAdapterRequestError({
+                provider: "codex",
+                method: "thread/fork",
+                detail: "turn not found",
+              }),
+            )
+          : Effect.succeed(session),
+    });
+
+    await startForkTurn(harness, "fork-native-fallback-message");
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    expect(recordNativeForkUnavailable).toHaveBeenCalledWith({
+      threadId: ThreadId.make("thread-1"),
+      reason: "turn not found",
+    });
+    expect(recordNativeFork).not.toHaveBeenCalled();
+    expect(harness.startSession.mock.calls.at(-1)?.[1]).not.toHaveProperty("forkFrom");
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toHaveProperty("contextPreamble");
+  });
+
+  it("sends a plain turn when the fork already holds its context", async () => {
+    const beginDelivery = vi.fn<ScientForkContextDeliveryShape["beginDelivery"]>(() => Effect.void);
+    const harness = await createHarness({
+      forkLineage: true,
+      forkContextDelivery: { beginDelivery },
+    });
+
+    await startForkTurn(harness, "fork-delivered-message");
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    expect(harness.sendTurn.mock.calls[0]?.[0]).not.toHaveProperty("contextPreamble");
+    expect(beginDelivery).not.toHaveBeenCalled();
   });
 
   effectIt.effect("forwards only a user-renamed title when starting a provider session", () =>

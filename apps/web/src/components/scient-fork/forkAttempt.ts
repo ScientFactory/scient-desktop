@@ -8,6 +8,7 @@ const Attempt = Schema.Struct({
   handoffDone: Schema.Boolean,
   composerDraftFingerprint: Schema.optional(Schema.String),
   displayTitle: Schema.optional(Schema.String),
+  attachmentIdMap: Schema.optional(Schema.Record(Schema.String, Schema.String)),
 });
 export type ForkAttempt = typeof Attempt.Type;
 const decodeAttempt = Schema.decodeUnknownSync(Schema.fromJsonString(Attempt));
@@ -56,14 +57,15 @@ export async function deliverForkAttempt(input: {
   key: string;
   attempt: ForkAttempt;
   store: ForkAttemptStore;
-  dispatch: (attempt: ForkAttempt) => Promise<void>;
+  dispatch: (attempt: ForkAttempt) => Promise<Readonly<Record<string, string>> | void>;
   discardDraft: () => void;
 }): Promise<ForkAttempt> {
   let attempt = input.attempt;
   if (attempt.ready) return attempt;
   input.store.set(input.key, attempt);
   try {
-    await input.dispatch(attempt);
+    const attachmentIdMap = await input.dispatch(attempt);
+    if (attachmentIdMap !== undefined) attempt = { ...attempt, attachmentIdMap };
   } catch (error) {
     const disposition = forkErrorDisposition(error);
     if (disposition === "rejected" || disposition === "abandoned") {

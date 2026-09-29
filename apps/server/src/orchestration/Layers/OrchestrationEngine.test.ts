@@ -460,6 +460,7 @@ describe("OrchestrationEngine", () => {
           getThreadRuntimeContext: () => Effect.die("unused"),
           getTurnStartMessage: () => Effect.die("unused"),
           getThreadShellById: () => Effect.succeedNone,
+          getThreadHistoryPage: () => Effect.die("unused history page"),
           getThreadDetailById: () => Effect.succeedNone,
           getThreadDetailSnapshot: () => Effect.succeedNone,
           searchThreads: () => Effect.succeed({ matches: [] }),

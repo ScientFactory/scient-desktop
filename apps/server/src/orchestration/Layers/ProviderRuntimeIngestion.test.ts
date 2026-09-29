@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import { withForkLiveImages } from "../scient-fork/liveImages.ts";
 import * as NodeFS from "node:fs";
 import { MODEL_TOKEN_LIMIT_MESSAGE } from "@t3tools/shared/model";
 import * as NodeOS from "node:os";
@@ -66,6 +67,7 @@ import {
   runtimeEventToActivities,
   splitBufferedAssistantText,
 } from "./ProviderRuntimeIngestion.ts";
+import { ScientLiveTurnFlush, ScientLiveTurnFlushLive } from "../scient-fork/liveTurnFlush.ts";
 import { DEFAULT_THREAD_TITLE } from "../threadTitles.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
@@ -416,6 +418,8 @@ describe("ProviderRuntimeIngestion", () => {
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), serverBaseDir)),
       Layer.provideMerge(NodeServices.layer),
       Layer.provideMerge(Layer.succeed(Tracer.Tracer, sqlCounter.tracer)),
+      // SCIENT-FORK: ingestion registers its ordered fork flush here.
+      Layer.provideMerge(ScientLiveTurnFlushLive),
     );
     const testRuntime = ManagedRuntime.make(layer);
     runtime = testRuntime;
@@ -488,7 +492,22 @@ describe("ProviderRuntimeIngestion", () => {
     return {
       engine,
       dispatch,
+      flushForFork: (threadId: ThreadId) =>
+        testRuntime.runPromise(
+          Effect.flatMap(ScientLiveTurnFlush, (liveTurnFlush) => liveTurnFlush.flush(threadId)),
+        ),
       readModel: () => testRuntime.runPromise(snapshotQuery.getSnapshot()),
+      readForkImageSnapshot: (threadId: ThreadId, turnId: TurnId) =>
+        testRuntime.runPromise(
+          Effect.gen(function* () {
+            const sql = yield* SqlClient.SqlClient;
+            const origin = (yield* snapshotQuery.getSnapshot()).threads.find(
+              (thread) => thread.id === threadId,
+            );
+            if (!origin) return yield* Effect.die("missing test thread");
+            return yield* withForkLiveImages(sql, origin, turnId);
+          }),
+        ),
       readTurn: (turnId: TurnId) =>
         testRuntime.runPromise(
           Effect.flatMap(ProjectionTurnRepository, (turns) =>
@@ -3059,6 +3078,12 @@ describe("ProviderRuntimeIngestion", () => {
         delta: "## Buffered plan\n\n- first",
       },
     });
+    await harness.drain();
+    await harness.flushForFork(asThreadId("thread-1"));
+    const partial = (await harness.readModel()).threads.find((entry) => entry.id === "thread-1");
+    expect(partial?.proposedPlans[0]?.planMarkdown).toBe("## Buffered plan\n\n- first");
+    expect(partial?.session?.status).toBe("running");
+    expect(partial?.proposedPlans[0]?.createdAt).toBeTruthy();
     harness.emit({
       type: "turn.proposed.delta",
       eventId: asEventId("evt-plan-delta-2"),
@@ -3085,7 +3110,8 @@ describe("ProviderRuntimeIngestion", () => {
     const thread = await waitForThread(harness.readModel, (entry) =>
       entry.proposedPlans.some(
         (proposedPlan: ProviderRuntimeTestProposedPlan) =>
-          proposedPlan.id === "plan:thread-1:turn:turn-plan-buffer",
+          proposedPlan.id === "plan:thread-1:turn:turn-plan-buffer" &&
+          proposedPlan.planMarkdown.endsWith("- second"),
       ),
     );
     const proposedPlan = thread.proposedPlans.find(
@@ -3093,7 +3119,7 @@ describe("ProviderRuntimeIngestion", () => {
         entry.id === "plan:thread-1:turn:turn-plan-buffer",
     );
     expect(proposedPlan?.planMarkdown).toBe("## Buffered plan\n\n- first\n- second");
-    expect(proposedPlan?.createdAt).toBe(now);
+    expect(proposedPlan?.createdAt).toBe(partial?.proposedPlans[0]?.createdAt);
   });
 
   it("releases a blank completed plan before a late replacement", async () => {
@@ -4025,6 +4051,75 @@ describe("ProviderRuntimeIngestion", () => {
     );
   });
 
+  it("persists a running turn's buffered text when it is forked", async () => {
+    const harness = await createHarness({ serverSettings: { responseStreamingMode: "turn" } });
+    const now = "2026-01-01T00:00:00.000Z";
+    const codex = ProviderDriverKind.make("codex");
+    const threadId = asThreadId("thread-1");
+    const turnId = asTurnId("turn-fork-flush");
+    const itemId = asItemId("item-fork-flush");
+    await harness.emitAndDrain([
+      {
+        type: "turn.started",
+        eventId: asEventId("evt-fork-flush-started"),
+        provider: codex,
+        createdAt: now,
+        threadId,
+        turnId,
+      },
+    ]);
+    harness.advanceClock(1_000);
+    await harness.emitAndDrain([
+      {
+        type: "content.delta",
+        eventId: asEventId("evt-fork-flush-delta"),
+        provider: codex,
+        createdAt: now,
+        threadId,
+        turnId,
+        itemId,
+        payload: { streamKind: "assistant_text", delta: "Held in memory so far. " },
+      },
+    ]);
+    const message = async () =>
+      (await harness.readModel()).threads
+        .find((thread) => thread.id === threadId)
+        ?.messages.find((entry: ProviderRuntimeTestMessage) => entry.id === `assistant:${itemId}`);
+    // Turn mode keeps the whole message in memory until it completes.
+    expect(await message()).toBeUndefined();
+
+    await harness.flushForFork(threadId);
+    expect(await message()).toMatchObject({ text: "Held in memory so far. ", streaming: true });
+
+    // The segment stays open: later text appends once, nothing is duplicated.
+    harness.advanceClock(1_000);
+    await harness.emitAndDrain([
+      {
+        type: "content.delta",
+        eventId: asEventId("evt-fork-flush-delta-2"),
+        provider: codex,
+        createdAt: now,
+        threadId,
+        turnId,
+        itemId,
+        payload: { streamKind: "assistant_text", delta: "Then the rest." },
+      },
+    ]);
+    await harness.emitAndDrain([
+      {
+        type: "item.completed",
+        eventId: asEventId("evt-fork-flush-completed"),
+        provider: codex,
+        createdAt: now,
+        threadId,
+        turnId,
+        itemId,
+        payload: { itemType: "assistant_message", status: "completed" },
+      },
+    ]);
+    expect((await message())?.text).toBe("Held in memory so far. Then the rest.");
+  });
+
   it("holds every paragraph until completion in turn mode", async () => {
     const harness = await createHarness({ serverSettings: { responseStreamingMode: "turn" } });
     const now = "2026-01-01T00:00:00.000Z";
@@ -4284,110 +4379,130 @@ describe("ProviderRuntimeIngestion", () => {
     expect(completionEvents).toHaveLength(1);
   });
 
-  it("materializes a generated image and persists it on the terminal assistant message", async () => {
-    const codexHome = makeTempDir("t3-provider-codex-home-");
-    const providerThreadId = "provider-thread-generated-image";
-    const generatedRoot = NodePath.join(codexHome, "generated_images", providerThreadId);
-    NodeFS.mkdirSync(generatedRoot, { recursive: true });
-    const sourcePath = NodePath.join(generatedRoot, "image-call.png");
-    const pngBytes = Buffer.from(
-      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
-      "base64",
-    );
-    NodeFS.writeFileSync(sourcePath, pngBytes);
-    const harness = await createHarness({
-      serverSettings: { providers: { codex: { homePath: codexHome } } },
-    });
-    const now = "2026-08-15T00:00:00.000Z";
-    const turnId = asTurnId("turn-generated-image");
+  it.each([false, true])(
+    "persists generated images without losing them after a fork flush (%s)",
+    async (forkFlush) => {
+      const codexHome = makeTempDir("t3-provider-codex-home-");
+      const providerThreadId = "provider-thread-generated-image";
+      const generatedRoot = NodePath.join(codexHome, "generated_images", providerThreadId);
+      NodeFS.mkdirSync(generatedRoot, { recursive: true });
+      const sourcePath = NodePath.join(generatedRoot, "image-call.png");
+      const pngBytes = Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+        "base64",
+      );
+      NodeFS.writeFileSync(sourcePath, pngBytes);
+      const harness = await createHarness({
+        serverSettings: { providers: { codex: { homePath: codexHome } } },
+      });
+      const now = "2026-08-15T00:00:00.000Z";
+      const turnId = asTurnId("turn-generated-image");
+      const expectedMessageId = "assistant:terminal-image-message";
 
-    harness.emit({
-      type: "turn.started",
-      eventId: asEventId("evt-generated-image-turn-started"),
-      provider: ProviderDriverKind.make("codex"),
-      createdAt: now,
-      threadId: asThreadId("thread-1"),
-      turnId,
-    });
-    await waitForThread(harness.readModel, (thread) => thread.session?.activeTurnId === turnId);
+      harness.emit({
+        type: "turn.started",
+        eventId: asEventId("evt-generated-image-turn-started"),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: now,
+        threadId: asThreadId("thread-1"),
+        turnId,
+      });
+      await waitForThread(harness.readModel, (thread) => thread.session?.activeTurnId === turnId);
 
-    harness.emit({
-      type: "item.completed",
-      eventId: asEventId("evt-generated-image"),
-      provider: ProviderDriverKind.make("codex"),
-      createdAt: now,
-      threadId: asThreadId("thread-1"),
-      turnId,
-      itemId: asItemId("image-call"),
-      payload: {
-        itemType: "image_view",
-        status: "completed",
-        title: "Generated image",
-        data: {
-          kind: "scient.codex-generated-image",
-          callId: "image-call",
-          providerThreadId,
-          sourcePath,
+      harness.emit({
+        type: "item.completed",
+        eventId: asEventId("evt-generated-image"),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: now,
+        threadId: asThreadId("thread-1"),
+        turnId,
+        itemId: asItemId("image-call"),
+        payload: {
+          itemType: "image_view",
+          status: "completed",
+          title: "Generated image",
+          data: {
+            kind: "scient.codex-generated-image",
+            callId: "image-call",
+            providerThreadId,
+            sourcePath,
+          },
         },
-      },
-    });
-    harness.emit({
-      type: "item.completed",
-      eventId: asEventId("evt-generated-image-assistant"),
-      provider: ProviderDriverKind.make("codex"),
-      createdAt: now,
-      threadId: asThreadId("thread-1"),
-      turnId,
-      itemId: asItemId("terminal-image-message"),
-      payload: {
-        itemType: "assistant_message",
-        status: "completed",
-      },
-    });
+      });
+      if (forkFlush) {
+        await harness.drain();
+        await harness.flushForFork(asThreadId("thread-1"));
+        const captured = (await harness.readModel()).threads.find(
+          (entry) => entry.id === "thread-1",
+        );
+        expect(captured?.session?.status).toBe("running");
+        const forkSnapshot = await harness.readForkImageSnapshot(asThreadId("thread-1"), turnId);
+        expect(
+          forkSnapshot.messages.find((entry) => entry.id === `assistant:fork-images:${turnId}`)
+            ?.attachments,
+        ).toHaveLength(1);
+        expect(
+          captured?.messages.some(
+            (entry) =>
+              entry.id === expectedMessageId || entry.id === `assistant:fork-images:${turnId}`,
+          ),
+        ).toBe(false);
+      }
+      harness.emit({
+        type: "item.completed",
+        eventId: asEventId("evt-generated-image-assistant"),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: now,
+        threadId: asThreadId("thread-1"),
+        turnId,
+        itemId: asItemId("terminal-image-message"),
+        payload: {
+          itemType: "assistant_message",
+          status: "completed",
+        },
+      });
 
-    const withImage = await waitForThread(harness.readModel, (thread) =>
-      thread.messages.some(
-        (message) =>
-          message.id === "assistant:terminal-image-message" &&
-          message.attachments?.length === 1 &&
-          message.streaming === false,
-      ),
-    );
-    const message = withImage.messages.find(
-      (entry) => entry.id === "assistant:terminal-image-message",
-    );
-    expect(message?.text).toBe("");
-    expect(message?.attachments).toHaveLength(1);
-    expect(message?.attachments?.[0]).toMatchObject({
-      type: "image",
-      name: "generated-image.png",
-      mimeType: "image/png",
-      sizeBytes: pngBytes.length,
-    });
-    const attachmentId = message?.attachments?.[0]?.id;
-    expect(attachmentId).toBeDefined();
-    expect(
-      NodeFS.readFileSync(NodePath.join(harness.attachmentsDir, `${attachmentId}.png`)),
-    ).toEqual(pngBytes);
+      const withImage = await waitForThread(harness.readModel, (thread) =>
+        thread.messages.some(
+          (message) =>
+            message.id === expectedMessageId &&
+            message.attachments?.length === 1 &&
+            message.streaming === false,
+        ),
+      );
+      const message = withImage.messages.find((entry) => entry.id === expectedMessageId);
+      expect(message?.text).toBe("");
+      expect(message?.attachments).toHaveLength(1);
+      expect(message?.attachments?.[0]).toMatchObject({
+        type: "image",
+        name: "generated-image.png",
+        mimeType: "image/png",
+        sizeBytes: pngBytes.length,
+      });
+      const attachmentId = message?.attachments?.[0]?.id;
+      expect(attachmentId).toBeDefined();
+      expect(
+        NodeFS.readFileSync(NodePath.join(harness.attachmentsDir, `${attachmentId}.png`)),
+      ).toEqual(pngBytes);
 
-    harness.emit({
-      type: "turn.completed",
-      eventId: asEventId("evt-generated-image-turn-completed"),
-      provider: ProviderDriverKind.make("codex"),
-      createdAt: now,
-      threadId: asThreadId("thread-1"),
-      turnId,
-      payload: { state: "completed" },
-    });
-    const completed = await waitForThread(
-      harness.readModel,
-      (thread) => thread.session?.status === "ready",
-    );
-    expect(
-      completed.messages.find((entry) => entry.id === "assistant:terminal-image-message")
-        ?.attachments,
-    ).toHaveLength(1);
-  });
+      harness.emit({
+        type: "turn.completed",
+        eventId: asEventId("evt-generated-image-turn-completed"),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: now,
+        threadId: asThreadId("thread-1"),
+        turnId,
+        payload: { state: "completed" },
+      });
+      const completed = await waitForThread(
+        harness.readModel,
+        (thread) => thread.session?.status === "ready",
+      );
+      expect(
+        completed.messages.find((entry) => entry.id === expectedMessageId)?.attachments,
+      ).toHaveLength(1);
+    },
+  );
 
   it("maps canonical request events into approval activities with requestKind", async () => {
     const harness = await createHarness();

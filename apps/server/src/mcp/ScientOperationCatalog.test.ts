@@ -16,8 +16,8 @@ const ScientSourcesListTool = ScientSourcesToolkit.tools.scient_sources_list;
 import { ScientSkillLoadTool } from "./toolkits/skills/tools.ts";
 import { PreviewSnapshotTool } from "./toolkits/preview/tools.ts";
 
-it("describes all 29 existing tools without replacing their schemas", () => {
-  expect(scientOperationCatalog.list()).toHaveLength(29);
+it("describes all 30 existing tools without replacing their schemas", () => {
+  expect(scientOperationCatalog.list()).toHaveLength(30);
   for (const tool of [
     ScientPdfBuildTool,
     ScientComputeToolkit.tools.scient_compute_inventory,

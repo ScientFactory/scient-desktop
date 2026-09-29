@@ -5,32 +5,52 @@ import {
   ExternalLinkIcon,
   LoaderIcon,
   RefreshCwIcon,
-  ShieldCheckIcon,
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
-import { DroidIcon } from "../../components/Icons";
 import { Button } from "../../components/ui/button";
 import {
   AssistedSetupActions,
+  AssistedSetupDiagnostics,
   AssistedSetupFrame,
   AssistedSetupStatus,
+  AssistedSetupUpdateButton,
+  AssistedSetupUpdateStatus,
+  ProviderSetupIcon,
 } from "./AssistedProviderSetup";
 import {
+  cancelRuntimeActionLabel,
+  failedRuntimeOperationMessage,
   isActiveProviderConnectionOperation,
   isActiveProviderRuntimeOperation,
   isProviderRuntimePresentedAsInstalled,
+  managedRuntimeRepairMessage,
   needsManagedRuntimeRecovery,
   providerAccountIdentity,
   providerLifecycleFailureMessage,
 } from "./providerConnectionPresentation";
-import { startReviewedProviderRuntimeAction } from "./providerLifecycleActions";
+import {
+  externalProviderUpdate,
+  externalProviderUpdateProgress,
+  providerUpdateIssue,
+  providerUpdateOffer,
+  startReviewedProviderRuntimeAction,
+  updateManagedOrExternalProviderRuntime,
+} from "./providerLifecycleActions";
 import { resolveProviderRuntimeForPresentation } from "./ProviderRuntimeSection";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
 
-type PendingAction = "install" | "repair" | "sign-in" | "cancel-runtime" | "cancel-sign-in" | null;
+type PendingAction =
+  | "install"
+  | "repair"
+  | "update"
+  | "external-update"
+  | "sign-in"
+  | "cancel-runtime"
+  | "cancel-sign-in"
+  | null;
 
 export function DroidInlineSetup(props: {
   readonly accountAction?: ReactNode;
@@ -38,6 +58,11 @@ export function DroidInlineSetup(props: {
   readonly provider: ServerProvider;
   readonly displayName: string;
   readonly managedRuntimePresentedExternally?: boolean;
+  /**
+   * Composer only: the model setup entry point. `primary` is the ready
+   * frame's one action; `secondary` sits quietly under another frame's.
+   */
+  readonly modelsActions?: { readonly primary: ReactNode; readonly secondary: ReactNode };
   readonly onRepairSucceeded?: () => void;
 }) {
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
@@ -67,6 +92,19 @@ export function DroidInlineSetup(props: {
     props.provider.status === "ready" && isAuthenticated && props.provider.models.length > 0;
   const needsRepair =
     !props.managedRuntimePresentedExternally && needsManagedRuntimeRecovery(props.provider);
+  const updateOffer = providerUpdateOffer(props.provider, {
+    managed: !props.managedRuntimePresentedExternally,
+  });
+  const externalUpdateProgress = externalProviderUpdateProgress(
+    props.provider,
+    pendingAction === "external-update",
+  );
+  // Custom models need Droid itself, not a Factory account.
+  const modelsActions =
+    props.provider.installed && !props.provider.probePending ? props.modelsActions : undefined;
+  const secondaryActions = modelsActions ? (
+    <AssistedSetupActions>{modelsActions.secondary}</AssistedSetupActions>
+  ) : null;
 
   useEffect(() => {
     const localOperation = localRuntime?.operation;
@@ -92,6 +130,23 @@ export function DroidInlineSetup(props: {
       }
     } catch (error) {
       setLocalError(providerLifecycleFailureMessage(error, `Scient could not ${action} Droid.`));
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
+  const update = async () => {
+    setLocalError(null);
+    setPendingAction(updateOffer?.path === "external" ? "external-update" : "update");
+    try {
+      const provider = await updateManagedOrExternalProviderRuntime(
+        props.controller,
+        props.provider,
+        "No Droid update is currently available.",
+      );
+      setLocalRuntime(provider.connection?.runtime ?? null);
+    } catch (error) {
+      setLocalError(providerLifecycleFailureMessage(error, "Scient could not update Droid."));
     } finally {
       setPendingAction(null);
     }
@@ -140,22 +195,37 @@ export function DroidInlineSetup(props: {
     }
   };
 
-  if (activeRuntimeOperation || pendingAction === "install" || pendingAction === "repair") {
-    const repairing = pendingAction === "repair" || activeRuntimeOperation?.action === "repair";
+  const runtimeDiagnostics = (
+    <AssistedSetupDiagnostics
+      displayName={props.displayName}
+      presentedExternally={props.managedRuntimePresentedExternally}
+      provider={props.provider}
+    />
+  );
+  if (
+    activeRuntimeOperation ||
+    pendingAction === "install" ||
+    pendingAction === "repair" ||
+    pendingAction === "update"
+  ) {
+    const action = activeRuntimeOperation?.action ?? pendingAction ?? "install";
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupStatus
           body={activeRuntimeOperation?.message ?? "Preparing the private Droid runtime…"}
           icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
           title={
-            <DroidLoadingTitle>
-              {repairing ? "Repairing Droid" : "Installing Droid"}
-            </DroidLoadingTitle>
+            action === "update"
+              ? "Updating Droid"
+              : action === "repair"
+                ? "Repairing Droid"
+                : "Installing Droid"
           }
         />
         {activeRuntimeOperation ? (
           <AssistedSetupActions>
             <Button
+              aria-label={cancelRuntimeActionLabel("Droid", activeRuntimeOperation.action)}
               disabled={pendingAction === "cancel-runtime"}
               onClick={() => void cancelRuntime()}
               size="sm"
@@ -171,16 +241,30 @@ export function DroidInlineSetup(props: {
             </Button>
           </AssistedSetupActions>
         ) : null}
-      </SetupFrame>
+      </AssistedSetupFrame>
+    );
+  }
+
+  if (externalUpdateProgress) {
+    return (
+      <AssistedSetupFrame>
+        <AssistedSetupUpdateStatus
+          name="Droid"
+          provider={props.provider}
+          trailing={props.accountAction}
+          update={externalProviderUpdate(props.provider)}
+          working={externalUpdateProgress}
+        />
+      </AssistedSetupFrame>
     );
   }
 
   if (needsRepair) {
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupStatus
           body={
-            localError ?? runtimeOperation?.message ?? "Droid’s private runtime could not start."
+            localError ?? managedRuntimeRepairMessage(props.provider, "Droid", runtimeOperation)
           }
           icon={<TriangleAlertIcon className="size-5 text-warning" />}
           role="alert"
@@ -196,16 +280,17 @@ export function DroidInlineSetup(props: {
             <RefreshCwIcon aria-hidden /> Repair Droid
           </Button>
         </AssistedSetupActions>
-      </SetupFrame>
+        {runtimeDiagnostics}
+      </AssistedSetupFrame>
     );
   }
 
   if (!isProviderRuntimePresentedAsInstalled(props.provider)) {
     const canInstall = runtime?.actions.includes("install") ?? false;
     const installationError =
-      localError ?? (runtimeOperation?.status === "failed" ? runtimeOperation.message : null);
+      localError ?? failedRuntimeOperationMessage(runtimeOperation, "install");
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupStatus
           body={
             installationError ??
@@ -217,7 +302,7 @@ export function DroidInlineSetup(props: {
             installationError ? (
               <TriangleAlertIcon className="size-5 text-destructive" />
             ) : (
-              <ShieldCheckIcon className="size-5 text-primary" />
+              <ProviderSetupIcon displayName={props.displayName} driver={props.provider.driver} />
             )
           }
           role={installationError ? "alert" : undefined}
@@ -226,6 +311,7 @@ export function DroidInlineSetup(props: {
         {canInstall ? (
           <AssistedSetupActions>
             <Button
+              aria-label={installationError ? "Retry installation of Droid" : "Install Droid"}
               onClick={() => void runRuntime("install")}
               size="sm"
               type="button"
@@ -236,7 +322,8 @@ export function DroidInlineSetup(props: {
             </Button>
           </AssistedSetupActions>
         ) : null}
-      </SetupFrame>
+        {installationError ? runtimeDiagnostics : null}
+      </AssistedSetupFrame>
     );
   }
 
@@ -244,7 +331,7 @@ export function DroidInlineSetup(props: {
     const starting = pendingAction === "sign-in" && !activeConnectionOperation;
     const verifying = activeConnectionOperation?.status === "verifying";
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupStatus
           body={
             starting
@@ -254,15 +341,12 @@ export function DroidInlineSetup(props: {
                 : "Complete Factory sign in in the browser opened by Droid."
           }
           icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
-          title={
-            <DroidLoadingTitle>
-              {starting ? "Starting sign in" : verifying ? "Verifying sign in" : "Finish sign in"}
-            </DroidLoadingTitle>
-          }
+          title={starting ? "Starting sign in" : verifying ? "Verifying sign in" : "Finish sign in"}
         />
         {activeConnectionOperation ? (
           <AssistedSetupActions>
             <Button
+              aria-label="Cancel Droid sign-in"
               disabled={pendingAction === "cancel-sign-in"}
               onClick={() => void cancelSignIn()}
               size="sm"
@@ -278,13 +362,37 @@ export function DroidInlineSetup(props: {
             </Button>
           </AssistedSetupActions>
         ) : null}
-      </SetupFrame>
+      </AssistedSetupFrame>
+    );
+  }
+
+  if (isAuthenticated && isReady && updateOffer) {
+    const issue = providerUpdateIssue(props.provider, updateOffer, localError);
+    return (
+      <AssistedSetupFrame>
+        <AssistedSetupUpdateStatus
+          issue={issue}
+          name="Droid"
+          provider={props.provider}
+          update={updateOffer}
+        />
+        <AssistedSetupActions>
+          {props.accountAction}
+          <AssistedSetupUpdateButton
+            name="Droid"
+            onClick={() => void update()}
+            retry={issue !== null}
+          />
+        </AssistedSetupActions>
+        {secondaryActions}
+        {issue ? runtimeDiagnostics : null}
+      </AssistedSetupFrame>
     );
   }
 
   if (isAuthenticated) {
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupStatus
           body={
             isReady
@@ -301,27 +409,35 @@ export function DroidInlineSetup(props: {
           title={isReady ? "Droid is ready" : "Droid needs attention"}
           trailing={props.accountAction}
         />
-      </SetupFrame>
+        {modelsActions ? (
+          <AssistedSetupActions>{modelsActions.primary}</AssistedSetupActions>
+        ) : null}
+        {isReady ? null : runtimeDiagnostics}
+      </AssistedSetupFrame>
     );
   }
 
   const signInError =
     localError ?? (connectionOperation?.status === "failed" ? connectionOperation.message : null);
+  const canInstallManaged =
+    !props.managedRuntimePresentedExternally && (runtime?.actions.includes("install") ?? false);
   if (!supportsDevicePairing) {
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupStatus
           body={signInError ?? props.provider.message ?? "Assisted sign in is unavailable."}
           icon={<TriangleAlertIcon className="size-5 text-warning" />}
           role={signInError ? "alert" : undefined}
           title="Assisted sign in unavailable"
         />
-      </SetupFrame>
+        {secondaryActions}
+        {runtimeDiagnostics}
+      </AssistedSetupFrame>
     );
   }
 
   return (
-    <SetupFrame>
+    <AssistedSetupFrame>
       <AssistedSetupStatus
         body={
           signInError ??
@@ -331,42 +447,33 @@ export function DroidInlineSetup(props: {
           signInError ? (
             <TriangleAlertIcon className="size-5 text-destructive" />
           ) : (
-            <ShieldCheckIcon className="size-5 text-primary" />
+            <ProviderSetupIcon displayName={props.displayName} driver={props.provider.driver} />
           )
         }
         role={signInError ? "alert" : undefined}
         title={signInError ? "Droid sign-in didn’t finish" : "Sign in required"}
       />
       <AssistedSetupActions>
-        <Button onClick={() => void signIn()} size="sm" type="button" variant="ghost-primary">
+        <Button
+          aria-label={signInError ? "Try again to sign in to Droid" : undefined}
+          onClick={() => void signIn()}
+          size="sm"
+          type="button"
+          variant="ghost-primary"
+        >
           {signInError ? <RefreshCwIcon aria-hidden /> : <ExternalLinkIcon aria-hidden />}
           {signInError ? "Try sign in again" : "Sign in with Factory"}
         </Button>
       </AssistedSetupActions>
-    </SetupFrame>
-  );
-}
-
-function SetupFrame(props: { readonly children: ReactNode }) {
-  return (
-    <AssistedSetupFrame>
-      <DroidIcon
-        aria-hidden
-        className="hidden size-8 shrink-0 in-[[data-model-picker-content=true]]:block"
-        data-droid-provider-mark="true"
-      />
-      <div className="contents in-[[data-model-picker-content=true]]:[&_[data-assisted-setup-icon=true]]:hidden">
-        {props.children}
-      </div>
+      {secondaryActions}
+      {signInError && !props.managedRuntimePresentedExternally ? (
+        <AssistedSetupDiagnostics
+          displayName={props.displayName}
+          managedActionBusy={pendingAction !== null}
+          onUseManaged={canInstallManaged ? () => void runRuntime("install") : undefined}
+          provider={props.provider}
+        />
+      ) : null}
     </AssistedSetupFrame>
-  );
-}
-
-function DroidLoadingTitle(props: { readonly children: ReactNode }) {
-  return (
-    <span className="inline-flex items-center justify-center gap-1.5">
-      <LoaderIcon className="hidden size-3.5 animate-spin text-primary in-[[data-model-picker-content=true]]:block" />
-      {props.children}
-    </span>
   );
 }

@@ -685,6 +685,11 @@ export const isForkBaselineBoundary = (boundary: OrchestrationForkBoundary): boo
 export const OrchestrationForkLineage = Schema.Struct({
   originThreadId: ThreadId,
   baselineAssistantMessageId: Schema.NullOr(MessageId),
+  /**
+   * Server read model only: destination turns holding inherited transcript.
+   * Revert never removes them. Client-facing payloads omit it.
+   */
+  inheritedTurnIds: Schema.optional(Schema.Array(TurnId)),
 });
 export type OrchestrationForkLineage = typeof OrchestrationForkLineage.Type;
 // SCIENT-FORK:END
@@ -1557,6 +1562,9 @@ export const ThreadForkCommand = Schema.Struct({
   // an unsent composer draft in the destination thread.
   sourceAssistantMessageId: Schema.optional(MessageId),
   sourceUserMessageId: Schema.optional(MessageId),
+  // The running turn itself: retain every completed turn plus that turn's
+  // latest state (reasoning, tool work and text produced so far).
+  sourceRunningTurnId: Schema.optional(TurnId),
   workspaceMode: OrchestrationForkWorkspaceMode,
   // Explicit destination title chosen by the user. When absent, the server
   // allocates the automatic collision-safe title at commit time.
@@ -1564,9 +1572,12 @@ export const ThreadForkCommand = Schema.Struct({
 }).check(
   Schema.makeFilter(
     (command) =>
-      (command.sourceAssistantMessageId === undefined) !==
-        (command.sourceUserMessageId === undefined) ||
-      "exactly one fork source message must be specified",
+      [
+        command.sourceAssistantMessageId,
+        command.sourceUserMessageId,
+        command.sourceRunningTurnId,
+      ].filter((source) => source !== undefined).length === 1 ||
+      "exactly one fork source must be specified",
   ),
 );
 export type ThreadForkCommand = typeof ThreadForkCommand.Type;
@@ -1576,6 +1587,7 @@ export const GetForkOptionsInput = Schema.Struct({
   originThreadId: ThreadId,
   sourceAssistantMessageId: Schema.optional(MessageId),
   sourceUserMessageId: Schema.optional(MessageId),
+  sourceRunningTurnId: Schema.optional(TurnId),
 });
 export type GetForkOptionsInput = typeof GetForkOptionsInput.Type;
 export const ForkOptions = Schema.Struct({
@@ -1584,6 +1596,7 @@ export const ForkOptions = Schema.Struct({
   reason: Schema.NullOr(Schema.String),
   sourceAssistantMessageId: Schema.NullOr(MessageId),
   sourceUserMessageId: Schema.NullOr(MessageId),
+  sourceRunningTurnId: Schema.optional(Schema.NullOr(TurnId)),
   newWorktree: Schema.Boolean,
 });
 export type ForkOptions = typeof ForkOptions.Type;
@@ -1806,6 +1819,10 @@ const ThreadForkCompleteCommand = Schema.Struct({
   threadId: ThreadId,
   checkpointStatus: OrchestrationForkCheckpointStatus,
   workspaceStatus: OrchestrationForkWorkspaceStatus,
+  /** The inherited baseline turn; its turn-zero checkpoint exists only once copied. */
+  checkpointBaseline: Schema.optional(
+    Schema.Struct({ turnId: TurnId, assistantMessageId: Schema.NullOr(MessageId) }),
+  ),
   createdAt: IsoDateTime,
 });
 // SCIENT-FORK:END
@@ -2216,6 +2233,25 @@ export const ThreadForkCopiedBoundary = Schema.Struct({
 });
 export type ThreadForkCopiedBoundary = typeof ThreadForkCopiedBoundary.Type;
 
+/**
+ * What a fork taken while the origin agent was still working captured of its
+ * running turn. Items listed here were copied as they stood at the cut; the
+ * provider handoff labels them so the fork's agent does not mistake a cut-off
+ * reasoning trace or an unfinished tool call for a completed one.
+ */
+export const ThreadForkMidTurnCut = Schema.Struct({
+  sourceTurnId: TurnId,
+  importedTurnId: TurnId,
+  cutSequence: NonNegativeInt,
+  partialMessageIds: Schema.Array(MessageId),
+  inFlightActivityIds: Schema.Array(EventId),
+  /** Approvals or questions the origin was waiting on; history only. */
+  pendingRequests: Schema.Array(Schema.String),
+  touchedFiles: Schema.Array(Schema.String),
+  sharedWorkspace: Schema.Boolean,
+});
+export type ThreadForkMidTurnCut = typeof ThreadForkMidTurnCut.Type;
+
 export const ThreadForkedPayload = Schema.Struct({
   originThreadId: ThreadId,
   newThreadId: ThreadId,
@@ -2235,7 +2271,7 @@ export const ThreadForkedPayload = Schema.Struct({
   baselineAssistantMessageId: Schema.NullOr(MessageId).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
-  forkPointKind: Schema.Literals(["assistant-response", "user-message"]).pipe(
+  forkPointKind: Schema.Literals(["assistant-response", "user-message", "running-turn"]).pipe(
     Schema.withDecodingDefault(Effect.succeed("assistant-response" as const)),
     Schema.withConstructorDefault(Effect.succeed("assistant-response" as const)),
   ),
@@ -2254,6 +2290,12 @@ export const ThreadForkedPayload = Schema.Struct({
   attachmentCopies: Schema.Array(ThreadForkAttachmentCopy).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
+  /**
+   * Every destination turn id holding inherited transcript; revert keeps them.
+   * Older events omit it: derive it from `copiedBoundaries` and `baselineTurnId`.
+   */
+  inheritedTurnIds: Schema.optional(Schema.Array(TurnId)),
+  midTurnCut: Schema.optional(ThreadForkMidTurnCut),
   createdAt: IsoDateTime,
 });
 export type ThreadForkedPayload = typeof ThreadForkedPayload.Type;
@@ -2579,6 +2621,8 @@ export type ProjectionPendingApprovalDecision = typeof ProjectionPendingApproval
 
 export const DispatchResult = Schema.Struct({
   sequence: NonNegativeInt,
+  /** Scient fork receipt: exact retained attachment ownership, absent on older servers. */
+  forkAttachmentIdMap: Schema.optional(Schema.Record(ChatAttachmentId, ChatAttachmentId)),
 });
 export type DispatchResult = typeof DispatchResult.Type;
 

@@ -408,6 +408,7 @@ function EnvironmentFileBody(props: {
         <Suspense fallback={<CenteredLoading label="Preparing PDF…" />}>
           <ScientPdfReader
             refreshKey={props.refreshToken}
+            readerScope={props.threadRef.threadId}
             source={environmentPdfSource({
               environmentId: props.environmentId,
               canonicalPath: props.file.canonicalPath,

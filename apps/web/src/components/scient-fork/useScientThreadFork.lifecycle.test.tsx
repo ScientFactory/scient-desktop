@@ -3,7 +3,7 @@ import { act, useLayoutEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, MessageId, ThreadId, TurnId } from "@t3tools/contracts";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -299,5 +299,36 @@ describe("fork lifecycle across navigation and remounts", () => {
     );
     expect(commands.options.mock.calls[0]![0].input).toEqual({ originThreadId: origin.id });
     expect(commands.dispatch.mock.calls[0]![0].input.sourceAssistantMessageId).toBe(completed);
+  });
+
+  it("forks a running turn with its work in progress", async () => {
+    const runningTurn = TurnId.make("running-turn");
+    commands.options.mockResolvedValue(
+      AsyncResult.success({
+        available: true,
+        localAvailable: true,
+        reason: null,
+        newWorktree: true,
+        sourceAssistantMessageId: null,
+        sourceUserMessageId: null,
+        sourceRunningTurnId: runningTurn,
+      }),
+    );
+    await render();
+    await act(() =>
+      hook.forkFromMessage(
+        { kind: "running-turn", turnId: runningTurn },
+        { workspaceMode: "new-worktree" },
+        "/workspace",
+      ),
+    );
+    expect(commands.options.mock.calls[0]![0].input).toEqual({
+      originThreadId: origin.id,
+      sourceRunningTurnId: runningTurn,
+    });
+    const command = commands.dispatch.mock.calls[0]![0].input;
+    expect(command.sourceRunningTurnId).toBe(runningTurn);
+    expect(command.sourceAssistantMessageId).toBeUndefined();
+    expect(command.workspaceMode).toBe("new-worktree");
   });
 });

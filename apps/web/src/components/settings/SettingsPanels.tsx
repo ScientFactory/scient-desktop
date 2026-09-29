@@ -188,6 +188,8 @@ import {
 import { searchableSetting } from "./settingsSearch";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { AnalyticsPrivacySettings } from "../../scient/analytics/AnalyticsPrivacySettings";
+// SCIENT-FORK: fork context size preference.
+import { ForkContextSettings } from "../../scient/fork/ForkContextSettings";
 import { useRecordScientAnalytics } from "../../scient/analytics/client";
 import { ScientGettingStartedSettingsRow } from "../../scient/onboarding/ScientGettingStartedSettingsRow";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
@@ -3404,6 +3406,8 @@ export function GeneralSettingsPanel() {
           }
         />
       </SettingsSection>
+
+      <ForkContextSettings />
 
       <AnalyticsPrivacySettings />
 
