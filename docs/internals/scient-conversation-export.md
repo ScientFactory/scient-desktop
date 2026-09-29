@@ -295,6 +295,10 @@ The contract between staging and the importer is the header of
   refused at preview with a message that suggests exporting again with the work log and reasoning
   turned off. The limit comes from the benchmark's work-log-heavy import on an on-disk
   database: about 3.5 s at 5,000 records, 14 s at 10,000, and 65 s at 20,000.
+- **Clock rollback.** An import moves times later than the import back to the import time
+  (`timesShiftedMs`); if the server's clock is later set back before that time, messages sent
+  afterwards sort before the imported history, as a thread's new messages sort before its older
+  ones whenever the clock goes backwards.
 - **Refusals and retries.** A refused file ends the import and removes its area; every rejection
   reason has its own short message, and a reported entry name is bounded, trimmed, and omitted when
   blank. Failures a retry may clear (no room yet, or an operating-system error such as a file
