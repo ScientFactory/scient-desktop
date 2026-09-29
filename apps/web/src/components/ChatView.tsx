@@ -28,6 +28,8 @@ import {
 } from "@t3tools/shared/usageLimits";
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
 import { usageLimitsBannerItem } from "./chat/ComposerUsageLimits";
+// SCIENT-FORK: imported-conversation notice.
+import { conversationImportBannerItem } from "./chat/scient-import/ConversationImportBanner";
 import { derivePendingRequests } from "@t3tools/client-runtime/pending-requests";
 import {
   questionAttachmentDraftId,
@@ -7217,7 +7219,24 @@ function ChatViewContent(props: ChatViewProps) {
       }),
     [feedbackSubmissions, routeThreadKey],
   );
+  // SCIENT-FORK:START — an imported thread says where it came from until its
+  // first provider session starts.
+  const [dismissedImportNoticeThreadId, setDismissedImportNoticeThreadId] = useState<string | null>(
+    null,
+  );
+  const conversationImportBanner = useMemo(
+    () =>
+      activeServerThread == null || dismissedImportNoticeThreadId === activeServerThread.id
+        ? null
+        : conversationImportBannerItem(activeServerThread, () =>
+            setDismissedImportNoticeThreadId(activeServerThread.id),
+          ),
+    [activeServerThread, dismissedImportNoticeThreadId],
+  );
+  // SCIENT-FORK:END
   const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
+    const conversationImportItems =
+      conversationImportBanner === null ? [] : [conversationImportBanner];
     const tokenLimitItems: ComposerBannerStackItem[] = hasTokenLimitNotice
       ? [
           {
@@ -7303,9 +7322,11 @@ function ChatViewContent(props: ChatViewProps) {
         ...resumeCompactionItems,
         ...wokeThreadItems,
         ...parkedThreadItems,
+        ...conversationImportItems,
       ];
     }
     return [
+      ...conversationImportItems,
       ...feedbackBannerItems,
       ...usageLimitsItems,
       ...projectCloneItems,
@@ -7361,6 +7382,7 @@ function ChatViewContent(props: ChatViewProps) {
     activePendingProgress,
     activeThread,
     backgroundLivenessBannerItem,
+    conversationImportBanner,
     clientSettingsHydrated,
     hasTokenLimitNotice,
     tokenLimitNoticeKey,
@@ -10812,6 +10834,12 @@ function ChatViewContent(props: ChatViewProps) {
             activeThreadId={activeThread.id}
             {...(routeKind === "draft" && draftId ? { draftId } : {})}
             activeThreadTitle={activeThread.title}
+            conversationImport={
+              activeServerThread?.conversationImport ??
+              activeServerThread?.forkLineage?.sourceImport ??
+              null
+            }
+            importSessionStarted={activeServerThread?.session != null}
             isServerThread={isServerThread}
             activeProject={activeProject}
             openInCwd={gitCwd}

@@ -21,6 +21,7 @@ import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as HostPowerMonitor from "./background/HostPowerMonitor.ts";
 import * as ServerConfig from "./config.ts";
+import { wordDiagramRequestBodyLayer } from "./scient/pandoc/wordDiagramBodyLimit.ts";
 import {
   otlpTracesProxyRouteLayer,
   assetRouteLayer,
@@ -212,6 +213,21 @@ import { scientSourcesHttpApiLayer } from "./scient/sources/http.ts";
 import { scientLatexHttpApiLayer } from "./scient/latex/http.ts";
 import { scientMarkdownHttpApiLayer } from "./scient/markdown/http.ts";
 import { scientThreadQueueHttpApiLayer } from "./scient/threadQueue/http.ts";
+import { scientConversationExportHttpApiLayer } from "./scient/conversationExport/http.ts";
+import * as ConversationExportFiles from "./scient/conversationExport/ConversationExportFiles.ts";
+import * as ConversationExportService from "./scient/conversationExport/ConversationExportService.ts";
+import * as ConversationSnapshotService from "./scient/conversationExport/ConversationSnapshotService.ts";
+import { documentCaptureStartupSweepLayer } from "./scient/documentExport/DocumentCapture.ts";
+import {
+  conversationImportUploadRouteLayer,
+  scientConversationImportHttpApiLayer,
+} from "./scient/conversationImport/http.ts";
+import * as ConversationImportStaging from "./scient/conversationImport/ConversationImportStaging.ts";
+import * as ConversationImporterLive from "./scient/conversationImport/ConversationImporterLive.ts";
+import { scientWordExportHttpApiLayer } from "./scient/pandoc/http.ts";
+import * as PandocManagedTool from "./scient/pandoc/PandocManagedTool.ts";
+import * as PandocWordConverter from "./scient/pandoc/PandocWordConverter.ts";
+import * as WordFileExport from "./scient/pandoc/WordFileExport.ts";
 import { scientAnalyticsHttpApiLayer } from "./telemetry/http.ts";
 
 // MCP handoff thread IDs include escaped provenance and can exceed find-my-way's
@@ -725,6 +741,25 @@ const commandReadinessLayer = HttpRouter.middleware(
 );
 
 const AnalysisRunIndexLive = AnalysisRunIndex.layer.pipe(Layer.provide(PersistenceLayerLive));
+// Word export runs the managed Pandoc. One tool serves the converter, the
+// install endpoint, and both exports, so an install is single-flight.
+const PandocWordConverterLive = PandocWordConverter.layer.pipe(
+  Layer.provideMerge(PandocManagedTool.layer),
+);
+// Conversation export reads one transactional snapshot and writes temporary files.
+const ConversationExportServiceLive = ConversationExportService.layer.pipe(
+  Layer.provide(ConversationSnapshotService.layer.pipe(Layer.provide(PersistenceLayerLive))),
+  Layer.provide(ConversationExportFiles.layer),
+  Layer.provide(PandocWordConverterLive),
+);
+const WordFileExportLive = WordFileExport.layer.pipe(
+  Layer.provide(ConversationExportFiles.layer),
+  Layer.provideMerge(PandocWordConverterLive),
+);
+// Import staging: uploads, validation, preview, and durable import commit.
+const ConversationImportStagingLive = ConversationImportStaging.layer().pipe(
+  Layer.provide(ConversationImporterLive.layer),
+);
 const ScientificRuntimePreferencesLive = ScientificRuntimePreferences.layer.pipe(
   Layer.provide(ServerSettingsLayerLive),
   Layer.provide(LocalAnalysisStore.layer),
@@ -771,15 +806,21 @@ export const makeRoutesLayer = Layer.mergeAll(
       Layer.provide(scientLatexHttpApiLayer),
       Layer.provide(scientMarkdownHttpApiLayer),
       Layer.provide(scientThreadQueueHttpApiLayer.pipe(Layer.provide(PersistenceLayerLive))),
+      Layer.provide(scientConversationExportHttpApiLayer),
+      Layer.provide(scientConversationImportHttpApiLayer),
+      Layer.provide(scientWordExportHttpApiLayer),
       Layer.provide(serverEnvironmentHttpApiLayer),
       Layer.provide(environmentAuthenticatedAuthLayer),
     ),
     otlpTracesProxyRouteLayer,
     assetRouteLayer,
     attachmentUploadRouteLayer,
+    conversationImportUploadRouteLayer,
     deviceHubProxyRouteLayer,
     staticAndDevRouteLayer,
     websocketRpcRouteLayer,
+    wordDiagramRequestBodyLayer,
+    documentCaptureStartupSweepLayer,
   ),
   McpHttpServer.layer.pipe(Layer.provide(McpSessionRegistry.layer)),
   // Last, so no route layer can replace the server's one TracerDisabledWhen.
@@ -799,6 +840,9 @@ export const makeRoutesLayer = Layer.mergeAll(
   // and mutations observed on WebSocket invalidate patches subsequently read over HTTP.
   Layer.provide(PullRequestServiceLive),
   Layer.provide(AnalysisServiceLive),
+  Layer.provide(ConversationExportServiceLive),
+  Layer.provide(ConversationImportStagingLive),
+  Layer.provide(WordFileExportLive),
   Layer.provide(ComputeMcpGatewayLive),
   Layer.provide(ComputeSessionServiceLive),
   Layer.provide(ScientificRuntimePreferencesLive),

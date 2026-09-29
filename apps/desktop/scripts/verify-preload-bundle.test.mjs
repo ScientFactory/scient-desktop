@@ -1,6 +1,39 @@
 import { assert, describe, it } from "vite-plus/test";
 
-import { verifyPreloadBundle } from "./verify-preload-bundle.mjs";
+import { verifyPreloadBundle, verifyConversationReviewPreload } from "./verify-preload-bundle.mjs";
+
+const validReview = `
+const {ipcRenderer} = require("electron");
+window.addEventListener("DOMContentLoaded", () => {
+  for (const action of ["cancel", "continue"]) document.getElementById(action).addEventListener("click", () => ipcRenderer.send("scient:conversation-review-action", action));
+  document.addEventListener("keydown", event => { if(event.key === "Escape") ipcRenderer.send("scient:conversation-review-action", "cancel"); });
+});`;
+
+describe("conversation review preload verifier", () => {
+  it("checks executable actions in the built isolated preload", () =>
+    assert.doesNotThrow(() => verifyConversationReviewPreload(validReview)));
+  it("rejects file access and bridge exposure", () => {
+    assert.throws(
+      () => verifyConversationReviewPreload('require("node:fs");'),
+      /only Electron IPC/,
+    );
+    assert.throws(
+      () =>
+        verifyConversationReviewPreload(
+          'require("electron").contextBridge.exposeInMainWorld("desktopBridge", {});',
+        ),
+      /exposed a bridge/,
+    );
+  });
+  it("rejects an unexpected action channel", () =>
+    assert.throws(
+      () =>
+        verifyConversationReviewPreload(
+          validReview.replaceAll("scient:conversation-review-action", "unrelated"),
+        ),
+      /unexpected actions/,
+    ));
+});
 
 const validPreload = `
   const electron = require("electron");
@@ -15,6 +48,13 @@ const validPreload = `
 `;
 
 describe("desktop preload bundle verifier", () => {
+  it("executes macOS window-control inset setup in its DOM sandbox", () => {
+    assert.doesNotThrow(() =>
+      verifyPreloadBundle(`${validPreload}
+      window.addEventListener("DOMContentLoaded", () => document.documentElement.style.setProperty("--inset", String(electron.webFrame.getZoomFactor())));
+    `),
+    );
+  });
   it("rejects required API names that only appear in strings", () => {
     assert.throws(
       () =>

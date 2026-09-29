@@ -32,6 +32,16 @@ import * as DesktopRemoteUpdates from "../updates/DesktopRemoteUpdates.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as DesktopSnapShot from "../snapShot/DesktopSnapShot.ts";
 import * as DesktopWslBackend from "../wsl/DesktopWslBackend.ts";
+// SCIENT-FORK:START — conversation files the OS opened with Scient. macOS
+// delivers a launch's open-file before startup reaches its listeners, so the
+// event is captured from module load.
+import {
+  captureConversationFileOpens,
+  installConversationFileOpening,
+} from "../scient/conversationImport/openedConversationFiles.ts";
+
+captureConversationFileOpens();
+// SCIENT-FORK:END
 
 const DEFAULT_DESKTOP_BACKEND_PORT = 3773;
 const MAX_TCP_PORT = 65_535;
@@ -310,6 +320,9 @@ const startup = Effect.gen(function* () {
   yield* appIdentity.configure;
   yield* lifecycle.register;
   yield* clerk.configure;
+  // SCIENT-FORK:START — opened files, including those captured since module load.
+  yield* installConversationFileOpening;
+  // SCIENT-FORK:END
 
   yield* electronApp.whenReady.pipe(
     Effect.withSpan("desktop.electron.whenReady"),

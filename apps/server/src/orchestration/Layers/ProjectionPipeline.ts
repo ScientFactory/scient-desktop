@@ -68,6 +68,7 @@ import {
   SCIENT_FORK_LINEAGE_PROJECTOR_NAME,
   applyScientThreadLineageProjection,
 } from "../scient-fork/lineageProjection.ts";
+import { readInheritedTurnIds } from "../scient-fork/importRepository.ts";
 // SCIENT-FORK:END
 
 export const ORCHESTRATION_PROJECTOR_NAMES = {
@@ -211,15 +212,6 @@ function derivePendingUserInputCountFromActivities(
   }
 
   return openRequestIds.size;
-}
-
-// SCIENT-FORK: tolerant read of the lineage inherited-turn list.
-const decodeInheritedTurnIdsOption = Schema.decodeUnknownOption(
-  Schema.fromJsonString(Schema.Array(Schema.String)),
-);
-function decodeInheritedTurnIds(json: string | null): ReadonlyArray<string> {
-  if (json === null) return [];
-  return Option.getOrElse(decodeInheritedTurnIdsOption(json), () => []);
 }
 
 function retainProjectionMessagesAfterRevert(
@@ -518,32 +510,13 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     const projectionTurnRepository = yield* ProjectionTurnRepository;
     const projectionPendingApprovalRepository = yield* ProjectionPendingApprovalRepository;
 
-    // SCIENT-FORK:START — a fork's inherited transcript is immutable: every
-    // inherited turn (not only the selected boundary) survives any revert, even
-    // when the origin had no Git checkpoint.
-    const getForkInheritedTurnIds = Effect.fn("getForkInheritedTurnIds")(function* (
-      threadId: string,
-    ) {
-      const rows = yield* sql<{
-        readonly baselineTurnId: string | null;
-        readonly inheritedTurnIdsJson: string | null;
-      }>`
-        SELECT
-          baseline_turn_id AS "baselineTurnId",
-          inherited_turn_ids_json AS "inheritedTurnIdsJson"
-        FROM scient_thread_lineage
-        WHERE thread_id = ${threadId}
-        LIMIT 1
-      `.pipe(
+    // SCIENT-FORK:START — inherited history is immutable: every inherited turn
+    // of a fork (not only the selected boundary) and every imported turn
+    // survives any revert, even without a Git checkpoint.
+    const getForkInheritedTurnIds = (threadId: string) =>
+      readInheritedTurnIds(sql, threadId).pipe(
         Effect.mapError(toPersistenceSqlError("ProjectionPipeline.getForkInheritedTurnIds:query")),
       );
-      const row = rows[0];
-      if (row === undefined) return new Set<string>();
-      return new Set<string>([
-        ...(row.baselineTurnId === null ? [] : [row.baselineTurnId]),
-        ...decodeInheritedTurnIds(row.inheritedTurnIdsJson),
-      ]);
-    });
     // SCIENT-FORK:END
 
     const fileSystem = yield* FileSystem.FileSystem;
@@ -717,6 +690,25 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           });
           return;
         }
+
+        // SCIENT-FORK:START — an import's newest turn with a response is the
+        // imported thread's latest turn, as a fork's baseline is.
+        case "thread.conversation-imported": {
+          const latestTurn = event.payload.turns.at(-1);
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow) || latestTurn === undefined) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            latestTurnId: latestTurn.turnId,
+            updatedAt: event.occurredAt,
+          });
+          return;
+        }
+        // SCIENT-FORK:END
 
         case "thread.archived": {
           const existingRow = yield* projectionThreadRepository.getById({
@@ -1788,6 +1780,33 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             checkpointStatus: null,
             checkpointFiles: [],
           });
+          return;
+        }
+
+        // Imported turns are completed history with no checkpoint, like a
+        // fork's inherited turns; they name the request that started them.
+        case "thread.conversation-imported": {
+          yield* Effect.forEach(
+            event.payload.turns,
+            (turn) =>
+              projectionTurnRepository.upsertByTurnId({
+                turnId: turn.turnId,
+                threadId: event.payload.threadId,
+                pendingMessageId: turn.userMessageId,
+                sourceProposedPlanThreadId: null,
+                sourceProposedPlanId: null,
+                assistantMessageId: turn.assistantMessageId,
+                state: "completed",
+                requestedAt: turn.requestedAt,
+                startedAt: turn.requestedAt,
+                completedAt: turn.completedAt,
+                checkpointTurnCount: null,
+                checkpointRef: null,
+                checkpointStatus: null,
+                checkpointFiles: [],
+              }),
+            { concurrency: 1, discard: true },
+          );
           return;
         }
         // SCIENT-FORK:END

@@ -27,7 +27,7 @@ The \`device_*\` tools control iOS Simulators and Android Emulators on this envi
 
 /** Included only when the session may build project documents. */
 const buildScientDocumentAwareness = (tools: ScientToolProjection): string => `## Scient PDF builds
-For a requested PDF deliverable, use \`${tools.name("scient_pdf_build")}\` to build an existing project HTML source and \`${tools.name("scient_latex_build")}\` to build an existing project LaTeX source.${tools.deferred ? ` If either is deferred, load its exact name through \`ToolSearch\` first.` : ""}`;
+For a requested PDF deliverable, use \`${tools.name("scient_pdf_build")}\` to build an existing project HTML source, \`${tools.name("scient_latex_build")}\` to build an existing project LaTeX source, and \`${tools.name("scient_document_export")}\` to export an existing project Markdown document.${tools.deferred ? ` If any is deferred, load its exact name through \`ToolSearch\` first.` : ""}`;
 
 export const SCIENT_DOCUMENT_BUILD_AWARENESS = buildScientDocumentAwareness(
   CANONICAL_SCIENT_TOOL_PROJECTION,

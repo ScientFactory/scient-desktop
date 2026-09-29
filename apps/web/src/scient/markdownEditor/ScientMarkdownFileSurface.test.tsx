@@ -2,7 +2,7 @@
 
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { MarkdownPersistenceCoordinator } from "@scientfactory/scient-markdown";
-import { act, StrictMode } from "react";
+import { act, isValidElement, StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   setRecentWikiLinks: vi.fn(),
   toastAdd: vi.fn(),
   workspaceProps: null as Record<string, unknown> | null,
+  wordDialogProps: null as Record<string, unknown> | null,
   writeFile: vi.fn(),
   listDirectoryCommand: Symbol("list-directory"),
   writeFileCommand: Symbol("write-file"),
@@ -67,6 +68,12 @@ vi.mock("./ScientMarkdownWorkspaceSurface", () => ({
   },
 }));
 vi.mock("./assets/client", () => ({ uploadMarkdownImage: vi.fn() }));
+vi.mock("../wordExport/WordFileExportDialog", () => ({
+  WordFileExportDialog: (props: Record<string, unknown>) => {
+    mocks.wordDialogProps = props;
+    return null;
+  },
+}));
 
 import { ScientMarkdownFileSurface } from "./ScientMarkdownFileSurface";
 
@@ -105,7 +112,7 @@ function success(
   };
 }
 
-describe("ScientMarkdownFileSurface link navigation", () => {
+describe("ScientMarkdownFileSurface", () => {
   const roots: ReturnType<typeof createRoot>[] = [];
 
   beforeEach(() => {
@@ -119,6 +126,7 @@ describe("ScientMarkdownFileSurface link navigation", () => {
     mocks.setRecentWikiLinks.mockReset();
     mocks.toastAdd.mockReset();
     mocks.workspaceProps = null;
+    mocks.wordDialogProps = null;
     mocks.writeFile.mockReset();
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   });
@@ -223,6 +231,23 @@ describe("ScientMarkdownFileSurface link navigation", () => {
     expect(callback).toBeTypeOf("function");
     callback?.(request, anchor);
   }
+
+  it("opens Word export from the Markdown document actions outside the menu", async () => {
+    await mount();
+    const actions = mocks.workspaceProps?.documentActions;
+    expect(isValidElement(actions)).toBe(true);
+    if (!isValidElement(actions)) return;
+    const { onWordExport } = actions.props as { onWordExport: () => void };
+
+    await act(async () => onWordExport());
+    expect(mocks.wordDialogProps).toMatchObject({
+      environmentId,
+      cwd: "/workspace",
+      relativePath: "notes/current.md",
+    });
+    const savedRevision = mocks.wordDialogProps?.savedRevision as () => Promise<string | null>;
+    expect(await savedRevision()).toBeNull();
+  });
 
   it("opens an exactly verified workspace file and preserves binary and symlink targets", async () => {
     const { onOpenFile } = await mount();

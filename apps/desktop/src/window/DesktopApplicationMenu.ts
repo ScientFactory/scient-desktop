@@ -138,6 +138,11 @@ export const make = Effect.gen(function* () {
     const settingsClick = () => {
       runMenuEffect("open-settings", dispatchMenuAction("open-settings"));
     };
+    // SCIENT-FORK:START — the renderer opens its file picker for a .scic.
+    const importConversationClick = () => {
+      runMenuEffect("import-conversation", dispatchMenuAction("import-conversation"));
+    };
+    // SCIENT-FORK:END
     // Chromium already pastes as plain text for this chord, so the accelerator
     // needs nothing from the menu: the composer and the terminal each arm
     // themselves from the same keydown. Routing it through the renderer anyway
@@ -191,6 +196,10 @@ export const make = Effect.gen(function* () {
       {
         label: "File",
         submenu: [
+          // SCIENT-FORK:START
+          { label: "Import Conversation...", click: importConversationClick },
+          { type: "separator" as const },
+          // SCIENT-FORK:END
           ...(environment.platform === "darwin"
             ? []
             : [

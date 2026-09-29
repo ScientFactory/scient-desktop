@@ -1,4 +1,11 @@
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 
 import { readLocalApi } from "~/localApi";
 import { attachShortcutHost } from "../keyboard/host";
@@ -71,6 +78,8 @@ export interface ScientMarkdownWorkspaceSurfaceProps {
   readonly wikiLinkCandidates?: ReadonlyArray<ScientMarkdownWikiLinkCandidate>;
   readonly recentWikiLinkPaths?: ReadonlyArray<string>;
   readonly onWikiLinkSelected?: (path: string) => void;
+  /** File-level actions for the editor's More actions menu. */
+  readonly documentActions?: ReactNode;
 }
 
 /**
@@ -368,6 +377,7 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
           {...(props.wikiLinkCandidates ? { wikiLinkCandidates: props.wikiLinkCandidates } : {})}
           {...(props.recentWikiLinkPaths ? { recentWikiLinkPaths: props.recentWikiLinkPaths } : {})}
           {...(props.onWikiLinkSelected ? { onWikiLinkSelected: props.onWikiLinkSelected } : {})}
+          documentActions={props.documentActions}
         />
         <ScientMarkdownDocument mode="write" controller={controller} />
         {props.citationSource ? (

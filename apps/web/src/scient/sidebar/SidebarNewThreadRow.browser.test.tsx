@@ -92,6 +92,7 @@ it("keeps the search icon and placeholder at the icon color until hovered", asyn
   const host = await mountSidebarTop(() => {});
   const input = host.querySelector<HTMLInputElement>('input[aria-label="Search threads"]')!;
   const field = input.closest<HTMLElement>("div.rounded-md")!;
+  await userEvent.unhover(field);
   const icon = field.querySelector("svg")!;
   const placeholderColor = () => getComputedStyle(input, "::placeholder").color;
   const iconColor = () => getComputedStyle(icon).color;

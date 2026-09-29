@@ -37,6 +37,7 @@ import type {
   PdfSyncNavigation,
 } from "~/scient/pdf/ScientPdfReader";
 import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
+import { WordFileExportDialog } from "~/scient/wordExport/WordFileExportDialog";
 
 import { documentBindingChanges } from "./bindingChanges";
 import { LatexToolchainSetupCard } from "./LatexToolchainSetupCard";
@@ -464,6 +465,13 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [syncNotice, setSyncNotice] = useState<LatexSyncNotice | null>(null);
+  const [wordExportOpen, setWordExportOpen] = useState(false);
+  const [sourcePending, setSourcePending] = useState(false);
+  const [confirmedSave, setConfirmedSave] = useState<{
+    path: string;
+    shownRevision: string;
+    savedRevision: string;
+  } | null>(null);
   const [forwardSyncTarget, setForwardSyncTarget] = useState<PdfForwardSyncTarget | null>(null);
   const [handledRevealRequestId, setHandledRevealRequestId] = useState<number | null>(null);
   const lastBindingChangeRef = useRef<DocumentBindingChange | null>(null);
@@ -496,11 +504,12 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   const { onOpenFileSource, onSaveConfirmed, onSaveFailure, revealLine, revealRequestId } = props;
   const handleSaveConfirmed = useCallback(
     (path: string, contents: string, revision: string) => {
+      setConfirmedSave({ path, shownRevision: props.revision, savedRevision: revision });
       setSaveError(null);
       onSaveConfirmed(path, contents, revision);
       if (target !== null) requestLatexRebuild(target);
     },
-    [onSaveConfirmed, target],
+    [onSaveConfirmed, props.revision, target],
   );
   const handleSaveFailure = useCallback(
     (path: string, error: unknown) => {
@@ -817,6 +826,14 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
           )}
         </div>
         <div className="scient-latex-actions">
+          <button
+            type="button"
+            className="scient-latex-action"
+            disabled={target === null || sourcePending}
+            onClick={() => setWordExportOpen(true)}
+          >
+            Export ▸ Word
+          </button>
           {status.canCancel && target !== null ? (
             <button
               type="button"
@@ -921,7 +938,10 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
                   revealRequestId={props.revealRequestId}
                   wordWrap={props.wordWrap}
                   onPostRender={props.onPostRender}
-                  onPendingChange={props.onPendingChange}
+                  onPendingChange={(relativePath, pending) => {
+                    setSourcePending(pending);
+                    props.onPendingChange(relativePath, pending);
+                  }}
                   onSaveFailure={handleSaveFailure}
                   onSaveConfirmed={handleSaveConfirmed}
                   onSaveResolutionApplied={props.onSaveResolutionApplied}
@@ -965,6 +985,23 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
           </div>
         ) : null}
       </div>
+      {wordExportOpen && target !== null ? (
+        <WordFileExportDialog
+          environmentId={props.environmentId}
+          cwd={props.cwd}
+          relativePath={props.relativePath}
+          rootRelativePath={target.relativePath}
+          savedRevision={async () =>
+            sourcePending
+              ? null
+              : confirmedSave?.path === props.relativePath &&
+                  confirmedSave.shownRevision === props.revision
+                ? confirmedSave.savedRevision
+                : props.revision
+          }
+          onClose={() => setWordExportOpen(false)}
+        />
+      ) : null}
     </div>
   );
 }

@@ -2,6 +2,7 @@ import {
   IsoDateTime,
   NonNegativeInt,
   OrchestrationForkWorkspaceMode,
+  OrchestrationConversationImportSource,
   MessageId,
   ThreadId,
   TurnId,
@@ -35,6 +36,8 @@ const SourcePointJson = Schema.fromJsonString(
   }),
 );
 const encodeSourcePointJson = Schema.encodeEffect(SourcePointJson);
+const SourceImportJson = Schema.fromJsonString(OrchestrationConversationImportSource);
+const encodeSourceImportJson = Schema.encodeEffect(SourceImportJson);
 
 const ForkRow = Schema.Struct({
   thread_id: ThreadId,
@@ -106,6 +109,10 @@ export const insertPendingFork = Effect.fn("insertPendingFork")(function* (
     turnCount: payload.forkAtTurnCount,
     ...(payload.midTurnCut === undefined ? {} : { cutSequence: payload.midTurnCut.cutSequence }),
   }).pipe(Effect.orDie);
+  const sourceImportJson =
+    payload.sourceImport === undefined
+      ? null
+      : yield* encodeSourceImportJson(payload.sourceImport).pipe(Effect.orDie);
   yield* sql`
     INSERT INTO scient_thread_lineage (
       thread_id,
@@ -182,12 +189,13 @@ export const insertPendingFork = Effect.fn("insertPendingFork")(function* (
   `;
   // The fork's provider context is resolved lazily on its first dispatch.
   yield* sql`
-    INSERT OR IGNORE INTO scient_context_transfers (
+    INSERT INTO scient_context_transfers (
       thread_id,
       type,
       source_thread_id,
       source_point_json,
       status,
+      origin_json,
       created_at,
       updated_at
     ) VALUES (
@@ -196,9 +204,12 @@ export const insertPendingFork = Effect.fn("insertPendingFork")(function* (
       ${payload.originThreadId},
       ${sourcePointJson},
       'pending',
+      ${sourceImportJson},
       ${payload.createdAt},
       ${payload.createdAt}
     )
+    ON CONFLICT(thread_id) DO UPDATE SET
+      origin_json = COALESCE(scient_context_transfers.origin_json, excluded.origin_json)
   `;
 });
 

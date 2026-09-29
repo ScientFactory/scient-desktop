@@ -14,6 +14,10 @@ import {
   SCIENT_DEV_APP_PID_FILE_ENV,
 } from "./dev-app-process.mjs";
 import { ensureElectronRuntime } from "./ensure-electron-runtime.mjs";
+import {
+  macConversationDocumentTypes,
+  macConversationExportedTypes,
+} from "./conversation-file-type.mjs";
 // SCIENT-DEV-APP: per-bundle records, a stable signed bundle, staged rebuilds.
 import {
   assertForegroundSigning,
@@ -39,7 +43,7 @@ const APP_BUNDLE_ID = isDevelopment
   ? `com.scientfactory.scient.next.dev.${devBundleIdSuffix || "local"}`
   : "com.scientfactory.scient.next";
 const APP_PROTOCOL_SCHEMES = isDevelopment ? ["scient-next-dev"] : ["scient-next"];
-const LAUNCHER_VERSION = 20;
+const LAUNCHER_VERSION = 22;
 const developmentMacIconPngPath = NodePath.join(
   repoRoot,
   "assets",
@@ -162,7 +166,7 @@ export function makeDevelopmentLauncherScript({
     "#!/bin/sh",
     'if [ "${SCIENT_NEXT_DEV_RUNNER_ACTIVE:-}" != "1" ]; then',
     '  launcher_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)',
-    '  exec "$launcher_dir/../Resources/run-scient-next-dev.command"',
+    '  exec "$launcher_dir/../Resources/run-scient-next-dev.command" "$@"',
     "fi",
     `if [ -n "\${${SCIENT_DEV_APP_ENV_FILE_ENV}:-}" ]; then`,
     `  if [ ! -f "\$${SCIENT_DEV_APP_ENV_FILE_ENV}" ]; then`,
@@ -256,6 +260,11 @@ export function makeDevelopmentCommandScript({ desktopRoot, environment }) {
       ? environment.SCIENT_NEXT_HOME
       : NodePath.join(launcherRepoRoot, ".scient-next");
   const logPath = NodePath.join(logRoot, "local-dev-app.log");
+  const openArgumentsPath = NodePath.join(
+    logRoot,
+    "local-dev-app-runtime",
+    "conversation-open-arguments.bin",
+  );
   const nodeBinDir = NodePath.dirname(process.execPath);
   const pnpmExecPath = environment.npm_execpath?.trim();
   const localDevInvocation = pnpmExecPath
@@ -274,6 +283,13 @@ export function makeDevelopmentCommandScript({ desktopRoot, environment }) {
     `cd ${shellSingleQuote(launcherRepoRoot)}`,
     roleExport,
     homeExport,
+    'if [ "$#" -gt 0 ]; then',
+    "  umask 077",
+    `  mkdir -p ${shellSingleQuote(NodePath.dirname(openArgumentsPath))}`,
+    `  conversation_args_tmp=${shellSingleQuote(openArgumentsPath)}".$$.tmp"`,
+    '  printf \'%s\\0\' "$@" > "$conversation_args_tmp"',
+    `  mv -f "$conversation_args_tmp" ${shellSingleQuote(openArgumentsPath)}`,
+    "fi",
     `exec ${localDevInvocation} >> ${shellSingleQuote(logPath)} 2>&1`,
     "",
   ].join("\n");
@@ -284,12 +300,85 @@ const developmentEnvironmentFilePath = NodePath.join(
   ".electron-runtime",
   "dev-environment.sh",
 );
+const developmentEnvironmentJsonPath = NodePath.join(
+  desktopDir,
+  ".electron-runtime",
+  "dev-environment.json",
+);
+const developmentBootstrapSourcePath = NodePath.join(__dirname, "dev-bundle-bootstrap.cjs");
 
-function writeDevelopmentEnvironmentScript() {
-  NodeFS.mkdirSync(NodePath.dirname(developmentEnvironmentFilePath), { recursive: true });
+export function developmentBootstrapEnvironment(environment) {
+  return Object.fromEntries(
+    [
+      "VITE_DEV_SERVER_URL",
+      "T3CODE_PORT",
+      "T3CODE_HOME",
+      "SCIENT_NEXT_HOME",
+      "SCIENT_DEV_APP_ROLE",
+      "T3CODE_COMMIT_HASH",
+      "T3CODE_OTLP_TRACES_URL",
+      "T3CODE_OTLP_EXPORT_INTERVAL_MS",
+      "T3CODE_OTLP_HEADERS",
+      "T3CODE_OTLP_PROTOCOL",
+      "T3CODE_DESKTOP_APP_USER_MODEL_ID",
+    ].flatMap((key) => (typeof environment[key] === "string" ? [[key, environment[key]]] : [])),
+  );
+}
+
+function writeDevelopmentBootstrapEnvironment() {
+  NodeFS.mkdirSync(NodePath.dirname(developmentEnvironmentJsonPath), { recursive: true });
   NodeFS.writeFileSync(
-    developmentEnvironmentFilePath,
-    makeDevelopmentEnvironmentScript(process.env),
+    developmentEnvironmentJsonPath,
+    `${JSON.stringify(developmentBootstrapEnvironment(process.env))}\n`,
+    { mode: 0o600 },
+  );
+  NodeFS.chmodSync(developmentEnvironmentJsonPath, 0o600);
+}
+
+export function developmentBootstrapConfig({
+  desktopRoot,
+  role,
+  stateRoot,
+  nodePath,
+  fallbackEnvironmentPath,
+}) {
+  return {
+    repoRoot: NodePath.resolve(desktopRoot, "..", ".."),
+    mainEntryPath: NodePath.join(desktopRoot, "dist-electron", "main.cjs"),
+    role,
+    stateRoot,
+    nodePath,
+    fallbackEnvironmentPath,
+  };
+}
+
+function writeDevelopmentBootstrap(appBundlePath) {
+  const resourcesAppPath = NodePath.join(appBundlePath, "Contents", "Resources", "app");
+  NodeFS.mkdirSync(resourcesAppPath, { recursive: true });
+  const role = process.env.SCIENT_DEV_APP_ROLE === "stable" ? "stable" : "candidate";
+  const stateRoot =
+    role === "stable" && process.env.SCIENT_NEXT_HOME
+      ? process.env.SCIENT_NEXT_HOME
+      : NodePath.join(repoRoot, ".scient-next");
+  NodeFS.writeFileSync(
+    NodePath.join(resourcesAppPath, "package.json"),
+    `${JSON.stringify({ name: "scient-next-dev-bootstrap", main: "bootstrap.cjs" })}\n`,
+  );
+  NodeFS.writeFileSync(
+    NodePath.join(resourcesAppPath, "scient-dev-bootstrap.json"),
+    `${JSON.stringify(
+      developmentBootstrapConfig({
+        desktopRoot: desktopDir,
+        role,
+        stateRoot,
+        nodePath: process.execPath,
+        fallbackEnvironmentPath: developmentEnvironmentJsonPath,
+      }),
+    )}\n`,
+  );
+  NodeFS.copyFileSync(
+    developmentBootstrapSourcePath,
+    NodePath.join(resourcesAppPath, "bootstrap.cjs"),
   );
 }
 
@@ -459,6 +548,12 @@ function patchMainBundleInfoPlist(appBundlePath, iconPath, executableName) {
       CFBundleURLSchemes: APP_PROTOCOL_SCHEMES,
     },
   ]);
+  setPlistJson(
+    infoPlistPath,
+    "CFBundleDocumentTypes",
+    macConversationDocumentTypes({ isDevelopment }),
+  );
+  setPlistJson(infoPlistPath, "UTExportedTypeDeclarations", macConversationExportedTypes());
 
   const resourcesDir = NodePath.join(appBundlePath, "Contents", "Resources");
   NodeFS.copyFileSync(iconPath, NodePath.join(resourcesDir, "icon.icns"));
@@ -514,19 +609,23 @@ export function resolveMacLauncherPaths(appBundlePath, displayName = APP_DISPLAY
   };
 }
 
+export function resolveMacDevelopmentBundleExecutable(appBundlePath) {
+  return resolveMacLauncherPaths(appBundlePath).runtimeElectronBinaryPath;
+}
+
 function buildMacLauncher(electronBinaryPath) {
   const sourceAppBundlePath = NodePath.resolve(NodePath.dirname(electronBinaryPath), "../..");
   const runtimeDir = NodePath.join(desktopDir, ".electron-runtime");
   const targetAppBundlePath = NodePath.join(runtimeDir, `${APP_DISPLAY_NAME}.app`);
   const developmentPaths = resolveMacLauncherPaths(targetAppBundlePath);
   const runtimeElectronBinaryPath = developmentPaths.runtimeElectronBinaryPath;
+  // A shell CFBundleExecutable loses Finder's queued open-file AppleEvent.
   const launcherBinaryPath = isDevelopment
-    ? developmentPaths.launcherBinaryPath
+    ? resolveMacDevelopmentBundleExecutable(targetAppBundlePath)
     : runtimeElectronBinaryPath;
   const iconPath = ensureMacIconIcns(runtimeDir);
   const appBundleName = NodePath.basename(targetAppBundlePath);
   const metadataPath = resolveBundleMetadataPath(runtimeDir, appBundleName);
-  const startCommandPath = resolveBundleStartCommandPath(runtimeDir, appBundleName);
   const signingIdentity = isDevelopment ? resolveDevelopmentCodeSigningIdentity() : undefined;
 
   NodeFS.mkdirSync(runtimeDir, { recursive: true });
@@ -539,6 +638,15 @@ function buildMacLauncher(electronBinaryPath) {
     appBundleId: APP_BUNDLE_ID,
     appProtocolSchemes: APP_PROTOCOL_SCHEMES,
     signingIdentity,
+    bootstrapMtimeMs: isDevelopment
+      ? NodeFS.statSync(developmentBootstrapSourcePath).mtimeMs
+      : undefined,
+    bootstrapNodePath: isDevelopment ? process.execPath : undefined,
+    bootstrapStateRoot: isDevelopment
+      ? process.env.SCIENT_DEV_APP_ROLE === "stable" && process.env.SCIENT_NEXT_HOME
+        ? process.env.SCIENT_NEXT_HOME
+        : NodePath.join(repoRoot, ".scient-next")
+      : undefined,
   };
 
   const currentMetadata = readJson(metadataPath);
@@ -553,14 +661,7 @@ function buildMacLauncher(electronBinaryPath) {
       // The launcher also handles protocol activations outside the dev runner,
       // so refresh its fallback environment on every launch. Never let a value
       // captured by an older parent app override the live dev-runner environment.
-      writeDevelopmentEnvironmentScript();
-      if (
-        writeDevelopmentLauncherScript(launcherBinaryPath, runtimeElectronBinaryPath, {
-          startCommandPath,
-        })
-      ) {
-        signDevelopmentAppBundle(targetAppBundlePath, signingIdentity ?? "-");
-      }
+      writeDevelopmentBootstrapEnvironment();
     }
     registerMacLauncherBundle(targetAppBundlePath);
     return launcherBinaryPath;
@@ -578,25 +679,11 @@ function buildMacLauncher(electronBinaryPath) {
       recursive: true,
       verbatimSymlinks: true,
     });
-    patchMainBundleInfoPlist(
-      stagedAppBundlePath,
-      iconPath,
-      isDevelopment ? developmentPaths.launcherExecutableName : "Electron",
-    );
+    patchMainBundleInfoPlist(stagedAppBundlePath, iconPath, "Electron");
     patchHelperBundleInfoPlists(stagedAppBundlePath);
     if (isDevelopment) {
-      // Keep Electron's native executable inside the branded bundle. Launching the
-      // node_modules copy makes macOS associate the process (and Dock label) with
-      // Electron.app even though this bundle's Info.plist has the Scient name.
-      // Its conventional executable name also keeps Electron's default-app runtime
-      // in development mode instead of making app.isPackaged report true.
-      // Scripts point at the final bundle path, which the staged copy becomes.
-      writeDevelopmentEnvironmentScript();
-      writeDevelopmentLauncherScript(
-        resolveMacLauncherPaths(stagedAppBundlePath).launcherBinaryPath,
-        runtimeElectronBinaryPath,
-        { startCommandPath },
-      );
+      writeDevelopmentBootstrapEnvironment();
+      writeDevelopmentBootstrap(stagedAppBundlePath);
       signDevelopmentAppBundle(stagedAppBundlePath, signingIdentity ?? "-");
     }
     if (!isDevelopment) signMacLauncherBundle(stagedAppBundlePath);
