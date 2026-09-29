@@ -34,6 +34,7 @@ vi.mock("../ui/button", () => ({
 }));
 
 import { PopoverPopup } from "../ui/popover";
+import { TooltipPopup } from "../ui/tooltip";
 import { AssistantCitationChip } from "./AssistantCitationChip";
 
 const citation = {
@@ -152,5 +153,67 @@ describe("citation comment source disappearance", () => {
     removeSource();
     expect(onSave).toHaveBeenCalledWith("saved comment");
     expect(renderer.root.findAllByType("textarea")).toHaveLength(0);
+  });
+});
+
+describe("citation hover content", () => {
+  const fileCitation = {
+    kind: "file" as const,
+    version: 1 as const,
+    environmentId: EnvironmentId.make("environment"),
+    threadId: ThreadId.make("thread"),
+    cwd: "/Users/someone/project",
+    path: "/Users/someone/project/apps/web/src/components/chat/workingPlaceholder.ts",
+    revision: `sha256:${"a".repeat(64)}`,
+    origin: "saved" as const,
+    sourceStart: 0,
+    sourceEnd: 20,
+    startLine: 12,
+    endLine: 18,
+    from: 1,
+    to: 21,
+    text: "export  const\n placeholder = true;",
+    prefix: "",
+    suffix: "",
+  };
+
+  // Each rendered element's own text, so a line like "Lines 12–18" reads as one entry.
+  function popupLines(): string[] {
+    return renderer.root
+      .findByType(TooltipPopup)
+      .findAll((node) => typeof node.type === "string")
+      .map((node) => node.children.filter((child) => typeof child === "string").join(""));
+  }
+
+  it.each([false, true])(
+    "renders a compact card instead of a native title (composer: %s)",
+    (composer) => {
+      act(() => {
+        renderer = create(<AssistantCitationChip citation={fileCitation} composer={composer} />);
+      });
+
+      expect(renderer.root.findByProps({ resetScroll: false }).props.title).toBeUndefined();
+      const text = popupLines();
+      expect(text).toContain("workingPlaceholder.ts");
+      expect(text.join("")).toContain("/Users/someone/project/apps/web/src/components/chat/");
+      expect(text).toContain("Lines 12–18");
+      expect(text).toContain("export const placeholder = true;");
+      expect(text.join("")).not.toContain("View source");
+      expect(renderer.root.findByType(TooltipPopup).findAllByType("wbr").length).toBeGreaterThan(5);
+    },
+  );
+
+  it("marks citations captured from unsaved drafts", () => {
+    act(() => {
+      renderer = create(<AssistantCitationChip citation={{ ...fileCitation, origin: "draft" }} />);
+    });
+    expect(popupLines()).toContain("Lines 12–18 · unsaved at capture");
+  });
+
+  it("keeps the View source tooltip for assistant citations", () => {
+    act(() => {
+      renderer = create(<AssistantCitationChip citation={citation} />);
+    });
+    expect(renderer.root.findByType(TooltipPopup).props.children).toBe("View source");
   });
 });
