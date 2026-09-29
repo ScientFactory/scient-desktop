@@ -1,9 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off -- test fixtures are local OS-opened files.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { afterEach, describe, expect, it } from "@effect/vitest";
+import { afterEach, describe, expect, it, vi } from "@effect/vitest";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as Effect from "effect/Effect";
 
 import {
   cancelOpenedConversationFileUploadFor,
@@ -582,6 +585,108 @@ describe("the file an OS-opened upload sends", () => {
     answer(true);
     expect(await uploading).toEqual({ _tag: "failed", reason: "cancelled" });
   });
+
+  it("closes a descriptor whose open finished after its attempt was cancelled, and asks nothing", async () => {
+    const { file } = await openedAt();
+    const handles: NodeFS.promises.FileHandle[] = [];
+    let finishOpen: () => void = () => undefined;
+    const opening = new Promise<void>((resolve) => {
+      finishOpen = resolve;
+    });
+    let openStarted: () => void = () => undefined;
+    const openRequested = new Promise<void>((resolve) => {
+      openStarted = resolve;
+    });
+    let prompts = 0;
+    const attemptId = nextAttemptId();
+    const uploading = uploadOpenedConversationFileTo(
+      { token: file.token, attemptId, url: remoteUrl },
+      permitted,
+      async () => {
+        prompts += 1;
+        return true;
+      },
+      recordingFetch().fetchImpl,
+      async (path) => {
+        openStarted();
+        await opening;
+        const handle = await NodeFS.promises.open(path, "r");
+        handles.push(handle);
+        return handle;
+      },
+    );
+    await openRequested;
+    cancelOpenedConversationFileUploadFor({ token: file.token, attemptId });
+    finishOpen();
+    expect(await uploading).toEqual({ _tag: "failed", reason: "cancelled" });
+    expect(handles).toHaveLength(1);
+    expect(handles[0]!.fd).toBe(-1);
+    expect(prompts).toBe(0);
+  });
+
+  it("closes a descriptor held by a pending prompt when the file expires, unprompted", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const { file } = await openedAt();
+      const handles: NodeFS.promises.FileHandle[] = [];
+      let answer: (approved: boolean) => void = () => undefined;
+      let prompted: () => void = () => undefined;
+      const promptOpen = new Promise<void>((resolve) => {
+        prompted = resolve;
+      });
+      const uploading = uploadOpenedConversationFileTo(
+        { token: file.token, attemptId: nextAttemptId(), url: remoteUrl },
+        permitted,
+        () =>
+          new Promise<boolean>((resolve) => {
+            answer = resolve;
+            prompted();
+          }),
+        recordingFetch().fetchImpl,
+        async (path) => {
+          const handle = await NodeFS.promises.open(path, "r");
+          handles.push(handle);
+          return handle;
+        },
+      );
+      await promptOpen;
+      expect(handles[0]!.fd).toBeGreaterThanOrEqual(0);
+      // No renderer call: the lifetime alone ends it.
+      vi.advanceTimersByTime(30 * 60_000);
+      expect(handles[0]!.fd).toBe(-1);
+      answer(true);
+      expect(await uploading).toEqual({ _tag: "failed", reason: "cancelled" });
+      expect(
+        await uploadOpenedConversationFileTo(
+          { token: file.token, attemptId: nextAttemptId(), url: managedUrl },
+          managed,
+          async () => true,
+          recordingFetch().fetchImpl,
+        ),
+      ).toEqual({ _tag: "failed", reason: "file-unavailable" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.effect("refuses a FIFO put at the path without waiting on it", () =>
+    Effect.gen(function* () {
+      if ((yield* HostProcessPlatform) === "win32") return;
+      const { file, path } = yield* Effect.promise(() => openedAt());
+      NodeFS.rmSync(path);
+      expect(NodeChildProcess.spawnSync("mkfifo", [path]).status).toBe(0);
+      // No writer ever opens the FIFO: a blocking open would never return.
+      const result = yield* Effect.promise(() =>
+        uploadOpenedConversationFileTo(
+          { token: file.token, attemptId: nextAttemptId(), url: managedUrl },
+          managed,
+          async () => true,
+          recordingFetch().fetchImpl,
+        ),
+      );
+      expect(result).toEqual({ _tag: "failed", reason: "file-changed" });
+    }),
+  );
 
   it("closes the opened file when an attempt ends, sent or not", async () => {
     const { file } = await openedAt();

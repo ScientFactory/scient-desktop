@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- opened files are inspected and streamed from disk in the main process.
+// @effect-diagnostics globalTimers:off -- a taken file's expiry is an unref'd main-process timer outside any Effect fiber.
 /**
  * `.scic` files the operating system opens with Scient: a double-click or
  * Open With (macOS `open-file`), a launch argument (Windows and Linux), or an
@@ -19,8 +20,11 @@
  * prompt, checks that descriptor against the identity, checks it again after
  * the prompt, and streams exactly the registered size from it, refusing a
  * file that changed (`file-changed`). A file replaced at its path during the
- * prompt is never read: the attempt holds the original. The descriptor is
- * closed when the attempt ends, including by cancel, release, or expiry. On
+ * prompt is never read: the attempt holds the original. The open is
+ * non-blocking where supported, so a FIFO put at the path cannot stall it.
+ * The descriptor is closed when the attempt ends, including by cancel (even
+ * one that arrives while the open is pending), release, or expiry, which a
+ * timer per taken file enforces with no renderer activity. On
  * Windows the identity is the volume serial number and file index Node
  * reports; where a file system reports no file index, only size and
  * modification time are compared, so a replacement with the same size and
@@ -105,6 +109,8 @@ interface TakenFile extends OpenedFile {
   upload: { readonly attemptId: string; readonly controller: AbortController } | null;
   /** Attempts cancelled before they started: they send nothing when they arrive. */
   readonly cancelledAttempts: Set<string>;
+  /** Forgets the file when its lifetime ends, whether or not the renderer acts again. */
+  readonly expiry: ReturnType<typeof setTimeout>;
 }
 
 /** Opened but not yet taken by the renderer. */
@@ -155,6 +161,7 @@ function forgetTakenFile(token: string): void {
   const file = taken.get(token);
   if (!file) return;
   taken.delete(token);
+  clearTimeout(file.expiry);
   file.upload?.controller.abort();
 }
 
@@ -171,12 +178,16 @@ export function takeOpenedConversationFileList(): ReadonlyArray<DesktopOpenedCon
       if (oldest === undefined) break;
       forgetTakenFile(oldest);
     }
+    const expiry = setTimeout(() => forgetTakenFile(file.token), TAKEN_FILE_LIFETIME_MS);
+    // Never keeps the app running on its own.
+    expiry.unref?.();
     taken.set(file.token, {
       ...file,
       expiresAt: performance.now() + TAKEN_FILE_LIFETIME_MS,
       approvedOrigins: new Set(),
       upload: null,
       cancelledAttempts: new Set(),
+      expiry,
     });
   }
   return files.map(({ token, fileName, sizeBytes }) => ({ token, fileName, sizeBytes }));
@@ -244,7 +255,13 @@ export function remoteUploadApprovalOptions(
 /** Opens a file for one upload attempt; replaceable in tests. */
 export type OpenConversationFile = (path: string) => Promise<NodeFS.promises.FileHandle>;
 
-const openForReading: OpenConversationFile = (path) => NodeFS.promises.open(path, "r");
+/**
+ * Non-blocking where the platform has it, so a FIFO or device put at the path
+ * cannot stall the open; the descriptor checks then refuse anything but the
+ * registered regular file.
+ */
+const openForReading: OpenConversationFile = (path) =>
+  NodeFS.promises.open(path, NodeFS.constants.O_RDONLY | (NodeFS.constants.O_NONBLOCK ?? 0));
 
 /** The opened file's bytes, exactly `size` of them; `onShort` when it ends early. */
 async function* exactBytes(
@@ -278,7 +295,7 @@ export async function uploadOpenedConversationFileTo(
   const file = taken.get(request.token);
   if (!file) return { _tag: "failed", reason: "file-unavailable" };
   if (file.expiresAt <= performance.now()) {
-    taken.delete(request.token);
+    forgetTakenFile(request.token);
     return { _tag: "failed", reason: "file-unavailable" };
   }
   if (file.cancelledAttempts.delete(request.attemptId))
@@ -296,13 +313,18 @@ export async function uploadOpenedConversationFileTo(
     // Bound to this descriptor from here on, whatever happens at the path.
     handle = await openFile(file.path).catch(() => null);
     if (handle === null) return { _tag: "failed", reason: "file-unavailable" };
-    // Cancel, release, and expiry close it at once, even while a prompt is open.
+    // Cancel, release, and expiry close it at once, even while a prompt is
+    // open, and before anything else when they came while it was opening.
     const descriptor = handle;
-    upload.signal.addEventListener("abort", () => void descriptor.close().catch(() => {}), {
-      once: true,
-    });
+    const closeDescriptor = () => void descriptor.close().catch(() => {});
+    if (upload.signal.aborted) {
+      closeDescriptor();
+      return cancelled;
+    }
+    upload.signal.addEventListener("abort", closeDescriptor, { once: true });
     const opened = await handle.stat({ bigint: true }).catch(() => null);
-    if (opened === null || !opened.isFile()) return { _tag: "failed", reason: "file-unavailable" };
+    if (opened === null) return { _tag: "failed", reason: "file-unavailable" };
+    // Anything but the registered regular file, a FIFO put there included.
     if (!isSameFile(opened, file.identity)) return changed;
     if (target.requiresApproval && !file.approvedOrigins.has(target.url.origin)) {
       const approved = await approveRemote(

@@ -324,8 +324,10 @@ The contract between staging and the importer is the header of
   server refusal (`rejected`). An upload sends only the file that was opened: each attempt opens it
   once, before any prompt, checks that descriptor against the device, file number, size, and
   modification time recorded when the file was opened (again after the prompt), and streams exactly
-  that size from it; a changed or replaced file is refused (`file-changed`). The descriptor closes
-  when the attempt ends, is cancelled or released, or the file expires. On Windows the file number
+  that size from it; a changed or replaced file is refused (`file-changed`). The open is
+  non-blocking where the platform allows, so a FIFO put at the path is refused without waiting. The
+  descriptor closes when the attempt ends, is cancelled (even while the open is still pending) or
+  released, or the file's 30-minute lifetime ends, which a timer enforces without renderer activity. On Windows the file number
   is the file index Node reports; where a file system has none, size and modification time alone
   are compared, but the open descriptor still keeps the original bytes.
 
