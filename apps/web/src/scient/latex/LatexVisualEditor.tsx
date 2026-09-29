@@ -11,7 +11,13 @@ import { labelKeys } from "../keyboard/keys";
 import { commandEdit, mathCommand } from "../math/input/catalog";
 import { WritingShortcutsDialog } from "../keyboard/WritingShortcutsDialog";
 import { Extension, Node, type Editor } from "@tiptap/core";
-import { NodeViewWrapper, ReactNodeViewRenderer, EditorContent, useEditor } from "@tiptap/react";
+import {
+  NodeViewWrapper,
+  ReactNodeViewRenderer,
+  EditorContent,
+  useEditor,
+  useEditorState,
+} from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import type { NodeViewProps } from "@tiptap/react";
 import {
@@ -1349,6 +1355,42 @@ function LatexLabelDraftField(props: {
   );
 }
 
+function PartNumberedOption({
+  editor,
+  getPos,
+  fallback,
+  disabled,
+  updateAttributes,
+}: {
+  editor: Editor;
+  getPos: NodeViewProps["getPos"];
+  fallback: boolean;
+  disabled: boolean;
+  updateAttributes: NodeViewProps["updateAttributes"];
+}) {
+  const numbered = useEditorState({
+    editor,
+    selector: ({ editor: current }) => {
+      const position = getPos();
+      const part = typeof position === "number" ? current.state.doc.nodeAt(position) : null;
+      return part?.type.name === "latexRichPreview" && part.attrs.kind === "part"
+        ? part.attrs.unnumbered !== true
+        : fallback;
+    },
+  });
+  return (
+    <label>
+      <input
+        type="checkbox"
+        checked={numbered}
+        disabled={disabled}
+        onChange={(event) => updateAttributes({ unnumbered: !event.currentTarget.checked })}
+      />
+      Numbered
+    </label>
+  );
+}
+
 function LatexRichPreviewView({
   node,
   decorations,
@@ -1687,15 +1729,13 @@ function LatexRichPreviewView({
           selected={selected}
           label="Part options"
         >
-          <label>
-            <input
-              type="checkbox"
-              checked={node.attrs.unnumbered !== true}
-              disabled={!editorEditable || !structureEditable}
-              onChange={(event) => updateAttributes({ unnumbered: !event.currentTarget.checked })}
-            />
-            Numbered
-          </label>
+          <PartNumberedOption
+            editor={editor}
+            getPos={getPos}
+            fallback={node.attrs.unnumbered !== true}
+            disabled={!editorEditable || !structureEditable}
+            updateAttributes={updateAttributes}
+          />
           <label>
             Reference label
             <LatexLabelDraftField

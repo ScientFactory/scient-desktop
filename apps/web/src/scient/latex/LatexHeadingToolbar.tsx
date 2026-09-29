@@ -1,10 +1,34 @@
 import type { Editor } from "@tiptap/core";
+import { useEditorState } from "@tiptap/react";
 import { LatexTextField } from "./LatexTextField";
 
 export function LatexHeadingToolbar({ editor, draftKey }: { editor: Editor; draftKey: string }) {
-  const heading = editor.getAttributes("heading");
-  const { $from } = editor.state.selection;
-  const position = $from.depth > 0 ? $from.before() : $from.pos;
+  const heading = useEditorState({
+    editor,
+    selector: ({ editor: current }) => {
+      const { $from } = current.state.selection;
+      const position = $from.depth > 0 ? $from.before() : $from.pos;
+      const node = current.state.doc.nodeAt(position);
+      return node?.type.name === "heading"
+        ? {
+            position,
+            numbered: node.attrs.unnumbered !== true,
+            referenceLabel: String(node.attrs.referenceLabel ?? ""),
+          }
+        : null;
+    },
+  });
+  if (!heading) return null;
+  const updateHeading = (attributes: Record<string, unknown>) => {
+    const node = editor.state.doc.nodeAt(heading.position);
+    if (node?.type.name !== "heading") return;
+    editor.view.dispatch(
+      editor.state.tr.setNodeMarkup(heading.position, undefined, {
+        ...node.attrs,
+        ...attributes,
+      }),
+    );
+  };
   return (
     <div
       role="toolbar"
@@ -15,26 +39,24 @@ export function LatexHeadingToolbar({ editor, draftKey }: { editor: Editor; draf
       <label className="scient-latex-title-author-toggle">
         <input
           type="checkbox"
-          checked={!heading.unnumbered}
-          onChange={(event) =>
-            editor.commands.updateAttributes("heading", { unnumbered: !event.target.checked })
-          }
+          checked={heading.numbered}
+          onChange={(event) => updateHeading({ unnumbered: !event.currentTarget.checked })}
         />
         Numbered
       </label>
       <label className="scient-latex-heading-reference">
         Reference label
         <LatexTextField
-          key={position}
+          key={heading.position}
           aria-label="Heading reference label"
           rows={1}
           spellCheck={false}
-          draftKey={`${draftKey}:heading:${position}:label`}
-          value={String(heading.referenceLabel ?? "")}
+          draftKey={`${draftKey}:heading:${heading.position}:label`}
+          value={heading.referenceLabel}
           placeholder="sec:introduction"
           onValueChange={(referenceLabel) => {
             if (!/[{}\\%\s#$&~^]/u.test(referenceLabel))
-              editor.commands.updateAttributes("heading", {
+              updateHeading({
                 referenceLabel: referenceLabel || null,
               });
           }}
