@@ -155,6 +155,7 @@ const make = Effect.gen(function* () {
     readonly turnId: TurnId | null;
     readonly detail: string;
     readonly createdAt: string;
+    readonly kind?: "checkpoint.capture.failed" | "checkpoint.diff.failed";
   }) =>
     Effect.all({
       commandId: serverCommandId("checkpoint-capture-failure"),
@@ -167,9 +168,12 @@ const make = Effect.gen(function* () {
           threadId: input.threadId,
           activity: {
             id: activityId,
-            tone: "error",
-            kind: "checkpoint.capture.failed",
-            summary: "Checkpoint capture failed",
+            tone: "info",
+            kind: input.kind ?? "checkpoint.capture.failed",
+            summary:
+              input.kind === "checkpoint.diff.failed"
+                ? "Changes could not be compared"
+                : "File history unavailable",
             payload: {
               detail: input.detail,
             },
@@ -327,7 +331,8 @@ const make = Effect.gen(function* () {
         appendCaptureFailureActivity({
           threadId: input.threadId,
           turnId: input.turnId,
-          detail: `Checkpoint captured, but turn diff summary is unavailable: ${error.message}`,
+          kind: "checkpoint.diff.failed",
+          detail: error.message,
           createdAt: input.createdAt,
         }),
       ),

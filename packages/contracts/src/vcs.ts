@@ -287,7 +287,23 @@ export class VcsUnsupportedOperationError extends Schema.TaggedError<VcsUnsuppor
   }
 }
 
+/** Checkpoint capture is unavailable because of resource, file-type, or filesystem constraints. */
+export class VcsCheckpointUnavailableError extends Schema.TaggedError<VcsCheckpointUnavailableError>()(
+  "VcsCheckpointUnavailableError",
+  {
+    operation: Schema.String,
+    cwd: Schema.String,
+    reason: Schema.Literals(["size-limit", "path-limit", "unsupported-file", "filesystem-error"]),
+    detail: Schema.String,
+  },
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}
+
 export const VcsError = Schema.Union([
+  VcsCheckpointUnavailableError,
   VcsProcessSpawnError,
   VcsProcessExitError,
   VcsProcessTimeoutError,
