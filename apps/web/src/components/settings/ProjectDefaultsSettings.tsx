@@ -12,7 +12,7 @@ import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
-  resolveDefaultProviderModelSelection,
+  resolveDefaultModelSettingsSelection,
   sortProviderInstanceEntries,
 } from "../../providerInstances";
 import { useEnvironments } from "../../state/environments";
@@ -61,7 +61,11 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     ? environments.find((environment) => environment.environmentId === target.environmentId)
     : undefined;
   const providers = representative?.serverConfig?.providers ?? EMPTY_SERVER_PROVIDERS;
-  const selection = resolveDefaultProviderModelSelection(providers, settings.defaultModelSelection);
+  const storedSelection = settings.defaultModelSelection;
+  const { selection, storedUnavailable } = resolveDefaultModelSettingsSelection(
+    providers,
+    storedSelection,
+  );
   const entries = sortProviderInstanceEntries(
     applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings),
   );
@@ -142,11 +146,15 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
           : "Default model for new threads. Projects can override it."
       }
       status={
-        unavailable || mixedModel || modelSource === "project"
+        unavailable || mixedModel
           ? undefined
-          : settings.defaultModelSelection === null
-            ? "Automatic"
-            : undefined
+          : storedUnavailable
+            ? `The saved provider is off or unavailable on ${representative?.label ?? "this environment"}. Its options return when it is back.`
+            : modelSource === "project"
+              ? undefined
+              : settings.defaultModelSelection === null
+                ? "Automatic"
+                : undefined
       }
       resetAction={
         settings.defaultModelSelection !== null ? (
@@ -154,7 +162,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
         ) : null
       }
       control={
-        selection && activeEntry ? (
+        selection && (activeEntry || storedUnavailable) ? (
           <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
             <ProviderModelPicker
               activeInstanceId={selection.instanceId}
@@ -176,7 +184,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                 setModel(createModelSelection(instanceId, model))
               }
             />
-            {!mixedModel ? (
+            {!mixedModel && !storedUnavailable && activeEntry ? (
               <TraitsPicker
                 provider={activeEntry.driverKind}
                 models={activeEntry.models}
@@ -187,9 +195,14 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                 allowPromptInjectedEffort={false}
                 planModeEnabled={settings.planModeEnabled}
                 triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                onModelOptionsChange={(options) =>
-                  setModel(createModelSelection(selection.instanceId, selection.model, options))
-                }
+                onModelOptionsChange={(options) => {
+                  const next = createModelSelection(selection.instanceId, selection.model, options);
+                  // Traits of the saved model cannot make it less available, and
+                  // the picker only shows when every target saves this model, so
+                  // only a first pick over "Automatic" needs the model check.
+                  if (storedSelection !== null) updateSettings({ defaultModelSelection: next });
+                  else setModel(next);
+                }}
               />
             ) : null}
           </div>

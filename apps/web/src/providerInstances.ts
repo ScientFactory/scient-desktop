@@ -303,6 +303,24 @@ export function resolveDefaultProviderModelSelection(
 }
 
 /**
+ * What the settings default-model row shows. A saved default whose provider
+ * is off or unavailable here still reads as saved, flagged `storedUnavailable`
+ * so its traits stay read-only: editing a stand-in's traits would overwrite
+ * the saved default. Only "Automatic" (null) shows the fallback a new thread
+ * would start with.
+ */
+export function resolveDefaultModelSettingsSelection(
+  providers: ReadonlyArray<ServerProvider>,
+  stored: ModelSelection | null,
+): { readonly selection: ModelSelection | null; readonly storedUnavailable: boolean } {
+  const resolved = resolveDefaultProviderModelSelection(providers, stored);
+  // No providers reported yet says nothing about the saved one.
+  const storedUnavailable =
+    stored !== null && providers.length > 0 && resolved?.instanceId !== stored.instanceId;
+  return { selection: storedUnavailable ? stored : resolved, storedUnavailable };
+}
+
+/**
  * Resolve an open model-selection routing key back to its driver kind.
  * Custom instance ids are not themselves driver-kind slugs, but the composer
  * still needs the owning driver kind for capabilities, options, icons, and

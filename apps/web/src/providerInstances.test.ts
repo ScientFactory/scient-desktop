@@ -7,6 +7,7 @@ import {
   getDefaultProviderInstanceModel,
   isProviderInstancePickerReady,
   isProviderInstancePickerVisible,
+  resolveDefaultModelSettingsSelection,
   resolveDefaultProviderModelSelection,
   resolveSelectableProviderInstance,
   resolveProviderDriverKindForInstanceSelection,
@@ -616,5 +617,76 @@ describe("resolveDefaultProviderModelSelection", () => {
         null,
       ),
     ).toBeNull();
+  });
+});
+
+describe("resolveDefaultModelSettingsSelection", () => {
+  const claude = ProviderInstanceId.make("claudeAgent");
+  const stored = {
+    instanceId: claude,
+    model: "claude-opus-4-8",
+    options: [{ id: "effort", value: "high" }],
+  };
+  const codexReady = provider({
+    provider: ProviderDriverKind.make("codex"),
+    instanceId: "codex",
+    models: [model("gpt-5.6", false, true)],
+  });
+
+  it("shows a saved default whose provider is available as-is", () => {
+    const providers = [
+      codexReady,
+      provider({
+        provider: ProviderDriverKind.make("claudeAgent"),
+        instanceId: "claudeAgent",
+        models: [model("claude-opus-4-8")],
+      }),
+    ];
+
+    expect(resolveDefaultModelSettingsSelection(providers, stored)).toEqual({
+      selection: stored,
+      storedUnavailable: false,
+    });
+  });
+
+  it.each([{ enabled: false }, { availability: "unavailable" as const }])(
+    "keeps showing the saved default, not a stand-in, when its provider is %o",
+    (state) => {
+      const providers = [
+        codexReady,
+        provider({
+          provider: ProviderDriverKind.make("claudeAgent"),
+          instanceId: "claudeAgent",
+          models: [model("claude-opus-4-8")],
+          ...state,
+        }),
+      ];
+
+      expect(resolveDefaultModelSettingsSelection(providers, stored)).toEqual({
+        selection: stored,
+        storedUnavailable: true,
+      });
+    },
+  );
+
+  it("keeps a saved default whose provider instance is gone", () => {
+    expect(resolveDefaultModelSettingsSelection([codexReady], stored)).toEqual({
+      selection: stored,
+      storedUnavailable: true,
+    });
+  });
+
+  it("does not call a saved default unavailable before any provider is reported", () => {
+    expect(resolveDefaultModelSettingsSelection([], stored)).toEqual({
+      selection: null,
+      storedUnavailable: false,
+    });
+  });
+
+  it("shows the fallback new threads would use when nothing is saved", () => {
+    expect(resolveDefaultModelSettingsSelection([codexReady], null)).toEqual({
+      selection: { instanceId: "codex", model: "gpt-5.6" },
+      storedUnavailable: false,
+    });
   });
 });
