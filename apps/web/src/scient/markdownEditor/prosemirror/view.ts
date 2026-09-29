@@ -89,7 +89,7 @@ import { ShortcutSequence } from "../../keyboard/sequence";
 import { registerShortcutClaim } from "../../keyboard/ownership";
 import { subscribeKeyboardPreferences } from "../../keyboard/preferences";
 import { markdownMathController } from "~/scient/math/input/markdownAdapter";
-import { isScientMessageCopyHtml } from "~/scient/clipboard/messageCopyHtml";
+import { isScientMessageCopyHtml } from "~/scient/clipboard/messageCopyMarker";
 
 export interface ScientMarkdownUploadedImage {
   readonly src: string;

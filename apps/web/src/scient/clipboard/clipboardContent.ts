@@ -7,6 +7,7 @@
  *   becomes the content of its Markdown copy: code, link text, or text.
  * - A details block becomes a bold summary paragraph followed by its body.
  * - A rendered diagram or chart card becomes a code block with its source.
+ * - Display math becomes its own left-to-right paragraph of `$$` source.
  */
 
 /** Mirrors what the T3 clipboard sanitizer removes. */
@@ -16,6 +17,8 @@ const KEPT_CHIP_SELECTOR = ".chat-markdown-file-link";
 const FENCE = /^(`{3,}|~{3,})([^\n]*)\n([\s\S]*?)\n?\1[ \t]*$/u;
 const INLINE_CODE = /^(`+)[ ]?([\s\S]*?)[ ]?\1$/u;
 const INLINE_LINK = /^\[([^\]]*)\]\(([^)\s]*)(?:\s+"[^"]*")?\)$/u;
+/** Chat's copy source for display math: `$$`, the TeX, and `$$` on their own lines. */
+const DISPLAY_MATH_COPY = /^\$\$\n[\s\S]*\n\$\$\s*$/u;
 
 function isWebUrl(href: string): boolean {
   return /^(?:https?:|mailto:)/iu.test(href);
@@ -85,6 +88,18 @@ function materializeVisualCards(container: Element): void {
   }
 }
 
+function materializeDisplayMath(container: Element): void {
+  const document = container.ownerDocument;
+  for (const math of container.querySelectorAll("[data-markdown-copy]")) {
+    const source = math.getAttribute("data-markdown-copy") ?? "";
+    if (!DISPLAY_MATH_COPY.test(source)) continue;
+    const paragraph = document.createElement("p");
+    paragraph.setAttribute("dir", "ltr");
+    paragraph.textContent = source.trim();
+    math.replaceWith(paragraph);
+  }
+}
+
 function materializeControlChips(container: Element): void {
   const document = container.ownerDocument;
   for (const chip of container.querySelectorAll("[data-markdown-copy]")) {
@@ -104,6 +119,7 @@ function materializeControlChips(container: Element): void {
 /** Materializes controls and cards in a detached clipboard fragment, in place. */
 export function materializeClipboardContent(container: Element): void {
   materializeDetails(container);
+  materializeDisplayMath(container);
   materializeVisualCards(container);
   materializeControlChips(container);
 }

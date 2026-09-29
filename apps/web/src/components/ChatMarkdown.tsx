@@ -234,6 +234,12 @@ import {
   useScientMathMarkdownText,
   useScientMathRemarkPlugins,
 } from "../scient/math/scientMathText";
+// SCIENT-FORK:START — the rich clipboard renders a message with chat's own pipeline
+import {
+  normalizeScientMathDelimiters,
+  scientMathRemarkPlugins,
+} from "../scient/math/scientMathText";
+// SCIENT-FORK:END
 import { ScientDisplayMath, ScientInlineMath } from "../scient/math/ScientMath";
 import { openEnvironmentFileInPreview } from "../scient/fileOpening/openEnvironmentFileInPreview";
 import { resolveLinkTarget } from "../browser/browserLinkTarget";
@@ -582,6 +588,76 @@ const CHAT_MARKDOWN_REHYPE_PLUGINS = [
   rehypePreserveImageSourceMeta,
   [rehypeSanitize, CHAT_MARKDOWN_SANITIZE_SCHEMA],
 ] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
+
+// SCIENT-FORK:START — the Copy message button's rich flavour renders with chat's own pipeline
+/**
+ * Chat's math text normalization and remark and rehype steps for one message,
+ * without its React components. Direction runs after these, as in `ChatMarkdown`.
+ */
+export function chatMarkdownPipeline(input: {
+  readonly text: string;
+  readonly lineBreaks: boolean;
+  readonly parseRawHtml: boolean;
+}): {
+  readonly text: string;
+  readonly remarkPlugins: NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
+  readonly rehypePlugins: NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
+} {
+  return {
+    text: normalizeScientMathDelimiters(input.text),
+    remarkPlugins: scientMathRemarkPlugins(
+      input.lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS,
+      input.text,
+    ),
+    rehypePlugins: input.parseRawHtml
+      ? CHAT_MARKDOWN_REHYPE_PLUGINS
+      : [rehypePreserveImageSourceMeta],
+  };
+}
+
+/** The direction chat gives a code or plain-text box, from its content and fence metadata. */
+function chatCodeBoxDirection(input: {
+  readonly code: string;
+  readonly language: string;
+  readonly fenceMeta: string | undefined;
+  readonly conversationDirection: ContentDirection;
+  readonly isStreaming: boolean;
+}): "auto" | "rtl" | "ltr" {
+  return resolvePlainTextBoxDirection({
+    code: input.code,
+    language: input.language,
+    fenceTitle: extractFenceTitle(input.fenceMeta),
+    fenceDirection: resolveFenceDirection(input.fenceMeta),
+    conversationDirection: input.conversationDirection,
+    isStreaming: input.isStreaming,
+  });
+}
+
+/** The title chat shows for a GitHub alert kind, or null when it is not an alert. */
+export function chatMarkdownAlertLabel(kind: unknown): string | null {
+  return GITHUB_ALERT_PRESENTATIONS[String(kind ?? "")]?.label ?? null;
+}
+
+/**
+ * `chatCodeBoxDirection` for a rendered `pre` node of a completed message;
+ * null when it is not a fenced code block or is display math.
+ */
+export function chatMarkdownCodeBoxDirection(
+  node: unknown,
+  children: ReactNode,
+  conversationDirection: ContentDirection,
+): "auto" | "rtl" | "ltr" | null {
+  const codeBlock = extractCodeBlock(children);
+  if (!codeBlock || isScientMathCodeClassName(codeBlock.className)) return null;
+  return chatCodeBoxDirection({
+    code: codeBlock.code,
+    language: extractFenceLanguage(codeBlock.className),
+    fenceMeta: extractPreCodeMeta(node),
+    conversationDirection,
+    isStreaming: false,
+  });
+}
+// SCIENT-FORK:END
 
 /** GitHub's own five alert kinds, in its colors: the glyph names the urgency, the title says it. */
 const GITHUB_ALERT_PRESENTATIONS: Record<
@@ -3295,14 +3371,15 @@ const CHAT_MARKDOWN_COMPONENTS = {
         </RenderErrorBoundary>
       );
     }
-    const copyTextDirection = resolvePlainTextBoxDirection({
+    // SCIENT-FORK:START — shared with the Copy message button's rich flavour
+    const copyTextDirection = chatCodeBoxDirection({
       code: codeBlock.code,
       language,
-      fenceTitle,
-      fenceDirection: resolveFenceDirection(fenceMeta),
+      fenceMeta,
       conversationDirection: resolvedContentDirection,
       isStreaming,
     });
+    // SCIENT-FORK:END
     return (
       <MarkdownCodeBlock
         code={codeBlock.code}

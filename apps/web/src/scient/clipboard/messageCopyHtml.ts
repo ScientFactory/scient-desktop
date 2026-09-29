@@ -4,41 +4,35 @@
  * paragraph's direction. Other messages keep their Markdown-only copy.
  *
  * The HTML is rendered from the message's Markdown, the same text the plain
- * flavour carries, with the chat's Markdown and direction pipeline. The live
+ * flavour carries, with chat's own Markdown pipeline (`chatMarkdownPipeline`)
+ * and direction transform. The live
  * row is not the source: it may be unmounted by the virtualized timeline, and
  * a collapsed details block has no body in the DOM. When the row is mounted,
  * its displayed direction is reused as the message direction.
  */
-import { createElement } from "react";
+import { codexArtifactTemplatePresentationLabel } from "@t3tools/client-runtime/codex-artifact-templates";
+import { artifactTemplateFromHastProperties } from "@t3tools/client-runtime/codex-markdown-directives";
+import { Children, createElement, type ComponentProps, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
-import ReactMarkdown, { defaultUrlTransform, type Options } from "react-markdown";
-import rehypeRaw from "rehype-raw";
-import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
-import remarkBreaks from "remark-breaks";
-import remarkGfm from "remark-gfm";
+import ReactMarkdown, { defaultUrlTransform, type Components } from "react-markdown";
 
+import {
+  chatMarkdownAlertLabel,
+  chatMarkdownCodeBoxDirection,
+  chatMarkdownPipeline,
+} from "~/components/ChatMarkdown";
 import { getClientSettings } from "~/hooks/useSettings";
 import { renderedMarkdownClipboardHtml } from "../../markdown-clipboard";
 import { resolveMarkdownDirection, type FixedContentDirection } from "../bidi/contentDirection";
 import { rehypeScientBidi } from "../bidi/rehypeScientBidi";
-import { remarkScientMath } from "../math/remarkScientMath";
-import { remarkScientSingleDollarMath } from "../math/scientSingleDollarMath";
+import { isScientMathCodeClassName } from "../math/remarkScientMath";
+import { mathMarkdownCopySource } from "../math/ScientMath";
 import { hasStrongRtl } from "./clipboardDirection";
+import { MESSAGE_COPY_ATTRIBUTE } from "./messageCopyMarker";
 
-/** Marks the button's HTML so Scient's own editors can keep pasting its Markdown. */
-const MESSAGE_COPY_ATTRIBUTE = "data-scient-message-copy";
-const MESSAGE_COPY_PATTERN = new RegExp(`<div\\s[^>]*\\b${MESSAGE_COPY_ATTRIBUTE}\\b`, "u");
 const MESSAGE_ROW_SELECTOR = '[data-timeline-row-kind="message"][data-message-id]';
 const MEDIA_SELECTOR = "audio, canvas, embed, iframe, object, picture > source, video";
-/** The chat's raw HTML handling for assistant messages, with the stricter default schema. */
-const RAW_HTML_REHYPE_PLUGINS = [rehypeRaw, [rehypeSanitize, defaultSchema]] satisfies NonNullable<
-  Options["rehypePlugins"]
->;
-
-export function isScientMessageCopyHtml(html: string): boolean {
-  return MESSAGE_COPY_PATTERN.test(html);
-}
 
 function isMessageRow(element: Element, messageId: string): boolean {
   return (
@@ -79,9 +73,61 @@ interface MessageMarkdownProfile {
   readonly parseRawHtml: boolean;
 }
 
+function childrenText(children: ReactNode): string {
+  return Children.toArray(children)
+    .map((child) => (typeof child === "string" || typeof child === "number" ? String(child) : ""))
+    .join("");
+}
+
 /**
- * Renders Markdown into an inert document: nothing in it loads, runs, or
- * reaches the visible timeline. Image sources are dropped before rendering.
+ * The elements chat renders in place of Markdown nodes, where the clipboard
+ * needs the same shape: code boxes carry chat's direction for their fence
+ * metadata, math carries chat's copy source, alerts carry chat's title, and
+ * artifact templates name themselves as chat's copy does.
+ */
+function clipboardComponents(direction: FixedContentDirection): Components {
+  const mathSpan = (tex: string, displayMode: boolean) =>
+    createElement("span", {
+      className: displayMode ? "scient-math-display" : "scient-math-inline",
+      dir: "ltr",
+      "data-markdown-copy": mathMarkdownCopySource(tex, displayMode),
+    });
+  return {
+    code: ({ node: _node, className, children, ...props }) =>
+      isScientMathCodeClassName(className)
+        ? mathSpan(childrenText(children), false)
+        : createElement("code", { ...props, className }, children),
+    pre: ({ node, children, ...props }) => {
+      const onlyChild = Children.toArray(children)[0];
+      const code = onlyChild as { props?: ComponentProps<"code"> } | undefined;
+      if (isScientMathCodeClassName(code?.props?.className)) {
+        return mathSpan(childrenText(code?.props?.children).replace(/\n$/u, ""), true);
+      }
+      const boxDirection = chatMarkdownCodeBoxDirection(node, children, direction);
+      const pre = createElement("pre", props, children);
+      return boxDirection === null
+        ? pre
+        : createElement("div", { "data-copy-text-direction": boxDirection }, pre);
+    },
+    // Chat shows an alert as a titled note rather than a quote.
+    blockquote: ({ node: _node, children, ...props }) => {
+      const label = chatMarkdownAlertLabel((props as Record<string, unknown>)["data-alert"]);
+      return label === null
+        ? createElement("blockquote", props, children)
+        : createElement("div", { role: "note" }, createElement("p", null, label), children);
+    },
+    div: ({ node, children, ...props }) => {
+      const template = artifactTemplateFromHastProperties(node?.properties);
+      if (!template) return createElement("div", props, children);
+      const label = codexArtifactTemplatePresentationLabel(template.artifactKind);
+      return createElement("p", null, `${template.displayName} (${label})`);
+    },
+  };
+}
+
+/**
+ * Renders Markdown with chat's pipeline into an inert document: nothing in it
+ * loads, runs, or reaches the visible timeline. Image sources are dropped.
  */
 function renderMarkdown(
   markdown: string,
@@ -89,6 +135,7 @@ function renderMarkdown(
   direction: FixedContentDirection,
   requestedDirection: ReturnType<typeof getClientSettings>["contentDirection"],
 ): Element {
+  const pipeline = chatMarkdownPipeline({ text: markdown, ...profile });
   const inert = document.implementation.createHTMLDocument("");
   const host = inert.createElement("div");
   inert.body.append(host);
@@ -99,20 +146,16 @@ function renderMarkdown(
         createElement(
           ReactMarkdown,
           {
-            remarkPlugins: [
-              remarkGfm,
-              remarkScientMath,
-              remarkScientSingleDollarMath,
-              ...(profile.lineBreaks ? [remarkBreaks] : []),
-            ],
+            remarkPlugins: pipeline.remarkPlugins,
             rehypePlugins: [
-              ...(profile.parseRawHtml ? RAW_HTML_REHYPE_PLUGINS : []),
+              ...pipeline.rehypePlugins,
               [rehypeScientBidi, { direction, requestedDirection }],
             ],
             skipHtml: false,
+            components: clipboardComponents(direction),
             urlTransform: (url, key) => (key === "src" ? "" : defaultUrlTransform(url)),
           },
-          markdown,
+          pipeline.text,
         ),
       ),
     );
@@ -127,12 +170,6 @@ function renderMarkdown(
 /** Replaces what only renders inside Scient with portable equivalents. */
 function toPortableContent(content: Element): void {
   const document = content.ownerDocument;
-  for (const math of content.querySelectorAll("code.language-math")) {
-    const tex = math.textContent ?? "";
-    const pre = math.parentElement?.tagName === "PRE" ? math.parentElement : null;
-    if (pre) pre.textContent = `$$\n${tex.replace(/\n$/u, "")}\n$$\n`;
-    else math.textContent = `$${tex}$`;
-  }
   for (const image of content.querySelectorAll("img")) {
     const alt = image.getAttribute("alt")?.trim() ?? "";
     if (alt) image.replaceWith(document.createTextNode(alt));

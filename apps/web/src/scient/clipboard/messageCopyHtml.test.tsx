@@ -11,7 +11,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 import { MessageCopyButton } from "~/components/chat/MessageCopyButton";
 import { MessagesTimeline } from "~/components/chat/MessagesTimeline";
-import { isScientMessageCopyHtml, messageCopyHtml } from "./messageCopyHtml";
+import { messageCopyHtml } from "./messageCopyHtml";
+import { isScientMessageCopyHtml } from "./messageCopyMarker";
 
 /** Rows the mocked list leaves unmounted, as LegendList does for rows out of view. */
 const virtualized = vi.hoisted(() => ({ rowIds: new Set<string>() }));
@@ -421,10 +422,11 @@ describe("messageCopyHtml", () => {
       })!,
     );
     expect(html.querySelector("img")).toBeNull();
-    expect(html.querySelector("p")?.textContent).toBe("גרף עקומת תגובה לפי $E = mc^2$.");
+    // Math copies as chat's own copy source, the same as a selection copy.
+    expect(html.querySelector("p")?.textContent).toBe("גרף עקומת תגובה לפי $$E = mc^2$$.");
     expect(
       [...html.querySelectorAll('span[dir="ltr"]')].map((island) => island.textContent),
-    ).toEqual(["$E = mc^2$"]);
+    ).toEqual(["$$E = mc^2$$"]);
   });
 
   it("keeps the composer context fragment round-tripping through the rich flavour", async () => {

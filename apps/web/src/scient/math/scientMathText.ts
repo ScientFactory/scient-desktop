@@ -25,22 +25,35 @@ type ScientRemarkPlugins = NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
  * both into `$$`); every other message keeps the shared static array, so the
  * common path allocates nothing.
  */
+export function scientMathRemarkPlugins(
+  basePlugins: ScientRemarkPlugins,
+  sourceText: string,
+): ScientRemarkPlugins {
+  if (!needsAuthoredMathIntent(sourceText)) {
+    return basePlugins;
+  }
+  return basePlugins.map((plugin) =>
+    plugin === remarkScientMathRefinements
+      ? ([
+          remarkScientMathRefinements,
+          { sourceText } satisfies ScientMathRefinementOptions,
+        ] satisfies ScientRemarkPlugins[number])
+      : plugin,
+  );
+}
+
+function needsAuthoredMathIntent(sourceText: string): boolean {
+  return sourceText.includes("\\(") || sourceText.includes("\\[");
+}
+
+/** `scientMathRemarkPlugins`, memoized for a rendered message. */
 export function useScientMathRemarkPlugins(
   basePlugins: ScientRemarkPlugins,
   sourceText: string,
 ): ScientRemarkPlugins {
-  const needsAuthoredIntent = sourceText.includes("\\(") || sourceText.includes("\\[");
-  return useMemo(() => {
-    if (!needsAuthoredIntent) {
-      return basePlugins;
-    }
-    return basePlugins.map((plugin) =>
-      plugin === remarkScientMathRefinements
-        ? ([
-            remarkScientMathRefinements,
-            { sourceText } satisfies ScientMathRefinementOptions,
-          ] satisfies ScientRemarkPlugins[number])
-        : plugin,
-    );
-  }, [basePlugins, needsAuthoredIntent, sourceText]);
+  const needsAuthoredIntent = needsAuthoredMathIntent(sourceText);
+  return useMemo(
+    () => (needsAuthoredIntent ? scientMathRemarkPlugins(basePlugins, sourceText) : basePlugins),
+    [basePlugins, needsAuthoredIntent, sourceText],
+  );
 }

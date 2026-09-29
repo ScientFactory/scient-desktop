@@ -101,18 +101,25 @@ prose so trailing punctuation keeps the paragraph direction. Before the
 sanitizer runs, an RTL copy's controls and cards become content
 (`scient/clipboard/clipboardContent.ts`): chips rendered as buttons become their
 Markdown copy (code, link text, or text), details become a bold summary
-paragraph followed by the body, and diagram and chart cards become an LTR code
-block with their fence source, so the HTML carries what the plain flavour
+paragraph followed by the body, display math becomes an LTR paragraph of its
+source, and diagram and chart cards become an LTR code block with their fence
+source, so the HTML carries what the plain flavour
 carries.
 
 The Copy message button adds the same HTML only for messages with RTL text.
-It renders the message's Markdown (the plain flavour's own text) with the
-chat's GFM, math, line-break, raw-HTML, and `rehypeScientBidi` profile into an
-inert document, so the result does not depend on whether the virtualized row is
+It renders the message's Markdown (the plain flavour's own text) into an inert
+document with chat's own pipeline, exported from `ChatMarkdown` behind a seam:
+`chatMarkdownPipeline` (math delimiter normalization, the chat remark plugins
+for the message profile, and the raw-HTML and sanitize steps),
+`chatMarkdownCodeBoxDirection` (fence `dir` and title metadata), and
+`chatMarkdownAlertLabel`, followed by `rehypeScientBidi`. Math carries chat's
+`$$` copy source and display math becomes its own LTR paragraph, as in a
+selection copy. The result does not depend on whether the virtualized row is
 mounted or a details block is collapsed; a mounted row only supplies the
-displayed message direction. Images become their alt text, links to local,
-context, or citation targets become their label, and math keeps its `$`
-source. The wrapper carries `data-scient-message-copy`, and the Markdown
+displayed message direction. `messageCopyParity.test.tsx` compares its blocks,
+directions, and LTR islands with what `ChatMarkdown` renders. Images become
+their alt text and links to local, context, or citation targets become their
+label. The wrapper carries `data-scient-message-copy`, and the Markdown
 document editor pastes that copy's Markdown text, as for every other Copy
 message paste.
 
@@ -132,7 +139,8 @@ The setting contract and Scient bidi modules are Scient-owned. The only
 inherited host edits are the ChatMarkdown renderer, ChatView scope, composer
 plugin mount, settings panel entry, and the clipboard seams in
 `markdown-clipboard.ts`, `useCopyToClipboard.ts`, `MessageCopyButton.tsx`, and
-the two Copy message call sites in `MessagesTimeline.tsx`. Do not fork T3's renderer or add
+the two Copy message call sites in `MessagesTimeline.tsx`, and the clipboard
+pipeline exports and shared code-box direction in `ChatMarkdown.tsx`. Do not fork T3's renderer or add
 direction logic to provider, server, persistence, or shell code. When T3's
 Markdown or composer seams change, reapply this narrow adapter and rerun the
 focused bidi tests before accepting the upstream update.

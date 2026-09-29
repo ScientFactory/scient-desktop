@@ -394,6 +394,9 @@ function mathAwareRange(source: Range): Range {
 // SCIENT-FORK:START — `direction` is set only when the copy contains right-to-left text
 function sanitizedHtmlFrom(container: Element, direction?: FixedContentDirection): string {
   // SCIENT-FORK:END
+  // SCIENT-FORK:START — chips, details, display math, and diagram cards keep their content
+  if (direction) materializeClipboardContent(container);
+  // SCIENT-FORK:END
   // Export portable source once, rather than KaTeX's visual + accessibility DOM.
   // The live document retains its MathML; only this detached copy is changed.
   for (const math of container.querySelectorAll(MATH_COPY_SELECTOR)) {
@@ -402,9 +405,6 @@ function sanitizedHtmlFrom(container: Element, direction?: FixedContentDirection
     replacement.textContent = math.getAttribute("data-markdown-copy");
     math.replaceWith(replacement);
   }
-  // SCIENT-FORK:START — chips, details, and diagram cards keep their content
-  if (direction) materializeClipboardContent(container);
-  // SCIENT-FORK:END
   for (const node of container.querySelectorAll(SANITIZED_HTML_SELECTOR)) {
     if (
       node.classList.contains("chat-markdown-file-link") ||
