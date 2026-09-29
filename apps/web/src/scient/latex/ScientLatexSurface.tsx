@@ -33,10 +33,7 @@ import {
 
 import { EditableFileEditor } from "~/components/files/FilePreviewPanel";
 import { useFileSaveCoordinator } from "~/components/files/useFileSaveCoordinator";
-import {
-  setProjectFileQueryData,
-  useProjectFileQuery,
-} from "~/components/files/projectFilesQueryState";
+import { setProjectFileQueryData } from "~/components/files/projectFilesQueryState";
 import { projectFileCacheKey } from "~/components/files/fileContentRevision";
 import { type DraftId } from "~/composerDraftStore";
 import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
@@ -56,8 +53,10 @@ import { usePdfSaveCopy } from "~/scient/pdf/usePdfSaveCopy";
 import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
 
 import { documentBindingChanges } from "./bindingChanges";
-const LatexVisualEditor = lazy(() =>
-  import("./LatexVisualEditor").then((module) => ({ default: module.LatexVisualEditor })),
+const LatexProjectVisualEditor = lazy(() =>
+  import("./LatexProjectVisualEditor").then((module) => ({
+    default: module.LatexProjectVisualEditor,
+  })),
 );
 import { LatexToolchainSetupCard } from "./LatexToolchainSetupCard";
 import { requestLatexForwardSync, requestLatexInverseSync } from "./client";
@@ -488,18 +487,6 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
           },
     [props.cwd, props.environmentId, resolvedRootRelativePath],
   );
-  const rootFile = useProjectFileQuery(
-    props.environmentId,
-    props.cwd,
-    resolvedRootRelativePath !== props.relativePath ? resolvedRootRelativePath : null,
-    resolvedRootRelativePath !== null && resolvedRootRelativePath !== props.relativePath,
-  );
-  const rootSource =
-    resolvedRootRelativePath === props.relativePath
-      ? props.contents
-      : rootFile.data && !rootFile.data.truncated
-        ? rootFile.data.contents
-        : null;
   const build = useLatexBuild(target);
   const bindingChange = useLatexBindingChange(props.environmentId, build.snapshot);
   const status = useMemo(() => latexStatusStripModel(build, props.cwd), [build, props.cwd]);
@@ -520,6 +507,11 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   const sourceRef = useRef(props.contents);
   sourceRef.current = props.contents;
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [visualProjectState, setVisualProjectState] = useState<{
+    pending: boolean;
+    error: string | null;
+  }>({ pending: false, error: null });
+  const visibleSaveError = saveError ?? visualProjectState.error;
   const [syncNotice, setSyncNotice] = useState<LatexSyncNotice | null>(null);
   const [forwardSyncTarget, setForwardSyncTarget] = useState<PdfForwardSyncTarget | null>(null);
   const [handledRevealRequestId, setHandledRevealRequestId] = useState<number | null>(null);
@@ -679,6 +671,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
     (expected: string, next: string) => {
       if (props.truncated || sourceRef.current !== expected || props.saveResolution !== null)
         return false;
+      if (expected === next) return true;
       if (!visualAwaitingSaveRef.current)
         visualPendingBaseRevisionRef.current = visualConfirmedRevisionRef.current;
       visualPendingSourceRef.current = next;
@@ -907,9 +900,12 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
         : descriptor.logicalDocumentKey;
   const compiledFrom = latexCompiledFromPath(build.snapshot?.rootRelativePath, props.relativePath);
   const showEditor = mode === "source" || mode === "split";
-  const showViewer = mode === "pdf" || mode === "split";
-  const showVisual = mode === "visual" || (mode === "split" && splitPreview === "visual");
-  const showRightPane = showViewer || showVisual;
+  const activePreview = mode === "split" ? splitPreview : mode === "source" ? null : mode;
+  const showVisual = activePreview === "visual";
+  const showRightPane = activePreview !== null;
+  // Keep Visual's save sessions alive when hidden; only the chosen preview is visible.
+  const [visualOpened, setVisualOpened] = useState(showVisual);
+  if (showVisual && !visualOpened) setVisualOpened(true);
 
   const [documentToolsHost, setDocumentToolsHost] = useState<HTMLDivElement | null>(null);
 
@@ -942,9 +938,13 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
           ))}
         </div>
         <div className="scient-latex-status">
-          {mode === "visual" && !saveError && !props.saveResolution ? (
+          {mode === "visual" && !visibleSaveError && !props.saveResolution ? (
             <span className="scient-latex-save-state" aria-label="File save status">
-              {hasLocalVisualDraft ? "Draft" : visualAwaitingSave ? "Saving..." : "Saved"}
+              {hasLocalVisualDraft
+                ? "Draft"
+                : visualAwaitingSave || visualProjectState.pending
+                  ? "Saving..."
+                  : "Saved"}
             </span>
           ) : null}
           {resolution.pending || status.busy ? (
@@ -1049,8 +1049,8 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
               <span className="scient-latex-chip">PDF needs rebuilding</span>
             )
           ) : null}
-          {saveError === null ? null : (
-            <ScientTooltip content={saveError}>
+          {visibleSaveError === null ? null : (
+            <ScientTooltip content={visibleSaveError}>
               <span className="scient-latex-chip scient-latex-chip-error">Save failed</span>
             </ScientTooltip>
           )}
@@ -1101,8 +1101,9 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
               target === null ||
               !status.canRebuild ||
               visualAwaitingSave ||
+              visualProjectState.pending ||
               hasLocalVisualDraft ||
-              saveError !== null ||
+              visibleSaveError !== null ||
               props.saveResolution !== null
             }
             // By hand is the one rebuild that re-probes: a TeX installed while
@@ -1130,8 +1131,9 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
                 status.stale ||
                 status.busy ||
                 visualAwaitingSave ||
+                visualProjectState.pending ||
                 hasLocalVisualDraft ||
-                saveError !== null ||
+                visibleSaveError !== null ||
                 props.saveResolution !== null ||
                 exportingPdf
               }
@@ -1250,8 +1252,9 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
           </ScientTooltip>
         ) : null}
 
-        {showRightPane ? (
+        {showRightPane || visualOpened ? (
           <div
+            style={showRightPane ? undefined : { display: "none" }}
             className={cn(
               "scient-latex-viewer-shell",
               mode !== "split" && "scient-latex-viewer-shell-solo",
@@ -1268,28 +1271,63 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
                 {...separatorHandlers}
               />
             ) : null}
-            {showVisual ? (
-              <Suspense fallback={<div className="scient-latex-empty">Opening Visual view…</div>}>
-                <LatexVisualEditor
-                  rootRelativePath={resolvedRootRelativePath}
-                  rootSource={rootSource}
-                  key={visualDraftKey}
-                  source={props.contents}
-                  documentToolsHost={documentToolsHost}
-                  onLocalDraftChange={setHasLocalVisualDraft}
-                  draftKey={visualDraftKey}
-                  fileRevision={props.revision}
-                  environmentId={props.environmentId}
-                  cwd={props.cwd}
-                  relativePath={props.relativePath}
-                  disabled={props.truncated || props.saveResolution !== null}
-                  onEdit={handleVisualEdit}
-                  onEditingChange={handleVisualEditingChange}
-                  onOpenSource={() => selectMode("source")}
-                  registerFinishEditing={registerFinishVisualEditing}
-                />
-              </Suspense>
-            ) : (
+            {showVisual || visualOpened ? (
+              <div style={{ display: showVisual ? "contents" : "none" }}>
+                <Suspense fallback={<div className="scient-latex-empty">Opening Visual view…</div>}>
+                  <LatexProjectVisualEditor
+                    selectedPending={visualAwaitingSave}
+                    fileTruncated={props.truncated}
+                    saveResolution={props.saveResolution}
+                    onPendingChange={props.onPendingChange}
+                    onSaveConfirmed={(path, contents, revision) => {
+                      props.onSaveConfirmed(path, contents, revision);
+                      if (target) notifyLatexBindingChange(target);
+                    }}
+                    onSaveFailure={props.onSaveFailure}
+                    onSaveResolutionApplied={props.onSaveResolutionApplied}
+                    onProjectStateChange={setVisualProjectState}
+                    onOpenFileSource={(path, line) =>
+                      props.onOpenFileSource(
+                        path,
+                        line,
+                        resolvedRootRelativePath
+                          ? { latexRootRelativePath: resolvedRootRelativePath }
+                          : undefined,
+                      )
+                    }
+                    rootRelativePath={resolvedRootRelativePath}
+                    key={visualDraftKey}
+                    source={props.contents}
+                    documentToolsHost={showVisual ? documentToolsHost : null}
+                    onLocalDraftChange={setHasLocalVisualDraft}
+                    draftKey={visualDraftKey}
+                    fileRevision={props.revision}
+                    environmentId={props.environmentId}
+                    cwd={props.cwd}
+                    relativePath={props.relativePath}
+                    disabled={props.truncated || props.saveResolution !== null}
+                    onEdit={handleVisualEdit}
+                    onEditingChange={handleVisualEditingChange}
+                    onOpenSource={() => selectMode("source")}
+                    onOpenRoot={(mode = "source") => {
+                      if (
+                        !resolvedRootRelativePath ||
+                        resolvedRootRelativePath === props.relativePath
+                      )
+                        selectMode(mode);
+                      else
+                        props.onOpenFileSource(
+                          resolvedRootRelativePath,
+                          mode === "source" ? 1 : undefined,
+                          mode === "visual" ? { latexPreviewMode: "visual" } : undefined,
+                        );
+                    }}
+                    registerFinishEditing={registerFinishVisualEditing}
+                  />
+                </Suspense>
+              </div>
+            ) : null}
+            {activePreview === "pdf" ? (
               <LatexViewerPane
                 descriptor={descriptor}
                 readerScope={
@@ -1307,7 +1345,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
                 onInstall={handleInstallToolchain}
                 {...(syncNavigation === undefined ? {} : { syncNavigation })}
               />
-            )}
+            ) : null}
           </div>
         ) : null}
       </div>

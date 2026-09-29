@@ -8,6 +8,7 @@ import {
   useState,
   type ComponentPropsWithoutRef,
 } from "react";
+import { afterEditorPaint } from "./afterEditorPaint";
 
 export const LatexDraftContext = createContext({
   reportDraft: (_id: string, _pending: boolean) => {},
@@ -21,7 +22,7 @@ type Props = Omit<ComponentPropsWithoutRef<"textarea">, "value" | "onChange"> & 
   draftKey?: string | undefined;
 };
 
-function restoredDraft(key: string | undefined, value: string): string {
+export function restoredLatexFieldDraft(key: string | undefined, value: string): string {
   if (!key) return value;
   try {
     const entry: unknown = JSON.parse(localStorage.getItem(`scient.latex.field:${key}`) ?? "null");
@@ -51,13 +52,44 @@ export function LatexTextField({
   onKeyDown,
   ...props
 }: Props) {
-  const [draft, setDraft] = useState(() => restoredDraft(draftKey, value));
+  const [draft, setDraft] = useState(() => restoredLatexFieldDraft(draftKey, value));
   const previousValue = useRef(value);
   const pending = useRef<string | null>(draft === value ? null : draft);
   const composing = useRef(false);
+  const publishTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const cancelJournal = useRef<(() => void) | null>(null);
+  const publish = useRef(onValueChange);
+  useLayoutEffect(() => {
+    publish.current = onValueChange;
+  }, [onValueChange]);
+  useEffect(() => () => clearTimeout(publishTimer.current), []);
+  const schedule = (text: string) => {
+    clearTimeout(publishTimer.current);
+    publishTimer.current = setTimeout(() => publish.current(text), 180);
+  };
   const field = useRef<HTMLTextAreaElement>(null);
   const id = useId();
   const { reportDraft, undo } = useContext(LatexDraftContext);
+  useEffect(() => {
+    const persist = () => {
+      cancelJournal.current?.();
+      cancelJournal.current = null;
+      if (!draftKey || pending.current === null) return;
+      try {
+        localStorage.setItem(
+          `scient.latex.field:${draftKey}`,
+          JSON.stringify({ base: previousValue.current, text: pending.current }),
+        );
+      } catch {
+        /* Keep the live field if storage is unavailable. */
+      }
+    };
+    window.addEventListener("pagehide", persist);
+    return () => {
+      window.removeEventListener("pagehide", persist);
+      persist();
+    };
+  }, [draftKey]);
   useEffect(() => {
     reportDraft(id, draft !== value);
   }, [draft, value, id, reportDraft]);
@@ -90,14 +122,19 @@ export function LatexTextField({
     pending.current = text;
     setDraft(text);
     if (draftKey) {
-      try {
-        localStorage.setItem(
-          `scient.latex.field:${draftKey}`,
-          JSON.stringify({ base: value, text }),
-        );
-      } catch {
-        /* Keep the live draft if storage is full. */
-      }
+      cancelJournal.current?.();
+      cancelJournal.current = afterEditorPaint(() => {
+        cancelJournal.current = null;
+        if (pending.current === null) return;
+        try {
+          localStorage.setItem(
+            `scient.latex.field:${draftKey}`,
+            JSON.stringify({ base: previousValue.current, text: pending.current }),
+          );
+        } catch {
+          /* Keep the live draft if storage is full. */
+        }
+      });
     }
   };
   return (
@@ -126,20 +163,22 @@ export function LatexTextField({
       onChange={(event) => {
         const text = event.currentTarget.value;
         retain(text);
-        if (!composing.current) onValueChange(text);
+        if (!composing.current) schedule(text);
       }}
       onCompositionStart={(event) => {
         composing.current = true;
+        clearTimeout(publishTimer.current);
         onCompositionStart?.(event);
       }}
       onCompositionEnd={(event) => {
         composing.current = false;
         retain(event.currentTarget.value);
-        onValueChange(event.currentTarget.value);
+        schedule(event.currentTarget.value);
         onCompositionEnd?.(event);
       }}
       onBlur={(event) => {
         composing.current = false;
+        clearTimeout(publishTimer.current);
         if (pending.current !== null) onValueChange(event.currentTarget.value);
         onBlur?.(event);
       }}

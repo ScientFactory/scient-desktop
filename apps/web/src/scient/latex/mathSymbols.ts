@@ -1,4 +1,5 @@
 import catalog from "./mathSymbolCatalog.json";
+import { latexCommands, latexWithoutComments } from "./latexPackages";
 
 export interface MathSymbol {
   id: string;
@@ -292,7 +293,7 @@ export const MATH_SYMBOLS: readonly MathSymbol[] = [
 const packagesByCommand = new Map<string, Set<string>>();
 for (const symbol of MATH_SYMBOLS) {
   const command = /^\\([A-Za-z]+)/u.exec(symbol.latex)?.[1];
-  if (!command) continue;
+  if (!command || command === "begin" || command === "left" || command === "right") continue;
   const packages = packagesByCommand.get(command) ?? new Set<string>();
   symbol.packages.forEach((name) => packages.add(name));
   packagesByCommand.set(command, packages);
@@ -300,11 +301,33 @@ for (const symbol of MATH_SYMBOLS) {
 
 /** Dependencies for newly introduced math commands, without touching existing declarations. */
 export function newMathSymbolPackages(previous: string, next: string): string[] {
-  const before = new Set([...previous.matchAll(/\\([A-Za-z]+)/gu)].map((match) => match[1]));
+  const before = new Set(latexCommands(previous).map((match) => match[1]));
   const packages = new Set<string>();
-  for (const match of next.matchAll(/\\([A-Za-z]+)/gu)) {
+  for (const match of latexCommands(next)) {
     if (!before.has(match[1]))
       packagesByCommand.get(match[1]!)?.forEach((name) => packages.add(name));
+  }
+  const environments = (source: string) => {
+    const clean = latexWithoutComments(source);
+    return new Set(
+      latexCommands(source).flatMap((command) => {
+        if (command[1] !== "begin") return [];
+        const name = /^\s*\{([^{}]+)\}/u.exec(clean.slice(command.index + command[0].length))?.[1];
+        return name ? [name] : [];
+      }),
+    );
+  };
+  const oldEnvironments = environments(previous);
+  for (const environment of environments(next)) {
+    if (oldEnvironments.has(environment)) continue;
+    if (
+      /^(?:align|alignat|flalign|gather|multline|equation)\*?$|^(?:aligned|alignedat|gathered|split|[pbBvV]?matrix|smallmatrix|cases)$/u.test(
+        environment,
+      )
+    )
+      packages.add("amsmath");
+    if (/^(?:[drl]+cases\*?|cases\*|[pbBvV]?matrix\*)$/u.test(environment))
+      packages.add("mathtools");
   }
   return [...packages];
 }

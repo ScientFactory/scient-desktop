@@ -25,6 +25,7 @@ export function LatexInsertMenu(props: {
   onOpenChange: (open: boolean) => void;
   actions: readonly LatexInsertAction[];
   disabled: boolean;
+  mathOnly?: boolean;
   onInsertTable: (rows: number, columns: number) => void;
   onReturnFocus: () => void;
 }) {
@@ -87,6 +88,7 @@ export function LatexInsertMenu(props: {
           return false;
         }}
         data-keybinding-capture=""
+        data-latex-insert-menu=""
       >
         <div ref={content}>
           <div className="scient-latex-insert-search">
@@ -115,7 +117,8 @@ export function LatexInsertMenu(props: {
             />
           </div>
           <div className="scient-latex-insert-items">
-            {!query || "table grid rows columns".includes(query.toLowerCase()) ? (
+            {!props.mathOnly &&
+            (!query || "table grid rows columns".includes(query.toLowerCase())) ? (
               <DocumentTableSizeMenu
                 onInsert={({ rows, columns }) => run(() => props.onInsertTable(rows, columns))}
               />
@@ -139,7 +142,7 @@ export function LatexInsertMenu(props: {
             ))}
             {choices.length === 0 &&
             query &&
-            !"table grid rows columns".includes(query.toLowerCase()) ? (
+            (props.mathOnly || !"table grid rows columns".includes(query.toLowerCase())) ? (
               <p className="scient-latex-empty-menu">No matching elements.</p>
             ) : null}
           </div>

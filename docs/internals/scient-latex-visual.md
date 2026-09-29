@@ -201,6 +201,13 @@ unsaved. Inner-environment completions omit display wrappers.
 
 Item controls stay outside measured flow. Inline math uses MathLive's
 `inline-math` mode and does not reserve input-field padding around every formula.
+Math selection keeps the pointer-down anchor and a path through nested cells.
+One resolver handles pointer and keyboard selection: movement within a cell
+selects a range, movement across cells selects their row/column rectangle,
+and crossing the visible outer boundary of a nested array selects that array
+as a whole before continuing in the outer scope. Gaps inside an array resolve
+to the nearest cell. MathLive supplies symbol offsets and rendering;
+the scope boxes are used only for hit testing and are never drawn on the paper.
 The MathLive dependency patch keeps command suggestion rows mounted while the
 highlight changes, reuses their rendered previews, and scrolls only the menu
 instead of the document. The menu appears synchronously without delayed callbacks
@@ -235,15 +242,69 @@ PR handoff. Human review is required before merge.
 
 ## Root context and source coverage
 
-Write uses the resolved root's preamble for chapter layout and its directory for
-figure paths. An unknown root leaves figure paths unresolved. Root documents add
-newly required figure, table and math packages to their own preamble. In included
-files, an insertion that would require changing the root is declined with guidance;
-there is no uncoordinated second file write. The default table is package-free.
+`LatexProjectVisualEditor` projects the resolved root and its included sources,
+regardless of which file Source is showing. `latexProjectVisual.ts` expands literal
+input/include/subfile/import/subimport directives and records virtual-to-physical
+source spans. Subfile document wrappers are omitted, includeonly is honored, and
+include page breaks have synthetic spans that cannot be written into child files.
+Missing files, cycles, unsupported dynamic includes and bounded expansion limits
+block Visual with an explanation while leaving PDF available.
+
+The assembled preamble supplies layout and package inventory. The edit mapper
+separates preamble and body changes, checks span ownership, and patches the owning
+files without flattening includes. Cross-file selections are rejected. The changed
+block's original offset disambiguates insertions at file boundaries. File watchers
+refresh dependencies; optimistic buffers are checked before publication. Each file
+uses the existing shared revision-checked save session, including files open in
+another Source view. Sessions survive view switches and retain pending removed
+dependencies until their saves finish. Build/export wait for saves or save errors.
+These are coordinated file saves, not an atomic filesystem transaction.
+
+Write uses the root's directory for figure paths. Required packages and declarations
+are mapped back to their source files in the preamble; the default table is
+package-free. Resolution retains the established root while a new saved revision
+is being resolved, avoiding a loading reset on each save.
+`latexPackages.ts` owns the declared package inventory, known dependency providers,
+and command requirements. The source guard inspects each changed block's emitted
+LaTeX as well as structured tool metadata and the math symbol catalog. This covers
+native MathLive context-menu styles and custom insertions without depending on
+which button initiated an edit. Color/highlight requests `xcolor`; menu-only color
+names receive non-overwriting `providecolor` definitions. Declarations retain user
+options and are added before relevant late-loading packages. This is a bounded
+source inventory, not execution of arbitrary preamble macros or external styles.
 Supported table structural operations retain each surviving cell's source and
 formatting by row and column identity. Labels are identifiers, not escaped prose.
-Page settings write only the requested fields. Hidden author text stays in app
+Page settings target the resolved root, expose individual margins and write only
+the requested fields. Hidden author text stays in app
 preferences rather than private comments in the preamble.
+
+The active math editor is registered within its document's React context. Insert
+and toolbar history target that editor until the caret leaves it. An inline-to-
+display conversion splits a paragraph around the formula; aligned and gathered
+bodies keep an inner math environment when their outer wrapper changes. Empty
+slots are local caret targets with subtle focused indicators, omitted from source.
+Math and object fields coalesce source publication for 180 ms while preserving
+native input and selection, flush on blur, and retain unacknowledged field drafts.
+Ordinary prose insertion, deletion, replacement and paragraph edits paint without
+calling the LaTeX adapter. `visualTyping.ts` classifies the editor steps without
+parsing or serializing source; the live immutable editor document is retained
+separately from the last synchronized source projection. `afterEditorPaint`
+(animation frame followed by a task, with a fallback for hidden windows) then
+converts, validates and publishes the latest document. Following ordinary input
+replaces the queued document without synchronously flushing earlier text. Toolbar
+refreshes and recognition of structured math typed as prose also wait until paint.
+Structural actions and explicit finish/reload flush outstanding typing and source
+publication to preserve revision ordering. Composition stays local until it ends.
+Cross-file package edits still require both file sessions to acknowledge the edit.
+Rejected text conversion or source conflicts retain the live text and a raw editor
+recovery snapshot; they never reset the typing document to the prior source. That
+snapshot can reopen after reload. Successful conversion hands recovery to the
+validated source journal before clearing the raw snapshot. Plain prose bypasses
+per-character source tokenization; round-trip signatures are cached for immutable
+nodes. Recovery storage writes happen after painting or on explicit exit.
+Pagination waits 220 ms after input and maps existing decorations while waiting;
+measurements and resize-observer refreshes run after painting, not on every input.
+It never replaces the editable DOM. Layout profiles are cached by preamble.
 
 The parser intentionally leaves unknown commands, optional citation arguments,
 control symbols, comments inside prose, custom macros and unsupported table cells

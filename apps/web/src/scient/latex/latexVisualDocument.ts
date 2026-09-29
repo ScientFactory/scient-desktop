@@ -1,6 +1,12 @@
 import type { JSONContent } from "@tiptap/core";
 import { newMathSymbolPackages } from "./mathSymbols";
 import {
+  ensureLatexPackages,
+  ensureLatexMenuColors,
+  latexPackageInventory,
+  newLatexCommandPackages,
+} from "./latexPackages";
+import {
   latexLengthInches,
   latexVisualLayoutProfile,
   LATEX_PAPER_SIZES,
@@ -26,11 +32,26 @@ export interface LatexVisualDocument {
   readonly rawBlocks: number;
 }
 
+export interface LatexRootUpdate {
+  readonly expected: string;
+  readonly next: string;
+}
+
+export const LATEX_HEADING_STYLES = [
+  { level: 6, command: "chapter", label: "Chapter" },
+  { level: 1, command: "section", label: "Section" },
+  { level: 2, command: "subsection", label: "Subsection" },
+  { level: 3, command: "subsubsection", label: "Subsubsection" },
+  { level: 4, command: "paragraph", label: "Paragraph heading" },
+  { level: 5, command: "subparagraph", label: "Subparagraph heading" },
+] as const;
+
 export interface LatexVisualLayoutUpdate {
   readonly documentClass?: string;
   readonly paper: LatexVisualLayoutProfile["paper"];
   readonly baseFontPt: 10 | 11 | 12;
   readonly margin: string;
+  readonly margins?: Record<"top" | "right" | "bottom" | "left", string>;
   readonly paragraphStyle: "indented" | "spaced";
 }
 
@@ -52,9 +73,12 @@ export function updateLatexVisualLayoutSource(
   source: string,
   update: Partial<LatexVisualLayoutUpdate>,
 ): string | null {
-  const documentClass = /\\documentclass(?:\[([^\]]*)\])?\{([^{}]+)\}/u.exec(source);
-  const begin = source.indexOf("\\begin{document}");
-  if (!documentClass || begin < 0 || documentClass.index > begin) return null;
+  const classAt = findDelimiter(source, "\\documentclass", 0);
+  const documentClass = /^\\documentclass\s*(?:\[([^\]]*)\])?\s*\{([^{}]+)\}/u.exec(
+    source.slice(classAt),
+  );
+  const begin = findDelimiter(source, "\\begin{document}", 0);
+  if (classAt < 0 || !documentClass || begin < 0 || classAt > begin) return null;
   const eol = source.includes("\r\n") ? "\r\n" : "\n";
   const targetClass = update.documentClass ?? documentClass[2];
   if (targetClass !== documentClass[2]) {
@@ -90,19 +114,28 @@ export function updateLatexVisualLayoutSource(
     if (update.paper !== undefined) options.push(`${update.paper}paper`);
     const value = options.filter(Boolean).join(",");
     changed =
-      source.slice(0, documentClass.index) +
+      source.slice(0, classAt) +
       `\\documentclass${value ? `[${value}]` : ""}{${targetClass}}` +
-      source.slice(documentClass.index + documentClass[0].length);
+      source.slice(classAt + documentClass[0].length);
   }
-  if (update.margin !== undefined || update.paper !== undefined) {
-    if (update.margin !== undefined) {
-      const margin = latexLengthInches(update.margin);
+  const margins =
+    update.margins ??
+    (update.margin === undefined
+      ? undefined
+      : { top: update.margin, right: update.margin, bottom: update.margin, left: update.margin });
+  if (margins !== undefined || update.paper !== undefined) {
+    if (margins !== undefined) {
+      const values = Object.values(margins).map((value) => latexLengthInches(value));
       const paper = LATEX_PAPER_SIZES[update.paper ?? latexVisualLayoutProfile(source).paper];
       if (
-        !/^(?:\d+(?:\.\d*)?|\.\d+)\s*(?:in|cm|mm|pt)$/u.test(update.margin) ||
-        margin === null ||
-        margin <= 0 ||
-        margin * 2 >= Math.min(paper.width, paper.height)
+        Object.values(margins).some(
+          (value) => !/^(?:\d+(?:\.\d*)?|\.\d+)\s*(?:in|cm|mm|pt)$/u.test(value.trim()),
+        ) ||
+        values.some((value) => value === null || value <= 0) ||
+        (latexLengthInches(margins.left) ?? 0) + (latexLengthInches(margins.right) ?? 0) >=
+          paper.width ||
+        (latexLengthInches(margins.top) ?? 0) + (latexLengthInches(margins.bottom) ?? 0) >=
+          paper.height
       )
         return null;
     }
@@ -113,7 +146,7 @@ export function updateLatexVisualLayoutSource(
           .filter(
             (option) =>
               !(
-                update.margin !== undefined &&
+                margins !== undefined &&
                 /^(?:margin|hmargin|vmargin|top|right|bottom|left|inner|outer|textwidth|textheight|width|height|total|scale|hscale|vscale)\s*=/u.test(
                   option.trim(),
                 )
@@ -125,12 +158,18 @@ export function updateLatexVisualLayoutSource(
                 )
               ),
           ),
-        ...(update.margin !== undefined ? [`margin=${update.margin.replace(/\s+/gu, "")}`] : []),
+        ...(update.margins
+          ? Object.entries(update.margins).map(
+              ([side, value]) => `${side}=${value.replace(/\s+/gu, "")}`,
+            )
+          : update.margin !== undefined
+            ? [`margin=${update.margin.replace(/\s+/gu, "")}`]
+            : []),
         ...(update.paper !== undefined ? [`${update.paper}paper`] : []),
       ]
         .filter(Boolean)
         .join(",");
-    const at = changed.indexOf("\\begin{document}");
+    const at = findDelimiter(changed, "\\begin{document}", 0);
     const preamble = changed.slice(0, at);
     const geometry = /\\usepackage(?:\[([^\]]*)\])?\{geometry\}/u;
     const configure = /\\geometry\s*\{((?:[^{}]|\{[^{}]*\})*)\}/gu;
@@ -149,7 +188,7 @@ export function updateLatexVisualLayoutSource(
         );
       else if (updated === preamble) updated += `\\geometry{${options("")}}${eol}`;
       changed = updated + changed.slice(at);
-    } else if (update.margin !== undefined) {
+    } else if (margins !== undefined) {
       changed =
         preamble +
         (preamble.endsWith("\n") ? "" : eol) +
@@ -166,7 +205,7 @@ export function updateLatexVisualLayoutSource(
         changed,
         new RegExp(`\\\\setlength\\{\\\\${command}\\}\\{[^{}]+\\}`, "u"),
         `\\setlength{\\${command}}{${value}}`,
-        changed.indexOf("\\begin{document}"),
+        findDelimiter(changed, "\\begin{document}", 0),
         eol,
       );
     }
@@ -389,7 +428,9 @@ function withSourceId(node: JSONContent, id: string): JSONContent {
 }
 
 function parseHeading(source: string): JSONContent | null {
-  const match = /^\\(section|subsection|subsubsection)(\*)?\{/u.exec(source);
+  const match = /^\\(chapter|section|subsection|subsubsection|paragraph|subparagraph)(\*)?\{/u.exec(
+    source,
+  );
   if (!match) return null;
   const opening = match[0].length - 1;
   const close = closingBrace(source, opening);
@@ -399,7 +440,7 @@ function parseHeading(source: string): JSONContent | null {
   if (tail && !label) return null;
   const content = parseInline(source.slice(opening + 1, close));
   if (content === null) return null;
-  const level = match[1] === "section" ? 1 : match[1] === "subsection" ? 2 : 3;
+  const level = LATEX_HEADING_STYLES.find((style) => style.command === match[1])!.level;
   return {
     type: "heading",
     attrs: {
@@ -414,9 +455,10 @@ function parseHeading(source: string): JSONContent | null {
 
 function parseList(source: string, depth: number): JSONContent | null {
   if (depth > 32) return null;
-  const opening = /^\\begin\{(itemize|enumerate)\}\s*/u.exec(source);
+  const opening = /^\\begin\{(itemize|enumerate)\}(\[resume\])?\s*/u.exec(source);
   if (!opening) return null;
   const environment = opening[1]!;
+  if (opening[2] && environment !== "enumerate") return null;
   const closing = `\\end{${environment}}`;
   const close = source.lastIndexOf(closing);
   if (close < opening[0].length || source.slice(close + closing.length).trim() !== "") return null;
@@ -452,7 +494,11 @@ function parseList(source: string, depth: number): JSONContent | null {
     if (projected.rawBlocks > 0 || projected.blocks[0]?.node.type !== "paragraph") return null;
     items.push({ type: "listItem", content: projected.content.content ?? [] });
   }
-  return { type: environment === "itemize" ? "bulletList" : "orderedList", content: items };
+  return {
+    type: environment === "itemize" ? "bulletList" : "orderedList",
+    ...(opening[2] ? { attrs: { resume: true } } : {}),
+    content: items,
+  };
 }
 
 export interface LatexVisualMathAttributes {
@@ -585,7 +631,11 @@ function nextBlockEnd(body: string, from: number): number {
   }
   const standalone = /^\\(?:maketitle|tableofcontents|newpage|clearpage)\b/u.exec(body.slice(from));
   if (standalone) return from + standalone[0].length;
-  if (/^\\(?:section|subsection|subsubsection)\*?\{/u.test(body.slice(from))) {
+  if (
+    /^\\(?:part|chapter|section|subsection|subsubsection|paragraph|subparagraph)\*?\{/u.test(
+      body.slice(from),
+    )
+  ) {
     const opening = body.indexOf("{", from);
     const close = closingBrace(body, opening);
     if (close === null) return body.length;
@@ -603,7 +653,11 @@ function nextBlockEnd(body: string, from: number): number {
     if (depth === 0 && index > from) {
       if (body.startsWith("\\end{document}", index)) return index;
       if (/^\r?\n[\t ]*\r?\n/u.test(body.slice(index))) return index;
-      if (/^\\(?:begin\{|\[|(?:section|subsection|subsubsection)\*?\{)/u.test(body.slice(index)))
+      if (
+        /^\\(?:begin\{|\[|(?:part|chapter|section|subsection|subsubsection|paragraph|subparagraph)\*?\{)/u.test(
+          body.slice(index),
+        )
+      )
         return index;
     }
     if (body[index] === "\\") index++;
@@ -710,7 +764,7 @@ function currentDateLabel(): string {
 const HIDDEN_AUTHOR_COMMENT = /^% scient-hidden-author: (.*)(?:\r?\n|$)/mu;
 
 function hiddenAuthor(source: string): string {
-  const begin = source.indexOf("\\begin{document}");
+  const begin = findDelimiter(source, "\\begin{document}", 0);
   const match = HIDDEN_AUTHOR_COMMENT.exec(begin < 0 ? source : source.slice(0, begin));
   if (!match) return "";
   try {
@@ -733,7 +787,7 @@ export function metadataText(value: string): string | null {
 }
 
 export function titleMetadata(source: string) {
-  const begin = source.indexOf("\\begin{document}");
+  const begin = findDelimiter(source, "\\begin{document}", 0);
   const preamble = begin < 0 ? source : source.slice(0, begin);
   const title = commandArgument(preamble, "title");
   const author = commandArgument(preamble, "author");
@@ -821,6 +875,132 @@ function parseDocumentFrontMatter(source: string, documentSource: string): JSONC
       raw: source,
       body: body?.display ?? previewText(source.slice(opening[0].length, ending)),
       editable: body !== null,
+    },
+  };
+}
+
+const SIMPLE_LAYOUT_ENVIRONMENTS = new Set([
+  "quotation",
+  "verse",
+  "verbatim",
+  "verbatim*",
+  "alltt",
+  "lstlisting",
+  "flushleft",
+  "flushright",
+]);
+
+function parseSimpleLayout(source: string): JSONContent | null {
+  const opening = /^\\begin\{([^}]+)\}/u.exec(source);
+  const environment = opening?.[1] ?? "";
+  if (!opening || !SIMPLE_LAYOUT_ENVIRONMENTS.has(environment)) return null;
+  const closing = `\\end{${environment}}`;
+  if (!source.endsWith(closing)) return null;
+  const interior = source
+    .slice(opening[0].length, -closing.length)
+    .replace(/^\r?\n/u, "")
+    .replace(/\r?\n$/u, "");
+  const code = ["verbatim", "verbatim*", "alltt", "lstlisting"].includes(environment);
+  const inline = code
+    ? null
+    : parseInline(
+        interior
+          .trim()
+          .replace(/\\par\b/gu, "\n\n")
+          .replace(/\\\\\s*\r?\n/gu, "\n"),
+      );
+  const editable =
+    code ||
+    (inline !== null && inline.every((node) => node.type === "text" || node.type === "hardBreak"));
+  const body = code
+    ? interior
+    : editable
+      ? inline!.map((node) => (node.type === "hardBreak" ? "\n" : (node.text ?? ""))).join("")
+      : previewText(interior);
+  return {
+    type: "latexRichPreview",
+    attrs: { kind: "simple", environment, body, raw: source, editable },
+  };
+}
+
+function parsePartPreview(source: string): JSONContent | null {
+  const opening = /^\\part(\*)?\{/u.exec(source);
+  if (!opening) return null;
+  const close = closingBrace(source, opening[0].length - 1);
+  if (close === null) return null;
+  const label = /^\s*\\label\{([^{}\\%\s]+)\}$/u.exec(source.slice(close + 1).trim());
+  if (source.slice(close + 1).trim() && !label) return null;
+  const inline = parseInline(source.slice(opening[0].length, close));
+  const editable = inline !== null && inline.every((node) => node.type === "text");
+  return {
+    type: "latexRichPreview",
+    attrs: {
+      kind: "part",
+      title: editable ? inline!.map((node) => node.text ?? "").join("") : previewText(source),
+      unnumbered: Boolean(opening[1]),
+      label: label?.[1] ?? "",
+      raw: source,
+      editable,
+    },
+  };
+}
+
+export function latexRomanNumber(value: number): string {
+  let remaining = value;
+  let result = "";
+  for (const [amount, numeral] of [
+    [1000, "M"],
+    [900, "CM"],
+    [500, "D"],
+    [400, "CD"],
+    [100, "C"],
+    [90, "XC"],
+    [50, "L"],
+    [40, "XL"],
+    [10, "X"],
+    [9, "IX"],
+    [5, "V"],
+    [4, "IV"],
+    [1, "I"],
+  ] as const) {
+    while (remaining >= amount) {
+      result += numeral;
+      remaining -= amount;
+    }
+  }
+  return result;
+}
+
+function parseBibliographyPreview(source: string): JSONContent | null {
+  const opening = /^\\begin\{thebibliography\}\{([^{}]*)\}/u.exec(source);
+  const closing = "\\end{thebibliography}";
+  if (!opening || !source.endsWith(closing)) return null;
+  const body = source.slice(opening[0].length, -closing.length);
+  if (/%/u.test(body)) return null;
+  const matches = [...body.matchAll(/\\bibitem\{([^{}\\\s]+)\}/gu)];
+  if (matches.length === 0 || matches.length > 100) return null;
+  let editable = !body.slice(0, matches[0]!.index).trim();
+  const items = matches.map((match, index) => {
+    const end = matches[index + 1]?.index ?? body.length;
+    const raw = body.slice(match.index! + match[0].length, end).trim();
+    const inline = parseInline(raw);
+    if (!inline || inline.some((node) => node.type !== "text" && node.type !== "hardBreak"))
+      editable = false;
+    return {
+      label: match[1]!,
+      body: inline
+        ? inline.map((node) => (node.type === "hardBreak" ? "\n" : (node.text ?? ""))).join("")
+        : previewText(raw),
+    };
+  });
+  return {
+    type: "latexRichPreview",
+    attrs: {
+      kind: "bibliography",
+      raw: source,
+      items,
+      widestLabel: opening[1],
+      editable,
     },
   };
 }
@@ -1174,6 +1354,7 @@ const SCIENTIFIC_ENVIRONMENTS = new Set([
   "definition",
   "example",
   "remark",
+  "remarks",
   "proof",
 ]);
 
@@ -1378,6 +1559,9 @@ export function latexVisualFigureSource(): string {
 function parseRichPreview(source: string, documentSource: string): JSONContent | null {
   return (
     parseDocumentFrontMatter(source, documentSource) ??
+    parsePartPreview(source) ??
+    parseSimpleLayout(source) ??
+    parseBibliographyPreview(source) ??
     parseDescriptionPreview(source) ??
     parseTablePreview(source) ??
     parseFigurePreview(source) ??
@@ -1390,6 +1574,14 @@ function classifyBlock(source: string, depth: number): JSONContent | null {
   return (
     parseHeading(source) ??
     parseList(source, depth) ??
+    (() => {
+      if (depth > 32 || !source.startsWith("\\begin{quote}") || !source.endsWith("\\end{quote}"))
+        return null;
+      const inner = projectLatexVisualDocument(source.slice(13, -11), depth + 1);
+      return inner.rawBlocks === 0
+        ? { type: "blockquote", content: inner.content.content ?? [] }
+        : null;
+    })() ??
     parseDisplayMath(source) ??
     (() => {
       const content = parseInline(source.trim());
@@ -1441,10 +1633,28 @@ export function projectLatexVisualDocument(source: string, depth = 0): LatexVisu
   let section = 0;
   let subsection = 0;
   let subsubsection = 0;
+  let chapter = 0;
+  let part = 0;
+  const chapters =
+    /\\documentclass(?:\[[^\]]*\])?\{(?:book|report|memoir|scrbook|scrreprt)\}/u.test(source);
   const tocEntries = blocks.flatMap((block) => {
+    if (block.node.type === "latexRichPreview" && block.node.attrs?.kind === "part") {
+      if (block.node.attrs.unnumbered === true) return [];
+      part += 1;
+      return [
+        { level: 0, number: latexRomanNumber(part), title: String(block.node.attrs.title ?? "") },
+      ];
+    }
     if (block.node.type !== "heading" || block.node.attrs?.unnumbered === true) return [];
     const level = Number(block.node.attrs?.level ?? 1);
-    if (level === 1) {
+    // The standard classes omit run-in headings from the contents by default.
+    if (level === 4 || level === 5) return [];
+    if (level === 6) {
+      chapter += 1;
+      section = 0;
+      subsection = 0;
+      subsubsection = 0;
+    } else if (level === 1) {
       section += 1;
       subsection = 0;
       subsubsection = 0;
@@ -1452,12 +1662,13 @@ export function projectLatexVisualDocument(source: string, depth = 0): LatexVisu
       subsection += 1;
       subsubsection = 0;
     } else subsubsection += 1;
-    const number =
+    const localNumber =
       level === 1
         ? `${section}`
         : level === 2
           ? `${section}.${subsection}`
           : `${section}.${subsection}.${subsubsection}`;
+    const number = level === 6 ? String(chapter) : (chapters ? `${chapter}.` : "") + localNumber;
     const title = (block.node.content ?? [])
       .map((child) =>
         child.type === "text"
@@ -1467,7 +1678,7 @@ export function projectLatexVisualDocument(source: string, depth = 0): LatexVisu
             : String(child.attrs?.argument ?? ""),
       )
       .join("");
-    return [{ level, number, title }];
+    return [{ level: level === 6 ? 0 : level, number, title }];
   });
   for (const [index, block] of blocks.entries()) {
     if (block.node.type !== "latexRichPreview" || block.node.attrs?.kind !== "toc") continue;
@@ -1749,15 +1960,16 @@ export function serializeLatexVisualBlock(node: JSONContent): string | null {
   if (node.type === "paragraph") return serializeInline(node.content) || "\\par";
   if (node.type === "heading") {
     const command =
-      node.attrs?.level === 2
-        ? "subsection"
-        : node.attrs?.level === 3
-          ? "subsubsection"
-          : "section";
+      LATEX_HEADING_STYLES.find((style) => style.level === node.attrs?.level)?.command ?? "section";
     const star = node.attrs?.unnumbered === true ? "*" : "";
     const label = node.attrs?.referenceLabel;
     if (label && (typeof label !== "string" || /[{}\\%\s#$&~^]/u.test(label))) return null;
     return `\\${command}${star}{${serializeInline(node.content)}}${label ? `\\label{${label}}` : ""}`;
+  }
+  if (node.type === "blockquote") {
+    const blocks = (node.content ?? []).map(serializeLatexVisualBlock);
+    if (blocks.some((block) => block === null)) return null;
+    return `\\begin{quote}\n${blocks.join("\n\n")}\n\\end{quote}`;
   }
   if (node.type === "latexDisplayMath") {
     return latexVisualMathSource(
@@ -1774,6 +1986,38 @@ export function serializeLatexVisualBlock(node: JSONContent): string | null {
     const raw = String(node.attrs?.raw ?? "");
     if (node.attrs?.editable !== true) return raw;
     if (["title", "toc", "pagebreak"].includes(String(node.attrs.kind))) return raw;
+    if (node.attrs.kind === "part") {
+      const title = typeof node.attrs.title === "string" ? node.attrs.title : null;
+      const label = safeLatexLabel(node.attrs.label ?? "");
+      if (title === null || label === null) return null;
+      return `\\part${node.attrs.unnumbered === true ? "*" : ""}{${escapeText(title)}}${label ? `\\label{${label}}` : ""}`;
+    }
+    if (node.attrs.kind === "simple") {
+      const environment = String(node.attrs.environment ?? "");
+      const body = typeof node.attrs.body === "string" ? node.attrs.body : null;
+      if (!SIMPLE_LAYOUT_ENVIRONMENTS.has(environment) || body === null) return null;
+      const code = ["verbatim", "verbatim*", "alltt", "lstlisting"].includes(environment);
+      const text = code
+        ? body
+        : environment === "verse"
+          ? body.split("\n").map(escapeText).join(" \\\\\n")
+          : escapeText(body);
+      return `\\begin{${environment}}\n${text}\n\\end{${environment}}`;
+    }
+    if (node.attrs.kind === "bibliography") {
+      const items = Array.isArray(node.attrs.items) ? node.attrs.items : null;
+      const widestLabel = safeLatexArgument(node.attrs.widestLabel ?? "99");
+      if (!items || items.length === 0 || widestLabel === null) return null;
+      const entries: string[] = [];
+      for (const item of items) {
+        if (!item || typeof item !== "object" || !("label" in item) || !("body" in item))
+          return null;
+        const key = safeLatexLabel(item.label);
+        if (!key || typeof item.body !== "string") return null;
+        entries.push(`\\bibitem{${key}} ${escapeText(item.body)}`);
+      }
+      return `\\begin{thebibliography}{${widestLabel}}\n${entries.join("\n")}\n\\end{thebibliography}`;
+    }
     if (node.attrs.kind === "abstract") {
       if (typeof node.attrs.body !== "string") return null;
       const eol = raw.includes("\r\n") ? "\r\n" : "\n";
@@ -2119,7 +2363,8 @@ export function serializeLatexVisualBlock(node: JSONContent): string | null {
       return `\\item ${children.join("\n\n")}`;
     });
     if (items.some((item) => item === null)) return null;
-    return `\\begin{${environment}}\n${items.join("\n")}\n\\end{${environment}}`;
+    const options = environment === "enumerate" && node.attrs?.resume === true ? "[resume]" : "";
+    return `\\begin{${environment}}${options}\n${items.join("\n")}\n\\end{${environment}}`;
   }
   return null;
 }
@@ -2157,9 +2402,13 @@ function comparableNode(node: JSONContent): ComparableVisualNode {
                   key === "figurePlacement" ||
                   key === "figureAlignment" ||
                   key === "figureStarred")) ||
-              (node.attrs?.kind !== "scientific" && key === "environment") ||
-              (!["scientific", "title"].includes(String(node.attrs?.kind)) && key === "title") ||
-              (!["scientific", "abstract"].includes(String(node.attrs?.kind)) && key === "body") ||
+              (!["scientific", "simple"].includes(String(node.attrs?.kind)) &&
+                key === "environment") ||
+              (!["scientific", "title", "part"].includes(String(node.attrs?.kind)) &&
+                key === "title") ||
+              (!["scientific", "abstract", "simple"].includes(String(node.attrs?.kind)) &&
+                key === "body") ||
+              (node.attrs?.kind !== "bibliography" && key === "widestLabel") ||
               (node.attrs?.kind !== "title" &&
                 ["author", "authorEnabled", "date", "dateEnabled", "dateMode"].includes(key)) ||
               (node.attrs?.kind !== "description" &&
@@ -2173,7 +2422,7 @@ function comparableNode(node: JSONContent): ComparableVisualNode {
           value === undefined
         )
           return false;
-        if (key === "unnumbered" && value === false) return false;
+        if ((key === "unnumbered" || key === "resume") && value === false) return false;
         if (key === "referenceLabel" && value === "") return false;
         if (key === "start" && value === 1) return false;
         if (key === "wrapper" && (value === "paren" || value === "bracket")) return false;
@@ -2216,7 +2465,10 @@ export function latexVisualNodeSignature(node: JSONContent): string {
 
 /** TeX collapses ordinary whitespace. Keep the live editor's whitespace in its
  * session projection, while checking structural round trips using TeX semantics. */
+const roundTripSignatures = new WeakMap<JSONContent, string>();
 function roundTripSignature(node: JSONContent): string {
+  const cached = roundTripSignatures.get(node);
+  if (cached !== undefined) return cached;
   const prose = (text: string) =>
     text
       .replace(/---/gu, "\u2014")
@@ -2244,7 +2496,12 @@ function roundTripSignature(node: JSONContent): string {
                 typeof item === "string"
                   ? key === "author" && value.attrs?.authorEnabled === false
                     ? ""
-                    : prose(item).trim()
+                    : value.attrs?.kind === "simple" &&
+                        ["verbatim", "verbatim*", "alltt", "lstlisting"].includes(
+                          String(value.attrs.environment),
+                        )
+                      ? item
+                      : prose(item).trim()
                   : item,
               ]),
             ),
@@ -2273,13 +2530,32 @@ function roundTripSignature(node: JSONContent): string {
             },
           }
         : {}),
+      ...(value.type === "latexRichPreview" && value.attrs?.kind === "bibliography"
+        ? {
+            attrs: {
+              ...value.attrs,
+              items: Array.isArray(value.attrs.items)
+                ? value.attrs.items.map((item: unknown) =>
+                    item &&
+                    typeof item === "object" &&
+                    "body" in item &&
+                    typeof item.body === "string"
+                      ? { ...item, body: prose(item.body).trim() }
+                      : item,
+                  )
+                : value.attrs.items,
+            },
+          }
+        : {}),
       ...(value.text === undefined ? {} : { text: prose(value.text) }),
       ...(children
         ? { content: children.filter((child) => child.type !== "text" || child.text !== "") }
         : {}),
     };
   };
-  return latexVisualNodeSignature(normalize(node));
+  const signature = latexVisualNodeSignature(normalize(node));
+  roundTripSignatures.set(node, signature);
+  return signature;
 }
 
 export function adoptLatexVisualContent(
@@ -2300,8 +2576,12 @@ export function adoptLatexVisualContent(
 function scientificEnvironments(content: readonly JSONContent[]): Set<string> {
   return new Set(
     content
-      .filter((node) => node.type === "latexRichPreview" && node.attrs?.kind === "scientific")
-      .map((node) => String(node.attrs?.environment ?? ""))
+      .flatMap((node) => [
+        ...(node.type === "latexRichPreview" && node.attrs?.kind === "scientific"
+          ? [String(node.attrs?.environment ?? "")]
+          : []),
+        ...scientificEnvironments(node.content ?? []),
+      ])
       .filter((environment) => SCIENTIFIC_ENVIRONMENTS.has(environment)),
   );
 }
@@ -2312,7 +2592,7 @@ function ensureScientificEnvironmentDeclarations(
   eol: string,
 ): string {
   if (environments.size === 0) return source;
-  const begin = source.indexOf("\\begin{document}");
+  const begin = findDelimiter(source, "\\begin{document}", 0);
   if (begin < 0) return source;
   const preamble = source.slice(0, begin).replace(/(?<!\\)%[^\r\n]*/gu, "");
   const declarations: string[] = [];
@@ -2344,84 +2624,50 @@ function ensureScientificEnvironmentDeclarations(
   return source.slice(0, begin) + boundary + insertion + source.slice(begin);
 }
 
-function richPreviewCount(content: readonly JSONContent[], kind: string): number {
-  return content.filter((node) => node.type === "latexRichPreview" && node.attrs?.kind === kind)
-    .length;
-}
-
-function ensureFigurePackage(source: string, shouldInsert: boolean, eol: string): string {
-  if (!shouldInsert) return source;
-  const begin = source.indexOf("\\begin{document}");
-  if (begin < 0) return source;
-  const preamble = source.slice(0, begin).replace(/(?<!\\)%[^\r\n]*/gu, "");
-  if (
-    /\\(?:usepackage|RequirePackage)\s*(?:\[[^\]]*\])?\s*\{[^{}]*\bgraphicx\b[^{}]*\}/u.test(
-      preamble,
+function requiredObjectPackages(nodes: readonly JSONContent[]): Set<string> {
+  const packages = new Set<string>();
+  for (const node of nodes) {
+    if (node.attrs?.kind === "figure") {
+      packages.add("graphicx");
+      if (String(node.attrs.figurePlacement ?? "").includes("H")) packages.add("float");
+    }
+    if (node.attrs?.kind === "table") {
+      if (node.attrs.tableStyle === "booktabs") packages.add("booktabs");
+      if (node.attrs.tableKind === "stretch") packages.add("tabularx");
+      if (node.attrs.tableKind === "long") packages.add("longtable");
+    }
+    if (
+      node.attrs?.kind === "description" &&
+      (node.attrs.descriptionStyle === "nextline" || node.attrs.descriptionLeftMargin)
     )
-  )
-    return source;
-  const boundary = begin > 0 && !/[\r\n]/u.test(source[begin - 1]!) ? eol : "";
-  return source.slice(0, begin) + boundary + `\\usepackage{graphicx}${eol}` + source.slice(begin);
+      packages.add("enumitem");
+    if (node.type === "orderedList" && node.attrs?.resume === true) packages.add("enumitem");
+    if (node.attrs?.kind === "simple" && node.attrs.environment === "alltt") packages.add("alltt");
+    if (node.attrs?.kind === "simple" && node.attrs.environment === "lstlisting")
+      packages.add("listings");
+    if (node.type === "latexInlineCommand") {
+      if (node.attrs?.name === "eqref") packages.add("amsmath");
+      if (node.attrs?.name === "autoref") packages.add("hyperref");
+    }
+    requiredObjectPackages(node.content ?? []).forEach((name) => packages.add(name));
+  }
+  return packages;
 }
 
-function mathContent(nodes: readonly JSONContent[]): string {
-  return nodes
-    .map((node) =>
-      node.type === "latexInlineMath" || node.type === "latexDisplayMath"
-        ? String(node.attrs?.tex ?? "")
-        : mathContent(node.content ?? []),
+function ensureMathSymbolDefinitions(source: string, nextMath: string, eol: string): string {
+  const { preamble, end } = latexPackageInventory(source);
+  // wasysym's nointegrals option leaves these variants under private names.
+  const definitions = ["varint", "varoint"]
+    .filter(
+      (name) =>
+        new RegExp(`\\\\${name}\\b`, "u").test(nextMath) &&
+        !preamble.includes(`\\providecommand{\\${name}}`),
     )
-    .join("\n");
-}
-
-function ensureMathSymbolPackages(
-  source: string,
-  previous: readonly JSONContent[],
-  next: readonly JSONContent[],
-  eol: string,
-): string {
-  const previousMath = mathContent(previous);
-  const nextMath = mathContent(next);
-  const packages = newMathSymbolPackages(previousMath, nextMath);
-  if (!packages.length) return source;
-  const begin = source.indexOf("\\begin{document}");
-  if (begin < 0) return source;
-  const preamble = source.slice(0, begin).replace(/(?<!\\)%[^\r\n]*/gu, "");
-  const loaded = new Set(
-    [
-      ...preamble.matchAll(/\\(?:usepackage|RequirePackage)\s*(?:\[[^\]]*\])?\s*\{([^{}]+)\}/gu),
-    ].flatMap((match) => match[1]!.split(",").map((name) => name.trim())),
-  );
-  // unicode-math supplies the standard math alphabets and AMS symbol repertoire.
-  if (loaded.has("unicode-math"))
-    ["amssymb", "amsfonts", "mathrsfs", "dsfont"].forEach((name) => loaded.add(name));
-  if (loaded.has("mathtools")) loaded.add("amsmath");
-  const missing = packages.filter((name) => !loaded.has(name));
-  // wasysym's safe nointegrals mode keeps its glyphs under private names.
-  // Expose only a requested variant, without changing the document's integrals.
-  const variants = ["varint", "varoint"].filter(
-    (name) =>
-      new RegExp(`\\\\${name}\\b`, "u").test(nextMath) &&
-      !new RegExp(`\\\\${name}\\b`, "u").test(previousMath) &&
-      !preamble.includes(`\\providecommand{\\${name}}`),
-  );
-  const definitions = variants
     .map((name) => `\\providecommand{\\${name}}{\\csname wasy@${name.slice(3)}\\endcsname}${eol}`)
     .join("");
-  if (!missing.length && !definitions) return source;
-  // amsmath must precede esint. wasysym's optional integrals otherwise collide
-  // with esint; request only its symbol repertoire when Scient adds the package.
-  const order = ["amsmath", "amssymb", "mathtools", "esint", "wasysym"];
-  missing.sort(
-    (a, b) =>
-      (order.indexOf(a) < 0 ? 99 : order.indexOf(a)) -
-      (order.indexOf(b) < 0 ? 99 : order.indexOf(b)),
-  );
-  const insertion = missing
-    .map((name) => `\\usepackage${name === "wasysym" ? "[nointegrals]" : ""}{${name}}${eol}`)
-    .join("");
-  const boundary = begin > 0 && !/[\r\n]/u.test(source[begin - 1]!) ? eol : "";
-  return source.slice(0, begin) + boundary + insertion + definitions + source.slice(begin);
+  if (!definitions) return source;
+  const boundary = end > 0 && !/[\r\n]/u.test(source[end - 1]!) ? eol : "";
+  return source.slice(0, end) + boundary + definitions + source.slice(end);
 }
 
 function setPreambleCommandArgument(
@@ -2430,7 +2676,7 @@ function setPreambleCommandArgument(
   value: string,
   eol: string,
 ): string | null {
-  const begin = source.indexOf("\\begin{document}");
+  const begin = findDelimiter(source, "\\begin{document}", 0);
   if (begin < 0) return null;
   const range = commandArgumentRange(source.slice(0, begin), command);
   if (range) return source.slice(0, range.from) + value + source.slice(range.to);
@@ -2472,7 +2718,7 @@ function updateTitleMetadata(
     node.attrs.authorEnabled !== previous.attrs?.authorEnabled ||
     node.attrs.author !== previous.attrs?.author
   ) {
-    const begin = changed.indexOf("\\begin{document}");
+    const begin = findDelimiter(changed, "\\begin{document}", 0);
     if (begin < 0) return null;
     changed = changed.slice(0, begin).replace(HIDDEN_AUTHOR_COMMENT, "") + changed.slice(begin);
     changed =
@@ -2583,11 +2829,23 @@ function minimallyPatchedBlock(block: LatexVisualSourceBlock, next: JSONContent)
     return null;
   const heading =
     next.type === "heading"
-      ? /^\\(?:section|subsection|subsubsection)\*?\{/u.exec(block.source)
+      ? /^\\(?:chapter|section|subsection|subsubsection|paragraph|subparagraph)\*?\{/u.exec(
+          block.source,
+        )
       : null;
   const from = heading?.[0].length ?? 0;
   const to = heading ? closingBrace(block.source, from - 1) : block.source.length;
   if (to === null) return null;
+  // Plain prose needs no per-character LaTeX tokenization. Keep the general
+  // mapper for commands, marks, nonbreaking spaces and original TeX spelling.
+  const plainText = (nodes: readonly JSONContent[] | undefined) =>
+    (nodes ?? []).every((node) => node.type === "text" && !node.marks?.length)
+      ? (nodes ?? []).map((node) => node.text ?? "").join("")
+      : null;
+  const before = plainText(block.node.content);
+  const after = plainText(next.content);
+  if (before !== null && after !== null && block.source.slice(from, to) === escapeText(before))
+    return block.source.slice(0, from) + escapeText(after) + block.source.slice(to);
   const oldUnits = inlineSourceUnits(block.source.slice(from, to), from);
   if (!oldUnits) return null;
   const nextUnits = inlineEditorUnits(next.content ?? []);
@@ -2636,8 +2894,18 @@ export function applyLatexVisualDocumentChange(
   source: string,
   projection: LatexVisualDocument,
   nextContent: JSONContent,
-  context?: { rootSource?: string | null; onMissingRequirement?: (message: string) => void },
-): { source: string; structural: boolean; projection: LatexVisualDocument } | null {
+  context?: {
+    rootSource?: string | null;
+    allowRootUpdates?: boolean;
+    onMissingRequirement?: (message: string) => void;
+  },
+): {
+  source: string;
+  structural: boolean;
+  projection: LatexVisualDocument;
+  rootUpdate?: LatexRootUpdate;
+  origin?: number;
+} | null {
   if (projection.source !== source) return null;
   const previous = projection.blocks;
   const next = nextContent.content ?? [];
@@ -2690,6 +2958,7 @@ export function applyLatexVisualDocumentChange(
   if (serialized.some((value) => value === null)) return null;
   let from = oldChanged[0]?.from ?? previous[prefix]?.from ?? previous.at(-1)?.to ?? source.length;
   let to = oldChanged.at(-1)?.to ?? from;
+  const origin = oldChanged[0]?.from ?? previous[prefix - 1]?.from ?? from;
   let replacement = serialized.join(eol + eol);
   // Own only whitespace at the edited boundaries. Otherwise inserting/deleting
   // a block leaves old separators behind and blank lines accumulate over time.
@@ -2705,62 +2974,43 @@ export function applyLatexVisualDocumentChange(
     } else if (before && after && from === before.to && to === after.from) replacement = gap;
   }
   let changedSource = source.slice(0, from) + replacement + source.slice(to);
+  let rootUpdate: LatexRootUpdate | undefined;
   const previousNodes = oldChanged.map((block) => block.node);
-  const ownPreamble = source.includes("\\begin{document}");
+  const ownPreamble = findDelimiter(source, "\\begin{document}", 0) >= 0;
   const root = ownPreamble ? changedSource : context?.rootSource;
-  const needsFigure =
-    richPreviewCount(newChanged, "figure") > richPreviewCount(previousNodes, "figure");
   const previousEnvironments = scientificEnvironments(previousNodes);
   const addedEnvironments = new Set(
     [...scientificEnvironments(newChanged)].filter(
       (environment) => !previousEnvironments.has(environment),
     ),
   );
-  const tablePackages = (nodes: readonly JSONContent[]) =>
-    new Set(
-      nodes.flatMap((node) =>
-        node.attrs?.kind !== "table"
-          ? []
-          : [
-              ...(node.attrs.tableStyle === "booktabs" ? ["booktabs"] : []),
-              ...(node.attrs.tableKind === "stretch"
-                ? ["tabularx"]
-                : node.attrs.tableKind === "long"
-                  ? ["longtable"]
-                  : []),
-            ],
-      ),
-    );
-  const oldPackages = tablePackages(previousNodes);
-  const addedPackages = [...tablePackages(newChanged)].filter((name) => !oldPackages.has(name));
-  const needsMath =
-    newMathSymbolPackages(mathContent(previousNodes), mathContent(newChanged)).length > 0;
-  if (needsFigure || addedEnvironments.size || addedPackages.length || needsMath) {
-    if (!root || !root.includes("\\begin{document}")) {
+  // Inspect newly introduced source and structures. Existing commands must not
+  // make an ordinary text edit depend on resolving the root document.
+  const previousSource = oldChanged.map((block) => block.source).join(eol + eol);
+  const previousPackages = requiredObjectPackages(previousNodes);
+  const requiredPackages = new Set([
+    ...[...requiredObjectPackages(newChanged)].filter((name) => !previousPackages.has(name)),
+    ...newMathSymbolPackages(previousSource, replacement),
+    ...newLatexCommandPackages(previousSource, replacement),
+  ]);
+  if (addedEnvironments.size || requiredPackages.size) {
+    if (!root || findDelimiter(root, "\\begin{document}", 0) < 0) {
       context?.onMissingRequirement?.(
         "Choose the root document before inserting content that needs LaTeX packages or declarations.",
       );
       return null;
     }
-    let prepared = ensureFigurePackage(root, needsFigure, eol);
-    prepared = ensureMathSymbolPackages(prepared, previousNodes, newChanged, eol);
+    let prepared = ensureLatexPackages(root, requiredPackages, eol);
+    prepared = ensureLatexMenuColors(prepared, replacement, eol);
+    prepared = ensureMathSymbolDefinitions(prepared, replacement, eol);
     prepared = ensureScientificEnvironmentDeclarations(prepared, addedEnvironments, eol);
-    for (const name of addedPackages) {
-      const begin = prepared.indexOf("\\begin{document}");
-      const preamble = prepared.slice(0, begin).replace(/(?<!\\)%[^\r\n]*/gu, "");
-      const loaded = [
-        ...preamble.matchAll(/\\(?:usepackage|RequirePackage)\s*(?:\[[^\]]*\])?\s*\{([^{}]+)\}/gu),
-      ].some((match) => match[1]!.split(",").some((item) => item.trim() === name));
-      if (!loaded)
-        prepared =
-          prepared.slice(0, begin) + `${eol}\\usepackage{${name}}${eol}` + prepared.slice(begin);
-    }
-    if (!ownPreamble && prepared !== root) {
+    if (!ownPreamble && prepared !== root && !context?.allowRootUpdates) {
       context?.onMissingRequirement?.(
         "This insertion needs packages or declarations in the root document. Add them in the root's Source view, then try again.",
       );
       return null;
     }
+    if (!ownPreamble && prepared !== root) rootUpdate = { expected: root, next: prepared };
     if (ownPreamble) changedSource = prepared;
   }
   // Local edits cannot change neighboring syntax. Validate only the replacement
@@ -2774,49 +3024,96 @@ export function applyLatexVisualDocumentChange(
   ) {
     const parsed = projectLatexVisualDocument(replacement);
     if (
-      parsed.blocks.length !== 1 ||
-      roundTripSignature(parsed.blocks[0]!.node) !== roundTripSignature(newChanged[0]!)
+      parsed.blocks.length === 1 &&
+      roundTripSignature(parsed.blocks[0]!.node) === roundTripSignature(newChanged[0]!)
+    ) {
+      const delta = replacement.length - (to - from);
+      const blocks = previous.map((block, index) =>
+        index === prefix
+          ? {
+              ...parsed.blocks[0]!,
+              id: block.id,
+              from,
+              to: from + replacement.length,
+              source: replacement,
+              node: newChanged[0]!,
+            }
+          : index > prefix
+            ? { ...block, from: block.from + delta, to: block.to + delta }
+            : block,
+      );
+      return {
+        source: changedSource,
+        ...(rootUpdate ? { rootUpdate } : {}),
+        origin,
+        structural: false,
+        projection: {
+          ...projection,
+          source: changedSource,
+          content: nextContent,
+          blocks,
+          supportedBlocks:
+            projection.supportedBlocks -
+            Number(oldChanged[0]!.editable) +
+            Number(parsed.blocks[0]!.editable),
+          rawBlocks:
+            projection.rawBlocks +
+            Number(oldChanged[0]!.editable) -
+            Number(parsed.blocks[0]!.editable),
+        },
+      };
+    }
+  }
+  // Reject a transaction that the supported projection cannot round-trip.
+  const projected = projectLatexVisualDocument(changedSource);
+  if (roundTripSignature(projected.content) !== roundTripSignature(nextContent)) {
+    const oldBlock = oldChanged[0];
+    const newBlock = newChanged[0];
+    const nonText = (node: JSONContent): JSONContent => ({
+      ...node,
+      ...(node.content
+        ? { content: node.content.filter((child) => child.type !== "text").map(nonText) }
+        : {}),
+    });
+    const hasMultilineText = (node: JSONContent): boolean =>
+      (node.type === "text" && /[\r\n]/u.test(node.text ?? "")) ||
+      (node.content?.some(hasMultilineText) ?? false);
+    if (
+      oldChanged.length !== 1 ||
+      newChanged.length !== 1 ||
+      !oldBlock?.editable ||
+      !newBlock ||
+      !["paragraph", "heading", "blockquote", "bulletList", "orderedList"].includes(
+        newBlock.type ?? "",
+      ) ||
+      latexVisualNodeSignature(nonText(oldBlock.node)) !==
+        latexVisualNodeSignature(nonText(newBlock)) ||
+      hasMultilineText(newBlock) ||
+      rootUpdate ||
+      changedSource !== source.slice(0, from) + replacement + source.slice(to)
     )
       return null;
+    // Text is escaped by serializeInline. Preserve the unchanged inline atoms
+    // and source ranges even when the general parser cannot compare this edit.
     const delta = replacement.length - (to - from);
     const blocks = previous.map((block, index) =>
       index === prefix
-        ? {
-            ...parsed.blocks[0]!,
-            id: block.id,
-            from,
-            to: from + replacement.length,
-            source: replacement,
-            node: newChanged[0]!,
-          }
+        ? { ...block, from, to: from + replacement.length, source: replacement, node: newBlock }
         : index > prefix
           ? { ...block, from: block.from + delta, to: block.to + delta }
           : block,
     );
     return {
       source: changedSource,
+      origin,
       structural: false,
-      projection: {
-        ...projection,
-        source: changedSource,
-        content: nextContent,
-        blocks,
-        supportedBlocks:
-          projection.supportedBlocks -
-          Number(oldChanged[0]!.editable) +
-          Number(parsed.blocks[0]!.editable),
-        rawBlocks:
-          projection.rawBlocks +
-          Number(oldChanged[0]!.editable) -
-          Number(parsed.blocks[0]!.editable),
-      },
+      projection: { ...projection, source: changedSource, content: nextContent, blocks },
     };
   }
-  // Reject a transaction that the supported projection cannot round-trip.
-  const projected = projectLatexVisualDocument(changedSource);
-  if (roundTripSignature(projected.content) !== roundTripSignature(nextContent)) return null;
   return {
     source: changedSource,
+    ...(rootUpdate ? { rootUpdate } : {}),
+    origin,
     projection: adoptLatexVisualContent(changedSource, nextContent, projected),
     structural: oldChanged.length !== 1 || newChanged.length !== 1,
   };

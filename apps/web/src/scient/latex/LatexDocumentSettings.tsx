@@ -1,5 +1,5 @@
 import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Settings2 } from "lucide-react";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "~/components/ui/popover";
 import { latexVisualLayoutProfile, type LatexVisualLayoutUpdate } from "./latexVisualDocument";
@@ -8,16 +8,24 @@ import { LATEX_PAPER_SIZES } from "./latexVisualLayout";
 export function LatexDocumentSettings(props: {
   source: string;
   disabled: boolean;
+  titleAvailable?: boolean;
   onApply: (layout: Partial<LatexVisualLayoutUpdate>) => boolean;
   onTitle: (field: "title" | "author" | "date") => void;
   onOpenSource: () => void;
+  onOpenTitle?: (() => void) | undefined;
 }) {
   const [open, setOpen] = useState(false);
-  const profile = latexVisualLayoutProfile(props.source);
+  const profile = useMemo(() => latexVisualLayoutProfile(props.source), [props.source]);
   const makeDraft = (): LatexVisualLayoutUpdate => ({
     paper: profile.paper,
     baseFontPt: profile.baseFontPt,
     margin: `${Math.round(profile.marginTopIn * 100) / 100}in`,
+    margins: {
+      top: `${Math.round(profile.marginTopIn * 1000) / 1000}in`,
+      right: `${Math.round(profile.marginRightIn * 1000) / 1000}in`,
+      bottom: `${Math.round(profile.marginBottomIn * 1000) / 1000}in`,
+      left: `${Math.round(profile.marginLeftIn * 1000) / 1000}in`,
+    },
     paragraphStyle: profile.paragraphGapEm > 0 ? "spaced" : "indented",
     documentClass: profile.documentClass,
   });
@@ -56,7 +64,12 @@ export function LatexDocumentSettings(props: {
       <ScientTooltip content="Document settings">
         <PopoverTrigger
           render={
-            <button type="button" className="scient-latex-action" aria-label="Document settings">
+            <button
+              type="button"
+              className="scient-latex-action"
+              aria-label="Document settings"
+              disabled={props.disabled}
+            >
               <Settings2 className="size-3.5" />
             </button>
           }
@@ -70,24 +83,40 @@ export function LatexDocumentSettings(props: {
             event.preventDefault();
             if (props.onApply(changes)) setOpen(false);
             else
-              setError("This layout could not be applied. Check the margins and document class.");
+              setError(
+                changes.documentClass === "article" && /\\chapter\b/u.test(props.source)
+                  ? "This document has chapters. Keep Report or Book, or convert the chapters to sections first."
+                  : "Could not apply these settings. Use positive margins such as 2cm or 1in that leave space on the page, and resolve any file save conflict.",
+              );
           }}
         >
           <fieldset disabled={props.disabled}>
-            <div className="scient-latex-metadata-actions">
-              {(["title", "author", "date"] as const).map((field) => (
-                <button
-                  type="button"
-                  key={field}
-                  onClick={() => {
-                    setTitleTarget(field);
-                    setOpen(false);
-                  }}
-                >
-                  {field === "title" ? "Title block" : field === "author" ? "Author" : "Date"}
-                </button>
-              ))}
-            </div>
+            {props.titleAvailable !== false ? (
+              <div className="scient-latex-metadata-actions">
+                {(["title", "author", "date"] as const).map((field) => (
+                  <button
+                    type="button"
+                    key={field}
+                    onClick={() => {
+                      setTitleTarget(field);
+                      setOpen(false);
+                    }}
+                  >
+                    {field === "title" ? "Title block" : field === "author" ? "Author" : "Date"}
+                  </button>
+                ))}
+              </div>
+            ) : props.onOpenTitle ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  props.onOpenTitle?.();
+                }}
+              >
+                Edit title, author and date in the root document
+              </button>
+            ) : null}
             <label>
               Document class
               <select
@@ -104,7 +133,13 @@ export function LatexDocumentSettings(props: {
               </select>
             </label>
             {customClass ? (
-              <button type="button" onClick={props.onOpenSource}>
+              <button
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  props.onOpenSource();
+                }}
+              >
                 Edit custom class in LaTeX
               </button>
             ) : null}
@@ -140,14 +175,20 @@ export function LatexDocumentSettings(props: {
                 </select>
               </label>
             </div>
-            <label>
-              Margins
-              <input
-                value={draft.margin}
-                placeholder="1in"
-                onChange={(event) => update({ margin: event.target.value })}
-              />
-            </label>
+            <div className="scient-latex-settings-pair">
+              {(["top", "right", "bottom", "left"] as const).map((side) => (
+                <label key={side}>
+                  {side[0]!.toUpperCase() + side.slice(1)} margin
+                  <input
+                    value={draft.margins?.[side] ?? ""}
+                    placeholder="1in"
+                    onChange={(event) =>
+                      update({ margins: { ...draft.margins!, [side]: event.target.value } })
+                    }
+                  />
+                </label>
+              ))}
+            </div>
             <label>
               Paragraphs
               <select

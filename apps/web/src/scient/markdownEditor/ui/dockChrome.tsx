@@ -143,6 +143,7 @@ export function DockCommandRadioItem({
 /** A dock dropdown trigger with a tooltip and consistent popup framing. */
 export function DockMenu(props: {
   readonly label: string;
+  readonly disabled?: boolean;
   readonly icon: ReactNode;
   readonly active?: boolean | undefined;
   readonly chevron?: boolean;
@@ -174,6 +175,7 @@ export function DockMenu(props: {
           <TooltipTrigger
             render={
               <MenuTrigger
+                disabled={props.disabled}
                 render={
                   <button
                     type="button"

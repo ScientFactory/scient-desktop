@@ -49,7 +49,7 @@ export function AuthoringKeybindingsSettings({
   query = "",
   appBindings = NO_APP_BINDINGS,
 }: {
-  readonly scope: KeyboardScope;
+  readonly scope: KeyboardScope | "writing";
   readonly query?: string;
   readonly appBindings?: ResolvedKeybindingsConfig;
 }) {
@@ -102,10 +102,11 @@ export function AuthoringKeybindingsSettings({
   }, [effective]);
   const visible = commands.filter(
     (command) =>
-      command.scope === scope &&
+      (command.scope === scope ||
+        (scope === "writing" && ["latex", "math", "table"].includes(command.scope))) &&
       (command.id + " " + command.label + " " + (keysByCommand.get(command.id)?.join(" ") ?? ""))
         .toLowerCase()
-        .includes(query.toLowerCase()),
+        .includes(query.toLowerCase().replace(/^\\/u, "")),
   );
   const save = (preferences: KeyboardPreferences, expected = snapshot) => {
     try {
@@ -308,10 +309,10 @@ export function AuthoringKeybindingsSettings({
                     />
                     <SettingsRow
                       className={MATH_OPTION_ROW_CLASS}
-                      title="Enter adds a matrix row"
+                      title="Shift+Enter adds a matrix row"
                       control={
                         <Switch
-                          aria-label="Enter adds a matrix row"
+                          aria-label="Shift+Enter adds a matrix row"
                           checked={snapshot.preferences.matrixEnter}
                           onCheckedChange={(checked) => update({ matrixEnter: checked })}
                         />
@@ -403,7 +404,7 @@ export function AuthoringKeybindingsSettings({
                 );
             }}
           />
-          {scope === "math" ? (
+          {scope === "math" || scope === "writing" ? (
             <Button size="xs" variant="ghost-muted" onClick={() => setCustomAction(null)}>
               New math action
             </Button>
@@ -504,6 +505,15 @@ export function AuthoringKeybindingsSettings({
               title={
                 <span className="flex items-center gap-2">
                   {command.label}
+                  {scope === "writing" ? (
+                    <span className="text-xs text-muted-foreground">
+                      {command.scope === "latex"
+                        ? "Write"
+                        : command.scope === "table"
+                          ? "Table"
+                          : "Math"}
+                    </span>
+                  ) : null}
                   {customized ? (
                     <Badge variant="outline" size="sm">
                       {disabled ? "Disabled" : "Custom"}

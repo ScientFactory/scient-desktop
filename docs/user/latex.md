@@ -36,9 +36,12 @@ service is required for the writing workflow.
 Write is a source-derived writing canvas, not an editable PDF. You can start
 writing before installing or running TeX. The canvas uses a document workspace
 with a compact toolbar, a collapsible outline, and a contextual
-status bar. The toolbar supports paragraphs, three heading levels, bold, italic,
+status bar. The paragraph-style menu includes section levels, paragraph and
+subparagraph headings, quotations and lists; chapter-based classes also offer
+Chapter. The toolbar supports bold, italic,
 lists, undo and redo. **Insert...** opens a searchable menu for equations, tables,
-statements, figures, question/solution pairs, and page breaks. Type `/` on an empty
+statements, figures and page breaks. Heading styles live in the style menu rather
+than being duplicated in Insert. Type `/` on an empty
 paragraph or press Ctrl/Cmd+/ to open it; use the arrow keys and Enter to choose.
 The toolbar stays on one slim row. Insert holds elements and references; Lists
 holds list actions. Document settings, Outline, and Review are in the document
@@ -62,7 +65,15 @@ entry, Enter or Escape returns to text; a paragraph is added after a display equ
 needed. Tab and arrow keys navigate inside math and return to text at its boundary.
 Backspace or Delete in a completely empty equation removes it. Clicking outside
 math dismisses its controls. Matrices, cases, and aligned calculations start with
-empty cells rather than example expressions.
+empty cells rather than example expressions. Empty math slots appear as subtle
+dots while the formula is focused and disappear when it is inactive. They are
+caret targets and are never written into the compiled source.
+
+Inside a formula, **Insert** offers math actions. **Math symbols and structures**
+inserts at the current math caret, including inside a matrix or case cell.
+Text formatting controls are disabled while math has focus, and toolbar Undo/Redo
+uses the formula's editing history. Converting inline math to a centered equation
+retains the text before and after it as paragraphs.
 
 Type `\` followed by a command name directly in a formula to see local command
 suggestions with symbol previews. Up/Down changes the suggestion; Enter or Tab
@@ -71,7 +82,7 @@ suggestions remain local until accepted, so ghost completions are not saved into
 the document. Clicking a suggestion keeps you inside the formula.
 
 Math controls appear within the editor's existing bottom status bar: equation
-type, **Symbols**, and **LaTeX**. The footer keeps the same height when entering
+type, **Symbols**, and **Code**. The footer keeps the same height when entering
 or leaving math. Structures and symbol categories live inside **Symbols**, which opens
 a compact visual palette with categories corresponding to LyX's math panels:
 Greek letters, arrows, relations, negated relations, operators, accents, delimiters,
@@ -84,7 +95,15 @@ without a selection, its entry slots are blank. **Structures** also offers blank
 matrices/cases and row/column editing at the current matrix cursor.
 
 The palette is bundled locally and needs no network. Known package requirements
-are added to a full document's preamble when a new command is introduced; the
+are added to the document root's preamble, including when editing an included
+file. Math environments, table styles and equation references contribute their
+requirements too. The same handling applies to commands produced by the math
+right-click menu, custom shortcuts and formula code edits: color and highlighting
+add `xcolor`, cancellation adds `cancel`, and AMS structures add their math packages.
+Menu color names not provided by `xcolor` receive a definition when used.
+The root's active `usepackage` and `RequirePackage` declarations are checked,
+including comma-separated package lists and known package dependencies. Commented
+declarations do not count. Existing declarations and their options are retained; the
 packages must be available in the local TeX installation. Commands without a
 browser glyph remain labeled LaTeX entries and render through their package in
 the compiled PDF. The editor never replaces them with a different source symbol.
@@ -92,7 +111,7 @@ the compiled PDF. The editor never replaces them with a different source symbol.
 The bar changes between inline,
 centered, numbered, unnumbered, aligned, and gathered forms and inserts
 fractions, roots, scripts, operators, relations, Greek letters, matrices,
-cases, and aligned structures at the mathematical cursor. Choose **LaTeX** in
+cases, and aligned structures at the mathematical cursor. Choose **Code** in
 that bar to edit just the formula's code in a compact box above the bar. Supported
 edits update the equation and document as you type; there are no Apply or Cancel
 buttons. Escape or Ctrl/Cmd+Enter returns to the formula. The outer delimiters and
@@ -132,9 +151,18 @@ inspect exact output. A successful build never means the browser canvas is
 pixel-identical to that PDF. Compile errors preserve the last successful PDF.
 The canvas reads safe document-class, paper, base-font, `geometry`, paragraph
 indentation, paragraph spacing and line-spacing settings from the preamble.
-Use **Document settings** to change paper size, base font size, margins and paragraph style;
+Use **Document settings** to change paper size, base font size, each of the four
+margins and paragraph style. In an included file, these settings update the root;
 these controls update explicit LaTeX preamble settings rather than maintaining
-private visual-only state.
+private visual-only state. Saving required root changes must finish before PDF
+build or export becomes available. A failed root save remains visible for resolution.
+
+Math and object fields retain the exact text and caret locally. Source updates
+are coalesced during typing and flushed when leaving the field; page measurement
+waits briefly for typing to pause. None of these actions starts a PDF build.
+The keyboard button opens **All writing shortcuts**, a searchable list covering
+Write, Math and Tables. Filter by area when needed; shortcut editing, custom math
+actions and the printable reference remain in the same dialog.
 
 The writing surface uses a vertical stack of pages. Paragraphs can continue
 across sheets, headings stay with following text when space allows, and tall
@@ -196,8 +224,8 @@ protected; selecting it shows **Protected table — edit in Source** in the foot
 Other unsupported structures, including
 custom macros and equation labels or tags, appear as protected source blocks.
 The visual editor does not silently normalize or discard them. A visual edit
-cannot delete across a protected preview or source block. Open an included file
-to edit its contents; the established root still controls the PDF build.
+cannot delete across a protected preview or source block, or across an included
+file boundary. **Edit LaTeX** opens the file that owns the selected block.
 
 The **Insert...** menu inserts theorem, claim, lemma, proposition, corollary,
 definition, example, remark and proof environments. Their type, optional title,
@@ -333,10 +361,24 @@ compiling the wrong file.
 
 ### Editing included chapters
 
-Write uses the selected root document for page settings and image paths. For an
-insertion requiring a missing package or theorem declaration, open the root in
-Source, add the declaration, then return to the chapter. Scient does not silently
-save a second file. New tables start with a package-free style.
+Visual shows the assembled document from the same resolved root as PDF, even when
+Source is showing a chapter. Literal `\input`, `\include`, `\subfile`, `\import`
+and `\subimport` references are expanded in order, including nested files.
+`\includeonly` is respected and `\include` retains its page breaks. Edits save
+back to the file that owns the content; the original include commands stay intact.
+
+Write uses the selected root document for page settings and image paths. When a
+supported insertion needs a missing package or theorem declaration, Scient saves
+it in the root preamble along with the chapter edit. Each file has its own revision
+check; save conflicts are reported, and PDF builds wait for pending file saves.
+Switching views keeps those saves active. A selection spanning multiple source
+files must be edited one file at a time.
+
+Missing files, cycles and unresolved dynamic or conditional includes show an
+explanation instead of an incomplete Visual document. Use PDF for includes that
+require TeX execution. This does not change the manual PDF-build policy.
+New tables start with a package-free style. Arbitrary custom macros and packages
+loaded through external class/style files are not expanded by the visual editor.
 
 Ordinary prose edits preserve unchanged `~`, dash spelling, emphasis commands and
 source line breaks. Unknown macros and unsupported syntax remain available through

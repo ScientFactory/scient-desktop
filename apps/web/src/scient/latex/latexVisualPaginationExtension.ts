@@ -2,6 +2,7 @@ import { Extension } from "@tiptap/core";
 import type { Node as DocumentNode } from "@tiptap/pm/model";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
+import { afterEditorPaint } from "./afterEditorPaint";
 import {
   planLatexVisualPagination,
   type LatexVisualPaginationBlock,
@@ -342,7 +343,10 @@ export const LatexVisualPagination = Extension.create<{
         },
         props: { decorations: (state) => latexPaginationKey.getState(state)?.decorations },
         view(view) {
-          let frame = 0;
+          let cancelPagination: (() => void) | null = null;
+          let refreshObservedBlocks = false;
+          let settle: ReturnType<typeof setTimeout> | undefined;
+          let lastInput = 0;
           let disposed = false;
           let measuring = false;
           let composing = false;
@@ -369,7 +373,11 @@ export const LatexVisualPagination = Extension.create<{
             return top >= box.top && top <= box.bottom ? { position: point, top, viewport } : null;
           };
           const paginate = () => {
-            frame = 0;
+            cancelPagination = null;
+            if (refreshObservedBlocks) {
+              refreshObservedBlocks = false;
+              observe();
+            }
             if (
               disposed ||
               view.composing ||
@@ -491,8 +499,17 @@ export const LatexVisualPagination = Extension.create<{
             }
           };
           const schedule = () => {
-            if (disposed || frame) return;
-            frame = requestAnimationFrame(paginate);
+            if (disposed || cancelPagination) return;
+            clearTimeout(settle);
+            const delay = Math.max(0, 220 - (performance.now() - lastInput));
+            if (delay > 0) settle = setTimeout(schedule, delay);
+            else cancelPagination = afterEditorPaint(paginate);
+          };
+          const typing = () => {
+            lastInput = performance.now();
+            cancelPagination?.();
+            cancelPagination = null;
+            schedule();
           };
           const fontsChanged = () => {
             lineCache = new WeakMap();
@@ -516,6 +533,7 @@ export const LatexVisualPagination = Extension.create<{
           };
           observe();
           root.addEventListener("load", schedule, true);
+          root.addEventListener("beforeinput", typing, true);
           root.addEventListener("compositionstart", compositionStart, true);
           root.addEventListener("compositionend", compositionEnd, true);
           document.fonts?.addEventListener("loadingdone", fontsChanged);
@@ -526,7 +544,7 @@ export const LatexVisualPagination = Extension.create<{
               const before = latexPaginationKey.getState(previous);
               const after = latexPaginationKey.getState(view.state);
               if (previous.doc !== view.state.doc) {
-                observe();
+                refreshObservedBlocks = true;
                 schedule();
               } else if (before?.revision !== after?.revision) {
                 lineCache = new WeakMap();
@@ -535,9 +553,11 @@ export const LatexVisualPagination = Extension.create<{
             },
             destroy() {
               disposed = true;
-              cancelAnimationFrame(frame);
+              cancelPagination?.();
+              clearTimeout(settle);
               resize?.disconnect();
               root.removeEventListener("load", schedule, true);
+              root.removeEventListener("beforeinput", typing, true);
               root.removeEventListener("compositionstart", compositionStart, true);
               root.removeEventListener("compositionend", compositionEnd, true);
               document.fonts?.removeEventListener("loadingdone", fontsChanged);

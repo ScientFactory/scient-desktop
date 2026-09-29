@@ -18,12 +18,12 @@ import type { KeyboardScope } from "./catalog";
 export function WritingShortcutsDialog({
   open,
   onOpenChange,
-  initialScope = "latex",
+  initialScope = "writing",
   environmentId,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  initialScope?: KeyboardScope;
+  initialScope?: KeyboardScope | "writing";
   environmentId?: EnvironmentId | undefined;
 }) {
   const primaryId = usePrimaryEnvironmentId();
@@ -32,7 +32,7 @@ export function WritingShortcutsDialog({
     () => mergeWithDefaultKeybindings(environment?.serverConfig?.keybindings ?? []),
     [environment?.serverConfig?.keybindings],
   );
-  const [scope, setScope] = useState<KeyboardScope>(initialScope);
+  const [scope, setScope] = useState<KeyboardScope | "writing">(initialScope);
   const [query, setQuery] = useState("");
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -42,7 +42,7 @@ export function WritingShortcutsDialog({
           <Select
             value={scope}
             onValueChange={(value) => {
-              if (value) setScope(value as KeyboardScope);
+              if (value) setScope(value as KeyboardScope | "writing");
             }}
           >
             <SelectTrigger aria-label="Shortcut section">
@@ -51,6 +51,7 @@ export function WritingShortcutsDialog({
             <SelectContent>
               {(
                 [
+                  ["writing", "All writing shortcuts"],
                   ["latex", "Write"],
                   ["math", "Math"],
                   ["table", "Tables"],
@@ -66,7 +67,7 @@ export function WritingShortcutsDialog({
           </Select>
           <Input
             aria-label="Search shortcuts"
-            placeholder="Find an action or shortcut"
+            placeholder="Search actions, LaTeX commands or keys"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
           />

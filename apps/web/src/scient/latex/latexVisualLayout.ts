@@ -108,9 +108,13 @@ function optionList(value: string): string[] {
 }
 
 /** A bounded interpretation of familiar class/geometry settings, never a TeX evaluator. */
+const profileCache = new Map<string, LatexVisualLayoutProfile>();
+
 export function latexVisualLayoutProfile(source: string): LatexVisualLayoutProfile {
   const uncommented = withoutComments(source);
   const preamble = uncommented.split(/\\begin\s*\{document\}/u)[0] ?? "";
+  const cached = profileCache.get(preamble);
+  if (cached) return cached;
   const depthAt = new Uint32Array(preamble.length + 1);
   let depth = 0;
   for (let index = 0; index < preamble.length; index += 1) {
@@ -324,7 +328,7 @@ export function latexVisualLayoutProfile(source: string): LatexVisualLayoutProfi
           : (lengthEm(settings.get("leftmargin") ?? "2.5em", fontSizePt) ?? 2.5),
     };
   }
-  return {
+  const profile: LatexVisualLayoutProfile = {
     documentClass,
     paper,
     paperWidthIn,
@@ -348,4 +352,7 @@ export function latexVisualLayoutProfile(source: string): LatexVisualLayoutProfi
     authorSizePt: baseFontPt === 12 ? 14.4 : 12,
     lists,
   };
+  if (profileCache.size >= 16) profileCache.delete(profileCache.keys().next().value!);
+  profileCache.set(preamble, profile);
+  return profile;
 }

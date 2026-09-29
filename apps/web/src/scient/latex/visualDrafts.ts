@@ -43,17 +43,23 @@ export function checkpointVisualDraft(
   if (pending.has(key)) return;
   pending.set(
     key,
-    setTimeout(() => {
-      pending.delete(key);
-      const draft = drafts.get(key);
-      if (!draft) return;
-      try {
-        setLocalStorageItem(storageKey(key), draft, Draft);
-      } catch {
-        window.dispatchEvent(new CustomEvent("scient-latex-recovery-error", { detail: key }));
-      }
-    }, 200),
+    setTimeout(() => flushVisualDraft(key), 200),
   );
+}
+
+/** Flush on exit, or before handing an unconverted typing draft to source recovery. */
+export function flushVisualDraft(key: string): boolean {
+  clearTimeout(pending.get(key));
+  pending.delete(key);
+  const draft = drafts.get(key);
+  if (!draft) return true;
+  try {
+    setLocalStorageItem(storageKey(key), draft, Draft);
+    return true;
+  } catch {
+    window.dispatchEvent(new CustomEvent("scient-latex-recovery-error", { detail: key }));
+    return false;
+  }
 }
 
 export function clearVisualDraft(key: string): void {

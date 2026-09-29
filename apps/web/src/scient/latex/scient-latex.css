@@ -792,6 +792,7 @@
 }
 
 .scient-latex-visual-document {
+  --scient-latex-selection-background: #c9ddf5;
   display: flex;
   flex-direction: column;
   counter-reset: scient-section;
@@ -818,7 +819,8 @@
   display: flow-root;
 }
 .scient-latex-visual-document ::selection {
-  background: #c9ddf5;
+  background: var(--scient-latex-selection-background);
+  color: inherit;
 }
 .scient-latex-pagination-gap {
   position: relative;
@@ -930,6 +932,56 @@
   text-indent: 0;
   text-wrap: pretty;
 }
+.scient-latex-visual-document > :is(h4, h5) {
+  font-size: 1em;
+  font-weight: bold;
+  margin: 1.5em 0 0.5em;
+}
+.scient-latex-visual-document > h5 {
+  margin-left: var(--scient-latex-par-indent);
+}
+.scient-latex-visual-document > h6 {
+  font-size: var(--scient-latex-title-size);
+  font-weight: bold;
+  margin: 2em 0 1.5em;
+  counter-reset: scient-section;
+}
+.scient-latex-visual-document > h6:not([data-latex-unnumbered]) {
+  counter-increment: scient-chapter;
+}
+.scient-latex-visual-document > h6:not([data-latex-unnumbered])::before {
+  content: "Chapter " counter(scient-chapter);
+  display: block;
+  font-size: 0.8em;
+  margin-bottom: 0.8em;
+}
+.scient-latex-visual-paper:is(
+    [data-document-class="book"],
+    [data-document-class="report"],
+    [data-document-class="memoir"],
+    [data-document-class="scrbook"],
+    [data-document-class="scrreprt"]
+  )
+  .scient-latex-visual-document {
+  counter-reset: scient-chapter scient-section;
+}
+.scient-latex-visual-paper:is([data-document-class="book"], [data-document-class="report"])
+  .scient-latex-visual-document
+  > h1:not([data-latex-unnumbered])::before {
+  content: counter(scient-chapter) "." counter(scient-section);
+}
+.scient-latex-visual-paper:is([data-document-class="book"], [data-document-class="report"])
+  .scient-latex-visual-document
+  > h2:not([data-latex-unnumbered])::before {
+  content: counter(scient-chapter) "." counter(scient-section) "." counter(scient-subsection);
+}
+.scient-latex-visual-document blockquote {
+  margin: 1em 2.5em;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  font-style: normal;
+}
 .scient-latex-visual-document > :nth-child(1 of :not(.scient-latex-pagination-gap)) {
   margin-top: 0;
 }
@@ -989,12 +1041,12 @@
   scroll-margin-block: 100px;
 }
 .scient-latex-visual-inline-math[data-empty] math-field {
-  min-width: 1.5em;
+  min-width: 1ch;
   min-height: 1.2em;
 }
 .scient-latex-visual-display-math[data-empty] math-field {
-  min-width: 7em;
-  min-height: 1.6em;
+  min-width: 1ch;
+  min-height: 1.2em;
 }
 .scient-latex-visual-inline-math[data-empty] math-field,
 .scient-latex-visual-display-math[data-empty] math-field {
@@ -1021,9 +1073,23 @@
   font-size: 1em;
   color: inherit;
   cursor: text;
-  --selection-background-color: #d5e5ff;
+  --selection-color: currentColor;
+  --selection-background-color: var(--scient-latex-selection-background);
   --caret-color: #2769bc;
   --primary: #2769bc;
+  --contains-highlight-background-color: transparent;
+  --highlight-text: transparent;
+  --text-highlight-background-color: transparent;
+  --placeholder-color: #6883a2;
+  --placeholder-opacity: 0;
+}
+.scient-latex-visual-inline-math[data-document-selected] math-field:not(:focus-within),
+.scient-latex-visual-display-math[data-document-selected] math-field:not(:focus-within) {
+  background: var(--scient-latex-selection-background);
+  --selection-background-color: transparent;
+}
+.scient-latex-mathfield math-field:focus-within {
+  --placeholder-opacity: 0.65;
 }
 .scient-latex-mathfield math-field::part(container) {
   padding: 0;
@@ -1037,10 +1103,6 @@
 .scient-latex-mathfield math-field::part(virtual-keyboard-toggle),
 .scient-latex-mathfield math-field::part(menu-toggle) {
   display: none;
-}
-.scient-latex-mathfield math-field:not([readonly]):focus-within,
-.scient-latex-mathfield math-field:not([readonly]):hover {
-  background: #f8fbff;
 }
 .scient-latex-visual-display-math math-field {
   font-size: 1em;
@@ -1594,6 +1656,95 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   border-color: #a8c1dc;
   outline: none;
   background: #f8fbff;
+}
+.scient-latex-simple-preview {
+  margin-block: 1em;
+}
+.scient-latex-simple-preview textarea,
+.scient-latex-part-preview textarea,
+.scient-latex-bibliography-preview textarea,
+.scient-latex-bibliography-preview input {
+  box-sizing: border-box;
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  resize: none;
+  field-sizing: content;
+}
+.scient-latex-simple-preview textarea:focus,
+.scient-latex-part-preview textarea:focus,
+.scient-latex-bibliography-preview :is(textarea, input):focus {
+  outline: none;
+  border-color: #a8c1dc;
+}
+.scient-latex-simple-preview[data-environment="quotation"] {
+  margin-inline: 2.5em;
+}
+.scient-latex-simple-preview[data-environment="verse"] {
+  margin-left: 2.5em;
+  font-style: italic;
+}
+.scient-latex-simple-preview[data-environment="flushleft"] textarea {
+  text-align: left;
+}
+.scient-latex-simple-preview[data-environment="flushright"] textarea {
+  text-align: right;
+}
+.scient-latex-simple-preview:is(
+    [data-environment="verbatim"],
+    [data-environment="verbatim*"],
+    [data-environment="alltt"],
+    [data-environment="lstlisting"]
+  )
+  textarea {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  white-space: pre-wrap;
+}
+.scient-latex-part-preview {
+  position: relative;
+  margin-block: 2em 1.5em;
+}
+.scient-latex-part-preview textarea {
+  font-size: 1.7em;
+  font-weight: bold;
+  text-align: center;
+}
+.scient-latex-part-number {
+  margin-bottom: 0.4em;
+  text-align: center;
+  font-size: 1.25em;
+  font-weight: bold;
+}
+.scient-latex-bibliography-preview {
+  position: relative;
+  margin-block: 1.5em;
+}
+.scient-latex-bibliography-preview h2 {
+  margin: 0 0 0.8em;
+  font-size: 1.2em;
+}
+.scient-latex-bibliography-preview ol {
+  padding-left: 2em;
+}
+.scient-latex-bibliography-preview li {
+  margin-bottom: 0.6em;
+}
+.scient-latex-bibliography-preview li input {
+  width: 8em;
+  font: 0.75em/1.2 var(--font-sans);
+  color: #64748b;
+}
+.scient-latex-rich-preview:is(.scient-latex-part-preview, .scient-latex-bibliography-preview):is(
+    :focus-within,
+    [data-selected="true"]
+  ) {
+  border-color: transparent;
+  box-shadow: none;
 }
 .scient-latex-toc-preview {
   margin: 2em 0;
