@@ -9,6 +9,52 @@ import type { ScientReleaseNote } from "./model";
  */
 export const SCIENT_RELEASE_NOTES = [
   {
+    version: "0.6.18",
+    publishedAt: "2026-09-29",
+    format: "paragraphs",
+    headline: "A more portable, organized Scient.",
+    highlights: [
+      {
+        id: "conversation-portability-0618",
+        title: "Take conversations with you",
+        description:
+          "Export conversations as Markdown, PDF, Word, or portable .scic files. Import .scic or Markdown into a project through a compact review flow, then continue in a fresh session; agent work never starts automatically.",
+      },
+      {
+        id: "oh-my-pi-0618",
+        title: "Connect Oh My Pi",
+        description:
+          "Use Oh My Pi as an optional provider in Scient, with custom models, tools, and Skills. Scient-managed installation is supported on Apple silicon Macs.",
+      },
+      {
+        id: "sidebar-sections-0618",
+        title: "Organize conversations your way",
+        description:
+          "Switch the sidebar between Status and Sections. Group, reorder, rename, and move conversations between sections, then start a thread right where it belongs. New thread also offers Add project.",
+      },
+      {
+        id: "reading-position-0618",
+        title: "Keep your place while reading",
+        description:
+          "Scient restores your reading position when you return or reload. Sending near the end gently reveals the answer; sending from earlier history leaves your place intact. A badge counts unread replies below.",
+      },
+      {
+        id: "file-recovery-0618",
+        title: "Recover files with clearer guidance",
+        description:
+          "File paths now copy correctly for workspace and host files. If a file or PDF can't open, get a clear explanation, a retry where available, and details on demand. Unsaved edits stay intact.",
+      },
+      {
+        id: "conversation-context-0618",
+        title: "Keep conversation branches and long requests on track",
+        description:
+          "Forks preserve prior context more reliably through provider recovery. Long Pi requests can compact and continue within the selected model's context limit.",
+      },
+    ],
+    alsoIncluded:
+      "Provider names and setup are clearer; managed updates wait until active work is idle. Long table values stay readable, citations and queued attachments scan more easily, and voice formatting and new-thread reasoning choices are preserved.",
+  },
+  {
     version: "0.6.17",
     publishedAt: "2026-09-24",
     format: "paragraphs",
