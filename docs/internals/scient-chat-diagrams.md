@@ -51,7 +51,12 @@ targets stay. An ordinary diagram comes back byte for byte;
 the addresses it removed become the card's one-line "Outside content not
 loaded" note, whose web addresses open in the
 system browser. The PDF document page, which itself has no network access,
-draws in its own page (`renderMermaidDiagram(…, "page")`). The frame's first
+draws in its own page (`renderMermaidDiagram(…, "page")`). Its policy lets the
+captured images load, so for the duration of each draw a picture Mermaid
+measures (`new Image()`) or links from an SVG `<image>` gets a local stand-in
+(`diagrams/measuredImages.ts`, whose measured-image stand-in the frame uses
+too); nothing is requested, the SVG is stripped as above, and each address
+becomes a PDF export note. The frame's first
 draw costs one load of the standalone build (about 0.6 s in the development
 server against about 0.2 s for the page's first import, measured in the
 Chromium test); later draws cost the same as in the page. Rendering is

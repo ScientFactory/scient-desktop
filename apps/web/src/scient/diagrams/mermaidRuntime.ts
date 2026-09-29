@@ -1,6 +1,7 @@
 import { LRUCache } from "~/lib/lruCache";
 import { dependencies } from "../../../package.json";
 import { sharedIsolatedMermaid } from "./isolatedMermaid";
+import { substituteMeasuredImages, substituteSvgImageLinks } from "./measuredImages";
 import {
   isMermaidSyntaxError,
   planMermaidRecovery,
@@ -15,10 +16,11 @@ export const MERMAID_VERSION = dependencies.mermaid;
 export type MermaidTheme = "light" | "dark";
 
 /**
- * Where Mermaid draws. `frame` is the shared no-network frame (`isolatedMermaid.ts`), and
- * its SVG is stripped of anything that would load from outside before it is returned.
+ * Where Mermaid draws. `frame` is the shared no-network frame (`isolatedMermaid.ts`).
  * `page` draws in this document; only a page that itself cannot fetch (the PDF document
- * page) uses it.
+ * page) uses it, and a picture Mermaid measures there gets the frame's local stand-in, so
+ * the draw does not wait on a load the page refuses. Either way the SVG is stripped of
+ * anything that would load from outside before it is returned, and `blocked` names it.
  */
 export type MermaidIsolation = "frame" | "page";
 
@@ -208,11 +210,28 @@ async function renderNativeTemplate(
   const { default: mermaid } = await getMermaidRuntimePromise();
   mermaid.initialize(mermaidRenderConfig(theme));
 
-  const result = await mermaid.render(nextRenderId("render"), source);
+  // Draws are queued one at a time, so only this draw sees the stand-ins.
+  const substituted: string[] = [];
+  const record = (address: string) => substituted.push(address);
+  const restoreMeasured = substituteMeasuredImages(window, record);
+  const restoreLinks = substituteSvgImageLinks(window, record);
+  let result: Awaited<ReturnType<typeof mermaid.render>>;
+  try {
+    result = await mermaid.render(nextRenderId("render"), source);
+  } finally {
+    restoreLinks();
+    restoreMeasured();
+  }
   if (!result.svg.includes("<svg")) {
     throw new Error("Mermaid returned an invalid diagram.");
   }
-  return { svgTemplate: result.svg, diagramType: result.diagramType };
+  const stripped = stripSvgExternalResources(result.svg);
+  const blocked = [...new Set([...substituted, ...stripped.blocked])];
+  return {
+    svgTemplate: stripped.svg,
+    diagramType: result.diagramType,
+    ...(blocked.length > 0 ? { blocked } : {}),
+  };
 }
 
 async function renderTemplate(

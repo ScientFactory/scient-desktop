@@ -88,7 +88,8 @@ size, such as an SVG with only a `viewBox`) is a content limitation only when th
 its bytes served and matching.
 
 A known content limitation does not stop publication: a missing, unsupported, or undecodable
-image prints as a labelled placeholder, a remote image is not downloaded, a Mermaid diagram with a syntax error
+image prints as a labelled placeholder, a remote image is not downloaded, a picture a Mermaid diagram names (an image shape, an actor
+icon) is never requested and the diagram prints without it, a Mermaid diagram with a syntax error
 prints its source (the full parse error is in the notes), TeX that KaTeX cannot typeset prints as TeX, Plotly and Vega-Lite fences print as source,
 and raw HTML outside GitHub's safe subset is removed. Each becomes a warning returned with the
 result and listed under **Export notes** at the end of the PDF. The page re-renders until those

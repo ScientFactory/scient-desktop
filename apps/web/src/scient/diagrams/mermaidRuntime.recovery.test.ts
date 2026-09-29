@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { recoveryFixtures } from "./mermaidRecovery.fixtures";
 

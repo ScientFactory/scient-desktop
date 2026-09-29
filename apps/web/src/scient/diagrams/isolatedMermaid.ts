@@ -19,6 +19,7 @@ import mermaidScriptUrl from "mermaid/dist/mermaid.min.js?url";
 
 import { remoteImageAddress } from "../presentation/remoteImageAddress";
 import { fetchesInCss } from "./cssResources";
+import { substituteMeasuredImages } from "./measuredImages";
 import { mermaidRenderConfig, type MermaidTheme } from "./mermaidRuntime";
 
 /**
@@ -33,9 +34,6 @@ function isolatedMermaidPolicy(appFonts: boolean): string {
 const LOAD_TIMEOUT_MS = 30_000;
 /** Refusals are reported in a task after the load that caused them; this lets them arrive. */
 const REPORT_SETTLE_MS = 50;
-/** Stands in for an image Mermaid loads only to measure it; transparent, 1×1. */
-const PLACEHOLDER_IMAGE =
-  "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
 
 type MermaidApi = typeof import("mermaid").default;
 
@@ -203,33 +201,6 @@ function mirrorAttributes(source: Element, target: Element): void {
     if (attribute.name === "style" && fetchesInCss(attribute.value)) continue;
     target.setAttribute(attribute.name, attribute.value);
   }
-}
-
-/**
- * Loads made through `new Image()` (an image shape measuring its picture) get a local
- * stand-in, so the draw completes without its picture instead of failing on the refusal.
- */
-function substituteMeasuredImages(frameWindow: Window, onBlocked: () => void) {
-  const prototype = (frameWindow as Window & typeof globalThis).HTMLImageElement.prototype;
-  const descriptor = Object.getOwnPropertyDescriptor(prototype, "src");
-  if (!descriptor?.set || !descriptor.get) return;
-  const { get, set } = descriptor;
-  Object.defineProperty(prototype, "src", {
-    configurable: true,
-    enumerable: descriptor.enumerable ?? true,
-    get() {
-      return get.call(this);
-    },
-    set(value: unknown) {
-      const address = String(value);
-      if (/^\s*(?:data|blob):/iu.test(address)) {
-        set.call(this, address);
-        return;
-      }
-      onBlocked();
-      set.call(this, PLACEHOLDER_IMAGE);
-    },
-  });
 }
 
 export async function openIsolatedMermaid(
