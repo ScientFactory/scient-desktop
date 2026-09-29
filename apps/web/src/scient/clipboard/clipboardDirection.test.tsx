@@ -349,6 +349,68 @@ describe("clipboard HTML direction for right-to-left copies", () => {
     expect(document.body.outerHTML).toBe(before);
   });
 
+  it("keeps chip, details, and diagram content that the sanitizer would drop", () => {
+    const root = mount(
+      [
+        "ראו את הקובץ כאן.",
+        "",
+        "<details open>",
+        "<summary>פרטים פתוחים</summary>",
+        "",
+        "גוף הפרטים.",
+        "",
+        "</details>",
+        "",
+        "<details>",
+        "<summary>פרטים סגורים</summary>",
+        "",
+        "גוף סגור.",
+        "",
+        "</details>",
+        "",
+        "```mermaid",
+        "graph TD; A-->B",
+        "```",
+      ].join("\n"),
+    );
+    // A user-message mention chip: a button whose Markdown copy is a context link.
+    const paragraph = root.querySelector("p")!;
+    const chip = document.createElement("button");
+    chip.setAttribute("data-markdown-copy", "[app.ts](t3-context://mention-1)");
+    chip.innerHTML = '<svg aria-hidden="true"></svg><span>app.ts</span>';
+    paragraph.firstChild!.after(chip);
+    const range = document.createRange();
+    range.selectNodeContents(root);
+    const expectedText = plainTextOf(range);
+    const { payload, html } = copy(range);
+    expect(payload.text).toBe(expectedText);
+    expect(payload.text).toContain("[app.ts](t3-context://mention-1)");
+    expect(block(html, "p").textContent).toContain("app.ts");
+    expect([...html.querySelectorAll("strong")].map((strong) => strong.textContent)).toEqual([
+      "פרטים פתוחים",
+      "פרטים סגורים",
+    ]);
+    expect(html.textContent).toContain("גוף הפרטים.");
+    // A collapsed body is not in the page, and the plain copy omits it too.
+    expect(payload.text).not.toContain("גוף סגור.");
+    const pre = block(html, "pre");
+    expect(pre.textContent).toBe("graph TD; A-->B\n");
+    expect(pre.getAttribute("dir")).toBe("ltr");
+    expect(html.querySelector("button, svg, [hidden]")).toBeNull();
+  });
+
+  it("leaves an English selection copy with a chip exactly as before", () => {
+    const root = mount("See the file now.");
+    const paragraph = root.querySelector("p")!;
+    const chip = document.createElement("button");
+    chip.setAttribute("data-markdown-copy", "[app.ts](t3-context://mention-1)");
+    chip.textContent = "app.ts";
+    paragraph.firstChild!.after(chip);
+    const { payload } = copyAll(root);
+    expect(payload.html).toBe('<meta charset="utf-8"><p dir="ltr">See the file now.</p>');
+    expect(directionMarking.calls).toBe(0);
+  });
+
   it("adds no invisible bidi control characters", () => {
     const root = mount("שלום `code` /tmp/file.txt https://example.com/ (בדיקה) 50%.");
     const { payload } = copyAll(root);

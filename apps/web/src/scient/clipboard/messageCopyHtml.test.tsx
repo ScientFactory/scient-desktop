@@ -13,6 +13,8 @@ import { MessageCopyButton } from "~/components/chat/MessageCopyButton";
 import { MessagesTimeline } from "~/components/chat/MessagesTimeline";
 import { isScientMessageCopyHtml, messageCopyHtml } from "./messageCopyHtml";
 
+/** Rows the mocked list leaves unmounted, as LegendList does for rows out of view. */
+const virtualized = vi.hoisted(() => ({ rowIds: new Set<string>() }));
 vi.mock("@legendapp/list/react", () => ({
   LegendList: (props: {
     data: Array<{ id: string }>;
@@ -23,9 +25,11 @@ vi.mock("@legendapp/list/react", () => ({
   }) => (
     <div>
       {props.ListHeaderComponent}
-      {props.data.map((item) => (
-        <div key={props.keyExtractor(item)}>{props.renderItem({ item })}</div>
-      ))}
+      {props.data
+        .filter((item) => !virtualized.rowIds.has(props.keyExtractor(item)))
+        .map((item) => (
+          <div key={props.keyExtractor(item)}>{props.renderItem({ item })}</div>
+        ))}
       {props.ListFooterComponent}
     </div>
   ),
@@ -91,6 +95,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  virtualized.rowIds.clear();
   await act(() => root?.unmount());
   root = null;
   document.body.replaceChildren();
@@ -227,65 +232,218 @@ describe("Copy message button", () => {
   });
 });
 
+const HEBREW_WITH_CARDS = [
+  "## סיכום",
+  "",
+  "<details>",
+  "<summary>פרטים נוספים</summary>",
+  "",
+  "גוף מוסתר של הפרטים.",
+  "",
+  "</details>",
+  "",
+  "```mermaid",
+  "graph TD; A-->B",
+  "```",
+].join("\n");
+
+describe("Copy message button content", () => {
+  it("carries a collapsed details body and a diagram's source", async () => {
+    await renderTimeline("Please summarize.", HEBREW_WITH_CARDS);
+    // The rendered details are collapsed, so their body is not in the page.
+    expect(host.textContent).not.toContain("גוף מוסתר של הפרטים.");
+    await click(copyButtonFor("assistant-1"));
+    const html = parse(writes[0]!.html!);
+    expect(html.querySelector("strong")?.textContent).toBe("פרטים נוספים");
+    expect(html.textContent).toContain("גוף מוסתר של הפרטים.");
+    expect(html.querySelector("pre")?.textContent).toBe("graph TD; A-->B\n");
+  });
+
+  it("still copies direction-marked HTML when the answer's row is virtualized away", async () => {
+    const turnId = TurnId.make("turn-trailing-tools");
+    virtualized.rowIds.add("assistant-entry");
+    root = createRoot(host);
+    await act(() =>
+      root!.render(
+        <MessagesTimeline
+          {...timelineProps()}
+          latestTurn={{
+            turnId,
+            // A settled turn that ended in a failed tool stays unfolded.
+            state: "error",
+            startedAt: "2026-09-29T07:59:50.000Z",
+            completedAt: "2026-09-29T08:00:10.000Z",
+          }}
+          timelineEntries={[
+            {
+              id: "assistant-entry",
+              kind: "message",
+              createdAt: CREATED_AT,
+              message: {
+                id: MessageId.make("assistant-trailing"),
+                role: "assistant",
+                text: HEBREW_ASSISTANT,
+                turnId,
+                createdAt: CREATED_AT,
+                updatedAt: CREATED_AT,
+                streaming: false,
+              },
+            },
+            {
+              id: "trailing-work-entry",
+              kind: "work",
+              createdAt: "2026-09-29T08:00:05.000Z",
+              entry: {
+                id: "trailing-work",
+                createdAt: "2026-09-29T08:00:05.000Z",
+                turnId,
+                label: "Ran command",
+                tone: "tool",
+                itemType: "command_execution",
+                toolLifecycleStatus: "failed",
+              },
+            },
+          ]}
+        />,
+      ),
+    );
+    expect(host.querySelector('[data-timeline-row-id="assistant-entry"]')).toBeNull();
+    const meta = host.querySelector('[data-timeline-row-id="assistant-meta:assistant-trailing"]');
+    const button = meta?.querySelector<HTMLButtonElement>('button[aria-label="Copy message"]');
+    expect(button).toBeTruthy();
+    await click(button!);
+    expect(writes).toHaveLength(1);
+    expect(writes[0]!.text).toBe(HEBREW_ASSISTANT);
+    const html = parse(writes[0]!.html!);
+    expect(html.querySelector("h2")?.getAttribute("style")).toBe("direction:rtl;text-align:right");
+    expect(html.querySelector("ul")?.getAttribute("dir")).toBe("rtl");
+    expect(html.querySelector("pre")?.getAttribute("dir")).toBe("ltr");
+  });
+});
+
 describe("messageCopyHtml", () => {
-  function renderedRow(messageId: string, body: string): HTMLElement {
+  const ASSISTANT_PROFILE = { lineBreaks: false, parseRawHtml: true } as const;
+
+  function renderedRow(messageId: string, body: string, dir = "rtl"): HTMLElement {
     const row = document.createElement("div");
     row.setAttribute("data-timeline-row-kind", "message");
     row.setAttribute("data-message-id", messageId);
-    row.innerHTML = `<div class="chat-markdown" dir="rtl" data-scient-content-direction="rtl">${body}</div>`;
+    row.innerHTML = `<div class="chat-markdown" dir="${dir}" data-scient-content-direction="${dir}">${body}</div>`;
     document.body.append(row);
     return row;
   }
 
-  it("finds the message from a separate metadata row", () => {
-    renderedRow("m-1", '<p dir="rtl">שלום</p>');
+  function detachedAnchor(): HTMLButtonElement {
+    return document.body.appendChild(document.createElement("button"));
+  }
+
+  it("uses the displayed direction of the message from a separate metadata row", () => {
+    // The message displays right-to-left even though its prose alone would not decide it.
+    renderedRow("m-1", '<p dir="rtl">x</p>');
     const meta = document.createElement("div");
     meta.setAttribute("data-message-id", "m-1");
     meta.setAttribute("data-timeline-row-kind", "assistant-meta");
-    const anchor = document.createElement("button");
-    meta.append(anchor);
+    const anchor = meta.appendChild(document.createElement("button"));
     document.body.append(meta);
-    const html = messageCopyHtml({ anchor, messageId: "m-1", markdown: "שלום" });
+    const html = messageCopyHtml({
+      anchor,
+      messageId: "m-1",
+      markdown: "Run the tests with Python and שלום.",
+      ...ASSISTANT_PROFILE,
+    })!;
+    expect(parse(html).querySelector("p")?.getAttribute("dir")).toBe("ltr");
+    expect(parse(html).querySelector("[data-scient-message-copy]")).not.toBeNull();
+  });
+
+  it("renders the message when its row is not mounted", () => {
+    const html = messageCopyHtml({
+      anchor: detachedAnchor(),
+      messageId: "missing",
+      markdown: "שלום עולם.",
+      ...ASSISTANT_PROFILE,
+    });
     expect(parse(html!).querySelector("p")?.getAttribute("style")).toBe(
       "direction:rtl;text-align:right",
     );
   });
 
-  it("keeps the plain copy when the message is not rendered", () => {
-    const anchor = document.createElement("button");
-    document.body.append(anchor);
-    expect(messageCopyHtml({ anchor, messageId: "missing", markdown: "שלום" })).toBeNull();
-  });
-
-  it("replaces images with their description rather than their signed address", () => {
+  it("keeps every chip, collapsed details body, and diagram source from the Markdown", () => {
+    const markdown = [
+      "ראו את [app.ts](t3-context://mention-1) ואת `notes/plan.md` ואת @src/data.csv.",
+      "",
+      "<details>",
+      "<summary>פרטים נוספים</summary>",
+      "",
+      "גוף מוסתר של הפרטים.",
+      "",
+      "</details>",
+      "",
+      "```mermaid",
+      "graph TD; A-->B",
+      "```",
+      "",
+      "```vega-lite",
+      '{"mark":"bar"}',
+      "```",
+    ].join("\n");
+    // The mounted row shows chips as buttons and the details collapsed.
     const row = renderedRow(
-      "m-2",
-      '<p dir="rtl">גרף <img alt="עקומת תגובה" src="http://127.0.0.1:1/asset?token=secret"></p>',
+      "m-5",
+      '<p dir="rtl">ראו <button data-markdown-copy="[app.ts](t3-context://mention-1)"><svg></svg><span>app.ts</span></button></p>' +
+        '<div data-markdown-details=""><button data-markdown-details-summary=""><span>פרטים נוספים</span></button></div>',
     );
     const anchor = row.appendChild(document.createElement("button"));
-    const html = messageCopyHtml({
-      anchor,
-      messageId: "m-2",
-      markdown: "גרף ![עקומת תגובה](a.png)",
-    })!;
-    expect(html).not.toContain("token=secret");
-    expect(parse(html).querySelector("p")?.textContent).toBe("גרף עקומת תגובה");
-    // The rendered message keeps its image.
-    expect(row.querySelector("img")?.getAttribute("src")).toContain("token=secret");
+    const html = parse(
+      messageCopyHtml({ anchor, messageId: "m-5", markdown, ...ASSISTANT_PROFILE })!,
+    );
+    const text = html.textContent ?? "";
+    expect(text).toContain("app.ts");
+    expect(text).toContain("notes/plan.md");
+    expect(text).toContain("@src/data.csv");
+    expect(html.querySelector("strong")?.textContent).toBe("פרטים נוספים");
+    expect(text).toContain("גוף מוסתר של הפרטים.");
+    const [mermaid, vega] = [...html.querySelectorAll("pre")];
+    expect(mermaid?.textContent).toBe("graph TD; A-->B\n");
+    expect(mermaid?.getAttribute("dir")).toBe("ltr");
+    expect(vega?.textContent).toBe('{"mark":"bar"}\n');
+    // Scient-only destinations do not become broken links.
+    expect(html.querySelector("a")).toBeNull();
+    expect(html.querySelector("button, svg, details")).toBeNull();
+  });
+
+  it("keeps math source and replaces images with their description", () => {
+    const html = parse(
+      messageCopyHtml({
+        anchor: detachedAnchor(),
+        messageId: "m-2",
+        markdown: "גרף ![עקומת תגובה](plot.png) לפי $E = mc^2$.",
+        ...ASSISTANT_PROFILE,
+      })!,
+    );
+    expect(html.querySelector("img")).toBeNull();
+    expect(html.querySelector("p")?.textContent).toBe("גרף עקומת תגובה לפי $E = mc^2$.");
+    expect(
+      [...html.querySelectorAll('span[dir="ltr"]')].map((island) => island.textContent),
+    ).toEqual(["$E = mc^2$"]);
   });
 
   it("keeps the composer context fragment round-tripping through the rich flavour", async () => {
     const row = renderedRow("m-3", '<p dir="rtl">שלום עם הקשר</p>');
-    const fragment = CONTEXT_FRAGMENT;
     const buttonHost = row.appendChild(document.createElement("div"));
     root = createRoot(buttonHost);
     await act(() =>
       root!.render(
         <MessageCopyButton
           text="שלום עם הקשר"
-          extraFlavors={{ [COMPOSER_CONTEXT_CLIPBOARD_MIME]: fragment }}
+          extraFlavors={{ [COMPOSER_CONTEXT_CLIPBOARD_MIME]: CONTEXT_FRAGMENT }}
           resolveHtml={(anchor) =>
-            messageCopyHtml({ anchor, messageId: "m-3", markdown: "שלום עם הקשר" })
+            messageCopyHtml({
+              anchor,
+              messageId: "m-3",
+              markdown: "שלום עם הקשר",
+              lineBreaks: true,
+              parseRawHtml: false,
+            })
           }
         />,
       ),
@@ -294,27 +452,34 @@ describe("messageCopyHtml", () => {
     expect(writes).toHaveLength(1);
     const html = writes[0]!.html!;
     expect(writes[0]!.flavors).toContain(COMPOSER_CONTEXT_CLIPBOARD_MIME);
-    expect(decodeComposerContextClipboardHtml(html)).toEqual(JSON.parse(fragment));
+    expect(decodeComposerContextClipboardHtml(html)).toEqual(JSON.parse(CONTEXT_FRAGMENT));
     expect(parse(html).querySelector("p")?.getAttribute("dir")).toBe("rtl");
   });
 
   it("keeps the context copy unchanged for a message without right-to-left text", async () => {
-    const row = renderedRow("m-4", '<p dir="ltr">Hello</p>');
-    const fragment = CONTEXT_FRAGMENT;
+    const row = renderedRow("m-4", '<p dir="ltr">Hello</p>', "ltr");
     const buttonHost = row.appendChild(document.createElement("div"));
     root = createRoot(buttonHost);
     await act(() =>
       root!.render(
         <MessageCopyButton
           text="Hello"
-          extraFlavors={{ [COMPOSER_CONTEXT_CLIPBOARD_MIME]: fragment }}
-          resolveHtml={(anchor) => messageCopyHtml({ anchor, messageId: "m-4", markdown: "Hello" })}
+          extraFlavors={{ [COMPOSER_CONTEXT_CLIPBOARD_MIME]: CONTEXT_FRAGMENT }}
+          resolveHtml={(anchor) =>
+            messageCopyHtml({
+              anchor,
+              messageId: "m-4",
+              markdown: "Hello",
+              lineBreaks: true,
+              parseRawHtml: false,
+            })
+          }
         />,
       ),
     );
     await click(buttonHost.querySelector("button")!);
     expect(writes[0]!.html).toBe(
-      `<pre data-t3-context-fragment="${encodeURIComponent(fragment)}">Hello</pre>`,
+      `<pre data-t3-context-fragment="${encodeURIComponent(CONTEXT_FRAGMENT)}">Hello</pre>`,
     );
   });
 });

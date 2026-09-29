@@ -53,6 +53,7 @@ const STRUCTURAL_TAGS = new Set([
   "TR",
 ]);
 const FILE_LINK_CLASS_NAME = "chat-markdown-file-link";
+const PLAIN_TEXT_CODE = /(?:^|\s)language-(?:text|plaintext|txt)(?:\s|$)/u;
 const ELEMENT_ISLAND_SELECTOR = `code, a, .${FILE_LINK_CLASS_NAME}, span[dir="ltr"]`;
 /**
  * Word marks its own direction runs with `<span dir>`. The macOS HTML importer
@@ -145,6 +146,10 @@ function codeBlockDirection(pre: Element): FixedContentDirection {
     ?.getAttribute("data-copy-text-direction");
   if (declared === "rtl") return "rtl";
   if (declared === "auto") return firstStrongDirection(pre.textContent ?? "") ?? "ltr";
+  // A Markdown rendering without the chat's copy box: plain text follows its script.
+  if (!declared && PLAIN_TEXT_CODE.test(pre.querySelector("code")?.className ?? "")) {
+    return firstStrongDirection(pre.textContent ?? "") ?? "ltr";
+  }
   return "ltr";
 }
 

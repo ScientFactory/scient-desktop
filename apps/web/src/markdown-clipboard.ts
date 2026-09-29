@@ -13,6 +13,7 @@ import {
   hasStrongRtl,
   markClipboardDirection,
 } from "./scient/clipboard/clipboardDirection";
+import { materializeClipboardContent } from "./scient/clipboard/clipboardContent";
 // SCIENT-FORK:END
 
 const SKIPPED_TAGS = new Set(["BUTTON", "INPUT", "SCRIPT", "STYLE", "TEMPLATE"]);
@@ -401,6 +402,9 @@ function sanitizedHtmlFrom(container: Element, direction?: FixedContentDirection
     replacement.textContent = math.getAttribute("data-markdown-copy");
     math.replaceWith(replacement);
   }
+  // SCIENT-FORK:START — chips, details, and diagram cards keep their content
+  if (direction) materializeClipboardContent(container);
+  // SCIENT-FORK:END
   for (const node of container.querySelectorAll(SANITIZED_HTML_SELECTOR)) {
     if (
       node.classList.contains("chat-markdown-file-link") ||

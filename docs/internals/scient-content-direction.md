@@ -97,10 +97,22 @@ writes for direction runs, so it is preferred over `bdi`; the explicit
 `unicode-bidi:embed` is what the macOS HTML importer maps to a writing
 direction (a bare `dir` computes to `isolate`). Google Docs keeps only paragraph
 direction, which is what matters most for punctuation. Plain LTR words stay
-prose so trailing punctuation keeps the paragraph direction. The Copy message
-button adds the same HTML, built from the rendered message with images reduced
-to their alt text (signed asset URLs never leave the app), only for messages
-with RTL text; its wrapper carries `data-scient-message-copy`, and the Markdown
+prose so trailing punctuation keeps the paragraph direction. Before the
+sanitizer runs, an RTL copy's controls and cards become content
+(`scient/clipboard/clipboardContent.ts`): chips rendered as buttons become their
+Markdown copy (code, link text, or text), details become a bold summary
+paragraph followed by the body, and diagram and chart cards become an LTR code
+block with their fence source, so the HTML carries what the plain flavour
+carries.
+
+The Copy message button adds the same HTML only for messages with RTL text.
+It renders the message's Markdown (the plain flavour's own text) with the
+chat's GFM, math, line-break, raw-HTML, and `rehypeScientBidi` profile into an
+inert document, so the result does not depend on whether the virtualized row is
+mounted or a details block is collapsed; a mounted row only supplies the
+displayed message direction. Images become their alt text, links to local,
+context, or citation targets become their label, and math keeps its `$`
+source. The wrapper carries `data-scient-message-copy`, and the Markdown
 document editor pastes that copy's Markdown text, as for every other Copy
 message paste.
 

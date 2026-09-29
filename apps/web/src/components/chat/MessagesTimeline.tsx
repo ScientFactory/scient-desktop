@@ -2175,6 +2175,8 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                     anchor,
                     messageId: row.message.id,
                     markdown: resolvedContext.text,
+                    lineBreaks: true,
+                    parseRawHtml: false,
                   })
                 }
                 // SCIENT-FORK:END
@@ -2458,7 +2460,13 @@ function AssistantCopyButton({
       text={assistantCopyState.text ?? ""}
       // SCIENT-FORK:START — right-to-left messages also copy as direction-marked HTML
       resolveHtml={(anchor) =>
-        messageCopyHtml({ anchor, messageId: message.id, markdown: assistantCopyState.text ?? "" })
+        messageCopyHtml({
+          anchor,
+          messageId: message.id,
+          markdown: assistantCopyState.text ?? "",
+          lineBreaks: shouldPreserveAssistantLineBreaks(assistantCopyState.text ?? ""),
+          parseRawHtml: true,
+        })
       }
       // SCIENT-FORK:END
       variant="ghost"
