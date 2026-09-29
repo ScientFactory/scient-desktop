@@ -49,6 +49,15 @@ export interface ProviderClientDefinition {
    * or custom — advertises the same marker.
    */
   readonly badgeLabel?: string;
+  /**
+   * Company behind the provider, shown beside its product name so people who
+   * know "ChatGPT" or "Gemini" but not "Codex" or "Antigravity" can find it.
+   */
+  readonly vendorLabel?: string;
+  /** The account people sign in with, named the way they know it. */
+  readonly accountLabel?: string;
+  /** Extra lowercase terms provider search should match, e.g. "chatgpt". */
+  readonly searchAliases?: ReadonlyArray<string>;
 }
 
 const PROVIDER_CLIENT_DEFINITIONS_UNORDERED: readonly ProviderClientDefinition[] = [
@@ -69,12 +78,18 @@ const PROVIDER_CLIENT_DEFINITIONS_UNORDERED: readonly ProviderClientDefinition[]
   {
     value: ProviderDriverKind.make("codex"),
     label: "Codex",
+    vendorLabel: "OpenAI",
+    accountLabel: "ChatGPT account",
+    searchAliases: ["openai", "chatgpt", "gpt"],
     icon: OpenAI,
     settingsSchema: CodexSettings,
   },
   {
     value: ProviderDriverKind.make("claudeAgent"),
     label: "Claude",
+    vendorLabel: "Anthropic",
+    accountLabel: "Claude account",
+    searchAliases: ["anthropic"],
     icon: ClaudeAI,
     settingsSchema: ClaudeSettings,
   },
@@ -87,12 +102,16 @@ const PROVIDER_CLIENT_DEFINITIONS_UNORDERED: readonly ProviderClientDefinition[]
   {
     value: ProviderDriverKind.make("grok"),
     label: "Grok",
+    vendorLabel: "xAI",
+    searchAliases: ["xai"],
     icon: GrokIcon,
     settingsSchema: GrokSettings,
   },
   {
     value: ProviderDriverKind.make("droid"),
     label: "Droid",
+    vendorLabel: "Factory",
+    searchAliases: ["factory"],
     icon: DroidIcon,
     settingsSchema: DroidSettings,
     supportsCustomModels: false,
@@ -106,6 +125,9 @@ const PROVIDER_CLIENT_DEFINITIONS_UNORDERED: readonly ProviderClientDefinition[]
   {
     value: ProviderDriverKind.make("antigravity"),
     label: "Antigravity",
+    vendorLabel: "Google",
+    accountLabel: "Google account",
+    searchAliases: ["google", "gemini"],
     icon: AntigravityIcon,
     settingsSchema: AntigravitySettings,
     supportsCustomModels: false,
@@ -125,6 +147,15 @@ const PROVIDER_CLIENT_DEFINITION_BY_VALUE: Partial<
 export const DRIVER_OPTIONS = PROVIDER_CLIENT_DEFINITIONS;
 export const DRIVER_OPTION_BY_VALUE = PROVIDER_CLIENT_DEFINITION_BY_VALUE;
 export type DriverOption = ProviderClientDefinition;
+
+/** Whether a provider search query matches its name, company, or aliases. */
+export function driverOptionMatchesQuery(definition: DriverOption, query: string): boolean {
+  const normalized = query.trim().toLocaleLowerCase();
+  if (normalized.length === 0) return true;
+  return [definition.label, definition.vendorLabel ?? "", ...(definition.searchAliases ?? [])].some(
+    (term) => term.toLocaleLowerCase().includes(normalized),
+  );
+}
 
 /**
  * Look up the driver metadata for an instance's `driver` field. Accepts

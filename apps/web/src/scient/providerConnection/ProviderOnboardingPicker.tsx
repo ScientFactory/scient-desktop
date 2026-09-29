@@ -14,7 +14,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ComposerControl, ComposerControlChevron } from "../../components/chat/ComposerControl";
 import { composerFloatingLayerProps } from "../../components/chat/composerEventScope";
-import { DRIVER_OPTIONS } from "../../components/settings/providerDriverMeta";
+import {
+  DRIVER_OPTIONS,
+  driverOptionMatchesQuery,
+} from "../../components/settings/providerDriverMeta";
 import { Button } from "../../components/ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../../components/ui/popover";
 import { ScientTooltip } from "../presentation/ScientTooltip";
@@ -141,7 +144,7 @@ export function ProviderOnboardingPicker(props: {
   }, [props.instanceEntries]);
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const visibleDefinitions = DRIVER_OPTIONS.filter((definition) =>
-    definition.label.toLocaleLowerCase().includes(normalizedQuery),
+    driverOptionMatchesQuery(definition, normalizedQuery),
   );
   const previewDefinitions = DRIVER_OPTIONS.slice(0, 3);
   const selectedDefinition = DRIVER_OPTIONS.find(
@@ -334,6 +337,7 @@ export function ProviderOnboardingPicker(props: {
                               {definition.label}
                             </span>
                             <span className="block truncate text-muted-foreground text-xs">
+                              {definition.vendorLabel ? `${definition.vendorLabel} · ` : null}
                               {providerOnboardingStatusLabel(entriesByDriver.get(definition.value))}
                             </span>
                           </span>
