@@ -12,6 +12,11 @@ export interface FileFailureCopy {
 
 export const UNSUPPORTED_PREVIEW_TITLE = "Preview unavailable";
 
+/** The server refused the path as outside the project; no preview or retry can reach it. */
+export function isOutsideProjectFailure(failure: ProjectFileFailure | null): boolean {
+  return failure === "workspace_path_outside_root" || failure === "resolved_path_outside_root";
+}
+
 /**
  * Plain-language copy for a failed workspace or host file read. Only failures
  * the server reports distinctly get a specific message; a missing file arrives

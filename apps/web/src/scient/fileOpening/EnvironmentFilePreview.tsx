@@ -81,7 +81,11 @@ function useEnvironmentTextAsset(input: {
   readonly environmentId: EnvironmentId;
   readonly file: EnvironmentFilePrepareResult;
   readonly refreshToken: number;
-}): { readonly state: TextLoadState; readonly refresh: () => void } {
+}): {
+  readonly state: TextLoadState;
+  readonly refresh: () => void;
+  readonly refreshing: boolean;
+} {
   const asset = useAssetUrlState(
     input.environmentId,
     environmentFileAssetResource({ path: input.file.canonicalPath }),
@@ -151,7 +155,11 @@ function useEnvironmentTextAsset(input: {
     refreshAsset,
   ]);
 
-  return { state, refresh: refreshAsset };
+  return {
+    state,
+    refresh: refreshAsset,
+    refreshing: asset._tag === "Failure" && asset.waiting === true,
+  };
 }
 
 function EnvironmentImageSurface(props: {
@@ -208,9 +216,11 @@ function EnvironmentImageSurface(props: {
         alt: props.file.fileName,
         revisionKey: `${props.file.canonicalPath}:${props.file.byteLength}:${props.file.mtimeMs}`,
       }}
-      onLoadError={() => {
+      onLoadError={({ hasDisplayedImage }) => {
         if (autoRetriedRef.current) {
-          setFailedUrl(asset.url);
+          // A failed refresh keeps the last good image on screen; only an image
+          // that never displayed is replaced by the failure state.
+          if (!hasDisplayedImage) setFailedUrl(asset.url);
           return;
         }
         autoRetriedRef.current = true;
@@ -368,7 +378,13 @@ function EnvironmentTextSurface(props: {
 
   if (load._tag === "Loading") return <CenteredLoading label="Reading file…" />;
   if (load._tag === "Failure") {
-    return <ReadFailure message={load.message} onRetry={loadedAsset.refresh} />;
+    return (
+      <ReadFailure
+        message={load.message}
+        retrying={loadedAsset.refreshing}
+        onRetry={loadedAsset.refresh}
+      />
+    );
   }
   if (props.file.presentation.kind === "markdown") {
     return (

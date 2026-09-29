@@ -8,6 +8,7 @@ import {
   parseMarkdownFileLink,
   safeDecodeURIComponent,
   splitFilePathPosition,
+  stripSlashPrefixedWindowsDrive,
   workspaceRelativeFilePath,
 } from "@t3tools/client-runtime/markdown-links";
 
@@ -115,8 +116,17 @@ export function resolveMarkdownFileLinkMeta(
  * path is not usable here because it is prefixed with the workspace name.
  */
 export function markdownFileLinkRelativeCopyPath(meta: MarkdownFileLinkMeta): string | null {
-  if (meta.workspaceRelativePath === null) return null;
-  const path = collapseDotSegments(meta.workspaceRelativePath);
+  const lexicalRelativePath = meta.workspaceRelativePath;
+  if (lexicalRelativePath === null) return null;
+  // The link target is joined lexically, so `../outside.md` still starts with
+  // the workspace root. Recover that root from the lexical split, then decide
+  // containment on both paths with their dot segments resolved.
+  const lexicalPath = stripSlashPrefixedWindowsDrive(meta.filePath.replaceAll("\\", "/"));
+  const lexicalRoot = lexicalPath.slice(0, lexicalPath.length - lexicalRelativePath.length - 1);
+  const path = workspaceRelativeFilePath(
+    collapseDotSegments(lexicalPath),
+    collapseDotSegments(lexicalRoot),
+  );
   if (path === null) return null;
   return formatFilePathPosition({
     path,
@@ -125,22 +135,16 @@ export function markdownFileLinkRelativeCopyPath(meta: MarkdownFileLinkMeta): st
   });
 }
 
-/**
- * Resolves `.` and `..` in a workspace-relative path. The link target is joined
- * lexically, so `../outside.md` still starts with the workspace root; a path
- * that climbs above the root, or names the root itself, has no relative form.
- */
-function collapseDotSegments(relativePath: string): string | null {
+/** Resolves `.` and `..` in an absolute `/`-separated path without climbing above its root. */
+function collapseDotSegments(path: string): string {
+  const [head = "", ...rest] = path.split("/");
   const segments: string[] = [];
-  for (const segment of relativePath.split("/")) {
+  for (const segment of rest) {
     if (segment === "" || segment === ".") continue;
-    if (segment === "..") {
-      if (segments.pop() === undefined) return null;
-      continue;
-    }
-    segments.push(segment);
+    if (segment === "..") segments.pop();
+    else segments.push(segment);
   }
-  return segments.length > 0 ? segments.join("/") : null;
+  return `${head}/${segments.join("/")}`;
 }
 
 function buildFileLinkMetaFromTarget(

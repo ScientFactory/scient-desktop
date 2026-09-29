@@ -580,6 +580,8 @@ describe("markdownFileLinkRelativeCopyPath", () => {
   });
 
   it("collapses dot segments that stay inside the workspace", () => {
+    expect(relativeCopyPath("../project/report.md:12", "/workspace/project")).toBe("report.md:12");
+    expect(relativeCopyPath("C:/repo/../repo/src/a.ts", "C:/repo")).toBe("src/a.ts");
     expect(relativeCopyPath("docs/../src/./main.ts:3", "/workspace/project")).toBe("src/main.ts:3");
     expect(relativeCopyPath("./docs/report.md", "/workspace/project")).toBe("docs/report.md");
   });

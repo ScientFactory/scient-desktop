@@ -3,7 +3,6 @@ import type {
   ChatFileAttachment,
   EditorId,
   EnvironmentId,
-  ProjectFileFailure,
   ResolvedKeybindingsConfig,
   ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -112,7 +111,8 @@ import {
   useWorkspaceFileRefresh,
 } from "~/scient/fileSurfaces/useWorkspaceFileRefresh";
 import { usePendingSurfaceDeparture } from "~/scient/fileSurfaces/usePendingSurfaceDeparture";
-import { fileReadFailureCopy, MEDIA_FAILURE_COPY } from "~/scient/fileSurfaces/fileFailureCopy";
+import { isOutsideProjectFailure, MEDIA_FAILURE_COPY } from "~/scient/fileSurfaces/fileFailureCopy";
+import { FileReadFailure } from "~/scient/fileSurfaces/FileReadFailure";
 
 import { AttachmentFilePreview } from "./AttachmentFilePreview";
 import { AudioPreview } from "./AudioPreview";
@@ -309,7 +309,9 @@ function WorkspaceImagePreview(props: {
     [props.absolutePath, props.relativePath, props.threadRef.threadId, props.workspaceRoot],
   );
   const assetUrl = useAssetUrlState(props.environmentId, resource);
+  const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const [retrying, setRetrying] = useState(false);
   const previousRefreshKey = useRef(props.refreshKey);
 
   useEffect(() => {
@@ -338,10 +340,17 @@ function WorkspaceImagePreview(props: {
         <div className="flex min-h-0 flex-1 flex-col">
           <FileSurfaceFailure
             {...MEDIA_FAILURE_COPY.image}
-            retrying={assetUrl._tag === "Failure" && assetUrl.waiting === true}
+            retrying={retrying || (assetUrl._tag === "Failure" && assetUrl.waiting === true)}
             onRetry={() => {
-              setFailedUrl(null);
-              assetUrl.refresh();
+              // Keep the failure (busy) until renewed authorization arrives, so
+              // the old URL is not shown, and cannot fail, in the meantime.
+              setRetrying(true);
+              void refreshAssetUrl()
+                .catch(() => undefined)
+                .finally(() => {
+                  setRetrying(false);
+                  setFailedUrl(null);
+                });
             }}
           />
         </div>
@@ -564,23 +573,6 @@ function WorkspaceAudioPreview(props: {
   }
   if (url === null) return <FileSurfaceLoading />;
   return <AudioPreview src={url} name={props.name} onError={() => setFailedUrl(url)} />;
-}
-
-function FileReadFailure(props: {
-  readonly failure: ProjectFileFailure | null;
-  readonly message: string;
-  readonly retrying: boolean;
-  readonly onRetry: () => void;
-}) {
-  const copy = fileReadFailureCopy({ failure: props.failure, message: props.message });
-  return (
-    <FileSurfaceFailure
-      title={copy.title}
-      description={copy.description}
-      details={copy.details}
-      {...(copy.retryable ? { onRetry: props.onRetry, retrying: props.retrying } : {})}
-    />
-  );
 }
 
 function clampFileLine(contents: string, requestedLine: number): number {
@@ -1959,6 +1951,14 @@ export default function FilePreviewPanel({
               mimeType={attachment.mimeType}
               sizeBytes={attachment.sizeBytes}
               asset={{ environmentId, attachmentId: attachment.id }}
+            />
+          ) : relativePath && file.data === null && isOutsideProjectFailure(file.failure) ? (
+            // Media and document previews would only fail to authorize the same path.
+            <FileReadFailure
+              failure={file.failure}
+              message={file.error}
+              retrying={false}
+              onRetry={requestManualReload}
             />
           ) : relativePath && isVideo && absolutePath ? (
             <WorkspaceVideoPreview
