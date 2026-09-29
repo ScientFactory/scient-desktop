@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "owner": "ScientFactory",
-  "purpose": "External Oh My Pi provider. The wire package has no Scient orchestration types. Desktop files own process, session cursor, and current turn mapping; every other path is a shared integration point this seam only mounts.",
+  "purpose": "External Oh My Pi provider. The wire package has no Scient orchestration types. Desktop files own process, session cursor, and current turn mapping. Shared integration points are mounts; Scient-owned provider documentation and release copy are classified here when they name Oh My Pi.",
   "ownedRoots": ["packages/effect-omp-rpc", "apps/server/src/provider/omp"],
   "ownedFiles": [
     "apps/server/scripts/qualify-omp-rpc.ts",
@@ -11,6 +11,7 @@
     "apps/server/src/scient/providerLifecycle/OmpManagedRuntimeActions.ts",
     "apps/server/src/textGeneration/OmpTextGeneration.ts",
     "apps/web/src/scient/providerConnection/OmpInlineSetup.tsx",
+    "apps/web/src/scient/releaseNotes/catalog.ts",
     "docs/user/providers-omp.md",
     "packages/scient-provider-runtime/src/managedOmpRuntime.ts",
     "packages/scient-provider-runtime/src/ompManifest.ts"
