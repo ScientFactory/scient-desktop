@@ -48,6 +48,10 @@ their normal reading and copying order. A plain-text copy box follows its own
 strong script when it is unambiguous; mixed plain text follows the selected
 conversation mode (or remains automatic).
 
+When copied text contains Hebrew, Arabic, or another right-to-left script,
+pasting it into Word, Google Docs, or Pages keeps each paragraph's direction,
+and code, paths, links, and equations stay left-to-right.
+
 In clearly RTL prose, standalone flow arrows are displayed in the reading
 direction even when the complete message is LTR. Technical and ambiguous arrow
 usage is preserved. An explicitly LTR message never rewrites arrows.
