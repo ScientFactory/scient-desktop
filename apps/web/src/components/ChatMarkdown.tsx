@@ -147,6 +147,7 @@ import {
   isWindowsDrivePathHref,
   normalizeMarkdownLinkDestination,
   resolveInlineCodeFileLinkMeta,
+  markdownFileLinkRelativeCopyPath,
   resolveMarkdownFileLinkMeta,
   rewriteMarkdownFileUriHref,
   shouldOpenMarkdownFileLinkInEditor,
@@ -925,7 +926,8 @@ interface MarkdownFileLinkProps {
   href: string;
   targetPath: string;
   iconPath: string;
-  displayPath: string;
+  /** Workspace-relative path with line position; null outside the workspace. */
+  relativeCopyPath: string | null;
   /** What the files panel opens: workspace-relative inside the workspace, the
       absolute host path outside it, null when the panel cannot show the file. */
   panelPath: string | null;
@@ -1693,7 +1695,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   href,
   targetPath,
   iconPath,
-  displayPath,
+  relativeCopyPath,
   panelPath,
   line,
   label,
@@ -1870,7 +1872,9 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
               ? ([{ id: "open-in-browser", label: "Open in integrated browser" }] as const)
               : []),
             ...(onReveal && revealLabel ? ([{ id: "reveal", label: revealLabel }] as const) : []),
-            { id: "copy-relative", label: "Copy relative path" },
+            ...(relativeCopyPath !== null
+              ? ([{ id: "copy-relative", label: "Copy relative path" }] as const)
+              : []),
             { id: "copy-full", label: "Copy full path" },
           ] as const,
           position,
@@ -1892,8 +1896,8 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
           handleRevealInFileManager();
           return;
         }
-        if (clicked === "copy-relative") {
-          handleCopy(displayPath, "relative");
+        if (clicked === "copy-relative" && relativeCopyPath !== null) {
+          handleCopy(relativeCopyPath, "relative");
           return;
         }
         if (clicked === "copy-full") {
@@ -1907,7 +1911,6 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
       }
     },
     [
-      displayPath,
       handleCopy,
       handleOpenInBrowser,
       handleOpenInEditor,
@@ -1917,6 +1920,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
       onOpen,
       onReveal,
       openInEditorMenuLabel,
+      relativeCopyPath,
       revealLabel,
       targetPath,
     ],
@@ -2013,7 +2017,7 @@ function areMarkdownFileLinkPropsEqual(
     previous.href === next.href &&
     previous.targetPath === next.targetPath &&
     previous.iconPath === next.iconPath &&
-    previous.displayPath === next.displayPath &&
+    previous.relativeCopyPath === next.relativeCopyPath &&
     previous.panelPath === next.panelPath &&
     previous.line === next.line &&
     previous.label === next.label &&
@@ -2479,7 +2483,7 @@ function useChatMarkdownState({
           href={fileLinkMeta.targetPath}
           targetPath={fileLinkMeta.targetPath}
           iconPath={fileLinkMeta.filePath}
-          displayPath={fileLinkMeta.displayPath}
+          relativeCopyPath={markdownFileLinkRelativeCopyPath(fileLinkMeta)}
           panelPath={panelPath}
           line={fileLinkMeta.line}
           label={labelParts.join(" · ")}

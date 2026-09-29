@@ -258,6 +258,7 @@ import {
   copyFilePathToClipboard,
   resolveFilePathCopyValue,
   type FilePathCopyFormat,
+  type FileSurfacePath,
 } from "./files/filePathClipboard";
 import { AgentsPanel } from "./AgentsPanel";
 import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
@@ -5879,9 +5880,9 @@ function ChatViewContent(props: ChatViewProps) {
     runAfterPendingSurfaceSave,
   ]);
   const copyRightPanelFilePath = useCallback(
-    (relativePath: string, format: FilePathCopyFormat) => {
+    (path: FileSurfacePath, format: FilePathCopyFormat) => {
       const value = resolveFilePathCopyValue({
-        relativePath,
+        path,
         workspaceRoot: activeWorkspaceRoot,
         format,
       });

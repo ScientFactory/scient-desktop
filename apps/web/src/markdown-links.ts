@@ -109,6 +109,20 @@ export function resolveMarkdownFileLinkMeta(
   return buildFileLinkMetaFromTarget(targetPath, cwd, workspaceRoot);
 }
 
+/**
+ * The path a chat file link copies as "relative": workspace-relative with the
+ * link's line position, or null for a file outside the workspace. The display
+ * path is not usable here because it is prefixed with the workspace name.
+ */
+export function markdownFileLinkRelativeCopyPath(meta: MarkdownFileLinkMeta): string | null {
+  if (meta.workspaceRelativePath === null) return null;
+  return formatFilePathPosition({
+    path: meta.workspaceRelativePath,
+    ...(meta.line !== undefined ? { line: meta.line } : {}),
+    ...(meta.column !== undefined ? { column: meta.column } : {}),
+  });
+}
+
 function buildFileLinkMetaFromTarget(
   targetPath: string,
   cwd?: string,
