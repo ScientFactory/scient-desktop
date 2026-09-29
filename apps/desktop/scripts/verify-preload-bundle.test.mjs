@@ -6,12 +6,22 @@ const validReview = `
 const {ipcRenderer} = require("electron");
 window.addEventListener("DOMContentLoaded", () => {
   for (const action of ["cancel", "continue"]) document.getElementById(action).addEventListener("click", () => ipcRenderer.send("scient:conversation-review-action", action));
+  const read = document.getElementById("read");
+  read.addEventListener("toggle", () => ipcRenderer.send("scient:conversation-review-action", read instanceof HTMLDetailsElement && read.open ? "expand" : "collapse"));
   document.addEventListener("keydown", event => { if(event.key === "Escape") ipcRenderer.send("scient:conversation-review-action", "cancel"); });
 });`;
 
 describe("conversation review preload verifier", () => {
   it("checks executable actions in the built isolated preload", () =>
     assert.doesNotThrow(() => verifyConversationReviewPreload(validReview)));
+  it("requires the read toggle actions", () =>
+    assert.throws(
+      () =>
+        verifyConversationReviewPreload(
+          validReview.replace(/  const read = .*\n  read.addEventListener\(.*\n/, ""),
+        ),
+      /missing read toggle/,
+    ));
   it("rejects file access and bridge exposure", () => {
     assert.throws(
       () => verifyConversationReviewPreload('require("node:fs");'),
