@@ -155,7 +155,8 @@ working text in the session → rich and source views → saved revision → der
 
 **PDF freshness is a build-input state, not one file revision.** A LaTeX PDF
 depends on the root, its included chapters, bibliographies, and images. The
-build service already records every file a build read, with its hash (see
+build service already records the inputs it can identify for each build, with
+their hashes and information about how complete that discovery was (see
 [build-input evidence](./scient-latex.md)). Shared status consumes that evidence
 and distinguishes three states:
 
@@ -165,7 +166,10 @@ and distinguishes three states:
 
 ### Durability levels — Proposed
 
-An edit passes through three levels, and each survives different failures:
+An edit reaches up to three levels, and each survives different failures.
+**Recoverable** and **published** are separate acknowledgements, not a sequence:
+a save can complete before a checkpoint commits, or the reverse. Status and
+tests track each one independently.
 
 | Level           | Meaning                                                    | Survives                                                             |
 | --------------- | ---------------------------------------------------------- | -------------------------------------------------------------------- |
@@ -694,9 +698,13 @@ The rules every adapter follows:
   the changed ranges, the base source revision, and the interpretation-context
   identity, so an adapter does not have to diff whole documents to rediscover
   them.
-- **Text-change units are defined once.** Offsets are UTF-16 code units, which is
-  what ProseMirror and JavaScript strings use. Line endings (LF or CRLF),
-  encoding, and the final-newline state are preserved.
+- **Text-change units are defined once.** Source offsets are UTF-16 code units
+  of the source string. Line endings (LF or CRLF), encoding, and the
+  final-newline state are preserved.
+- **Source offsets and editor positions are distinct.** ProseMirror positions
+  count document structure (node boundaries), so they are never used directly as
+  source offsets. The projection maps between the two explicitly, and the two
+  are distinct types with tests for the mapping.
 - **Minimal patch first.**
   - An edit inside a block becomes the smallest text patch, verified by
     reparsing that block. This is what Markdown's `minimallyPatchedTextBlock`
@@ -728,14 +736,30 @@ The rules every adapter follows:
 **Generalize the Markdown session incrementally, preserving its behavior
 first.**
 
-- `@scientfactory/scient-markdown`'s session, persistence coordinator, and
-  checkpoint become a format-neutral package, working name
-  `@scientfactory/scient-document`.
-  - `reconcileMarkdown` becomes a per-format strategy.
-  - The ledger and projection stay in `scient-markdown`.
-- The web registry, leases, ordered transport, departure guards, and recovery UI
-  move to shared code.
-- Markdown moves first, with no behavior change.
+**The first extraction is deliberately small.** Its deliverable: _Markdown uses
+a format-neutral session and persistence coordinator, with its existing behavior
+preserved._
+
+- The generic session state and persistence coordinator move into the shared
+  package, working name `@scientfactory/scient-document`.
+- Reconciliation is injected as a strategy. The coordinator calls
+  `reconcileMarkdown` directly today; that dependency is the real boundary.
+- Markdown's parsing, source ledger, and reconciliation implementation stay in
+  `scient-markdown`, and the existing Markdown consumer is reconnected.
+- Checkpoint identity, storage format, save timing, conflict behavior, and
+  recovery behavior are all preserved.
+- The web registry, recovery UI, and checkpoint implementation stay where they
+  are. They move only when an actual dependency, such as the second consumer,
+  requires it.
+- **Success criterion:** the shared core has no Markdown dependency, and
+  Markdown still behaves correctly. Existing session, coordinator, and recovery
+  tests are reused; new tests are added only where the new boundary introduces
+  risk. The slice demonstrates that:
+  - an older save acknowledgement cannot clear newer edits;
+  - external changes reconcile or produce a conflict;
+  - recovery resumes the correct working text;
+  - switching or closing views does not introduce another writer;
+  - save acknowledgements preserve the rich editor's selection and undo.
 - **Extraction and fixes are separate, independently verified changes.** The
   stale-projection fix, where a rejected change is pushed into the view and then
   corrected by a microtask, lands as its own change before or after the
@@ -755,6 +779,11 @@ qualifying cases:
 - closing and recovering;
 - reconnecting, or opening the file in a second window;
 - rejecting a stale edit without losing newer work.
+
+**One active persistence owner per file.** Across the Source, Split, and Visual
+views, exactly one persistence owner writes a given file at any time. The old
+implementation may remain available during migration, but it never competes
+with the session for the same file.
 
 Other source views (code, Compute) may follow once the LaTeX source view
 qualifies (**Open**).
@@ -809,6 +838,11 @@ other objects.
   Keeping a recoverable input buffer is different from silently committing a
   change that alters the surrounding source structure. The first is always
   allowed; the second never happens without the user's intent.
+
+- **Recoverable input buffers belong to the session's recovery mechanism.** They
+  are stored with the file's recovery checkpoint, keyed by the edited object's
+  identity, and never become a separate draft store. How they participate in
+  recovery and conflicts is specified before floating math is implemented.
 
 - **Anchoring.** The rendered object stays in place as the anchor. Opening,
   validating, resizing, or closing an editor never changes document layout.
@@ -921,10 +955,12 @@ Built in stage 1 and used by every stage after it:
 - **Adapter conformance suite.** Any format adapter must pass it:
   - projecting and applying with no edit yields identical bytes, including line
     endings and final newline;
-  - **every operation the adapter advertises** is tested in the relevant contexts
-    and is either accepted with bytes outside the affected region unchanged, or
-    refused without losing the user's input (property-based, over generated and
-    corpus documents);
+  - **every operation the adapter advertises is accepted** within its declared
+    capabilities and valid preconditions, in each relevant context, with bytes
+    outside the affected region unchanged (property-based, over generated and
+    corpus documents). An adapter cannot pass by refusing;
+  - **unsupported, out-of-precondition, and stale operations are refused**
+    without losing the user's input;
   - external changes are adopted without disturbing unchanged blocks;
   - typing stays within budget across documents of different structure: long
     prose, dense equations, large tables, heavy raw source, and multi-file
@@ -958,15 +994,15 @@ work stays in **one PR (#353) for now**, organized into clear commits and
 checkpoints and regularly merged with `main`. How PRs are split is not the
 organizing concern.
 
-| Stage                               | Shared and Markdown work (owner and assigned implementers)                                                                                                                                                                                                                                                         | LaTeX work (contributor, by assignment)                                                                                                                                                |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **0. Agreement**                    | Agree this record; refresh the implementation baseline on `main` and #353, and check existing work and ownership before creating branches                                                                                                                                                                          | —                                                                                                                                                                                      |
-| **1. Baseline and contracts**       | Answer the [hard questions](#hard-questions--open-answered-in-writing-in-stage-1) in writing; define minimal revision, change, and adapter contracts; build the [measuring instrument](#measuring-instrument--proposed) and record baselines. **In parallel:** the [experience study](#experience-study--proposed) | Preserve regression cases; identify capability and fidelity gaps; harden the LaTeX translator against the minimal contract and conformance suite (local verification, minimal patches) |
-| **2. Session foundation**           | Extract the session through Markdown with no behavior change; validate it with LaTeX source editing as the second consumer                                                                                                                                                                                         | Help connect LaTeX source. Remove the separate draft journal only after every view that uses it has migrated and qualified                                                             |
-| **3. First shared interaction**     | Complete floating math editing in Markdown: focus, selection, undo, validation, placement, and the math input decision. Starts once the study has answered its questions                                                                                                                                           | Exercise the same object-editor lifecycle with LaTeX math                                                                                                                              |
-| **4. Early rich LaTeX integration** | Adjust shared boundaries based on actual use                                                                                                                                                                                                                                                                       | Thin LaTeX path on the shared core: open, prose and math, raw source, edit, save, switch to source, reopen. Includes an unsupported command and an included chapter. Measured.         |
-| **5. Broader writing experience**   | Footer (after narrow-panel testing), commands, find, Insert, outline, keyboard, document creation                                                                                                                                                                                                                  | Format-specific controls; migrate the remaining constructs one by one: tables, figures, references, title, layout, and pagination if kept                                              |
-| **6. Qualification**                | Recovery, external changes, responsiveness, and the owner's visual review                                                                                                                                                                                                                                          | The same checks, plus root context, builds, and multi-file behavior                                                                                                                    |
+| Stage                               | Shared and Markdown work (owner and assigned implementers)                                                                                                                                                                                                                                                         | LaTeX work (contributor, by assignment)                                                                                                                                                                                |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **0. Agreement**                    | Agree this record; refresh the implementation baseline on `main` and #353, and check existing work and ownership before creating branches                                                                                                                                                                          | —                                                                                                                                                                                                                      |
+| **1. Baseline and contracts**       | Answer the [hard questions](#hard-questions--open-answered-in-writing-in-stage-1) in writing; define minimal revision, change, and adapter contracts; build the [measuring instrument](#measuring-instrument--proposed) and record baselines. **In parallel:** the [experience study](#experience-study--proposed) | Preserve and test the translator's source-fidelity behavior; produce a capability matrix; add regression fixtures; identify edits that need broader verification or root context (see [first assignment](#next-steps)) |
+| **2. Session foundation**           | The deliberately small extraction: Markdown on a format-neutral session and coordinator, behavior preserved. Then LaTeX source editing as the second consumer, with one active persistence owner per file                                                                                                          | Help connect LaTeX source. Remove the separate draft journal only after every view that uses it has migrated and qualified                                                                                             |
+| **3. First shared interaction**     | Complete floating math editing in Markdown: focus, selection, undo, validation, placement, and the math input decision. Starts once the study has answered its questions                                                                                                                                           | Exercise the same object-editor lifecycle with LaTeX math                                                                                                                                                              |
+| **4. Early rich LaTeX integration** | Adjust shared boundaries based on actual use                                                                                                                                                                                                                                                                       | Thin LaTeX path on the shared core: open, prose and math, raw source, edit, save, switch to source, reopen. Includes an unsupported command and an included chapter. Measured.                                         |
+| **5. Broader writing experience**   | Footer (after narrow-panel testing), commands, find, Insert, outline, keyboard, document creation                                                                                                                                                                                                                  | Format-specific controls; migrate the remaining constructs one by one: tables, figures, references, title, layout, and pagination if kept                                                                              |
+| **6. Qualification**                | Recovery, external changes, responsiveness, and the owner's visual review                                                                                                                                                                                                                                          | The same checks, plus root context, builds, and multi-file behavior                                                                                                                                                    |
 
 Moving to the next stage needs that stage's evidence, not every future UX
 decision. The session work and the experience study progress independently. Floating math
@@ -1002,17 +1038,43 @@ convenient.
 
 ### Next steps
 
-1. **Update this record** in #373 to reflect the agreed approach,
-   responsibilities, and decision status.
-2. **Refresh the implementation baseline** on `main` and #353, and check for
-   existing work and ownership before creating implementation branches.
-3. **Prepare the experience study:** isolated candidate apps, paired `.md` and
-   `.tex` fixtures, and a concise decision sheet.
-4. **Define the contributor's first assignment:** LaTeX adapter fidelity and
-   regression coverage against the minimal shared contract.
-5. **Start the first implementation slice:** extract the document session through
-   Markdown, then prove it with LaTeX source. The study meanwhile prepares
-   floating math editing as the first visible shared improvement.
+The starting package is three bounded activities, run in parallel. Floating math
+and the first thin rich-LaTeX integration follow once they produce evidence.
+
+1. **Baseline and ownership.**
+   - Create a fresh implementation worktree from the latest `origin/main` after
+     checking for overlapping work. This record's worktree stays dedicated to the
+     document.
+   - Record the exact Markdown and LaTeX revisions used for comparison.
+   - Confirm ownership: the owner's side takes the shared session, Markdown
+     integration, and later shared UI. The contributor initially owns LaTeX
+     adapter correctness and regression coverage. Changes to shared keyboard,
+     math, and writing controls are coordinated explicitly.
+   - The contributor's branch stays one PR and is not reshaped to start this
+     work.
+2. **Session extraction** (owner's side): the deliberately small, behavior-
+   preserving extraction described in
+   [Document session and persistence](#document-session-and-persistence--proposed).
+   Then LaTeX source editing as the next integration checkpoint.
+3. **The contributor's first assignment:** preserve and test the LaTeX
+   translator's source-fidelity behavior. The translator is improved in place,
+   not rewritten against a large provisional interface; its findings shape the
+   shared interface. Expected output:
+   - tests for the previously identified source-preservation cases;
+   - a capability matrix of supported and unsupported constructs and
+     operations;
+   - tests for context changes and safe refusal;
+   - measurements showing where ordinary edits cause whole-document work.
+4. **Experience study.** Launch the unchanged Markdown and LaTeX candidates with
+   paired synthetic documents. Start with a focused review of:
+   - math editing;
+   - switching between rich and source views;
+   - table controls;
+   - toolbar and footer layout;
+   - continuous versus paged writing surfaces.
+
+   Record the decisions and the unresolved questions. This prepares floating math
+   as the first visible improvement.
 
 ## Working on shared pieces
 
