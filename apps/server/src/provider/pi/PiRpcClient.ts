@@ -85,6 +85,11 @@ export interface PiRpcClient {
   readonly assessModelConnections?: (
     models: ReadonlyArray<PiRpcModel>,
   ) => ReadonlyArray<ModelConnectionReadiness>;
+  /**
+   * Custom-model bridge only: the name of the Scient model connection a Pi
+   * provider id stands for, so the model list shows it instead of the id.
+   */
+  readonly modelProviderLabel?: (provider: string) => string | undefined;
   readonly version?: string;
   readonly events: Stream.Stream<PiRpcEvent>;
   readonly getState: () => Effect.Effect<PiRpcState, PiRpcError>;

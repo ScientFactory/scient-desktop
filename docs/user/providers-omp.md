@@ -70,6 +70,12 @@ unknown limits, and models whose stored credential is unavailable, stay out of t
 Image and reasoning controls are advertised only when the shared custom-model settings explicitly
 enable them or provide compatible evidence.
 
+In the model picker, an Oh My Pi instance with both kinds of models shows them in two sections:
+**Your Oh My Pi accounts** (models from Oh My Pi's own sign-ins and API keys, grouped by provider)
+and **Scient custom models**, where each model is labeled with its connection's name. Select a
+section's header to collapse or expand it; Scient remembers the choice on this device. The section
+holding the selected model opens with the picker, and searching lists every match.
+
 ## What you can do
 
 - Send text and images when the selected model advertises image input, and see streamed replies and

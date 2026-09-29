@@ -128,6 +128,11 @@ export interface OmpRpcProcess extends OmpRpcClient {
     models: ReadonlyArray<OmpRpcModel>,
   ) => ReadonlyArray<ModelConnectionReadiness>;
   /**
+   * Custom-model bridge only: the name of the Scient model connection an Oh
+   * My Pi provider id stands for, so the model list shows it instead of the id.
+   */
+  readonly modelProviderLabel?: (provider: string) => string | undefined;
+  /**
    * Custom-model bridge only: re-read Scient's model connections and wait
    * until Oh My Pi acknowledges it has registered them.
    */

@@ -108,6 +108,8 @@ for (const change of ["rotate", "remove", "detach", "unselected-key"] as const) 
           }),
       );
       const runtime = yield* factory({ command: "synthetic" });
+      expect(runtime.modelProviderLabel?.("scient_fixture")).toBe("Fixture");
+      expect(runtime.modelProviderLabel?.("anthropic")).toBeUndefined();
       failCheck = true;
       yield* PubSub.publish(updates, snapshot());
       yield* Deferred.await(failedCheck);

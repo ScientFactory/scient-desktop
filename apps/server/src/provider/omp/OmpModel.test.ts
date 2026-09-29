@@ -69,6 +69,18 @@ describe("Oh My Pi model slugs", () => {
     ).toEqual(["low", "high"]);
   });
 
+  it("shows a model connection's name in place of its provider id", () => {
+    const custom = ompModelToServerModel(
+      { provider: "scient_openrouter", id: "glm" },
+      undefined,
+      "OpenRouter",
+    );
+    expect(custom).toMatchObject({ slug: "scient_openrouter/glm", subProvider: "OpenRouter" });
+    expect(
+      ompModelToServerModel({ provider: "anthropic", id: "claude" }, undefined, " "),
+    ).toMatchObject({ subProvider: "anthropic" });
+  });
+
   it("M-1 lists exactly the efforts Oh My Pi reports, with its default", () => {
     // Shape recorded from omp 18.3.1 `get_available_models` (available-models capture).
     const [model] = decodeModels({

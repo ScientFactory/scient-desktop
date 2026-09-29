@@ -447,6 +447,10 @@ export const makePiCustomModelsClientFactory = Effect.fn("PiCustomModels.make")(
                 }
               : undefined;
           }),
+        modelProviderLabel: (provider: string) =>
+          resolvedConnections.find(
+            (connection) => customModelProviderId(connection.id) === provider,
+          )?.name,
         prompt: (...args: Parameters<typeof client.prompt>) =>
           checkAuthority.pipe(Effect.andThen(client.prompt(...args))),
         setModel: (provider: string, modelId: string) =>

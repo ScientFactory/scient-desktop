@@ -174,6 +174,30 @@ describe("Oh My Pi provider status", () => {
     );
   }
 
+  it.effect("labels custom-model providers with their connection name", () =>
+    Effect.gen(function* () {
+      const result = yield* checkOmpProviderStatus(settings, {}, () =>
+        Effect.succeed(
+          process({
+            getModels: () =>
+              Effect.succeed({
+                models: [
+                  { provider: "anthropic", id: "claude-test", name: "Claude Test" },
+                  { provider: "scient_openrouter", id: "glm", name: "GLM" },
+                ],
+              }),
+            modelProviderLabel: (provider) =>
+              provider === "scient_openrouter" ? "OpenRouter" : undefined,
+          }),
+        ),
+      );
+      expect(result.models.map((model) => [model.slug, model.subProvider] as const)).toEqual([
+        ["anthropic/claude-test", "anthropic"],
+        ["scient_openrouter/glm", "OpenRouter"],
+      ]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("preserves custom-model readiness reported by the process wrapper", () =>
     Effect.gen(function* () {
       const result = yield* checkOmpProviderStatus(settings, {}, () =>

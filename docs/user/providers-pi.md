@@ -43,6 +43,12 @@ Deleting a model keeps its connection and key; deleting a connection removes bot
 
 If a saved key is missing or unreadable, only that connection's models become unavailable. Use
 **Test** for the setup error, then use **Manage** to re-enter the connection's key.
+
+In the model picker, a Pi instance with both kinds of models shows them in two sections:
+**Your Pi accounts** (models from Pi's own sign-ins and API keys, grouped by provider) and
+**Scient custom models**, where each model is labeled with its connection's name. Select a
+section's header to collapse or expand it; Scient remembers the choice on this device. The section
+holding the selected model opens with the picker, and searching lists every match.
 Connection setup and testing are available in desktop and web, not yet in the mobile app.
 
 You can still configure models and API keys, or complete Pi's supported `/login` flow, in Pi itself
