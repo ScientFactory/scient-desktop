@@ -10883,7 +10883,7 @@ function ChatViewContent(props: ChatViewProps) {
                   {unreadBelowCount > 0 && (
                     <span
                       aria-hidden="true"
-                      className="pointer-events-none absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-3xs leading-none font-medium text-primary-foreground tabular-nums"
+                      className="pointer-events-none absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full border border-info/20 bg-background/90 bg-linear-to-b from-info/10 to-info/10 px-1 text-3xs leading-none font-medium text-info-foreground tabular-nums backdrop-blur-sm"
                     >
                       {unreadBelowCount > 99 ? "99+" : unreadBelowCount}
                     </span>
