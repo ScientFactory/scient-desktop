@@ -135,7 +135,13 @@ function intendedImportModel(
   groups: ReadonlyArray<ImportModelGroup>,
 ): { readonly selection: ModelSelection; readonly ready: boolean } | null {
   if (config === undefined || project === null) return null;
-  const configured = projectSettings(config, project).defaultModelSelection ?? null;
+  // The default as set, before any availability fallback: resolved settings
+  // drop a project default whose provider is disabled or deleted, which would
+  // silently put the environment's (or another provider's) model in its place.
+  const projectDefault = resolveProjectSettings(config.settings, project.id, project).overrides
+    .defaultModelSelection;
+  const configured =
+    projectDefault !== undefined ? projectDefault : (config.settings.defaultModelSelection ?? null);
   const selection = configured ?? resolveDefaultProviderModelSelection(config.providers, undefined);
   if (selection === null) return null;
   const key = importModelKey(selection);

@@ -125,6 +125,37 @@ describe("destination model", () => {
     expect(defaultImportModelKey(config, null, groups)).toBeNull();
   });
 
+  it("leaves the model unset when the project's default provider is disabled or deleted", () => {
+    const withProjectModel = (projectModel: { instanceId: string; model: string }) =>
+      testConfig([codex, claude], {
+        // The environment default is ready: it must not stand in for the project's.
+        defaultModelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+        providerInstances: {
+          "claude-work": { driver: "claudeAgent", enabled: false },
+        } as unknown as ServerConfig["settings"]["providerInstances"],
+        projectSettingsOverrides: {
+          [project.id]: {
+            defaultModelSelection: {
+              instanceId: ProviderInstanceId.make(projectModel.instanceId),
+              model: projectModel.model,
+            },
+          },
+        },
+      });
+    for (const projectModel of [
+      { instanceId: "claude-work", model: "claude-opus" },
+      { instanceId: "retired-custom", model: "old-model" },
+    ]) {
+      const settings = withProjectModel(projectModel);
+      const readyGroups = importModelGroups(settings);
+      expect(readyGroups.length).toBeGreaterThan(0);
+      expect(defaultImportModelKey(settings, project, readyGroups)).toBeNull();
+      expect(unavailableDefaultModelHint(settings, project, readyGroups)).toBe(
+        `Your default model, ${projectModel.model}, isn't available here. Choose a model.`,
+      );
+    }
+  });
+
   it("leaves the model unset, with a hint, when the default is not ready here", () => {
     const offlineClaude = testProvider(
       "claudeAgent",
