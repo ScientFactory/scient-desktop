@@ -222,8 +222,15 @@ The evidence covers macOS Apple silicon only:
 - recorded 18.3.1 protocol captures (success, reasoning, tool call, abort, authentication and
   unknown-model errors, retries, output-limit stop) replayed through the client and adapter.
 
-Windows process-tree cleanup, Linux process qualification, and hosted-account flows are not claimed
-by this evidence. Those platforms remain unqualified until their own matrix runs.
+The Scient-managed runtime pipeline has also been run natively on macOS arm64 and x64, Linux glibc
+arm64 and x64, and Windows x64 and ARM64 hosted runners with Oh My Pi 18.4.3: download, checksum,
+smoke test, the RPC handshake and state request after install and after repair, and removal (five
+times on each Windows runner). The bundled 18.2.8 binaries for targets other than macOS arm64 have
+not been run natively; a qualified newer release from the catalog supersedes them when update
+checks are on.
+
+Conversations on Windows and Linux (process-tree cleanup during a turn, full model turns) and
+hosted-account flows are not claimed by this evidence.
 
 Scient's shared native provider event log records Oh My Pi's notifications and every command Scient
 sends with its response, the same diagnostics other native providers produce. Before anything is
