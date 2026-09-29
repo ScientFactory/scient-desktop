@@ -1,5 +1,5 @@
 import { Image } from "expo-image";
-import { Path, Svg } from "react-native-svg";
+import { Defs, LinearGradient, Path, Rect, Stop, Svg } from "react-native-svg";
 import { View } from "react-native";
 import { providerInstanceInitials } from "@t3tools/client-runtime/state/provider-instance-display";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
@@ -74,12 +74,29 @@ export function ProviderIcon(props: ProviderIconProps) {
   }
 
   if (props.provider === "pi") {
-    // Scient: Pi's colour mark, drawn from the pi.dev favicon paths.
+    // Pi's colour mark, drawn from the pi.dev favicon paths.
     return (
       <Svg width={size} height={size} viewBox="-40 -40 640 640" fill="none">
         <Path fill="#F09082" d="M420 280H280V140H0V0H420V280Z" />
         <Path fill="#4D9ABF" d="M140 560H0V140H140V280H280V420H140V560Z" />
         <Path fill="#F1BE58" d="M560 560H420V280H560V560Z" />
+      </Svg>
+    );
+  }
+
+  if (props.provider === "omp") {
+    // Oh My Pi's official mark (can1357/oh-my-pi collab-web favicon).
+    return (
+      <Svg width={size} height={size} viewBox="0 0 64 64" fill="none">
+        <Defs>
+          <LinearGradient id="omp-mark" x1="0" y1="0" x2="1" y2="1">
+            <Stop offset="0" stopColor="#ed4abf" />
+            <Stop offset="0.5" stopColor="#9b4dff" />
+            <Stop offset="1" stopColor="#5ad8e6" />
+          </LinearGradient>
+        </Defs>
+        <Rect width={64} height={64} rx={12} fill="#0f0a14" />
+        <Path fill="url(#omp-mark)" d="M14 16h36v8H40v32h-8V24h-6v22h-8V24h-4z" />
       </Svg>
     );
   }

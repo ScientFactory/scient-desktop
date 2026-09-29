@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   VOICE_CANCEL_MODEL_DOWNLOAD_CHANNEL,
+  VOICE_CANCEL_TRANSCRIPTION_CHANNEL,
+  VOICE_TRANSCRIBE_CHANNEL,
   VOICE_REQUEST_MICROPHONE_ACCESS_CHANNEL,
 } from "../../ipc/channels.ts";
 import { makeDesktopVoiceBridge } from "./preloadBridge.ts";
@@ -73,5 +75,23 @@ describe("makeDesktopVoiceBridge", () => {
     unsubscribe();
     await vi.advanceTimersByTimeAsync(1_000);
     expect(listener).toHaveBeenCalledTimes(1);
+  });
+});
+
+it("carries the same transcription identity through both IPC operations", async () => {
+  const invoke = vi.fn().mockResolvedValue(undefined);
+  const bridge = makeDesktopVoiceBridge({ invoke });
+  const request = {
+    requestId: "owner",
+    audioBase64: "AAAA",
+    mimeType: "audio/wav",
+    sampleRateHz: 24000,
+    durationMs: 1,
+  } as const;
+  await bridge.transcribe(request);
+  await bridge.cancelTranscriptionRequest?.({ requestId: request.requestId });
+  expect(invoke).toHaveBeenNthCalledWith(1, VOICE_TRANSCRIBE_CHANNEL, request);
+  expect(invoke).toHaveBeenNthCalledWith(2, VOICE_CANCEL_TRANSCRIPTION_CHANNEL, {
+    requestId: "owner",
   });
 });

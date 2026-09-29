@@ -1881,6 +1881,7 @@ const make = Effect.gen(function* () {
                 );
                 return settleForkContext({
                   type: "accepted",
+                  turnId: turn.turnId,
                   nativeThreadKey:
                     session === undefined
                       ? null
@@ -1940,13 +1941,16 @@ const make = Effect.gen(function* () {
   type PendingStop = {
     readonly threadId: ThreadId;
     readonly session: OrchestrationSession;
+    readonly background: boolean;
     readonly deadline: number;
   };
   const pendingStops = new Map<ThreadId, PendingStop>();
   const ownsStop = (operation: PendingStop, session: OrchestrationSession | null | undefined) =>
     pendingStops.get(operation.threadId) === operation &&
     session != null &&
-    (session.status === "running" || session.status === "starting") &&
+    (operation.background
+      ? session.status === "ready" && session.updatedAt === operation.session.updatedAt
+      : session.status === "running" || session.status === "starting") &&
     session.providerInstanceId === operation.session.providerInstanceId &&
     session.activeTurnId === operation.session.activeTurnId;
 
@@ -1997,10 +2001,17 @@ const make = Effect.gen(function* () {
   ) {
     const thread = yield* resolveThreadShell(event.payload.threadId);
     const session = thread?.session;
+    const background =
+      session?.status === "ready" &&
+      session.activeTurnId === null &&
+      thread?.backgroundLiveness != null &&
+      event.payload.turnId === undefined &&
+      event.payload.sessionUpdatedAt !== undefined &&
+      event.payload.sessionUpdatedAt === session.updatedAt;
     // A delayed Stop must not interrupt a replacement turn or revive a settled session.
     if (
       !session ||
-      (session.status !== "running" && session.status !== "starting") ||
+      (!background && session.status !== "running" && session.status !== "starting") ||
       (event.payload.turnId !== undefined && event.payload.turnId !== session.activeTurnId)
     )
       return;
@@ -2015,6 +2026,7 @@ const make = Effect.gen(function* () {
     const operation: PendingStop = {
       threadId: event.payload.threadId,
       session,
+      background,
       deadline: (yield* Clock.currentTimeMillis) + stopTiming.deadlineMillis,
     };
     pendingStops.set(operation.threadId, operation);
@@ -2040,6 +2052,17 @@ const make = Effect.gen(function* () {
               stop: () => Effect.succeed(false),
             };
       if (!(yield* stopStillOwned(operation))) return;
+      if (operation.background) {
+        // There is no foreground turn to interrupt. The adapter's captured
+        // handle owns the exact runtime and closes its detached work.
+        const stopped = yield* bounded(handle.stop(), stopTiming.sessionTimeoutMillis);
+        if (Option.isSome(stopped) && stopped.value) {
+          yield* updateStoppedTurn(operation, "stopped", null);
+        } else {
+          yield* reportUnconfirmedStop(operation);
+        }
+        return;
+      }
       const interrupted = yield* bounded(handle.interrupt, stopTiming.interruptTimeoutMillis).pipe(
         Effect.catchCause((cause) =>
           Cause.hasInterruptsOnly(cause)

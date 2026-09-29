@@ -8,6 +8,7 @@ import {
   resolveReviewedCursorArtifact,
   resolveReviewedDroidArtifact,
   resolveReviewedGrokArtifact,
+  resolveReviewedOmpArtifact,
   resolveReviewedPiArtifact,
   type ManagedRuntimeArtifact,
   type ManagedRuntimeProvider,
@@ -58,6 +59,7 @@ const policies: ReadonlyArray<{
   { provider: "droid", resolve: resolveReviewedDroidArtifact },
   { provider: "grok", resolve: resolveReviewedGrokArtifact },
   { provider: "pi", resolve: resolveReviewedPiArtifact },
+  { provider: "omp", resolve: resolveReviewedOmpArtifact },
 ];
 
 function nextPatch(version: string): string {

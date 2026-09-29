@@ -23,7 +23,11 @@ const connection: ResolvedModelConnection = {
       configurationMode: "automatic",
       images: false,
       reasoning: false,
-      instanceIds: [ProviderInstanceId.make("pi"), ProviderInstanceId.make("droid")],
+      instanceIds: [
+        ProviderInstanceId.make("pi"),
+        ProviderInstanceId.make("droid"),
+        ProviderInstanceId.make("omp"),
+      ],
     },
   ],
 };
@@ -80,7 +84,7 @@ describe("model connection assessment", () => {
     ).toBe(customModelAttachmentKey(connection, evidenced));
   });
   it("uses the same bounded eligibility on browser and server", () => {
-    for (const driver of ["pi", "droid"])
+    for (const driver of ["pi", "droid", "omp"])
       for (const protocol of [
         "openai-responses",
         "openai-completions",

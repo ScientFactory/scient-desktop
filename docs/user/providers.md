@@ -1,7 +1,7 @@
 # Providers in Scient
 
 A provider supplies the AI models that work inside Scient. For example, you
-can connect Codex, Claude, Cursor, Grok, Droid, Antigravity, or Pi, then choose an
+can connect Codex, Claude, Cursor, Grok, Droid, Antigravity, Pi, or Oh My Pi, then choose an
 available model for each conversation. Different providers can have different
 models, tools, account requirements, and usage limits.
 
@@ -22,8 +22,9 @@ available step without requiring you to leave the conversation:
 
 Scient verifies the provider again after installation or sign-in. It reports Ready only when the
 runtime, account configuration, and available models are usable together.
-Pi instead reports **Models available** after discovery; authentication and quota remain specific
-to each configured model provider and are verified when used.
+Pi instead reports **Models available** after discovery, and Oh My Pi reports Ready once discovery
+lists models; for both, authentication and quota remain specific to each configured model provider
+and are verified when used.
 
 In **Settings > Providers**, a shipped provider opens on **Models** when that tab is available; use
 **Configuration** for paths, environment variables, and advanced instance settings. An
@@ -133,10 +134,16 @@ You can still use an installation administered directly on the server when that 
 - [Droid](./providers-droid.md)
 - [Cursor](./providers-cursor.md)
 - [Pi](./providers-pi.md)
+- [Oh My Pi](./providers-omp.md)
 
 Pi uses its own multi-provider model and credential configuration. Scient can manage its runtime
 on a qualified target, but does not offer a universal Pi account sign-in or sign-out action. Model
 discovery is not proof that a particular credential or subscription works.
+
+Oh My Pi uses the `omp` executable you install or, on the macOS Apple silicon desktop app, a
+Scient-managed private copy. Scient never runs `omp update` on your installation; it shows the
+command when a newer release is available. Scient does not sign in to Oh My Pi. Full access is the
+only runtime mode, and Oh My Pi's own approval mode is explicit `yolo`.
 
 OpenCode uses its own multi-provider credential and runtime configuration. Scient does not present
 one universal OpenCode account, sign-out action, or Scient-managed installation because its upstream

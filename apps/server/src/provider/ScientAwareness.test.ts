@@ -156,5 +156,7 @@ describe("Scient awareness", () => {
     expect(Object.keys(SCIENT_AWARENESS_DELIVERY).toSorted()).toEqual(builtInKinds);
     expect(SCIENT_AWARENESS_DELIVERY.antigravity).toBe("unsupported-no-private-system-seam");
     expect(SCIENT_AWARENESS_DELIVERY.cursor).toBe("unsupported-no-private-system-seam");
+    // Oh My Pi uses Pi's session-local extension hook, appended to its string[] prompt.
+    expect(SCIENT_AWARENESS_DELIVERY.omp).toBe(SCIENT_AWARENESS_DELIVERY.pi);
   });
 });

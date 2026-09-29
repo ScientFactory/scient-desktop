@@ -587,11 +587,15 @@ export function shouldWriteThreadErrorToCurrentServerThread(input: {
 export function buildThreadTurnInterruptInput(thread: Pick<Thread, "id" | "session">): {
   threadId: ThreadId;
   turnId?: TurnId;
+  sessionUpdatedAt?: NonNullable<Thread["session"]>["updatedAt"];
 } {
   const runningTurnId = thread.session?.status === "running" ? thread.session.activeTurnId : null;
   return {
     threadId: thread.id,
     ...(runningTurnId !== null ? { turnId: runningTurnId } : {}),
+    ...(thread.session?.status === "ready" && thread.session.activeTurnId === null
+      ? { sessionUpdatedAt: thread.session.updatedAt }
+      : {}),
   };
 }
 

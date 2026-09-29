@@ -227,15 +227,21 @@ export default defineConfig(() => {
         "react-dom/client",
         ...(process.env.VITEST
           ? [
+              "@base-ui/react/alert-dialog",
               "@base-ui/react/autocomplete",
               "@base-ui/react/collapsible",
               "@base-ui/react/combobox",
               "@base-ui/react/direction-provider",
+              "@base-ui/react/number-field",
               "@base-ui/react/scroll-area",
               "@base-ui/react/toggle",
+              "@base-ui/react/toggle-group",
+              "@daypicker/react",
+              "@formkit/auto-animate",
               "@pierre/diffs/utils/parsePatchFiles",
               "@pierre/trees",
               "effect/unstable/reactivity/AsyncResult",
+              "heic-to/csp",
               "zustand/vanilla/shallow",
             ]
           : []),

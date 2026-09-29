@@ -5,10 +5,10 @@ export interface VoiceDraftReplacement {
 }
 
 function composeDraft(base: string, addition: string): string {
-  const trimmedBase = base.replace(/\s+$/u, "");
   const trimmedAddition = addition.trim();
   if (trimmedAddition.length === 0) return base;
-  return trimmedBase.length > 0 ? `${trimmedBase}\n${trimmedAddition}` : trimmedAddition;
+  const separator = base.length > 0 && !/\s$/u.test(base) ? " " : "";
+  return `${base}${separator}${trimmedAddition}`;
 }
 
 export function buildVoiceDraftReplacement(

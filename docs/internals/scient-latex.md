@@ -54,10 +54,11 @@ manifest itself (schema version, owner), that every owned root/file and mount
 anchor still exists, that the owned roots are still absent from the official
 T3 upstream ref, and — given `--base`/`--head` — that any changed path
 matching a `latexDiffSignals` pattern is classified somewhere in the manifest
-rather than landing as an unclassified fork change. It runs as part of the
-"Verify provenance and General Chat seams" step in
-`.github/workflows/scient-upstream-provenance.yml`, alongside the general
-upstream-provenance check and the General Chat and analysis seam verifiers.
+rather than landing as an unclassified fork change. CI runs the same check for
+every seam manifest through `scripts/scient-seam-check.mjs --base --head` in the
+"Verify upstream provenance and Scient seams" step of
+`.github/workflows/scient-upstream-provenance.yml`, after the general
+upstream-provenance check.
 
 ## Build lifecycle
 

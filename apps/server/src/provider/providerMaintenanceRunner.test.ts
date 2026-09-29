@@ -1,3 +1,4 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, it, assert } from "@effect/vitest";
 import {
   ProviderDriverKind,
@@ -30,6 +31,7 @@ import {
   ProviderVersionCache,
   type ProviderMaintenanceCapabilities,
 } from "./providerMaintenance.ts";
+import { ompMaintenance } from "./omp/OmpMaintenance.ts";
 const isServerProviderUpdateError = Schema.is(ServerProviderUpdateError);
 
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
@@ -1032,6 +1034,53 @@ it.effect("refuses incompatible latest versions and unapproved or unpinnable tar
         mockSpawnerLayer((_command, args) => {
           calls.push(args.join(" "));
           return { stdout: "installed" };
+        }),
+      ),
+    ),
+  );
+});
+
+it.effect("never runs a native Oh My Pi updater, whatever the latest release is", () => {
+  const calls: string[] = [];
+  return Effect.gen(function* () {
+    const provider = ProviderDriverKind.make("omp");
+    const instanceId = ProviderInstanceId.make("omp");
+    const { registry } = yield* makeRegistry({
+      ...baseProvider,
+      driver: provider,
+      instanceId,
+      version: "18.2.8",
+    });
+    // A standalone install on PATH, the shape #371 offered `omp update` for.
+    const capabilities = yield* ompMaintenance
+      .resolve({
+        binaryPath: "omp",
+        resolvedCommandPath: "/usr/local/bin/omp",
+        realCommandPath: "/usr/local/bin/omp",
+        env: { HOME: "/home/test", PATH: "/usr/local/bin" },
+        platform: "linux",
+      })
+      .pipe(Effect.provide(NodeServices.layer));
+    assert.strictEqual(capabilities.update, null);
+    const updater = yield* makeTestRunner(
+      {
+        ...registry,
+        getProviderMaintenanceCapabilitiesForInstance: () =>
+          Effect.succeed({ ...capabilities, latestVersion: "19.0.0" }),
+      },
+      ModelManifest.BUNDLED_MODEL_MANIFEST,
+    );
+    const error = yield* updater.updateProvider(provider).pipe(Effect.flip);
+    assert.isTrue(isServerProviderUpdateError(error));
+    assert.deepStrictEqual(calls, []);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        NonWindowsPlatform,
+        latestVersionHttpClient("19.0.0"),
+        mockSpawnerLayer((command, args) => {
+          calls.push([command, ...args].join(" "));
+          return { stdout: "updated" };
         }),
       ),
     ),

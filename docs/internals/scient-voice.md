@@ -40,6 +40,17 @@ orchestrator.
 - A generation token invalidates permission prompts, model setup, recording,
   and transcription that complete after cancel, dismiss, unmount, or a newer
   operation.
+- Each new renderer transcription carries an immutable request ID through IPC.
+  Cancellation only aborts the matching active request; stale and unknown IDs
+  are harmless. Legacy cancellation can only affect an identity-less request.
+  New renderers on older hosts invalidate local results without issuing global
+  cancellation; already-running host inference may finish in the background.
+- Automatic-stop completion is bound to the recording generation. Cancel or
+  unmount during the final audio flush suppresses delivery of that clip.
+- The Whisper adapter requests segment text and concatenates it verbatim,
+  omitting the server's synthetic separator newlines. Whitespace inside segment
+  text is preserved; optional correction runs after this normalization. Appending
+  dictation preserves the existing draft, including intentional trailing spacing.
 - Every recorder start owns its microphone stream and audio graph, so cleanup
   from an older start cannot stop a newer recording.
 - A normal stop flushes the AudioWorklet's final partial frame before the graph

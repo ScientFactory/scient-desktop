@@ -318,6 +318,28 @@ describe("Scient seam snapshot verification", () => {
     expect(result.checks.map((check) => check.status)).toEqual(["unavailable", "passed"]);
   });
 
+  it("classifies anchored mounts in shared Scient-owned files without claiming them", () => {
+    const f = fixture();
+    f.write("shared/common.ts", "export const other = true;\nexport const ScientFeature = true;\n");
+    expect(f.messages(f.inspect())).toContain(
+      "Changed path is not classified in scient-onboarding-seams.json: shared/common.ts",
+    );
+    f.manifest.scientMounts = [
+      { path: "shared/common.ts", anchor: "ScientFeature", purpose: "Mount the shared fixture" },
+    ];
+    f.saveManifest();
+    expect(f.inspect().checks[0].status).toBe("passed");
+    f.write("shared/common.ts", "export const other = true;\n");
+    expect(f.messages(f.inspect())).toContain(
+      "Scient mount shared/common.ts missing locator: ScientFeature",
+    );
+    f.manifest.scientMounts = [{ path: "next-host.ts", anchor: "nextHost" }];
+    f.saveManifest();
+    expect(f.messages(f.inspect())).toContain(
+      "Scient mount exists upstream; use an upstream mount: next-host.ts",
+    );
+  });
+
   it("does not allow new integration code through a retired classification", () => {
     const f = fixture();
     f.manifest.upstreamMounts = [];

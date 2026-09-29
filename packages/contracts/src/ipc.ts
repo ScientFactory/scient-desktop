@@ -6,6 +6,7 @@ import type {
   VoiceModelsSnapshot,
   VoiceMicrophoneAccessStatus,
   VoiceTranscribeRequest,
+  VoiceCancelTranscriptionRequest,
   VoiceTranscript,
 } from "./voice.ts";
 import type {
@@ -1514,8 +1515,10 @@ export interface DesktopVoiceBridge {
   removeModel: (request: VoiceModelRemoveRequest) => Promise<VoiceModelsSnapshot>;
   /** Transcribe one validated clip. Rejects with a safe, user-facing message. */
   transcribe: (request: VoiceTranscribeRequest) => Promise<VoiceTranscript>;
-  /** Cancel the in-flight transcription, if any. */
+  /** Legacy cancellation, restricted to requests without an identity. */
   cancelTranscription: () => Promise<void>;
+  /** Optional on older hosts. Never fall back to legacy global cancellation. */
+  cancelTranscriptionRequest?: (request: VoiceCancelTranscriptionRequest) => Promise<void>;
   /**
    * Observe model-download progress. Implemented by polling `getModelsState`
    * from the preload bridge, so it needs no dedicated push channel. Returns an

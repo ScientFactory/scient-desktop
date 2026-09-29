@@ -187,7 +187,7 @@ describe("createLocalWhisperEngine", () => {
       platform: "linux",
       spawnImpl: fakeSpawn(),
       fetchImpl: inferenceFetch(
-        () => new Response(JSON.stringify({ text: "bonjour" }), { status: 200 }),
+        () => new Response(JSON.stringify({ segments: [{ text: "bonjour" }] }), { status: 200 }),
       ),
     });
 
@@ -252,7 +252,7 @@ describe("createLocalWhisperEngine", () => {
       platform: "linux",
       spawnImpl: fakeSpawn(),
       fetchImpl: inferenceFetch(
-        () => new Response(JSON.stringify({ text: "hello" }), { status: 200 }),
+        () => new Response(JSON.stringify({ segments: [{ text: "hello" }] }), { status: 200 }),
       ),
     });
     await engine.transcribe(definition.id, CLIP, { signal: new AbortController().signal });

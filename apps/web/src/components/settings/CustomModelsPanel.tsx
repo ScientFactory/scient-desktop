@@ -3,6 +3,7 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   CustomModelError,
   customModelAttachmentKey,
+  PROVIDER_DISPLAY_NAMES,
   supportsModelConnections,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -196,7 +197,7 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
     .filter(([, value]) => supportsModelConnections(value.driver))
     .map(([id, value]) => ({
       id: ProviderInstanceId.make(id),
-      name: value.displayName ?? (value.driver === "droid" ? "Droid" : "Pi"),
+      name: value.displayName ?? PROVIDER_DISPLAY_NAMES[value.driver] ?? value.driver,
       driver: value.driver,
     }));
   if (

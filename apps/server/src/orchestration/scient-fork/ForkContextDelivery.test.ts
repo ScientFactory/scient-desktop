@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  CommandId,
   EventId,
   MessageId,
   ProjectId,
@@ -15,6 +16,11 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
+import { ServerConfig } from "../../config.ts";
+import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
+import { OrchestrationEventStore } from "../../persistence/Services/OrchestrationEventStore.ts";
+import { OrchestrationProjectionPipelineLive } from "../Layers/ProjectionPipeline.ts";
+import { OrchestrationProjectionPipeline } from "../Services/ProjectionPipeline.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { nativeThreadKey } from "./context/nativeThreadKey.ts";
@@ -98,8 +104,10 @@ function thread(messages: ReadonlyArray<OrchestrationMessage> = history): Orches
   };
 }
 
-const layer = ScientForkContextDeliveryLive.pipe(
-  Layer.provide(ServerSettingsService.layerTest()),
+const layer = Layer.merge(ScientForkContextDeliveryLive, OrchestrationProjectionPipelineLive).pipe(
+  Layer.provideMerge(OrchestrationEventStoreLive),
+  Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "fork-recovery-test-" })),
+  Layer.provideMerge(ServerSettingsService.layerTest()),
   Layer.provideMerge(SqlitePersistenceMemory),
   Layer.provideMerge(NodeServices.layer),
 );
@@ -178,6 +186,115 @@ it.layer(layer)("ScientForkContextDelivery", (it) => {
         )
       `;
     });
+
+  for (const acceptsBeforeStart of [true, false]) {
+    it.effect(
+      `recovery keeps history after a real session reset (early acceptance: ${acceptsBeforeStart})`,
+      () =>
+        Effect.gen(function* () {
+          const sql = yield* reset;
+          const store = yield* OrchestrationEventStore;
+          const projector = yield* OrchestrationProjectionPipeline;
+          const key = "codex:thread-a";
+          const turnId = TurnId.make("recovered-turn");
+          const old = yield* deliver(yield* prepare());
+          yield* settle(old.handoffId, { type: "accepted", nativeThreadKey: key });
+          const recovery = yield* prepare({ nativeThreadKey: key });
+          assert.strictEqual(recovery.kind, "deliver");
+          if (recovery.kind !== "deliver") return;
+          assert.isTrue(recovery.requireFreshSession);
+
+          const requested = yield* store.append({
+            type: "thread.turn-start-requested",
+            eventId: EventId.make(`recovery-request-${acceptsBeforeStart}`),
+            aggregateKind: "thread",
+            aggregateId: FORK,
+            occurredAt: NOW,
+            commandId: CommandId.make(`recovery-request-${acceptsBeforeStart}`),
+            causationEventId: null,
+            correlationId: null,
+            metadata: {},
+            payload: {
+              threadId: FORK,
+              messageId: current.id,
+              runtimeMode: "full-access",
+              createdAt: NOW,
+            },
+          });
+          yield* projector.projectEvent(requested);
+          let sessionEventIndex = 0;
+          const session = (status: "stopped" | "starting" | "running" | "ready") =>
+            Effect.gen(function* () {
+              const id = `recovery-${status}-${acceptsBeforeStart}-${sessionEventIndex++}`;
+              const event = yield* store.append({
+                type: "thread.session-set",
+                eventId: EventId.make(id),
+                aggregateKind: "thread",
+                aggregateId: FORK,
+                occurredAt: NOW,
+                commandId: CommandId.make(id),
+                causationEventId: null,
+                correlationId: null,
+                metadata: {},
+                payload: {
+                  threadId: FORK,
+                  session: {
+                    threadId: FORK,
+                    status,
+                    providerName: "codex",
+                    runtimeMode: "full-access",
+                    activeTurnId: status === "running" ? turnId : null,
+                    lastError: null,
+                    updatedAt: NOW,
+                  },
+                },
+              });
+              yield* projector.projectEvent(event);
+            });
+          // Replay the user's failure path, including the projector that consumes
+          // the old process's exit before the replacement starts the user turn.
+          yield* session("starting");
+          yield* session("stopped");
+          yield* session("starting");
+          const handoff = yield* deliver(recovery);
+          const accepted = { type: "accepted" as const, nativeThreadKey: key, turnId };
+          if (acceptsBeforeStart) yield* settle(handoff.handoffId, accepted);
+          yield* session("running");
+          yield* session("ready");
+          if (!acceptsBeforeStart) yield* settle(handoff.handoffId, accepted);
+          const rows =
+            yield* sql`SELECT pending_message_id, state FROM projection_turns WHERE thread_id = ${FORK} AND turn_id = ${turnId}`;
+          assert.deepEqual(rows, [{ pending_message_id: null, state: "completed" }]);
+          assert.strictEqual((yield* prepare({ nativeThreadKey: key })).kind, "none");
+          const delivery = yield* ScientForkContextDelivery;
+          for (let index = 0; index < 3; index++) {
+            const followup = message(`followup-${index}`, "user", "Continue", null, NOW);
+            assert.strictEqual(
+              (yield* delivery.prepareTurn({
+                thread: thread([...history, current]),
+                message: followup,
+                userText: followup.text,
+                attachments: [],
+                nativeThreadKey: key,
+                sessionRunning: false,
+              })).kind,
+              "none",
+            );
+          }
+          // A server restart must not need an in-memory pending-send association.
+          assert.strictEqual(
+            (yield* prepare({ nativeThreadKey: key }).pipe(
+              Effect.provide(Layer.fresh(ScientForkContextDeliveryLive)),
+            )).kind,
+            "none",
+          );
+          // Keeping the session identity is insufficient after undo removes the
+          // actual carrying turn, even if the live revert notification was lost.
+          yield* sql`DELETE FROM projection_turns WHERE thread_id = ${FORK} AND turn_id = ${turnId}`;
+          assert.strictEqual((yield* prepare({ nativeThreadKey: key })).kind, "deliver");
+        }),
+    );
+  }
 
   for (const provider of ["codex", "claudeAgent", "pi", "omp"]) {
     for (const cursorAfter of [0, 1, 5, 19]) {
@@ -371,12 +488,63 @@ it.layer(layer)("ScientForkContextDelivery", (it) => {
     Effect.gen(function* () {
       yield* reset;
       const first = yield* deliver(yield* prepare({ nativeThreadKey: "claudeAgent:s1" }));
-      // Accepted into an in-memory queue, then the provider process ended.
-      yield* settle(first.handoffId, { type: "accepted", nativeThreadKey: "claudeAgent:s1" });
+      // A receipt alone is not proof of execution: the provider can lose its queue.
+      yield* settle(first.handoffId, {
+        type: "accepted",
+        nativeThreadKey: "claudeAgent:s1",
+        turnId: TurnId.make("never-started"),
+      });
       const next = yield* prepare({ nativeThreadKey: "claudeAgent:s1" });
       assert.strictEqual(next.kind, "deliver");
       if (next.kind !== "deliver") return;
       assert.isTrue(next.requireFreshSession);
+    }),
+  );
+
+  it.effect("does not confuse a different turn or message with the accepted handoff turn", () =>
+    Effect.gen(function* () {
+      const sql = yield* reset;
+      const first = yield* deliver(yield* prepare({ nativeThreadKey: "codex:thread-a" }));
+      yield* settle(first.handoffId, {
+        type: "accepted",
+        nativeThreadKey: "codex:thread-a",
+        turnId: TurnId.make("accepted-turn"),
+      });
+      yield* recordProviderTurn("background-turn", 1);
+      assert.strictEqual((yield* prepare({ nativeThreadKey: "codex:thread-a" })).kind, "deliver");
+      yield* sql`UPDATE projection_turns SET turn_id = 'accepted-turn', pending_message_id = 'another-message' WHERE turn_id = 'background-turn'`;
+      assert.strictEqual((yield* prepare({ nativeThreadKey: "codex:thread-a" })).kind, "deliver");
+    }),
+  );
+
+  it.effect("does not treat a pre-start interruption placeholder as delivery evidence", () =>
+    Effect.gen(function* () {
+      yield* reset;
+      const first = yield* deliver(yield* prepare({ nativeThreadKey: "codex:thread-a" }));
+      const turnId = TurnId.make("cancelled-before-start");
+      yield* settle(first.handoffId, {
+        type: "accepted",
+        nativeThreadKey: "codex:thread-a",
+        turnId,
+      });
+      const store = yield* OrchestrationEventStore;
+      const projector = yield* OrchestrationProjectionPipeline;
+      const event = yield* store.append({
+        type: "thread.turn-interrupt-requested",
+        eventId: EventId.make("cancel-before-start"),
+        aggregateKind: "thread",
+        aggregateId: FORK,
+        occurredAt: NOW,
+        commandId: CommandId.make("cancel-before-start"),
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+        payload: { threadId: FORK, turnId, createdAt: NOW },
+      });
+      yield* projector.projectEvent(event);
+      const next = yield* prepare({ nativeThreadKey: "codex:thread-a" });
+      assert.strictEqual(next.kind, "deliver");
+      if (next.kind === "deliver") assert.isTrue(next.requireFreshSession);
     }),
   );
 
