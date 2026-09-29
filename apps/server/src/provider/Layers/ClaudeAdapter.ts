@@ -5374,7 +5374,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     const context = yield* requireSession(threadId);
     const owns = () => sessions.get(threadId) === context && !context.stopped;
     return {
-      interrupt: Effect.suspend(() => (owns() ? stopSessionInternal(context) : Effect.void)),
+      interrupt: Effect.gen(function* () {
+        if (!owns()) return;
+        yield* settleInterruptedTurn(context);
+        if (owns()) yield* stopSessionInternal(context);
+      }),
       confirm: Effect.succeed("active" as const),
       stop: (onStopped = Effect.void) =>
         Effect.gen(function* () {
