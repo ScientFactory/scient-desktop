@@ -190,6 +190,7 @@ export interface TestProviderAdapterHarness {
   readonly getStartCount: () => number;
   readonly getRollbackCalls: (threadId: ThreadId) => ReadonlyArray<number>;
   readonly getInterruptCalls: (threadId: ThreadId) => ReadonlyArray<TurnId | undefined>;
+  readonly emitEvent: (event: ProviderRuntimeEvent) => Effect.Effect<void>;
   readonly listActiveSessionIds: () => ReadonlyArray<ThreadId>;
   readonly getApprovalResponses: (threadId: ThreadId) => ReadonlyArray<{
     readonly threadId: ThreadId;
@@ -565,6 +566,7 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
       getStartCount,
       getRollbackCalls,
       getInterruptCalls,
+      emitEvent: (event) => emit(event).pipe(Effect.asVoid),
       listActiveSessionIds,
       getApprovalResponses,
     } satisfies TestProviderAdapterHarness;
