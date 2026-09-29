@@ -112,6 +112,8 @@ export interface GettingStartedProviderChoice {
   readonly driverKind: ProviderDriverKind;
   readonly icon: ComponentType<{ className?: string }>;
   readonly label: string;
+  /** Company and account, e.g. "OpenAI · ChatGPT account"; null when the name says enough. */
+  readonly detail: string | null;
   readonly status: string;
   readonly ready: boolean;
   readonly actionable: boolean;
@@ -156,7 +158,7 @@ export function GettingStartedAgentStep(props: {
   return (
     <div>
       <GettingStartedStepHeading
-        description="Connect an existing subscription, or skip this for now."
+        description="Use a ChatGPT, Claude, or Google subscription you already have, or skip this for now."
         title="Choose an AI"
       />
       <div className="mt-6 divide-y divide-border/70 border-y border-border/70">
@@ -175,17 +177,25 @@ export function GettingStartedAgentStep(props: {
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block text-sm font-medium text-foreground">{choice.label}</span>
-                <span className="mt-0.5 block text-xs text-muted-foreground">{choice.status}</span>
+                {choice.detail ? (
+                  <span className="mt-0.5 block text-xs text-muted-foreground">
+                    {choice.detail}
+                  </span>
+                ) : null}
               </span>
+              {/* Identity stays on the left; the right edge only carries state. */}
               {choice.ready ? (
                 <span className="flex items-center gap-1 text-success text-xs font-medium">
                   <CheckIcon aria-hidden className="size-3.5" /> Ready
                 </span>
               ) : (
-                <ChevronRightIcon
-                  aria-hidden
-                  className="size-4 shrink-0 text-icon-muted transition-transform group-hover:translate-x-0.5"
-                />
+                <span className="flex shrink-0 items-center gap-1.5 text-muted-foreground text-xs">
+                  {choice.status}
+                  <ChevronRightIcon
+                    aria-hidden
+                    className="size-4 shrink-0 text-icon-muted transition-transform group-hover:translate-x-0.5"
+                  />
+                </span>
               )}
             </button>
           );
