@@ -15,6 +15,8 @@ import {
 } from "./baseSchemas.ts";
 import { ToolLifecycleItemType } from "./providerRuntime.ts";
 import {
+  CONVERSATION_IMPORT_MAX_NOTICES,
+  OrchestrationConversationImportNotice,
   OrchestrationConversationImportOmission,
   OrchestrationConversationImportSource,
 } from "./orchestration.ts";
@@ -359,6 +361,12 @@ export const ConversationProvenance = Schema.Union([
     ),
     /** How far earlier imports moved these times back; the note survives re-export too. */
     timesShiftedMs: Schema.optionalKey(PositiveInt),
+    /** Notes earlier files carried about themselves; they survive re-export too. */
+    notices: Schema.optionalKey(
+      Schema.Array(OrchestrationConversationImportNotice).check(
+        Schema.isMaxLength(CONVERSATION_IMPORT_MAX_NOTICES),
+      ),
+    ),
   }),
 ]);
 export type ConversationProvenance = typeof ConversationProvenance.Type;

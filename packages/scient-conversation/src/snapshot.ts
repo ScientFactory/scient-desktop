@@ -337,6 +337,9 @@ export function buildConversationSnapshot(input: {
             ...(thread.conversationImport.timesShiftedMs === undefined
               ? {}
               : { timesShiftedMs: thread.conversationImport.timesShiftedMs }),
+            ...(thread.conversationImport.notices === undefined
+              ? {}
+              : { notices: thread.conversationImport.notices }),
           }
         : { _tag: "original" },
     captured: {

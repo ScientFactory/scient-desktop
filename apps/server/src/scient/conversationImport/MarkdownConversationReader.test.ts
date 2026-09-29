@@ -457,6 +457,30 @@ describe("Markdown conversation import adapter", () => {
     expect(result.validated.snapshot.messages[0]?.text).toContain("paper.pdf");
     expect(result.validated.snapshot.messages[0]?.attachments).toEqual([]);
     expect(result.validated.warnings[0]?._tag).toBe("export-warning");
+    // The imported thread keeps the note that the files' contents did not come across.
+    const command = buildConversationImportCommand({
+      validated: result.validated,
+      ids: decodeImportIds({
+        threadId: "fresh-thread",
+        commandId: "fresh-command",
+        messages: Object.fromEntries(
+          result.validated.snapshot.messages.map((message, index) => [
+            message.id,
+            `fresh-message-${index + 1}`,
+          ]),
+        ),
+        turns: {},
+        attachments: {},
+        proposedPlans: {},
+        workLog: {},
+        questionAnswers: {},
+      }),
+      destination: destination(),
+      importedAt: "2026-09-28T10:01:00.000Z",
+    });
+    expect(command.origin.notices).toEqual([
+      "Attachment names are kept in the imported text; their file contents are not included.",
+    ]);
   });
 
   it("never turns ordinary headings or quoted markers into transcript messages", () => {

@@ -1052,6 +1052,95 @@ describe("ConversationImporter", () => {
       ),
   );
 
+  it.effect("keeps the file's own notices on the imported thread, its forks, and re-export", () =>
+    withImporter(
+      Effect.gen(function* () {
+        const fixture = importFixture({ turns: 2 });
+        const newer = { major: 1, minor: 1 };
+        const input: typeof fixture.input = {
+          ...fixture.input,
+          package: { ...fixture.input.package, formatVersion: newer },
+          warnings: [
+            {
+              _tag: "export-warning",
+              warning: {
+                code: "resource-unresolved",
+                message: "The linked image chart.png was unavailable.",
+              },
+            },
+            {
+              // A path is never shown: the notice falls back to a plain line.
+              _tag: "export-warning",
+              warning: {
+                code: "resource-unresolved",
+                message: "The file /Users/sender/notes/secret.txt was unavailable.",
+              },
+            },
+            {
+              // An omission already states this; the banner does not repeat it.
+              _tag: "export-warning",
+              warning: {
+                code: "running-turn-omitted",
+                message: "A turn still running at export was left out.",
+              },
+            },
+            { _tag: "newer-minor-version", formatVersion: newer },
+          ],
+        };
+        const notices = [
+          "The linked image chart.png was unavailable.",
+          "Some linked files or images were not included.",
+          "A newer version of Scient made this file. Anything this version does not recognise was skipped.",
+        ];
+        const { lease } = yield* leaseFor({ ...fixture, input });
+        const { result } = yield* importOnce(lease);
+        const imported = (yield* readThread(result.threadId))!;
+        assert.deepStrictEqual(imported.conversationImport?.notices, notices);
+
+        const forkId = ThreadId.make("fork-keeps-notices");
+        yield* Effect.flatMap(OrchestrationEngineService, (engine) =>
+          engine.dispatch({
+            type: "thread.fork",
+            commandId: CommandId.make("fork-keeps-notices"),
+            originThreadId: result.threadId,
+            newThreadId: forkId,
+            sourceAssistantMessageId: imported.messages.find(
+              (message) => message.text === "Answer 2",
+            )!.id,
+            workspaceMode: "local",
+          }),
+        );
+        const fork = (yield* readThread(forkId))!;
+        assert.deepStrictEqual(fork.forkLineage?.sourceImport?.notices, notices);
+
+        const snapshot = buildConversationSnapshot({
+          thread: imported,
+          snapshotSequence: 1,
+          threadSequence: 1,
+          capturedAt: "2026-09-28T11:01:00.000Z",
+          selection: { workLog: false, reasoning: false, throughMessageId: null },
+          isAttachmentAvailable: () => false,
+        });
+        assert.deepStrictEqual(
+          snapshot.provenance._tag === "import" ? snapshot.provenance.notices : undefined,
+          notices,
+        );
+        // Imported again, the earlier notices stay, each once.
+        const again: typeof fixture.input = {
+          ...input,
+          snapshot: { ...input.snapshot, provenance: snapshot.provenance },
+        };
+        const command = buildConversationImportCommand({
+          validated: again,
+          ids: yield* mintConversationImportIds(again),
+          destination: destination(),
+          importedAt: "2026-09-28T12:00:00.000Z",
+        });
+        assert.deepStrictEqual(command.origin.notices, notices);
+      }),
+    ),
+  );
+
   it.effect("a fork of an imported folded answer names the fork's copy of its message", () =>
     withImporter(
       Effect.gen(function* () {

@@ -59,6 +59,8 @@ export function conversationImportNotice(
           ? "Text copied from a Scient Markdown export, which anyone can edit."
           : "Copied from a Scient conversation file, which anyone can edit.",
       omitted.length > 0 ? `Not included: ${listLabels(omitted)}.` : null,
+      // The file's own notes, which the server keeps only when no omission says the same.
+      ...new Set(conversationImport.notices ?? []),
       conversationImport.timesShiftedMs === undefined
         ? null
         : importTimesShiftedNotice(conversationImport.timesShiftedMs),

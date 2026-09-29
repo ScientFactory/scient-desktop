@@ -40,6 +40,23 @@ describe("conversation import provenance notice", () => {
     expect(conversationImportNotice(imported).description).not.toContain("Times are shown");
   });
 
+  it("lists the file's own notices after the omissions, each once", () => {
+    const description = conversationImportNotice({
+      ...imported,
+      source: "markdown",
+      notices: [
+        "Attachment names are kept in the imported text; their file contents are not included.",
+        "A newer version of Scient made this file. Anything this version does not recognise was skipped.",
+        "Attachment names are kept in the imported text; their file contents are not included.",
+      ],
+    }).description;
+    expect(description).toContain(
+      "Not included: messages after message 3. Attachment names are kept in the imported text; their file contents are not included. A newer version of Scient made this file.",
+    );
+    expect(description.split("their file contents are not included").length).toBe(2);
+    expect(conversationImportNotice(imported).description).not.toContain("file contents");
+  });
+
   it("renders a persistent, non-dismissable label for an imported thread after continuation", () => {
     const markup = renderToStaticMarkup(
       createElement(ConversationImportProvenanceBadge, {

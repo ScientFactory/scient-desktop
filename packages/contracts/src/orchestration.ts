@@ -703,6 +703,20 @@ export const OrchestrationConversationImportOmission = Schema.Union([
 export type OrchestrationConversationImportOmission =
   typeof OrchestrationConversationImportOmission.Type;
 
+/** At most this many file notices are kept on an imported thread. */
+export const CONVERSATION_IMPORT_MAX_NOTICES = 10;
+
+/**
+ * A note the imported file carried about itself that no omission states (for
+ * example that attachment contents were not included): one line of plain
+ * text, without paths or codes, shown by the thread's import banner.
+ */
+export const OrchestrationConversationImportNotice = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(300),
+);
+export type OrchestrationConversationImportNotice =
+  typeof OrchestrationConversationImportNotice.Type;
+
 /**
  * External source identity and known omissions of imported history. The
  * identifiers came from a package: they are provenance only, never local ids.
@@ -722,6 +736,12 @@ export const OrchestrationConversationImportSource = Schema.Struct({
    * ahead). Absent when nothing was moved; earlier transfers' moves add up.
    */
   timesShiftedMs: Schema.optional(PositiveInt),
+  /** The file's own notes, deduplicated against the omissions; absent when there are none. */
+  notices: Schema.optional(
+    Schema.Array(OrchestrationConversationImportNotice).check(
+      Schema.isMaxLength(CONVERSATION_IMPORT_MAX_NOTICES),
+    ),
+  ),
 });
 export type OrchestrationConversationImportSource =
   typeof OrchestrationConversationImportSource.Type;

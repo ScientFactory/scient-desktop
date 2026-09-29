@@ -22,7 +22,9 @@
  */
 import {
   ApprovalRequestId,
+  CONVERSATION_IMPORT_MAX_NOTICES,
   CommandId,
+  DocumentWarningCode,
   EventId,
   MessageId,
   ThreadId,
@@ -33,6 +35,7 @@ import {
   type ConversationQuestionAnswer,
   type ConversationWorkLogEntry,
   type OrchestrationCommand,
+  type OrchestrationConversationImportNotice,
   type OrchestrationConversationImportOmission,
   type OrchestrationProposedPlan,
   type OrchestrationThreadActivity,
@@ -595,6 +598,79 @@ function importOmissions(
   return [...byKind.values()];
 }
 
+/**
+ * Export warnings whose fact an omission (or the times-shifted note) already
+ * states, and the sender's own caution about sharing: none becomes a notice.
+ */
+const NOTICE_EXCLUDED_CODES: ReadonlySet<DocumentWarningCode> = new Set([
+  "running-turn-omitted",
+  "attachment-unavailable",
+  "attachment-unsupported",
+  "records-skipped",
+  "source-history-incomplete",
+  "times-shifted",
+  "sensitive-content-included",
+]);
+
+/** Plain lines for the notices whose sender text is unfit to show. */
+const NOTICE_FALLBACK_BY_CODE: Partial<Record<DocumentWarningCode, string>> = {
+  "resource-unresolved": "Some linked files or images were not included.",
+  "context-reference-unresolved": "Some references to other content could not be resolved.",
+  "unsupported-construct": "Some content could not be carried over.",
+  "converter-reported": "Some content could not be converted.",
+};
+
+const NEWER_VERSION_NOTICE =
+  "A newer version of Scient made this file. Anything this version does not recognise was skipped.";
+const NOTICE_MAX_CHARS = 300;
+const PATH_LIKE = /[A-Za-z]:\\|\\\\|(?:^|[\s"'“‘(])\.{0,2}\/|\w\/\w|\w\\\w/u;
+
+/**
+ * The sender's line when it is plain: one line, without control characters,
+ * paths, or codes, cut to the notice length. Null when it is unfit to show.
+ */
+function plainNotice(text: string): string | null {
+  const line = text
+    .replace(/[\p{Cc}\p{Cf}]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  if (
+    line.length === 0 ||
+    PATH_LIKE.test(line) ||
+    DocumentWarningCode.literals.some((code) => line.includes(code))
+  ) {
+    return null;
+  }
+  return line.length <= NOTICE_MAX_CHARS
+    ? line
+    : `${line.slice(0, NOTICE_MAX_CHARS - 1).trimEnd()}…`;
+}
+
+/**
+ * The import banner's notices: what the file said about itself that no
+ * omission states, after any notices an earlier transfer kept. Each line is
+ * plain text, repeated lines are kept once, and at most ten are kept.
+ */
+function importNotices(
+  input: ValidatedConversationImport,
+): ReadonlyArray<OrchestrationConversationImportNotice> {
+  const provenance = input.snapshot.provenance;
+  const earlier =
+    provenance._tag === "import"
+      ? (provenance.notices ?? [])
+      : provenance._tag === "fork"
+        ? (provenance.sourceImport?.notices ?? [])
+        : [];
+  const current = input.warnings.flatMap((warning): ReadonlyArray<string> => {
+    if (warning._tag === "newer-minor-version") return [NEWER_VERSION_NOTICE];
+    const { code, message } = warning.warning;
+    if (NOTICE_EXCLUDED_CODES.has(code)) return [];
+    const line = plainNotice(message) ?? NOTICE_FALLBACK_BY_CODE[code];
+    return line === undefined ? [] : [line];
+  });
+  return [...new Set([...earlier, ...current])].slice(0, CONVERSATION_IMPORT_MAX_NOTICES);
+}
+
 type ImportedSnapshot = ValidatedConversationImport["snapshot"];
 
 /**
@@ -680,6 +756,7 @@ export function buildConversationImportCommand(input: {
   };
   const { snapshot } = validated;
   const totalShiftMs = timesShiftedMs + earlierShiftMs(snapshot);
+  const notices = importNotices(validated);
   const assignment = assignTurns(validated);
   const localTurn = (key: string | null | undefined): TurnId | null =>
     key === null || key === undefined ? null : (ids.turns[key] ?? null);
@@ -853,6 +930,7 @@ export function buildConversationImportCommand(input: {
       ...provenance,
       omissions: importOmissions(validated, skippedRecords),
       ...(totalShiftMs > 0 ? { timesShiftedMs: totalShiftMs } : {}),
+      ...(notices.length > 0 ? { notices } : {}),
     },
     createdAt: importedAt,
   };
