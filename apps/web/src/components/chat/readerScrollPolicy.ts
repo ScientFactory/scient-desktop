@@ -1,5 +1,81 @@
 import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
-import type { RememberedTimelinePosition } from "./timelineScrollAnchoring";
+import {
+  getRowBottom,
+  type RememberedTimelinePosition,
+  type TimelineListMeasurementState,
+  withRealTimelineEnd,
+} from "./timelineScrollAnchoring";
+
+/** Where a row's readable content ends; trailing file lists and controls come after it. */
+const READING_END_SELECTOR = '[data-reading-end], [data-user-message-body="true"]';
+
+function isReadingRow(row: MessagesTimelineRow | undefined) {
+  return (
+    (row?.kind === "message" &&
+      (row.message.role === "assistant" || row.message.role === "user")) ||
+    row?.kind === "proposed-plan"
+  );
+}
+
+/**
+ * How far the end of the last message's text sits below the visible area
+ * above the composer, measured on screen (negative when it is in view). Uses
+ * the rendered rows directly, so it holds while the list's own position
+ * bookkeeping catches up. Null when that row is not rendered.
+ */
+export function readingEndGapOnScreen(
+  state: {
+    readonly data: readonly unknown[];
+    readonly elementAtIndex?: (index: number) => Element | null | undefined;
+  },
+  viewport: Element,
+  composerInset: number,
+): number | null {
+  const rows = state.data as readonly MessagesTimelineRow[];
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    if (!isReadingRow(rows[index])) continue;
+    const element = state.elementAtIndex?.(index);
+    if (!element?.isConnected) return null;
+    const markers = element.querySelectorAll(READING_END_SELECTOR);
+    const end = (
+      markers.length > 0 ? markers[markers.length - 1]! : element
+    ).getBoundingClientRect().bottom;
+    const view = viewport.getBoundingClientRect();
+    return end - (view.top + viewport.clientHeight - composerInset);
+  }
+  return null;
+}
+
+/**
+ * The timeline state with its end at the last conversational content: the
+ * text of the last message or plan. Trailing changed-file lists, tool groups,
+ * timestamps and working indicators are not something the reader has left to
+ * read, so they never decide whether the reader is at the bottom. Falls back
+ * to the last row (excluding reserved anchor padding) while unmeasured.
+ */
+export function withReadingEnd<
+  T extends TimelineListMeasurementState & {
+    readonly elementAtIndex?: (index: number) => Element | null | undefined;
+  },
+>(state: T | undefined, composerInset: number): T | undefined {
+  if (!state?.data) return state;
+  const rows = state.data as readonly MessagesTimelineRow[];
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    if (!isReadingRow(rows[index])) continue;
+    const top = state.positionAtIndex(index);
+    const bottom = getRowBottom(state, index);
+    if (top === undefined || bottom === null) break;
+    const element = state.elementAtIndex?.(index);
+    const markers = element?.isConnected ? element.querySelectorAll(READING_END_SELECTOR) : [];
+    const marker = markers.length > 0 ? markers[markers.length - 1] : undefined;
+    const end =
+      element && marker
+        ? top + marker.getBoundingClientRect().bottom - element.getBoundingClientRect().top
+        : bottom;
+    return { ...state, contentLength: Math.min(end, bottom) + composerInset };
+  }
+  return withRealTimelineEnd(state, composerInset);
+}
 
 export function canApplySendAnchor(input: {
   atEnd: boolean;
@@ -120,4 +196,44 @@ export function readSendScrollAllowance(
   if (!body) return undefined;
   const lineHeight = Number.parseFloat(getComputedStyle(body).lineHeight);
   return Number.isFinite(lineHeight) && lineHeight > 0 ? lineHeight * 2 : undefined;
+}
+
+/** The server delivers a queued prompt under this message id prefix (threadQueue Worker). */
+const QUEUED_PROMPT_ID_PREFIX = "queue:";
+
+/**
+ * Whether a newly arrived prompt gets the same reveal as a direct send: only
+ * a queued prompt the server delivered (not one sent from another window),
+ * as the new latest prompt of the same thread, while the reader was at the
+ * end before it arrived.
+ */
+export function shouldRevealArrivedPrompt(input: {
+  previous: { threadKey: string | null; id: string | null } | null;
+  threadKey: string | null;
+  latestPromptId: string | null;
+  sentHere: boolean;
+  readerAtEnd: boolean;
+}) {
+  const { previous } = input;
+  return (
+    input.latestPromptId !== null &&
+    input.latestPromptId.startsWith(QUEUED_PROMPT_ID_PREFIX) &&
+    previous !== null &&
+    previous.threadKey === input.threadKey &&
+    previous.id !== null &&
+    previous.id !== input.latestPromptId &&
+    !input.sentHere &&
+    input.readerAtEnd
+  );
+}
+
+/** Whether the reader crossed the end ("reached"/"left"); null when nothing changed. */
+export function endTransition(wasAtEnd: boolean, isAtEnd: boolean): "reached" | "left" | null {
+  if (wasAtEnd === isAtEnd) return null;
+  return isAtEnd ? "reached" : "left";
+}
+
+/** A thread returned to mid-history starts away from the end, so its end control shows at once. */
+export function savedPositionIsAtEnd(position: { readonly atEnd?: boolean } | null | undefined) {
+  return position?.atEnd !== false;
 }
