@@ -605,19 +605,44 @@ it("keeps an interrupted turn's unseen activity below the reader counted", async
     ...history(8),
     message(30, "assistant", `Previous answer. ${"Text. ".repeat(40)}`, "turn-30"),
     message(31, "user", "A short question", "turn-40"),
-    ...toolRows("turn-40", 8),
+    // An interim note first ("Let me check…"), then failed tool steps (each its own row).
+    message(32, "assistant", "Let me look at the config.", "turn-40"),
+    ...toolRows("turn-40", 6).map((row) => ({
+      ...row,
+      entry: { ...row.entry, tone: "error" as const, detail: "Command failed" },
+    })),
   ];
   render(key, rows, { isWorking: true, runningTurnId: TurnId.make("turn-40"), onIsAtEndChange });
   await expect.poll(() => readTimelinePosition(key)).toBeDefined();
   await listRef.current!.scrollToEnd({ animated: false });
   await frames(6);
-  await listRef.current!.scrollToOffset({ offset: node().scrollTop - 200, animated: false });
+  // Rest with the interim note in view and the tool steps after it hidden.
+  const view = () => node().getBoundingClientRect().top + node().clientHeight - COMPOSER_INSET;
+  const noteBottom = rowRect(message(32, "assistant", "").message.id)!.bottom;
+  await listRef.current!.scrollToOffset({
+    offset: node().scrollTop + noteBottom - view() + 4,
+    animated: false,
+  });
   await frames(6);
+  const now = listRef.current!.getState();
+  expect(rowRect(message(32, "assistant", "").message.id)!.bottom).toBeLessThanOrEqual(view());
+  expect(now.contentLength - now.scroll - now.scrollLength).toBeGreaterThan(90);
   expect(isAtEndNow(true)).toBe(false);
   // The turn is stopped before it answers: its tool steps are still unseen.
-  render(key, rows, { isWorking: false, runningTurnId: null, onIsAtEndChange });
+  const interrupted = {
+    turnId: TurnId.make("turn-40"),
+    state: "interrupted" as const,
+    startedAt: "2026-09-29T02:00:00.000Z",
+    completedAt: "2026-09-29T02:01:00.000Z",
+  };
+  render(key, rows, {
+    isWorking: false,
+    runningTurnId: null,
+    latestTurn: interrupted,
+    onIsAtEndChange,
+  });
   await frames(6);
-  expect(isAtEndNow(false)).toBe(false);
+  expect(isAtEndNow(true)).toBe(false);
   expect(onIsAtEndChange.mock.lastCall?.[0]).toBe(false);
 });
 

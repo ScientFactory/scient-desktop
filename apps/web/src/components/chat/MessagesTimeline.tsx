@@ -548,10 +548,13 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     ReadonlySet<string>
   >(() => rememberedPosition?.disclosures?.reasoningMessages ?? new Set());
   const [positionedThreadKey, setPositionedThreadKey] = useState<string | null>(null);
-  // Whether a turn is running, for callbacks that judge the reading end later.
-  const turnRunningRef = useRef(runningTurnId !== null);
+  // Whether the latest turn is unfinished (running, or it ended interrupted or
+  // with an error): its latest content is then the reading end.
+  const turnUnfinished =
+    runningTurnId !== null || latestTurn?.state === "interrupted" || latestTurn?.state === "error";
+  const turnUnfinishedRef = useRef(turnUnfinished);
   useLayoutEffect(() => {
-    turnRunningRef.current = runningTurnId !== null;
+    turnUnfinishedRef.current = turnUnfinished;
   });
   const [readingListLoaded, setReadingListLoaded] = useState(false);
   const requestedReadingPages = useRef({ key: listIdentityKey, cursors: new Set<string>() });
@@ -665,7 +668,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             readerAtReadingEnd(
               listRef.current?.getState(),
               contentInsetEndAdjustment,
-              turnRunningRef.current,
+              turnUnfinishedRef.current,
             ) === true
           ) {
             onToolOutputCollapsedAtEnd?.();
@@ -1225,7 +1228,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       offsetWithinRow: identity.rowId
         ? element.getBoundingClientRect().top - row.getBoundingClientRect().top
         : 0,
-      atEnd: readerAtReadingEnd(state, contentInsetEndAdjustment, runningTurnId !== null) ?? false,
+      atEnd: readerAtReadingEnd(state, contentInsetEndAdjustment, turnUnfinished) ?? false,
       ...(anchorMessageId ? { anchorMessageId } : {}),
       disclosures: {
         turns: paintedExpandedTurnIds,
@@ -1243,6 +1246,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     citationPositioning,
     timelinePositioningPending,
     runningTurnId,
+    turnUnfinished,
     rows,
     listIdentityKey,
     anchorMessageId,
@@ -1325,7 +1329,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     // most its last three lines (readerAtReadingEnd: a running turn's latest
     // content, otherwise the latest turn's answer). Reserved anchor space and
     // what trails a finished answer are not unread content.
-    const isAtEnd = readerAtReadingEnd(state, contentInsetEndAdjustment, runningTurnId !== null);
+    const isAtEnd = readerAtReadingEnd(state, contentInsetEndAdjustment, turnUnfinished);
     if (isAtEnd !== undefined && !citationPositioning) onIsAtEndChange(isAtEnd);
     // Whether the reader rests at the reading end, measured on screen (the
     // list's positions can trail the rendered rows by a frame).
@@ -1411,6 +1415,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     onReleaseUnusedAnchor,
     contentInsetEndAdjustment,
     runningTurnId,
+    turnUnfinished,
     minimapItems,
     minimapStripMap,
     onIsAtEndChange,
