@@ -537,3 +537,58 @@ it("still judges a thread with no answer yet by the reader's own latest message"
   await frames(4);
   expect(readerAtReadingEnd(listRef.current!.getState(), COMPOSER_INSET)).toBe(false);
 });
+
+it("shows the end control while a running turn has new activity below the reader", async () => {
+  const key = "reading-end:running-activity";
+  const onIsAtEndChange = vi.fn();
+  const answer = message(30, "assistant", `Previous answer. ${"Text. ".repeat(40)}`, "turn-30");
+  const prompt = message(31, "user", "A short question", "turn-40");
+  // The running turn has produced tool steps only, no answer text yet.
+  const tools = Array.from({ length: 8 }, (_, i) => ({
+    id: `tool-${i}`,
+    kind: "work" as const,
+    createdAt: "2026-09-29T02:00:00.000Z",
+    entry: {
+      id: `tool-${i}`,
+      createdAt: "2026-09-29T02:00:00.000Z",
+      turnId: TurnId.make("turn-40"),
+      label: `Run command ${i}`,
+      tone: "tool" as const,
+      toolLifecycleStatus: "completed" as const,
+      detail: `Command output ${i}`,
+    },
+  }));
+  const running = { isWorking: true, runningTurnId: TurnId.make("turn-40"), onIsAtEndChange };
+  render(key, [...history(8), answer, prompt, ...tools], running);
+  await expect.poll(() => readTimelinePosition(key)).toBeDefined();
+  await listRef.current!.scrollToEnd({ animated: false });
+  await frames(6);
+  expect(readerAtReadingEnd(listRef.current!.getState(), COMPOSER_INSET, true)).toBe(true);
+  // The reader scrolls up a little: the turn's latest tool steps are now below them.
+  await listRef.current!.scrollToOffset({ offset: node().scrollTop - 200, animated: false });
+  await frames(6);
+  const state = listRef.current!.getState();
+  // Precondition: the previous answer's text is still in view (so judging by
+  // it alone would say "at the end"), while new activity is hidden below.
+  expect(readerAtReadingEnd(state, COMPOSER_INSET, false)).toBe(true);
+  expect(state.contentLength - state.scroll - state.scrollLength).toBeGreaterThan(120);
+  // While the turn runs, that activity is what's new: not at the end.
+  expect(readerAtReadingEnd(state, COMPOSER_INSET, true)).toBe(false);
+  expect(onIsAtEndChange.mock.lastCall?.[0]).toBe(false);
+});
+
+it("once the turn is finished, judges the end by the answer again", async () => {
+  const key = "reading-end:finished-turn";
+  const answer = message(30, "assistant", `Answer. ${"Text. ".repeat(40)}`, "turn-30");
+  const sent = message(31, "user", paragraph(31).repeat(2), "turn-31");
+  render(key, [...history(8), answer, sent]);
+  await expect.poll(() => readTimelinePosition(key)).toBeDefined();
+  await listRef.current!.scrollToEnd({ animated: false });
+  await frames(6);
+  const state = listRef.current!.getState();
+  const atTextEnd = withReadingEnd(state, COMPOSER_INSET)!.contentLength - state.scrollLength;
+  await listRef.current!.scrollToOffset({ offset: atTextEnd, animated: false });
+  await frames(6);
+  // Idle: your own later message below the answer doesn't count.
+  expect(readerAtReadingEnd(listRef.current!.getState(), COMPOSER_INSET, false)).toBe(true);
+});

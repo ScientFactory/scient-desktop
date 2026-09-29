@@ -548,6 +548,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     ReadonlySet<string>
   >(() => rememberedPosition?.disclosures?.reasoningMessages ?? new Set());
   const [positionedThreadKey, setPositionedThreadKey] = useState<string | null>(null);
+  // Whether the thread works, for callbacks that judge the reading end later.
+  const isWorkingRef = useRef(isWorking);
+  useLayoutEffect(() => {
+    isWorkingRef.current = isWorking;
+  });
   const [readingListLoaded, setReadingListLoaded] = useState(false);
   const requestedReadingPages = useRef({ key: listIdentityKey, cursors: new Set<string>() });
   if (requestedReadingPages.current.key !== listIdentityKey) {
@@ -657,7 +662,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           // Closing output can reveal the end without a scroll event.
           if (
             collapsed &&
-            readerAtReadingEnd(listRef.current?.getState(), contentInsetEndAdjustment) === true
+            readerAtReadingEnd(
+              listRef.current?.getState(),
+              contentInsetEndAdjustment,
+              isWorkingRef.current,
+            ) === true
           ) {
             onToolOutputCollapsedAtEnd?.();
           }
@@ -1216,7 +1225,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       offsetWithinRow: identity.rowId
         ? element.getBoundingClientRect().top - row.getBoundingClientRect().top
         : 0,
-      atEnd: readerAtReadingEnd(state, contentInsetEndAdjustment) ?? false,
+      atEnd: readerAtReadingEnd(state, contentInsetEndAdjustment, isWorking) ?? false,
       ...(anchorMessageId ? { anchorMessageId } : {}),
       disclosures: {
         turns: paintedExpandedTurnIds,
@@ -1238,6 +1247,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     listIdentityKey,
     anchorMessageId,
     contentInsetEndAdjustment,
+    isWorking,
     paintedExpandedTurnIds,
     paintedExpandedWorkGroupIds,
     paintedExpandedSpawnEntryIds,
@@ -1316,7 +1326,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     // but for at most its last three lines: reserved anchor space, trailing
     // file lists or tool groups and your own latest message are not unread
     // content. Overflowing answers still show the end control.
-    const isAtEnd = readerAtReadingEnd(state, contentInsetEndAdjustment);
+    const isAtEnd = readerAtReadingEnd(state, contentInsetEndAdjustment, isWorking);
     if (isAtEnd !== undefined && !citationPositioning) onIsAtEndChange(isAtEnd);
     // Whether the reader rests at the reading end, measured on screen (the
     // list's positions can trail the rendered rows by a frame).
@@ -1401,6 +1411,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     timelinePositioningPending,
     onReleaseUnusedAnchor,
     contentInsetEndAdjustment,
+    isWorking,
     minimapItems,
     minimapStripMap,
     onIsAtEndChange,

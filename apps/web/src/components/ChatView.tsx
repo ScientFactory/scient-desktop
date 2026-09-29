@@ -2277,10 +2277,16 @@ function ChatViewContent(props: ChatViewProps) {
     });
   }
   const timelineAnchorMessageId = timelineAnchor.messageId;
-  // The end is the latest answer's text, allowing its last three lines to be
-  // hidden; trailing tool or file blocks and your own latest message don't count.
+  // The end is the running turn's latest content while the thread works,
+  // otherwise the latest answer's text; up to its last three lines may be hidden.
+  const threadWorkingRef = useRef(false);
   const readerAtEndNow = useCallback(
-    () => readerAtReadingEnd(legendListRef.current?.getState(), composerTimelineInset),
+    () =>
+      readerAtReadingEnd(
+        legendListRef.current?.getState(),
+        composerTimelineInset,
+        threadWorkingRef.current,
+      ),
     [composerTimelineInset],
   );
   const isTimelineAtLogicalEnd = useCallback(
@@ -3684,6 +3690,7 @@ function ChatViewContent(props: ChatViewProps) {
     isCompacting ||
     isForkingThread ||
     awaitingBootstrapTurn;
+  threadWorkingRef.current = isWorking;
   const isPreparingWorktree = isLocallyPreparingWorktree || awaitingBootstrapTurn;
   const activeWorkStartedAt = deriveActiveWorkStartedAt(
     activeLatestTurn,

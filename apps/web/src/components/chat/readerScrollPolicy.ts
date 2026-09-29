@@ -9,13 +9,34 @@ import {
 /** Where a row's readable content ends; trailing file lists and controls come after it. */
 const READING_END_SELECTOR = '[data-reading-end], [data-user-message-body="true"]';
 
+/** Rows that only show that the agent is busy; they are not content to read. */
+const INDICATOR_ROW_KINDS: ReadonlySet<MessagesTimelineRow["kind"]> = new Set([
+  "working",
+  "thinking",
+  "worktree-setup",
+  "assistant-meta",
+]);
+
 /**
- * The row whose text marks the end of the conversation: the latest answer
- * (the agent's message or plan). Your own messages below it, like one just
- * sent or queued, don't count as unread. Before any answer exists, your
- * latest message is the end. -1 when there is neither.
+ * The row whose text marks the end of the conversation. While a turn runs,
+ * everything it has produced after your latest message is new content, so
+ * the end is its latest row (an answer as it streams, a note, a tool step),
+ * or your message itself before anything arrives; busy indicators never
+ * count. Once the turn is finished, the end is the latest answer (the
+ * agent's message or plan): what trails it (changed files, tool summaries,
+ * your own later message, sent or queued) doesn't count as unread. Before
+ * any answer exists, your latest message is the end. -1 when there is none.
  */
-function readingEndRowIndex(rows: readonly MessagesTimelineRow[]): number {
+function readingEndRowIndex(rows: readonly MessagesTimelineRow[], running = false): number {
+  if (running) {
+    // The last row that isn't a busy indicator: the turn's latest content,
+    // or your latest message when nothing has arrived after it yet.
+    for (let index = rows.length - 1; index >= 0; index -= 1) {
+      const row = rows[index];
+      if (row && !INDICATOR_ROW_KINDS.has(row.kind)) return index;
+    }
+    return -1;
+  }
   let userIndex = -1;
   for (let index = rows.length - 1; index >= 0; index -= 1) {
     const row = rows[index];
@@ -39,13 +60,16 @@ const READING_END_MIN_ALLOWANCE_PX = 40;
  * still counts as at the end: its last three lines, in its own line height
  * so it holds at any text size. With no answer yet, the inherited 40px band.
  */
-export function readingEndAllowance(state: {
-  readonly data: readonly unknown[];
-  readonly elementAtIndex?: (index: number) => Element | null | undefined;
-}): number {
+export function readingEndAllowance(
+  state: {
+    readonly data: readonly unknown[];
+    readonly elementAtIndex?: (index: number) => Element | null | undefined;
+  },
+  running = false,
+): number {
   if (!state.data) return READING_END_MIN_ALLOWANCE_PX;
   const rows = state.data as readonly MessagesTimelineRow[];
-  const index = readingEndRowIndex(rows);
+  const index = readingEndRowIndex(rows, running);
   // Before any answer exists, the end is the reader's own message and keeps
   // the inherited band.
   const row = rows[index];
@@ -72,9 +96,10 @@ export function readingEndGapOnScreen(
   },
   viewport: Element,
   composerInset: number,
+  running = false,
 ): number | null {
   if (!state.data) return null;
-  const index = readingEndRowIndex(state.data as readonly MessagesTimelineRow[]);
+  const index = readingEndRowIndex(state.data as readonly MessagesTimelineRow[], running);
   if (index < 0) return null;
   const element = state.elementAtIndex?.(index);
   if (!element?.isConnected) return null;
@@ -96,9 +121,9 @@ export function withReadingEnd<
   T extends TimelineListMeasurementState & {
     readonly elementAtIndex?: (index: number) => Element | null | undefined;
   },
->(state: T | undefined, composerInset: number): T | undefined {
+>(state: T | undefined, composerInset: number, running = false): T | undefined {
   if (!state?.data) return state;
-  const index = readingEndRowIndex(state.data as readonly MessagesTimelineRow[]);
+  const index = readingEndRowIndex(state.data as readonly MessagesTimelineRow[], running);
   const top = index < 0 ? undefined : state.positionAtIndex(index);
   const bottom = index < 0 ? null : getRowBottom(state, index);
   if (top === undefined || bottom === null) return withRealTimelineEnd(state, composerInset);
@@ -113,18 +138,21 @@ export function withReadingEnd<
 }
 
 /**
- * Whether the reader is at the end: the latest answer's text is in view,
- * except at most its last three lines. Anything below it (tool activity,
- * changed files, your own latest message) doesn't count. The one rule for
+ * Whether the reader is at the end: the end's text is in view, except at
+ * most its last three lines (see readingEndRowIndex: the running turn's
+ * latest content while the thread works, otherwise the latest answer). The one rule for
  * the end control, sending, navigation and saved positions.
  */
 export function readerAtReadingEnd<
   T extends TimelineListMeasurementState & {
     readonly elementAtIndex?: (index: number) => Element | null | undefined;
   },
->(state: T | undefined, composerInset: number): boolean | undefined {
+>(state: T | undefined, composerInset: number, running = false): boolean | undefined {
   if (!state) return undefined;
-  return resolveTimelineIsAtEnd(withReadingEnd(state, composerInset), readingEndAllowance(state));
+  return resolveTimelineIsAtEnd(
+    withReadingEnd(state, composerInset, running),
+    readingEndAllowance(state, running),
+  );
 }
 
 export function canApplySendAnchor(input: {
