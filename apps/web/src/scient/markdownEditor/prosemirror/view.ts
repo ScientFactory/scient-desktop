@@ -89,6 +89,7 @@ import { ShortcutSequence } from "../../keyboard/sequence";
 import { registerShortcutClaim } from "../../keyboard/ownership";
 import { subscribeKeyboardPreferences } from "../../keyboard/preferences";
 import { markdownMathController } from "~/scient/math/input/markdownAdapter";
+import { isScientMessageCopyHtml } from "~/scient/clipboard/messageCopyHtml";
 
 export interface ScientMarkdownUploadedImage {
   readonly src: string;
@@ -314,6 +315,7 @@ export class ScientMarkdownEditorView {
     return mapped ? this.execute(mapped[1]) : false;
   }
   private releaseMathInput: (() => void) | null = null;
+  private pastingMessageCopyText = false;
   readonly session: ScientProseMirrorSession;
   private editorView: EditorView | null = null;
   private mode: MarkdownDocumentMode;
@@ -1093,7 +1095,8 @@ export class ScientMarkdownEditorView {
         );
         return true;
       },
-      handlePaste: (_view, event) => this.handleImageTransfer(event.clipboardData),
+      handlePaste: (view, event) =>
+        this.handleImageTransfer(event.clipboardData) || this.pasteMessageCopyAsText(view, event),
       handleDrop: (view, event) => {
         const position = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos;
         return this.handleImageTransfer(event.dataTransfer, position);
@@ -1118,6 +1121,26 @@ export class ScientMarkdownEditorView {
     );
     if (files.length === 0) return false;
     files.forEach((file) => this.uploadImageFile(file, position));
+    return true;
+  }
+
+  /**
+   * The chat's Copy message button adds rendered HTML beside the Markdown for
+   * right-to-left messages. This editor keeps pasting that copy's Markdown text,
+   * as it does for every other copied message.
+   */
+  private pasteMessageCopyAsText(view: EditorView, event: ClipboardEvent): boolean {
+    const data = event.clipboardData;
+    if (this.pastingMessageCopyText || !data) return false;
+    const text = data.getData("text/plain");
+    if (!text || !isScientMessageCopyHtml(data.getData("text/html"))) return false;
+    // `pasteText` runs the paste props again with this event; the flag lets it through.
+    this.pastingMessageCopyText = true;
+    try {
+      view.pasteText(text, event);
+    } finally {
+      this.pastingMessageCopyText = false;
+    }
     return true;
   }
 

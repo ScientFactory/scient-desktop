@@ -197,6 +197,10 @@ export async function readTextFromClipboard(target = "text"): Promise<string> {
   }
 }
 
+// SCIENT-FORK:START
+type Flavors = Readonly<Record<string, string>>;
+// SCIENT-FORK:END
+
 export function useCopyToClipboard<TContext = void>({
   timeout = 2000,
   target = "text",
@@ -209,7 +213,12 @@ export function useCopyToClipboard<TContext = void>({
   onCopy?: (ctx: TContext) => void;
   onError?: (error: Error, ctx: TContext) => void;
   extraFlavors?: Readonly<Record<string, string>>;
-} = {}): { copyToClipboard: (value: string, ctx: TContext) => void; isCopied: boolean } {
+} = {}): {
+  // SCIENT-FORK:START — flavours built at click time replace the hook's own for that copy
+  copyToClipboard: (value: string, ctx: TContext, extraFlavors?: Flavors) => void;
+  // SCIENT-FORK:END
+  isCopied: boolean;
+} {
   const [isCopied, setIsCopied] = React.useState(false);
   const timeoutIdRef = React.useRef<NodeJS.Timeout | null>(null);
   const onCopyRef = React.useRef(onCopy);
@@ -224,8 +233,10 @@ export function useCopyToClipboard<TContext = void>({
   timeoutRef.current = timeout;
   extraFlavorsRef.current = extraFlavors;
 
-  const copyToClipboard = React.useCallback((value: string, ctx: TContext): void => {
-    void writeTextToClipboard(value, targetRef.current, extraFlavorsRef.current).then(
+  // SCIENT-FORK:START
+  const copyToClipboard = React.useCallback((value: string, ctx: TContext, flavors?: Flavors) => {
+    void writeTextToClipboard(value, targetRef.current, flavors ?? extraFlavorsRef.current).then(
+      // SCIENT-FORK:END
       (didCopy) => {
         if (!didCopy) return;
         if (timeoutIdRef.current) {

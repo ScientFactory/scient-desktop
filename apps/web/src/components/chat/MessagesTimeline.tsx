@@ -159,6 +159,9 @@ import {
   timelineContentOverflowsViewport,
 } from "./timelineScrollAnchoring";
 import { MessageCopyButton } from "./MessageCopyButton";
+// SCIENT-FORK:START
+import { messageCopyHtml } from "~/scient/clipboard/messageCopyHtml";
+// SCIENT-FORK:END
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { inferEntryKindFromPath } from "../../pierre-icons";
 import { AssistantSelectionToolbar } from "./AssistantSelectionToolbar";
@@ -2166,6 +2169,15 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                       extraFlavors: { [COMPOSER_CONTEXT_CLIPBOARD_MIME]: contextClipboardFragment },
                     }
                   : {})}
+                // SCIENT-FORK:START — right-to-left messages also copy as direction-marked HTML
+                resolveHtml={(anchor) =>
+                  messageCopyHtml({
+                    anchor,
+                    messageId: row.message.id,
+                    markdown: resolvedContext.text,
+                  })
+                }
+                // SCIENT-FORK:END
                 variant="ghost"
               />
             )}
@@ -2441,7 +2453,17 @@ function AssistantCopyButton({
     return null;
   }
 
-  return <MessageCopyButton text={assistantCopyState.text ?? ""} variant="ghost" />;
+  return (
+    <MessageCopyButton
+      text={assistantCopyState.text ?? ""}
+      // SCIENT-FORK:START — right-to-left messages also copy as direction-marked HTML
+      resolveHtml={(anchor) =>
+        messageCopyHtml({ anchor, messageId: message.id, markdown: assistantCopyState.text ?? "" })
+      }
+      // SCIENT-FORK:END
+      variant="ghost"
+    />
+  );
 }
 
 function ProposedPlanTimelineRow({
