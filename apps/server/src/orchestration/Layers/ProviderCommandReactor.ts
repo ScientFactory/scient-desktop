@@ -1881,6 +1881,7 @@ const make = Effect.gen(function* () {
                 );
                 return settleForkContext({
                   type: "accepted",
+                  turnId: turn.turnId,
                   nativeThreadKey:
                     session === undefined
                       ? null

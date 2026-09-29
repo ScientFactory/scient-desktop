@@ -576,9 +576,14 @@ meaning is the same.
   fresh provider session (`ProviderService.discardSessionContinuity`) and
   delivers again. A duplicate can only exist in the abandoned session.
 - **Evidence, not acceptance.** A handoff counts as received once the provider
-  reported the turn it started (`projection_turns.pending_message_id`), or
-  while that turn still runs. An adapter that only enqueued the turn in memory
-  (Claude) and then died is re-delivered.
+  reported the turn it started, or while that turn still runs. New deliveries
+  retain the provider send receipt's turn ID and verify that exact turn in the
+  durable projection; older deliveries use `projection_turns.pending_message_id`.
+  This survives an internal session reset clearing the temporary pending-message
+  record, so recovery does not reset and resend history on every later message.
+  Acceptance alone is insufficient: an adapter that only enqueued the turn in
+  memory (Claude) and then died is re-delivered. Existing incomplete receipts
+  may need one fresh delivery before later turns can reuse the confirmed session.
 - **Revert** invalidates a handoff whose carrying turn was removed. Every
   preparation rechecks durable turn evidence, including previously confirmed
   rows, so a missed live notification cannot retain stale trust. A changed or
