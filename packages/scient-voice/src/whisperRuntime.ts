@@ -328,7 +328,8 @@ export class LocalWhisperRuntime {
         new Blob([Buffer.from(clip.audioBytes)], { type: clip.mimeType }),
         "voice.wav",
       );
-      form.append("response_format", "json");
+      form.append("response_format", "verbose_json");
+      form.append("no_language_probabilities", "true");
       form.append("language", language ?? "auto");
       form.append("temperature", "0.0");
       form.append("temperature_inc", "0.2");
@@ -340,11 +341,21 @@ export class LocalWhisperRuntime {
       if (!response.ok) {
         throw new Error(`Offline transcription failed with status ${response.status}.`);
       }
-      const payload = (await response.json().catch(() => null)) as { text?: unknown } | null;
-      if (typeof payload?.text !== "string") {
+      const payload = (await response.json().catch(() => null)) as {
+        segments?: Array<{ text?: unknown } | null>;
+      } | null;
+      if (
+        !Array.isArray(payload?.segments) ||
+        !payload.segments.every((segment) => typeof segment?.text === "string")
+      ) {
         throw new Error("Offline transcription returned an invalid response.");
       }
-      const text = payload.text.trim();
+      // whisper.cpp's aggregate text adds a newline after every segment.
+      // Join original segment text verbatim: whitespace within speech text is meaningful.
+      const text = payload.segments
+        .map((segment) => segment!.text as string)
+        .join("")
+        .trim();
       return { text };
     } catch (error) {
       if (inferenceController.signal.reason instanceof WhisperRuntimeError) {

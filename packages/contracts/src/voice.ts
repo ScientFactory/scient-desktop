@@ -162,12 +162,21 @@ export const VoiceModelId = Schema.Literals([
 ]);
 export type VoiceModelId = typeof VoiceModelId.Type;
 
+const VoiceTranscriptionRequestId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
+
+export const VoiceCancelTranscriptionRequest = Schema.Struct({
+  requestId: VoiceTranscriptionRequestId,
+});
+export type VoiceCancelTranscriptionRequest = typeof VoiceCancelTranscriptionRequest.Type;
+
 /**
  * Untrusted transcribe request as it crosses the IPC boundary. Audio is
  * base64-encoded so it survives JSON transport; the core decodes and strictly
  * validates it (24 kHz mono 16-bit PCM WAV) before inference.
  */
 export const VoiceTranscribeRequest = Schema.Struct({
+  // Older renderers omit the identity; their cancellation cannot target scoped requests.
+  requestId: Schema.optionalKey(VoiceTranscriptionRequestId),
   // Bound the string at the main-process IPC decoder before the core allocates
   // a decode buffer. The core independently validates the exact decoded size.
   audioBase64: TrimmedNonEmptyString.check(Schema.isMaxLength(VOICE_AUDIO_BASE64_MAX_CHARS)),

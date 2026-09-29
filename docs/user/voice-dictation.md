@@ -20,6 +20,10 @@ and reopen Scient. A downloaded model does not itself grant microphone access.
 If the Mac restricts microphone access through parental controls or device
 management, those restrictions must be resolved before recording can start.
 
+Dictation continues the current draft without forcing a new line. Existing
+spaces and paragraph breaks you entered are preserved. Speech-recognition
+segment boundaries do not introduce paragraph breaks.
+
 Audio and the initial transcript are processed by a bundled local speech model.
 Audio remains on the local computer and is never sent to Scient or an AI
 provider.

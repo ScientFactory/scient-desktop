@@ -167,8 +167,11 @@ interface Harness {
     url: string;
     method: string;
     language: FormDataEntryValue | null;
+    responseFormat: FormDataEntryValue | null;
+    noLanguageProbabilities: FormDataEntryValue | null;
   }>;
   maxConcurrent: number;
+  response: unknown;
   readonly cleanup: () => Promise<void>;
 }
 
@@ -185,7 +188,10 @@ async function makeHarness(child: FakeChild = new FakeChild()): Promise<Harness>
   };
 
   const posts: Harness["posts"] = [];
-  const harness: Partial<Harness> = { maxConcurrent: 0 };
+  const harness: Partial<Harness> = {
+    maxConcurrent: 0,
+    response: { segments: [{ text: "hello world" }] },
+  };
   let active = 0;
   const fetchImpl = (async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const target = String(url);
@@ -197,12 +203,15 @@ async function makeHarness(child: FakeChild = new FakeChild()): Promise<Harness>
       url: target,
       method,
       language: init?.body instanceof FormData ? init.body.get("language") : null,
+      responseFormat: init?.body instanceof FormData ? init.body.get("response_format") : null,
+      noLanguageProbabilities:
+        init?.body instanceof FormData ? init.body.get("no_language_probabilities") : null,
     });
     active += 1;
     harness.maxConcurrent = Math.max(harness.maxConcurrent ?? 0, active);
     await new Promise((resolve) => setTimeout(resolve, 5));
     active -= 1;
-    return new Response(JSON.stringify({ text: "hello world" }), { status: 200 });
+    return new Response(JSON.stringify(harness.response), { status: 200 });
   }) as unknown as typeof fetch;
 
   const runtime = new LocalWhisperRuntime({
@@ -262,6 +271,8 @@ describe("LocalWhisperRuntime lifecycle", () => {
     const endpoint = h.posts[0]?.url ?? "";
     expect(endpoint).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/scient-[0-9a-f]{48}\/inference$/u);
     expect(h.posts[0]?.language).toBe("auto");
+    expect(h.posts[0]?.responseFormat).toBe("verbose_json");
+    expect(h.posts[0]?.noLanguageProbabilities).toBe("true");
   });
 
   it("passes an explicit language to Whisper inference", async () => {
@@ -289,7 +300,9 @@ describe("LocalWhisperRuntime lifecycle", () => {
       fetchImpl: (async (_url: string | URL | Request, init?: RequestInit) =>
         (init?.method ?? "GET") === "OPTIONS"
           ? new Response(null, { status: 200 })
-          : new Response(JSON.stringify({ text: "" }), { status: 200 })) as typeof fetch,
+          : new Response(JSON.stringify({ text: "", segments: [] }), {
+              status: 200,
+            })) as typeof fetch,
     });
     await expect(
       runtime.transcribe("/model.bin", CLIP, { signal: new AbortController().signal }),
@@ -370,4 +383,35 @@ describe("LocalWhisperRuntime lifecycle", () => {
     ).rejects.toThrow(/runtime is missing/u);
     await runtime.dispose();
   });
+});
+
+describe("Whisper segment formatting", () => {
+  it.each([
+    ["English", [" This is", " one sentence."], "This is one sentence."],
+    [
+      "Hebrew and English",
+      [" שלום", " עולם with", " technical terms"],
+      "שלום עולם with technical terms",
+    ],
+    ["word split", [" tran", "scription"], "transcription"],
+    ["CJK", ["你好", "世界"], "你好世界"],
+    ["paragraphs", [" First\n\nSecond", " paragraph"], "First\n\nSecond paragraph"],
+  ])("removes only runtime segment separators: %s", async (_name, segments, expected) => {
+    const h = await harness();
+    h.response = { text: segments.join("\n"), segments: segments.map((text) => ({ text })) };
+    await expect(
+      h.runtime.transcribe("/model.bin", CLIP, { signal: new AbortController().signal }),
+    ).resolves.toEqual({ text: expected });
+  });
+
+  it.each([null, {}, { segments: [null] }, { segments: [{ text: 42 }] }, { segments: "text" }])(
+    "rejects malformed segment responses: %j",
+    async (response) => {
+      const h = await harness();
+      h.response = response;
+      await expect(
+        h.runtime.transcribe("/model.bin", CLIP, { signal: new AbortController().signal }),
+      ).rejects.toThrow("invalid response");
+    },
+  );
 });
