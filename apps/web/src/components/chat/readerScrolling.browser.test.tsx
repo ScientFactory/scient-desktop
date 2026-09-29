@@ -636,7 +636,7 @@ it("allows three of the answer's lines hidden, but not more, at different text s
     // Scroll offset at which the answer's text end sits exactly at the visible bottom.
     const state = list.getState();
     const atTextEnd = withReadingEnd(state, inset)!.contentLength - state.scrollLength;
-    for (const hiddenLines of [0, 1, 2, 3, 3.3, 4]) {
+    for (const hiddenLines of [0, 1, 2, 2.9, 3.3, 4]) {
       await list.scrollToOffset({ offset: atTextEnd - lineHeight * hiddenLines, animated: false });
       await frames(2);
       expect(

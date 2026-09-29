@@ -519,6 +519,19 @@ it("still judges a thread with no answer yet by the reader's own latest message"
   await listRef.current!.scrollToEnd({ animated: false });
   await frames(6);
   expect(readerAtReadingEnd(listRef.current!.getState(), COMPOSER_INSET)).toBe(true);
+  // Before any answer, the inherited 40px band holds past the message's text
+  // end: 30px hidden is the end, 60px is not (three lines would allow ~68px).
+  const end = node().scrollTop;
+  const state = listRef.current!.getState();
+  const atTextEnd = withReadingEnd(state, COMPOSER_INSET)!.contentLength - state.scrollLength;
+  await listRef.current!.scrollToOffset({ offset: atTextEnd - 30, animated: false });
+  await frames(4);
+  expect(readerAtReadingEnd(listRef.current!.getState(), COMPOSER_INSET)).toBe(true);
+  await listRef.current!.scrollToOffset({ offset: atTextEnd - 60, animated: false });
+  await frames(4);
+  expect(readerAtReadingEnd(listRef.current!.getState(), COMPOSER_INSET)).toBe(false);
+  await listRef.current!.scrollToOffset({ offset: end, animated: false });
+  await frames(4);
   // Well above the end (far more than three lines) is not the end.
   await listRef.current!.scrollToOffset({ offset: node().scrollTop - 400, animated: false });
   await frames(4);

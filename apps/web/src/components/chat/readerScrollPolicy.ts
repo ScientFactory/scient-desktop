@@ -37,14 +37,19 @@ const READING_END_MIN_ALLOWANCE_PX = 40;
 /**
  * How far below the visible area the answer's text may end while the reader
  * still counts as at the end: its last three lines, in its own line height
- * so it holds at any text size.
+ * so it holds at any text size. With no answer yet, the inherited 40px band.
  */
 export function readingEndAllowance(state: {
   readonly data: readonly unknown[];
   readonly elementAtIndex?: (index: number) => Element | null | undefined;
 }): number {
   if (!state.data) return READING_END_MIN_ALLOWANCE_PX;
-  const index = readingEndRowIndex(state.data as readonly MessagesTimelineRow[]);
+  const rows = state.data as readonly MessagesTimelineRow[];
+  const index = readingEndRowIndex(rows);
+  // Before any answer exists, the end is the reader's own message and keeps
+  // the inherited band.
+  const row = rows[index];
+  if (row?.kind === "message" && row.message.role === "user") return READING_END_MIN_ALLOWANCE_PX;
   const element = index < 0 ? undefined : state.elementAtIndex?.(index);
   const bodies = element?.isConnected ? element.querySelectorAll(".chat-markdown") : [];
   const body = bodies.length > 0 ? bodies[bodies.length - 1] : undefined;
