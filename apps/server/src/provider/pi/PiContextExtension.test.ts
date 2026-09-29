@@ -128,6 +128,23 @@ describe("Pi final request budget", () => {
     expect(h.compact).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps Gemini thinking inside an already smaller answer allowance", () => {
+    const h = harness();
+    const result = h.run({
+      contents: [{ parts: [{ text: "continue" }] }],
+      generationConfig: {
+        maxOutputTokens: 4_096,
+        thinkingConfig: { thinkingBudget: 8_192 },
+      },
+    });
+    expect(result).toMatchObject({
+      generationConfig: {
+        maxOutputTokens: 4_096,
+        thinkingConfig: { thinkingBudget: 3_072 },
+      },
+    });
+  });
+
   it("reports failed compaction without continuing or dropping input", () => {
     const h = harness();
     h.run({ messages: [{ content: "x".repeat(300_000) }] });

@@ -103,14 +103,18 @@ export function piContextExtension(pi: {
     const config = record(body.generationConfig);
     if (config && positive(config.maxOutputTokens)) {
       const thinkingConfig = record(config.thinkingConfig);
+      const output = Math.min(config.maxOutputTokens, available);
       result.generationConfig = {
         ...config,
-        maxOutputTokens: Math.min(config.maxOutputTokens, available),
+        maxOutputTokens: output,
         ...(thinkingConfig && positive(thinkingConfig.thinkingBudget)
           ? {
               thinkingConfig: {
                 ...thinkingConfig,
-                thinkingBudget: Math.min(thinkingConfig.thinkingBudget, available - 1_024),
+                thinkingBudget: Math.min(
+                  thinkingConfig.thinkingBudget,
+                  Math.max(0, output - 1_024),
+                ),
               },
             }
           : {}),

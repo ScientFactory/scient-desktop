@@ -18,7 +18,7 @@ const decodeRecord = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
 );
 
-for (const outcome of ["success", "compaction-error", "still-full"] as const)
+for (const outcome of ["success", "compaction-error", "still-full", "stop"] as const)
   it.effect.skipIf(!binary)(
     `real Pi context recovery: ${outcome}`,
     () =>
@@ -35,6 +35,9 @@ for (const outcome of ["success", "compaction-error", "still-full"] as const)
             }),
           );
           const requests: Array<Record<string, unknown>> = [];
+          const compactionStarted = Promise.withResolvers<void>();
+          const releaseCompaction = Promise.withResolvers<void>();
+          yield* Effect.addFinalizer(() => Effect.sync(() => releaseCompaction.resolve()));
           const server = NodeHttp.createServer(async (request, response) => {
             if (rejectNonPostRequest(request, response)) return;
             let raw = "";
@@ -42,6 +45,10 @@ for (const outcome of ["success", "compaction-error", "still-full"] as const)
             const body = decodeRecord(raw);
             requests.push(body);
             const summary = !Array.isArray(body.tools) || body.tools.length === 0;
+            if (summary && outcome === "stop") {
+              compactionStarted.resolve();
+              await releaseCompaction.promise;
+            }
             if (summary && outcome === "compaction-error") {
               response.writeHead(400, { "content-type": "application/json" });
               response.end(json({ error: { message: "Synthetic compaction failure" } }));
@@ -120,18 +127,28 @@ for (const outcome of ["success", "compaction-error", "still-full"] as const)
               Stream.runCollect,
               Effect.forkChild,
             );
-            yield* adapter.sendTurn({
+            const sent = yield* adapter.sendTurn({
               threadId,
               input,
               originalInput: input,
               modelSelection: createModelSelection(instanceId, "scient-test/synthetic"),
             });
+            if (outcome === "stop" && index === 2) {
+              yield* Effect.promise(() => compactionStarted.promise);
+              yield* adapter.interruptTurn(threadId, sent.turnId);
+              releaseCompaction.resolve();
+              expect(yield* adapter.hasSession(threadId)).toBe(false);
+            }
             const events = Array.from(yield* Fiber.join(collected));
             allEvents.push(...events);
             expect(events.find((event) => event.type === "turn.completed")?.payload.state).toBe(
-              outcome !== "success" && index === 2 ? "failed" : "completed",
+              index !== 2 || outcome === "success"
+                ? "completed"
+                : outcome === "stop"
+                  ? "interrupted"
+                  : "failed",
             );
-            if (outcome !== "success" && index === 2) {
+            if ((outcome === "compaction-error" || outcome === "still-full") && index === 2) {
               expect(
                 events.find((event) => event.type === "runtime.error")?.payload.message,
               ).toContain("automatic recovery could not make room");
@@ -150,7 +167,7 @@ for (const outcome of ["success", "compaction-error", "still-full"] as const)
           if (outcome !== "success") {
             // A split turn needs both a history and a turn-prefix summary.
             // Neither failure may dispatch the oversized task to the endpoint.
-            expect(requests).toHaveLength(outcome === "still-full" ? 4 : 3);
+            if (outcome !== "stop") expect(requests).toHaveLength(outcome === "still-full" ? 4 : 3);
             expect(
               requests.filter((body) => Array.isArray(body.tools) && body.tools.length > 0),
             ).toHaveLength(2);
