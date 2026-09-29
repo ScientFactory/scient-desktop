@@ -48,6 +48,7 @@ import {
   ConversationImportNotice,
   IMPORT_RUNTIME_MODE,
   defaultImportModelKey,
+  unavailableDefaultModelHint,
   desktopUploadOutcome,
   importEnvironmentOptions,
   importFailureMessage,
@@ -299,6 +300,8 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
   const selectedModel =
     modelGroups.flatMap((group) => group.models).find((model) => model.key === modelKey) ?? null;
   const runtimeModeNote = importRuntimeModeNote(config, project);
+  const defaultModelHint =
+    chosenModelKey === null ? unavailableDefaultModelHint(config, project, modelGroups) : null;
 
   const file = sourceFile(source);
   const fileProblem = file === null ? null : importFileProblem(file.name, file.sizeBytes);
@@ -808,6 +811,9 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
                       ))}
                     </SelectPopup>
                   </Select>
+                  {defaultModelHint !== null ? (
+                    <p className="text-muted-foreground text-xs">{defaultModelHint}</p>
+                  ) : null}
                   {runtimeModeNote !== null ? (
                     <p className="text-muted-foreground text-xs">{runtimeModeNote}</p>
                   ) : null}
