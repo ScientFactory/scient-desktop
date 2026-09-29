@@ -16,8 +16,9 @@ periodically while the app is open. Updates are deliberate:
    **Restart now** to install the update.
 
 The notice closes after about five seconds, or when you dismiss it. The update
-control then shows **Restart**. Choosing **Restart**, in the sidebar or in
-**Settings**, restarts Scient right away, with no extra confirmation. The
+control then shows **Restart**. Choosing **Restart** in the sidebar, or
+**Install** in **Settings**, restarts Scient right away, with no extra
+confirmation. The
 **Read more** link in the notice opens that version's Scient release notes;
 reading them does not install the update. On Windows, Scient can stay closed for
 a few minutes while the update installs, then reopens.

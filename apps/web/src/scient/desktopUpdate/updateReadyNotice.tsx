@@ -30,31 +30,41 @@ function isWindowsHost(): boolean {
   return typeof navigator !== "undefined" && isWindowsPlatform(navigator.platform);
 }
 
+function reportInstallFailure(description: string) {
+  toastManager.add(
+    stackedThreadToast({ type: "error", title: "Could not install update", description }),
+  );
+}
+
+let installInFlight: Promise<void> | null = null;
+
 /**
  * Restarts into the downloaded update. Restarting is the user's explicit
- * action, so there is no confirmation step; failures surface as a toast and
- * leave the footer's Retry state to the updater.
+ * action, so there is no confirmation step. Concurrent calls (the notice and a
+ * footer, or repeated clicks) share one request. A refused or failed install
+ * surfaces a toast and leaves the footer's Retry state to the updater.
  */
-export async function installDesktopUpdateNow(shell: UpdateInstallShell): Promise<void> {
+export function installDesktopUpdateNow(shell: UpdateInstallShell): Promise<void> {
+  installInFlight ??= runInstall(shell).finally(() => {
+    installInFlight = null;
+  });
+  return installInFlight;
+}
+
+async function runInstall(shell: UpdateInstallShell): Promise<void> {
   try {
     const result = await shell.installUpdate();
+    if (!result.accepted) {
+      reportInstallFailure(
+        result.state.message?.trim() ||
+          "Another update step is still running. Try again in a moment.",
+      );
+      return;
+    }
     const actionError = getDesktopUpdateActionError(result);
-    if (!actionError) return;
-    toastManager.add(
-      stackedThreadToast({
-        type: "error",
-        title: "Could not install update",
-        description: actionError,
-      }),
-    );
+    if (actionError) reportInstallFailure(actionError);
   } catch (error) {
-    toastManager.add(
-      stackedThreadToast({
-        type: "error",
-        title: "Could not install update",
-        description: error instanceof Error ? error.message : "An unexpected error occurred.",
-      }),
-    );
+    reportInstallFailure(error instanceof Error ? error.message : "An unexpected error occurred.");
   }
 }
 
@@ -103,10 +113,13 @@ export function showScientUpdateReadyNotice({
   shell,
   state,
   anchor,
+  install = () => installDesktopUpdateNow(shell),
 }: {
   readonly shell: UpdateNoticeShell;
   readonly state: DesktopUpdateState;
   readonly anchor: Element | null;
+  /** The caller's install, so its own pending state covers Restart now too. */
+  readonly install?: () => Promise<void>;
 }): ScientUpdateReadyNoticeHandle {
   const version = getDesktopUpdateDownloadedVersion(state);
   const releaseUrl = getDesktopUpdateReleaseUrl(version);
@@ -136,7 +149,7 @@ export function showScientUpdateReadyNotice({
       children: "Restart now",
       onClick: () => {
         close();
-        void installDesktopUpdateNow(shell);
+        void install();
       },
     },
   });

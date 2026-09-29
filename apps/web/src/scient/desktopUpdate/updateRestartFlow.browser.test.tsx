@@ -3,6 +3,7 @@ import "../../index.css";
 import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vitest/browser";
 
 const updateStore = vi.hoisted(() => {
   let state: DesktopUpdateState | null = null;
@@ -200,6 +201,72 @@ describe("update restart flow", () => {
     await vi.waitFor(() => expect(anchoredNotice()).toBeNull());
     expect(footerButton().textContent).toBe("Restart");
     expect(bridge.installUpdate).not.toHaveBeenCalled();
+  });
+
+  it("a failed install releases the footer so Restart can be tried again", async () => {
+    bridge.installUpdate.mockImplementationOnce(async () => {
+      throw new Error("IPC closed");
+    });
+    updateStore.set(downloaded());
+    mount();
+
+    await vi.waitFor(() => expect(footerButton().textContent).toBe("Restart"));
+    footerButton().click();
+    await vi.waitFor(() => expect(cornerNotice()?.textContent).toContain("IPC closed"));
+    await vi.waitFor(() => expect(footerButton().getAttribute("aria-disabled")).toBeNull());
+
+    footerButton().click();
+    await vi.waitFor(() => expect(bridge.installUpdate).toHaveBeenCalledTimes(2));
+  });
+
+  it("Restart now holds the footer pending, so a second click sends nothing", async () => {
+    let finishInstall: (value: DesktopUpdateActionResult) => void = () => {};
+    bridge.installUpdate.mockImplementationOnce(
+      () => new Promise<DesktopUpdateActionResult>((resolve) => (finishInstall = resolve)),
+    );
+    mount();
+    await downloadThroughFooter();
+    await vi.waitFor(() => expect(footerButton().getAttribute("aria-disabled")).toBeNull());
+
+    restartNow(anchoredNotice()!)?.click();
+    await vi.waitFor(() => expect(footerButton().getAttribute("aria-disabled")).toBe("true"));
+    footerButton().click();
+    expect(bridge.installUpdate).toHaveBeenCalledTimes(1);
+
+    finishInstall(result(downloaded()));
+    await vi.waitFor(() => expect(footerButton().getAttribute("aria-disabled")).toBeNull());
+    expect(bridge.installUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes the nightly release-notes popover so it cannot cover the notice", async () => {
+    const nightly = { channel: "nightly" as const, availableVersion: "0.6.19-nightly.2" };
+    const notes = [{ version: "0.6.19-nightly.2", items: ["Newest change"], totalItems: 1 }];
+    updateStore.set(updateState({ ...nightly, releaseNotes: notes }));
+    bridge.downloadUpdate.mockImplementationOnce(async () => {
+      const done = updateState({
+        ...nightly,
+        releaseNotes: notes,
+        status: "downloaded",
+        downloadedVersion: nightly.availableVersion,
+        downloadPercent: 100,
+      });
+      updateStore.set(done);
+      return result(done);
+    });
+    mount();
+    const popover = () => document.querySelector('[aria-label="Nightly update release notes"]');
+
+    await vi.waitFor(() => expect(footerButton().textContent).toContain("Update"));
+    await userEvent.hover(footerButton());
+    await vi.waitFor(() => expect(popover()).not.toBeNull());
+
+    footerButton().click();
+    await vi.waitFor(() => expect(anchoredNotice()).not.toBeNull());
+    await vi.waitFor(() => expect(popover()).toBeNull());
+
+    const action = restartNow(anchoredNotice()!)!;
+    const box = action.getBoundingClientRect();
+    expect(document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)).toBe(action);
   });
 
   it("uses the corner stack when the sidebar footer is off screen", async () => {

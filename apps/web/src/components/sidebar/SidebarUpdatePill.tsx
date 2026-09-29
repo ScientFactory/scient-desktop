@@ -133,6 +133,11 @@ function SidebarUpdateControl() {
   // SCIENT-FORK: the ready notice anchors to this control; close it if the control goes away.
   const updateReadyNoticeRef = useRef<ScientUpdateReadyNoticeHandle | null>(null);
   useEffect(() => () => updateReadyNoticeRef.current?.close(), []);
+  const installFromFooter = useCallback((bridge: NonNullable<typeof window.desktopBridge>) => {
+    updateReadyNoticeRef.current?.close();
+    setIsActionPending(true);
+    return installDesktopUpdateNow(bridge).finally(() => setIsActionPending(false));
+  }, []);
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const displayedDownloadPercent = useScientDownloadProgress({
     status: state?.status,
@@ -204,11 +209,18 @@ function SidebarUpdateControl() {
         .then((result) => {
           if (result.completed) {
             // SCIENT-FORK: offer Restart next to the button that started the download.
+            // The release-notes popover shares this anchor and would cover the notice.
+            // Closing it may return focus to the button; don't let that reopen it.
+            if (releaseNotesPopoverHandle.isOpen) {
+              suppressReleaseNotesFocusOpen.current = true;
+              releaseNotesPopoverHandle.close();
+            }
             updateReadyNoticeRef.current?.close();
             updateReadyNoticeRef.current = showScientUpdateReadyNotice({
               shell: bridge,
               state: result.state,
               anchor: document.getElementById(releaseNotesTriggerId),
+              install: () => installFromFooter(bridge),
             });
           }
           if (!shouldToastDesktopUpdateActionResult(result)) return;
@@ -237,8 +249,7 @@ function SidebarUpdateControl() {
 
     if (action === "install") {
       // SCIENT-FORK: Restart is the user's explicit action; no second confirmation.
-      updateReadyNoticeRef.current?.close();
-      void installDesktopUpdateNow(bridge).finally(() => setIsActionPending(false));
+      void installFromFooter(bridge);
       return;
     }
 
@@ -269,7 +280,15 @@ function SidebarUpdateControl() {
         );
       })
       .finally(() => setIsActionPending(false));
-  }, [action, isInteractionDisabled, prefersReducedMotion, releaseNotesTriggerId, state]);
+  }, [
+    action,
+    installFromFooter,
+    isInteractionDisabled,
+    prefersReducedMotion,
+    releaseNotesPopoverHandle,
+    releaseNotesTriggerId,
+    state,
+  ]);
 
   const handleCheckAnimationIteration = useCallback(() => {
     setIsCheckAnimationLatched(

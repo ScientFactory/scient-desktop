@@ -3694,7 +3694,17 @@ export default function LegacySidebar() {
         .then((result) => {
           if (result.completed) {
             // SCIENT-FORK: the legacy footer has no anchor id, so the notice uses the corner stack.
-            showScientUpdateReadyNotice({ shell: bridge, state: result.state, anchor: null });
+            showScientUpdateReadyNotice({
+              shell: bridge,
+              state: result.state,
+              anchor: null,
+              install: () => {
+                setDesktopUpdateActionPending(true);
+                return installDesktopUpdateNow(bridge).finally(() =>
+                  setDesktopUpdateActionPending(false),
+                );
+              },
+            });
           }
           if (!shouldToastDesktopUpdateActionResult(result)) return;
           const actionError = getDesktopUpdateActionError(result);

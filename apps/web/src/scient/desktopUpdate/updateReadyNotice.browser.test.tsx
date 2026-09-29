@@ -156,6 +156,23 @@ describe("showScientUpdateReadyNotice", () => {
     expect(notice.positionerProps).toBeUndefined();
   });
 
+  it("Restart now runs the caller's install when one is given", () => {
+    const install = vi.fn(async () => {});
+    const installUpdate = vi.fn(async () => installResult());
+    showScientUpdateReadyNotice({
+      shell: shell(installUpdate),
+      state: downloadedState(),
+      anchor: null,
+      install,
+    });
+
+    lastNotice(toasts.add).actionProps.onClick();
+
+    expect(install).toHaveBeenCalledTimes(1);
+    expect(installUpdate).not.toHaveBeenCalled();
+    expect(toasts.close).toHaveBeenCalledWith("corner-toast");
+  });
+
   it("Restart now closes the notice and installs exactly once, with no confirmation", async () => {
     const confirm = vi.spyOn(window, "confirm");
     const installUpdate = vi.fn(async () => installResult());
@@ -227,7 +244,55 @@ describe("installDesktopUpdateNow", () => {
     expect(toasts.add).not.toHaveBeenCalled();
   });
 
-  it("reports an install the updater refused", async () => {
+  it("reports an install the updater refused, with its message", async () => {
+    await installDesktopUpdateNow({
+      installUpdate: vi.fn(async () =>
+        installResult({
+          accepted: false,
+          completed: false,
+          state: downloadedState({ message: "No downloaded update" }),
+        }),
+      ),
+    });
+    expect(toasts.add).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Could not install update",
+        description: "No downloaded update",
+      }),
+    );
+  });
+
+  it("reports a refusal that carries no message", async () => {
+    await installDesktopUpdateNow({
+      installUpdate: vi.fn(async () => installResult({ accepted: false, completed: false })),
+    });
+    expect(toasts.add).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Could not install update",
+        description: "Another update step is still running. Try again in a moment.",
+      }),
+    );
+  });
+
+  it("shares one request between concurrent callers, then allows a new one", async () => {
+    let finish: (value: DesktopUpdateActionResult) => void = () => {};
+    const installUpdate = vi.fn(
+      () => new Promise<DesktopUpdateActionResult>((resolve) => (finish = resolve)),
+    );
+    const first = installDesktopUpdateNow({ installUpdate });
+    const second = installDesktopUpdateNow({ installUpdate });
+    expect(second).toBe(first);
+    expect(installUpdate).toHaveBeenCalledTimes(1);
+
+    finish(installResult());
+    await first;
+
+    const third = vi.fn(async () => installResult());
+    await installDesktopUpdateNow({ installUpdate: third });
+    expect(third).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports an accepted install that failed", async () => {
     await installDesktopUpdateNow({
       installUpdate: vi.fn(async () =>
         installResult({

@@ -305,7 +305,8 @@ function AboutVersionTitle() {
   );
 }
 
-function AboutVersionSection() {
+// SCIENT-FORK: exported for the update restart-flow browser test.
+export function AboutVersionSection() {
   const updateState = useDesktopUpdateState();
   const [isChangingUpdateChannel, setIsChangingUpdateChannel] = useState(false);
   const [isUpdateActionPending, setIsUpdateActionPending] = useState(false);
