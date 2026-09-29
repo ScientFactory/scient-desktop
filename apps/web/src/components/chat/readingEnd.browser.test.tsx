@@ -452,3 +452,40 @@ it("never pulls the reader back when they scroll in the same frame the answer gr
   await frames(8);
   expect(Math.abs(node().scrollTop - readerTop)).toBeLessThanOrEqual(1);
 });
+
+it("never pulls the reader back during a scrollbar drag that spans several frames", async () => {
+  const key = "reading-end:scrollbar-drag";
+  const entries = [...history(11), message(11, "assistant", "Short answer.")];
+  render(key, entries);
+  await expect.poll(() => readTimelinePosition(key)).toBeDefined();
+  await listRef.current!.scrollToEnd({ animated: false });
+  await frames(10);
+  // A press on the scroll node itself (its scrollbar), then movement over frames.
+  node().dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+  for (let step = 0; step < 3; step++) {
+    node().scrollTop -= 40;
+    await frames(1);
+  }
+  const readerTop = node().scrollTop;
+  // A late render lands mid-drag, several frames after the only input event.
+  render(key, [...entries.slice(0, -1), message(11, "assistant", paragraph(11).repeat(3))]);
+  await frames(8);
+  expect(Math.abs(node().scrollTop - readerTop)).toBeLessThanOrEqual(1);
+  document.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+});
+
+it("still keeps the end after typing in the composer", async () => {
+  const key = "reading-end:typing";
+  const entries = [...history(11), message(11, "assistant", "Short answer.")];
+  render(key, entries);
+  await expect.poll(() => readTimelinePosition(key)).toBeDefined();
+  await listRef.current!.scrollToEnd({ animated: false });
+  await frames(10);
+  const composer = document.createElement("textarea");
+  document.body.append(composer);
+  composer.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true }));
+  composer.remove();
+  await frames(2);
+  render(key, [...entries.slice(0, -1), message(11, "assistant", paragraph(11).repeat(3))]);
+  await expect.poll(() => gapToListEnd(), { timeout: 4000 }).toBeLessThanOrEqual(1);
+});

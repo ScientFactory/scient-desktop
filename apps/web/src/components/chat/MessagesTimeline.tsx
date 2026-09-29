@@ -617,8 +617,14 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   // message, a plan, tool output). Idle end pinning pauses briefly after one,
   // so the toggled content keeps its place instead of being pinned to its end.
   const [interactionSettling, setInteractionSettling] = useState(false);
-  // The reader's own scrolling input since the last bookkeeping pass.
+  // The reader's own scrolling input, held until their movement has stopped:
+  // a drag, an animated wheel notch or key scroll moves for several frames.
   const readerInputRef = useRef(false);
+  const scrollbarHeldRef = useRef(false);
+  const lastBookkeepingScrollRef = useRef<number | null>(null);
+  const stillFramesRef = useRef(0);
+  // Schedules a bookkeeping pass; set once the per-frame scheduler exists.
+  const scheduleBookkeepingRef = useRef<() => void>(() => {});
   const disclosureAnchorKeyRef = useRef<string | null>(null);
   const disclosureSettleFrameRef = useRef<number | null>(null);
   const disclosureSettleSecondFrameRef = useRef<number | null>(null);
@@ -1055,11 +1061,25 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     // The reader's own scrolling input; idle end keeping never acts on it.
     const input = () => {
       readerInputRef.current = true;
+      stillFramesRef.current = 0;
+      scheduleBookkeepingRef.current();
     };
+    // A scrollbar drag moves the view on every frame until release.
     const pressed = (event: PointerEvent) => {
-      if (event.target === listRef.current?.getScrollableNode()) input();
+      if (event.target !== listRef.current?.getScrollableNode()) return;
+      scrollbarHeldRef.current = true;
+      input();
+    };
+    const released = () => {
+      scrollbarHeldRef.current = false;
     };
     const keyed = (event: globalThis.KeyboardEvent) => {
+      // Keys typed into the composer or another field don't scroll the timeline.
+      if (
+        event.target instanceof Element &&
+        event.target.closest("input, textarea, [contenteditable=true], [contenteditable='']")
+      )
+        return;
       if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key))
         input();
     };
@@ -1070,6 +1090,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     timelineViewportElement.addEventListener("touchmove", input, { capture: true, passive: true });
     timelineViewportElement.addEventListener("pointerdown", pressed, { capture: true });
     ownerDocument.addEventListener("keydown", keyed, { capture: true });
+    ownerDocument.addEventListener("pointerup", released);
+    ownerDocument.addEventListener("pointercancel", released);
+    ownerDocument.addEventListener("mouseup", released);
     return () => {
       if (timer !== null) clearTimeout(timer);
       timelineViewportElement.removeEventListener("click", settle, { capture: true });
@@ -1078,6 +1101,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       timelineViewportElement.removeEventListener("touchmove", input, { capture: true });
       timelineViewportElement.removeEventListener("pointerdown", pressed, { capture: true });
       ownerDocument.removeEventListener("keydown", keyed, { capture: true });
+      ownerDocument.removeEventListener("pointerup", released);
+      ownerDocument.removeEventListener("pointercancel", released);
+      ownerDocument.removeEventListener("mouseup", released);
     };
   }, [listRef, timelineViewportElement]);
   // Re-measure the minimap gutter when the chat column changes width without a viewport resize.
@@ -1309,7 +1335,21 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             rowsKey: timelineRowsKey(state.data),
           }
         : null;
-    readerInputRef.current = false;
+    // Clear the reader's input only once their movement has stopped: the
+    // scrollbar released and a few frames in a row without movement. Until
+    // then, keep checking every frame.
+    const scrollNow = viewport?.scrollTop ?? null;
+    if (readerInputRef.current) {
+      const still =
+        !scrollbarHeldRef.current &&
+        scrollNow !== null &&
+        lastBookkeepingScrollRef.current !== null &&
+        Math.abs(scrollNow - lastBookkeepingScrollRef.current) <= 0.5;
+      stillFramesRef.current = still ? stillFramesRef.current + 1 : 0;
+      if (stillFramesRef.current >= 3) readerInputRef.current = false;
+      else scheduleBookkeepingRef.current();
+    }
+    lastBookkeepingScrollRef.current = scrollNow;
     reportContentOverflow();
     if (!state || minimapItems.length === 0) {
       return;
@@ -1421,7 +1461,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     keepReadingEndInViewRef.current = keepReadingEndInView;
   });
   const bookkeepingFrameRef = useRef<number | null>(null);
-  const handleScrollOnNextFrame = useCallback(() => {
+  const handleScrollOnNextFrame: () => void = useCallback(() => {
     if (bookkeepingFrameRef.current !== null) return;
     bookkeepingFrameRef.current = requestAnimationFrame(() => {
       bookkeepingFrameRef.current = null;
@@ -1429,6 +1469,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       handleScrollRef.current();
     });
   }, []);
+  useLayoutEffect(() => {
+    scheduleBookkeepingRef.current = handleScrollOnNextFrame;
+  }, [handleScrollOnNextFrame]);
   useEffect(
     () => () => {
       if (bookkeepingFrameRef.current !== null) cancelAnimationFrame(bookkeepingFrameRef.current);
