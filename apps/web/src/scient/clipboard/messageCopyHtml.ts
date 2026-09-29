@@ -12,7 +12,7 @@
  */
 import { codexArtifactTemplatePresentationLabel } from "@t3tools/client-runtime/codex-artifact-templates";
 import { artifactTemplateFromHastProperties } from "@t3tools/client-runtime/codex-markdown-directives";
-import { Children, createElement, type ComponentProps, type ReactNode } from "react";
+import { Children, createElement, type ComponentProps } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import ReactMarkdown, { defaultUrlTransform, type Components } from "react-markdown";
@@ -20,6 +20,7 @@ import ReactMarkdown, { defaultUrlTransform, type Components } from "react-markd
 import {
   chatMarkdownAlertLabel,
   chatMarkdownCodeBoxDirection,
+  chatMarkdownNodeText,
   chatMarkdownPipeline,
 } from "~/components/ChatMarkdown";
 import { getClientSettings } from "~/hooks/useSettings";
@@ -73,12 +74,6 @@ interface MessageMarkdownProfile {
   readonly parseRawHtml: boolean;
 }
 
-function childrenText(children: ReactNode): string {
-  return Children.toArray(children)
-    .map((child) => (typeof child === "string" || typeof child === "number" ? String(child) : ""))
-    .join("");
-}
-
 /**
  * The elements chat renders in place of Markdown nodes, where the clipboard
  * needs the same shape: code boxes carry chat's direction for their fence
@@ -95,13 +90,13 @@ function clipboardComponents(direction: FixedContentDirection): Components {
   return {
     code: ({ node: _node, className, children, ...props }) =>
       isScientMathCodeClassName(className)
-        ? mathSpan(childrenText(children), false)
+        ? mathSpan(chatMarkdownNodeText(children), false)
         : createElement("code", { ...props, className }, children),
     pre: ({ node, children, ...props }) => {
       const onlyChild = Children.toArray(children)[0];
       const code = onlyChild as { props?: ComponentProps<"code"> } | undefined;
       if (isScientMathCodeClassName(code?.props?.className)) {
-        return mathSpan(childrenText(code?.props?.children).replace(/\n$/u, ""), true);
+        return mathSpan(chatMarkdownNodeText(code?.props?.children).replace(/\n$/u, ""), true);
       }
       const boxDirection = chatMarkdownCodeBoxDirection(node, children, direction);
       const pre = createElement("pre", props, children);

@@ -412,6 +412,27 @@ describe("messageCopyHtml", () => {
     expect(html.querySelector("button, svg, details")).toBeNull();
   });
 
+  it("keeps the full TeX of raw-HTML math whose source has nested elements", () => {
+    const html = parse(
+      messageCopyHtml({
+        anchor: detachedAnchor(),
+        messageId: "m-6",
+        markdown: [
+          'שלום <code class="language-math"><span>x</span> + y</code> סוף.',
+          "",
+          '<pre><code class="language-math"><span>a</span> = b</code></pre>',
+        ].join("\n"),
+        ...ASSISTANT_PROFILE,
+      })!,
+    );
+    expect(
+      [...html.querySelectorAll('span[dir="ltr"]')].map((island) => island.textContent),
+    ).toEqual(["$$x + y$$"]);
+    expect([...html.querySelectorAll('p[dir="ltr"]')].map((p) => p.textContent)).toEqual([
+      "$$\na = b\n$$",
+    ]);
+  });
+
   it("keeps math source and replaces images with their description", () => {
     const html = parse(
       messageCopyHtml({

@@ -181,6 +181,11 @@ const CASES: ReadonlyArray<readonly [string, string, Profile]> = [
   ],
   ["user line breaks", "שורה ראשונה\nשורה שנייה עם `code`\n\n- פריט\n- item", USER],
   ["user raw html stays text", "שלום <b>לא מודגש</b> וסוף.", USER],
+  [
+    "raw-html math with nested elements",
+    'שלום <code class="language-math"><span>x</span> + y</code> סוף.\n\n<pre><code class="language-math"><span>a</span> = b</code></pre>',
+    ASSISTANT,
+  ],
 ];
 
 describe("Copy message rendering parity with chat", () => {

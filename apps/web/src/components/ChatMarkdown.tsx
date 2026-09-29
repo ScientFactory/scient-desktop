@@ -633,6 +633,11 @@ function chatCodeBoxDirection(input: {
   });
 }
 
+/** Chat's plain text of rendered Markdown children, as its math renderers read TeX. */
+export function chatMarkdownNodeText(node: ReactNode): string {
+  return nodeToPlainText(node);
+}
+
 /** The title chat shows for a GitHub alert kind, or null when it is not an alert. */
 export function chatMarkdownAlertLabel(kind: unknown): string | null {
   return GITHUB_ALERT_PRESENTATIONS[String(kind ?? "")]?.label ?? null;
