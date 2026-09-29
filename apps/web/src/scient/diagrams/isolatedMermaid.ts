@@ -202,12 +202,11 @@ async function mirrorRenderedFontsToPage(frameDocument: Document): Promise<void>
   const loaded = loadedFontKeys(frameDocument.fonts);
   const pending: Promise<unknown>[] = [];
   document.fonts.forEach((face) => {
-    if (face.status === "unloaded" && loaded.has(fontKey(face))) {
+    if (face.status !== "loaded" && loaded.has(fontKey(face))) {
       pending.push(face.load().catch(() => undefined));
     }
   });
   if (pending.length > 0) await Promise.all(pending);
-  await document.fonts.ready;
   await mirrorLoadedFonts(frameDocument);
 }
 
