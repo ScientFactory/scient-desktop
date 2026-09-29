@@ -91,6 +91,8 @@ function useEnvironmentTextAsset(input: {
     environmentFileAssetResource({ path: input.file.canonicalPath }),
   );
   const [state, setState] = useState<TextLoadState>({ _tag: "Loading" });
+  // Bumped by a retry after a failed read, so the same URL is fetched again.
+  const [readAttempt, setReadAttempt] = useState(0);
   const previousRefreshTokenRef = useRef(input.refreshToken);
   const autoRetriedUrlRef = useRef<string | null>(null);
   const refreshAsset = asset.refresh;
@@ -152,12 +154,21 @@ function useEnvironmentTextAsset(input: {
     assetUrl,
     input.file.byteLength,
     input.file.presentation.textEncoding,
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A retry must read the same URL again.
+    readAttempt,
     refreshAsset,
   ]);
 
+  // A failed authorization is renewed; a failed read is simply read again,
+  // which shows loading at once, so neither can be requested twice.
+  const retry = useCallback(() => {
+    if (assetFailed) refreshAsset();
+    else setReadAttempt((attempt) => attempt + 1);
+  }, [assetFailed, refreshAsset]);
+
   return {
     state,
-    refresh: refreshAsset,
+    refresh: retry,
     refreshing: asset._tag === "Failure" && asset.waiting === true,
   };
 }
@@ -176,12 +187,21 @@ function EnvironmentImageSurface(props: {
   const autoRetriedRef = useRef(false);
   // The authorized URL whose image still failed after the automatic retry.
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  // A newer revision failed while the last good image stays on screen.
+  const [refreshFailed, setRefreshFailed] = useState(false);
   const refreshAsset = asset.refresh;
+  const retry = useCallback(() => {
+    autoRetriedRef.current = false;
+    setFailedUrl(null);
+    setRefreshFailed(false);
+    refreshAsset();
+  }, [refreshAsset]);
   useEffect(() => {
     if (previousRefreshTokenRef.current === props.refreshToken) return;
     previousRefreshTokenRef.current = props.refreshToken;
     autoRetriedRef.current = false;
     setFailedUrl(null);
+    setRefreshFailed(false);
     refreshAsset();
   }, [props.refreshToken, refreshAsset]);
 
@@ -197,36 +217,44 @@ function EnvironmentImageSurface(props: {
   }
   if (asset._tag !== "Success") return <CenteredLoading label="Preparing image…" />;
   if (failedUrl === asset.url) {
-    return (
-      <FileSurfaceFailure
-        {...MEDIA_FAILURE_COPY.image}
-        onRetry={() => {
-          autoRetriedRef.current = false;
-          setFailedUrl(null);
+    return <FileSurfaceFailure {...MEDIA_FAILURE_COPY.image} onRetry={retry} />;
+  }
+  return (
+    <>
+      {refreshFailed ? (
+        <div
+          className="absolute inset-x-0 top-0 z-10 flex items-center gap-2 border-b border-warning/20 bg-warning-surface px-3 py-2 text-[11px] text-warning-foreground"
+          role="status"
+        >
+          <AlertTriangle className="size-3.5 shrink-0" aria-hidden="true" />
+          <span className="min-w-0 flex-1 truncate">
+            The latest version could not be loaded. Showing the last available copy.
+          </span>
+          <Button size="xs" variant="outline" onClick={retry}>
+            Try again
+          </Button>
+        </div>
+      ) : null}
+      <PreviewImageSurface
+        className="absolute inset-0"
+        source={{
+          url: asset.url,
+          alt: props.file.fileName,
+          revisionKey: `${props.file.canonicalPath}:${props.file.byteLength}:${props.file.mtimeMs}`,
+        }}
+        onLoadError={({ hasDisplayedImage }) => {
+          if (autoRetriedRef.current) {
+            // A failed refresh keeps the last good image on screen with a caution;
+            // only an image that never displayed is replaced by the failure state.
+            if (hasDisplayedImage) setRefreshFailed(true);
+            else setFailedUrl(asset.url);
+            return;
+          }
+          autoRetriedRef.current = true;
           refreshAsset();
         }}
       />
-    );
-  }
-  return (
-    <PreviewImageSurface
-      className="absolute inset-0"
-      source={{
-        url: asset.url,
-        alt: props.file.fileName,
-        revisionKey: `${props.file.canonicalPath}:${props.file.byteLength}:${props.file.mtimeMs}`,
-      }}
-      onLoadError={({ hasDisplayedImage }) => {
-        if (autoRetriedRef.current) {
-          // A failed refresh keeps the last good image on screen; only an image
-          // that never displayed is replaced by the failure state.
-          if (!hasDisplayedImage) setFailedUrl(asset.url);
-          return;
-        }
-        autoRetriedRef.current = true;
-        refreshAsset();
-      }}
-    />
+    </>
   );
 }
 
@@ -452,7 +480,8 @@ function EnvironmentFileBody(props: {
     case "image":
       return (
         <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
-          <EnvironmentImageSurface {...props} />
+          {/* Keyed per file: a retained last-good image must never belong to another file. */}
+          <EnvironmentImageSurface key={props.file.canonicalPath} {...props} />
         </div>
       );
     case "pdf":
