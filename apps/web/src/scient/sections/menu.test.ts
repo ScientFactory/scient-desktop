@@ -28,6 +28,8 @@ describe("buildSectionSubmenu", () => {
       currentSectionIds: ["research", null],
     });
     expect(menu.label).toBe("Move to section (2)");
+    // It joins the thread menu's first group rather than starting its own.
+    expect(menu.separatorBefore).toBeUndefined();
     expect(menu.children?.some((item) => item.checked === true)).toBe(false);
   });
 

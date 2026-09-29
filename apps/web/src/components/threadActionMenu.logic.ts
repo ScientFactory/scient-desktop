@@ -130,6 +130,11 @@ export function buildThreadActionMenuItems(
               },
         ]
       : []),
+    // SCIENT-FORK:START
+    // Section sits with pin, settle and snooze: all four decide where the
+    // thread lives in the sidebar.
+    ...(state.sectionMenu ? [state.sectionMenu] : []),
+    // SCIENT-FORK:END
     { id: "rename", label: "Rename thread", icon: "pencil", separatorBefore: true },
     ...(state.supports.titleRegeneration
       ? [
@@ -178,9 +183,6 @@ export function buildThreadActionMenuItems(
           },
         ]
       : []),
-    // SCIENT-FORK:START
-    ...(state.sectionMenu ? [state.sectionMenu] : []),
-    // SCIENT-FORK:END
     {
       id: "copy",
       label: "Copy",
