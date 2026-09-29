@@ -16,27 +16,40 @@ export const WINDOWS_PREVIEW_APP_ID = "{6D2B5079-2F0B-48DD-AB7F-97CEC514D30B}";
 export const WINDOWS_PREVIEW_DLL = "ScientConversationPreview.dll";
 export const MAC_PREVIEW_BUNDLE = "ScientConversationQuickLook.appex";
 
-/** Carry the installed static dependencies' notices with the Windows DLL. */
+/** Carry the installed port notices and the fetched libarchive source license with the DLL. */
 export async function stageWindowsPreviewNotices(
   shareDirectory: string,
+  archiveCopying: string,
   destination: string,
 ): Promise<void> {
-  await NodeFSP.mkdir(destination, { recursive: true });
-  const copied = new Set<string>();
+  const notices = new Map<string, string>();
   for (const entry of await NodeFSP.readdir(shareDirectory, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
+    if (entry.name === "libarchive") {
+      throw new Error("libarchive must come from the pinned CMake source, not vcpkg.");
+    }
     const source = NodePath.join(shareDirectory, entry.name, "copyright");
     const stat = await NodeFSP.lstat(source).catch(() => null);
     if (!stat?.isFile()) continue;
-    await NodeFSP.copyFile(source, NodePath.join(destination, `${entry.name}.txt`));
-    copied.add(entry.name);
+    notices.set(`${entry.name}.txt`, source);
   }
-  if (!copied.has("libarchive") || !copied.has("json-c")) {
-    throw new Error("Missing libarchive or json-c license notice in the native Windows toolchain.");
+  if (!notices.has("json-c.txt") || !notices.has("zlib.txt")) {
+    throw new Error("Missing json-c or zlib license notice in the isolated vcpkg install.");
   }
+  if (!(await NodeFSP.lstat(archiveCopying).catch(() => null))?.isFile())
+    throw new Error("Missing libarchive COPYING from the pinned CMake source.");
+  notices.set("libarchive.txt", archiveCopying);
+  await NodeFSP.mkdir(destination, { recursive: true });
+  for (const [name, source] of notices)
+    await NodeFSP.copyFile(source, NodePath.join(destination, name));
 }
-export const MAC_PREVIEW_DEPENDENCIES = "json-c@0.19/libarchive@3.8.7";
+export const MAC_PREVIEW_DEPENDENCIES = "json-c@0.19/libarchive@3.8.7/policy1";
 export const WINDOWS_VCPKG_REVISION = "9e593bb18ea69cc5095e012465dcd675a822ed0d";
+export const WINDOWS_PREVIEW_DEPENDENCIES = `libarchive@3.8.7/policy1/vcpkg@${WINDOWS_VCPKG_REVISION}`;
+
+export function windowsPreviewInstalledRoot(buildDir: string): string {
+  return NodePath.join(buildDir, "vcpkg-installed");
+}
 
 export function macPreviewVariant(arch: ConversationPreviewArch): "arm64" | "x86_64" | "universal" {
   return arch === "x64" ? "x86_64" : arch;
@@ -99,17 +112,43 @@ function previewDependencyRevision(platform: "mac" | "win"): string {
   const revision = NodeChildProcess.execFileSync("git", ["-C", root, "rev-parse", "HEAD"], {
     encoding: "utf8",
   }).trim();
+  const checkoutRoot = NodeChildProcess.execFileSync(
+    "git",
+    ["-C", root, "rev-parse", "--show-toplevel"],
+    { encoding: "utf8" },
+  ).trim();
   const dirty = NodeChildProcess.execFileSync(
     "git",
     ["-C", root, "status", "--porcelain", "--untracked-files=no"],
     { encoding: "utf8" },
   ).trim();
-  if (dirty || revision !== WINDOWS_VCPKG_REVISION) {
+  const untrackedInputs = NodeChildProcess.execFileSync(
+    "git",
+    [
+      "-C",
+      root,
+      "ls-files",
+      "--others",
+      "--",
+      "ports",
+      "triplets",
+      "scripts",
+      "versions",
+      "vcpkg-configuration.json",
+    ],
+    { encoding: "utf8" },
+  ).trim();
+  if (
+    NodePath.resolve(checkoutRoot).toLowerCase() !== NodePath.resolve(root).toLowerCase() ||
+    dirty ||
+    untrackedInputs ||
+    revision !== WINDOWS_VCPKG_REVISION
+  ) {
     throw new Error(
-      "The Windows preview vcpkg checkout is dirty or differs from the CI-pinned revision.",
+      "The Windows preview vcpkg checkout is not a clean checkout at the CI-pinned revision.",
     );
   }
-  return revision;
+  return WINDOWS_PREVIEW_DEPENDENCIES;
 }
 
 /** A release gate, not evidence by itself: CI must issue qualified only after native QA. */
@@ -345,10 +384,9 @@ export async function buildConversationPreview(input: {
       `Preview DLL does not contain the ${input.channel} channel CLSID; native build must honor SCIC_PREVIEW_CLSID.`,
     );
   }
-  const vcpkgRoot = process.env.VCPKG_ROOT;
-  if (!vcpkgRoot) throw new Error("Missing vcpkg root for native license notices.");
   await stageWindowsPreviewNotices(
-    NodePath.join(vcpkgRoot, "installed", `${input.arch}-windows-static`, "share"),
+    NodePath.join(windowsPreviewInstalledRoot(buildDir), `${input.arch}-windows-static`, "share"),
+    NodePath.join(buildDir, "_deps", "scic_libarchive-src", "COPYING"),
     `${dll}.licenses`,
   );
   return dll;

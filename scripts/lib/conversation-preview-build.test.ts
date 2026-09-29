@@ -7,6 +7,7 @@ import { assert, expect, it } from "@effect/vitest";
 
 import {
   clsidBinaryBytes,
+  MAC_PREVIEW_DEPENDENCIES,
   macPreviewArchitectures,
   macPreviewBundleIdentifier,
   macPreviewVariant,
@@ -16,42 +17,152 @@ import {
   previewSourceSha256,
   stageWindowsPreviewNotices,
   WINDOWS_PREVIEW_CLSIDS,
+  WINDOWS_PREVIEW_DEPENDENCIES,
+  WINDOWS_VCPKG_REVISION,
+  windowsPreviewInstalledRoot,
 } from "./conversation-preview-build.ts";
 
-it("stages direct and transitive static dependency notices and fails on missing direct notices", async () => {
+it("stages isolated port notices and the pinned archive source license", async () => {
   const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scic-preview-notices-"));
   const share = NodePath.join(root, "share");
+  const copying = NodePath.join(root, "_deps", "scic_libarchive-src", "COPYING");
   const output = NodePath.join(root, "notices");
   try {
-    for (const name of ["libarchive", "json-c", "zlib"]) {
+    for (const name of ["json-c", "zlib"]) {
       await NodeFSP.mkdir(NodePath.join(share, name), { recursive: true });
       await NodeFSP.writeFile(NodePath.join(share, name, "copyright"), `${name} license`);
     }
-    await stageWindowsPreviewNotices(share, output);
+    await NodeFSP.mkdir(NodePath.dirname(copying), { recursive: true });
+    await NodeFSP.writeFile(copying, "pinned archive license");
+    await stageWindowsPreviewNotices(share, copying, output);
     assert.deepStrictEqual((await NodeFSP.readdir(output)).sort(), [
       "json-c.txt",
       "libarchive.txt",
       "zlib.txt",
     ]);
+    assert.equal(
+      await NodeFSP.readFile(NodePath.join(output, "libarchive.txt"), "utf8"),
+      "pinned archive license",
+    );
     await NodeFSP.unlink(NodePath.join(share, "json-c", "copyright"));
-    await expect(stageWindowsPreviewNotices(share, output)).rejects.toThrow(
-      /Missing libarchive or json-c/,
+    await expect(stageWindowsPreviewNotices(share, copying, output)).rejects.toThrow(
+      /Missing json-c or zlib/,
+    );
+    await NodeFSP.writeFile(NodePath.join(share, "json-c", "copyright"), "json-c license");
+    await NodeFSP.unlink(copying);
+    await expect(stageWindowsPreviewNotices(share, copying, output)).rejects.toThrow(
+      /Missing libarchive COPYING/,
     );
   } finally {
     await NodeFSP.rm(root, { recursive: true, force: true });
   }
 });
 
+it("takes Windows notices from the build's isolated install, not the shared toolchain", async () => {
+  const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scic-preview-install-"));
+  try {
+    const build = NodePath.join(root, "build");
+    const isolatedShare = NodePath.join(
+      windowsPreviewInstalledRoot(build),
+      "x64-windows-static",
+      "share",
+    );
+    const sharedShare = NodePath.join(root, "vcpkg", "installed", "x64-windows-static", "share");
+    const copying = NodePath.join(build, "_deps", "scic_libarchive-src", "COPYING");
+    const notices = NodePath.join(root, "notices");
+    for (const share of [isolatedShare, sharedShare]) {
+      for (const name of ["json-c", "zlib"]) {
+        await NodeFSP.mkdir(NodePath.join(share, name), { recursive: true });
+        await NodeFSP.writeFile(NodePath.join(share, name, "copyright"), share);
+      }
+    }
+    await NodeFSP.mkdir(NodePath.dirname(copying), { recursive: true });
+    await NodeFSP.writeFile(copying, "fetched source");
+    await stageWindowsPreviewNotices(isolatedShare, copying, notices);
+    assert.equal(await NodeFSP.readFile(NodePath.join(notices, "zlib.txt"), "utf8"), isolatedShare);
+    await NodeFSP.rm(NodePath.join(isolatedShare, "json-c"), { recursive: true });
+    await expect(stageWindowsPreviewNotices(isolatedShare, copying, notices)).rejects.toThrow(
+      /Missing json-c or zlib/,
+    );
+    await NodeFSP.mkdir(NodePath.join(isolatedShare, "libarchive"));
+    await expect(stageWindowsPreviewNotices(isolatedShare, copying, notices)).rejects.toThrow(
+      /libarchive must come from the pinned CMake source/,
+    );
+  } finally {
+    await NodeFSP.rm(root, { recursive: true, force: true });
+  }
+});
+
+it("keeps the Windows installer and packager on the same fresh install root", async () => {
+  const script = await NodeFSP.readFile(
+    NodePath.join(import.meta.dirname, "../build-conversation-preview.ps1"),
+    "utf8",
+  );
+  assert.match(script, /\$installed = Join-Path \$build "vcpkg-installed"/u);
+  assert.match(script, /"--x-install-root=\$installed"/u);
+  assert.match(script, /"-DVCPKG_INSTALLED_DIR=\$installed"/u);
+  assert.match(script, /--binarysource=clear/u);
+  assert.match(script, /"zlib:\$Triplet" "json-c:\$Triplet"/u);
+  assert.match(script, /-DCMAKE_DISABLE_FIND_PACKAGE_LibArchive=TRUE/u);
+  assert.match(script, /"json-c_DIR", "ZLIB_INCLUDE_DIR"/u);
+  assert.match(script, /"ZLIB_LIBRARY_RELEASE", "ZLIB_LIBRARY_DEBUG", "ZLIB_LIBRARY"/u);
+  assert.match(script, /CMake did not fetch the pinned libarchive source COPYING/u);
+  assert.match(script, /CMake resolved libarchive outside the pinned source build/u);
+  assert.match(script, /BuildDirectory must be a fresh empty directory/u);
+  assert.match(script, /VCPKG_\|X_VCPKG_\|CMAKE_\|PKG_CONFIG_/u);
+  const builder = await NodeFSP.readFile(
+    NodePath.join(import.meta.dirname, "conversation-preview-build.ts"),
+    "utf8",
+  );
+  assert.match(builder, /NodePath\.join\(windowsPreviewInstalledRoot\(buildDir\),/u);
+  assert.match(builder, /NodePath\.join\(buildDir, "_deps", "scic_libarchive-src", "COPYING"\)/u);
+});
+
+it("builds Linux against zlib while CMake fetches the patched archive", async () => {
+  const workflow = await NodeFSP.readFile(
+    NodePath.join(import.meta.dirname, "../../.github/workflows/conversation-preview.yml"),
+    "utf8",
+  );
+  assert.match(workflow, /zlib1g-dev/u);
+  assert.notMatch(workflow, /libarchive-dev/u);
+});
+
+it("includes the archive policy and pinned vcpkg revision in Windows qualification", () => {
+  assert.equal(
+    WINDOWS_PREVIEW_DEPENDENCIES,
+    `libarchive@3.8.7/policy1/vcpkg@${WINDOWS_VCPKG_REVISION}`,
+  );
+  const expected = {
+    platform: "win",
+    arch: "x64",
+    channel: "latest",
+    sourceSha256: "a".repeat(64),
+    dependencyRevision: WINDOWS_PREVIEW_DEPENDENCIES,
+  } as const;
+  const manifest = { schemaVersion: 2, status: "qualified", ...expected, evidence: "windows-qa" };
+  assert.equal(parsePreviewQualification(JSON.stringify(manifest), expected), "qualified");
+  assert.throws(() =>
+    parsePreviewQualification(
+      JSON.stringify({ ...manifest, dependencyRevision: WINDOWS_VCPKG_REVISION }),
+      expected,
+    ),
+  );
+});
+
 it("invalidates qualification when a native source or pinned build input changes", async () => {
   const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scic-preview-digest-"));
   try {
     await NodeFSP.mkdir(NodePath.join(root, "native/conversation-preview"), { recursive: true });
+    await NodeFSP.mkdir(NodePath.join(root, "native/conversation-preview/cmake"), {
+      recursive: true,
+    });
     await NodeFSP.mkdir(NodePath.join(root, "scripts"), { recursive: true });
     await NodeFSP.mkdir(NodePath.join(root, "scripts/lib"), { recursive: true });
     await NodeFSP.mkdir(NodePath.join(root, "apps/desktop/scripts"), { recursive: true });
     await NodeFSP.mkdir(NodePath.join(root, ".github/workflows"), { recursive: true });
     const files = [
       "native/conversation-preview/CMakeLists.txt",
+      "native/conversation-preview/cmake/ScicArchive.cmake",
       "scripts/build-conversation-preview.sh",
       "scripts/build-conversation-preview.ps1",
       "scripts/build-desktop-artifact.ts",
@@ -67,18 +178,37 @@ it("invalidates qualification when a native source or pinned build input changes
       "new pinned dependency",
     );
     assert.notEqual(await previewSourceSha256(root), before);
+    await NodeFSP.writeFile(
+      NodePath.join(root, "scripts/build-conversation-preview.sh"),
+      "original",
+    );
+    await NodeFSP.writeFile(
+      NodePath.join(root, "native/conversation-preview/cmake/ScicArchive.cmake"),
+      "new patched archive source",
+    );
+    assert.notEqual(await previewSourceSha256(root), before);
+    await NodeFSP.writeFile(
+      NodePath.join(root, "native/conversation-preview/cmake/ScicArchive.cmake"),
+      "original",
+    );
+    await NodeFSP.writeFile(
+      NodePath.join(root, "scripts/lib/conversation-preview-build.ts"),
+      "new archive policy revision",
+    );
+    assert.notEqual(await previewSourceSha256(root), before);
   } finally {
     await NodeFSP.rm(root, { recursive: true, force: true });
   }
 });
 
 it("requires an exact platform, architecture, and channel qualification", () => {
+  assert.equal(MAC_PREVIEW_DEPENDENCIES, "json-c@0.19/libarchive@3.8.7/policy1");
   const expected = {
     platform: "mac",
     arch: "arm64",
     channel: "latest",
     sourceSha256: "a".repeat(64),
-    dependencyRevision: "json-c@0.19/libarchive@3.8.7",
+    dependencyRevision: MAC_PREVIEW_DEPENDENCIES,
   } as const;
   const manifest = { schemaVersion: 2, status: "qualified", ...expected, evidence: "ci-run-123" };
   assert.doesNotThrow(() => parsePreviewQualification(JSON.stringify(manifest), expected));
@@ -90,6 +220,7 @@ it("requires an exact platform, architecture, and channel qualification", () => 
     { status: "pending" },
     { sourceSha256: "b".repeat(64) },
     { dependencyRevision: "other-dependencies" },
+    { dependencyRevision: "json-c@0.19/libarchive@3.8.7" },
   ]) {
     assert.throws(() =>
       parsePreviewQualification(JSON.stringify({ ...manifest, ...mutation }), expected),
@@ -103,7 +234,7 @@ it("allows an exact-source candidate only for preview artifacts", () => {
     arch: "universal",
     channel: "preview",
     sourceSha256: "a".repeat(64),
-    dependencyRevision: "json-c@0.19/libarchive@3.8.7",
+    dependencyRevision: MAC_PREVIEW_DEPENDENCIES,
   } as const;
   const candidate = {
     schemaVersion: 2,

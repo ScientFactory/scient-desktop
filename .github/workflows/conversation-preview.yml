@@ -5,6 +5,8 @@ on:
     paths:
       - "native/conversation-preview/**"
       - "scripts/build-conversation-preview.*"
+      - "scripts/lib/conversation-preview-build.ts"
+      - "scripts/lib/conversation-preview-build.test.ts"
       - ".github/workflows/conversation-preview.yml"
   workflow_dispatch:
 
@@ -28,7 +30,7 @@ jobs:
       - uses: actions/checkout@v6
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libarchive-dev libjson-c-dev libssl-dev cmake
+        run: sudo apt-get update && sudo apt-get install -y zlib1g-dev libjson-c-dev libssl-dev cmake
       - name: Build native preview without registering it
         env:
           SCIC_PREVIEW_BUILD_DIR: ${{ runner.temp }}/conversation-preview
@@ -50,7 +52,7 @@ jobs:
       matrix:
         arch: [x64, arm64]
     runs-on: windows-2025
-    timeout-minutes: 40
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
       - name: Check out pinned native dependency toolchain
@@ -59,14 +61,7 @@ jobs:
           repository: microsoft/vcpkg
           ref: 9e593bb18ea69cc5095e012465dcd675a822ed0d
           path: .native-toolchain/vcpkg
-      - name: Build native dependencies
-        shell: pwsh
-        run: |
-          & ./.native-toolchain/vcpkg/bootstrap-vcpkg.bat -disableMetrics
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & ./.native-toolchain/vcpkg/vcpkg.exe install libarchive:${{ matrix.arch }}-windows-static json-c:${{ matrix.arch }}-windows-static --disable-metrics
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Build preview handler without registering it
+      - name: Build preview with isolated zlib and json-c
         shell: pwsh
         run: |
           $env:VCPKG_ROOT = (Resolve-Path ./.native-toolchain/vcpkg).Path

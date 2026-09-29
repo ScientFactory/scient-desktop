@@ -31,6 +31,8 @@
 #include <unistd.h>
 #endif
 
+extern "C" int scic_archive_policy_version(void);
+
 namespace {
 constexpr const char *kMediaType = "application/vnd.scient.conversation+zip";
 constexpr size_t kMaxManifest = 16 * 1024 * 1024;
@@ -238,7 +240,13 @@ std::string readArchive(archive *rawReader, Clock::time_point deadline) {
     checkTime(deadline);
     const int status = archive_read_next_header(reader, &entry);
     if (status == ARCHIVE_EOF) break;
-    if (status != ARCHIVE_OK || !entry) throw std::runtime_error("Damaged ZIP directory");
+    if (status != ARCHIVE_OK || !entry) {
+      const char *detail = archive_error_string(reader);
+      // Expose only our fixed policy reason, never arbitrary archive metadata.
+      if (detail && std::strstr(detail, "Unsupported SCIC ZIP compression"))
+        throw std::runtime_error("Unsupported SCIC ZIP compression or first entry");
+      throw std::runtime_error("Damaged ZIP directory");
+    }
     if (archive_format(reader) != ARCHIVE_FORMAT_ZIP)
       throw std::runtime_error("Expected a ZIP archive");
     if (++index > kMaxEntries) throw std::runtime_error("Too many ZIP entries");
@@ -353,6 +361,8 @@ std::string readStream(void *context, long long length,
                        scic_preview_skip_callback skipCallback) {
   if (!context || !readCallback || length < 0 || length > kMaxArchive)
     throw std::runtime_error("Conversation ZIP exceeds preview file limit");
+  if (scic_archive_policy_version() != 1)
+    throw std::runtime_error("Unsupported ZIP preview policy");
   Archive reader(archive_read_new(), archive_read_free);
   if (!reader) throw std::bad_alloc();
   archive_read_support_filter_none(reader.get());

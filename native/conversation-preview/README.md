@@ -7,12 +7,23 @@ extracts an entry to disk or evaluates Markdown/HTML; every platform displays
 plain text from `conversation.json` (title, role, message text). The CLI is
 also a fixture-friendly smoke surface.
 
+All platforms build the same SHA-256-pinned libarchive source with
+`cmake/PatchArchive.cmake`. Its preview-only ZIP policy checks the full 16-bit
+local-header compression method before extra fields or symlink decoding:
+only stored/deflate are accepted, and the first entry must be stored at offset
+zero. A required policy-version symbol makes linking an unpatched system
+library fail. This check cannot safely live only after `next_header`, because
+libarchive may decompress symlink targets inside that call. Optional codecs
+are also disabled. Normal stored/deflated members and streamed data descriptors
+remain supported; no archive contents are extracted to disk.
+
 ## Build and host contract
 
 - macOS: `scripts/build-conversation-preview.sh` requires Xcode, CMake, and
   HTTPS access to pinned upstream source archives. It verifies SHA-256, builds
   static json-c 0.19 in the isolated build directory for the requested
-  architecture and deployment target, and links the macOS SDK's libarchive.
+  architecture and deployment target, and builds the pinned preview-only
+  libarchive described below. Only zlib comes from the macOS SDK.
   It does not use Homebrew libraries or install dependencies globally. Set
   `SCIC_PREVIEW_BUILD_DIR` to an exact fresh directory and
   `SCIC_PREVIEW_MAC_ARCH` to `arm64`, `x86_64`, or `universal` (default: host
@@ -24,7 +35,7 @@ also a fixture-friendly smoke surface.
   parent app's channel; the build checks the resulting Info.plist value.
   The pinned archives are upstream json-c `0.19-nodoc`
   (`704927172443309a8efeb162060bb215548e1286e5568514007dd2cc35a0a164`)
-  and libarchive `3.8.7` headers
+  and libarchive `3.8.7` source
   (`4b787cca6697a95c7725e45293c973c208cbdc71ae2279f30ef09f52472b9166`).
   The packaging owner embeds this bundle at
   `Scient.app/Contents/PlugIns/ScientConversationQuickLook.appex`, then signs
@@ -40,10 +51,12 @@ also a fixture-friendly smoke surface.
   unsigned. Local C++/Swift compilation does not establish Finder activation
   or runtime compatibility on the oldest supported macOS release; both need
   installed, signed-candidate QA.
-- Windows: install vcpkg `libarchive` and `json-c` for the chosen static
-  triplet, then run `scripts/build-conversation-preview.ps1` with
+- Windows: point `VCPKG_ROOT` at the pinned clean toolchain, then run
+  `scripts/build-conversation-preview.ps1` with
   `-Triplet x64-windows-static` or `-Triplet arm64-windows-static`. The script
-  selects the matching Visual Studio architecture and static MSVC runtime,
+  installs zlib and json-c into a fresh isolated directory with binary caching
+  disabled, builds the pinned patched libarchive from source, selects the
+  matching Visual Studio architecture and static MSVC runtime,
   builds the DLL, CLI, and an unregistered COM smoke executable, then runs
   the smoke via CTest on x64. ARM64 CI compiles but does not execute the ARM64
   test on an x64 host. The installer

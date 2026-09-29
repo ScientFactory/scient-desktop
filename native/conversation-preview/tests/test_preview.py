@@ -4,6 +4,7 @@ import json
 import os
 import pathlib
 import subprocess
+import struct
 import sys
 import tempfile
 import unittest
@@ -15,7 +16,9 @@ MEDIA = b"application/vnd.scient.conversation+zip"
 
 
 def package(path, *, text="Hello from conversation.json", archive_name="conversation.json",
-            digest=True, overrides=None, extra_members=None, ensure_ascii=False):
+            digest=True, overrides=None, extra_members=None, ensure_ascii=False,
+            compression=zipfile.ZIP_STORED, mimetype_compression=zipfile.ZIP_STORED,
+            streamed=False):
     data = {
         "format": "scient.conversation-snapshot",
         "version": 1,
@@ -36,8 +39,10 @@ def package(path, *, text="Hello from conversation.json", archive_name="conversa
             {"path": "conversation.md", "byteLength": 27, "sha256": "sha256:" + "0" * 64},
         ],
     }).encode()
-    with zipfile.ZipFile(path, "w") as file:
-        file.writestr("mimetype", MEDIA, compress_type=zipfile.ZIP_STORED)
+    with zipfile.ZipFile(path, "w", compression=compression) as file:
+        file.writestr("mimetype", MEDIA, compress_type=mimetype_compression)
+        if streamed:
+            file._seekable = False  # Match yazl's streamed members after stored mimetype.
         file.writestr("manifest.json", manifest)
         file.writestr(archive_name, snapshot)
         file.writestr("conversation.md", "Malicious Markdown? <script>x")
@@ -71,6 +76,61 @@ class NativePreviewTests(unittest.TestCase):
         result = self.run_preview()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("digest mismatch", result.stderr)
+
+    def test_accepts_stored_deflated_and_streamed_members(self):
+        for compression in [zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED]:
+            for streamed in [False, True]:
+                with self.subTest(compression=compression, streamed=streamed):
+                    package(self.path, compression=compression, streamed=streamed)
+                    result = self.run_preview()
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn("Answer from JSON", result.stdout)
+
+    def test_rejects_compressed_mimetype(self):
+        for compression in [zipfile.ZIP_DEFLATED, zipfile.ZIP_LZMA, zipfile.ZIP_BZIP2]:
+            with self.subTest(compression=compression):
+                package(self.path, mimetype_compression=compression)
+                self.assertNotEqual(self.run_preview().returncode, 0)
+
+    def test_rejects_unsupported_methods_in_every_entry_including_skipped_data(self):
+        for method in [1, 9, 12, 14, 93, 95, 256, 264, 65535]:
+            for name in ["mimetype", "manifest.json", "conversation.json", "conversation.md"]:
+                with self.subTest(method=method, member=name):
+                    package(self.path)
+                    with zipfile.ZipFile(self.path) as file:
+                        offset = file.getinfo(name).header_offset
+                    raw = bytearray(self.path.read_bytes())
+                    struct.pack_into("<H", raw, offset + 8, method)
+                    self.path.write_bytes(raw)
+                    self.assertNotEqual(self.run_preview().returncode, 0)
+
+    def test_rejects_real_lzma_and_bzip2_members(self):
+        for compression in [zipfile.ZIP_LZMA, zipfile.ZIP_BZIP2]:
+            with self.subTest(compression=compression):
+                package(self.path, compression=compression)
+                self.assertNotEqual(self.run_preview().returncode, 0)
+
+    def test_blocks_symlink_decoder_during_header_parsing(self):
+        # The xl extra field exposes Unix file type in the local header. Without
+        # the pre-header gate libarchive attempts LZMA decoding before returning
+        # the entry to our ordinary no-links check. Deliberately invalid data
+        # ensures the policy error, not a decoder error, is the rejecting path.
+        for method in [14, 270]:
+            with self.subTest(method=method):
+                package(self.path)
+                with zipfile.ZipFile(self.path) as file:
+                    offset = file.getinfo("manifest.json").header_offset
+                raw = bytearray(self.path.read_bytes())
+                name_length, extra_length = struct.unpack_from("<HH", raw, offset + 26)
+                xl = struct.pack("<HHBHI", 0x6c78, 7, 5, 0x0314, 0xa1ff0000)
+                end = offset + 30 + name_length + extra_length
+                raw[end:end] = xl
+                struct.pack_into("<H", raw, offset + 28, extra_length + len(xl))
+                struct.pack_into("<H", raw, offset + 8, method)
+                self.path.write_bytes(raw)
+                result = self.run_preview()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Unsupported SCIC ZIP compression", result.stderr)
 
     def test_bidi_embeddings_and_overrides_are_visible_in_title_and_messages(self):
         controls = "".join(chr(code) for code in range(0x202a, 0x202f))
