@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { beforeEach } from "vite-plus/test";
 
+import { boundText } from "./boundedText.ts";
 import {
   importedWorkLogOmissions,
   projectQuestionAnswers,
@@ -55,6 +56,22 @@ describe("work-log export projection", () => {
     const long = Array.from({ length: 100 }, (_, index) => `line ${index}`).join("\n");
     const recut = project(long, { output: { lines: 9, chars: 90 } });
     expect(recut?._tag === "tool" && recut.output?.omittedLines).toBe(55 + 9);
+    // Text the writer bounded by characters gains lines from its omission
+    // line (46 lines become 48); exporting it again changes nothing.
+    const written = boundText(
+      [
+        ...Array.from({ length: 23 }, (_, index) => `head ${index}`),
+        "y".repeat(10_000),
+        ...Array.from({ length: 22 }, (_, index) => `tail ${index}`),
+      ].join("\n"),
+      { headLines: 30, tailLines: 15, headChars: 6_000, tailChars: 2_000 },
+    );
+    expect(written.text.split("\n")).toHaveLength(48);
+    expect(
+      project(written.text, {
+        output: { lines: written.omittedLines, chars: written.omittedChars },
+      }),
+    ).toMatchObject({ output: written });
     // Counts that are not whole positive numbers are ignored.
     expect(project("ok", { output: { lines: -1, chars: "x" }, changedFiles: 1.5 })).toMatchObject({
       output: { text: "ok", omittedLines: 0, omittedChars: 0 },

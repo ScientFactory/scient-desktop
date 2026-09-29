@@ -128,25 +128,18 @@ function importedOmissions(payload: unknown): ImportedOmissions {
   };
 }
 
-/** The longest omission line `boundText` writes, with its line breaks. */
-const OMISSION_LINE_MAX_CHARS = 48;
-
 function bounded(
   value: string | null,
   bounds: TextBounds,
   earlier?: TextOmission,
 ): ConversationBoundedText | null {
   if (value === null) return null;
-  const result = boundText(value, bounds);
-  if (earlier === undefined) return result;
   // Imported text was bounded by its sender and already holds its omission
-  // line; it is kept as it is, with the sender's counts. Text longer than any
-  // bounded text is bounded again, and what that cuts is counted too.
-  const alreadyBounded =
-    value.split("\n").length <= bounds.headLines + bounds.tailLines + 1 &&
-    value.length <= bounds.headChars + bounds.tailChars + OMISSION_LINE_MAX_CHARS;
-  return alreadyBounded
-    ? { text: value, omittedLines: earlier.lines, omittedChars: earlier.chars }
+  // line; `boundText` keeps such text as it is, so only the sender's counts
+  // apply. Text longer than any bounded text is cut again, and both count.
+  const result = boundText(value, bounds);
+  return earlier === undefined
+    ? result
     : {
         ...result,
         omittedLines: result.omittedLines + earlier.lines,
