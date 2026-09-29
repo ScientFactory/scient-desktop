@@ -269,6 +269,43 @@ describe("update restart flow", () => {
     expect(document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)).toBe(action);
   });
 
+  it("closing the popover does not swallow a later keyboard focus", async () => {
+    const nightly = { channel: "nightly" as const, availableVersion: "0.6.19-nightly.2" };
+    const notes = [{ version: "0.6.19-nightly.2", items: ["Newest change"], totalItems: 1 }];
+    updateStore.set(updateState({ ...nightly, releaseNotes: notes }));
+    bridge.downloadUpdate.mockImplementationOnce(async () => {
+      const done = updateState({
+        ...nightly,
+        releaseNotes: notes,
+        status: "downloaded",
+        downloadedVersion: nightly.availableVersion,
+        downloadPercent: 100,
+      });
+      updateStore.set(done);
+      return result(done);
+    });
+    const elsewhere = document.createElement("button");
+    elsewhere.textContent = "Elsewhere";
+    document.body.prepend(elsewhere);
+    mount();
+    const popover = () => document.querySelector('[aria-label="Nightly update release notes"]');
+
+    await vi.waitFor(() => expect(footerButton().textContent).toContain("Update"));
+    elsewhere.focus();
+    await userEvent.hover(footerButton());
+    await vi.waitFor(() => expect(popover()).not.toBeNull());
+    footerButton().click();
+    await vi.waitFor(() => expect(anchoredNotice()).not.toBeNull());
+    await vi.waitFor(() => expect(popover()).toBeNull());
+    expect(document.activeElement).toBe(elsewhere);
+
+    await userEvent.unhover(footerButton());
+    await userEvent.tab();
+    expect(document.activeElement).toBe(footerButton());
+    await vi.waitFor(() => expect(popover()).not.toBeNull());
+    elsewhere.remove();
+  });
+
   it("uses the corner stack when the sidebar footer is off screen", async () => {
     mount("position:fixed;left:-600px;bottom:24px;width:240px");
     await downloadThroughFooter();

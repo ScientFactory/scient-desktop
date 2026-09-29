@@ -210,9 +210,20 @@ function SidebarUpdateControl() {
           if (result.completed) {
             // SCIENT-FORK: offer Restart next to the button that started the download.
             // The release-notes popover shares this anchor and would cover the notice.
-            // Closing it may return focus to the button; don't let that reopen it.
+            // Closing it returns focus to the button only when focus is on the page body or
+            // inside the popover; suppress that one reopen, never a later deliberate focus.
             if (releaseNotesPopoverHandle.isOpen) {
-              suppressReleaseNotesFocusOpen.current = true;
+              const active = document.activeElement;
+              if (
+                active === null ||
+                active === document.body ||
+                releaseNotesPopupRef.current?.contains(active)
+              ) {
+                suppressReleaseNotesFocusOpen.current = true;
+                window.setTimeout(() => {
+                  suppressReleaseNotesFocusOpen.current = false;
+                }, 1_000);
+              }
               releaseNotesPopoverHandle.close();
             }
             updateReadyNoticeRef.current?.close();
