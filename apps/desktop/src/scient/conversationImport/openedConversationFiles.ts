@@ -13,6 +13,20 @@
  * closed) forgets the token. The same preview then opens as for a file picked
  * in the app.
  *
+ * An upload sends the file that was opened, never whatever later sits at its
+ * path. Registration records the file's identity (device, file number, size,
+ * modification time). Each attempt opens the path once, before any approval
+ * prompt, checks that descriptor against the identity, checks it again after
+ * the prompt, and streams exactly the registered size from it, refusing a
+ * file that changed (`file-changed`). A file replaced at its path during the
+ * prompt is never read: the attempt holds the original. The descriptor is
+ * closed when the attempt ends, including by cancel, release, or expiry. On
+ * Windows the identity is the volume serial number and file index Node
+ * reports; where a file system reports no file index, only size and
+ * modification time are compared, so a replacement with the same size and
+ * time there is not detected before the prompt, but the open descriptor still
+ * keeps the original bytes.
+ *
  * macOS delivers the `open-file` of a launch (a double-click while Scient is
  * closed) before startup has built its services, so `captureConversationFileOpens`
  * listens from module load and holds paths until `installConversationFileOpening`
@@ -58,8 +72,30 @@ const TAKEN_FILE_LIFETIME_MS = 30 * 60_000;
 /** Cancelled attempts remembered per file; the oldest is forgotten beyond this. */
 const MAX_CANCELLED_ATTEMPTS = 32;
 
+/** What names one file on disk, whatever its path is later. */
+interface FileIdentity {
+  readonly dev: bigint;
+  readonly ino: bigint;
+  readonly size: bigint;
+  readonly mtimeNs: bigint;
+}
+
+function fileIdentity(stat: NodeFS.BigIntStats): FileIdentity {
+  return { dev: stat.dev, ino: stat.ino, size: stat.size, mtimeNs: stat.mtimeNs };
+}
+
+/** Whether `stat` is the file `identity` recorded, unchanged. */
+function isSameFile(stat: NodeFS.BigIntStats, identity: FileIdentity): boolean {
+  if (!stat.isFile() || stat.size !== identity.size || stat.mtimeNs !== identity.mtimeNs) {
+    return false;
+  }
+  // A file system without file numbers reports zero; size and time must do.
+  return identity.ino === 0n || (stat.dev === identity.dev && stat.ino === identity.ino);
+}
+
 interface OpenedFile extends DesktopOpenedConversationFile {
   readonly path: string;
+  readonly identity: FileIdentity;
 }
 
 interface TakenFile extends OpenedFile {
@@ -93,7 +129,7 @@ function conversationFilePathsFromArgv(
 /** Queues a regular `.scic` file for the renderer; false when it is not one. */
 export async function registerOpenedConversationFile(path: string): Promise<boolean> {
   if (!path.toLowerCase().endsWith(SCIC_FILE_EXTENSION)) return false;
-  const stat = await NodeFS.promises.stat(path).catch(() => null);
+  const stat = await NodeFS.promises.stat(path, { bigint: true }).catch(() => null);
   if (stat === null || !stat.isFile()) return false;
   for (const [token, file] of waiting) {
     if (file.path === path) waiting.delete(token);
@@ -108,9 +144,18 @@ export async function registerOpenedConversationFile(path: string): Promise<bool
     token,
     path,
     fileName: NodePath.basename(path).slice(0, 255),
-    sizeBytes: stat.size,
+    sizeBytes: Number(stat.size),
+    identity: fileIdentity(stat),
   });
   return true;
+}
+
+/** Forgets a taken file; an upload in progress is aborted and its descriptor closed. */
+function forgetTakenFile(token: string): void {
+  const file = taken.get(token);
+  if (!file) return;
+  taken.delete(token);
+  file.upload?.controller.abort();
 }
 
 /** Hands every waiting file to the renderer, by token. */
@@ -118,13 +163,13 @@ export function takeOpenedConversationFileList(): ReadonlyArray<DesktopOpenedCon
   const files = [...waiting.values()];
   waiting.clear();
   for (const [token, file] of taken) {
-    if (file.expiresAt <= performance.now()) taken.delete(token);
+    if (file.expiresAt <= performance.now()) forgetTakenFile(token);
   }
   for (const file of files) {
     while (taken.size >= MAX_PENDING_CONVERSATION_FILES) {
       const oldest = taken.keys().next().value;
       if (oldest === undefined) break;
-      taken.delete(oldest);
+      forgetTakenFile(oldest);
     }
     taken.set(file.token, {
       ...file,
@@ -196,15 +241,39 @@ export function remoteUploadApprovalOptions(
   };
 }
 
+/** Opens a file for one upload attempt; replaceable in tests. */
+export type OpenConversationFile = (path: string) => Promise<NodeFS.promises.FileHandle>;
+
+const openForReading: OpenConversationFile = (path) => NodeFS.promises.open(path, "r");
+
+/** The opened file's bytes, exactly `size` of them; `onShort` when it ends early. */
+async function* exactBytes(
+  source: AsyncIterable<Uint8Array>,
+  size: number,
+  onShort: () => void,
+): AsyncGenerator<Uint8Array> {
+  let sent = 0;
+  for await (const chunk of source) {
+    sent += chunk.byteLength;
+    yield chunk;
+  }
+  if (sent !== size) {
+    onShort();
+    throw new Error("The opened file changed while it was being sent.");
+  }
+}
+
 /**
  * Streams a taken file to its signed upload URL as one attempt, retaining the
- * file for a later attempt with a fresh URL.
+ * file for a later attempt with a fresh URL. Only the file that was opened is
+ * sent (see the module header).
  */
 export async function uploadOpenedConversationFileTo(
   request: DesktopConversationFileUploadRequest,
   allowedOrigins: ReadonlySet<string>,
   approveRemote: (origin: string, fileName: string, plaintextNetwork: boolean) => Promise<boolean>,
   fetchImpl: typeof fetch = fetch,
+  openFile: OpenConversationFile = openForReading,
 ): Promise<DesktopConversationFileUploadResult> {
   const file = taken.get(request.token);
   if (!file) return { _tag: "failed", reason: "file-unavailable" };
@@ -220,10 +289,21 @@ export async function uploadOpenedConversationFileTo(
   const upload = new AbortController();
   file.upload = { attemptId: request.attemptId, controller: upload };
   const cancelled = { _tag: "failed", reason: "cancelled" } as const;
+  const changed = { _tag: "failed", reason: "file-changed" } as const;
+  let handle: NodeFS.promises.FileHandle | null = null;
+  let short = false;
   try {
-    const stat = await NodeFS.promises.stat(file.path).catch(() => null);
-    if (stat === null || !stat.isFile()) return { _tag: "failed", reason: "file-unavailable" };
-    if (stat.size !== file.sizeBytes) return { _tag: "failed", reason: "file-changed" };
+    // Bound to this descriptor from here on, whatever happens at the path.
+    handle = await openFile(file.path).catch(() => null);
+    if (handle === null) return { _tag: "failed", reason: "file-unavailable" };
+    // Cancel, release, and expiry close it at once, even while a prompt is open.
+    const descriptor = handle;
+    upload.signal.addEventListener("abort", () => void descriptor.close().catch(() => {}), {
+      once: true,
+    });
+    const opened = await handle.stat({ bigint: true }).catch(() => null);
+    if (opened === null || !opened.isFile()) return { _tag: "failed", reason: "file-unavailable" };
+    if (!isSameFile(opened, file.identity)) return changed;
     if (target.requiresApproval && !file.approvedOrigins.has(target.url.origin)) {
       const approved = await approveRemote(
         target.url.origin,
@@ -236,29 +316,50 @@ export async function uploadOpenedConversationFileTo(
     }
     if (upload.signal.aborted) return cancelled;
     if (file.expiresAt <= performance.now()) {
+      forgetTakenFile(request.token);
       return { _tag: "failed", reason: "file-unavailable" };
     }
+    // The file may have been written to in place while the prompt was open.
+    const current = await handle.stat({ bigint: true }).catch(() => null);
+    if (current === null || !isSameFile(current, file.identity)) return changed;
     // A cancel stops the request and the file read together.
-    const source = NodeFS.createReadStream(file.path, { signal: upload.signal });
+    const source =
+      file.sizeBytes === 0
+        ? NodeStream.Readable.from([])
+        : handle.createReadStream({ start: 0, end: file.sizeBytes - 1, autoClose: false });
     source.on("error", () => {});
+    const stop = () => source.destroy(new Error("The upload was cancelled."));
+    upload.signal.addEventListener("abort", stop, { once: true });
+    const body = NodeStream.Readable.from(
+      exactBytes(source, file.sizeBytes, () => {
+        short = true;
+      }),
+      { objectMode: false },
+    );
+    body.on("error", () => {});
     try {
       const response = await fetchImpl(target.url, {
         method: "POST",
         headers: { "content-type": SCIC_MEDIA_TYPE },
-        body: NodeStream.Readable.toWeb(source) as ReadableStream,
+        body: NodeStream.Readable.toWeb(body) as ReadableStream,
         duplex: "half",
         redirect: "error",
         signal: upload.signal,
       } as RequestInit);
       if (upload.signal.aborted) return cancelled;
+      if (short) return changed;
       return response.ok ? { _tag: "uploaded" } : { _tag: "failed", reason: "rejected" };
     } finally {
+      upload.signal.removeEventListener("abort", stop);
       source.destroy();
+      body.destroy();
     }
   } catch {
-    return upload.signal.aborted ? cancelled : { _tag: "failed", reason: "network-failed" };
+    if (upload.signal.aborted) return cancelled;
+    return short ? changed : { _tag: "failed", reason: "network-failed" };
   } finally {
     file.upload = null;
+    await handle?.close().catch(() => {});
   }
 }
 
@@ -291,10 +392,7 @@ export function cancelOpenedConversationFileUploadFor(request: {
  * is ignored.
  */
 export function releaseOpenedConversationFileFor(token: string): void {
-  const file = taken.get(token);
-  if (!file) return;
-  taken.delete(token);
-  file.upload?.controller.abort();
+  forgetTakenFile(token);
 }
 
 /** Tells the renderer that files are waiting, and brings Scient forward. */

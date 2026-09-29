@@ -444,6 +444,167 @@ describe("OS-opened conversation file upload outcomes", () => {
   });
 });
 
+describe("the file an OS-opened upload sends", () => {
+  const managedUrl = `http://127.0.0.1:31234${route}`;
+  const managed = new Set(["http://127.0.0.1:31234"]);
+
+  async function openedAt(contents = "portable conversation") {
+    const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-opened-scic-"));
+    directories.push(directory);
+    const path = NodePath.join(directory, "opened.scic");
+    NodeFS.writeFileSync(path, contents);
+    expect(await registerOpenedConversationFile(path)).toBe(true);
+    const [file] = takeOpenedConversationFileList();
+    if (!file) throw new Error("The opened file was not returned to the renderer.");
+    return { file, path, directory };
+  }
+
+  /** Records what each request carried. */
+  function recordingFetch() {
+    const bodies: string[] = [];
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      bodies.push(await new Response(init?.body).text());
+      return new Response(null, { status: 204 });
+    };
+    return { bodies, fetchImpl };
+  }
+
+  it("sends the opened file, never a replacement put at its path during the prompt", async () => {
+    const { file, path, directory } = await openedAt();
+    const { bodies, fetchImpl } = recordingFetch();
+    const replacement = NodePath.join(directory, "replacement.scic");
+    // Same size, so only the file's identity can tell them apart.
+    NodeFS.writeFileSync(replacement, "PORTABLE CONVERSATION");
+    const result = await uploadOpenedConversationFileTo(
+      { token: file.token, attemptId: nextAttemptId(), url: remoteUrl },
+      permitted,
+      async () => {
+        NodeFS.renameSync(replacement, path);
+        return true;
+      },
+      fetchImpl,
+    );
+    expect(result).toEqual({ _tag: "uploaded" });
+    expect(bodies).toEqual(["portable conversation"]);
+    // A later attempt finds another file at the path and sends nothing.
+    expect(
+      await uploadOpenedConversationFileTo(
+        { token: file.token, attemptId: nextAttemptId(), url: managedUrl },
+        managed,
+        async () => true,
+        fetchImpl,
+      ),
+    ).toEqual({ _tag: "failed", reason: "file-changed" });
+    expect(bodies).toHaveLength(1);
+  });
+
+  it("refuses a file whose size changed, before the prompt or during it", async () => {
+    const { file, path } = await openedAt();
+    const { bodies, fetchImpl } = recordingFetch();
+    let prompts = 0;
+    const approve = async () => {
+      prompts += 1;
+      return true;
+    };
+    NodeFS.appendFileSync(path, " and more");
+    expect(
+      await uploadOpenedConversationFileTo(
+        { token: file.token, attemptId: nextAttemptId(), url: remoteUrl },
+        permitted,
+        approve,
+        fetchImpl,
+      ),
+    ).toEqual({ _tag: "failed", reason: "file-changed" });
+    expect(prompts).toBe(0);
+
+    const second = await openedAt();
+    expect(
+      await uploadOpenedConversationFileTo(
+        { token: second.file.token, attemptId: nextAttemptId(), url: remoteUrl },
+        permitted,
+        async () => {
+          NodeFS.appendFileSync(second.path, " written in place");
+          return true;
+        },
+        fetchImpl,
+      ),
+    ).toEqual({ _tag: "failed", reason: "file-changed" });
+    expect(bodies).toEqual([]);
+  });
+
+  it("refuses a file cut short while it is being sent", async () => {
+    const { file, path } = await openedAt("x".repeat(1024 * 1024));
+    let sent = 0;
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      NodeFS.truncateSync(path, 1024);
+      sent = (await new Response(init?.body).arrayBuffer()).byteLength;
+      return new Response(null, { status: 204 });
+    };
+    expect(
+      await uploadOpenedConversationFileTo(
+        { token: file.token, attemptId: nextAttemptId(), url: managedUrl },
+        managed,
+        async () => true,
+        fetchImpl,
+      ).catch(() => "threw"),
+    ).toEqual({ _tag: "failed", reason: "file-changed" });
+    expect(sent).toBeLessThan(1024 * 1024);
+  });
+
+  it("closes the opened file when the upload is released, even with the prompt still open", async () => {
+    const { file } = await openedAt();
+    const handles: NodeFS.promises.FileHandle[] = [];
+    let answer: (approved: boolean) => void = () => undefined;
+    let prompted: () => void = () => undefined;
+    const promptOpen = new Promise<void>((resolve) => {
+      prompted = resolve;
+    });
+    const uploading = uploadOpenedConversationFileTo(
+      { token: file.token, attemptId: nextAttemptId(), url: remoteUrl },
+      permitted,
+      () =>
+        new Promise<boolean>((resolve) => {
+          answer = resolve;
+          prompted();
+        }),
+      recordingFetch().fetchImpl,
+      async (path) => {
+        const handle = await NodeFS.promises.open(path, "r");
+        handles.push(handle);
+        return handle;
+      },
+    );
+    await promptOpen;
+    expect(handles).toHaveLength(1);
+    expect(handles[0]!.fd).toBeGreaterThanOrEqual(0);
+    releaseOpenedConversationFileFor(file.token);
+    expect(handles[0]!.fd).toBe(-1);
+    answer(true);
+    expect(await uploading).toEqual({ _tag: "failed", reason: "cancelled" });
+  });
+
+  it("closes the opened file when an attempt ends, sent or not", async () => {
+    const { file } = await openedAt();
+    const handles: NodeFS.promises.FileHandle[] = [];
+    const openFile = async (path: string) => {
+      const handle = await NodeFS.promises.open(path, "r");
+      handles.push(handle);
+      return handle;
+    };
+    const { fetchImpl } = recordingFetch();
+    for (const approve of [async () => false, async () => true]) {
+      await uploadOpenedConversationFileTo(
+        { token: file.token, attemptId: nextAttemptId(), url: remoteUrl },
+        permitted,
+        approve,
+        fetchImpl,
+        openFile,
+      );
+    }
+    expect(handles.map((handle) => handle.fd)).toEqual([-1, -1]);
+  });
+});
+
 describe("files macOS opens before Scient is ready", () => {
   it("holds paths until a handler attaches, then hands over each one as it arrives", () => {
     const relay = makeOpenedPathRelay(2);

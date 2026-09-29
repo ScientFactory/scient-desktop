@@ -321,7 +321,13 @@ The contract between staging and the importer is the header of
   renderer uploads an opened file by token; the desktop asks before sending it to a server it does
   not manage, and `cancelOpenedConversationFileUpload` aborts an upload in progress or keeps one
   from starting. Results distinguish a declined send (`declined`), a cancel (`cancelled`), and a
-  server refusal (`rejected`).
+  server refusal (`rejected`). An upload sends only the file that was opened: each attempt opens it
+  once, before any prompt, checks that descriptor against the device, file number, size, and
+  modification time recorded when the file was opened (again after the prompt), and streams exactly
+  that size from it; a changed or replaced file is refused (`file-changed`). The descriptor closes
+  when the attempt ends, is cancelled or released, or the file expires. On Windows the file number
+  is the file index Node reports; where a file system has none, size and modification time alone
+  are compared, but the open descriptor still keeps the original bytes.
 
 ## Dialog
 

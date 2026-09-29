@@ -412,7 +412,7 @@ export const DesktopConversationFileUploadResult = Schema.Union([
     reason: Schema.Literals([
       /** Unknown token, or the file can no longer be read. */
       "file-unavailable",
-      /** The file's size changed since it was opened. */
+      /** The file changed, or another file replaced it, since it was opened; nothing of it was used. */
       "file-changed",
       "invalid-url",
       "network-failed",
