@@ -292,4 +292,45 @@ describe("workspace refresh ownership", () => {
       input.relativePath,
     );
   });
+
+  it("retries a failed read by clearing it, reading again, and re-subscribing the watcher", () => {
+    mocks.file = {
+      authoritativeData: null,
+      data: null,
+      error: "Failed to open 'report.md'.",
+      isPending: false,
+    };
+    let result = render();
+    vi.clearAllMocks();
+
+    result.requestManualReload();
+    result = render();
+
+    expect(mocks.clearFile).toHaveBeenCalledWith(
+      input.environmentId,
+      input.cwd,
+      input.relativePath,
+    );
+    expect(mocks.refreshFile).toHaveBeenCalledOnce();
+    expect(mocks.refreshWatcher).toHaveBeenCalledOnce();
+    expect(result.reloadNotice).toBeNull();
+    expect(result.viewerRefreshKey).toBeGreaterThan(0);
+  });
+
+  it("never clears a dirty buffer when retrying after a failed refresh", () => {
+    mocks.file = {
+      authoritativeData: file("Disk", "r1"),
+      data: file("My draft", "r0"),
+      error: "The latest version could not be read.",
+      isPending: false,
+    };
+    let result = render({ sourcePending: true });
+    vi.clearAllMocks();
+
+    result.requestManualReload();
+    result = render({ sourcePending: true });
+
+    expect(mocks.clearFile).not.toHaveBeenCalled();
+    expect(result.reloadNotice).toMatchObject({ kind: "manual-reload", contents: "Disk" });
+  });
 });

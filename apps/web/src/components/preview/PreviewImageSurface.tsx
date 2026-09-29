@@ -37,7 +37,8 @@ export function PreviewImageSurface({
 }: {
   readonly source: PreviewImageSource;
   readonly className?: string;
-  readonly onLoadError?: () => void;
+  /** A replacement image failed; the last good image stays displayed when there is one. */
+  readonly onLoadError?: (failure: { readonly hasDisplayedImage: boolean }) => void;
   readonly statusLabel?: string;
   /** Direct web images can display without granting byte access to this origin. */
   readonly crossOrigin?: "anonymous" | null | undefined;
@@ -195,7 +196,7 @@ export function PreviewImageSurface({
                 _tag: "failed",
                 token: previewImageSourceToken(imageState.pending),
               });
-              onLoadError?.();
+              onLoadError?.({ hasDisplayedImage: Boolean(imageState.displayed) });
             }}
           />
         ) : null}

@@ -24,6 +24,10 @@ import { toastManager } from "~/components/ui/toast";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
+import {
+  MEDIA_FAILURE_COPY,
+  UNSUPPORTED_PREVIEW_TITLE,
+} from "~/scient/fileSurfaces/fileFailureCopy";
 
 import { AudioPreview } from "./AudioPreview";
 import { BrowserDocumentFrame } from "./BrowserDocumentFrame";
@@ -33,6 +37,7 @@ import {
   FileSurfaceAction,
   FileSurfaceFailure,
   FileSurfaceLoading,
+  FileSurfaceMessage,
   FileSurfaceNotice,
 } from "./fileSurfaceChrome";
 
@@ -106,7 +111,7 @@ export function AttachmentFilePreview(props: {
   const [rendered, setRendered] = useState(true);
   const [revision, setRevision] = useState(0);
   const [content, setContent] = useState<{ text: string; truncated: boolean } | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<AttachmentFailure | null>(null);
   // Reading source is a separate failure from loading the file: a rendered HTML page can be
   // fine while its bytes are not UTF-8, and switching back to the page must not stay stuck.
   const [contentError, setContentError] = useState<string | null>(null);
@@ -134,7 +139,10 @@ export function AttachmentFilePreview(props: {
       })
       .catch((cause: unknown) => {
         if (!cancelled)
-          setError(cause instanceof Error ? cause.message : "The attachment is unavailable.");
+          setError({
+            kind: "load",
+            message: cause instanceof Error ? cause.message : "The attachment is unavailable.",
+          });
       });
     return () => {
       cancelled = true;
@@ -181,7 +189,8 @@ export function AttachmentFilePreview(props: {
     });
     return () => controller.abort();
   }, [url, needsText, revision, props.sizeBytes, props.file, refresh]);
-  const failure = error ?? (needsText ? contentError : null);
+  const failure: AttachmentFailure | null =
+    error ?? (needsText && contentError !== null ? { kind: "load", message: contentError } : null);
   const wordWrap = useClientSettings((settings) => settings.wordWrap);
   const updateClientSettings = useUpdateClientSettings();
   // Only the raw-text body honours word wrap. A rendered table or Markdown lays itself out,
@@ -230,7 +239,13 @@ export function AttachmentFilePreview(props: {
 
   const body = failure ? (
     <FileSurfaceFailure
-      message={failure}
+      {...(failure.kind === "media" && (kind === "image" || kind === "audio" || kind === "video")
+        ? MEDIA_FAILURE_COPY[kind]
+        : {
+            title: "Couldn't open this file",
+            description: "Scient couldn't load this attachment.",
+            details: failure.kind === "load" ? failure.message : null,
+          })}
       onRetry={() => {
         // Clearing first lets a local Blob preview remount: its URL never changes, so the
         // revision bump alone would re-render the same failed element.
@@ -253,7 +268,7 @@ export function AttachmentFilePreview(props: {
   ) : kind === "pdf" || kind === "html" ? (
     <BrowserDocumentFrame src={url} title={props.name} pdf={kind === "pdf"} />
   ) : kind === "audio" ? (
-    <AudioPreview src={url} name={props.name} onError={() => setError("Unable to load audio.")} />
+    <AudioPreview src={url} name={props.name} onError={() => setError(MEDIA_LOAD_FAILURE)} />
   ) : kind === "video" ? (
     <div className="flex min-h-0 flex-1 items-center justify-center bg-black">
       <video
@@ -262,7 +277,7 @@ export function AttachmentFilePreview(props: {
         src={url}
         aria-label={props.name}
         className="max-h-full max-w-full"
-        onError={() => setError("Unable to load video.")}
+        onError={() => setError(MEDIA_LOAD_FAILURE)}
       />
     </div>
   ) : kind === "image" ? (
@@ -271,17 +286,14 @@ export function AttachmentFilePreview(props: {
         src={url}
         alt={props.name}
         className="max-h-full max-w-full object-contain"
-        onError={() => setError("Unable to load image.")}
+        onError={() => setError(MEDIA_LOAD_FAILURE)}
       />
     </div>
   ) : (
-    <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-1 px-6 text-center">
-      <p className="scient-reading-ui text-sm font-medium">No preview for this file</p>
-      <p className="max-w-sm scient-reading-ui text-xs leading-relaxed text-muted-foreground">
-        Save it to open in an app that supports {props.name.split(".").at(-1) || "this format"}{" "}
-        files.
-      </p>
-    </div>
+    <FileSurfaceMessage
+      title={UNSUPPORTED_PREVIEW_TITLE}
+      description={`Save it to open in an app that supports ${fileExtensionLabel(props.name)}.`}
+    />
   );
 
   return (
@@ -360,4 +372,18 @@ export function AttachmentFilePreview(props: {
       {body}
     </div>
   );
+}
+
+/** The browser failed to load or decode the media element; it gives no reason. */
+type AttachmentFailure =
+  | { readonly kind: "media" }
+  | { readonly kind: "load"; readonly message: string };
+
+const MEDIA_LOAD_FAILURE: AttachmentFailure = { kind: "media" };
+
+/** "csv files" for report.csv; a name without an extension names no format. */
+function fileExtensionLabel(name: string): string {
+  const dot = name.lastIndexOf(".");
+  const extension = dot > 0 ? name.slice(dot + 1) : "";
+  return extension ? `${extension} files` : "this format";
 }
