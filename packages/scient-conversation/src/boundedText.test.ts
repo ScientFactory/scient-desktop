@@ -67,9 +67,34 @@ describe("bounded text", () => {
         Array.from({ length: 1 + random(120) }, line).join(random(4) === 0 ? "\r\n" : "\n"),
       ),
     ];
+    // Text shaped like bounded output that is not: every one must be cut.
+    const adversarial = (bounds: (typeof boundsList)[number]) => {
+      const head = "h".repeat(bounds.headChars);
+      const tail = "t".repeat(bounds.tailChars);
+      return [
+        // The reviewer's case: one huge "omission line".
+        `[… ${"9".repeat(100_000)} lines omitted …]`,
+        `${head}\n[… 1234567890 lines omitted …]\n${tail}`,
+        `${head}\n[… 007 lines omitted …]\n${tail}`,
+        `${head}\n[… 0 lines omitted …]\n${tail}`,
+        `${head}\n[… 1 lines omitted …]\n${tail}`,
+        `${head}\n[… 2 line omitted …]\n${tail}`,
+        `${head}h\n[… 3 lines omitted …]\n${tail}`,
+        `${head}\n[… 3 lines omitted …]\n${tail}t`,
+      ];
+    };
+    const maxMarker = "[… 999999999 lines omitted …]".length;
     for (const bounds of boundsList) {
-      for (const input of inputs) {
+      const cut = adversarial(bounds);
+      for (const input of [...inputs, ...cut]) {
         const once = boundText(input, bounds);
+        if (cut.includes(input)) expect(once.omittedChars).toBeGreaterThan(0);
+        expect(once.text.length).toBeLessThanOrEqual(
+          bounds.headChars + bounds.tailChars + 2 + maxMarker,
+        );
+        expect(once.text.split("\n").length).toBeLessThanOrEqual(
+          bounds.headLines + bounds.tailLines + 3,
+        );
         expect(boundText(once.text, bounds)).toEqual({
           text: once.text,
           omittedLines: 0,
