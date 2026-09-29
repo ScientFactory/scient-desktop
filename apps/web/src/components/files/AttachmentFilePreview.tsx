@@ -24,6 +24,10 @@ import { toastManager } from "~/components/ui/toast";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
+import {
+  MEDIA_FAILURE_COPY,
+  UNSUPPORTED_PREVIEW_TITLE,
+} from "~/scient/fileSurfaces/fileFailureCopy";
 
 import { AudioPreview } from "./AudioPreview";
 import { BrowserDocumentFrame } from "./BrowserDocumentFrame";
@@ -33,6 +37,7 @@ import {
   FileSurfaceAction,
   FileSurfaceFailure,
   FileSurfaceLoading,
+  FileSurfaceMessage,
   FileSurfaceNotice,
 } from "./fileSurfaceChrome";
 
@@ -230,7 +235,12 @@ export function AttachmentFilePreview(props: {
 
   const body = failure ? (
     <FileSurfaceFailure
-      message={failure}
+      title={
+        kind === "image" || kind === "audio" || kind === "video"
+          ? MEDIA_FAILURE_COPY[kind].title
+          : "Couldn't open this file"
+      }
+      description={failure}
       onRetry={() => {
         // Clearing first lets a local Blob preview remount: its URL never changes, so the
         // revision bump alone would re-render the same failed element.
@@ -253,7 +263,11 @@ export function AttachmentFilePreview(props: {
   ) : kind === "pdf" || kind === "html" ? (
     <BrowserDocumentFrame src={url} title={props.name} pdf={kind === "pdf"} />
   ) : kind === "audio" ? (
-    <AudioPreview src={url} name={props.name} onError={() => setError("Unable to load audio.")} />
+    <AudioPreview
+      src={url}
+      name={props.name}
+      onError={() => setError(MEDIA_FAILURE_COPY.audio.description)}
+    />
   ) : kind === "video" ? (
     <div className="flex min-h-0 flex-1 items-center justify-center bg-black">
       <video
@@ -262,7 +276,7 @@ export function AttachmentFilePreview(props: {
         src={url}
         aria-label={props.name}
         className="max-h-full max-w-full"
-        onError={() => setError("Unable to load video.")}
+        onError={() => setError(MEDIA_FAILURE_COPY.video.description)}
       />
     </div>
   ) : kind === "image" ? (
@@ -271,17 +285,14 @@ export function AttachmentFilePreview(props: {
         src={url}
         alt={props.name}
         className="max-h-full max-w-full object-contain"
-        onError={() => setError("Unable to load image.")}
+        onError={() => setError(MEDIA_FAILURE_COPY.image.description)}
       />
     </div>
   ) : (
-    <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-1 px-6 text-center">
-      <p className="scient-reading-ui text-sm font-medium">No preview for this file</p>
-      <p className="max-w-sm scient-reading-ui text-xs leading-relaxed text-muted-foreground">
-        Save it to open in an app that supports {props.name.split(".").at(-1) || "this format"}{" "}
-        files.
-      </p>
-    </div>
+    <FileSurfaceMessage
+      title={UNSUPPORTED_PREVIEW_TITLE}
+      description={`Save it to open in an app that supports ${fileExtensionLabel(props.name)}.`}
+    />
   );
 
   return (
@@ -360,4 +371,11 @@ export function AttachmentFilePreview(props: {
       {body}
     </div>
   );
+}
+
+/** "csv files" for report.csv; a name without an extension names no format. */
+function fileExtensionLabel(name: string): string {
+  const dot = name.lastIndexOf(".");
+  const extension = dot > 0 ? name.slice(dot + 1) : "";
+  return extension ? `${extension} files` : "this format";
 }

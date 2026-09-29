@@ -24,8 +24,11 @@ vi.mock("./fileSurfaceChrome", () => ({
   FileSurfaceAction: ({ label, onPress }: { label: string; onPress: () => void }) => (
     <button aria-label={label} onClick={onPress} />
   ),
-  FileSurfaceFailure: ({ message }: { message: string }) => <div role="alert">{message}</div>,
+  FileSurfaceFailure: ({ description }: { description: string }) => (
+    <div role="alert">{description}</div>
+  ),
   FileSurfaceLoading: () => <div role="status">Loading</div>,
+  FileSurfaceMessage: ({ title }: { title: string }) => <div role="status">{title}</div>,
   FileSurfaceNotice: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
 

@@ -123,9 +123,10 @@ export function ScientFileFreshnessNotices(props: {
         </div>
       ) : null}
       {props.relativePath && props.readError && props.hasFallbackData ? (
+        // The last good copy is still on screen, so this is a caution, not a failure.
         <div
-          className="flex shrink-0 items-center gap-2 border-b border-destructive/20 bg-destructive/5 px-3 py-2 scient-reading-micro text-destructive"
-          role="alert"
+          className="flex shrink-0 items-center gap-2 border-b border-warning/20 bg-warning-surface px-3 py-2 scient-reading-micro text-warning-foreground"
+          role="status"
         >
           <AlertTriangle className="size-3.5 shrink-0" aria-hidden="true" />
           <span className="min-w-0 flex-1 truncate">

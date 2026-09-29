@@ -36,6 +36,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "~/components/ui/menu";
+import { Button } from "~/components/ui/button";
+import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { toastManager } from "~/components/ui/toast";
 import { ensureLocalApi } from "~/localApi";
 import { cn } from "~/lib/utils";
@@ -162,10 +164,14 @@ export function ScientPdfReader(props: {
   if (asset._tag === "Failure") {
     return (
       <div className="scient-pdf-reader">
-        <div className="scient-pdf-state-card text-destructive">
-          <FileText className="size-6" aria-hidden="true" />
-          <h2>Unable to open PDF</h2>
+        <div className="scient-pdf-state-card" role="alert">
+          <FileText className="size-6 text-muted-foreground/70" aria-hidden="true" />
+          <h2>Couldn't open this PDF</h2>
           <p>Scient could not create an authorized preview for this file.</p>
+          <Button type="button" size="xs" variant="outline" onClick={asset.refresh}>
+            <RefreshIcon size="xs" />
+            Try again
+          </Button>
         </div>
       </div>
     );
@@ -764,9 +770,9 @@ function LoadedScientPdfReader(props: {
             </div>
           ) : state.phase === "error" ? (
             <div className="scient-pdf-state-overlay">
-              <div className="scient-pdf-state-card text-destructive">
-                <FileText className="size-6" aria-hidden="true" />
-                <h2>Unable to open PDF</h2>
+              <div className="scient-pdf-state-card" role="alert">
+                <FileText className="size-6 text-muted-foreground/70" aria-hidden="true" />
+                <h2>Couldn't open this PDF</h2>
                 <p>{state.error}</p>
               </div>
             </div>
