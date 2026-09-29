@@ -397,12 +397,16 @@ function sectionGroupIdOf(
  * unarchived thread of the scope, on any shelf. A section with no threads
  * anywhere is listed in the projects it was created for, so a new section
  * stays in view to be filled; one without that record lists only under All
- * projects.
+ * projects. "No threads anywhere" is only concluded when every environment
+ * that has held its threads is loaded here; otherwise its threads may simply
+ * not be visible yet.
  */
 export function sectionIdsInProjectScope(input: {
   readonly sections: readonly ThreadSection[];
   /** The scope's `${environmentId}:${projectId}` keys; null for All projects. */
   readonly scopeProjectKeys: ReadonlySet<string> | null;
+  /** Environments whose threads this client currently holds. */
+  readonly loadedEnvironmentIds: ReadonlySet<string>;
   /** Every thread this client knows, across projects and shelves. */
   readonly threads: ReadonlyArray<{
     readonly environmentId: string;
@@ -422,6 +426,10 @@ export function sectionIdsInProjectScope(input: {
   }
   for (const section of input.sections) {
     if (occupied.has(section.id)) continue;
+    const allLoaded = (section.environmentIds ?? []).every((id) =>
+      input.loadedEnvironmentIds.has(id),
+    );
+    if (!allLoaded) continue;
     if ((section.createdInProjects ?? []).some((ref) => scope.has(projectRefKey(ref)))) {
       inScope.add(section.id);
     }
@@ -511,6 +519,8 @@ export type SectionsListItem =
       readonly lifecycle: SectionsLifecycle;
       /** The group the row renders in; null on the snoozed and settled shelves. */
       readonly groupId: string | null;
+      /** A snoozed row that keeps its pin; it rejoins the pinned rows when dropped. */
+      readonly pinned?: boolean;
     }
   | { readonly kind: "shelf"; readonly id: string; readonly shelf: "snoozed" | "settled" };
 
@@ -531,8 +541,57 @@ export function sectionsDropIndex(
   activeIndex: number,
   overIndex: number,
 ): number {
-  if (items[overIndex]?.kind !== "header" || overIndex > activeIndex) return overIndex;
-  return overIndex + 1;
+  const active = items[activeIndex];
+  const index =
+    items[overIndex]?.kind === "header" && overIndex < activeIndex ? overIndex + 1 : overIndex;
+  if (active?.kind !== "thread") return index;
+  // A drop never changes a pin, and a section lists pinned rows first, so the
+  // row lands on its own side of that boundary (where the planner puts it).
+  const moved = items.filter((_, position) => position !== activeIndex);
+  let header = -1;
+  for (let position = index - 1; position >= 0; position -= 1) {
+    const item = moved[position]!;
+    if (item.kind === "thread") continue;
+    header = item.kind === "header" ? position : -1;
+    break;
+  }
+  if (header < 0) return index;
+  let firstActive = header + 1;
+  for (let row = moved[firstActive]; row?.kind === "thread" && row.lifecycle === "pinned";) {
+    firstActive += 1;
+    row = moved[firstActive];
+  }
+  return droppedAsPinned(active) ? Math.min(index, firstActive) : Math.max(index, firstActive);
+}
+
+/** Whether a dropped row joins its section's pinned rows (settling clears a pin). */
+function droppedAsPinned(item: Extract<SectionsListItem, { kind: "thread" }>): boolean {
+  return item.lifecycle === "pinned" || (item.lifecycle === "snoozed" && item.pinned === true);
+}
+
+/**
+ * A section's full row order after a drop, from the order the list showed:
+ * a collapsed section shows only some of its rows (or none), so the dropped
+ * row is placed before the shown row it landed above, else after the one it
+ * landed below, else at the top.
+ */
+export function expandSectionDropOrder(input: {
+  /** The section's rows as shown, with the dropped row in place. */
+  readonly shownOrder: readonly string[];
+  /** Every row of the section before the drop, in order. */
+  readonly fullOrder: readonly string[];
+  readonly droppedId: string;
+}): string[] {
+  const { droppedId, shownOrder } = input;
+  const full = input.fullOrder.filter((id) => id !== droppedId);
+  const at = shownOrder.indexOf(droppedId);
+  const next = shownOrder[at + 1];
+  const previous = at > 0 ? shownOrder[at - 1] : undefined;
+  const nextIndex = next === undefined ? -1 : full.indexOf(next);
+  const previousIndex = previous === undefined ? -1 : full.indexOf(previous);
+  const insertAt = nextIndex >= 0 ? nextIndex : previousIndex >= 0 ? previousIndex + 1 : 0;
+  full.splice(insertAt, 0, droppedId);
+  return full;
 }
 
 /**
@@ -613,6 +672,8 @@ export function planSectionsThreadDrop(input: {
   readonly pinnedKeysById: ReadonlyMap<string, string | null | undefined>;
   readonly activeKeysById: ReadonlyMap<string, string | null | undefined>;
   readonly toSectionId: (groupId: string) => ThreadSectionId | null;
+  /** Whether these threads' servers accept order-key writes (default: yes). */
+  readonly canWriteOrderKeys?: (ids: readonly string[], group: "pinned" | "active") => boolean;
 }): SectionsThreadDropPlan {
   const { source, target } = input;
   if (target.kind === "settled") {
@@ -638,7 +699,7 @@ export function planSectionsThreadDrop(input: {
   // A thread landing alone (an empty or collapsed section) keeps its key:
   // with no neighbours to sit between, a new key would only move it in the
   // Status view.
-  const assignments =
+  const planned =
     orderChanged && orderedIds.length > 1
       ? planPinnedReorder({
           orderedIds,
@@ -646,6 +707,14 @@ export function planSectionsThreadDrop(input: {
           movedId: source.key,
         })
       : [];
+  // Keys are written all or nothing; without them only the move itself remains.
+  const writable =
+    input.canWriteOrderKeys?.(
+      planned.map((assignment) => assignment.id),
+      group,
+    ) ?? true;
+  const assignments = writable ? planned : [];
+  if (!sectionChanged && !lifecycleChanged && assignments.length === 0) return { kind: "none" };
   return {
     kind: "move",
     ...(sectionChanged ? { sectionId: input.toSectionId(target.groupId) } : {}),

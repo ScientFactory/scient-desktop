@@ -59,6 +59,7 @@ import {
   resolveSectionsDropTarget,
   type SectionBlock,
   sectionsDropIndex,
+  expandSectionDropOrder,
   sectionShifts,
   sectionGroupIdFromHeaderItemId,
   sectionHeaderItemId,
@@ -239,7 +240,13 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
     if (props.showSnoozedShelf) {
       items.push({ kind: "shelf", id: shelfMarkerId("snoozed"), shelf: "snoozed" });
       for (const thread of snoozedThreads) {
-        items.push({ kind: "thread", id: keyOf(thread), lifecycle: "snoozed", groupId: null });
+        items.push({
+          kind: "thread",
+          id: keyOf(thread),
+          lifecycle: "snoozed",
+          groupId: null,
+          ...(thread.pinnedAt != null ? { pinned: true } : {}),
+        });
       }
     }
     items.push({ kind: "shelf", id: shelfMarkerId("settled"), shelf: "settled" });
@@ -304,13 +311,21 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
     [items],
   );
 
-  const orderOfGroup = useCallback(
-    (groupId: string) =>
-      items.flatMap((item) =>
-        item.kind === "thread" && item.groupId === groupId ? [item.id] : [],
-      ),
-    [items],
+  // Every row of each section, including those a collapsed section hides:
+  // a drop is planned against the whole section, not only what it shows.
+  const fullOrderByGroup = useMemo(
+    () => new Map(groups.map((group) => [group.id, group.threads.map(keyOf)])),
+    [groups],
   );
+  const planLifecycleByKey = useMemo(() => {
+    const map = new Map(lifecycleByKey);
+    for (const group of groups) {
+      for (const thread of group.threads) {
+        map.set(keyOf(thread), thread.pinnedAt != null ? "pinned" : "active");
+      }
+    }
+    return map;
+  }, [groups, lifecycleByKey]);
 
   const handleDragStart = useCallback(
     (event: DragStartEvent) => {
@@ -411,8 +426,20 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
     (activeKey: string, overId: string) => {
       const thread = threadByKey.get(activeKey);
       const source = items.find((item) => item.id === activeKey);
-      const target = resolveSectionsDropTarget(items, activeKey, overId);
-      if (thread === undefined || source?.kind !== "thread" || target === null) return null;
+      const shown = resolveSectionsDropTarget(items, activeKey, overId);
+      if (thread === undefined || source?.kind !== "thread" || shown === null) return null;
+      const fullOrder = shown.kind === "section" ? fullOrderByGroup.get(shown.groupId) : undefined;
+      const target =
+        shown.kind === "section" && fullOrder !== undefined
+          ? {
+              ...shown,
+              order: expandSectionDropOrder({
+                shownOrder: shown.order,
+                fullOrder,
+                droppedId: activeKey,
+              }),
+            }
+          : shown;
       const plan = planSectionsThreadDrop({
         source: {
           key: activeKey,
@@ -421,16 +448,23 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
           pinned: thread.pinnedAt != null,
         },
         target,
-        targetOrderBefore: target.kind === "section" ? orderOfGroup(target.groupId) : [],
-        lifecycleByKey,
+        targetOrderBefore: target.kind === "section" ? (fullOrder ?? []) : [],
+        lifecycleByKey: planLifecycleByKey,
         pinnedKeysById,
         activeKeysById,
         toSectionId: (groupId) =>
           groupId === GENERAL_SECTION_GROUP_ID ? null : ThreadSectionId.make(groupId),
+        canWriteOrderKeys: (ids, group) =>
+          ids.every((id) => {
+            const row = threadByKey.get(id);
+            return (
+              row !== undefined && readEnvironmentSupportsThreadReorder(row.environmentId, group)
+            );
+          }),
       });
       return plan.kind === "none" ? null : { thread, target, plan };
     },
-    [activeKeysById, items, lifecycleByKey, orderOfGroup, pinnedKeysById, threadByKey],
+    [activeKeysById, fullOrderByGroup, items, pinnedKeysById, planLifecycleByKey, threadByKey],
   );
 
   // Only a drop that changes something highlights its section or shelf.
@@ -466,16 +500,7 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
         ids.splice(sectionsDropIndex(items, activeIndex, overIndex), 0, activeKey);
         setHeld({ ids, expiresAt: Date.now() + HELD_LAYOUT_MS });
       }
-      // Order keys are written only where every row's server takes them; the
-      // section move does not depend on them.
-      const assignments = plan.assignments.every((assignment) => {
-        const row = threadByKey.get(assignment.id);
-        return (
-          row !== undefined && readEnvironmentSupportsThreadReorder(row.environmentId, plan.group)
-        );
-      })
-        ? plan.assignments
-        : [];
+
       const release = () => setHeld(null);
       void (async () => {
         if (plan.unsettle) {
@@ -497,7 +522,7 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
             ? moveThreadsToSection([threadRef], plan.sectionId)
             : Promise.resolve(true);
         // Stop on failure; each successful key write remains a valid placement.
-        for (const assignment of assignments) {
+        for (const assignment of plan.assignments) {
           const target = threadByKey.get(assignment.id);
           if (target === undefined) continue;
           const result = await (

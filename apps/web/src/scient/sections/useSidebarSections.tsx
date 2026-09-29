@@ -8,7 +8,7 @@ import type {
   ThreadSectionProjectRef,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { type ReactNode, useCallback, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 
 import { stackedThreadToast, toastManager } from "../../components/ui/toast";
 import type { useHandleNewThread } from "../../hooks/useHandleNewThread";
@@ -18,18 +18,13 @@ import { readLocalApi } from "../../localApi";
 import { useEnvironments } from "../../state/environments";
 import { useThreadSectionActions } from "./actions";
 import { useThreadSectionCatalog } from "./catalog";
-import {
-  groupThreadsBySection,
-  mergeListedGroupOrder,
-  sectionIdsInProjectScope,
-  sectionLayoutOrder,
-  SidebarViewMode,
-} from "./logic";
+import { groupThreadsBySection, sectionIdsInProjectScope, SidebarViewMode } from "./logic";
 import {
   rememberSectionForNewThread,
   useApplyPendingNewThreadSections,
 } from "./pendingNewThreadSections";
 import { SidebarSectionsToggle } from "./SidebarSectionsToggle";
+import { setSidebarSectionScope } from "./sidebarScope";
 import type { SidebarSectionsViewProps } from "./SidebarSectionsView";
 import { useEmptySectionCleanup } from "./useEmptySectionCleanup";
 import { sectionOriginForThreads, useNewSectionForThreads } from "./useNewSectionForThreads";
@@ -88,7 +83,12 @@ export function useSidebarSections(input: {
   } = input;
   const catalog = useThreadSectionCatalog();
   const { moveThreadsToSection, setThreadSection } = useThreadSectionActions();
-  const newSectionDialog = useNewSectionForThreads(scopeProjectRefs);
+  const newSectionDialog = useNewSectionForThreads();
+  // Section creation outside the sidebar records the same selected project.
+  useEffect(() => {
+    setSidebarSectionScope(scopeProjectRefs);
+    return () => setSidebarSectionScope(null);
+  }, [scopeProjectRefs]);
   const { environments } = useEnvironments();
 
   const [viewMode, setViewMode] = useLocalStorage(
@@ -119,14 +119,24 @@ export function useSidebarSections(input: {
         : new Set(scopeProjectRefs.map((ref) => `${ref.environmentId}:${ref.projectId}`)),
     [scopeProjectRefs],
   );
+  const loadedKey = environments
+    .filter((environment) => environment.connection.phase === "connected")
+    .map((environment) => environment.environmentId)
+    .toSorted()
+    .join("\n");
+  const loadedEnvironmentIds = useMemo(
+    () => new Set(loadedKey.length > 0 ? loadedKey.split("\n") : []),
+    [loadedKey],
+  );
   const listedSectionIds = useMemo(
     () =>
       sectionIdsInProjectScope({
         sections: catalog.sections,
         scopeProjectKeys,
+        loadedEnvironmentIds,
         threads: input.threads,
       }),
-    [catalog.sections, input.threads, scopeProjectKeys],
+    [catalog.sections, input.threads, loadedEnvironmentIds, scopeProjectKeys],
   );
   const groups = useMemo(
     () =>
@@ -247,11 +257,7 @@ export function useSidebarSections(input: {
   /** Takes the new order of the listed groups; hidden sections keep their slots. */
   const reorderSections = useCallback(
     (listedOrder: readonly string[]) => {
-      const orderedIds = mergeListedGroupOrder(
-        sectionLayoutOrder(catalog.sections, catalog.generalIndex),
-        listedOrder,
-      );
-      void catalog.reorder(orderedIds).then((saved) => {
+      void catalog.reorder(listedOrder).then((saved) => {
         if (!saved) {
           toastManager.add(
             stackedThreadToast({ type: "error", title: "Failed to reorder sections" }),

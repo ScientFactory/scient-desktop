@@ -147,8 +147,8 @@ export type ThreadSectionsPrecondition = typeof ThreadSectionsPrecondition.Type;
 /**
  * Whether two catalogs hold the same entries in the same order. Leaves out
  * `createdInProjects`: clients that predate it drop the field when they read
- * the catalog, and must still pass the write precondition. Their writes erase
- * it, so an empty section then lists only under All projects.
+ * the catalog, and must still pass the write precondition. The server keeps
+ * the stored refs on every write instead, since refs are only ever added.
  */
 export function threadSectionCatalogsEqual(left: ThreadSections, right: ThreadSections): boolean {
   const sameIds = (a?: ReadonlyArray<string>, b?: ReadonlyArray<string>) =>

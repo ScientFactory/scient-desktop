@@ -22,9 +22,11 @@ import {
   catalogWithRestoredSection,
   catalogWithoutSection,
   layoutFromGroupOrder,
+  mergeListedGroupOrder,
   readThreadSections,
   type SectionOccupancy,
   type SectionOrigin,
+  sectionLayoutOrder,
   sweepEmptySections,
 } from "./logic";
 import { type CatalogEdit, type LiveLayout, writeCatalog } from "./catalogWrite";
@@ -65,8 +67,12 @@ export interface ThreadSectionCatalog {
     sectionId: string,
     environmentIds: readonly string[],
   ) => Promise<boolean>;
-  /** Applies a group order that may include General. */
-  readonly reorder: (orderedGroupIds: readonly string[]) => Promise<boolean>;
+  /**
+   * Applies a new order of the listed groups (General included). Sections not
+   * listed, such as those hidden by a project scope or created elsewhere
+   * meanwhile, keep their slots.
+   */
+  readonly reorder: (listedGroupIds: readonly string[]) => Promise<boolean>;
 }
 
 export function useThreadSectionCatalog(): ThreadSectionCatalog {
@@ -234,10 +240,18 @@ export function useThreadSectionCatalog(): ThreadSectionCatalog {
   );
 
   const reorder = useCallback(
-    async (orderedGroupIds: readonly string[]) =>
+    async (listedGroupIds: readonly string[]) =>
+      // Merged against each attempt's catalog, so a retry after another
+      // client's edit still leaves unlisted sections where that edit put them.
       (
         await write((layout) => ({
-          layout: layoutFromGroupOrder(layout.sections, orderedGroupIds),
+          layout: layoutFromGroupOrder(
+            layout.sections,
+            mergeListedGroupOrder(
+              sectionLayoutOrder(layout.sections, layout.generalIndex),
+              listedGroupIds,
+            ),
+          ),
           result: true,
         }))
       ).ok,

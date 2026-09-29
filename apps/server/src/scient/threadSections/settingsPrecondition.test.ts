@@ -45,4 +45,23 @@ describe("applyThreadSectionsPrecondition", () => {
       threadSections: [beta],
     });
   });
+
+  it("keeps the projects a stored section was created for, whoever writes", () => {
+    const a = { environmentId: "local", projectId: "a" };
+    const b = { environmentId: "local", projectId: "b" };
+    const stored = { ...current, threadSections: [{ ...alpha, createdInProjects: [a] }] };
+    // A client that predates the field, or whose copy trails, writes without it.
+    expect(
+      applyThreadSectionsPrecondition(stored, {
+        threadSections: [{ ...alpha, name: "Renamed" }, beta],
+        threadSectionsExpected: { threadSections: [alpha], threadSectionsGeneralIndex: 0 },
+      }).threadSections,
+    ).toEqual([{ ...alpha, name: "Renamed", createdInProjects: [a] }, beta]);
+    // New refs are added after the stored ones, without duplicates.
+    expect(
+      applyThreadSectionsPrecondition(stored, {
+        threadSections: [{ ...alpha, createdInProjects: [b, a] }],
+      }).threadSections,
+    ).toEqual([{ ...alpha, createdInProjects: [a, b] }]);
+  });
 });

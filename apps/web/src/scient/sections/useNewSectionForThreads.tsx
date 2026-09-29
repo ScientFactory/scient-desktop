@@ -6,6 +6,7 @@ import { useThreadSectionActions } from "./actions";
 import { useThreadSectionCatalog } from "./catalog";
 import type { SectionOrigin } from "./logic";
 import { NewSectionDialog } from "./NewSectionDialog";
+import { readSidebarSectionScope } from "./sidebarScope";
 
 /**
  * What a section created for `threadRefs` records: their environments, and
@@ -30,9 +31,7 @@ export function sectionOriginForThreads(
  * "New section…" from a thread menu: asks for a name, creates the section
  * (or reuses one with that name) and files the threads into it in one step.
  */
-export function useNewSectionForThreads(
-  scopeProjectRefs: readonly ThreadSectionProjectRef[] | null = null,
-): {
+export function useNewSectionForThreads(): {
   readonly request: (threadRefs: readonly ScopedThreadRef[]) => void;
   readonly dialog: ReactNode;
 } {
@@ -51,13 +50,13 @@ export function useNewSectionForThreads(
       const threadRefs = pending ?? [];
       const section = await catalog.create(
         name,
-        sectionOriginForThreads(threadRefs, scopeProjectRefs),
+        sectionOriginForThreads(threadRefs, readSidebarSectionScope()),
       );
       if (section === null) return false;
       if (threadRefs.length > 0) await moveThreadsToSection(threadRefs, section.id);
       return true;
     },
-    [catalog, moveThreadsToSection, pending, scopeProjectRefs],
+    [catalog, moveThreadsToSection, pending],
   );
 
   return {
