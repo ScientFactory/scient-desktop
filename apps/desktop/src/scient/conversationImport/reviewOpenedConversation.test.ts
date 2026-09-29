@@ -31,6 +31,8 @@ vi.mock("electron", async () => {
       mocks.windows.push(this);
     }
     setMenu() {}
+    readonly setResizable = vi.fn();
+    readonly setContentSize = vi.fn();
     isDestroyed() {
       return this.destroyed;
     }
@@ -131,6 +133,40 @@ describe("focused local conversation window", () => {
     await vi.waitFor(() => expect(window().urls.at(-1)).toContain('id="continue"'));
     action("continue");
     expect(await result).toEqual(identity);
+  });
+  it("opens compact and grows only while the person reads the conversation", async () => {
+    const result = reviewOpenedConversation(file);
+    await vi.waitFor(() => expect(window().urls.at(-1)).toContain('id="continue"'));
+    expect(window().options).toMatchObject({
+      width: 440,
+      height: 196,
+      useContentSize: true,
+      resizable: false,
+    });
+    const resized = window() as unknown as {
+      setResizable: ReturnType<typeof vi.fn>;
+      setContentSize: ReturnType<typeof vi.fn>;
+    };
+    action("expand", new NodeEvents.EventEmitter());
+    expect(resized.setContentSize).not.toHaveBeenCalled();
+    action("expand");
+    expect(resized.setResizable).toHaveBeenLastCalledWith(true);
+    expect(resized.setContentSize).toHaveBeenLastCalledWith(640, 600, true);
+    action("collapse");
+    expect(resized.setResizable).toHaveBeenLastCalledWith(false);
+    expect(resized.setContentSize).toHaveBeenLastCalledWith(440, 196, true);
+    action("cancel");
+    expect(await result).toBeNull();
+  });
+  it("a read-only preview ignores resize requests", async () => {
+    const result = reviewOpenedConversation(file, true);
+    await vi.waitFor(() => expect(window().urls.at(-1)).toContain("Example"));
+    action("expand");
+    expect(
+      (window() as unknown as { setContentSize: ReturnType<typeof vi.fn> }).setContentSize,
+    ).not.toHaveBeenCalled();
+    action("cancel");
+    expect(await result).toBeNull();
   });
   it("read-only mode cannot initiate an import, even through its action channel", async () => {
     const result = reviewOpenedConversation(file, true);

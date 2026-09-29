@@ -7,7 +7,7 @@ import type {
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { FileUpIcon, ImportIcon } from "lucide-react";
-import { useEffect, useEffectEvent, useId, useMemo, useRef, useState } from "react";
+import { type RefObject, useEffect, useEffectEvent, useId, useMemo, useRef, useState } from "react";
 
 import { Button } from "../../components/ui/button";
 import {
@@ -406,6 +406,7 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
   // The desktop streams one opened file at a time; a new attempt waits for the last.
   const desktopUploadRef = useRef<Promise<unknown>>(Promise.resolve());
   const primaryRef = useRef<HTMLButtonElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   // Opening focuses the dialog itself; Import takes focus once the check is done.
   const popupRef = useRef<HTMLDivElement>(null);
 
@@ -740,7 +741,7 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
       <DialogPopup
         ref={popupRef}
         initialFocus={popupRef}
-        className="sm:max-w-md"
+        className="sm:max-w-sm"
         showCloseButton={false}
       >
         <DialogHeader>
@@ -754,7 +755,7 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
               </p>
             ) : null}
             {file === null ? (
-              <ConversationFileChoice />
+              <ConversationFileChoice inputRef={fileInputRef} />
             ) : unreadable !== null ? (
               <p role="alert" className="text-sm">
                 {unreadable}
@@ -906,10 +907,16 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
             ) : null}
           </div>
         </DialogPanel>
-        <DialogFooter>
+        <DialogFooter variant="bare">
           <Button type="button" variant="outline" disabled={!closable} onClick={close}>
             {confirmation === null ? "Cancel" : "Close"}
           </Button>
+          {file === null ? (
+            <Button type="button" onClick={() => fileInputRef.current?.click()}>
+              <FileUpIcon />
+              Choose file…
+            </Button>
+          ) : null}
           {file !== null && unreadable === null && (!damagedMarkers || importing) ? (
             <Button
               ref={primaryRef}
@@ -928,18 +935,18 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
   );
 }
 
-/** Where a file is chosen when the dialog opened without one. */
-function ConversationFileChoice() {
-  const inputRef = useRef<HTMLInputElement>(null);
+/**
+ * Where a file is chosen when the dialog opened without one; the footer's
+ * primary button opens the picker.
+ */
+function ConversationFileChoice({
+  inputRef,
+}: {
+  readonly inputRef: RefObject<HTMLInputElement | null>;
+}) {
   return (
-    <div data-conversation-file-choice className="flex flex-col items-start gap-2">
-      <p className="text-muted-foreground text-sm">
-        Choose a Scient conversation (.scic) or Markdown (.md) file, or drop one here.
-      </p>
-      <Button type="button" size="sm" variant="outline" onClick={() => inputRef.current?.click()}>
-        <FileUpIcon />
-        Choose file…
-      </Button>
+    <div data-conversation-file-choice>
+      <p className="text-muted-foreground text-sm">Choose a .scic or .md file, or drop it here.</p>
       <input
         ref={inputRef}
         type="file"

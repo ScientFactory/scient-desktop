@@ -1278,7 +1278,7 @@ describe("ConversationImportDialog", () => {
     await act(async () => requestConversationImport());
     await flush();
     expect(createConversationImportUpload).not.toHaveBeenCalled();
-    expect(visibleButtons()).toEqual(["Choose file…", "Cancel"]);
+    expect(visibleButtons()).toEqual(["Cancel", "Choose file…"]);
 
     const input = dialog()!.querySelector<HTMLInputElement>('input[type="file"]')!;
     expect(input.accept).toBe(".scic,.md");

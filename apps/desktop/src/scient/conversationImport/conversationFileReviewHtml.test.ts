@@ -11,7 +11,9 @@ describe("local conversation preview document", () => {
       messages: [{ role: "user", text: "Hello" }],
     };
     const opening = conversationFileReviewHtml(content);
-    expect(opening).toContain("<details><summary>Read conversation (optional)</summary>");
+    expect(opening).toContain('<details id="read"><summary>Read conversation</summary>');
+    expect(opening).toContain("1 message · 0 attachments");
+    expect(opening).not.toContain("Continue to choose where to import");
     expect(opening).not.toContain("<details open");
     expect(opening).toContain('id="continue"');
     const preview = conversationFileReviewHtml(content, undefined, true);
