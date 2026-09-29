@@ -30,6 +30,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  ThreadSectionId,
   TurnId,
   type OrchestrationEvent,
   type OrchestrationReadModel,
@@ -156,6 +157,25 @@ function threadCreatedEvent(threadId: ThreadId, title: string, eventId: string):
       createdAt: NOW,
       updatedAt: NOW,
     },
+  };
+}
+
+function threadSectionFiledEvent(
+  threadId: ThreadId,
+  sectionId: ThreadSectionId,
+  eventId: string,
+): EventInput {
+  return {
+    type: "thread.meta-updated",
+    eventId: EventId.make(eventId),
+    aggregateKind: "thread",
+    aggregateId: threadId,
+    occurredAt: NOW,
+    commandId: CommandId.make(`cmd-${eventId}`),
+    causationEventId: null,
+    correlationId: CorrelationId.make(`cmd-${eventId}`),
+    metadata: {},
+    payload: { threadId, sectionId, updatedAt: NOW },
   };
 }
 
@@ -491,6 +511,11 @@ it.layer(Layer.fresh(makeCrossAreaTestLayer("t3-cross-005-")))(
           turnDiffCompletedEvent(ORIGIN, T3, 3, A3, "2026-04-01T00:00:06.500Z", "evt-tdc-3"),
         );
 
+        // The origin is filed in a section; the fork must land there too.
+        yield* appendAndProject(
+          threadSectionFiledEvent(ORIGIN, ThreadSectionId.make("cross-section"), "evt-section"),
+        );
+
         // 2. Resolve boundaries from SQL — select the non-final assistant a2.
         const resolver = makeForkBoundaryResolver(sql);
         const resolved = yield* resolver.resolve({
@@ -617,6 +642,12 @@ it.layer(Layer.fresh(makeCrossAreaTestLayer("t3-cross-005-")))(
           originTurns.map((t) => t.turn_id),
           [T1, T2, T3],
         );
+
+        // 10. The fork is stored in the origin's section.
+        const destSection = yield* sql<{ readonly section_id: string | null }>`
+          SELECT section_id FROM projection_threads WHERE thread_id = 'cross-fork-005'
+        `;
+        assert.strictEqual(destSection[0]?.section_id, "cross-section");
       }),
     );
   },

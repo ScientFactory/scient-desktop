@@ -461,6 +461,24 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
       updatedAt: occurredAt,
     },
   });
+  // A fork stays in its origin's section. Filed in the same decision, so the
+  // fork is never briefly unsectioned. An id whose catalog entry was removed
+  // reads as General, exactly like the origin.
+  if (origin.sectionId != null) {
+    events.push({
+      ...(yield* withForkEventBase({
+        commandId: command.commandId,
+        aggregateId: command.newThreadId,
+        occurredAt,
+      })),
+      type: "thread.meta-updated",
+      payload: {
+        threadId: command.newThreadId,
+        sectionId: origin.sectionId,
+        updatedAt: occurredAt,
+      },
+    });
+  }
 
   // The imported transcript is one immutable provider-neutral baseline. It is
   // deliberately not represented as N native provider turns: the new provider
