@@ -119,16 +119,14 @@ about, and each was found by reading the composed result.
   `ProviderStatusBanner.test.ts`, and the reason it is safe is that the
   incompatible branch returns first.
 
-## Upstream inconsistency carried forward (not a fork change)
+## Claude version gates
 
 `72330e22c0` adds `claude-sonnet-5-5` with `adapter.claudeCode.minVersion`
-`2.1.284`, while the `claudeAgent` compatibility block still declares
-`recommendedRange: ">=2.1.280"` and tops out at `>=2.1.280` supported. The
-`claudeAgent` block is byte-identical at the boundary, at `upstream/main`, and
-on the fork, so this gap is upstream's own, not a composition artifact. It fails
-safe: the model is hidden below 2.1.284 while the driver still reads as
-supported. Raising the driver range is a fork product decision and was not made
-here.
+`2.1.284`. The existing `claudeAgent` compatibility block recommends and
+supports `>=2.1.280`, which has no upper bound. Thus Claude Code 2.1.280–2.1.283
+remains supported for other models while Sonnet 5.5 is hidden until 2.1.284.
+These are separate provider and model gates, not a merge inconsistency; no
+driver-policy change is needed for this alignment.
 
 ## Dependencies
 
