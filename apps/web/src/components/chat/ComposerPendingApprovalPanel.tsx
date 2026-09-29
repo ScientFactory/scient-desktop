@@ -48,6 +48,11 @@ export const ComposerPendingApprovalPanel = memo(function ComposerPendingApprova
           <span className="ml-auto shrink-0 tabular-nums">1/{pendingCount}</span>
         ) : null}
       </span>
+      {approval.responseError ? (
+        <span role="alert" className="text-xs text-destructive">
+          {approval.responseError}
+        </span>
+      ) : null}
       <Detail
         aria-label={detailAriaLabel}
         className={cn(

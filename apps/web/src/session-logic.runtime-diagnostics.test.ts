@@ -27,11 +27,16 @@ function makeActivity(
 }
 
 describe("runtime diagnostics in the work log", () => {
-  it("shows the retained error message in place of its generic row label", () => {
+  it("keeps a concise error label and retains the technical message for expansion", () => {
     const [entry] = deriveWorkLogEntries([makeActivity()]);
 
-    expect(entry).toMatchObject({ label: "Runtime error", detail: retainedMessage });
-    expect(entry && workEntryDisplayLabel(entry, undefined)).toBe(retainedMessage);
+    expect(entry).toMatchObject({
+      label: "The agent encountered a problem",
+      detail: retainedMessage,
+    });
+    expect(entry && workEntryDisplayLabel(entry, undefined)).toBe(
+      "The agent encountered a problem",
+    );
   });
 
   it("shows the retained warning message beyond its truncated label", () => {

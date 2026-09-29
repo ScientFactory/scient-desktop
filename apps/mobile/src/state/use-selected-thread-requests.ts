@@ -1,3 +1,4 @@
+import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import { derivePendingRequests } from "@t3tools/client-runtime/pending-requests";
 import { useServerConfigs } from "./entities";
 import { Alert } from "react-native";
@@ -99,10 +100,28 @@ export function useSelectedThreadRequests() {
     null,
   );
 
-  const { approvals: activePendingApprovals, userInputs: activePendingUserInputs } = useMemo(
-    () => derivePendingRequests(selectedThread?.activities ?? []),
-    [selectedThread?.activities],
+  const [responseErrors, setResponseErrors] = useState<Record<string, string>>({});
+  const setResponseError = useCallback(
+    (requestId: ApprovalRequestId, message: string) => {
+      if (!selectedThreadShell) return;
+      const key = scopedRequestKey(selectedThreadShell.environmentId, requestId);
+      setResponseErrors((errors) => ({ ...errors, [key]: message }));
+    },
+    [selectedThreadShell],
   );
+  const { approvals: activePendingApprovals, userInputs: activePendingUserInputs } = useMemo(() => {
+    const requests = derivePendingRequests(selectedThread?.activities ?? []);
+    const withError = <T extends { requestId: ApprovalRequestId }>(request: T) => {
+      const responseError = selectedThreadShell
+        ? responseErrors[scopedRequestKey(selectedThreadShell.environmentId, request.requestId)]
+        : undefined;
+      return responseError ? { ...request, responseError } : request;
+    };
+    return {
+      approvals: requests.approvals.map(withError),
+      userInputs: requests.userInputs.map(withError),
+    };
+  }, [selectedThread?.activities, selectedThreadShell, responseErrors]);
   const activePendingApproval = activePendingApprovals[0] ?? null;
   const activePendingUserInput = activePendingUserInputs[0] ?? null;
   const questionServerConfigs = useServerConfigs();
@@ -227,10 +246,13 @@ export function useSelectedThreadRequests() {
           decision,
         },
       });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        setResponseError(requestId, "Approval could not be sent. Try again.");
+      }
       setRespondingApprovalId((current) => (current === requestId ? null : current));
       return result;
     },
-    [respondToApproval, selectedThreadShell],
+    [respondToApproval, selectedThreadShell, setResponseError],
   );
 
   const onSubmitUserInput = useCallback(async () => {
@@ -296,6 +318,12 @@ export function useSelectedThreadRequests() {
           : {}),
       },
     });
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      setResponseError(
+        activePendingUserInput.requestId,
+        "Your response could not be sent. Try again.",
+      );
+    }
     userInputResponsesInFlight.current.delete(responseKey);
     setRespondingUserInputId((current) =>
       current === activePendingUserInput.requestId ? null : current,
@@ -306,6 +334,7 @@ export function useSelectedThreadRequests() {
     activePendingUserInputAnswers,
     respondToUserInput,
     selectedThreadShell,
+    setResponseError,
   ]);
 
   // Closes an async question without messaging the agent.
@@ -322,11 +351,17 @@ export function useSelectedThreadRequests() {
         requestId: activePendingUserInput.requestId,
       },
     });
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      setResponseError(
+        activePendingUserInput.requestId,
+        "The question could not be dismissed. Try again.",
+      );
+    }
     setRespondingUserInputId((current) =>
       current === activePendingUserInput.requestId ? null : current,
     );
     return result;
-  }, [activePendingUserInput, dismissUserInput, selectedThreadShell]);
+  }, [activePendingUserInput, dismissUserInput, selectedThreadShell, setResponseError]);
 
   return {
     activePendingApproval,

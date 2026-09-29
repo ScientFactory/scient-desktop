@@ -168,12 +168,37 @@ which agent is behind them. See [providers.md](./providers.md).
 
 ## Checkpointing
 
-Each turn is bracketed by workspace checkpoints so diffs and reverts are exact. `CheckpointStore`
+Scient attempts workspace checkpoints around each turn to support diffs and reverts. Capture
+availability is separate from whether the agent answered successfully. `CheckpointStore`
 captures state as hidden Git refs through the VCS driver's checkpoint operations;
 `CheckpointDiffQuery` answers turn and full-thread diff requests; `CheckpointReactor` coordinates
 baseline capture, completed-turn capture, diff projection, and reverting both the workspace and the
 provider conversation. The storage contract is `VcsCheckpointOps` in
 [`VcsDriver.ts`](../../apps/server/src/vcs/VcsDriver.ts), implemented for Git in the same directory.
+
+Capture admission retains its limits (512 MiB per changed file, 1 GiB in changed files and bounded
+path enumeration), together with the existing execution timeout. Size accounting measures symlinks without following their targets and resolves
+porcelain paths from the repository root, within the workspace staging pathspec. A declined capture
+has a typed availability error; it is not reported as a fabricated Git process exit. Capture still stages in a temporary repository and
+publishes only after successful staging, with cleanup on failure or interruption. These checkpoints still depend on Git; they are
+not a Git-independent file-history backend.
+
+## Issue presentation
+
+The shared client-runtime activity policy assigns known failures to their owning capability.
+Background capture and diff failures stay in persisted diagnostics and do not become failed answers
+in either web or mobile, including when replaying older events. Capture and diff have separate event
+kinds: failure to compare files does not mean the captured checkpoint was lost. Ordinary chat does
+not prompt users to install Git. Worktree setup failures belong to the existing setup card; legacy
+script failures without a card remain inspectable. Composer validation, attachment readiness and
+queue-edit failures continue to use the composer, because they block the action requested there.
+
+Approval and question reply errors appear on the pending request with retry feedback; drafts remain
+available. Transport failures use the same local controls. Restore errors stay in the requesting web
+dialog with expandable details; file-history diagnostics can also be inspected there. Historical restore failures remain inspectable as neutral activity.
+Genuine start, runtime, Stop and session-stop failures remain prominent, with concise summaries and
+expandable technical details. Unknown activity kinds remain visible; a `.failed` suffix alone does
+not imply a failed answer. Tool outcomes retain their existing tool-specific presentation.
 
 ## Startup
 

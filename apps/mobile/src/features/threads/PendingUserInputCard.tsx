@@ -248,6 +248,11 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
           />
         </View>
       </Pressable>
+      {props.pendingUserInput.responseError ? (
+        <Text accessibilityRole="alert" className="text-sm text-danger-foreground">
+          {props.pendingUserInput.responseError}
+        </Text>
+      ) : null}
       <ScrollView
         bounces={false}
         className="min-h-0"

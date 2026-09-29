@@ -1,3 +1,4 @@
+import { activityIssuePolicy } from "@t3tools/client-runtime/work-log/issue-presentation";
 import { useBoundedAnswerFollow } from "./useBoundedAnswerFollow";
 import { countUnreadBelow, unreadMessagesForThread } from "./unreadTimelineMessages";
 import { readingIdentity, resolveReadingRow } from "./readerScrollPolicy";
@@ -4908,9 +4909,7 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
   const iconConfig = workToneIcon(workEntry.tone);
   const showWarningIndicator = workEntry.sourceActivityKind === "runtime.warning";
   const showFailedIndicator = workEntryDisplayIndicatesToolFailure(workEntry);
-  const showDestructiveRowStyle =
-    showFailedIndicator &&
-    (workEntrySignalsSevereFailure(workEntry) || !workLogEntryIsToolLike(workEntry));
+  const showDestructiveRowStyle = showFailedIndicator && workEntrySignalsSevereFailure(workEntry);
   const entryIconName =
     showWarningIndicator || showDestructiveRowStyle ? "circle-alert" : workEntryIconName(workEntry);
   const entryToolIcon =
@@ -4970,8 +4969,11 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
         ? "text-secondary-label"
         : "text-foreground/80";
   const accessiblePreview = [previewText, answerPreview].filter(Boolean).join(": ");
+  const failureLabel = activityIssuePolicy(workEntry.sourceActivityKind)
+    ? "Operation failed"
+    : "Tool call failed";
   const accessibleDisplayText = showFailedIndicator
-    ? `${accessiblePreview}, tool call failed`
+    ? `${accessiblePreview}, ${failureLabel.toLowerCase()}`
     : accessiblePreview;
   const rowToggleProps = canExpand
     ? {
@@ -5004,7 +5006,7 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
         <span
           className={iconWrapperClass}
           role={showFailedIndicator ? "img" : undefined}
-          aria-label={showFailedIndicator ? "Tool call failed" : undefined}
+          aria-label={showFailedIndicator ? failureLabel : undefined}
         >
           <ToolActivityIconView
             icon={entryToolIcon}

@@ -178,6 +178,11 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
         setCollapsedQuestionId(open ? null : activeQuestion.id);
       }}
     >
+      {prompt.responseError ? (
+        <p role="alert" className="px-3 text-xs text-destructive">
+          {prompt.responseError}
+        </p>
+      ) : null}
       <CollapsibleTrigger
         render={<ComposerBanner.Row render={<button type="button" />} />}
         title={

@@ -23,6 +23,7 @@ import {
   selectHandoffImageResources,
   selectMessageImageResources,
   workEntryIndicatesToolNeutralStatus,
+  workEntrySignalsSevereFailure,
 } from "./session-logic";
 
 let nextActivityId = 0;
@@ -594,7 +595,7 @@ describe("deriveWorkLogEntries", () => {
     expect(entries).toMatchObject([
       {
         id: "setup-failed",
-        label: "Setup script failed to start",
+        label: "Workspace setup script failed",
         tone: "error",
         detail: "Could not start the setup terminal",
         turnId: null,
@@ -2631,4 +2632,78 @@ describe("session activity performance", () => {
       toolLifecycleStatus: "completed",
     });
   });
+});
+
+describe("issue ownership", () => {
+  it.each(["checkpoint.capture.failed", "checkpoint.diff.failed"])(
+    "does not replay %s as a chat failure",
+    (kind) => {
+      expect(
+        deriveWorkLogEntries([
+          makeActivity({
+            kind,
+            tone: "error",
+            summary: "Internal checkpoint error",
+            payload: { detail: "git status exited with 1" },
+          }),
+        ]),
+      ).toEqual([]);
+    },
+  );
+  it("shows concise real turn and Stop failures and leaves unknown failures inspectable", () => {
+    for (const kind of [
+      "runtime.error",
+      "provider.turn.start.failed",
+      "provider.turn.interrupt.failed",
+      "provider.session.stop.failed",
+      "extension.failed",
+    ]) {
+      const [entry] = deriveWorkLogEntries([
+        makeActivity({
+          kind,
+          tone: "error",
+          summary: "Operation failed",
+          payload: { detail: "technical detail" },
+        }),
+      ]);
+      expect(entry).toBeDefined();
+      expect(entry?.detail).toBe("technical detail");
+      expect(workEntrySignalsSevereFailure(entry!)).toBe(kind !== "extension.failed");
+      expect(entry?.label).not.toBe("technical detail");
+    }
+  });
+  it("routes a retryable approval failure to its card instead of duplicating it in chat", () => {
+    const requested = makeActivity({
+      kind: "approval.requested",
+      tone: "approval",
+      payload: { requestId: "retry", requestKind: "command" },
+    });
+    const failed = makeActivity({
+      kind: "provider.approval.respond.failed",
+      tone: "error",
+      payload: { requestId: "retry", detail: "transport failure" },
+    });
+    expect(
+      deriveWorkLogEntries([requested, failed]).some(
+        (entry) => entry.sourceActivityKind === failed.kind,
+      ),
+    ).toBe(false);
+    expect(
+      deriveWorkLogEntries([failed]).some((entry) => entry.sourceActivityKind === failed.kind),
+    ).toBe(true);
+  });
+});
+
+it("does not resurface a failed request attempt after a successful retry", () => {
+  const entries = deriveWorkLogEntries([
+    makeActivity({
+      kind: "provider.user-input.respond.failed",
+      tone: "error",
+      payload: { requestId: "resolved", detail: "connection failed" },
+    }),
+    makeActivity({ kind: "user-input.resolved", payload: { requestId: "resolved" } }),
+  ]);
+  expect(
+    entries.some((entry) => entry.sourceActivityKind === "provider.user-input.respond.failed"),
+  ).toBe(false);
 });
