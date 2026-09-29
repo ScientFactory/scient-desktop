@@ -2,17 +2,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { useEffect, useRef, useState } from "react";
 import { Dialog, DialogPopup, DialogTitle, DialogDescription } from "~/components/ui/dialog";
 import { useProjectEntriesQuery } from "~/components/files/projectFilesQueryState";
-import { escapeDocumentText } from "../documents/documentTemplates";
-
-function relativeAsset(documentPath: string, assetPath: string) {
-  const parent = documentPath.replaceAll("\\", "/").split("/").slice(0, -1);
-  const target = assetPath.replaceAll("\\", "/").split("/");
-  while (parent.length && target.length && parent[0] === target[0]) {
-    parent.shift();
-    target.shift();
-  }
-  return [...parent.map(() => ".."), ...target].join("/");
-}
+import { latexFigureSource } from "./figureSource";
 
 export function LatexFigureInsertDialog(props: {
   open: boolean;
@@ -56,20 +46,13 @@ function FigurePicker(props: Parameters<typeof LatexFigureInsertDialog>[0]) {
   const valid = images.some((image) => image.path === path);
   const insert = () => {
     if (!valid) return;
-    const slug =
-      path
-        .split("/")
-        .at(-1)!
-        .replace(/\.[^.]+$/u, "")
-        .replace(/[^A-Za-z0-9-]/gu, "-")
-        .slice(0, 50) || "image";
-    const labels = new Set(
-      [...props.source.matchAll(/\\label\{([^{}]+)\}/gu)].map((match) => match[1]),
-    );
-    let label = `fig:${slug}`,
-      suffix = 2;
-    while (labels.has(label)) label = `fig:${slug}-${suffix++}`;
-    const source = `\\begin{figure}[htbp]\n\\centering\n\\includegraphics[width=${width / 100}\\textwidth]{${relativeAsset(props.relativePath, path)}}\n\\caption{${escapeDocumentText(caption || "Figure caption")}}\n\\label{${label}}\n\\end{figure}`;
+    const source = latexFigureSource({
+      documentPath: props.relativePath,
+      assetPath: path,
+      source: props.source,
+      caption,
+      width,
+    });
     props.onOpenChange(false);
     requestAnimationFrame(() => props.onInsert(source));
   };

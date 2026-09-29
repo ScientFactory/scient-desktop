@@ -12,6 +12,7 @@ import {
   failEnvironmentInternal,
   requireEnvironmentScope,
 } from "../../auth/http.ts";
+import { uploadWorkspaceLatexImage } from "../assets/WorkspaceImageFiles.ts";
 import { LatexBuildService } from "./LatexBuildService.ts";
 import { LatexManagedToolchain } from "./LatexManagedToolchain.ts";
 import { LatexSyncTex } from "./LatexSyncTex.ts";
@@ -57,6 +58,25 @@ export const scientLatexHttpApiLayer = HttpApiBuilder.group(
       });
 
     return handlers
+      .handle("imageUpload", (args) =>
+        Effect.gen(function* () {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+          return yield* uploadWorkspaceLatexImage({
+            cwd: args.payload.cwd,
+            documentRelativePath: args.payload.documentRelativePath,
+            temporaryPath: args.payload.file.path,
+            fileName: args.payload.file.name,
+            ...(args.payload.assetDirectory === undefined
+              ? {}
+              : { assetDirectory: args.payload.assetDirectory }),
+          }).pipe(
+            Effect.catchTag("WorkspaceImageOperationError", (cause) =>
+              failEnvironmentInternal("scient_latex_build_failed", cause.cause),
+            ),
+          );
+        }),
+      )
       .handle("resolve", (args) =>
         handle(
           args.endpoint.name,

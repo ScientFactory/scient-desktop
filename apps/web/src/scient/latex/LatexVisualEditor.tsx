@@ -39,9 +39,11 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
+import { refreshProjectEntriesQuery } from "~/components/files/projectFilesQueryState";
 
 import { EditorState, Plugin, NodeSelection, Selection, TextSelection } from "@tiptap/pm/state";
 import type { Node as ProseMirrorNode, Slice } from "@tiptap/pm/model";
+import type { EditorView } from "@tiptap/pm/view";
 import { LatexInsertMenu, type LatexInsertAction } from "./LatexInsertMenu";
 import { LatexDocumentSettings } from "./LatexDocumentSettings";
 import {
@@ -54,6 +56,14 @@ import { MenuGroupLabel, MenuRadioGroup, MenuSeparator } from "~/components/ui/m
 import "../markdownEditor/scient-markdown-editor.css";
 import { LatexReferenceDialog } from "./LatexReferenceDialog";
 import { LatexFigureInsertDialog } from "./LatexFigureInsertDialog";
+import { latexFigureSource } from "./figureSource";
+import { uploadLatexImage } from "./imageUpload";
+import {
+  addLatexImageUpload,
+  latexImageUploadBookmark,
+  latexImageUploads,
+  removeLatexImageUpload,
+} from "./latexImageUploads";
 import { LatexDocumentReview } from "./LatexDocumentReview";
 import { LatexMathField, type LatexMathFieldHandle } from "./LatexMathField";
 import { LatexMathPalette } from "./LatexMathPalette";
@@ -2803,6 +2813,19 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   } | null>(null);
   const cancelSourcePublish = useRef<(() => void) | null>(null);
   const editorRef = useRef<ReturnType<typeof useEditor>>(null);
+  const imageUploadSequence = useRef(0);
+  const imageContext = useRef({
+    environmentId: props.environmentId,
+    cwd: props.cwd,
+    documentPath: props.rootRelativePath ?? props.relativePath,
+  });
+  useLayoutEffect(() => {
+    imageContext.current = {
+      environmentId: props.environmentId,
+      cwd: props.cwd,
+      documentPath: props.rootRelativePath ?? props.relativePath,
+    };
+  }, [props.environmentId, props.cwd, props.rootRelativePath, props.relativePath]);
   const [editorRevision, refreshToolbar] = useState(0);
   const cancelToolbarRefresh = useRef<(() => void) | null>(null);
   useEffect(() => () => cancelToolbarRefresh.current?.(), []);
@@ -3064,6 +3087,10 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       LatexVisualPagination.configure({ onPageCount: setPageCount }),
       richPreviewExtension,
       Extension.create({
+        name: "latexImageUploads",
+        addProseMirrorPlugins: () => [latexImageUploads()],
+      }),
+      Extension.create({
         name: "latexSourceGuard",
         addProseMirrorPlugins() {
           return [
@@ -3127,6 +3154,82 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     [richPreviewExtension],
   );
 
+  const handleImageTransfer = (view: EditorView, data: DataTransfer | null, position?: number) => {
+    if (!data || !view.editable) return false;
+    const files = data.files.length
+      ? [...data.files]
+      : [...data.items].flatMap((item) => {
+          const file = item.kind === "file" ? item.getAsFile() : null;
+          return file ? [file] : [];
+        });
+    const images = files.filter(
+      (file) => file.type.startsWith("image/") || /\.(?:png|jpe?g)$/iu.test(file.name),
+    );
+    if (!images.length) return false;
+    if (images.length !== 1) {
+      setNotice("Add one image at a time.");
+      return true;
+    }
+    const { environmentId, cwd, documentPath } = imageContext.current;
+    if (!environmentId || !cwd || !documentPath) {
+      setNotice("Open a LaTeX document in a project before adding an image.");
+      return true;
+    }
+    const file = images[0]!;
+    const selection =
+      position === undefined
+        ? view.state.selection
+        : Selection.near(
+            view.state.doc.resolve(Math.max(0, Math.min(position, view.state.doc.content.size))),
+          );
+    const id = `latex-image-${++imageUploadSequence.current}`;
+    view.dispatch(
+      addLatexImageUpload(view.state.tr, id, selection.getBookmark()).setMeta(
+        "addToHistory",
+        false,
+      ),
+    );
+    setNotice("Adding image to the project…");
+    void uploadLatexImage(environmentId, { cwd, documentRelativePath: documentPath, file }).then(
+      (uploaded) => {
+        const current = editorRef.current;
+        if (!current || current.isDestroyed || current.view !== view) return;
+        const bookmark = latexImageUploadBookmark(view.state, id);
+        if (!bookmark) return;
+        refreshProjectEntriesQuery(environmentId, cwd);
+        const source = latexFigureSource({
+          documentPath,
+          assetPath: uploaded.relativePath,
+          source: currentSource.current,
+        });
+        const figure = projectLatexVisualDocument(source).content.content?.[0];
+        view.dispatch(removeLatexImageUpload(view.state.tr, id).setMeta("addToHistory", false));
+        if (!figure) {
+          setNotice(
+            `Image saved as ${uploaded.relativePath}, but the figure could not be inserted.`,
+          );
+          return;
+        }
+        view.dispatch(view.state.tr.setSelection(bookmark.resolve(view.state.doc)));
+        const before = current.state.doc;
+        const inserted = current.chain().focus().insertContent(figure).run();
+        if (!inserted || current.state.doc === before)
+          setNotice(
+            `Image saved as ${uploaded.relativePath}, but the figure could not be inserted.`,
+          );
+        else
+          setNotice((previous) => (previous === "Adding image to the project…" ? null : previous));
+      },
+      () => {
+        const current = editorRef.current;
+        if (current?.view === view)
+          view.dispatch(removeLatexImageUpload(view.state.tr, id).setMeta("addToHistory", false));
+        setNotice("Could not add the image. Use a PNG or JPEG under 20 MB.");
+      },
+    );
+    return true;
+  };
+
   const editor = useEditor({
     shouldRerenderOnTransaction: false,
     extensions: guardedExtensions,
@@ -3163,9 +3266,20 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
           if (doc) queueTyping(doc);
           return false;
         },
+        dragover: (_view, event) => {
+          if (!(event instanceof DragEvent) || !event.dataTransfer?.types.includes("Files"))
+            return false;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "copy";
+          return true;
+        },
       },
       handlePaste(view, event) {
         if (!view.editable) return false;
+        if (handleImageTransfer(view, event.clipboardData)) {
+          event.preventDefault();
+          return true;
+        }
         const source = (
           event.clipboardData?.getData("text/plain") ||
           event.clipboardData?.getData("application/x-latex")
@@ -3182,6 +3296,14 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
         }
         event.preventDefault();
         return insertVisualMath(editor, pasted.display, pasted.attributes.tex, pasted.attributes);
+      },
+      handleDrop(view, event) {
+        if (!view.editable || !event.dataTransfer?.types.includes("Files")) return false;
+        const position = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos;
+        const handled = handleImageTransfer(view, event.dataTransfer, position);
+        event.preventDefault();
+        if (!handled) setNotice("Drop a PNG or JPEG image into the document.");
+        return true;
       },
       handleKeyDown(view, event) {
         if (event.isComposing || view.composing || !view.editable) return false;
@@ -4570,6 +4692,23 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
                       className="scient-latex-visual-paper"
                       data-indent-after-heading={layout.indentAfterHeading}
                       data-document-class={layout.documentClass}
+                      onDragOver={(event) => {
+                        if (!event.dataTransfer.types.includes("Files")) return;
+                        event.preventDefault();
+                        event.dataTransfer.dropEffect = "copy";
+                      }}
+                      onDrop={(event) => {
+                        if (event.defaultPrevented || !event.dataTransfer.types.includes("Files"))
+                          return;
+                        const view = editor?.view;
+                        if (!view || !view.editable) return;
+                        event.preventDefault();
+                        const position =
+                          view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos ??
+                          view.state.doc.content.size;
+                        if (!handleImageTransfer(view, event.dataTransfer, position))
+                          setNotice("Drop a PNG or JPEG image into the document.");
+                      }}
                     >
                       <div className="scient-latex-page-stack" aria-hidden="true">
                         {Array.from({ length: pageCount }, (_, index) => (

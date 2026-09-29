@@ -940,6 +940,24 @@ export class EnvironmentScientSourcesHttpApi extends HttpApiGroup.make("scientSo
 
 export class EnvironmentScientLatexHttpApi extends HttpApiGroup.make("scientLatex")
   .add(
+    HttpApiEndpoint.post("imageUpload", "/api/scient/latex/images/upload", {
+      headers: OptionalBearerHeaders,
+      payload: ScientMarkdownImageUploadRequest,
+      success: ScientMarkdownImageUploadResult,
+      error: [
+        EnvironmentRequestInvalidError,
+        EnvironmentAuthInvalidError,
+        EnvironmentScopeRequiredError,
+        EnvironmentOperationForbiddenError,
+        EnvironmentResourceNotFoundError,
+        EnvironmentInternalError,
+        ScientMarkdownImageInvalidError,
+        ScientMarkdownImageTooLargeError,
+        ScientMarkdownImageConflictError,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
     HttpApiEndpoint.post("resolve", "/api/scient/latex/resolve", {
       headers: OptionalBearerHeaders,
       payload: ScientLatexResolveRequest,

@@ -59,7 +59,10 @@ it to the destination without overwriting an existing file.
 
 The writing toolbar owns a searchable Insert menu, with `/` on an empty
 paragraph and Ctrl/Cmd+/ shortcuts. Actions use the existing source adapter and
-editor transactions. Figure selection lists project images; citation selection
+editor transactions. Figure selection lists project images. Pasting or dropping
+one PNG or JPEG image in Write saves it to an `assets` folder beside the root
+document and inserts an editable figure at the original selection; the upload
+limit is 20 MB. Citation selection
 reads explicitly linked project bibliography files through the existing reader.
 Literal BibTeX fields are indexed for selection, not executed or resolved. Object
 references and review checks are scoped to the open file. PDF export delegates to
