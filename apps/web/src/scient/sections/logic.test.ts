@@ -10,6 +10,10 @@ import {
   catalogWithoutSection,
   groupThreadsBySection,
   layoutFromGroupOrder,
+  mergeListedGroupOrder,
+  newSectionTitle,
+  sectionIdsInProjectScope,
+  sectionLayoutOrder,
   capitalizeSectionName,
   normalizeSectionName,
   readThreadSections,
@@ -460,5 +464,134 @@ describe("catalogWithEnvironments", () => {
     expect(recorded?.[1]?.environmentIds).toEqual(["a"]);
     expect(catalogWithEnvironments(recorded!, "perma", ["a"])).toBeNull();
     expect(catalogWithEnvironments(recorded!, "gone", ["a"])).toBeNull();
+  });
+});
+
+describe("creating a section for threads", () => {
+  const A = { environmentId: "local", projectId: "project-a" };
+  const B = { environmentId: "local", projectId: "project-b" };
+
+  it("records the threads' environments and the projects it was made for", () => {
+    const created = catalogWithCreatedSection([RESEARCH], "Design", sid("design"), {
+      environmentIds: ["local", "local"],
+      createdInProjects: [A, A],
+    });
+    expect(created.changed).toBe(true);
+    expect(created.section).toEqual({
+      id: "design",
+      name: "Design",
+      order: 1,
+      environmentIds: ["local"],
+      createdInProjects: [A],
+    });
+  });
+
+  it("reuses a name without a write unless there is something new to record", () => {
+    const existing = { ...RESEARCH, createdInProjects: [A] };
+    const same = catalogWithCreatedSection([existing], "research", sid("x"), {
+      createdInProjects: [A],
+    });
+    expect(same).toMatchObject({ created: false, changed: false, section: existing });
+    const wider = catalogWithCreatedSection([existing], "research", sid("x"), {
+      createdInProjects: [B],
+    });
+    expect(wider.created).toBe(false);
+    expect(wider.changed).toBe(true);
+    expect(wider.section.createdInProjects).toEqual([A, B]);
+    expect(wider.section.id).toBe("research");
+  });
+
+  it("names what the section is for", () => {
+    expect(newSectionTitle(0)).toBe("New section");
+    expect(newSectionTitle(1)).toBe("New section for this thread");
+    expect(newSectionTitle(3)).toBe("New section for 3 threads");
+  });
+});
+
+describe("sections in a project scope", () => {
+  const A = { environmentId: "local", projectId: "project-a" };
+  const scopeA = new Set(["local:project-a"]);
+  const thread = (
+    projectId: string,
+    sectionId: string | null,
+    archivedAt: string | null = null,
+  ) => ({
+    environmentId: "local",
+    projectId,
+    sectionId,
+    archivedAt,
+  });
+  const sections = [
+    section("mine", "Mine", 0),
+    section("theirs", "Theirs", 1),
+    section("shared", "Shared", 2),
+    { ...section("fresh", "Fresh", 3), createdInProjects: [A] },
+    section("orphan", "Orphan", 4),
+    { ...section("moved", "Moved", 5), createdInProjects: [A] },
+  ];
+  const threads = [
+    thread("project-a", "mine"),
+    thread("project-b", "theirs"),
+    thread("project-a", "shared"),
+    thread("project-b", "shared"),
+    // Created in A, but its only thread now lives in B.
+    thread("project-b", "moved"),
+    // Archived threads don't keep a section listed.
+    thread("project-a", "orphan", "2026-09-01T00:00:00.000Z"),
+  ];
+
+  it("lists every section under All projects", () => {
+    expect(sectionIdsInProjectScope({ sections, scopeProjectKeys: null, threads })).toBeNull();
+  });
+
+  it("lists sections with the project's threads, and its own empty ones", () => {
+    const listed = sectionIdsInProjectScope({ sections, scopeProjectKeys: scopeA, threads });
+    expect([...(listed ?? [])].toSorted()).toEqual(["fresh", "mine", "shared"]);
+  });
+
+  it("lists a section with threads in two projects under both", () => {
+    const listedB = sectionIdsInProjectScope({
+      sections,
+      scopeProjectKeys: new Set(["local:project-b"]),
+      threads,
+    });
+    expect([...(listedB ?? [])].toSorted()).toEqual(["moved", "shared", "theirs"]);
+  });
+
+  it("counts snoozed and settled threads, which the sections list does not show", () => {
+    // The grouping only sees pinned and active threads; visibility sees all.
+    const listed = sectionIdsInProjectScope({
+      sections: [section("later", "Later", 0)],
+      scopeProjectKeys: scopeA,
+      threads: [thread("project-a", "later")],
+    });
+    expect([...(listed ?? [])]).toEqual(["later"]);
+  });
+
+  it("hides unlisted sections but never General or a section holding a shown thread", () => {
+    const groups = groupThreadsBySection({
+      sections: [section("mine", "Mine", 0), section("theirs", "Theirs", 1)],
+      generalIndex: 1,
+      pinned: [],
+      active: [{ id: "t1", sectionId: "theirs" }],
+      listedSectionIds: new Set(["mine"]),
+    });
+    expect(groups.map((group) => group.id)).toEqual(["mine", GENERAL_SECTION_GROUP_ID, "theirs"]);
+  });
+
+  it("keeps hidden sections in their slots when the listed ones are reordered", () => {
+    const full = sectionLayoutOrder(
+      [section("a", "A", 0), section("h1", "H1", 1), section("b", "B", 2), section("h2", "H2", 3)],
+      4,
+    );
+    expect(full).toEqual(["a", "h1", "b", "h2", GENERAL_SECTION_GROUP_ID]);
+    // The scope lists a, b and General; the user drags General to the top.
+    expect(mergeListedGroupOrder(full, [GENERAL_SECTION_GROUP_ID, "a", "b"])).toEqual([
+      GENERAL_SECTION_GROUP_ID,
+      "h1",
+      "a",
+      "h2",
+      "b",
+    ]);
   });
 });

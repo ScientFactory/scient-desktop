@@ -1,5 +1,10 @@
 import { planPinnedReorder } from "@t3tools/client-runtime/state/thread-sort";
-import type { ThreadSection, ThreadSectionId, ThreadSections } from "@t3tools/contracts";
+import type {
+  ThreadSection,
+  ThreadSectionId,
+  ThreadSectionProjectRef,
+  ThreadSections,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 /**
@@ -64,25 +69,87 @@ function renumber(sections: readonly ThreadSection[]): ThreadSection[] {
   );
 }
 
-/** Appends a section, or returns the existing one with the same name. */
+/** Names what a new section is for, so threads the user picked are never silently dropped. */
+export function newSectionTitle(threadCount: number): string {
+  if (threadCount === 1) return "New section for this thread";
+  return threadCount > 1 ? `New section for ${threadCount} threads` : "New section";
+}
+
+/** What a new section records about where it was made (see `ThreadSection`). */
+export interface SectionOrigin {
+  /** Environments of the threads filed into it on creation. */
+  readonly environmentIds?: readonly string[];
+  readonly createdInProjects?: readonly ThreadSectionProjectRef[];
+}
+
+/**
+ * Appends a section, or returns the existing one with the same name.
+ * `changed` is false when the catalog needs no write: the name exists and
+ * already records everything in `origin`.
+ */
 export function catalogWithCreatedSection(
   sections: ThreadSections,
   name: string,
   id: ThreadSectionId,
+  origin: SectionOrigin = {},
 ): {
   readonly catalog: ThreadSection[];
   readonly section: ThreadSection;
   readonly created: boolean;
+  readonly changed: boolean;
 } {
   const ordered = readThreadSections(sections);
   const existing = findSectionByName(ordered, name);
-  if (existing) return { catalog: ordered, section: existing, created: false };
-  const section: ThreadSection = {
-    id,
-    name: normalizeSectionName(name),
-    order: ordered.length,
+  if (existing) {
+    // Reusing a name still makes the section show where it was asked for.
+    const recorded = withSectionOrigin(existing, origin);
+    if (recorded === existing) {
+      return { catalog: ordered, section: existing, created: false, changed: false };
+    }
+    const catalog = ordered.map((section) => (section === existing ? recorded : section));
+    return { catalog, section: recorded, created: false, changed: true };
+  }
+  const section = withSectionOrigin(
+    { id, name: normalizeSectionName(name), order: ordered.length },
+    origin,
+  );
+  return { catalog: renumber([...ordered, section]), section, created: true, changed: true };
+}
+
+/** `section` with `origin` merged in; the same object when nothing is new. */
+function withSectionOrigin(section: ThreadSection, origin: SectionOrigin): ThreadSection {
+  const environmentIds = mergeEnvironmentIds(section.environmentIds, origin.environmentIds ?? []);
+  const createdInProjects = mergeProjectRefs(
+    section.createdInProjects,
+    origin.createdInProjects ?? [],
+  );
+  if (environmentIds === null && createdInProjects === null) return section;
+  // Recording threads also means the section is no longer empty.
+  const { emptySince: _emptySince, ...occupied } = section;
+  return {
+    ...(environmentIds === null ? section : occupied),
+    ...(environmentIds === null ? {} : { environmentIds }),
+    ...(createdInProjects === null ? {} : { createdInProjects }),
   };
-  return { catalog: renumber([...ordered, section]), section, created: true };
+}
+
+function projectRefKey(ref: ThreadSectionProjectRef): string {
+  return `${ref.environmentId}:${ref.projectId}`;
+}
+
+/** `recorded` plus any new refs, or null when nothing is new. */
+function mergeProjectRefs(
+  recorded: readonly ThreadSectionProjectRef[] | undefined,
+  seen: readonly ThreadSectionProjectRef[],
+): ThreadSectionProjectRef[] | null {
+  const merged = [...(recorded ?? [])];
+  const keys = new Set(merged.map(projectRefKey));
+  for (const ref of seen) {
+    if (keys.has(projectRefKey(ref))) continue;
+    keys.add(projectRefKey(ref));
+    merged.push({ environmentId: ref.environmentId, projectId: ref.projectId });
+  }
+  return merged.length === (recorded ?? []).length ? null : merged;
 }
 
 export type CatalogRenameResult =
@@ -325,11 +392,66 @@ function sectionGroupIdOf(
 }
 
 /**
+ * Which sections a sidebar scoped to one project lists (null: every section,
+ * for All projects). A section is listed where it has threads: any
+ * unarchived thread of the scope, on any shelf. A section with no threads
+ * anywhere is listed in the projects it was created for, so a new section
+ * stays in view to be filled; one without that record lists only under All
+ * projects.
+ */
+export function sectionIdsInProjectScope(input: {
+  readonly sections: readonly ThreadSection[];
+  /** The scope's `${environmentId}:${projectId}` keys; null for All projects. */
+  readonly scopeProjectKeys: ReadonlySet<string> | null;
+  /** Every thread this client knows, across projects and shelves. */
+  readonly threads: ReadonlyArray<{
+    readonly environmentId: string;
+    readonly projectId: string | null;
+    readonly sectionId?: string | null | undefined;
+    readonly archivedAt?: string | null | undefined;
+  }>;
+}): ReadonlySet<string> | null {
+  const scope = input.scopeProjectKeys;
+  if (scope === null) return null;
+  const inScope = new Set<string>();
+  const occupied = new Set<string>();
+  for (const thread of input.threads) {
+    if (thread.sectionId == null || thread.archivedAt != null) continue;
+    occupied.add(thread.sectionId);
+    if (scope.has(`${thread.environmentId}:${thread.projectId}`)) inScope.add(thread.sectionId);
+  }
+  for (const section of input.sections) {
+    if (occupied.has(section.id)) continue;
+    if ((section.createdInProjects ?? []).some((ref) => scope.has(projectRefKey(ref)))) {
+      inScope.add(section.id);
+    }
+  }
+  return inScope;
+}
+
+/**
+ * Applies a new order of the listed groups to the full layout order: hidden
+ * sections keep their slots, and the listed ones fill the rest in the new
+ * order. Without this, reordering in a project scope would push every hidden
+ * section to the end.
+ */
+export function mergeListedGroupOrder(
+  fullOrder: readonly string[],
+  listedOrder: readonly string[],
+): string[] {
+  const listed = new Set(listedOrder);
+  const queue = [...listedOrder];
+  const merged = fullOrder.map((id) => (listed.has(id) ? queue.shift()! : id));
+  return [...merged, ...queue];
+}
+
+/**
  * Pinned and active threads grouped by section, with General (threads without
- * a section, including new ones) at its stored position. Every section shows,
- * even empty, since each is a drop target. Each group keeps the Status view's
- * order: pinned first, then active. Snoozed and settled threads stay on their
- * own shelves.
+ * a section, including new ones) at its stored position. Every listed section
+ * shows, even empty, since each is a drop target; `listedSectionIds` (null:
+ * all) hides the rest, see `sectionIdsInProjectScope`. Each group keeps the
+ * Status view's order: pinned first, then active. Snoozed and settled threads
+ * stay on their own shelves.
  */
 export function groupThreadsBySection<
   T extends { readonly sectionId?: string | null | undefined },
@@ -338,6 +460,7 @@ export function groupThreadsBySection<
   readonly generalIndex: number;
   readonly pinned: readonly T[];
   readonly active: readonly T[];
+  readonly listedSectionIds?: ReadonlySet<string> | null;
 }): SectionGroup<T>[] {
   const known = new Set<string>(input.sections.map((section) => section.id));
   const members = new Map<string, T[]>();
@@ -348,11 +471,21 @@ export function groupThreadsBySection<
     else members.set(groupId, [thread]);
   }
   const bySection = new Map(input.sections.map((section) => [section.id as string, section]));
-  return sectionLayoutOrder(input.sections, input.generalIndex).map((id) => ({
-    id,
-    section: bySection.get(id) ?? null,
-    threads: members.get(id) ?? [],
-  }));
+  const listed = input.listedSectionIds ?? null;
+  return sectionLayoutOrder(input.sections, input.generalIndex)
+    .filter(
+      (id) =>
+        id === GENERAL_SECTION_GROUP_ID ||
+        listed === null ||
+        listed.has(id) ||
+        // Never hide a thread the grouping placed.
+        members.has(id),
+    )
+    .map((id) => ({
+      id,
+      section: bySection.get(id) ?? null,
+      threads: members.get(id) ?? [],
+    }));
 }
 
 // ── Drag and drop ──────────────────────────────────────────────────────

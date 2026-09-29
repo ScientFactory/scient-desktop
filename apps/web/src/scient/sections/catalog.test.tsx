@@ -55,10 +55,34 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it("only acknowledges registration for an existing section, even when no write is needed", async () => {
+it("acknowledges registration for a recorded section without a write", async () => {
   expect(await catalog.recordEnvironments(research.id, ["primary"])).toBe(true);
-  expect(await catalog.recordEnvironments("deleted", ["remote"])).toBe(false);
   expect(mocks.update).not.toHaveBeenCalled();
+});
+
+it("rejects registration for a missing section once the server confirms it is gone", async () => {
+  // The confirming write changes nothing and the server still holds only Research.
+  mocks.update.mockResolvedValue(AsyncResult.success(mocks.settings));
+  expect(await catalog.recordEnvironments("deleted", ["remote"])).toBe(false);
+  expect(mocks.update).toHaveBeenCalledTimes(1);
+  expect(mocks.update.mock.calls[0]?.[0].input.patch.threadSections).toEqual([research]);
+});
+
+it("registers a section this client just created before the settings stream shows it", async () => {
+  // The local copy trails the server: it lacks the new section.
+  const fresh: ThreadSection = { id: ThreadSectionId.make("fresh"), name: "Fresh", order: 1 };
+  const onServer = { threadSections: [research, fresh], threadSectionsGeneralIndex: 0 };
+  mocks.update.mockImplementation(async ({ input }) => {
+    const expected = input.patch.threadSectionsExpected;
+    if (expected.threadSections.length === onServer.threadSections.length) {
+      onServer.threadSections = input.patch.threadSections;
+    }
+    return AsyncResult.success(onServer);
+  });
+  expect(await catalog.recordEnvironments(fresh.id, ["remote"])).toBe(true);
+  expect(onServer.threadSections.find((entry) => entry.id === "fresh")?.environmentIds).toEqual([
+    "remote",
+  ]);
 });
 
 it("rejects registration if the section disappears during a catalog conflict", async () => {
@@ -66,7 +90,8 @@ it("rejects registration if the section disappears during a catalog conflict", a
     AsyncResult.success({ threadSections: [], threadSectionsGeneralIndex: 0 }),
   );
   expect(await catalog.recordEnvironments(research.id, ["remote"])).toBe(false);
-  expect(mocks.update).toHaveBeenCalledTimes(1);
+  // The conflicting write, then one confirming the section is gone.
+  expect(mocks.update).toHaveBeenCalledTimes(2);
 });
 
 it("rejects registration after repeated catalog conflicts", async () => {

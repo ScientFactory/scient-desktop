@@ -56,6 +56,7 @@ import {
   sectionShifts,
   sectionGroupIdFromHeaderItemId,
   sectionHeaderItemId,
+  newSectionTitle,
 } from "./logic";
 import { readTypedSectionName } from "./sectionNameInput";
 
@@ -108,7 +109,11 @@ export interface SidebarSectionsViewProps {
   readonly onRenamingSectionChange: (sectionId: string | null) => void;
   readonly onRenameSection: (sectionId: string, name: string) => void;
   /** Inline name input replacing the "New section" row; null when not creating. */
-  readonly creatingSection: { readonly onSubmit: (name: string) => void } | null;
+  readonly creatingSection: {
+    readonly onSubmit: (name: string) => void;
+    /** Threads the section is being made for (0 from the "New section" row). */
+    readonly threadCount: number;
+  } | null;
   readonly onStartCreateSection: () => void;
   readonly onCancelCreateSection: () => void;
 }
@@ -583,6 +588,7 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
                   {firstShelf ? (
                     props.creatingSection !== null ? (
                       <NewSectionRow
+                        threadCount={props.creatingSection.threadCount}
                         onSubmit={props.creatingSection.onSubmit}
                         onCancel={props.onCancelCreateSection}
                       />
@@ -877,14 +883,20 @@ function AddSectionRow(props: { onClick: () => void }) {
   );
 }
 
-function NewSectionRow(props: { onSubmit: (name: string) => void; onCancel: () => void }) {
+function NewSectionRow(props: {
+  threadCount: number;
+  onSubmit: (name: string) => void;
+  onCancel: () => void;
+}) {
   return (
     <li className="mx-0.5 h-8 list-none" data-testid="sidebar-new-section-row" data-sections-end>
       <div className="flex h-full items-center px-2">
         <SectionNameInput
           initialName=""
-          ariaLabel="New section name"
-          placeholder="Section name"
+          ariaLabel={newSectionTitle(props.threadCount)}
+          placeholder={
+            props.threadCount === 0 ? "Section name" : `${newSectionTitle(props.threadCount)}…`
+          }
           onSubmit={props.onSubmit}
           onCancel={props.onCancel}
         />

@@ -2830,6 +2830,7 @@ export default function Sidebar() {
   }, [isMobile, setOpenMobile]);
   const sections = useSidebarSections({
     threads,
+    scopeProjectRefs: scopedProjectGroup?.memberProjectRefs ?? null,
     pinnedThreads,
     activeThreads,
     routeThreadKey,

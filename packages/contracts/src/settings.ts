@@ -99,6 +99,13 @@ const DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT: SidebarThreadPreviewCount = 6;
  * on each thread, so removing a catalog entry leaves its threads' IDs intact:
  * they read as unsectioned, and restoring the entry brings them back.
  */
+/** A physical project: the environment it lives on and its id there. */
+export const ThreadSectionProjectRef = Schema.Struct({
+  environmentId: TrimmedNonEmptyString,
+  projectId: TrimmedNonEmptyString,
+});
+export type ThreadSectionProjectRef = typeof ThreadSectionProjectRef.Type;
+
 export const ThreadSection = Schema.Struct({
   id: ThreadSectionId,
   name: TrimmedNonEmptyString,
@@ -111,6 +118,14 @@ export const ThreadSection = Schema.Struct({
    * single client or server sees every environment's threads.
    */
   environmentIds: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
+  /**
+   * The projects the section was created for: the sidebar's selected project,
+   * plus the projects of any threads filed into it on creation. A sidebar
+   * scoped to one project lists a section once that project has threads in
+   * it; while the section has no threads anywhere, it is listed only in these
+   * projects (and under All projects).
+   */
+  createdInProjects: Schema.optionalKey(Schema.Array(ThreadSectionProjectRef)),
 });
 export type ThreadSection = typeof ThreadSection.Type;
 
@@ -129,7 +144,12 @@ export const ThreadSectionsPrecondition = Schema.Struct({
 });
 export type ThreadSectionsPrecondition = typeof ThreadSectionsPrecondition.Type;
 
-/** Whether two catalogs hold the same entries in the same order. */
+/**
+ * Whether two catalogs hold the same entries in the same order. Leaves out
+ * `createdInProjects`: clients that predate it drop the field when they read
+ * the catalog, and must still pass the write precondition. Their writes erase
+ * it, so an empty section then lists only under All projects.
+ */
 export function threadSectionCatalogsEqual(left: ThreadSections, right: ThreadSections): boolean {
   const sameIds = (a?: ReadonlyArray<string>, b?: ReadonlyArray<string>) =>
     (a ?? []).length === (b ?? []).length && (a ?? []).every((id, index) => id === b?.[index]);
