@@ -836,3 +836,10 @@ when a request opens (approval) or user input is requested, via
 [ingest]: ../../apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts
 [cmd]: ../../apps/server/src/orchestration/Layers/ProviderCommandReactor.ts
 [checkpoint]: ../../apps/server/src/orchestration/Layers/CheckpointReactor.ts
+
+Managed subscription-sharing OAuth and remote handoff are retained as upstream machinery,
+but are not enabled in Scient. Native Codex sign-in remains the active connection path.
+
+Antigravity sign-out closes admission to new processes and stops existing processes before clearing account
+metadata. Otherwise a helper or resumed session could retain the old account. Cached model lists
+do not establish current access, and an authoritative empty catalog must clear the old list.

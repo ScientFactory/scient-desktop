@@ -576,7 +576,11 @@ describe("markdownFileLinkRelativeCopyPath", () => {
     expect(relativeCopyPath("../outside.md:12", "/workspace/project")).toBeNull();
     expect(relativeCopyPath("/workspace/project/../outside.md", "/workspace/project")).toBeNull();
     expect(relativeCopyPath("C:/repo/../other/a.ts", "C:/repo")).toBeNull();
-    expect(relativeCopyPath("docs/..", "/workspace/project")).toBeNull();
+  });
+
+  it("copies workspace root links as the root directory", () => {
+    expect(relativeCopyPath("/workspace/project", "/workspace/project")).toBe(".");
+    expect(relativeCopyPath("docs/..", "/workspace/project")).toBe(".");
   });
 
   it("collapses dot segments that stay inside the workspace", () => {
@@ -584,5 +588,13 @@ describe("markdownFileLinkRelativeCopyPath", () => {
     expect(relativeCopyPath("C:/repo/../repo/src/a.ts", "C:/repo")).toBe("src/a.ts");
     expect(relativeCopyPath("docs/../src/./main.ts:3", "/workspace/project")).toBe("src/main.ts:3");
     expect(relativeCopyPath("./docs/report.md", "/workspace/project")).toBe("docs/report.md");
+  });
+});
+
+it("routes the project-root code link to the workspace explorer", () => {
+  const cwd = "/Users/saphid/.t3/worktrees/ov2-standalone-20260918";
+  expect(resolveInlineCodeFileLinkMeta(cwd, cwd)).toMatchObject({
+    workspaceRelativePath: ".",
+    filePath: cwd,
   });
 });

@@ -658,6 +658,18 @@ component. The Settings route retains `data-settings-page-layout` as the observe
 root. Page changes do not automatically open a submenu. Settings search,
 page routing, and shared sidebar primitives remain upstream-owned.
 
+Scient retains native Codex browser/device sign-in and its existing managed-runtime
+lifecycle. Upstream `setupMode: managed` means ChatGPT subscription sharing; it
+is separate from Scient installing a CLI. That capability remains dormant:
+settings activation, driver creation, installer operations, remote handoff/profile
+RPCs, and desktop callbacks reject before credential, browser or process work.
+Its setup/coordinator UI has no active mount, and the dormant installer does not
+probe PATH at startup. Persisted unsupported modes remain decodable and unavailable;
+users can recover by switching to native/existing mode. Preserve these guards until
+a separately qualified activation explicitly replaces them. Shared policy lives in
+`packages/shared/src/scientCodexPolicy.ts`; backend guards live in
+`apps/server/src/scient/providerLifecycle/codexSubscriptionSharingPolicy.ts`.
+
 In the shared provider settings editor, Scient displays the authenticated account's
 subscription label on its own line above the email/visibility control. Preserve
 this hierarchy rather than joining both with an inline separator. Providers without

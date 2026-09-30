@@ -94,7 +94,7 @@ function EmptyMobileClients() {
       <EmptyHeader>
         <EmptyTitle>No mobile clients</EmptyTitle>
         <EmptyDescription>
-          Sign in to Scient on your iPhone to register it for push notifications and Live
+          Install Scient on your iPhone and sign in to register it for push notifications and Live
           Activities.
         </EmptyDescription>
       </EmptyHeader>
@@ -112,7 +112,7 @@ export function MobileClientsUserProfilePage() {
   return (
     <ClerkUserProfilePage
       title="Mobile clients"
-      description="Devices registered to receive T3 Connect activity from your environments."
+      description="Mobile devices that get notifications from your environments."
       action={
         <ClerkUserProfileRefreshButton
           isPending={devicesState.isPending}

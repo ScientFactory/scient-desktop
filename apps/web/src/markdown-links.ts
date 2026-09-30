@@ -118,6 +118,7 @@ export function resolveMarkdownFileLinkMeta(
 export function markdownFileLinkRelativeCopyPath(meta: MarkdownFileLinkMeta): string | null {
   const lexicalRelativePath = meta.workspaceRelativePath;
   if (lexicalRelativePath === null) return null;
+  if (lexicalRelativePath === ".") return ".";
   // The link target is joined lexically, so `../outside.md` still starts with
   // the workspace root. Recover that root from the lexical split, then decide
   // containment on both paths with their dot segments resolved.

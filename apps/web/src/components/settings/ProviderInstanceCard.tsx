@@ -405,6 +405,7 @@ interface ProviderInstanceCardProps {
    */
   readonly headerAction?: ReactNode | undefined;
   readonly setup?: ReactNode;
+  readonly runtime?: ReactNode;
   readonly hiddenModels: ReadonlyArray<string>;
   readonly favoriteModels: ReadonlyArray<string>;
   readonly modelOrder: ReadonlyArray<string>;
