@@ -226,6 +226,117 @@ describe("Sections view drops", () => {
     expect(resolveSectionsDropTarget(items, "r1", "z1")).toBeNull();
   });
 
+  it.each(["o1", "s1", "z1", "r1"])(
+    "appends %s after the final row without depending on drag direction",
+    (source) => {
+      expect(resolveSectionsDropTarget(items, source, "r2", "after")).toEqual({
+        kind: "section",
+        groupId: "research",
+        order: source === "r1" ? ["r-pin", "r2", "r1"] : ["r-pin", "r1", "r2", source],
+      });
+    },
+  );
+
+  it("places rows before or after the same neighbour from either direction", () => {
+    const list = [
+      header("above"),
+      row("up", "active", "above"),
+      header("target"),
+      row("a", "active", "target"),
+      row("b", "active", "target"),
+      header("below"),
+      row("down", "active", "below"),
+    ];
+    for (const source of ["up", "down"]) {
+      expect(resolveSectionsDropTarget(list, source, "b", "before")).toEqual({
+        kind: "section",
+        groupId: "target",
+        order: ["a", source, "b"],
+      });
+      expect(resolveSectionsDropTarget(list, source, "b", "after")).toEqual({
+        kind: "section",
+        groupId: "target",
+        order: ["a", "b", source],
+      });
+      expect(resolveSectionsDropTarget(list, source, "a", "after")).toEqual({
+        kind: "section",
+        groupId: "target",
+        order: ["a", source, "b"],
+      });
+    }
+  });
+
+  it("keeps self drops unchanged on either side", () => {
+    for (const placement of ["before", "after"] as const) {
+      expect(resolveSectionsDropTarget(items, "r1", "r1", placement)).toEqual({
+        kind: "section",
+        groupId: "research",
+        order: ["r-pin", "r1", "r2"],
+      });
+    }
+  });
+
+  it("appends a pinned row only within the pinned group", () => {
+    const list = [
+      header("research"),
+      row("p1", "pinned", "research"),
+      row("p2", "pinned", "research"),
+      row("a1", "active", "research"),
+      header("other"),
+      row("p3", "pinned", "other"),
+    ];
+    expect(resolveSectionsDropTarget(list, "p3", "a1", "after")).toEqual({
+      kind: "section",
+      groupId: "research",
+      order: ["p1", "p2", "p3", "a1"],
+    });
+  });
+
+  it("resolves every row insertion side across sections and lifecycle groups", () => {
+    const list: SectionsListItem[] = ["above", "target", "below"].flatMap((group) => [
+      header(group),
+      row(`${group}-p1`, "pinned", group),
+      row(`${group}-p2`, "pinned", group),
+      row(`${group}-a1`, "active", group),
+      row(`${group}-a2`, "active", group),
+    ]);
+    list.push(
+      { kind: "shelf", id: "snoozed", shelf: "snoozed" },
+      row("wake", "snoozed", null),
+      { ...row("wake-pin", "snoozed", null), pinned: true },
+      { kind: "shelf", id: "settled", shelf: "settled" },
+      row("restore", "settled", null),
+    );
+    const sources = list.filter((item) => item.kind === "thread");
+    const targets = sources.filter((item) => item.groupId !== null);
+    for (const source of sources)
+      for (const over of targets)
+        for (const placement of ["before", "after"] as const) {
+          const target = resolveSectionsDropTarget(list, source.id, over.id, placement);
+          const peers = sources.filter(
+            (item) => item.groupId === over.groupId && item.id !== source.id,
+          );
+          const pinned = source.lifecycle === "pinned" || source.pinned === true;
+          const sameKind = peers.filter((item) => (item.lifecycle === "pinned") === pinned);
+          const hoveredIndex = sameKind.findIndex((item) => item.id === over.id);
+          const insertAt =
+            hoveredIndex >= 0
+              ? hoveredIndex + (placement === "after" ? 1 : 0)
+              : pinned
+                ? sameKind.length
+                : 0;
+          sameKind.splice(insertAt, 0, source);
+          const otherKind = peers.filter((item) => (item.lifecycle === "pinned") !== pinned);
+          const expected =
+            source.id === over.id
+              ? sources.filter((item) => item.groupId === over.groupId).map((item) => item.id)
+              : (pinned ? [...sameKind, ...otherKind] : [...otherKind, ...sameKind]).map(
+                  (item) => item.id,
+                );
+          expect(target).toEqual({ kind: "section", groupId: over.groupId, order: expected });
+        }
+  });
+
   it("moves a thread into another section at the dropped position", () => {
     expect(plan("o1", "r2")).toEqual({
       kind: "move",
@@ -353,6 +464,34 @@ describe("Sections view drops", () => {
       kind: "section",
       groupId: "perma",
       order: ["r2", "p1"],
+    });
+  });
+
+  it("keeps hidden rows before a drop at the preceding section's end", () => {
+    expect(
+      expandSectionDropOrder({
+        shownOrder: ["o1"],
+        fullOrder: ["r1", "r2"],
+        droppedId: "o1",
+        atEnd: true,
+      }),
+    ).toEqual(["r1", "r2", "o1"]);
+  });
+
+  it("places the upper header slot at the end of the preceding section", () => {
+    expect(
+      resolveSectionsDropTarget(items, "o1", sectionHeaderItemId("perma"), "before-header"),
+    ).toEqual({
+      kind: "section",
+      groupId: "research",
+      order: ["r-pin", "r1", "r2", "o1"],
+    });
+    expect(
+      resolveSectionsDropTarget(items, "o1", sectionHeaderItemId("research"), "before-header"),
+    ).toEqual({
+      kind: "section",
+      groupId: "research",
+      order: ["r-pin", "o1", "r1", "r2"],
     });
   });
 
