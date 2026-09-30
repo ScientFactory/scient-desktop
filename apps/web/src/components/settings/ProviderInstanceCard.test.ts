@@ -63,15 +63,17 @@ describe("Pi status copy", () => {
   );
 
   it.each(["list", "editor"] as const)("preserves a Pi discovery error in the %s", (mode) => {
-    expect(
-      render(mode, { ...liveProvider, status: "error", message: "Pi RPC timed out." }),
-    ).toContain("Pi RPC timed out.");
+    const markup = render(mode, { ...liveProvider, status: "error", message: "Pi RPC timed out." });
+    if (mode === "editor") expect(markup).toContain("Pi RPC timed out.");
+    else expect(markup).not.toContain("Pi RPC timed out.");
   });
 
   it.each(["list", "editor"] as const)(
     "keeps the disabled %s explicit despite a stale ready snapshot",
     (mode) => {
-      expect(render(mode, liveProvider, false)).toContain("Disabled");
+      const markup = render(mode, liveProvider, false);
+      if (mode === "editor") expect(markup).toContain("Disabled");
+      else expect(markup).not.toContain("Disabled");
     },
   );
 
@@ -307,7 +309,7 @@ describe("deriveProviderModelsForDisplay", () => {
       }
     },
   );
-  it("surfaces a failed probe message in both the list row and the editor", () => {
+  it("keeps failed probe details in the editor and the list row concise", () => {
     const instanceId = ProviderInstanceId.make("codex_work");
     const driver = ProviderDriverKind.make("codex");
     const message =
@@ -343,8 +345,13 @@ describe("deriveProviderModelsForDisplay", () => {
 
     for (const mode of ["list", "editor"] as const) {
       const markup = renderToStaticMarkup(createElement(ProviderInstanceCard, { ...props, mode }));
-      expect(markup).toContain("Unavailable");
-      expect(markup).toContain("is not a symlink");
+      if (mode === "editor") {
+        expect(markup).toContain("Unavailable");
+        expect(markup).toContain("is not a symlink");
+      } else {
+        expect(markup).not.toContain("Unavailable");
+        expect(markup).not.toContain("is not a symlink");
+      }
     }
   });
 });
