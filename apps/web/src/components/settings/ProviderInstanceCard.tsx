@@ -668,7 +668,9 @@ export function ProviderInstanceCard({
       : compatibility?.status === "unsupported"
         ? "Unsupported"
         : "Limited support"
-    : statusDetail;
+    : connectionPresentation.kind === "sign-in-required"
+      ? null
+      : statusDetail;
   const editorStatusNode = !showStatus ? null : isAuthenticated && authEmail ? (
     <div className="grid gap-1">
       {authLabel ? (
@@ -772,29 +774,9 @@ export function ProviderInstanceCard({
                 )
               ) : null}
             </span>
-            {showStatus || vendorLabel ? (
-              <span className="mt-0.5 flex items-start gap-1.5 text-sm leading-compact text-muted-foreground/80">
-                {/* The company sits beside the status; the switch owns the right edge. */}
-                {vendorLabel ? (
-                  <span className="shrink-0">
-                    {vendorLabel}
-                    {showStatus ? " ·" : null}
-                  </span>
-                ) : null}
-                {showStatus && statusDotNode ? (
-                  <span className="flex h-[1.45em] shrink-0 items-center">{statusDotNode}</span>
-                ) : null}
-                {showStatus ? (
-                  <ProviderStatusDiagnostic detail={statusDiagnostic}>
-                    <span
-                      tabIndex={statusDiagnostic ? 0 : undefined}
-                      className="pointer-events-auto line-clamp-2 [overflow-wrap:anywhere]"
-                    >
-                      {statusHeadline}
-                      {needsAttention && inlineStatusDetail ? ` · ${inlineStatusDetail}` : null}
-                    </span>
-                  </ProviderStatusDiagnostic>
-                ) : null}
+            {vendorLabel ? (
+              <span className="mt-0.5 block truncate text-xs text-muted-foreground/80">
+                {vendorLabel}
               </span>
             ) : null}
           </span>

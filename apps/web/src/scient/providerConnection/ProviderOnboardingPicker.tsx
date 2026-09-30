@@ -36,6 +36,7 @@ import { resolveAntigravityDraftSelection } from "./antigravityDraftSelection";
 
 export function providerOnboardingStatusLabel(entry: ProviderInstanceEntry | undefined): string {
   if (!entry) return "Not configured";
+  if (!entry.enabled) return "Disabled";
   if (isProviderInstancePickerReady(entry)) return "Ready";
   switch (providerConnectionPresentation(entry.snapshot).kind) {
     case "not-installed":

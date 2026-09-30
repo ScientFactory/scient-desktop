@@ -173,7 +173,13 @@ export function useProviderLifecycleController(input: {
     if (!isSafeProviderAuthorizationUrl(url)) {
       throw new Error("Scient refused an invalid or insecure provider sign-in link.");
     }
-    await ensureLocalApi().shell.openExternal(url);
+    if (window.desktopBridge) {
+      await ensureLocalApi().shell.openExternal(url);
+      return;
+    }
+    // Preview hosts distinguish a popup from a new-tab link. Preserve the
+    // originating setup page and isolate the authorization page from its opener.
+    window.open(url, "_blank", "popup,noopener,noreferrer");
   }, []);
 
   const planRuntime = useCallback(

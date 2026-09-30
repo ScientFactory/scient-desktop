@@ -3,14 +3,7 @@ import type {
   ProviderManagedRuntimeAction,
   ServerProvider,
 } from "@t3tools/contracts";
-import {
-  DownloadIcon,
-  LoaderIcon,
-  LogInIcon,
-  RefreshCwIcon,
-  Settings2Icon,
-  WrenchIcon,
-} from "lucide-react";
+import { DownloadIcon, LoaderIcon, LogInIcon, RefreshCwIcon, Settings2Icon } from "lucide-react";
 import { type ReactNode, useRef, useState } from "react";
 
 import { Button } from "../../components/ui/button";
@@ -18,10 +11,12 @@ import { stackedThreadToast, toastManager } from "../../components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { startCodexBrowserSignIn } from "./codexLifecycleActions";
 import { startReviewedProviderRuntimeAction } from "./providerLifecycleActions";
+import type { ProviderSettingsLifecyclePresentation } from "./providerSettingsLifecyclePresentation";
 import {
-  providerSettingsLifecyclePresentation,
-  type ProviderSettingsLifecyclePresentation,
-} from "./providerSettingsLifecyclePresentation";
+  isActiveProviderConnectionOperation,
+  isActiveProviderRuntimeOperation,
+  isProviderRuntimePresentedAsInstalled,
+} from "./providerConnectionPresentation";
 import { useProviderLifecycleController } from "./useProviderLifecycleController";
 
 export type ProviderSettingsPrimaryAction =
@@ -66,131 +61,79 @@ function actionErrorMessage(error: unknown): string {
     : "The provider action could not be completed.";
 }
 
-export function ProviderSettingsLifecycleAction(props: {
+interface ProviderSettingsLifecycleActionProps {
   readonly environmentId: EnvironmentId;
   readonly provider: ServerProvider;
   readonly displayName: string;
   readonly onManage: (runtimeAction?: ProviderManagedRuntimeAction) => void;
   readonly onRunExternalUpdate?: (() => void) | undefined;
   readonly externalUpdateRunning?: boolean | undefined;
-}) {
-  const presentation = providerSettingsLifecyclePresentation(props.provider, props.displayName);
-  if (presentation.kind === "checking") {
-    return (
-      <span
-        className="inline-flex h-7 shrink-0 items-center gap-1.5 px-2.5 text-muted-foreground text-xs"
-        role="status"
-      >
-        <LoaderIcon aria-hidden className="size-4 animate-spin" />
-        <span>Checking</span>
-        <span className="sr-only">{props.displayName} status</span>
-      </span>
-    );
-  }
-  const primaryAction = resolveProviderSettingsPrimaryAction({
-    provider: props.provider,
-    presentation,
-    canRunExternalUpdate: props.onRunExternalUpdate !== undefined,
-  });
+}
 
-  if (primaryAction.kind === "codex-browser-sign-in") {
-    return (
-      <CodexBrowserSignInButton
-        displayName={props.displayName}
-        environmentId={props.environmentId}
-        provider={props.provider}
-      />
-    );
-  }
-  if (primaryAction.kind === "managed-runtime") {
-    const actionButton = (
-      <ManagedRuntimeActionButton
-        key={JSON.stringify([props.environmentId, props.provider.instanceId, primaryAction.action])}
-        action={primaryAction.action}
-        displayName={props.displayName}
-        environmentId={props.environmentId}
-        onManage={props.onManage}
-        provider={props.provider}
-      />
-    );
-    return primaryAction.action === "update" ? (
-      <ProviderSettingsUpdateActions displayName={props.displayName} onManage={props.onManage}>
-        {actionButton}
-      </ProviderSettingsUpdateActions>
-    ) : (
-      actionButton
-    );
-  }
-  if (primaryAction.kind === "none") return null;
+export function resolveProviderSettingsHeaderAction(
+  provider: ServerProvider,
+): "install" | "sign-in" | "manage" {
+  if (
+    !provider.enabled ||
+    provider.probePending === true ||
+    isActiveProviderRuntimeOperation(provider.connection?.runtime?.operation ?? null) ||
+    isActiveProviderConnectionOperation(provider.connection?.operation ?? null)
+  )
+    return "manage";
+  const installed = isProviderRuntimePresentedAsInstalled(provider);
+  if (!installed && provider.connection?.runtime?.actions.includes("install")) return "install";
+  if (
+    installed &&
+    provider.auth.required !== false &&
+    provider.auth.status !== "authenticated" &&
+    (provider.connection?.methods.length ?? 0) > 0
+  )
+    return "sign-in";
+  return "manage";
+}
 
-  const externallyUpdating =
-    primaryAction.kind === "external-update" && props.externalUpdateRunning === true;
-
-  const run = () => {
-    switch (primaryAction.kind) {
-      case "external-update":
-        props.onRunExternalUpdate?.();
-        return;
-      case "open":
-        props.onManage(primaryAction.runtimeAction ?? undefined);
-        return;
-    }
-  };
-
-  const actionButton = (
-    <Button
-      disabled={externallyUpdating}
-      onClick={run}
-      size="compact"
-      type="button"
-      variant={
-        presentation.actionKind === "manage" || presentation.kind === "installing"
-          ? "ghost-muted"
-          : "ghost-primary"
-      }
+export function ProviderSettingsLifecycleAction(props: ProviderSettingsLifecycleActionProps) {
+  const action = resolveProviderSettingsHeaderAction(props.provider);
+  return (
+    <ProviderSettingsActions
+      displayName={props.displayName}
+      onManage={props.onManage}
+      labeled={action === "manage"}
     >
-      {externallyUpdating || presentation.busy ? (
-        <LoaderIcon className="animate-spin" />
-      ) : presentation.actionKind === "sign-in" ? (
-        <LogInIcon />
-      ) : primaryAction.kind === "external-update" || presentation.runtimeAction === "update" ? (
-        <RefreshCwIcon />
-      ) : presentation.runtimeAction === "install" ? (
-        <DownloadIcon />
-      ) : presentation.runtimeAction === "repair" ? (
-        <WrenchIcon />
-      ) : (
-        <Settings2Icon />
-      )}
-      {presentation.downloadPercent !== undefined ? (
-        <span className="inline-flex items-baseline gap-1.5">
-          {presentation.actionLabel}
-          <span
-            aria-label={`Download progress ${presentation.downloadPercent}%`}
-            className="text-[11px] font-normal tabular-nums text-muted-foreground"
+      {action === "install" ? (
+        <ManagedRuntimeActionButton
+          action="install"
+          displayName={props.displayName}
+          environmentId={props.environmentId}
+          onManage={props.onManage}
+          provider={props.provider}
+        />
+      ) : action === "sign-in" ? (
+        props.provider.driver === "codex" &&
+        props.provider.connection?.methods.includes("codex_browser") ? (
+          <CodexBrowserSignInButton
+            displayName={props.displayName}
+            environmentId={props.environmentId}
+            provider={props.provider}
+          />
+        ) : (
+          <Button
+            onClick={() => props.onManage()}
+            size="compact"
+            type="button"
+            variant="ghost-primary"
           >
-            {presentation.downloadPercent}%
-          </span>
-        </span>
-      ) : externallyUpdating ? (
-        "Updating"
-      ) : (
-        presentation.actionLabel
-      )}
-    </Button>
-  );
-
-  return primaryAction.kind === "external-update" ? (
-    <ProviderSettingsUpdateActions displayName={props.displayName} onManage={props.onManage}>
-      {actionButton}
-    </ProviderSettingsUpdateActions>
-  ) : (
-    actionButton
+            <LogInIcon /> Sign in
+          </Button>
+        )
+      ) : null}
+    </ProviderSettingsActions>
   );
 }
 
-function ProviderSettingsUpdateActions(props: {
+function ProviderSettingsActions(props: {
   readonly children: ReactNode;
+  readonly labeled: boolean;
   readonly displayName: string;
   readonly onManage: () => void;
 }) {
@@ -203,12 +146,13 @@ function ProviderSettingsUpdateActions(props: {
           render={
             <Button
               aria-label={manageLabel}
-              onClick={props.onManage}
-              size="icon-xs"
+              onClick={() => props.onManage()}
+              size={props.labeled ? "compact" : "icon-xs"}
               type="button"
               variant="ghost-muted"
             >
               <Settings2Icon />
+              {props.labeled ? "Manage" : null}
             </Button>
           }
         />
