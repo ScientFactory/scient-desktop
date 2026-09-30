@@ -95,7 +95,11 @@ and `upstream-state.json`. It integrates all 20 official commits after
 `35be904f2fc40aa6d7a42778b6895e8274f3097f`, onto owned base
 `136ab8ad104b92f100a6ccd8fac1e6ee0c884102`. The upstream merge
 `efacdaf575f2cd3d65068d8e4e78a2ffb2b16578` preserves that exact official target
-as its second parent. The [preceding alignment](docs/internals/2026-09-29-upstream-sync-d2c9281b8.md)
+as its second parent. Owned-main catch-up merge
+`14fb2478174667b49afaf6d7405526ed897d0c16` incorporates owned main
+`e0efa3fa4346ea6b7c88c93b25b4638cea715fe4` without changing the official target.
+The receipt separately records the original qualification and the 2026-10-01
+catch-up checks; fresh hosted CI remains required. The [preceding alignment](docs/internals/2026-09-29-upstream-sync-d2c9281b8.md)
 remains literal ancestry.
 
 The range brings Codex 0.159 protocol support, Pro Max/Ultrafast capability
