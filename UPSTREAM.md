@@ -99,7 +99,7 @@ as its second parent. Owned-main catch-up merge
 `14fb2478174667b49afaf6d7405526ed897d0c16` incorporates owned main
 `e0efa3fa4346ea6b7c88c93b25b4638cea715fe4` without changing the official target.
 The receipt separately records the original qualification and the 2026-10-01
-catch-up checks and the Compute workspace's explicit use of the existing root
+catch-up checks and the Compute/conversation workspaces' explicit use of the existing root
 test configuration; fresh hosted CI remains required. The [preceding alignment](docs/internals/2026-09-29-upstream-sync-d2c9281b8.md)
 remains literal ancestry.
 

@@ -161,6 +161,18 @@ Source/configuration review and formatting checks qualify this command change.
 Local tests were not rerun. Fresh hosted CI must validate collection and the
 complete workspace result; the repair does not yet establish a passing run.
 
+The repaired PR head passed hosted CI. Merge-group run `36787120294` then
+passed Compute but exposed the same omitted-root-configuration issue in
+`@scientfactory/conversation`: the long-transcript Markdown round trip exceeded
+the default five-second limit (5.575 seconds reported). Conversation's command
+now uses the same explicit root configuration and package directory. Its
+two-thousand-message workload and assertions remain unchanged. No product code or
+shared test budget changed. Formatting, diff, and provenance checks passed.
+After the owner requested delivery readiness, the existing focused
+`conversationMarkdown.test.ts` suite passed all 24 tests with the corrected
+command (1.04 seconds total locally). The complete local test graph was not
+rerun. Fresh PR and merge-group CI remain delivery gates.
+
 Quick fixes remain in separate draft PR [#421](https://github.com/ScientFactory/scient-desktop/pull/421).
 Its provider/onboarding/auth-browser changes are not included in this catch-up.
 The running review app, its checkout, and its signed-in profile remain untouched.
