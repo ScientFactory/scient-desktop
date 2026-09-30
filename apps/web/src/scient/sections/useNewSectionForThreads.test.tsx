@@ -124,7 +124,7 @@ it("does not let an old form close a newer creation request", () => {
     anchor: { x: 80, y: 200 },
   });
   act(() => mocks.popoverProps!.onOpenChange(false));
-  expect(mocks.popoverProps).toMatchObject({ open: false });
+  expect(mocks.popoverProps).toMatchObject({ open: false, anchor: { x: 80, y: 200 } });
 });
 
 // The shared create-and-file step.

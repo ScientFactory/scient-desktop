@@ -70,7 +70,9 @@ export function useNewSectionForThreads(
 } {
   const catalog = useThreadSectionCatalog();
   const { moveThreadsToSection } = useThreadSectionActions();
+  // Keep the origin through dismissal so positioning and return focus can finish.
   const [pending, setPending] = useState<{
+    readonly open: boolean;
     readonly threadRefs: readonly ScopedThreadRef[];
     readonly anchor: SectionCreateAnchor;
   } | null>(null);
@@ -79,7 +81,7 @@ export function useNewSectionForThreads(
   const request = useCallback(
     (threadRefs: readonly ScopedThreadRef[], anchor: SectionCreateAnchor) => {
       setRequestKey((key) => key + 1);
-      setPending({ threadRefs, anchor });
+      setPending({ open: true, threadRefs, anchor });
     },
     [],
   );
@@ -101,15 +103,18 @@ export function useNewSectionForThreads(
 
   return {
     request,
-    close: () => setPending(null),
+    close: () => setPending((current) => (current ? { ...current, open: false } : current)),
     popover: (
       <NewSectionPopover
-        open={pending !== null}
+        open={pending?.open ?? false}
         requestKey={requestKey}
         threadCount={pending?.threadRefs.length ?? 0}
         anchor={pending?.anchor ?? null}
         onOpenChange={(open) => {
-          if (!open) setPending((current) => (current === pending ? null : current));
+          if (!open)
+            setPending((current) =>
+              current && current === pending ? { ...current, open: false } : current,
+            );
         }}
         onSubmit={submit}
       />
