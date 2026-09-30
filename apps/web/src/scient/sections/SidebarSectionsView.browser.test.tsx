@@ -407,6 +407,43 @@ it.each([4, 24, 44])("keeps the grabbed point under the pointer (pickup %ipx)", 
   expect(moveThreadsToSection).not.toHaveBeenCalled();
 });
 
+it("switches from a section overlay to direct conversation tracking", async () => {
+  const onReorderSections = vi.fn();
+  renderView(onReorderSections);
+  await nextFrame();
+  const handle = headerOf("a").querySelector<HTMLElement>("button[aria-expanded]")!;
+  const header = handle.getBoundingClientRect();
+  const x = header.left + 20;
+  const headerY = header.top + header.height / 2;
+  pointer("pointerdown", handle, x, headerY);
+  pointer("pointermove", document, x, headerY + 12);
+  await nextFrame();
+  expect(
+    [...document.querySelectorAll<HTMLElement>("div")].some(
+      (node) => getComputedStyle(node).position === "fixed" && node.textContent?.trim() === "A",
+    ),
+  ).toBe(true);
+  document.dispatchEvent(
+    new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }),
+  );
+  await nextFrame();
+  const row = document.querySelector<HTMLElement>('[data-row="g1"]')!;
+  const start = row.getBoundingClientRect();
+  pointer("pointerdown", row, x, start.top + 4);
+  pointer("pointermove", document, x, start.top + 12);
+  await nextFrame();
+  const y = host!.getBoundingClientRect().top + 180;
+  pointer("pointermove", document, x, y);
+  await nextFrame();
+  expect(Math.abs(row.getBoundingClientRect().top + 4 - y)).toBeLessThan(1);
+  document.dispatchEvent(
+    new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }),
+  );
+  await nextFrame();
+  expect(onReorderSections).not.toHaveBeenCalled();
+  expect(reorderActiveThread).not.toHaveBeenCalled();
+});
+
 it("keeps pointer attachment when its scrollable list scrolls", async () => {
   renderView(vi.fn());
   host!.style.height = "300px";
