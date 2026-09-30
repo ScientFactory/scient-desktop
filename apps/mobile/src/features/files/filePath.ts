@@ -117,6 +117,26 @@ export function resolveHostFilePath(
   return collapseAbsoluteFilePath(resolveWorkspaceFilePath(workspaceRoot, targetPath));
 }
 
+/**
+ * Where a file link opens: the workspace file it names (editable), or the host
+ * file it names when it lies outside the workspace (read-only). A path that
+ * leaves and re-enters the workspace is a workspace file. Null when the link
+ * cannot be placed at all, such as a home-relative path.
+ */
+export function resolveFileLinkTarget(
+  workspaceRoot: string | null | undefined,
+  targetPath: string,
+): { readonly kind: "workspace" | "host"; readonly path: string } | null {
+  const workspacePath = resolveWorkspaceRelativeFilePath(workspaceRoot, targetPath);
+  if (workspacePath !== null) return { kind: "workspace", path: workspacePath };
+  const hostPath = resolveHostFilePath(workspaceRoot, targetPath);
+  if (hostPath === null) return null;
+  const reentered = resolveWorkspaceRelativeFilePath(workspaceRoot, hostPath);
+  return reentered !== null
+    ? { kind: "workspace", path: reentered }
+    : { kind: "host", path: hostPath };
+}
+
 export function isVideoPreviewFile(path: string): boolean {
   return isWorkspaceVideoPreviewPath(path);
 }

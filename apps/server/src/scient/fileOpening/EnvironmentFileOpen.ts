@@ -194,6 +194,8 @@ function filesystemFailure(
   }
 }
 
+const OPEN_TIMEOUT = "10 seconds";
+
 export const prepareEnvironmentFileOpen = Effect.fn("EnvironmentFileOpen.prepare")(function* (
   input: EnvironmentFilePrepareInput,
 ): Effect.fn.Return<
@@ -248,6 +250,14 @@ export const prepareEnvironmentFileOpen = Effect.fn("EnvironmentFileOpen.prepare
               path: input.path,
               failure: filesystemFailure(cause),
             }),
+        ),
+        // The type check above cannot stop a file being swapped for a FIFO in
+        // between; bound the wait so inspection always answers.
+        Effect.timeout(OPEN_TIMEOUT),
+        Effect.catchTag("TimeoutError", () =>
+          Effect.fail(
+            new EnvironmentFilePrepareError({ path: input.path, failure: "inspection_failed" }),
+          ),
         ),
       );
       const info = yield* file.stat.pipe(

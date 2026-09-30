@@ -32,6 +32,25 @@ export function missingFileCandidates(
 }
 
 /**
+ * Whether System Settings can help with a denied read: only when the file is
+ * on this Mac and the desktop shell can open the settings. A remote machine's
+ * permissions, and other platforms, have no such shortcut.
+ */
+export function canOfferPrivacySettings(input: {
+  readonly failureReason: ProjectFileErrorReason | null;
+  readonly isLocalEnvironment: boolean;
+  readonly platform: string;
+  readonly hasSystemSettingsBridge: boolean;
+}): boolean {
+  return (
+    input.failureReason === "permission_denied" &&
+    input.isLocalEnvironment &&
+    isMacPlatform(input.platform) &&
+    input.hasSystemSettingsBridge
+  );
+}
+
+/**
  * What a file surface can offer when a read failed: the exact location that
  * was tried, same-named files in the project when nothing exists there, and a
  * shortcut to the system privacy settings when this machine denied access.
@@ -68,12 +87,13 @@ export function useMissingFileRecovery(input: {
     () => (searchesCandidates ? missingFileCandidates(path, search.entries) : []),
     [path, search.entries, searchesCandidates],
   );
-  const canOpenPrivacySettings =
-    input.failureReason === "permission_denied" &&
-    input.isLocalEnvironment &&
-    typeof navigator !== "undefined" &&
-    isMacPlatform(navigator.platform) &&
-    window.desktopBridge?.openSystemSettings !== undefined;
+  const canOpenPrivacySettings = canOfferPrivacySettings({
+    failureReason: input.failureReason,
+    isLocalEnvironment: input.isLocalEnvironment,
+    platform: typeof navigator === "undefined" ? "" : navigator.platform,
+    hasSystemSettingsBridge:
+      typeof window !== "undefined" && window.desktopBridge?.openSystemSettings !== undefined,
+  });
   const openPrivacySettings = useCallback(() => {
     void readLocalApi()
       ?.shell.openSystemSettings("full-disk-access")

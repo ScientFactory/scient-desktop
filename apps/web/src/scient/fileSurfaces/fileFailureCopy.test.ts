@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { fileReadFailureCopy, UNSUPPORTED_PREVIEW_TITLE } from "./fileFailureCopy";
+import {
+  fileReadFailureCopy,
+  readFailureBlocksPreview,
+  UNSUPPORTED_PREVIEW_TITLE,
+} from "./fileFailureCopy";
 
 describe("fileReadFailureCopy", () => {
   it("presents a binary file as an unsupported preview without a retry", () => {
@@ -67,5 +71,37 @@ describe("fileReadFailureCopy", () => {
       details: null,
       retryable: true,
     });
+  });
+});
+
+describe("readFailureBlocksPreview", () => {
+  const failed = { hasData: false, failure: "operation_failed" as const, isHostFile: false };
+
+  it("shows the explained failure instead of a media viewer that would fail again", () => {
+    expect(readFailureBlocksPreview({ ...failed, reason: "not_found" })).toBe(true);
+    expect(readFailureBlocksPreview({ ...failed, reason: "permission_denied" })).toBe(true);
+    expect(
+      readFailureBlocksPreview({
+        hasData: false,
+        failure: "path_not_file",
+        reason: null,
+        isHostFile: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("lets viewers handle binary media, workspace folders, and readable files", () => {
+    expect(readFailureBlocksPreview({ ...failed, failure: "binary_file", reason: null })).toBe(
+      false,
+    );
+    expect(
+      readFailureBlocksPreview({
+        hasData: false,
+        failure: "path_not_file",
+        reason: null,
+        isHostFile: false,
+      }),
+    ).toBe(false);
+    expect(readFailureBlocksPreview({ ...failed, hasData: true, reason: "not_found" })).toBe(false);
   });
 });

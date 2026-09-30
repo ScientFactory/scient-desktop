@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  resolveFileLinkTarget,
   resolveHostFilePath,
   fileRoutePathSegments,
   isSvgImagePreviewFile,
@@ -74,5 +75,29 @@ describe("resolveHostFilePath", () => {
   it("cannot place a home-relative path or a relative path without a workspace", () => {
     expect(resolveHostFilePath("/Users/me/project", "~/notes.md")).toBeNull();
     expect(resolveHostFilePath(null, "../notes.md")).toBeNull();
+  });
+});
+
+describe("resolveFileLinkTarget", () => {
+  it("keeps workspace files editable however the path is spelled", () => {
+    expect(resolveFileLinkTarget("/Users/me/project", "docs/notes.md")).toEqual({
+      kind: "workspace",
+      path: "docs/notes.md",
+    });
+    expect(resolveFileLinkTarget("/Users/me/project", "../project/notes.md")).toEqual({
+      kind: "workspace",
+      path: "notes.md",
+    });
+    expect(
+      resolveFileLinkTarget("/Users/me/project", "/Users/me/project/docs/../notes.md"),
+    ).toEqual({ kind: "workspace", path: "notes.md" });
+  });
+
+  it("opens a file outside the workspace as a host file", () => {
+    expect(resolveFileLinkTarget("/Users/me/project", "../reviews/notes.md")).toEqual({
+      kind: "host",
+      path: "/Users/me/reviews/notes.md",
+    });
+    expect(resolveFileLinkTarget("/Users/me/project", "~/notes.md")).toBeNull();
   });
 });

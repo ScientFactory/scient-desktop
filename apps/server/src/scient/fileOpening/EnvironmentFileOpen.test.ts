@@ -6,6 +6,7 @@ import { EnvironmentFilePath } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -134,6 +135,37 @@ describe("EnvironmentFileOpen", () => {
 
         expect(error.failure).toBe("not_a_file");
       }).pipe(Effect.provide(TestLayer), Effect.scoped),
+  );
+
+  it.effect("answers instead of waiting forever when an open never completes", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-file-hang-" });
+      const filePath = path.join(root, "report.md");
+      yield* fileSystem.writeFileString(filePath, "# Report\n");
+      // A regular file at stat time whose open then blocks, as when the file
+      // is swapped for a FIFO between the two calls.
+      const hangingFileSystem = FileSystem.FileSystem.of({
+        ...fileSystem,
+        open: () => Effect.never,
+      });
+
+      const fiber = yield* prepareEnvironmentFileOpen({
+        path: EnvironmentFilePath.make(filePath),
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, hangingFileSystem),
+        Effect.flip,
+        Effect.forkChild,
+      );
+      // Let the real canonicalization and stat finish so the open, and its
+      // timeout, have started before virtual time moves.
+      yield* TestClock.withLive(Effect.sleep("300 millis"));
+      yield* TestClock.adjust("10 seconds");
+      const error = yield* Fiber.join(fiber);
+
+      expect(error.failure).toBe("inspection_failed");
+    }).pipe(Effect.provide(TestLayer), Effect.scoped),
   );
 
   it.effect("maps host permission failures to the stable unreadable contract", () =>

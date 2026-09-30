@@ -193,6 +193,12 @@ describe("collapseAbsoluteFilePath", () => {
     ["C:\\..\\a.ts", "C:\\a.ts"],
     ["\\\\server\\share\\docs\\..\\a.ts", "\\\\server\\share\\a.ts"],
     ["\\\\server\\share\\..\\..\\a.ts", "\\\\server\\share\\a.ts"],
+    // On POSIX a backslash is part of a file name, never a separator.
+    ["/tmp/reports/a\\b.md", "/tmp/reports/a\\b.md"],
+    ["/tmp/reports/x/../a\\..\\b.md", "/tmp/reports/a\\..\\b.md"],
+    // `//` could be POSIX or a forward-slash UNC share; it is left as written.
+    ["//server/share/docs/../a.ts", "//server/share/docs/../a.ts"],
+    ["///tmp/a/../b.md", "/tmp/b.md"],
     // Relative paths are left alone: only the host knows their base.
     ["../reviews/notes.md", "../reviews/notes.md"],
     ["docs/./a.md", "docs/./a.md"],

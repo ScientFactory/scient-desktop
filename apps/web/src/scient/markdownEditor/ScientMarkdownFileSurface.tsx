@@ -1,6 +1,7 @@
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import type { FileCitation } from "@t3tools/contracts";
 import type { MarkdownCiteHandler } from "./markdownCitation";
+import { workspaceRelativeFilePath } from "@t3tools/client-runtime/markdown-links";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
@@ -287,6 +288,12 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
         // it opens read-only, and a missing one says so in the panel.
         const hostPath = resolveMarkdownHostLinkPath(props.relativePath, props.cwd, target);
         if (hostPath) {
+          // An absolute spelling of a workspace file stays an editable workspace file.
+          const workspacePath = workspaceRelativeFilePath(hostPath, props.cwd);
+          if (workspacePath !== null) {
+            void openWorkspaceFile(workspacePath, anchor);
+            return;
+          }
           onOpenFile(hostPath);
           return;
         }

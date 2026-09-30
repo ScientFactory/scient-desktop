@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { missingFileCandidates } from "./useMissingFileRecovery";
+import { canOfferPrivacySettings, missingFileCandidates } from "./useMissingFileRecovery";
 
 describe("missingFileCandidates", () => {
   it("offers every same-named project file except the missing path itself", () => {
@@ -29,5 +29,26 @@ describe("missingFileCandidates", () => {
       kind: "file" as const,
     }));
     expect(missingFileCandidates("notes.md", entries)).toHaveLength(5);
+  });
+});
+
+describe("canOfferPrivacySettings", () => {
+  const local = {
+    failureReason: "permission_denied" as const,
+    isLocalEnvironment: true,
+    platform: "MacIntel",
+    hasSystemSettingsBridge: true,
+  };
+
+  it("offers System Settings for a denied read on this Mac in the desktop shell", () => {
+    expect(canOfferPrivacySettings(local)).toBe(true);
+  });
+
+  it("offers nothing where System Settings cannot help", () => {
+    expect(canOfferPrivacySettings({ ...local, failureReason: "not_found" })).toBe(false);
+    expect(canOfferPrivacySettings({ ...local, failureReason: null })).toBe(false);
+    expect(canOfferPrivacySettings({ ...local, isLocalEnvironment: false })).toBe(false);
+    expect(canOfferPrivacySettings({ ...local, platform: "Win32" })).toBe(false);
+    expect(canOfferPrivacySettings({ ...local, hasSystemSettingsBridge: false })).toBe(false);
   });
 });

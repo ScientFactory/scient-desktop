@@ -22,6 +22,23 @@ export function isOutsideProjectFailure(failure: ProjectFileFailure | null): boo
 }
 
 /**
+ * Whether a failed read already explains why nothing can be shown, so media
+ * and document viewers should not try (and fail again with less to say).
+ * Binary media never reads as text, so a plain `binary_file` failure does not
+ * count; a missing file, a denied read, or a host path that is not a regular
+ * file does. A workspace directory opens the explorer instead.
+ */
+export function readFailureBlocksPreview(input: {
+  readonly hasData: boolean;
+  readonly failure: ProjectFileFailure | null;
+  readonly reason: ProjectFileErrorReason | null;
+  readonly isHostFile: boolean;
+}): boolean {
+  if (input.hasData) return false;
+  return input.reason !== null || (input.failure === "path_not_file" && input.isHostFile);
+}
+
+/**
  * Plain-language copy for a failed workspace or host file read. The operating
  * system's reason wins when the server reports one; otherwise only failures the
  * server classifies distinctly get a specific message, and the fallback must

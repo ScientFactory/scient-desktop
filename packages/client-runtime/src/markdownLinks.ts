@@ -324,36 +324,47 @@ export function fileBasename(path: string): string {
   return separatorIndex >= 0 ? trimmed.slice(separatorIndex + 1) : trimmed;
 }
 
-const UNC_ROOT_PATTERN = /^[\\/]{2}[^\\/]+[\\/][^\\/]+/;
+const UNC_ROOT_PATTERN = /^\\\\[^\\/]+[\\/][^\\/]+/;
 const WINDOWS_DRIVE_ROOT_PATTERN = /^[A-Za-z]:(?=[\\/])/;
 
 /**
  * Resolves `.` and `..` segments in an absolute host path without climbing
- * above its root (`/`, `C:\`, or a `\\host\share` UNC share), keeping the
- * path's own separator style. A relative path is returned unchanged: only the
- * host that owns it knows what it is relative to.
+ * above its root, keeping the path's own separator style:
+ *
+ * - `C:\` and `C:/` drive paths and `\\host\share` UNC paths are Windows
+ *   paths, where both separators divide segments;
+ * - `/` paths are POSIX paths, where only `/` divides segments and a
+ *   backslash is an ordinary filename character.
+ *
+ * A path starting with exactly `//` is ambiguous (a POSIX path, or a Windows
+ * UNC share written with forward slashes) and a relative path has no base
+ * here, so both are returned unchanged.
  */
 export function collapseAbsoluteFilePath(path: string): string {
   const source = stripSlashPrefixedWindowsDrive(path);
   let root: string;
   let separator: string;
+  let splitter: RegExp;
   const unc = source.match(UNC_ROOT_PATTERN);
   const drive = source.match(WINDOWS_DRIVE_ROOT_PATTERN);
   if (unc) {
     separator = "\\";
+    splitter = /[\\/]+/;
     root = unc[0].replaceAll("/", "\\");
   } else if (drive) {
     separator = source.charAt(drive[0].length);
+    splitter = /[\\/]+/;
     root = `${drive[0]}${separator}`;
-  } else if (source.startsWith("/")) {
+  } else if (source.startsWith("/") && !/^\/\/(?!\/)/.test(source)) {
     separator = "/";
+    splitter = /\/+/;
     root = "/";
   } else {
     return path;
   }
-  const rest = unc ? source.slice(unc[0].length) : source.slice(root.length);
+  const rest = source.slice(unc ? unc[0].length : root.length);
   const segments: string[] = [];
-  for (const segment of rest.split(/[\\/]+/)) {
+  for (const segment of rest.split(splitter)) {
     if (segment === "" || segment === ".") continue;
     if (segment === "..") segments.pop();
     else segments.push(segment);

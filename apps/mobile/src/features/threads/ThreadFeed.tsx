@@ -186,12 +186,7 @@ import { usePreparedConnection } from "../../state/session";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { composerDocumentAttachmentRecord } from "../../lib/composerContext";
 import * as Option from "effect/Option";
-import {
-  basename,
-  fileRoutePathSegments,
-  resolveHostFilePath,
-  resolveWorkspaceRelativeFilePath,
-} from "../files/filePath";
+import { basename, fileRoutePathSegments, resolveFileLinkTarget } from "../files/filePath";
 import { fileChipMenu, resolveFileChipTarget, type FileChipAction } from "./fileChipMenu";
 import { useFileChipShare } from "./useFileChipShare";
 import {
@@ -2079,11 +2074,13 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const onMarkdownLinkPress = useCallback(
     (href: string) => {
       const presentation = resolveMarkdownLinkPresentation(href);
+      const linkTarget =
+        presentation.kind === "file"
+          ? resolveFileLinkTarget(props.workspaceRoot, presentation.path)
+          : null;
+      const hostPath = linkTarget?.kind === "host" ? linkTarget.path : null;
       if (presentation.kind === "file") {
-        const relativePath = resolveWorkspaceRelativeFilePath(
-          props.workspaceRoot,
-          presentation.path,
-        );
+        const relativePath = linkTarget?.kind === "workspace" ? linkTarget.path : null;
         if (relativePath) {
           void Haptics.selectionAsync();
           if (isPdfFile({ name: relativePath })) {
@@ -2130,10 +2127,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       // A host file outside the workspace, such as a report an agent wrote to
       // a temp directory or a link that climbs out of the project, opens
       // read-only in the file screen.
-      const hostPath =
-        presentation.kind === "file"
-          ? resolveHostFilePath(props.workspaceRoot, presentation.path)
-          : null;
       if (presentation.kind === "file" && hostPath !== null) {
         void Haptics.selectionAsync();
         if (isPdfFile({ name: hostPath })) {

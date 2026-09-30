@@ -754,7 +754,7 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
-  it.effect("rejects malformed and escaping rooted workspace locators", () =>
+  it.effect("rejects malformed rooted workspace locators and serves escaping symlinks alone", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -772,14 +772,64 @@ describe("AssetAccess", () => {
       const traversalError = yield* issueAssetUrl({
         resource: { _tag: "workspace-file", cwd: root, relativePath: "../outside.pdf" },
       }).pipe(Effect.flip);
-      const symlinkError = yield* issueAssetUrl({
+      // A symlink leading out of the workspace is viewable, but only as its
+      // own exact target: the same capability an absolute media path grants.
+      const linked = yield* issueAssetUrl({
         resource: { _tag: "workspace-file", cwd: root, relativePath: "linked.pdf" },
-      }).pipe(Effect.flip);
+      });
 
       expect(absolutePathError._tag).toBe("AssetWorkspacePathValidationError");
       expect(traversalError._tag).toBe("AssetWorkspacePathValidationError");
-      expect(symlinkError._tag).toBe("AssetWorkspaceAssetNotFoundError");
+      expect(linked.sourcePath).toBe("linked.pdf");
+      expect(linked.relativeUrl.endsWith("/outside.pdf")).toBe(true);
     }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "serves a workspace symlink that leads outside as its target alone",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-asset-root-" });
+        const outside = yield* fs.makeTempDirectoryScoped({ prefix: "t3-asset-outside-" });
+        const figurePath = path.join(outside, "figure.svg");
+        yield* fs.writeFileString(figurePath, "<svg/>");
+        yield* fs.writeFileString(path.join(outside, "secret.txt"), "private");
+        yield* fs.symlink(figurePath, path.join(root, "figure.svg"));
+
+        const result = yield* issueAssetUrl({
+          resource: {
+            _tag: "workspace-file",
+            threadId: ThreadId.make("thread-1"),
+            cwd: root,
+            relativePath: "figure.svg",
+            path: path.join(root, "figure.svg"),
+          },
+        });
+        const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+        const separator = suffix.indexOf("/");
+        const token = suffix.slice(0, separator);
+        // Exactly the linked file, never its neighbours outside the workspace.
+        expect(yield* resolveAsset(token, suffix.slice(separator + 1))).toMatchObject({
+          kind: "file",
+          path: yield* fs.realPath(figurePath),
+        });
+        expect(yield* resolveAsset(token, "secret.txt")).toBeNull();
+
+        // A missing target is still reported as missing.
+        yield* fs.remove(figurePath);
+        const missing = yield* issueAssetUrl({
+          resource: {
+            _tag: "workspace-file",
+            threadId: ThreadId.make("thread-1"),
+            cwd: root,
+            relativePath: "figure.svg",
+            path: path.join(root, "figure.svg"),
+          },
+        }).pipe(Effect.flip);
+        expect(missing._tag).toBe("AssetWorkspaceAssetNotFoundError");
+      }).pipe(Effect.provide(testLayer)),
   );
 
   it.effect("rejects workspace files outside the authorized root", () =>

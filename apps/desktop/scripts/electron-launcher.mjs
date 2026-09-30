@@ -43,7 +43,7 @@ const APP_BUNDLE_ID = isDevelopment
   ? `com.scientfactory.scient.next.dev.${devBundleIdSuffix || "local"}`
   : "com.scientfactory.scient.next";
 const APP_PROTOCOL_SCHEMES = isDevelopment ? ["scient-next-dev"] : ["scient-next"];
-const LAUNCHER_VERSION = 22;
+const LAUNCHER_VERSION = 23;
 const developmentMacIconPngPath = NodePath.join(
   repoRoot,
   "assets",

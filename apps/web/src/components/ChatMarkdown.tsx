@@ -53,10 +53,7 @@ import {
   classifyMarkdownImageSource,
   markdownImageSourceFragment,
 } from "@t3tools/client-runtime/markdown-images";
-import {
-  collapseAbsoluteFilePath,
-  inlineCodeFilePathCandidate,
-} from "@t3tools/client-runtime/markdown-links";
+import { inlineCodeFilePathCandidate } from "@t3tools/client-runtime/markdown-links";
 import { mediaFileReference, mediaUrlReference } from "@t3tools/client-runtime/media-reference";
 import { mediaKindFromPath, mediaMimeTypeFromExtension } from "@t3tools/shared/filePreview";
 import * as Cause from "effect/Cause";
@@ -249,7 +246,10 @@ import {
 // SCIENT-FORK:END
 import { ScientDisplayMath, ScientInlineMath } from "../scient/math/ScientMath";
 import { openEnvironmentFileInPreview } from "../scient/fileOpening/openEnvironmentFileInPreview";
-import { pickChangedFileForLink } from "../scient/fileOpening/changedFileLinkEvidence";
+import {
+  chatFileOpenNeedsLookup,
+  resolveChatFileOpenPath,
+} from "../scient/fileOpening/changedFileLinkEvidence";
 import { environmentFilePreparation } from "../scient/fileOpening/environmentFileState";
 import { resolveLinkTarget } from "../browser/browserLinkTarget";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
@@ -2539,8 +2539,8 @@ function useChatMarkdownState({
     },
     [cwd, environmentId, searchProjectEntries],
   );
-  // A bare filename resolves to the workspace root, which is rarely where the
-  // file is, so ask the index before opening. Absolute host paths open as-is.
+  // Opens the file a chat link means; see resolveChatFileOpenPath. Links that
+  // cannot be redirected open synchronously. The rest check the host first.
   const openFileInPanel = useCallback(
     (panelPath: string, line: number | undefined) => {
       if (!threadRef) return;
@@ -2549,36 +2549,31 @@ function useChatMarkdownState({
       const isLatestLookup = claimWorkspaceBasenameLookup();
       const openAt = (path: string) =>
         useRightPanelStore.getState().openFile(threadRef, path, line);
-      const changedFileMatch =
-        cwd && changedFiles && changedFiles.length > 0
-          ? pickChangedFileForLink(
-              panelPath,
-              changedFiles.map((file) => file.path),
-              cwd,
-            )
-          : null;
-      if (cwd && changedFileMatch !== null) {
-        // The link and a file this turn changed share a name. Open the link as
-        // written when it exists; otherwise it was written relative to another
-        // directory, and the changed file is the one it meant.
-        const linkPath = collapseAbsoluteFilePath(
-          isAbsolutePath(panelPath) ? panelPath : resolvePathLinkTarget(panelPath, cwd),
-        );
-        void (async () => {
-          const exists = await linkTargetExists(linkPath);
-          if (!isLatestLookup()) return;
-          openAt(exists ? panelPath : changedFileMatch);
-        })();
-        return;
-      }
-      if (!cwd || !needsWorkspaceBasenameLookup(panelPath)) {
+      const request = {
+        panelPath,
+        workspaceRoot: cwd,
+        changedPaths: changedFiles?.map((file) => file.path) ?? [],
+      };
+      if (!chatFileOpenNeedsLookup(request)) {
         openAt(panelPath);
         return;
       }
+      // Anything the user does in the panel while the host answers wins over
+      // this click, so a slow check never replaces a newer choice.
+      const userActionRevision = useRightPanelStore.getState().getUserActionRevision(threadRef);
       void (async () => {
-        const match = await findWorkspaceBasenameMatch(panelPath);
-        if (!isLatestLookup()) return;
-        openAt(match ?? panelPath);
+        const path = await resolveChatFileOpenPath({
+          ...request,
+          exists: linkTargetExists,
+          findBasenameMatch: findWorkspaceBasenameMatch,
+        });
+        if (
+          !isLatestLookup() ||
+          useRightPanelStore.getState().getUserActionRevision(threadRef) !== userActionRevision
+        ) {
+          return;
+        }
+        openAt(path);
       })();
     },
     [changedFiles, cwd, findWorkspaceBasenameMatch, linkTargetExists, threadRef],
