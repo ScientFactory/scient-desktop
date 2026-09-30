@@ -70,7 +70,7 @@ interface ProviderSettingsLifecycleActionProps {
   readonly externalUpdateRunning?: boolean | undefined;
 }
 
-export function resolveProviderSettingsHeaderAction(
+function resolveProviderSettingsHeaderAction(
   provider: ServerProvider,
 ): "install" | "sign-in" | "manage" {
   if (

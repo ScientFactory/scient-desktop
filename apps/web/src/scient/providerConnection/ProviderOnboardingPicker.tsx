@@ -74,6 +74,10 @@ export function readyProviderModelSelection(
 ): ModelSelection | null {
   const defaultModel = readyProviderDefaultModel(entry);
   if (!entry || !defaultModel) return null;
+  if (saved?.instanceId === entry.instanceId && entry.driverKind !== "antigravity") {
+    const model = resolveSelectableModel(entry.driverKind, saved.model, entry.models);
+    if (model && !hiddenModels.includes(model)) return saved;
+  }
   if (entry.driverKind === "antigravity" && saved?.instanceId === entry.instanceId) {
     const selection =
       resolveAntigravityDraftSelection(saved, entry.snapshot, hiddenModels) ?? saved;
