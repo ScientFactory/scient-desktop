@@ -530,4 +530,42 @@ Theory & Proofs \\\\
     expect(editor().getText()).toBe("External replacement");
     expect(editor().can().undo()).toBe(false);
   });
+
+  it("keeps the body caret after an external source change so typing cannot replace the title", async () => {
+    const titled = (body: string) =>
+      `\\documentclass{article}\n\\title{Keep this title}\n\\begin{document}\n\\maketitle\n\n${body}\n\\end{document}\n`;
+    const renderEditor = (source: string) => (
+      <LatexVisualEditor
+        draftKey="synthetic-title-selection-test"
+        fileRevision="external-title-test"
+        source={source}
+        disabled={false}
+        onEdit={(expected, next) => {
+          writes(expected, next);
+          return true;
+        }}
+        onEditingChange={() => {}}
+        onOpenSource={() => {}}
+      />
+    );
+    await act(async () => root.render(renderEditor(titled("First paragraph"))));
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 20)));
+    let bodyPosition = -1;
+    editor().state.doc.descendants((node, position) => {
+      if (node.isText && node.text?.includes("First paragraph")) bodyPosition = position + 5;
+    });
+    expect(bodyPosition).toBeGreaterThan(0);
+    await act(async () => editor().commands.setTextSelection(bodyPosition));
+
+    const external = titled("Changed paragraph");
+    await act(async () => root.render(renderEditor(external)));
+    expect(editor().getText()).toContain("Changed paragraph");
+    expect(editor().state.selection.empty).toBe(true);
+    expect(editor().state.selection.$from.parent.type.name).toBe("paragraph");
+    await act(async () => editor().commands.insertContent("X"));
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 300)));
+    expect(writes).toHaveBeenCalledWith(external, expect.stringContaining("\\maketitle"));
+    expect(writes.mock.lastCall?.[1]).toContain("\\title{Keep this title}");
+    expect(writes.mock.lastCall?.[1]).toContain("ChangXed paragraph");
+  });
 });

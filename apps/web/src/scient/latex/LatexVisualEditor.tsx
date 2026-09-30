@@ -3411,10 +3411,13 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     currentSource.current = props.source;
     installProjection(projectLatexVisualDocument(props.source), true);
     if (editor) {
+      // Recreate state to clear obsolete undo history without resetting the caret
+      // to the first block, which may be the document title.
       editor.view.updateState(
         EditorState.create({
           schema: editor.schema,
           doc: editor.state.doc,
+          selection: editor.state.selection,
           plugins: editor.state.plugins,
         }),
       );
