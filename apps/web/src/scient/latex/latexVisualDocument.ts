@@ -1,4 +1,5 @@
 import type { JSONContent } from "@tiptap/core";
+import { patchNumberedMathSource, projectMathNumbering } from "./latexMathNumbering";
 import { newMathSymbolPackages } from "./mathSymbols";
 import {
   ensureLatexPackages,
@@ -505,12 +506,19 @@ export interface LatexVisualMathAttributes {
   readonly tex: string;
   readonly environment?: string | null;
   readonly wrapper?: "paren" | "dollar" | "bracket" | "double-dollar";
+  readonly numbering?: readonly (readonly string[])[] | null;
+  readonly numberingSource?: string | null;
 }
 
 export function latexVisualMathSource(
   attributes: LatexVisualMathAttributes,
   display: boolean,
 ): string {
+  if (display && attributes.numberingSource)
+    return (
+      patchNumberedMathSource(attributes.numberingSource, attributes.tex) ??
+      attributes.numberingSource
+    );
   const tex = attributes.tex;
   if (display && attributes.environment)
     return `\\begin{${attributes.environment}}\n${tex}\n\\end{${attributes.environment}}`;
@@ -525,11 +533,9 @@ export function parseLatexVisualMathSource(
   display: boolean,
 ): LatexVisualMathAttributes | null {
   const trimmed = source.trim();
-  // MathLive owns mathematical input, not TeX numbering or state-changing
-  // commands. Never let a math edit silently drop those semantics.
-  if (/\\(?:label|tag|notag|nonumber|newcommand|renewcommand|def|catcode)\b/u.test(trimmed))
-    return null;
+  if (/\\(?:newcommand|renewcommand|def|catcode)\b/u.test(trimmed)) return null;
   if (!display) {
+    if (/\\(?:label|tag|notag|nonumber)\b/u.test(trimmed)) return null;
     if (trimmed.startsWith("\\(") && trimmed.endsWith("\\)"))
       return { tex: trimmed.slice(2, -2), wrapper: "paren" };
     if (
@@ -541,18 +547,45 @@ export function parseLatexVisualMathSource(
       return { tex: trimmed.slice(1, -1), wrapper: "dollar" };
     return null;
   }
+  const project = (attributes: LatexVisualMathAttributes): LatexVisualMathAttributes | null => {
+    if (!/\\(?:label|tag|notag|nonumber)\b/u.test(attributes.tex)) return attributes;
+    const numbered = projectMathNumbering(attributes.tex);
+    if (!numbered) return null;
+    if (!numbered.commands.some((row) => row.length > 0)) return attributes;
+    return {
+      ...attributes,
+      tex: numbered.tex,
+      numbering: numbered.commands,
+      numberingSource: trimmed,
+    };
+  };
   if (trimmed.startsWith("\\[") && trimmed.endsWith("\\]")) {
-    return { tex: trimmed.slice(2, -2).trim(), wrapper: "bracket" };
+    return project({ tex: trimmed.slice(2, -2).trim(), wrapper: "bracket" });
   }
   if (trimmed.startsWith("$$") && trimmed.endsWith("$$") && trimmed.length >= 4) {
-    return { tex: trimmed.slice(2, -2).trim(), wrapper: "double-dollar" };
+    return project({ tex: trimmed.slice(2, -2).trim(), wrapper: "double-dollar" });
   }
   const environment = /^\\begin\{([^}]+)\}([\s\S]*)\\end\{\1\}$/u.exec(trimmed);
   if (!environment || !DISPLAY_MATH_ENVIRONMENTS.test(environment[1]!)) return null;
-  return {
+  return project({
     tex: environment[2]!.trim(),
     environment: environment[1]!,
-  };
+  });
+}
+
+function serializeNumberedMath(
+  attributes: LatexVisualMathAttributes,
+  source: string,
+): string | null {
+  const original = parseLatexVisualMathSource(source, true);
+  if (
+    !original?.numberingSource ||
+    original.environment !== (attributes.environment ?? undefined) ||
+    (original.wrapper ?? "bracket") !== (attributes.wrapper ?? "bracket") ||
+    JSON.stringify(original.numbering) !== JSON.stringify(attributes.numbering)
+  )
+    return null;
+  return patchNumberedMathSource(source, attributes.tex);
 }
 
 function parseDisplayMath(source: string): JSONContent | null {
@@ -1972,6 +2005,11 @@ export function serializeLatexVisualBlock(node: JSONContent): string | null {
     return `\\begin{quote}\n${blocks.join("\n\n")}\n\\end{quote}`;
   }
   if (node.type === "latexDisplayMath") {
+    if (typeof node.attrs?.numberingSource === "string")
+      return serializeNumberedMath(
+        { ...node.attrs, tex: String(node.attrs.tex ?? "") },
+        node.attrs.numberingSource,
+      );
     return latexVisualMathSource(
       {
         tex: String(node.attrs?.tex ?? ""),
@@ -2383,6 +2421,7 @@ function comparableNode(node: JSONContent): ComparableVisualNode {
       .filter(([key, value]) => {
         if (
           key === "sourceId" ||
+          (node.type === "latexDisplayMath" && key === "numberingSource") ||
           key === "latexCommand" ||
           (node.type === "latexRichPreview" &&
             (key === "raw" ||
@@ -2487,6 +2526,14 @@ function roundTripSignature(node: JSONContent): string {
     }
     return {
       ...value,
+      ...(value.type === "latexDisplayMath" && value.attrs?.numberingSource
+        ? {
+            attrs: {
+              ...value.attrs,
+              tex: projectMathNumbering(String(value.attrs.tex ?? ""))?.tex ?? value.attrs.tex,
+            },
+          }
+        : {}),
       ...(value.type === "latexRichPreview" && value.attrs
         ? {
             attrs: Object.fromEntries(
@@ -2930,6 +2977,17 @@ export function applyLatexVisualDocumentChange(
   const newChanged = next.slice(prefix, next.length - suffix);
   if (oldChanged.some((block) => !block.editable)) return null;
   if (
+    oldChanged.length === newChanged.length &&
+    oldChanged.some(
+      (block, index) =>
+        block.node.type === "latexDisplayMath" &&
+        block.node.attrs?.numberingSource &&
+        (newChanged[index]?.type !== "latexDisplayMath" ||
+          !newChanged[index]?.attrs?.numberingSource),
+    )
+  )
+    return null;
+  if (
     oldChanged.length === 1 &&
     newChanged.length === 1 &&
     oldChanged[0]?.node.type === "latexRichPreview" &&
@@ -2949,6 +3007,15 @@ export function applyLatexVisualDocumentChange(
   }
   const eol = source.includes("\r\n") ? "\r\n" : "\n";
   const serialized = newChanged.map((node, index) => {
+    const previousBlock = oldChanged.length === newChanged.length ? oldChanged[index] : null;
+    if (
+      previousBlock?.node.type === "latexDisplayMath" &&
+      previousBlock.node.attrs?.numberingSource
+    )
+      return serializeNumberedMath(
+        { ...node.attrs, tex: String(node.attrs?.tex ?? "") },
+        previousBlock.source,
+      );
     const minimal =
       oldChanged.length === newChanged.length && oldChanged[index]
         ? minimallyPatchedBlock(oldChanged[index]!, node)

@@ -568,4 +568,25 @@ Theory & Proofs \\\\
     expect(writes.mock.lastCall?.[1]).toContain("\\title{Keep this title}");
     expect(writes.mock.lastCall?.[1]).toContain("ChangXed paragraph");
   });
+
+  it("edits labelled equation math while retaining numbering and refusing new outer rows", async () => {
+    await mount("\\begin{align}\n  x &= y \\label{eq:first} \\\\\n  a &= b \\notag\n\\end{align}");
+    const before = current;
+    expect(editor().state.doc.firstChild?.type.name).toBe("latexDisplayMath");
+    await act(async () => {
+      editor().commands.setNodeSelection(0);
+      editor().commands.updateAttributes("latexDisplayMath", {
+        tex: String(editor().state.doc.firstChild!.attrs.tex).replace("x &=", "z &="),
+      });
+    });
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 300)));
+    expect(current).toBe(before.replace("x &=", "z &="));
+    const saved = current;
+    const math = editor().state.doc.firstChild!.attrs.tex;
+    await act(async () => {
+      editor().commands.updateAttributes("latexDisplayMath", { tex: math + " \\\\ q = r" });
+    });
+    expect(editor().state.doc.firstChild!.attrs.tex).toBe(math);
+    expect(current).toBe(saved);
+  });
 });

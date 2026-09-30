@@ -202,6 +202,14 @@ supported changes through the existing source guard as the user types. Outer
 wrappers stay under the equation-type selector; rejected drafts are marked as
 unsaved. Inner-environment completions omit display wrappers.
 
+Labelled display math keeps `label`, `tag`, `notag`, and `nonumber` commands in
+preserved source metadata outside MathLive. The adapter counts outer rows while
+ignoring row separators inside nested matrices and cases. Formula edits patch
+only their changed source range and retain the commands, whitespace, and row
+separators. Numbered formulas keep their outer row count and equation type;
+changes spanning an interior numbering command are refused. Comments, malformed
+commands, and numbering inside a nested environment remain source-only.
+
 Item controls stay outside measured flow. Inline math uses MathLive's
 `inline-math` mode and does not reserve input-field padding around every formula.
 Math selection keeps the pointer-down anchor and a path through nested cells.

@@ -69,6 +69,7 @@ import { LatexMathField, type LatexMathFieldHandle } from "./LatexMathField";
 import { LatexMathPalette } from "./LatexMathPalette";
 import { LatexTextField, LatexDraftContext } from "./LatexTextField";
 import { afterEditorPaint } from "./afterEditorPaint";
+import { projectMathNumbering } from "./latexMathNumbering";
 import {
   isOrdinaryTyping,
   readTypingDraft,
@@ -368,6 +369,9 @@ function LatexMathView({ node, updateAttributes, editor, getPos, selected }: Nod
     tex: String(node.attrs.tex ?? ""),
     environment: node.attrs.environment ? String(node.attrs.environment) : null,
     wrapper: node.attrs.wrapper,
+    numbering: node.attrs.numbering,
+    numberingSource:
+      typeof node.attrs.numberingSource === "string" ? node.attrs.numberingSource : null,
   } as const;
   const [editing, setEditing] = useState(false);
   const [dragOutside, setDragOutside] = useState(false);
@@ -714,9 +718,14 @@ function LatexMathView({ node, updateAttributes, editor, getPos, selected }: Nod
       projected?.length !== 1 ||
       (!display && projected[0]?.content?.length !== 1) ||
       formula?.type !== node.type.name ||
-      String(formula.attrs?.tex ?? "").trim() !== tex.trim()
+      String(formula.attrs?.tex ?? "").trim() !==
+        (attributes.numberingSource ? (projectMathNumbering(tex)?.tex ?? tex) : tex).trim()
     ) {
-      setSourceError("Not saved yet. Complete the formula without its outer math delimiters.");
+      setSourceError(
+        attributes.numberingSource
+          ? "Keep the existing equation rows and label positions to save. Your input is kept here."
+          : "Not saved yet. Complete the formula without its outer math delimiters.",
+      );
       return;
     }
     updateAttributes({ tex });
@@ -751,6 +760,12 @@ function LatexMathView({ node, updateAttributes, editor, getPos, selected }: Nod
   };
 
   const changeType = (value: string) => {
+    if (attributes.numberingSource) {
+      setSourceError(
+        "Change the equation type in Source to keep its labels and numbering commands.",
+      );
+      return;
+    }
     if (!mathField.current?.flush()) return;
     const position = getPos();
     if (position === undefined) return;
@@ -903,22 +918,33 @@ function LatexMathView({ node, updateAttributes, editor, getPos, selected }: Nod
             aria-label="Math tools"
             onClick={(event) => event.stopPropagation()}
           >
-            <select
-              aria-label="Equation type"
-              value={mathType(attributes, display)
-                .replace("inline-dollar", "inline-paren")
-                .replace("display-dollar", "display-bracket")
-                .replace("environment:equation*", "display-bracket")}
-              onChange={(event) => changeType(event.currentTarget.value)}
+            <ScientTooltip
+              content={
+                attributes.numberingSource
+                  ? "Change equation type in Source to preserve labels and numbering."
+                  : "Equation type"
+              }
             >
-              <option value="inline-paren">Inline</option>
-              <option value="display-bracket">Centered</option>
-              <option value="environment:equation">Numbered</option>
-              <option value="environment:align">Align (numbered)</option>
-              <option value="environment:align*">Align (unnumbered)</option>
-              <option value="environment:gather">Gather (numbered)</option>
-              <option value="environment:gather*">Gather (unnumbered)</option>
-            </select>
+              <span>
+                <select
+                  aria-label="Equation type"
+                  value={mathType(attributes, display)
+                    .replace("inline-dollar", "inline-paren")
+                    .replace("display-dollar", "display-bracket")
+                    .replace("environment:equation*", "display-bracket")}
+                  onChange={(event) => changeType(event.currentTarget.value)}
+                  disabled={Boolean(attributes.numberingSource)}
+                >
+                  <option value="inline-paren">Inline</option>
+                  <option value="display-bracket">Centered</option>
+                  <option value="environment:equation">Numbered</option>
+                  <option value="environment:align">Align (numbered)</option>
+                  <option value="environment:align*">Align (unnumbered)</option>
+                  <option value="environment:gather">Gather (numbered)</option>
+                  <option value="environment:gather*">Gather (unnumbered)</option>
+                </select>
+              </span>
+            </ScientTooltip>
             <span className="scient-latex-shortcut-hint" role="status">
               {shortcutHint}
             </span>
@@ -1077,7 +1103,12 @@ function LatexMathView({ node, updateAttributes, editor, getPos, selected }: Nod
         disabled={!editable}
         formatCopiedMath={(tex) =>
           latexVisualMathSource(
-            { ...attributes, tex: mathEnvironmentBody(tex, attributes.environment) },
+            {
+              ...attributes,
+              numbering: null,
+              numberingSource: null,
+              tex: mathEnvironmentBody(tex, attributes.environment),
+            },
             display,
           )
         }
@@ -1137,7 +1168,9 @@ function LatexMathView({ node, updateAttributes, editor, getPos, selected }: Nod
           setSourceError(
             accepted.trim() === body.trim()
               ? null
-              : "Finish this formula to save it. Your input is kept here.",
+              : attributes.numberingSource
+                ? "Keep the existing equation rows and label positions to save. Your input is kept here."
+                : "Finish this formula to save it. Your input is kept here.",
           );
           return {
             accepted: accepted.trim() === body.trim(),
@@ -2515,6 +2548,8 @@ const LatexDisplayMath = Node.create({
       environment: { default: null },
       wrapper: { default: "bracket" },
       sourceId: { default: null, rendered: false },
+      numbering: { default: null, rendered: false },
+      numberingSource: { default: null, rendered: false },
     };
   },
   parseHTML() {

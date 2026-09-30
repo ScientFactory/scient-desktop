@@ -115,8 +115,13 @@ cases, and aligned structures at the mathematical cursor. Choose **Code** in
 that bar to edit just the formula's code in a compact box above the bar. Supported
 edits update the equation and document as you type; there are no Apply or Cancel
 buttons. Escape or Ctrl/Cmd+Enter returns to the formula. The outer delimiters and
-equation environment are managed by the equation-type selector. Labels, numbering
-commands, and macro definitions belong in the document source. Edits that cannot
+equation environment are managed by the equation-type selector. Equations with
+`\label`, `\tag`, `\notag`, or `\nonumber` allow edits to the math in their existing
+rows. Those commands remain outside the formula field and keep their exact source.
+Change their labels, numbering, row count, or equation type in Source. Edits that
+cross a numbering command inside a formula, or numbering inside a nested
+environment or a commented equation, remain protected. Macro definitions belong
+in the document source. Edits that cannot
 round-trip remain local and are marked as unsaved. MathLive's separate virtual
 keyboard and menu are hidden.
 
@@ -222,7 +227,7 @@ consistent; the surrounding document remains untouched. A table containing
 structural cell content, such as nested commands, math, or `\multicolumn`, stays
 protected; selecting it shows **Protected table — edit in Source** in the footer.
 Other unsupported structures, including
-custom macros and equation labels or tags, appear as protected source blocks.
+custom macros, appear as protected source blocks.
 The visual editor does not silently normalize or discard them. A visual edit
 cannot delete across a protected preview or source block, or across an included
 file boundary. **Edit LaTeX** opens the file that owns the selected block.
