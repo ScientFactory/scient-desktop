@@ -9,6 +9,52 @@ import type { ScientReleaseNote } from "./model";
  */
 export const SCIENT_RELEASE_NOTES = [
   {
+    version: "0.6.20",
+    publishedAt: "2026-10-01",
+    format: "paragraphs",
+    headline: "Easier AI setup, better defaults, smoother conversations.",
+    highlights: [
+      {
+        id: "ai-setup-0620",
+        title: "Connect your AI more easily",
+        description:
+          "Choose from one scrollable provider list during setup. Install or sign in when needed, with Manage always available. Settings are more compact, and browser sign-in keeps your setup page open.",
+      },
+      {
+        id: "conversation-defaults-0620",
+        title: "Better defaults for new conversations",
+        description:
+          "Codex prefers GPT 6.1 Sol; Claude prefers Opus 5.5. Both use Medium reasoning where supported, while Antigravity prefers High. Automatic defaults are clearer; your saved choices stay intact.",
+      },
+      {
+        id: "section-interactions-0620",
+        title: "Smoother conversation organization",
+        description:
+          "Create sections in a compact form beside its starting point. Conversation drags follow the pointer and land more accurately. Failed moves no longer reorder the original section.",
+      },
+      {
+        id: "reading-end-0620",
+        title: "Stay with the latest answer",
+        description:
+          "Reading-end detection follows the latest answer rather than later messages or tool activity. A small allowance for covered answer lines makes scrolling and sending more consistent.",
+      },
+      {
+        id: "agent-questions-0620",
+        title: "See what your agent is asking",
+        description:
+          "When an agent needs your input, the conversation timeline shows the actual question, making it easier to see what needs an answer.",
+      },
+      {
+        id: "grok-recovery-0620",
+        title: "Recover from interrupted Grok sessions",
+        description:
+          "Crashed Grok sessions are no longer reused. Active requests settle before Scient replaces the session, helping conversations recover cleanly.",
+      },
+    ],
+    alsoIncluded:
+      "Updated Codex support recognizes Pro Max and eligible Ultrafast access. Workspace-root links open the file explorer; model IDs stay inline code; multi-PR badges open linked pull requests. Menu descriptions and diff filenames display more clearly, and shared OpenCode Go usage limits are grouped correctly.",
+  },
+  {
     version: "0.6.19",
     publishedAt: "2026-09-30",
     format: "paragraphs",
