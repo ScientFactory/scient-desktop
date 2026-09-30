@@ -1,10 +1,15 @@
-import { collapseAbsoluteFilePath } from "@t3tools/client-runtime/markdown-links";
+import { collapseAbsoluteFilePath, fileBasename } from "@t3tools/client-runtime/markdown-links";
+import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 
 import { isAbsolutePath, resolvePathLinkTarget } from "~/terminal-links";
-import { needsWorkspaceBasenameLookup } from "~/workspaceBasenameLookup";
 
+/**
+ * Path segments for suffix comparison. Windows paths divide on either slash;
+ * on POSIX a backslash is part of a file name, never a separator.
+ */
 function pathSegments(path: string): string[] {
-  return path.split(/[\\/]+/).filter((segment) => segment.length > 0 && segment !== ".");
+  const separator = isWindowsAbsolutePath(path) ? /[\\/]+/ : /\/+/;
+  return path.split(separator).filter((segment) => segment.length > 0 && segment !== ".");
 }
 
 function sharedSuffixLength(left: ReadonlyArray<string>, right: ReadonlyArray<string>): number {
@@ -19,45 +24,48 @@ function sharedSuffixLength(left: ReadonlyArray<string>, right: ReadonlyArray<st
   return length;
 }
 
-/**
- * The file a turn changed that a link in that turn's answer names, for when the
- * link's own location does not exist. Agents often write links relative to the
- * directory their shell was in, which Scient cannot see; the files the same
- * turn changed are recorded evidence of what the link meant.
- *
- * Only those files are considered, the file name must match exactly, and the
- * longest shared path suffix must belong to exactly one of them. Anything
- * weaker returns null, so a link never silently opens a different document.
- *
- * @param linkPath The link target: absolute, or relative to `workspaceRoot`.
- * @param changedPaths The turn's changed files, relative to `workspaceRoot`.
- * @returns The matching changed file's workspace-relative path, or null.
- */
-export function pickChangedFileForLink(
-  linkPath: string,
-  changedPaths: ReadonlyArray<string>,
-  workspaceRoot: string,
-): string | null {
-  const targetPath = collapseAbsoluteFilePath(
+function absoluteLinkPath(linkPath: string, workspaceRoot: string): string {
+  return collapseAbsoluteFilePath(
     isAbsolutePath(linkPath) ? linkPath : resolvePathLinkTarget(linkPath, workspaceRoot),
   );
+}
+
+/**
+ * The candidate a link most plausibly names when the link's own location does
+ * not exist. Agents often write links relative to the directory their shell
+ * was in, or to a folder they were thinking in, which Scient cannot see: the
+ * link `reviews/notes.md` usually means the one project file ending in
+ * `reviews/notes.md`.
+ *
+ * The file name must match exactly, and the candidate sharing the longest run
+ * of trailing path segments with the link must be the only one at that length.
+ * A tie returns null, so the user chooses instead of Scient guessing.
+ *
+ * @param linkPath The link target: absolute, or relative to `workspaceRoot`.
+ * @param candidatePaths Existing files, relative to `workspaceRoot`.
+ * @returns The best candidate's workspace-relative path, or null.
+ */
+export function pickClosestPathMatch(
+  linkPath: string,
+  candidatePaths: ReadonlyArray<string>,
+  workspaceRoot: string,
+): string | null {
+  const targetPath = absoluteLinkPath(linkPath, workspaceRoot);
   const targetSegments = pathSegments(targetPath);
   let best: string | null = null;
   let bestLength = 0;
   let ambiguous = false;
-  for (const changedPath of changedPaths) {
-    const changedTarget = collapseAbsoluteFilePath(
-      resolvePathLinkTarget(changedPath, workspaceRoot),
-    );
+  for (const candidatePath of candidatePaths) {
+    const candidateTarget = absoluteLinkPath(candidatePath, workspaceRoot);
     // The link already names this file; its absence is not evidence of another.
-    if (changedTarget === targetPath) return null;
-    const length = sharedSuffixLength(targetSegments, pathSegments(changedTarget));
+    if (candidateTarget === targetPath) return null;
+    const length = sharedSuffixLength(targetSegments, pathSegments(candidateTarget));
     if (length === 0) continue;
     if (length > bestLength) {
-      best = changedPath;
+      best = candidatePath;
       bestLength = length;
       ambiguous = false;
-    } else if (length === bestLength && changedPath !== best) {
+    } else if (length === bestLength && candidatePath !== best) {
       ambiguous = true;
     }
   }
@@ -72,52 +80,56 @@ export interface ChatFileOpenInput {
   readonly changedPaths: ReadonlyArray<string>;
 }
 
-/**
- * Whether opening a chat link needs to consult the host before choosing a
- * file. Only a link that could be redirected does: one sharing a name with a
- * file its turn changed, or a bare file name. Everything else opens as written.
- */
-export function chatFileOpenNeedsLookup(input: ChatFileOpenInput): boolean {
-  if (!input.workspaceRoot) return false;
-  return (
-    needsWorkspaceBasenameLookup(input.panelPath) ||
-    pickChangedFileForLink(input.panelPath, input.changedPaths, input.workspaceRoot) !== null
-  );
+export interface ChatFileOpenResolution {
+  /** The path to open. */
+  readonly path: string;
+  /** Set when the link's own location did not exist and a match was opened instead. */
+  readonly missingLinkPath?: string;
 }
 
 /**
- * The file a chat link opens. The link as written always wins when it exists;
- * a link whose location does not exist falls back first to the unique file its
- * turn changed with that name, then, for a bare file name, to a unique
- * same-named workspace file. It never chooses between equally good matches.
+ * Whether opening a chat link needs to consult the host first. Any link inside
+ * a workspace thread might have been written relative to the wrong directory,
+ * so all of them are checked; without a workspace there is nothing to match.
+ */
+export function chatFileOpenNeedsLookup(input: ChatFileOpenInput): boolean {
+  return Boolean(input.workspaceRoot);
+}
+
+/**
+ * The file a chat link opens. The link as written always wins when it exists.
+ * When it does not, the closest match opens instead (see pickClosestPathMatch):
+ * first among the files the link's own turn changed, which is recorded
+ * evidence, then among the project files with the same name. A tie opens the
+ * link as written, so the file panel offers the choices.
  *
  * @param exists Whether an absolute host path exists. Implementations answer
  *   false only for a definite "not found", so a permission or connection
  *   problem surfaces on the linked file rather than redirecting to another.
- * @param findBasenameMatch The unique workspace file with this bare name, or null.
+ * @param findFilesNamed Workspace-relative paths of project files with exactly
+ *   this file name.
  */
 export async function resolveChatFileOpenPath(
   input: ChatFileOpenInput & {
     readonly exists: (absolutePath: string) => Promise<boolean>;
-    readonly findBasenameMatch: (fileName: string) => Promise<string | null>;
+    readonly findFilesNamed: (fileName: string) => Promise<ReadonlyArray<string>>;
   },
-): Promise<string> {
+): Promise<ChatFileOpenResolution> {
   const workspaceRoot = input.workspaceRoot;
-  if (!workspaceRoot) return input.panelPath;
-  const linkPath = collapseAbsoluteFilePath(
-    isAbsolutePath(input.panelPath)
-      ? input.panelPath
-      : resolvePathLinkTarget(input.panelPath, workspaceRoot),
-  );
-  if (await input.exists(linkPath)) return input.panelPath;
-  const changedFileMatch = pickChangedFileForLink(
+  if (!workspaceRoot) return { path: input.panelPath };
+  const linkPath = absoluteLinkPath(input.panelPath, workspaceRoot);
+  if (await input.exists(linkPath)) return { path: input.panelPath };
+
+  const changedFileMatch = pickClosestPathMatch(input.panelPath, input.changedPaths, workspaceRoot);
+  if (changedFileMatch !== null) {
+    return { path: changedFileMatch, missingLinkPath: linkPath };
+  }
+  const projectMatch = pickClosestPathMatch(
     input.panelPath,
-    input.changedPaths,
+    await input.findFilesNamed(fileBasename(linkPath)),
     workspaceRoot,
   );
-  if (changedFileMatch !== null) return changedFileMatch;
-  if (needsWorkspaceBasenameLookup(input.panelPath)) {
-    return (await input.findBasenameMatch(input.panelPath)) ?? input.panelPath;
-  }
-  return input.panelPath;
+  return projectMatch !== null
+    ? { path: projectMatch, missingLinkPath: linkPath }
+    : { path: input.panelPath };
 }

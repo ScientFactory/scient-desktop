@@ -29,7 +29,9 @@ describe("universal chat-file opening seam", () => {
     expect(chatMarkdownSource).toContain(
       "!canPreviewMedia && isAbsolutePath(fileLinkMeta.filePath)",
     );
-    expect(chatMarkdownSource).toContain("openMarkdownMedia(mediaPath, fileLinkMeta.filePath)");
+    // Outside media links resolve like other links, then open in the media viewer.
+    expect(chatMarkdownSource).toContain("openMarkdownMediaLink(mediaPath, fileLinkMeta.filePath)");
+    expect(chatMarkdownSource).toContain("openMarkdownMedia(mediaPath, filePath);");
   });
 
   it("routes HTML through the integrated Browser with an explicit document capability", () => {

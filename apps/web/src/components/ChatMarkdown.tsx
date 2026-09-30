@@ -53,7 +53,7 @@ import {
   classifyMarkdownImageSource,
   markdownImageSourceFragment,
 } from "@t3tools/client-runtime/markdown-images";
-import { inlineCodeFilePathCandidate } from "@t3tools/client-runtime/markdown-links";
+import { fileBasename, inlineCodeFilePathCandidate } from "@t3tools/client-runtime/markdown-links";
 import { mediaFileReference, mediaUrlReference } from "@t3tools/client-runtime/media-reference";
 import { mediaKindFromPath, mediaMimeTypeFromExtension } from "@t3tools/shared/filePreview";
 import * as Cause from "effect/Cause";
@@ -249,6 +249,7 @@ import { openEnvironmentFileInPreview } from "../scient/fileOpening/openEnvironm
 import {
   chatFileOpenNeedsLookup,
   resolveChatFileOpenPath,
+  type ChatFileOpenResolution,
 } from "../scient/fileOpening/changedFileLinkEvidence";
 import { environmentFilePreparation } from "../scient/fileOpening/environmentFileState";
 import { resolveLinkTarget } from "../browser/browserLinkTarget";
@@ -340,6 +341,21 @@ export function shouldUseMarkdownFileBrowserPrimaryAction(input: {
   return input.canOpenInBrowser;
 }
 
+/** Says when a link opened a different file than it names, so an unexpected match is noticed. */
+function announceResolvedLink(resolution: ChatFileOpenResolution): void {
+  if (resolution.missingLinkPath === undefined) return;
+  toastManager.add(
+    stackedThreadToast({
+      type: "info",
+      title: `Opened ${resolution.path}`,
+      description: `The link pointed to ${resolution.missingLinkPath}, which doesn't exist.`,
+    }),
+  );
+}
+
+// The index ranks by fuzzy score, so ask for enough results that every file
+// sharing a common name (`index.md`, `README.md`) is among them.
+const WORKSPACE_FILE_NAME_SEARCH_LIMIT = 200;
 const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
 const EMPTY_REMARK_PLUGINS: NonNullable<ReactMarkdownOptions["remarkPlugins"]> = [];
 
@@ -2539,8 +2555,22 @@ function useChatMarkdownState({
     },
     [cwd, environmentId, searchProjectEntries],
   );
-  // Opens the file a chat link means; see resolveChatFileOpenPath. Links that
-  // cannot be redirected open synchronously. The rest check the host first.
+  const findWorkspaceFilesNamed = useCallback(
+    async (fileName: string): Promise<ReadonlyArray<string>> => {
+      if (!cwd || environmentId === null || fileName.length === 0) return [];
+      const result = await searchProjectEntries({
+        environmentId,
+        input: { cwd, query: fileName, limit: WORKSPACE_FILE_NAME_SEARCH_LIMIT, kind: "file" },
+      });
+      if (result._tag !== "Success") return [];
+      return result.value.entries
+        .filter((entry) => entry.kind === "file" && fileBasename(entry.path) === fileName)
+        .map((entry) => entry.path);
+    },
+    [cwd, environmentId, searchProjectEntries],
+  );
+  // Opens the file a chat link means; see resolveChatFileOpenPath. Without a
+  // workspace a link opens as written; otherwise the host is checked first.
   const openFileInPanel = useCallback(
     (panelPath: string, line: number | undefined) => {
       if (!threadRef) return;
@@ -2562,10 +2592,10 @@ function useChatMarkdownState({
       // this click, so a slow check never replaces a newer choice.
       const userActionRevision = useRightPanelStore.getState().getUserActionRevision(threadRef);
       void (async () => {
-        const path = await resolveChatFileOpenPath({
+        const resolution = await resolveChatFileOpenPath({
           ...request,
           exists: linkTargetExists,
-          findBasenameMatch: findWorkspaceBasenameMatch,
+          findFilesNamed: findWorkspaceFilesNamed,
         });
         if (
           !isLatestLookup() ||
@@ -2573,10 +2603,41 @@ function useChatMarkdownState({
         ) {
           return;
         }
-        openAt(path);
+        openAt(resolution.path);
+        announceResolvedLink(resolution);
       })();
     },
-    [changedFiles, cwd, findWorkspaceBasenameMatch, linkTargetExists, threadRef],
+    [changedFiles, cwd, findWorkspaceFilesNamed, linkTargetExists, threadRef],
+  );
+  // An outside media link whose file is missing gets the same recovery as any
+  // other file link; otherwise it opens in the media viewer as before.
+  const openMarkdownMediaLink = useCallback(
+    (mediaPath: string, filePath: string) => {
+      if (!threadRef || !cwd) {
+        openMarkdownMedia(mediaPath, filePath);
+        return;
+      }
+      const userActionRevision = useRightPanelStore.getState().getUserActionRevision(threadRef);
+      void (async () => {
+        const resolution = await resolveChatFileOpenPath({
+          panelPath: filePath,
+          workspaceRoot: cwd,
+          changedPaths: changedFiles?.map((file) => file.path) ?? [],
+          exists: linkTargetExists,
+          findFilesNamed: findWorkspaceFilesNamed,
+        });
+        if (useRightPanelStore.getState().getUserActionRevision(threadRef) !== userActionRevision) {
+          return;
+        }
+        if (resolution.missingLinkPath === undefined) {
+          openMarkdownMedia(mediaPath, filePath);
+          return;
+        }
+        useRightPanelStore.getState().openFile(threadRef, resolution.path);
+        announceResolvedLink(resolution);
+      })();
+    },
+    [changedFiles, cwd, findWorkspaceFilesNamed, linkTargetExists, openMarkdownMedia, threadRef],
   );
   const revealMarkdownFileInFileManager = useCallback(
     async (fileLinkMeta: MarkdownFileLinkMeta) => {
@@ -2631,7 +2692,7 @@ function useChatMarkdownState({
           onOpenInPanel={openFileInPanel}
           onOpenMedia={
             threadRef && canPreviewMedia
-              ? () => openMarkdownMedia(mediaPath, fileLinkMeta.filePath)
+              ? () => openMarkdownMediaLink(mediaPath, fileLinkMeta.filePath)
               : undefined
           }
           openInEditorMenuLabel={preferredEditorMenuLabel}

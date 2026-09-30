@@ -2,35 +2,35 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   chatFileOpenNeedsLookup,
-  pickChangedFileForLink,
+  pickClosestPathMatch,
   resolveChatFileOpenPath,
 } from "./changedFileLinkEvidence";
 
-const root = "/Users/me/ScientFactory";
+const root = "/Users/me/scient-open-file-test";
 
-describe("pickChangedFileForLink", () => {
-  it("recovers a link written relative to the agent's shell directory", () => {
-    // The agent's shell was in ScientFactory/tmp, so it wrote ../reviews/...,
-    // which from the project root points at /Users/me/reviews/....
+describe("pickClosestPathMatch", () => {
+  it("recovers a link written relative to another directory", () => {
+    // The agent's shell was in tmp/, so it wrote ../reviews/..., which from
+    // the project root points one level too high.
     expect(
-      pickChangedFileForLink(
-        "/Users/me/reviews/document-editing/pr353-app-review-notes.md",
-        ["reviews/document-editing/pr353-app-review-notes.md", "tmp/sample.md"],
+      pickClosestPathMatch(
+        "/Users/me/reviews/document-editing/notes.md",
+        ["reviews/document-editing/notes.md", "tmp/sample.md"],
         root,
       ),
-    ).toBe("reviews/document-editing/pr353-app-review-notes.md");
-    expect(
-      pickChangedFileForLink(
-        "../reviews/document-editing/pr353-app-review-notes.md",
-        ["reviews/document-editing/pr353-app-review-notes.md"],
-        root,
-      ),
-    ).toBe("reviews/document-editing/pr353-app-review-notes.md");
+    ).toBe("reviews/document-editing/notes.md");
+    // Links written relative to a subfolder the agent was thinking in.
+    expect(pickClosestPathMatch("reviews/inside.md", ["project/reviews/inside.md"], root)).toBe(
+      "project/reviews/inside.md",
+    );
+    expect(pickClosestPathMatch("../outside/locked.md", ["outside/locked.md"], root)).toBe(
+      "outside/locked.md",
+    );
   });
 
-  it("prefers the changed file sharing the longest path suffix", () => {
+  it("prefers the candidate sharing the longest path ending", () => {
     expect(
-      pickChangedFileForLink(
+      pickClosestPathMatch(
         "/elsewhere/reviews/notes.md",
         ["drafts/notes.md", "archive/reviews/notes.md"],
         root,
@@ -38,126 +38,122 @@ describe("pickChangedFileForLink", () => {
     ).toBe("archive/reviews/notes.md");
   });
 
-  it("refuses to choose between equally plausible changed files", () => {
+  it("refuses to choose between equally plausible files", () => {
     expect(
-      pickChangedFileForLink("/elsewhere/notes.md", ["a/notes.md", "b/notes.md"], root),
+      pickClosestPathMatch(
+        "dup.md",
+        ["project/reviews/a/dup.md", "project/reviews/b/dup.md"],
+        root,
+      ),
     ).toBeNull();
   });
 
-  it("needs the file name itself to match", () => {
+  it("needs the exact file name", () => {
     expect(
-      pickChangedFileForLink("/elsewhere/reviews/notes.md", ["reviews/other.md"], root),
+      pickClosestPathMatch("/elsewhere/reviews/notes.md", ["reviews/other.md"], root),
     ).toBeNull();
-    expect(pickChangedFileForLink("/elsewhere/Notes.md", ["reviews/notes.md"], root)).toBeNull();
+    expect(pickClosestPathMatch("/elsewhere/Notes.md", ["reviews/notes.md"], root)).toBeNull();
+    // On POSIX a backslash belongs to the file name.
+    expect(pickClosestPathMatch("/tmp/draft\\notes.md", ["reviews/notes.md"], root)).toBeNull();
   });
 
-  it("does nothing when the link already names a changed file", () => {
+  it("does nothing when the link already names a candidate", () => {
     expect(
-      pickChangedFileForLink("reviews/notes.md", ["reviews/notes.md", "other/notes.md"], root),
+      pickClosestPathMatch("reviews/notes.md", ["reviews/notes.md", "other/notes.md"], root),
     ).toBeNull();
-  });
-
-  it("matches a bare file name only through the turn's own changes", () => {
-    expect(pickChangedFileForLink("notes.md", ["reviews/notes.md"], root)).toBe("reviews/notes.md");
-    expect(pickChangedFileForLink("notes.md", [], root)).toBeNull();
   });
 });
 
 describe("resolveChatFileOpenPath", () => {
-  const notFoundExcept =
-    (...existing: string[]) =>
+  const existing =
+    (...paths: string[]) =>
     async (path: string) =>
-      existing.includes(path);
-  const noBasenameMatch = async () => null;
+      paths.includes(path);
+  const noFiles = async () => [];
 
-  it("opens the link as written whenever it exists, even with a same-named change", async () => {
-    const exists = vi.fn(notFoundExcept("/Users/me/ScientFactory/notes.md"));
+  it("opens the link as written whenever it exists", async () => {
+    const exists = vi.fn(existing(`${root}/notes.md`));
+    const findFilesNamed = vi.fn(async () => ["reviews/notes.md"]);
     await expect(
       resolveChatFileOpenPath({
         panelPath: "notes.md",
         workspaceRoot: root,
         changedPaths: ["reviews/notes.md"],
         exists,
-        findBasenameMatch: async () => "docs/notes.md",
+        findFilesNamed,
       }),
-    ).resolves.toBe("notes.md");
-    expect(exists).toHaveBeenCalledWith("/Users/me/ScientFactory/notes.md");
+    ).resolves.toEqual({ path: "notes.md" });
+    expect(exists).toHaveBeenCalledWith(`${root}/notes.md`);
+    expect(findFilesNamed).not.toHaveBeenCalled();
   });
 
-  it("falls back to the turn's changed file only when the link does not exist", async () => {
+  it("prefers a file the link's turn changed, then the closest project file", async () => {
     await expect(
       resolveChatFileOpenPath({
         panelPath: "/Users/me/reviews/notes.md",
         workspaceRoot: root,
         changedPaths: ["reviews/notes.md"],
-        exists: notFoundExcept(),
-        findBasenameMatch: noBasenameMatch,
+        exists: existing(),
+        findFilesNamed: async () => ["archive/reviews/notes.md"],
       }),
-    ).resolves.toBe("reviews/notes.md");
+    ).resolves.toEqual({
+      path: "reviews/notes.md",
+      missingLinkPath: "/Users/me/reviews/notes.md",
+    });
+    await expect(
+      resolveChatFileOpenPath({
+        panelPath: "reviews/inside.md",
+        workspaceRoot: root,
+        changedPaths: [],
+        exists: existing(),
+        findFilesNamed: async () => ["project/reviews/inside.md"],
+      }),
+    ).resolves.toEqual({
+      path: "project/reviews/inside.md",
+      missingLinkPath: `${root}/reviews/inside.md`,
+    });
   });
 
   it("keeps the link when the host cannot say it is missing", async () => {
-    // A permission or connection problem is reported as existing, so the
-    // user sees that problem on the linked file instead of another document.
+    // A permission or connection problem is reported as existing, so the user
+    // sees that problem on the linked file instead of another document.
     await expect(
       resolveChatFileOpenPath({
         panelPath: "/Users/me/reviews/notes.md",
         workspaceRoot: root,
         changedPaths: ["reviews/notes.md"],
         exists: async () => true,
-        findBasenameMatch: noBasenameMatch,
+        findFilesNamed: noFiles,
       }),
-    ).resolves.toBe("/Users/me/reviews/notes.md");
+    ).resolves.toEqual({ path: "/Users/me/reviews/notes.md" });
   });
 
-  it("checks a bare file name on disk before trusting the search index", async () => {
-    const findBasenameMatch = vi.fn(async () => "docs/notes.md");
+  it("opens the link as written when there is no single best match", async () => {
     await expect(
       resolveChatFileOpenPath({
-        panelPath: "notes.md",
+        panelPath: "dup.md",
         workspaceRoot: root,
         changedPaths: [],
-        exists: notFoundExcept("/Users/me/ScientFactory/notes.md"),
-        findBasenameMatch,
+        exists: existing(),
+        findFilesNamed: async () => ["project/reviews/a/dup.md", "project/reviews/b/dup.md"],
       }),
-    ).resolves.toBe("notes.md");
-    expect(findBasenameMatch).not.toHaveBeenCalled();
-
-    await expect(
-      resolveChatFileOpenPath({
-        panelPath: "notes.md",
-        workspaceRoot: root,
-        changedPaths: [],
-        exists: notFoundExcept(),
-        findBasenameMatch,
-      }),
-    ).resolves.toBe("docs/notes.md");
-  });
-
-  it("opens the link as written when nothing better is known", async () => {
+    ).resolves.toEqual({ path: "dup.md" });
     await expect(
       resolveChatFileOpenPath({
         panelPath: "reports/missing.md",
         workspaceRoot: root,
-        changedPaths: ["reviews/notes.md"],
-        exists: notFoundExcept(),
-        findBasenameMatch: noBasenameMatch,
+        changedPaths: [],
+        exists: existing(),
+        findFilesNamed: noFiles,
       }),
-    ).resolves.toBe("reports/missing.md");
+    ).resolves.toEqual({ path: "reports/missing.md" });
   });
 });
 
 describe("chatFileOpenNeedsLookup", () => {
-  it("consults the host only for links that could be redirected", () => {
-    const base = { workspaceRoot: root, changedPaths: ["reviews/notes.md"] };
-    expect(chatFileOpenNeedsLookup({ ...base, panelPath: "/Users/me/reviews/notes.md" })).toBe(
-      true,
-    );
-    expect(chatFileOpenNeedsLookup({ ...base, panelPath: "notes.md" })).toBe(true);
-    expect(chatFileOpenNeedsLookup({ ...base, panelPath: "reviews/notes.md" })).toBe(false);
-    expect(chatFileOpenNeedsLookup({ ...base, panelPath: "docs/other.md" })).toBe(false);
-    expect(
-      chatFileOpenNeedsLookup({ ...base, workspaceRoot: undefined, panelPath: "notes.md" }),
-    ).toBe(false);
+  it("checks every link in a workspace thread and none without one", () => {
+    const input = { panelPath: "reviews/notes.md", changedPaths: [] };
+    expect(chatFileOpenNeedsLookup({ ...input, workspaceRoot: root })).toBe(true);
+    expect(chatFileOpenNeedsLookup({ ...input, workspaceRoot: undefined })).toBe(false);
   });
 });
