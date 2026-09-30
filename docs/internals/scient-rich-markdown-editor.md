@@ -577,6 +577,7 @@ packages/scient-document/
   session.ts       Baseline, draft, revision, and explicit save intent (format-neutral)
   persistenceCoordinator.ts  Serial publication, ordered verification, retry and recovery,
                    with reconciliation injected by the document format
+  testing/         Randomized persistence scenarios that any document format can run
 
 packages/scient-markdown/
   sourceLedger.ts  Reuses untouched source ranges and applies bounded patches
@@ -806,7 +807,7 @@ tests are necessary but do not replace proportional review in the real web/deskt
 | No mutation on view switch | transaction spy, save spy, before/after SHA, repeated eye-toggle test          |
 | Rich visual continuity     | same mounted view identity plus geometry and screenshot differential           |
 | Source preservation        | golden and property tests showing only intended source ranges changed          |
-| External edit safety       | deterministic revision-conflict integration tests and real two-writer exercise |
+| External edit safety       | randomized per-format stress, revision-conflict tests, and two-writer exercise |
 | Lists and tables stay rich | interaction tests plus real-app keyboard exercise                              |
 | Scientific nodes           | valid/invalid transition tests and visual/runtime evidence per node            |
 | RTL and mixed direction    | Hebrew/English fixtures, caret/navigation checks, rendered screenshots         |
