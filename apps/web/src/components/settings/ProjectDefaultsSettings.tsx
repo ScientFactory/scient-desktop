@@ -153,7 +153,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             : modelSource === "project"
               ? undefined
               : settings.defaultModelSelection === null
-                ? "Automatic"
+                ? `Automatic${selection ? ` · ${modelOptions.get(selection.instanceId)?.find((model) => model.slug === selection.model)?.name ?? selection.model}` : ""}`
                 : undefined
       }
       resetAction={

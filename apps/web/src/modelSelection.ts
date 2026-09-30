@@ -14,6 +14,7 @@ import {
   createModelSelection,
   normalizeCustomModelSlug,
   readCustomModelEntries,
+  resolveAutomaticModel,
   resolveSelectableModel,
 } from "@t3tools/shared/model";
 import { getComposerProviderState } from "./components/chat/composerProviderState";
@@ -324,7 +325,7 @@ export function resolveAppModelSelectionForInstance(
       return unavailableSelection;
     }
   }
-  return options.find((option) => option.isDefault)?.slug ?? options[0]?.slug ?? null;
+  return options.length > 0 ? (resolveAutomaticModel(entry.driverKind, options) ?? null) : null;
 }
 
 /**

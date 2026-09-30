@@ -53,6 +53,7 @@ it.layer(testLayer)("OpenCodeRuntime inventory", (it) => {
       NodeAssert.deepEqual((yield* Queue.takeAll(aborted)).toSorted(), [
         "/agent",
         "/command",
+        "/config",
         "/provider",
         "/skill",
       ]);

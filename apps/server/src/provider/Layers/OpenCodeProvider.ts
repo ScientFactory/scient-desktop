@@ -159,10 +159,10 @@ function inferDefaultVariant(
   if (variants.length === 1) {
     return variants[0];
   }
-  if (providerID === "anthropic" || providerID.startsWith("google")) {
+  if (providerID.startsWith("google")) {
     return variants.includes("high") ? "high" : undefined;
   }
-  if (providerID === "openai" || providerID === "opencode") {
+  if (providerID === "openai" || providerID === "opencode" || providerID === "anthropic") {
     return variants.includes("medium") ? "medium" : variants.includes("high") ? "high" : undefined;
   }
   return undefined;
@@ -204,14 +204,8 @@ function openCodeCapabilitiesForModel(input: {
   readonly model: ProviderListResponse["all"][number]["models"][string];
   readonly agents: ReadonlyArray<Agent>;
 }): ModelCapabilities {
-  const rawVariantValues = Object.keys(input.model.variants ?? {});
-  // When a model advertises no variants, synthesize the standard reasoning
-  // levels so the composer still offers a Reasoning selector (mirrors the
-  // Codex/Grok experience where reasoning is always configurable). The set
-  // covers the common OpenCode variant spectrum; `inferDefaultVariant`
-  // picks the provider-appropriate default (e.g. medium for openai/opencode).
-  const variantValues =
-    rawVariantValues.length > 0 ? rawVariantValues : ["low", "medium", "high", "xhigh"];
+  // Only advertise variants supplied by this model; absent controls stay native.
+  const variantValues = Object.keys(input.model.variants ?? {});
   const defaultVariant = inferDefaultVariant(input.providerID, variantValues);
   const variantOptions = variantValues.map((value) =>
     defaultVariant === value
@@ -236,7 +230,7 @@ function openCodeCapabilitiesForModel(input: {
               label: "Reasoning",
               type: "select" as const,
               options: variantOptions,
-              ...(defaultVariant ? { currentValue: defaultVariant } : {}),
+              ...(defaultVariant ? { concreteReasoning: true, currentValue: defaultVariant } : {}),
             },
           ]
         : []),
@@ -276,6 +270,12 @@ function flattenOpenCodeModels(input: OpenCodeInventory): ReadonlyArray<ServerPr
         name,
         ...(subProvider ? { subProvider } : {}),
         isCustom: false,
+        ...(input.configuredModel === `${provider.id}/${model.id}` ||
+        (!input.configuredModel &&
+          connected.size === 1 &&
+          input.providerList.default[provider.id] === model.id)
+          ? { isDefault: true }
+          : {}),
         capabilities: openCodeCapabilitiesForModel({
           providerID: provider.id,
           model,
