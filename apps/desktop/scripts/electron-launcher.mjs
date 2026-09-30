@@ -534,6 +534,12 @@ export function resolveMacBundleInfoPlistStrings(executableName) {
     NSScreenCaptureUsageDescription:
       "Scient captures the active window when you use the snapshot shortcut.",
     NSDocumentsFolderUsageDescription: "Scient reads project files you open in the desktop app.",
+    NSDesktopFolderUsageDescription: "Scient reads files on your Desktop that you open in it.",
+    NSDownloadsFolderUsageDescription:
+      "Scient reads files in your Downloads folder that you open in it.",
+    NSRemovableVolumesUsageDescription:
+      "Scient reads files on external drives that you open in it.",
+    NSNetworkVolumesUsageDescription: "Scient reads files on network drives that you open in it.",
   };
 }
 
