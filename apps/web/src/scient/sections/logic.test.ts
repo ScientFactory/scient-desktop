@@ -467,6 +467,34 @@ describe("Sections view drops", () => {
     });
   });
 
+  it("keeps hidden rows before a drop at the preceding section's end", () => {
+    expect(
+      expandSectionDropOrder({
+        shownOrder: ["o1"],
+        fullOrder: ["r1", "r2"],
+        droppedId: "o1",
+        atEnd: true,
+      }),
+    ).toEqual(["r1", "r2", "o1"]);
+  });
+
+  it("places the upper header slot at the end of the preceding section", () => {
+    expect(
+      resolveSectionsDropTarget(items, "o1", sectionHeaderItemId("perma"), "before-header"),
+    ).toEqual({
+      kind: "section",
+      groupId: "research",
+      order: ["r-pin", "r1", "r2", "o1"],
+    });
+    expect(
+      resolveSectionsDropTarget(items, "o1", sectionHeaderItemId("research"), "before-header"),
+    ).toEqual({
+      kind: "section",
+      groupId: "research",
+      order: ["r-pin", "o1", "r1", "r2"],
+    });
+  });
+
   it("reaches a header-only (empty or collapsed) section from below", () => {
     const withEmpty: SectionsListItem[] = [
       header("research"),

@@ -235,7 +235,7 @@ it("files a thread dragged up onto a collapsed section's header into that sectio
   let y = start.top + start.height / 2;
   pointer("pointerdown", row, x, y);
   const header = headerOf("a").getBoundingClientRect();
-  while (y > header.top + header.height / 2) {
+  while (y > header.top + header.height * 0.75) {
     y -= 12;
     pointer("pointermove", document, x, y);
     await nextFrame();
@@ -544,3 +544,69 @@ it("capitalizes a section name as it is typed, keeping the caret in place", asyn
   await userEvent.keyboard("{Enter}");
   expect(onRename).toHaveBeenCalledWith("Research notes");
 });
+
+it("slides a header as soon as the pointer crosses its midpoint and commits the shown slot", async () => {
+  renderView(vi.fn());
+  await nextFrame();
+  const row = document.querySelector<HTMLElement>('[data-row="b2"]')!;
+  const start = row.getBoundingClientRect();
+  const header = headerOf("a").getBoundingClientRect();
+  const x = start.left + 20;
+  pointer("pointerdown", row, x, start.top + 4);
+  pointer("pointermove", document, x, start.top + 16);
+  await nextFrame();
+  pointer("pointermove", document, x, header.top + header.height / 2 + 2);
+  await nextFrame();
+  expect(headerOf("a").getBoundingClientRect().top).toBeCloseTo(header.top, 0);
+  pointer("pointermove", document, x, header.top + header.height / 2 - 2);
+  await vi.waitFor(() =>
+    expect(headerOf("a").getBoundingClientRect().top).toBeGreaterThan(header.top + 40),
+  );
+  await nextFrame();
+  expect(headerOf("a").getBoundingClientRect().top).toBeGreaterThan(header.top + 40);
+  pointer("pointermove", document, x, header.top + header.height / 2 + 2);
+  await vi.waitFor(() =>
+    expect(headerOf("a").getBoundingClientRect().top).toBeCloseTo(header.top, 0),
+  );
+  pointer("pointermove", document, x, header.top + header.height / 2 - 2);
+  await vi.waitFor(() =>
+    expect(headerOf("a").getBoundingClientRect().top).toBeGreaterThan(header.top + 40),
+  );
+  pointer("pointerup", document, x, header.top + header.height / 2 - 2);
+  await nextFrame();
+  expect(moveThreadsToSection).toHaveBeenCalledWith(
+    [expect.objectContaining({ threadId: "b2" })],
+    null,
+  );
+});
+
+it.each([48, 96, 144].flatMap((height) => [4, 24, 44].map((grab) => ({ height, grab }))))(
+  "responds at the header midpoint with a $height px preceding row and $grab px pickup",
+  async ({ height, grab }) => {
+    renderView(vi.fn());
+    await nextFrame();
+    document.querySelector<HTMLElement>('[data-row="g2"]')!.style.height = `${height}px`;
+    await nextFrame();
+    const row = document.querySelector<HTMLElement>('[data-row="b2"]')!;
+    const start = row.getBoundingClientRect();
+    const header = headerOf("a").getBoundingClientRect();
+    const x = start.left + 20;
+    const midpoint = header.top + header.height / 2;
+    pointer("pointerdown", row, x, start.top + grab);
+    pointer("pointermove", document, x, start.top + grab - 8);
+    await nextFrame();
+    pointer("pointermove", document, x, midpoint + 2);
+    await nextFrame();
+    expect(headerOf("a").getBoundingClientRect().top).toBeCloseTo(header.top, 0);
+    pointer("pointermove", document, x, midpoint - 2);
+    await vi.waitFor(() =>
+      expect(headerOf("a").getBoundingClientRect().top).toBeGreaterThan(header.top + 40),
+    );
+    await nextFrame();
+    expect(headerOf("a").getBoundingClientRect().top).toBeGreaterThan(header.top + 40);
+    expect(Math.abs(row.getBoundingClientRect().top + grab - (midpoint - 2))).toBeLessThan(1);
+    await userEvent.keyboard("{Escape}");
+    expect(moveThreadsToSection).not.toHaveBeenCalled();
+    expect(reorderActiveThread).not.toHaveBeenCalled();
+  },
+);

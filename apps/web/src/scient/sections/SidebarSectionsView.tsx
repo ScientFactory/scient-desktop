@@ -156,10 +156,9 @@ type SectionDragGeometry = {
 function threadDropPlacement(
   event: Pick<DragMoveEvent, "over" | "collisions">,
 ): SectionsDropPlacement {
-  return event.collisions?.find((collision) => collision.id === event.over?.id)?.data?.placement ===
-    "after"
-    ? "after"
-    : "before";
+  const placement = event.collisions?.find((collision) => collision.id === event.over?.id)?.data
+    ?.placement;
+  return placement === "after" || placement === "before-header" ? placement : "before";
 }
 
 const SECTION_SLIDE = "transform 160ms ease";
@@ -304,8 +303,7 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
   const holding = items !== canonicalItems;
 
   const sortableIds = useMemo(() => items.map((item) => item.id), [items]);
-  // Rows slide to where a drop would land, so over a header the lifted row
-  // shows below it, in that header's section (see sectionsDropIndex).
+  // Rows and headers slide to the same insertion slot the drop will commit.
   const sortingStrategy = useCallback<SortingStrategy>(
     (args) =>
       verticalListSortingStrategy(
@@ -404,13 +402,18 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
       const item = items.find((entry) => entry.id === nearest.id);
       const targetRect = args.droppableRects.get(nearest.id);
       const placement: SectionsDropPlacement =
-        item?.kind === "thread" &&
-        item.groupId !== null &&
         pointer &&
         targetRect &&
-        pointer.y >= targetRect.top + targetRect.height / 2
-          ? "after"
-          : "before";
+        item?.kind === "header" &&
+        pointer.y < targetRect.top + targetRect.height / 2
+          ? "before-header"
+          : item?.kind === "thread" &&
+              item.groupId !== null &&
+              pointer &&
+              targetRect &&
+              pointer.y >= targetRect.top + targetRect.height / 2
+            ? "after"
+            : "before";
       return [{ ...nearest, data: { ...nearest.data, placement } }, ...collisions.slice(1)];
     },
     [items],
@@ -477,6 +480,7 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
                 fullOrder,
                 droppedId: activeKey,
                 onHeader: sectionGroupIdFromHeaderItemId(overId) === shown.groupId,
+                atEnd: placement === "before-header",
               }),
             }
           : shown;

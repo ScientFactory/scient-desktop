@@ -141,11 +141,12 @@ section when un-settled or woken.
 
 **Drops land where the list shows them.**
 
-- **Headers are targets:** a row dropped on a section header lands at the top
-  of that section, from either direction, so an empty or collapsed section
-  (only a header) can be reached from below. `sectionsDropIndex` decides the
-  slot, and the Sections view's sorting strategy slides rows to the same slot
-  while dragging, so the header stays put instead of sliding past the row.
+- **Headers have two insertion sides:** the lower half places a conversation
+  at the top of the named section, including empty or collapsed sections. Crossing
+  the midpoint upward selects the end of the preceding section, and the header
+  slides down immediately to show that slot. Hidden rows remain before an end
+  drop. The first header stays at the top; either half targets its own section.
+  Preview and committed placement use the same slot and preserve pin boundaries.
 - **Rows have two insertion sides:** the pointer above a row's midpoint inserts
   before it, and below inserts after it, independent of the source's position.
   The lower half of the last row appends to that section. Collision geometry

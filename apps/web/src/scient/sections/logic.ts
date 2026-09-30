@@ -528,10 +528,11 @@ export type SectionsDropTarget =
   | { readonly kind: "section"; readonly groupId: string; readonly order: readonly string[] }
   | { readonly kind: "settled" };
 
-export type SectionsDropPlacement = "before" | "after";
+export type SectionsDropPlacement = "before" | "after" | "before-header";
 
-/** The insertion slot in the list without the lifted row. Headers mean the
- * top of their section; row placement is explicit and independent of drag
+/** The insertion slot in the list without the lifted row. A header
+ * lower half means the top of its section; its upper half means the end
+ * of the preceding section. Row placement is explicit and independent of drag
  * direction. The slot stays on the dropped row's side of the pin boundary. */
 export function sectionsDropIndex(
   items: readonly SectionsListItem[],
@@ -545,7 +546,7 @@ export function sectionsDropIndex(
   const remainingIndex = overIndex - (activeIndex < overIndex ? 1 : 0);
   const index =
     over?.kind === "header"
-      ? remainingIndex + 1
+      ? remainingIndex + (placement === "before-header" && remainingIndex > 0 ? 0 : 1)
       : over?.kind === "thread" && over.groupId !== null
         ? remainingIndex + (placement === "after" ? 1 : 0)
         : overIndex;
@@ -579,7 +580,8 @@ function droppedAsPinned(item: Extract<SectionsListItem, { kind: "thread" }>): b
  * a collapsed section shows only some of its rows (or none), so the dropped
  * row is placed before the shown row it landed above, else after the one it
  * landed below, else at the top. A drop on the section's header is always at
- * the top, whatever the collapsed section still shows.
+ * the top, whatever the collapsed section still shows; the slot above the next
+ * header is at the end, including every hidden row.
  */
 export function expandSectionDropOrder(input: {
   /** The section's rows as shown, with the dropped row in place. */
@@ -588,10 +590,12 @@ export function expandSectionDropOrder(input: {
   readonly fullOrder: readonly string[];
   readonly droppedId: string;
   readonly onHeader?: boolean;
+  readonly atEnd?: boolean;
 }): string[] {
   const { droppedId, shownOrder } = input;
   const full = input.fullOrder.filter((id) => id !== droppedId);
   if (input.onHeader === true) return [droppedId, ...full];
+  if (input.atEnd === true) return [...full, droppedId];
   const at = shownOrder.indexOf(droppedId);
   const next = shownOrder[at + 1];
   const previous = at > 0 ? shownOrder[at - 1] : undefined;
@@ -605,8 +609,9 @@ export function expandSectionDropOrder(input: {
 /**
  * Where a lifted row lands if dropped over `overId`: the section whose header
  * precedes the slot (with that section's rows in their new order), the settled
- * shelf, or nowhere (the snoozed shelf is never a destination). Over a header,
- * that header's section, at its top (see `sectionsDropIndex`).
+ * shelf, or nowhere (the snoozed shelf is never a destination). A header targets
+ * its own section unless the explicit upper slot selects the preceding section
+ * (see `sectionsDropIndex`).
  */
 export function resolveSectionsDropTarget(
   items: readonly SectionsListItem[],
