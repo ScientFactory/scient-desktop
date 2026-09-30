@@ -2,7 +2,7 @@ name: Prepare scheduled stable candidate
 
 on:
   schedule:
-    - cron: "0 3 * * *"
+    - cron: "0 4 * * *"
       timezone: "Asia/Jerusalem"
   workflow_dispatch:
     inputs:

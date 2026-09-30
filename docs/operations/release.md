@@ -14,7 +14,7 @@ separate states and must be reported separately.
 - `.github/workflows/release.yml` is manual-only. Its default is a build-only
   proof and creates no tag or release.
 - `.github/workflows/scheduled-stable-candidate.yml` may dispatch those two
-  guarded workflows at 03:00 Asia/Jerusalem, but it has no direct publication
+  guarded workflows at 04:00 Asia/Jerusalem, but it has no direct publication
   or branch-write authority. The existing promotion and production gates remain
   authoritative.
 - Publication additionally requires the protected `production` environment and
@@ -51,7 +51,7 @@ lifecycle and is never a publication source.
 
 ### Scheduled candidate path
 
-At 03:00 Asia/Jerusalem, the scheduled candidate workflow checks current
+At 04:00 Asia/Jerusalem, the scheduled candidate workflow checks current
 `main`. It does nothing when `main` is already the source of the Latest stable
 release or another stable candidate is active or awaiting approval. Otherwise
 it requires successful CI for the exact current `main` commit, derives the next
@@ -67,13 +67,13 @@ reviewer. Approval publishes those exact accepted bytes as the public Latest
 release; rejection, cancellation, or no decision publishes nothing.
 
 The schedule uses GitHub's named-time-zone support with `Asia/Jerusalem`, so it
-remains at local 03:00 across daylight-saving changes. A manual invocation
+remains at local 04:00 across daylight-saving changes. A manual invocation
 defaults to a dry run that validates version, notes, and exact-main CI without
 promoting a branch or starting release builds.
 
 If a candidate is still awaiting a decision the following night, the scheduler
 does not replace it. Approve, reject, or cancel that run first, then manually
-rerun the scheduler or wait for the next 03:00 cycle. The scheduler fails closed
+rerun the scheduler or wait for the next 04:00 cycle. The scheduler fails closed
 when current-main CI is missing or unsuccessful, the next release note is not
 approved, the stable tag history is inconsistent, promotion fails, or a target
 tag or release already exists.
