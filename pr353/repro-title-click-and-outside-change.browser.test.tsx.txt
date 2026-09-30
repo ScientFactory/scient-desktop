@@ -1,0 +1,234 @@
+import { type ReactNode, useState } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { page, userEvent } from "vitest/browser";
+
+vi.mock("~/scient/presentation/ScientTooltip", () => ({
+  ScientTooltip: ({ children }: { children: ReactNode }) => children,
+}));
+vi.mock("~/assets/assetUrls", () => ({
+  useAssetUrlState: () => ({ _tag: "Failure", refresh: vi.fn() }),
+}));
+
+import { LatexVisualEditor } from "./LatexVisualEditor";
+import "./scient-latex.css";
+
+const source = `% Scient built-in starter. Replace the instructional text with your own work.
+\\documentclass[11pt,a4paper]{article}
+\\usepackage[T1]{fontenc}
+\\usepackage[utf8]{inputenc}
+\\usepackage[margin=1in]{geometry}
+\\usepackage{amsmath,amssymb,amsthm}
+\\usepackage{graphicx}
+\\usepackage{booktabs,tabularx}
+\\usepackage[hidelinks]{hyperref}
+
+\\title{fgvbhnju}
+\\author{}
+\\date{}
+
+\\begin{document}
+\\maketitle
+
+dcvbunimo alpha beta
+
+\\par
+
+\\end{document}
+`;
+
+function state(label: string) {
+  const active = document.activeElement;
+  const sel = window.getSelection();
+  const ta = active instanceof HTMLTextAreaElement ? active : null;
+  return {
+    label,
+    active: active
+      ? `${active.tagName}${active.getAttribute("aria-label") ? `[${active.getAttribute("aria-label")}]` : ""}.${[...active.classList].join(".")}`
+      : null,
+    textareaSel: ta ? [ta.selectionStart, ta.selectionEnd, ta.value.slice(ta.selectionStart, ta.selectionEnd)] : null,
+    domSel: sel ? { type: sel.type, text: sel.toString(), anchor: sel.anchorNode?.nodeName } : null,
+    titleActive: document.querySelector(".scient-latex-title-preview")?.getAttribute("data-active"),
+    selectedNode: document.querySelector(".ProseMirror-selectednode")?.className ?? null,
+  };
+}
+
+
+let lastSource = "";
+function Harness({ initial }: { initial: string }) {
+  const [doc, setDoc] = useState({ source: initial, revision: 1 });
+  return (
+    <LatexVisualEditor
+      draftKey="scratch-title-2"
+      fileRevision={`r${doc.revision}`}
+      source={doc.source}
+      disabled={false}
+      onEditingChange={() => {}}
+      onOpenSource={() => {}}
+      onEdit={(expected, next) => {
+        lastSource = next;
+        setTimeout(() => setDoc((d) => (d.source === expected ? { source: next, revision: d.revision + 1 } : d)), 50);
+        return true;
+      }}
+    />
+  );
+}
+
+let externalEdit: ((f: (s: string) => string) => void) | null = null;
+function SyncHarness({ initial }: { initial: string }) {
+  const [doc, setDoc] = useState({ source: initial, revision: 1 });
+  externalEdit = (f) => setDoc((d) => ({ source: f(d.source), revision: d.revision + 1 }));
+  return (
+    <LatexVisualEditor
+      draftKey="scratch-title-3"
+      fileRevision={`r${doc.revision}`}
+      source={doc.source}
+      disabled={false}
+      onEditingChange={() => {}}
+      onOpenSource={() => {}}
+      onEdit={(expected, next) => {
+        lastSource = next;
+        setDoc((d) => (d.source === expected ? { source: next, revision: d.revision + 1 } : d));
+        return true;
+      }}
+    />
+  );
+}
+
+describe("scratch title click", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+  beforeEach(async () => {
+    await page.viewport(1400, 900);
+    container = document.createElement("div");
+    Object.assign(container.style, { width: "1200px", height: "900px" });
+    document.body.append(container);
+    root = createRoot(container);
+  });
+  afterEach(() => {
+    root.unmount();
+    container.remove();
+  });
+
+  it.skip("title: dblclick, outside, dblclick", async () => {
+    root.render(
+      <LatexVisualEditor
+        draftKey="scratch-title"
+        fileRevision="r1"
+        source={source}
+        disabled={false}
+        onEditingChange={() => {}}
+        onOpenSource={() => {}}
+        onEdit={() => true}
+      />,
+    );
+    await expect.poll(() => container.querySelector('textarea[aria-label="Document title"]')).not.toBeNull();
+    const title = () => container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Document title"]')!;
+    const para = () =>
+      [...container.querySelectorAll<HTMLElement>(".ProseMirror p")].find((p) => p.textContent?.includes("alpha"))!;
+    const log: unknown[] = [];
+    const record = (entry: unknown) => log.push(entry);
+    const wait = () => new Promise((r) => setTimeout(r, 400));
+
+    await userEvent.dblClick(title());
+    await wait();
+    record(state("1 dblclick title"));
+    await userEvent.click(title());
+    await wait();
+    record(state("1b single click title"));
+    await userEvent.click(para(), { position: { x: 5, y: 5 } });
+    await wait();
+    record(state("2 click body"));
+    await userEvent.dblClick(title());
+    await wait();
+    record(state("3 dblclick title again"));
+    await userEvent.click(para(), { position: { x: 40, y: 8 } });
+    await wait();
+    record(state("4 click empty workspace"));
+    await userEvent.dblClick(title());
+    await wait();
+    record(state("5 dblclick title third"));
+    await userEvent.dblClick(para(), { position: { x: 20, y: 8 } });
+    await wait();
+    record(state("6 dblclick body word"));
+    await userEvent.click(title());
+    await wait();
+    record(state("7 click title"));
+    await userEvent.dblClick(para(), { position: { x: 20, y: 8 } });
+    await wait();
+    record(state("8 dblclick body word again"));
+    throw new Error("SCRATCH" + JSON.stringify(log, null, 1));
+  });
+
+  it.skip("after typing and saves", async () => {
+    root.render(<Harness initial={source.replace("\\title{fgvbhnju}", "\\title{Untitled}")} />);
+    await expect.poll(() => container.querySelector('textarea[aria-label="Document title"]')).not.toBeNull();
+    const title = () => container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Document title"]')!;
+    const para = () =>
+      [...container.querySelectorAll<HTMLElement>(".ProseMirror p")].find((p) => p.textContent?.includes("alpha"))!;
+    const log: unknown[] = [];
+    const record = (entry: unknown) => log.push({ ...(entry as object), title: container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Document title"]')?.value ?? "(no title field)", titleNodes: container.querySelectorAll('textarea[aria-label="Document title"]').length });
+    const wait = (ms = 600) => new Promise((r) => setTimeout(r, ms));
+
+    await userEvent.dblClick(title());
+    await wait();
+    record(state("A1 dblclick title"));
+    await userEvent.keyboard("fgvbhnju");
+    await wait(1200);
+    record(state("A2 typed title + saved"));
+    await userEvent.click(para(), { position: { x: 40, y: 8 } });
+    await wait();
+    record(state("A3 click body"));
+    await userEvent.keyboard("xyz");
+    await wait(20);
+    record(state("A4a typed body, before ack"));
+    await wait(1200);
+    record(state("A4 typed body + saved"));
+    await userEvent.keyboard("Q");
+    await wait(1200);
+    record(state("A4q typed Q after save"));
+    record({ label: "A4q source", active: String(lastSource).slice(lastSource.indexOf("\\title"), lastSource.indexOf("\\par")), textareaSel: null, domSel: null, titleActive: null, selectedNode: null });
+    throw new Error("SCRATCH" + JSON.stringify(log, null, 1));
+    await userEvent.dblClick(title());
+    await wait();
+    record(state("A5 dblclick title again"));
+    await userEvent.click(para(), { position: { x: 40, y: 8 } });
+    await wait();
+    record(state("A6 click body"));
+    await userEvent.click(title());
+    await wait();
+    record(state("A7 single click title"));
+    await userEvent.click(para(), { position: { x: 40, y: 8 } });
+    await wait();
+    await userEvent.dblClick(para(), { position: { x: 20, y: 8 } });
+    await wait();
+    record(state("A8 dblclick body word"));
+    throw new Error("SCRATCH" + JSON.stringify(log, null, 1));
+  });
+
+  it("sync saves, then an outside change", async () => {
+    root.render(<SyncHarness initial={source} />);
+    await expect.poll(() => container.querySelector('textarea[aria-label="Document title"]')).not.toBeNull();
+    const para = () =>
+      [...container.querySelectorAll<HTMLElement>(".ProseMirror p")].find((p) => p.textContent?.includes("alpha"))!;
+    const log: unknown[] = [];
+    const titleField = () => container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Document title"]');
+    const record = (entry: unknown) => log.push({ ...(entry as object), title: titleField()?.value ?? "(no title field)" });
+    const wait = (ms = 600) => new Promise((r) => setTimeout(r, ms));
+    await userEvent.click(para(), { position: { x: 40, y: 8 } });
+    await userEvent.keyboard("xyz");
+    await wait(1500);
+    record(state("B1 typed body, synchronous saves"));
+    await userEvent.keyboard("k");
+    await wait(800);
+    record(state("B2 typed another key"));
+    externalEdit!((src) => src.replace("\\end{document}", "Agent paragraph.\n\n\\end{document}"));
+    await wait(800);
+    record(state("B3 outside change arrived"));
+    await userEvent.keyboard("Q");
+    await wait(800);
+    record(state("B4 typed Q"));
+    log.push({ label: "B4 source", body: lastSource.slice(lastSource.indexOf("\\begin{document}")) });
+    throw new Error("SCRATCH" + JSON.stringify(log, null, 1));
+  });
+});
