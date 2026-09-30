@@ -43,6 +43,7 @@ import { useNewThreadHandler } from "./useHandleNewThread";
 import { useClientSettings } from "./useSettings";
 import { useThreadActions } from "./useThreadActions";
 // SCIENT-FORK:START
+import type { SectionCreateAnchor } from "../scient/sections/NewSectionPopover";
 import { useThreadSectionMenu } from "../scient/sections/useThreadSectionMenu";
 import { handleConversationExportMenuAction } from "../scient/conversationExport/menu";
 // SCIENT-FORK:END
@@ -73,7 +74,10 @@ export function useThreadActionMenu(input: {
   readonly projectCwd: string | null;
   readonly onStartRename: () => void;
   // SCIENT-FORK:START — "New section…" needs a name, which the caller asks for.
-  readonly onRequestNewSection: (threadRefs: readonly ScopedThreadRef[]) => void;
+  readonly onRequestNewSection: (
+    threadRefs: readonly ScopedThreadRef[],
+    anchor: SectionCreateAnchor,
+  ) => void;
   // SCIENT-FORK:END
 }) {
   const { threadRef, projectCwd, onStartRename } = input;
@@ -187,7 +191,7 @@ export function useThreadActionMenu(input: {
           return;
         }
         // SCIENT-FORK:START
-        if (await handleSectionMenuAction(action, [threadRef])) return;
+        if (await handleSectionMenuAction(action, [threadRef], position)) return;
         if (handleConversationExportMenuAction(action, threadRef)) return;
         // SCIENT-FORK:END
         const reportFailure = async (

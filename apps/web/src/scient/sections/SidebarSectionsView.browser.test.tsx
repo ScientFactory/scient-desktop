@@ -124,9 +124,7 @@ function renderView(
       renamingSectionId={options.renaming ?? null}
       onRenamingSectionChange={() => {}}
       onRenameSection={(_id: string, name: string) => options.onRename?.(name)}
-      creatingSection={null}
       onStartCreateSection={() => {}}
-      onCancelCreateSection={() => {}}
     />,
   );
 }

@@ -6,10 +6,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   create: vi.fn(),
   moveThreadsToSection: vi.fn(),
-  dialogProps: null as null | {
+  popoverProps: null as null | {
     readonly open: boolean;
     readonly threadCount: number;
     readonly onSubmit: (name: string) => Promise<boolean>;
+    readonly onOpenChange: (open: boolean) => void;
   },
 }));
 vi.mock("./catalog", () => ({ useThreadSectionCatalog: () => ({ create: mocks.create }) }));
@@ -19,9 +20,9 @@ vi.mock("./actions", () => ({
 vi.mock("../../state/entities", () => ({
   readThreadShell: () => ({ projectId: "project-b" }),
 }));
-vi.mock("./NewSectionDialog", () => ({
-  NewSectionDialog: (props: NonNullable<typeof mocks.dialogProps>) => {
-    mocks.dialogProps = props;
+vi.mock("./NewSectionPopover", () => ({
+  NewSectionPopover: (props: NonNullable<typeof mocks.popoverProps>) => {
+    mocks.popoverProps = props;
     return null;
   },
 }));
@@ -40,14 +41,14 @@ function Probe(): ReactNode {
   useLayoutEffect(() => {
     hook = value;
   });
-  return value.dialog;
+  return value.popover;
 }
 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   mocks.create.mockReset();
   mocks.moveThreadsToSection.mockReset();
-  mocks.dialogProps = null;
+  mocks.popoverProps = null;
   act(() => {
     renderer = create(<Probe />);
   });
@@ -62,12 +63,12 @@ it("creates the section for the requested thread and files it there", async () =
   setSidebarSectionScope([{ environmentId: "local", projectId: "project-a" }]);
   mocks.create.mockResolvedValue({ id: ThreadSectionId.make("design"), name: "Design", order: 0 });
   mocks.moveThreadsToSection.mockResolvedValue(true);
-  act(() => hook.request([threadRef]));
-  expect(mocks.dialogProps).toMatchObject({ open: true, threadCount: 1 });
+  act(() => hook.request([threadRef], { x: 20, y: 100 }));
+  expect(mocks.popoverProps).toMatchObject({ open: true, threadCount: 1 });
 
   let submitted: boolean | undefined;
   await act(async () => {
-    submitted = await mocks.dialogProps!.onSubmit("Design");
+    submitted = await mocks.popoverProps!.onSubmit("Design");
   });
   expect(submitted).toBe(true);
   // Recorded for the sidebar's selected project and the thread's own.
@@ -88,10 +89,10 @@ it("files every selected thread", async () => {
   };
   mocks.create.mockResolvedValue({ id: ThreadSectionId.make("design"), name: "Design", order: 0 });
   mocks.moveThreadsToSection.mockResolvedValue(true);
-  act(() => hook.request([threadRef, second]));
-  expect(mocks.dialogProps).toMatchObject({ threadCount: 2 });
+  act(() => hook.request([threadRef, second], { x: 20, y: 100 }));
+  expect(mocks.popoverProps).toMatchObject({ threadCount: 2 });
   await act(async () => {
-    await mocks.dialogProps!.onSubmit("Design");
+    await mocks.popoverProps!.onSubmit("Design");
   });
   expect(mocks.create.mock.calls[0]?.[1]).toMatchObject({ environmentIds: ["local", "remote"] });
   expect(mocks.moveThreadsToSection).toHaveBeenCalledWith([threadRef, second], "design");
@@ -99,16 +100,34 @@ it("files every selected thread", async () => {
 
 it("files nothing and reports failure when the section cannot be created", async () => {
   mocks.create.mockResolvedValue(null);
-  act(() => hook.request([threadRef]));
+  act(() => hook.request([threadRef], { x: 20, y: 100 }));
   let submitted: boolean | undefined;
   await act(async () => {
-    submitted = await mocks.dialogProps!.onSubmit("Design");
+    submitted = await mocks.popoverProps!.onSubmit("Design");
   });
   expect(submitted).toBe(false);
   expect(mocks.moveThreadsToSection).not.toHaveBeenCalled();
 });
 
-// The shared step behind the dialog and the Sections view's inline row.
+it("does not let an old form close a newer creation request", () => {
+  act(() => hook.request([threadRef], { x: 20, y: 100 }));
+  const oldForm = mocks.popoverProps!;
+  const second = {
+    environmentId: EnvironmentId.make("remote"),
+    threadId: ThreadId.make("thread-2"),
+  };
+  act(() => hook.request([threadRef, second], { x: 80, y: 200 }));
+  act(() => oldForm.onOpenChange(false));
+  expect(mocks.popoverProps).toMatchObject({
+    open: true,
+    threadCount: 2,
+    anchor: { x: 80, y: 200 },
+  });
+  act(() => mocks.popoverProps!.onOpenChange(false));
+  expect(mocks.popoverProps).toMatchObject({ open: false, anchor: { x: 80, y: 200 } });
+});
+
+// The shared create-and-file step.
 describe("createSectionAndFile", () => {
   const second = { environmentId: EnvironmentId.make("remote"), threadId: ThreadId.make("t-2") };
   const design = { id: ThreadSectionId.make("design"), name: "Design", order: 0 };
