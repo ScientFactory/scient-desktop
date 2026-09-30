@@ -251,9 +251,14 @@ it("files a thread dragged up onto a collapsed section's header into that sectio
   );
 });
 
-it.each(["g1", "b1"])(
-  "appends %s to A from either direction and keeps the preview stable",
-  async (source) => {
+it.each([
+  { source: "g1", pickup: "top" },
+  { source: "g1", pickup: "bottom" },
+  { source: "b1", pickup: "top" },
+  { source: "b1", pickup: "bottom" },
+])(
+  "appends $source to A with $pickup pickup and keeps the preview stable",
+  async ({ source, pickup }) => {
     let release: (value: boolean) => void = () => {};
     moveThreadsToSection.mockClear();
     moveThreadsToSection.mockImplementation(
@@ -270,10 +275,11 @@ it.each(["g1", "b1"])(
     const last = document.querySelector<HTMLElement>('[data-row="a3"]')!;
     const target = last.getBoundingClientRect();
     const x = start.left + 20;
-    // Pick up near the top: placement must follow the pointer, not the card centre.
-    pointer("pointerdown", row, x, start.top + 4);
+    // Placement follows the pointer regardless of where the row was picked up.
+    const pickupY = pickup === "top" ? start.top + 4 : start.bottom - 4;
+    pointer("pointerdown", row, x, pickupY);
     const y = target.bottom - 4;
-    pointer("pointermove", document, x, start.top + 12);
+    pointer("pointermove", document, x, pickupY - 8);
     await nextFrame();
     pointer("pointermove", document, x, y);
     await nextFrame();
@@ -324,6 +330,54 @@ it("changes insertion side within the same row before committing", async () => {
   expect(reorderActiveThread).toHaveBeenCalledTimes(1);
   const [, key] = reorderActiveThread.mock.calls[0]! as unknown as [unknown, string];
   expect(key > "g" && key < "m").toBe(true);
+});
+
+it("reorders to the end within a section without changing membership", async () => {
+  moveThreadsToSection.mockClear();
+  reorderActiveThread.mockClear();
+  renderView(vi.fn());
+  await nextFrame();
+  const row = document.querySelector<HTMLElement>('[data-row="a1"]')!;
+  const start = row.getBoundingClientRect();
+  const target = document.querySelector<HTMLElement>('[data-row="a3"]')!.getBoundingClientRect();
+  const x = start.left + 20;
+  pointer("pointerdown", row, x, start.top + 4);
+  pointer("pointermove", document, x, start.top + 12);
+  await nextFrame();
+  pointer("pointermove", document, x, target.bottom - 4);
+  await nextFrame();
+  pointer("pointerup", document, x, target.bottom - 4);
+  await nextFrame();
+  expect(moveThreadsToSection).not.toHaveBeenCalled();
+  expect(reorderActiveThread).toHaveBeenCalledTimes(1);
+  const [ref, key] = reorderActiveThread.mock.calls[0]! as unknown as [
+    { threadId: string },
+    string,
+  ];
+  expect(ref.threadId).toBe("a1");
+  expect(key > "m").toBe(true);
+});
+
+it("cancels an end-slot preview without writing membership or order", async () => {
+  moveThreadsToSection.mockClear();
+  reorderActiveThread.mockClear();
+  renderView(vi.fn());
+  await nextFrame();
+  const row = document.querySelector<HTMLElement>('[data-row="b1"]')!;
+  const start = row.getBoundingClientRect();
+  const target = document.querySelector<HTMLElement>('[data-row="a3"]')!.getBoundingClientRect();
+  const x = start.left + 20;
+  pointer("pointerdown", row, x, start.top + 4);
+  pointer("pointermove", document, x, start.top + 12);
+  await nextFrame();
+  pointer("pointermove", document, x, target.bottom - 4);
+  await nextFrame();
+  document.dispatchEvent(
+    new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }),
+  );
+  await nextFrame();
+  expect(moveThreadsToSection).not.toHaveBeenCalled();
+  expect(reorderActiveThread).not.toHaveBeenCalled();
 });
 
 it("sets section names 4px low, nearer their own threads, without growing the header", async () => {

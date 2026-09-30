@@ -292,6 +292,51 @@ describe("Sections view drops", () => {
     });
   });
 
+  it("resolves every row insertion side across sections and lifecycle groups", () => {
+    const list: SectionsListItem[] = ["above", "target", "below"].flatMap((group) => [
+      header(group),
+      row(`${group}-p1`, "pinned", group),
+      row(`${group}-p2`, "pinned", group),
+      row(`${group}-a1`, "active", group),
+      row(`${group}-a2`, "active", group),
+    ]);
+    list.push(
+      { kind: "shelf", id: "snoozed", shelf: "snoozed" },
+      row("wake", "snoozed", null),
+      { ...row("wake-pin", "snoozed", null), pinned: true },
+      { kind: "shelf", id: "settled", shelf: "settled" },
+      row("restore", "settled", null),
+    );
+    const sources = list.filter((item) => item.kind === "thread");
+    const targets = sources.filter((item) => item.groupId !== null);
+    for (const source of sources)
+      for (const over of targets)
+        for (const placement of ["before", "after"] as const) {
+          const target = resolveSectionsDropTarget(list, source.id, over.id, placement);
+          const peers = sources.filter(
+            (item) => item.groupId === over.groupId && item.id !== source.id,
+          );
+          const pinned = source.lifecycle === "pinned" || source.pinned === true;
+          const sameKind = peers.filter((item) => (item.lifecycle === "pinned") === pinned);
+          const hoveredIndex = sameKind.findIndex((item) => item.id === over.id);
+          const insertAt =
+            hoveredIndex >= 0
+              ? hoveredIndex + (placement === "after" ? 1 : 0)
+              : pinned
+                ? sameKind.length
+                : 0;
+          sameKind.splice(insertAt, 0, source);
+          const otherKind = peers.filter((item) => (item.lifecycle === "pinned") !== pinned);
+          const expected =
+            source.id === over.id
+              ? sources.filter((item) => item.groupId === over.groupId).map((item) => item.id)
+              : (pinned ? [...sameKind, ...otherKind] : [...otherKind, ...sameKind]).map(
+                  (item) => item.id,
+                );
+          expect(target).toEqual({ kind: "section", groupId: over.groupId, order: expected });
+        }
+  });
+
   it("moves a thread into another section at the dropped position", () => {
     expect(plan("o1", "r2")).toEqual({
       kind: "move",
