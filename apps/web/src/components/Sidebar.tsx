@@ -3941,7 +3941,7 @@ export default function Sidebar() {
       const selectedRefs = selectedThreads.map((thread) =>
         scopeThreadRef(thread.environmentId, thread.id),
       );
-      if (await handleSectionMenuAction(clicked.value, selectedRefs)) {
+      if (await handleSectionMenuAction(clicked.value, selectedRefs, position)) {
         clearSelection();
         return;
       }
@@ -4183,7 +4183,7 @@ export default function Sidebar() {
         );
         if (clicked._tag === "Failure") return;
         // SCIENT-FORK:START
-        if (await handleSectionMenuAction(clicked.value, [threadRef])) return;
+        if (await handleSectionMenuAction(clicked.value, [threadRef], position)) return;
         if (handleConversationExportMenuAction(clicked.value, threadRef)) return;
         // SCIENT-FORK:END
         if (clicked.value?.startsWith("snooze:")) {
@@ -5256,7 +5256,7 @@ export default function Sidebar() {
       </SidebarContent>
       <SidebarChromeFooter />
       {/* SCIENT-FORK:START */}
-      {sections.dialog}
+      {sections.popover}
       {/* SCIENT-FORK:END */}
     </>
   );

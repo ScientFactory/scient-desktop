@@ -63,8 +63,8 @@ import {
   sectionShifts,
   sectionGroupIdFromHeaderItemId,
   sectionHeaderItemId,
-  newSectionTitle,
 } from "./logic";
+import type { SectionCreateAnchor } from "./NewSectionPopover";
 import { readTypedSectionName } from "./sectionNameInput";
 
 type Shell = EnvironmentThreadShell;
@@ -115,14 +115,7 @@ export interface SidebarSectionsViewProps {
   readonly renamingSectionId: string | null;
   readonly onRenamingSectionChange: (sectionId: string | null) => void;
   readonly onRenameSection: (sectionId: string, name: string) => void;
-  /** Inline name input replacing the "New section" row; null when not creating. */
-  readonly creatingSection: {
-    readonly onSubmit: (name: string) => void;
-    /** Threads the section is being made for (0 from the "New section" row). */
-    readonly threadCount: number;
-  } | null;
-  readonly onStartCreateSection: () => void;
-  readonly onCancelCreateSection: () => void;
+  readonly onStartCreateSection: (anchor: SectionCreateAnchor) => void;
 }
 
 type DragState =
@@ -647,17 +640,7 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
               const firstShelf = items.findIndex((entry) => entry.kind === "shelf") === index;
               return (
                 <Fragment key={item.id}>
-                  {firstShelf ? (
-                    props.creatingSection !== null ? (
-                      <NewSectionRow
-                        threadCount={props.creatingSection.threadCount}
-                        onSubmit={props.creatingSection.onSubmit}
-                        onCancel={props.onCancelCreateSection}
-                      />
-                    ) : (
-                      <AddSectionRow onClick={props.onStartCreateSection} />
-                    )
-                  ) : null}
+                  {firstShelf ? <AddSectionRow onClick={props.onStartCreateSection} /> : null}
                   {props.renderShelfHeader(item.shelf, {
                     dragging: drag?.kind === "thread",
                     isDropTarget: item.shelf === "settled" && dragTarget?.kind === "settled",
@@ -929,40 +912,18 @@ function SectionNameInput(props: {
   );
 }
 
-function AddSectionRow(props: { onClick: () => void }) {
+function AddSectionRow(props: { onClick: (anchor: SectionCreateAnchor) => void }) {
   return (
     <li className="mx-0.5 h-8 list-none" data-sections-end>
       <button
         type="button"
-        onClick={props.onClick}
+        onClick={(event) => props.onClick(event.currentTarget)}
         data-testid="sidebar-add-section"
         className="flex h-full w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left text-xs font-medium text-sidebar-muted-foreground/60 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
       >
         <PlusIcon aria-hidden className="size-3 shrink-0" />
         New section
       </button>
-    </li>
-  );
-}
-
-function NewSectionRow(props: {
-  threadCount: number;
-  onSubmit: (name: string) => void;
-  onCancel: () => void;
-}) {
-  return (
-    <li className="mx-0.5 h-8 list-none" data-testid="sidebar-new-section-row" data-sections-end>
-      <div className="flex h-full items-center px-2">
-        <SectionNameInput
-          initialName=""
-          ariaLabel={newSectionTitle(props.threadCount)}
-          placeholder={
-            props.threadCount === 0 ? "Section name" : `${newSectionTitle(props.threadCount)}…`
-          }
-          onSubmit={props.onSubmit}
-          onCancel={props.onCancel}
-        />
-      </div>
     </li>
   );
 }
