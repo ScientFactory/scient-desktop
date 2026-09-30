@@ -52,6 +52,7 @@ import {
   GENERAL_SECTION_GROUP_ID,
   type SectionGroup,
   type SectionsDropTarget,
+  type SectionsDropPlacement,
   type SectionsLifecycle,
   type SectionsListItem,
   planSectionsThreadDrop,
@@ -126,7 +127,12 @@ export interface SidebarSectionsViewProps {
 }
 
 type DragState =
-  | { readonly kind: "thread"; readonly key: string; readonly target: SectionsDropTarget | null }
+  | {
+      readonly kind: "thread";
+      readonly key: string;
+      readonly target: SectionsDropTarget | null;
+      readonly placement: SectionsDropPlacement;
+    }
   | {
       readonly kind: "section";
       readonly groupId: string;
@@ -146,6 +152,15 @@ type SectionDragGeometry = {
   readonly scroller: HTMLElement | null;
   readonly scrollTop: number;
 };
+
+function threadDropPlacement(
+  event: Pick<DragMoveEvent, "over" | "collisions">,
+): SectionsDropPlacement {
+  return event.collisions?.find((collision) => collision.id === event.over?.id)?.data?.placement ===
+    "after"
+    ? "after"
+    : "before";
+}
 
 const SECTION_SLIDE = "transform 160ms ease";
 
@@ -296,9 +311,17 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
       verticalListSortingStrategy(
         args.activeIndex < 0 || args.overIndex < 0 || items[args.activeIndex]?.kind !== "thread"
           ? args
-          : { ...args, overIndex: sectionsDropIndex(items, args.activeIndex, args.overIndex) },
+          : {
+              ...args,
+              overIndex: sectionsDropIndex(
+                items,
+                args.activeIndex,
+                args.overIndex,
+                drag?.kind === "thread" ? drag.placement : "before",
+              ),
+            },
       ),
-    [items],
+    [drag, items],
   );
 
   const lifecycleByKey = useMemo(
@@ -332,7 +355,7 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
       const id = String(event.active.id);
       const groupId = sectionGroupIdFromHeaderItemId(id);
       if (groupId === null) {
-        setDrag({ kind: "thread", key: id, target: null });
+        setDrag({ kind: "thread", key: id, target: null, placement: "before" });
         return;
       }
       const groupIds = groups.map((group) => group.id);
@@ -356,25 +379,41 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
     [groups],
   );
 
-  const handleDragMove = useCallback((event: DragMoveEvent) => {
-    setDrag((current) => {
-      if (current?.kind !== "section") return current;
-      const { geometry } = current;
-      const scrolled = (geometry.scroller?.scrollTop ?? 0) - geometry.scrollTop;
-      const pointerY = geometry.pointerY + event.delta.y + scrolled;
-      const preview = resolveSectionDragOrder(geometry.blocks, current.groupId, pointerY);
-      return preview.every((groupId, position) => groupId === current.preview[position])
-        ? current
-        : { ...current, preview };
-    });
-  }, []);
-
-  // Section drags resolve against the frozen geometry, never dnd-kit's targets,
-  // so the sortable list leaves every row and header where it is.
+  // Measure against the untransformed droppable rects: preview animations must
+  // not change the insertion side beneath a stationary pointer. Use the pointer
+  // rather than the lifted card's centre so pickup position cannot bias the slot.
   const collisionDetection = useCallback<CollisionDetection>(
-    (args) =>
-      sectionGroupIdFromHeaderItemId(String(args.active.id)) === null ? closestCenter(args) : [],
-    [],
+    (args) => {
+      if (sectionGroupIdFromHeaderItemId(String(args.active.id)) !== null) return [];
+      const pointer = args.pointerCoordinates;
+      const rect = args.collisionRect;
+      const collisions = closestCenter(
+        pointer
+          ? {
+              ...args,
+              collisionRect: {
+                ...rect,
+                top: pointer.y - rect.height / 2,
+                bottom: pointer.y + rect.height / 2,
+              },
+            }
+          : args,
+      );
+      const nearest = collisions[0];
+      if (!nearest) return collisions;
+      const item = items.find((entry) => entry.id === nearest.id);
+      const targetRect = args.droppableRects.get(nearest.id);
+      const placement: SectionsDropPlacement =
+        item?.kind === "thread" &&
+        item.groupId !== null &&
+        pointer &&
+        targetRect &&
+        pointer.y >= targetRect.top + targetRect.height / 2
+          ? "after"
+          : "before";
+      return [{ ...nearest, data: { ...nearest.data, placement } }, ...collisions.slice(1)];
+    },
+    [items],
   );
 
   const reportFailure = useCallback(
@@ -423,10 +462,10 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
 
   /** What dropping the lifted row over `overId` would do; null when nothing. */
   const planThreadDrop = useCallback(
-    (activeKey: string, overId: string) => {
+    (activeKey: string, overId: string, placement: SectionsDropPlacement) => {
       const thread = threadByKey.get(activeKey);
       const source = items.find((item) => item.id === activeKey);
-      const shown = resolveSectionsDropTarget(items, activeKey, overId);
+      const shown = resolveSectionsDropTarget(items, activeKey, overId, placement);
       if (thread === undefined || source?.kind !== "thread" || shown === null) return null;
       const fullOrder = shown.kind === "section" ? fullOrderByGroup.get(shown.groupId) : undefined;
       const target =
@@ -470,22 +509,43 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
 
   // Only a drop that changes something highlights its section or shelf.
   const handleDragOver = useCallback(
-    (event: DragOverEvent) => {
+    (event: DragOverEvent | DragMoveEvent) => {
       const activeId = String(event.active.id);
       if (sectionGroupIdFromHeaderItemId(activeId) !== null) return;
+      const placement = threadDropPlacement(event);
       const target = event.over
-        ? (planThreadDrop(activeId, String(event.over.id))?.target ?? null)
+        ? (planThreadDrop(activeId, String(event.over.id), placement)?.target ?? null)
         : null;
       setDrag((current) =>
-        current?.kind === "thread" && current.key === activeId ? { ...current, target } : current,
+        current?.kind === "thread" && current.key === activeId
+          ? { ...current, target, placement }
+          : current,
       );
     },
     [planThreadDrop],
   );
 
+  const handleDragMove = useCallback(
+    (event: DragMoveEvent) => {
+      // The hovered id can stay the same while the pointer crosses its midpoint.
+      handleDragOver(event);
+      setDrag((current) => {
+        if (current?.kind !== "section") return current;
+        const { geometry } = current;
+        const scrolled = (geometry.scroller?.scrollTop ?? 0) - geometry.scrollTop;
+        const pointerY = geometry.pointerY + event.delta.y + scrolled;
+        const preview = resolveSectionDragOrder(geometry.blocks, current.groupId, pointerY);
+        return preview.every((groupId, position) => groupId === current.preview[position])
+          ? current
+          : { ...current, preview };
+      });
+    },
+    [handleDragOver],
+  );
+
   const dropThread = useCallback(
-    (activeKey: string, overId: string) => {
-      const planned = planThreadDrop(activeKey, overId);
+    (activeKey: string, overId: string, placement: SectionsDropPlacement) => {
+      const planned = planThreadDrop(activeKey, overId, placement);
       if (planned === null) return;
       const { thread, target, plan } = planned;
       const threadRef = scopeThreadRef(thread.environmentId, thread.id);
@@ -498,7 +558,7 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
         const activeIndex = items.findIndex((item) => item.id === activeKey);
         const overIndex = items.findIndex((item) => item.id === overId);
         const ids = items.map((item) => item.id).filter((id) => id !== activeKey);
-        ids.splice(sectionsDropIndex(items, activeIndex, overIndex), 0, activeKey);
+        ids.splice(sectionsDropIndex(items, activeIndex, overIndex, placement), 0, activeKey);
         setHeld({ ids, expiresAt: Date.now() + HELD_LAYOUT_MS });
       }
 
@@ -564,7 +624,8 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
       setDrag(null);
       if (current === null) return;
       if (current.kind === "section") dropSection(current.preview);
-      else if (event.over !== null) dropThread(current.key, String(event.over.id));
+      else if (event.over !== null)
+        dropThread(current.key, String(event.over.id), threadDropPlacement(event));
     },
     [drag, dropSection, dropThread],
   );

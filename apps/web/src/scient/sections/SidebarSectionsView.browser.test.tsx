@@ -5,13 +5,17 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vitest/browser";
 
+const { reorderActiveThread } = vi.hoisted(() => ({
+  reorderActiveThread: vi.fn(async () => ({ _tag: "Success" })),
+}));
+
 vi.mock("../../hooks/useThreadActions", () => {
   const succeed = vi.fn(async () => ({ _tag: "Success" }));
   return {
     useThreadActions: () => ({
       unsettleThread: succeed,
       unsnoozeThread: succeed,
-      reorderActiveThread: succeed,
+      reorderActiveThread,
       reorderPinnedThread: succeed,
     }),
   };
@@ -30,6 +34,8 @@ let root: Root | undefined;
 let host: HTMLDivElement | undefined;
 
 afterEach(() => {
+  moveThreadsToSection.mockReset().mockResolvedValue(true);
+  reorderActiveThread.mockClear();
   root?.unmount();
   host?.remove();
   root = undefined;
@@ -80,7 +86,18 @@ function renderView(
       settledThreads={[]}
       showSnoozedShelf={false}
       pinnedKeysById={new Map()}
-      activeKeysById={new Map()}
+      activeKeysById={
+        new Map([
+          ["env:g1", "a"],
+          ["env:g2", "b"],
+          ["env:a1", "d"],
+          ["env:a2", "g"],
+          ["env:a3", "m"],
+          ["env:b1", "t"],
+          ["env:b2", "w"],
+          ["env:b3", "z"],
+        ])
+      }
       canDragThread={() => true}
       renderThreadRow={(row, _lifecycle, sortable) => (
         <li
@@ -232,6 +249,81 @@ it("files a thread dragged up onto a collapsed section's header into that sectio
     [expect.objectContaining({ threadId: "b2" })],
     "a",
   );
+});
+
+it.each(["g1", "b1"])(
+  "appends %s to A from either direction and keeps the preview stable",
+  async (source) => {
+    let release: (value: boolean) => void = () => {};
+    moveThreadsToSection.mockClear();
+    moveThreadsToSection.mockImplementation(
+      () =>
+        new Promise<boolean>((resolve) => {
+          release = resolve;
+        }),
+    );
+    reorderActiveThread.mockClear();
+    renderView(vi.fn());
+    await nextFrame();
+    const row = document.querySelector<HTMLElement>(`[data-row="${source}"]`)!;
+    const start = row.getBoundingClientRect();
+    const last = document.querySelector<HTMLElement>('[data-row="a3"]')!;
+    const target = last.getBoundingClientRect();
+    const x = start.left + 20;
+    // Pick up near the top: placement must follow the pointer, not the card centre.
+    pointer("pointerdown", row, x, start.top + 4);
+    const y = target.bottom - 4;
+    pointer("pointermove", document, x, start.top + 12);
+    await nextFrame();
+    pointer("pointermove", document, x, y);
+    await nextFrame();
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const previewTop = last.getBoundingClientRect().top;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    expect(last.getBoundingClientRect().top).toBeCloseTo(previewTop, 0);
+    pointer("pointerup", document, x, y);
+    await nextFrame();
+    expect(moveThreadsToSection).toHaveBeenCalledWith(
+      [expect.objectContaining({ threadId: source })],
+      "a",
+    );
+    const ids = [...document.querySelectorAll<HTMLElement>("[data-row]")].map(
+      (node) => node.dataset.row,
+    );
+    expect(ids.indexOf(source)).toBe(ids.indexOf("a3") + 1);
+    expect(reorderActiveThread).toHaveBeenCalledTimes(1);
+    const [ref, key] = reorderActiveThread.mock.calls[0]! as unknown as [
+      { threadId: string },
+      string,
+    ];
+    expect(ref.threadId).toBe(source);
+    expect(key > "m").toBe(true);
+    release(true);
+    await nextFrame();
+  },
+);
+
+it("changes insertion side within the same row before committing", async () => {
+  moveThreadsToSection.mockClear();
+  reorderActiveThread.mockClear();
+  renderView(vi.fn());
+  await nextFrame();
+  const row = document.querySelector<HTMLElement>('[data-row="b1"]')!;
+  const start = row.getBoundingClientRect();
+  const target = document.querySelector<HTMLElement>('[data-row="a2"]')!.getBoundingClientRect();
+  const x = start.left + 20;
+  pointer("pointerdown", row, x, start.top + 4);
+  pointer("pointermove", document, x, start.top + 12);
+  await nextFrame();
+  pointer("pointermove", document, x, target.top + 4);
+  await nextFrame();
+  pointer("pointermove", document, x, target.bottom - 4);
+  await nextFrame();
+  pointer("pointerup", document, x, target.bottom - 4);
+  await nextFrame();
+  expect(reorderActiveThread).toHaveBeenCalledTimes(1);
+  const [, key] = reorderActiveThread.mock.calls[0]! as unknown as [unknown, string];
+  expect(key > "g" && key < "m").toBe(true);
 });
 
 it("sets section names 4px low, nearer their own threads, without growing the header", async () => {

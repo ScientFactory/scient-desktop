@@ -226,6 +226,72 @@ describe("Sections view drops", () => {
     expect(resolveSectionsDropTarget(items, "r1", "z1")).toBeNull();
   });
 
+  it.each(["o1", "s1", "z1", "r1"])(
+    "appends %s after the final row without depending on drag direction",
+    (source) => {
+      expect(resolveSectionsDropTarget(items, source, "r2", "after")).toEqual({
+        kind: "section",
+        groupId: "research",
+        order: source === "r1" ? ["r-pin", "r2", "r1"] : ["r-pin", "r1", "r2", source],
+      });
+    },
+  );
+
+  it("places rows before or after the same neighbour from either direction", () => {
+    const list = [
+      header("above"),
+      row("up", "active", "above"),
+      header("target"),
+      row("a", "active", "target"),
+      row("b", "active", "target"),
+      header("below"),
+      row("down", "active", "below"),
+    ];
+    for (const source of ["up", "down"]) {
+      expect(resolveSectionsDropTarget(list, source, "b", "before")).toEqual({
+        kind: "section",
+        groupId: "target",
+        order: ["a", source, "b"],
+      });
+      expect(resolveSectionsDropTarget(list, source, "b", "after")).toEqual({
+        kind: "section",
+        groupId: "target",
+        order: ["a", "b", source],
+      });
+      expect(resolveSectionsDropTarget(list, source, "a", "after")).toEqual({
+        kind: "section",
+        groupId: "target",
+        order: ["a", source, "b"],
+      });
+    }
+  });
+
+  it("keeps self drops unchanged on either side", () => {
+    for (const placement of ["before", "after"] as const) {
+      expect(resolveSectionsDropTarget(items, "r1", "r1", placement)).toEqual({
+        kind: "section",
+        groupId: "research",
+        order: ["r-pin", "r1", "r2"],
+      });
+    }
+  });
+
+  it("appends a pinned row only within the pinned group", () => {
+    const list = [
+      header("research"),
+      row("p1", "pinned", "research"),
+      row("p2", "pinned", "research"),
+      row("a1", "active", "research"),
+      header("other"),
+      row("p3", "pinned", "other"),
+    ];
+    expect(resolveSectionsDropTarget(list, "p3", "a1", "after")).toEqual({
+      kind: "section",
+      groupId: "research",
+      order: ["p1", "p2", "p3", "a1"],
+    });
+  });
+
   it("moves a thread into another section at the dropped position", () => {
     expect(plan("o1", "r2")).toEqual({
       kind: "move",

@@ -528,22 +528,27 @@ export type SectionsDropTarget =
   | { readonly kind: "section"; readonly groupId: string; readonly order: readonly string[] }
   | { readonly kind: "settled" };
 
-/**
- * The index a lifted row takes in the list without it, when dropped over the
- * item at `overIndex`. A row lands in the over item's slot, except over a
- * section header, where it always lands just below the header (the top of
- * that section), whichever way it was dragged. Without that, dragging up onto
- * a header would file the row into the section above it, and a header-only
- * (empty or collapsed) section could never be reached from below.
- */
+export type SectionsDropPlacement = "before" | "after";
+
+/** The insertion slot in the list without the lifted row. Headers mean the
+ * top of their section; row placement is explicit and independent of drag
+ * direction. The slot stays on the dropped row's side of the pin boundary. */
 export function sectionsDropIndex(
   items: readonly SectionsListItem[],
   activeIndex: number,
   overIndex: number,
+  placement: SectionsDropPlacement = "before",
 ): number {
   const active = items[activeIndex];
+  const over = items[overIndex];
+  if (activeIndex === overIndex) return activeIndex;
+  const remainingIndex = overIndex - (activeIndex < overIndex ? 1 : 0);
   const index =
-    items[overIndex]?.kind === "header" && overIndex < activeIndex ? overIndex + 1 : overIndex;
+    over?.kind === "header"
+      ? remainingIndex + 1
+      : over?.kind === "thread" && over.groupId !== null
+        ? remainingIndex + (placement === "after" ? 1 : 0)
+        : overIndex;
   if (active?.kind !== "thread") return index;
   // A drop never changes a pin, and a section lists pinned rows first, so the
   // row lands on its own side of that boundary (where the planner puts it).
@@ -607,12 +612,13 @@ export function resolveSectionsDropTarget(
   items: readonly SectionsListItem[],
   activeId: string,
   overId: string,
+  placement: SectionsDropPlacement = "before",
 ): SectionsDropTarget | null {
   const activeIndex = items.findIndex((item) => item.id === activeId);
   const overIndex = items.findIndex((item) => item.id === overId);
   const active = items[activeIndex];
   if (activeIndex === -1 || overIndex === -1 || active?.kind !== "thread") return null;
-  const dropIndex = sectionsDropIndex(items, activeIndex, overIndex);
+  const dropIndex = sectionsDropIndex(items, activeIndex, overIndex, placement);
   const moved = items.filter((_, index) => index !== activeIndex);
   moved.splice(dropIndex, 0, active);
   let owner: SectionsListItem | null = null;

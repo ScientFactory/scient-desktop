@@ -146,6 +146,11 @@ section when un-settled or woken.
   (only a header) can be reached from below. `sectionsDropIndex` decides the
   slot, and the Sections view's sorting strategy slides rows to the same slot
   while dragging, so the header stays put instead of sliding past the row.
+- **Rows have two insertion sides:** the pointer above a row's midpoint inserts
+  before it, and below inserts after it, independent of the source's position.
+  The lower half of the last row appends to that section. Collision geometry
+  excludes preview transforms, so a stationary pointer keeps its slot while
+  rows slide. Preview, held layout and order-key planning use the same placement.
 - **Pins stay on top:** the slot keeps the row on its own side of the pinned
   rows, since a drop never changes a pin.
 - **Whole sections:** a drop is planned against every row of the target
