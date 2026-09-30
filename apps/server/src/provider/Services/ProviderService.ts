@@ -12,7 +12,6 @@
  * @module ProviderService
  */
 import type {
-  ModelSelection,
   ProviderInterruptTurnInput,
   ProviderInstanceId,
   ProviderRespondToRequestInput,

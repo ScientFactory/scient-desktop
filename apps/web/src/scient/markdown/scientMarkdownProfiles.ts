@@ -24,14 +24,14 @@ type RemarkPlugins = NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
  */
 export type ScientMarkdownProfile = "document" | "chat";
 
-export const SCIENT_MARKDOWN_GRAMMAR_REMARK_PLUGINS = [
+export const SCIENT_MARKDOWN_GRAMMAR_REMARK_PLUGINS: RemarkPlugins = [
   remarkGfm,
   remarkScientMath,
   remarkScientSingleDollarMath,
   remarkScientMathRefinements,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
-] satisfies RemarkPlugins;
+];
 
 const PROFILE_LINE_BREAK_PLUGINS = {
   document: [],

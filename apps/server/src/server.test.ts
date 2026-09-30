@@ -163,6 +163,7 @@ import {
   AntigravityInstallation,
   AntigravityInstallationError,
 } from "./provider/AntigravityInstallation.ts";
+import { CodexInstallation } from "./provider/CodexInstallation.ts";
 import type { ProviderInstance } from "./provider/ProviderDriver.ts";
 import * as ProviderSessionDirectory from "./provider/Services/ProviderSessionDirectory.ts";
 import { ProviderAdapterRequestError } from "./provider/Errors.ts";
@@ -557,6 +558,7 @@ const buildAppUnderTest = (options?: {
     providerAuth?: Partial<ProviderAuthService["Service"]>;
     providerInstanceRegistry?: Partial<ProviderInstanceRegistry["Service"]>;
     antigravityInstallation?: Partial<AntigravityInstallation["Service"]>;
+    codexInstallation?: Partial<CodexInstallation["Service"]>;
     serverSettings?: Partial<ServerSettings.ServerSettingsService["Service"]>;
     externalLauncher?: Partial<ExternalLauncher.ExternalLauncher["Service"]>;
     vcsDriver?: Partial<VcsDriver.VcsDriver["Service"]>;
@@ -882,6 +884,10 @@ const buildAppUnderTest = (options?: {
             getInstance: () => Effect.undefined,
             listInstances: Effect.succeed([]),
             ...options?.layers?.providerInstanceRegistry,
+          }),
+          Layer.mock(CodexInstallation)({
+            managedDirectory: "unused-test-codex-runtime",
+            ...options?.layers?.codexInstallation,
           }),
           Layer.mock(AntigravityInstallation)({
             managedDirectory: "unused-test-antigravity-runtime",
@@ -6694,6 +6700,52 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         failureMessage.includes("Unauthorized") ||
           failureMessage.includes("An error occurred during Open"),
       );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("rejects dormant Codex subscription-sharing RPCs before starting auth", () =>
+    Effect.gen(function* () {
+      let authCalls = 0;
+      yield* buildAppUnderTest({
+        layers: {
+          providerAuth: {
+            start: () =>
+              Effect.sync(() => {
+                authCalls += 1;
+                return providerSetupAuthState;
+              }),
+          },
+        },
+      });
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const exported = yield* client[WS_METHODS.chatGptReconnectProfile]({
+              instanceId: providerSetupInstanceId,
+              methodId: "chatgpt",
+            }).pipe(Effect.flip);
+            assert.equal(exported._tag, "ProviderSetupError");
+            const handoff = yield* client[WS_METHODS.chatGptHandoffSubscribe]({
+              instanceId: providerSetupInstanceId,
+              environmentId: testEnvironmentDescriptor.environmentId,
+              attemptId: "synthetic-handoff",
+              returnUrl: "scient://auth-return",
+              profile: null,
+            }).pipe(Stream.runHead, Effect.flip);
+            assert.equal(handoff._tag, "ProviderSetupError");
+            const callback = yield* client[WS_METHODS.codexAuthCallbackSubscribe]({
+              instanceId: providerSetupInstanceId,
+              environmentId: testEnvironmentDescriptor.environmentId,
+              flowId: "synthetic-callback",
+              authorizationUrl: "https://example.com/authorize",
+              returnUrl: "scient://auth-return",
+            }).pipe(Stream.runHead, Effect.flip);
+            assert.equal(callback._tag, "ProviderSetupError");
+          }),
+        ),
+      );
+      assert.equal(authCalls, 0);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

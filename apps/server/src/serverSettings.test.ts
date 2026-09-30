@@ -119,6 +119,30 @@ const recordProviderUsage = (provider: string, instanceId: string | null = provi
   });
 
 it.layer(NodeServices.layer)("server settings", (it) => {
+  it.effect("rejects subscription-sharing activation without persisting settings or secrets", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const before = yield* service.getSettings;
+      const result = yield* Effect.exit(
+        service.updateSettings({
+          providers: { codex: { setupMode: "managed" } },
+        }),
+      );
+      assert.equal(result._tag, "Failure");
+      assert.deepEqual(yield* service.getSettings, before);
+      const id = ProviderInstanceId.make("deferred-personal");
+      const instanceResult = yield* Effect.exit(
+        service.updateSettings({
+          providerInstances: {
+            [id]: { driver: ProviderDriverKind.make("codex"), config: { setupMode: "managed" } },
+          },
+        }),
+      );
+      assert.equal(instanceResult._tag, "Failure");
+      assert.deepEqual(yield* service.getSettings, before);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   const modelConnection = {
     id: "metadata",
     name: "OpenRouter",

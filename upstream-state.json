@@ -6,24 +6,24 @@
   "officialDefaultBranch": "main",
   "updateMode": "thin-fork-merge",
   "candidateStatus": "active-public-desktop",
-  "integrationBase": "d2c9281b8112dc3b2991642c4bdb985e4b08b9bb",
-  "reviewedThrough": "d2c9281b8112dc3b2991642c4bdb985e4b08b9bb",
-  "reviewedAt": "2026-09-29",
-  "reviewRecord": "docs/internals/2026-09-29-upstream-sync-d2c9281b8.md",
+  "integrationBase": "35be904f2fc40aa6d7a42778b6895e8274f3097f",
+  "reviewedThrough": "35be904f2fc40aa6d7a42778b6895e8274f3097f",
+  "reviewedAt": "2026-10-01",
+  "reviewRecord": "docs/internals/2026-09-30-upstream-sync-35be904f2f.md",
   "verifiedBaseline": "a2ca89aa10f13a2222e08afd98c66285121d5ba2",
   "observedOfficialTipAtBootstrap": "a2ca89aa10f13a2222e08afd98c66285121d5ba2",
   "observedOfficialTagAtBootstrap": "v0.0.32-nightly.20260806.1012",
   "bootstrapBranch": "agent/d4-bootstrap-20260806",
   "bootstrapMerge": "3e8f7bc0e18be4a42c23b021e68bf30e3690bc4d",
   "bootstrapRecord": "docs/internals/scient-next-d4-bootstrap.md",
-  "lastRefreshBase": "63d9edf1b6eba1387826c8aa6ae7dfe8c292a770",
-  "lastRefreshPreviousOfficialTip": "de251fc2971a884cb5b1305ba4daf309dc8cccb0",
-  "lastRefreshOfficialTip": "d2c9281b8112dc3b2991642c4bdb985e4b08b9bb",
-  "lastRefreshOfficialTag": "v0.0.43-nightly.20260929.2416",
-  "lastRefreshRangeCount": 14,
-  "lastRefreshMerge": "eb56e78c44cb76fa37c19d0a99b099a93a69eee3",
-  "lastRefreshBranch": "codex/t3-sync-d2c9281b8-20260929",
-  "lastRefreshVerifiedAt": "2026-09-29T08:30:00Z",
+  "lastRefreshBase": "136ab8ad104b92f100a6ccd8fac1e6ee0c884102",
+  "lastRefreshPreviousOfficialTip": "d2c9281b8112dc3b2991642c4bdb985e4b08b9bb",
+  "lastRefreshOfficialTip": "35be904f2fc40aa6d7a42778b6895e8274f3097f",
+  "lastRefreshOfficialTag": "v0.0.45-nightly.20260930.2493",
+  "lastRefreshRangeCount": 20,
+  "lastRefreshMerge": "efacdaf575f2cd3d65068d8e4e78a2ffb2b16578",
+  "lastRefreshBranch": "codex/t3-sync-35be904f2f-20260930",
+  "lastRefreshVerifiedAt": "2026-09-30T20:43:51Z",
   "historicalExceptions": [
     {
       "id": "t3-pr-5822-projectless-threads",
@@ -43,5 +43,7 @@
       "replacementPullRequest": null,
       "replacementMerge": null
     }
-  ]
+  ],
+  "lastRefreshOwnedMain": "e0efa3fa4346ea6b7c88c93b25b4638cea715fe4",
+  "lastRefreshOwnedMainMerge": "14fb2478174667b49afaf6d7405526ed897d0c16"
 }

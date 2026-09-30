@@ -148,6 +148,7 @@ import {
   isLatexPreviewFile,
   isMarkdownPreviewFile,
   resolveMarkdownTaskPreviewUpdate,
+  resolveFilePreviewPath,
   shouldShowFileExplorer,
 } from "./filePreviewMode";
 import { useFileSaveCoordinator } from "./useFileSaveCoordinator";
@@ -1396,7 +1397,7 @@ export default function FilePreviewPanel({
   environmentId,
   cwd,
   projectName,
-  relativePath,
+  relativePath: requestedPath,
   attachment,
   threadRef,
   composerDraftTarget,
@@ -1415,6 +1416,8 @@ export default function FilePreviewPanel({
   selectedFilePending,
   workspaceMutationId,
 }: FilePreviewPanelProps) {
+  const relativePath =
+    attachment === undefined ? resolveFilePreviewPath(requestedPath, cwd) : requestedPath;
   const { resolvedTheme } = useTheme();
   const wordWrap = useClientSettings((settings) => settings.wordWrap);
   const updateClientSettings = useUpdateClientSettings();
