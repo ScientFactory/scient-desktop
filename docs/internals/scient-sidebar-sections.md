@@ -92,7 +92,7 @@ Because it's one rule, the field never shows a name that saves differently.
 
 **New section… files its threads.** Creating a section from a thread menu
 (or the chat header) creates it already registered for those threads'
-environments and projects, then files them. The compact creation popover says which threads it is for. It opens beside
+environments and projects, then files them. The compact creation popover shows a section-name input and small action buttons; its accessible title identifies the threads it is for. It opens beside
 the initiating button or native-menu origin in both sidebar modes and the chat
 header, without a backdrop or modal focus trap. The sidebar's New section row
 opens the same form instead of becoming a bottom-of-list input.

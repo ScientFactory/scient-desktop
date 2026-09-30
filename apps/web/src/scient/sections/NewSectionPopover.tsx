@@ -81,7 +81,9 @@ function NewSectionForm(props: {
         }
       }}
     >
-      <PopoverTitle size="compact">{newSectionTitle(threadCount)}</PopoverTitle>
+      <div className="sr-only">
+        <PopoverTitle size="compact">{newSectionTitle(threadCount)}</PopoverTitle>
+      </div>
       <div className="flex flex-col gap-1.5">
         <label htmlFor={`${id}-name`} className="sr-only">
           Section name
@@ -100,10 +102,10 @@ function NewSectionForm(props: {
         {error ? <p className="text-xs text-destructive">{error}</p> : null}
       </div>
       <div className="flex justify-end gap-1">
-        <Button type="button" variant="ghost" size="sm" onClick={() => onOpenChange(false)}>
+        <Button type="button" variant="ghost" size="xs" onClick={() => onOpenChange(false)}>
           Cancel
         </Button>
-        <Button type="submit" size="sm" disabled={saving || name.trim().length === 0}>
+        <Button type="submit" size="xs" disabled={saving || name.trim().length === 0}>
           Create
         </Button>
       </div>
