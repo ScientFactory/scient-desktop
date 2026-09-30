@@ -748,14 +748,14 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
           {props.trailing}
         </ul>
       </SortableContext>
-      <DragOverlay dropAnimation={null}>
-        {liftedGroup ? (
+      {liftedGroup ? (
+        <DragOverlay dropAnimation={null}>
           <div className="flex h-8 items-center gap-2 rounded-md bg-sidebar-row-active px-2 text-xs font-medium text-sidebar-foreground/80 shadow-sm">
             <FadeTruncate text={liftedGroup.section?.name ?? "General"} className="shrink" />
             <span aria-hidden className="h-px min-w-6 flex-1 bg-sidebar-foreground/25" />
           </div>
-        ) : null}
-      </DragOverlay>
+        </DragOverlay>
+      ) : null}
     </DndContext>
   );
 }

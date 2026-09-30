@@ -380,6 +380,62 @@ it("cancels an end-slot preview without writing membership or order", async () =
   expect(reorderActiveThread).not.toHaveBeenCalled();
 });
 
+it.each([4, 24, 44])("keeps the grabbed point under the pointer (pickup %ipx)", async (grab) => {
+  renderView(vi.fn());
+  await nextFrame();
+  const row = document.querySelector<HTMLElement>('[data-row="g1"]')!;
+  const start = row.getBoundingClientRect();
+  const x = start.left + 20;
+  pointer("pointerdown", row, x, start.top + grab);
+  pointer("pointermove", document, x, start.top + grab + 8);
+  await nextFrame();
+  for (const offset of [150, 241, 387, 180]) {
+    const y = host!.getBoundingClientRect().top + offset;
+    pointer("pointermove", document, x + 40, y);
+    await nextFrame();
+    expect(Math.abs(row.getBoundingClientRect().top + grab - y)).toBeLessThan(1);
+    expect(Math.abs(row.getBoundingClientRect().left - start.left)).toBeLessThan(1);
+  }
+  document.dispatchEvent(
+    new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }),
+  );
+  await nextFrame();
+  await vi.waitFor(() =>
+    expect(Math.abs(row.getBoundingClientRect().top - start.top)).toBeLessThan(1),
+  );
+  expect(reorderActiveThread).not.toHaveBeenCalled();
+  expect(moveThreadsToSection).not.toHaveBeenCalled();
+});
+
+it("keeps pointer attachment when its scrollable list scrolls", async () => {
+  renderView(vi.fn());
+  host!.style.height = "300px";
+  host!.style.overflow = "auto";
+  await nextFrame();
+  const row = document.querySelector<HTMLElement>('[data-row="g1"]')!;
+  const start = row.getBoundingClientRect();
+  const grab = 24;
+  const x = start.left + 20;
+  const y = host!.getBoundingClientRect().top + 180;
+  pointer("pointerdown", row, x, start.top + grab);
+  pointer("pointermove", document, x, start.top + grab + 8);
+  await nextFrame();
+  pointer("pointermove", document, x, y);
+  await nextFrame();
+  expect(Math.abs(row.getBoundingClientRect().top + grab - y)).toBeLessThan(1);
+  host!.scrollTop = 60;
+  await vi.waitFor(() => {
+    expect(host!.scrollTop).toBe(60);
+    expect(Math.abs(row.getBoundingClientRect().top + grab - y)).toBeLessThan(1);
+  });
+  document.dispatchEvent(
+    new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }),
+  );
+  await nextFrame();
+  expect(reorderActiveThread).not.toHaveBeenCalled();
+  expect(moveThreadsToSection).not.toHaveBeenCalled();
+});
+
 it("sets section names 4px low, nearer their own threads, without growing the header", async () => {
   renderView(() => {});
   await nextFrame();

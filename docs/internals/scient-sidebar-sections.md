@@ -151,6 +151,10 @@ section when un-settled or woken.
   The lower half of the last row appends to that section. Collision geometry
   excludes preview transforms, so a stationary pointer keeps its slot while
   rows slide. Preview, held layout and order-key planning use the same placement.
+- **Conversation drags follow the pointer:** the grabbed point stays under the
+  pointer as the list scrolls. Only section headers mount a drag overlay; an
+  empty overlay would make sortable rows follow landing slots instead. Vertical
+  movement and scroll-viewport boundaries still constrain the dragged card.
 - **Pins stay on top:** the slot keeps the row on its own side of the pinned
   rows, since a drop never changes a pin.
 - **Whole sections:** a drop is planned against every row of the target
