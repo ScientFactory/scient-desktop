@@ -37,6 +37,13 @@ export function NewSectionPopover(props: {
         width="sm"
         padding="tight"
         initialFocus
+        finalFocus={(closeType) =>
+          closeType === "keyboard" &&
+          props.anchor !== null &&
+          "getBoundingClientRect" in props.anchor
+            ? props.anchor
+            : true
+        }
       >
         <NewSectionForm
           key={props.requestKey}

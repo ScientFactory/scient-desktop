@@ -106,4 +106,5 @@ it("keeps a failed name for retry and closes with Escape", async () => {
   await userEvent.keyboard("{Escape}");
   await nextFrame();
   await vi.waitFor(() => expect(document.querySelector('[data-slot="popover-popup"]')).toBeNull());
+  expect(document.activeElement).toBe(document.querySelector("button"));
 });

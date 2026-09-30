@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
     readonly open: boolean;
     readonly threadCount: number;
     readonly onSubmit: (name: string) => Promise<boolean>;
+    readonly onOpenChange: (open: boolean) => void;
   },
 }));
 vi.mock("./catalog", () => ({ useThreadSectionCatalog: () => ({ create: mocks.create }) }));
@@ -106,6 +107,24 @@ it("files nothing and reports failure when the section cannot be created", async
   });
   expect(submitted).toBe(false);
   expect(mocks.moveThreadsToSection).not.toHaveBeenCalled();
+});
+
+it("does not let an old form close a newer creation request", () => {
+  act(() => hook.request([threadRef], { x: 20, y: 100 }));
+  const oldForm = mocks.popoverProps!;
+  const second = {
+    environmentId: EnvironmentId.make("remote"),
+    threadId: ThreadId.make("thread-2"),
+  };
+  act(() => hook.request([threadRef, second], { x: 80, y: 200 }));
+  act(() => oldForm.onOpenChange(false));
+  expect(mocks.popoverProps).toMatchObject({
+    open: true,
+    threadCount: 2,
+    anchor: { x: 80, y: 200 },
+  });
+  act(() => mocks.popoverProps!.onOpenChange(false));
+  expect(mocks.popoverProps).toMatchObject({ open: false });
 });
 
 // The shared create-and-file step.
