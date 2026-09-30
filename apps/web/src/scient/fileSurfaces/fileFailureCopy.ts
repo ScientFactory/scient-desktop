@@ -1,4 +1,4 @@
-import type { ProjectFileFailure } from "@t3tools/contracts";
+import type { ProjectFileErrorReason, ProjectFileFailure } from "@t3tools/contracts";
 
 /** What a file surface says when it cannot show a file. */
 export interface FileFailureCopy {
@@ -12,21 +12,47 @@ export interface FileFailureCopy {
 
 export const UNSUPPORTED_PREVIEW_TITLE = "Preview unavailable";
 
-/** The server refused the path as outside the project; no preview or retry can reach it. */
+/**
+ * A server that predates location-independent reads refused the path as
+ * outside the project. Current servers read such files read-only instead, so
+ * this only reaches older environments, where opening the absolute path works.
+ */
 export function isOutsideProjectFailure(failure: ProjectFileFailure | null): boolean {
   return failure === "workspace_path_outside_root" || failure === "resolved_path_outside_root";
 }
 
 /**
- * Plain-language copy for a failed workspace or host file read. Only failures
- * the server reports distinctly get a specific message; a missing file arrives
- * as a generic operation failure, so the fallback must not claim a cause.
+ * Plain-language copy for a failed workspace or host file read. The operating
+ * system's reason wins when the server reports one; otherwise only failures the
+ * server classifies distinctly get a specific message, and the fallback must
+ * not claim a cause.
  */
 export function fileReadFailureCopy(input: {
   readonly failure: ProjectFileFailure | null;
+  readonly reason?: ProjectFileErrorReason | null;
   readonly message: string | null;
 }): FileFailureCopy {
   const details = input.message?.trim() || null;
+  switch (input.reason) {
+    case "not_found":
+      return {
+        title: "File not found",
+        description:
+          "Nothing exists at this location. It may have been moved, renamed, or deleted.",
+        details,
+        retryable: true,
+      };
+    case "permission_denied":
+      return {
+        title: "Access denied",
+        description:
+          "This file's permissions, or your system's privacy settings, don't let Scient read it.",
+        details,
+        retryable: true,
+      };
+    default:
+      break;
+  }
   switch (input.failure) {
     case "binary_file":
       return {
@@ -39,7 +65,7 @@ export function fileReadFailureCopy(input: {
     case "resolved_path_outside_root":
       return {
         title: "Outside this project",
-        description: "This file is outside the project folder, so it can't be opened here.",
+        description: "This file is outside the project folder. You can still open it read-only.",
         details,
         retryable: false,
       };

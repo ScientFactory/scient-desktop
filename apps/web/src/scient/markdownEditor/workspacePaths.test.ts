@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   markdownWikiTargetForPath,
+  resolveMarkdownHostLinkPath,
   resolveMarkdownSiblingPath,
   resolveMarkdownUrlPath,
   resolveWikiLinkPath,
@@ -63,5 +64,31 @@ describe("Markdown workspace paths", () => {
     );
     expect(markdownWikiTargetForPath("result.md", "images/plot.png")).toBeNull();
     expect(markdownWikiTargetForPath("result.md", "../outside.md")).toBeNull();
+  });
+});
+
+describe("resolveMarkdownHostLinkPath", () => {
+  it("places a link that climbs out of the workspace on the host", () => {
+    expect(
+      resolveMarkdownHostLinkPath("reviews/notes.md", "/Users/me/project", "../../shared/a.md"),
+    ).toBe("/Users/me/shared/a.md");
+    expect(
+      resolveMarkdownHostLinkPath("notes.md", "/Users/me/project", "../My%20Notes/a.md#intro"),
+    ).toBe("/Users/me/My Notes/a.md");
+  });
+
+  it("keeps absolute paths and file URLs as the host paths they name", () => {
+    expect(resolveMarkdownHostLinkPath("notes.md", "/repo", "/tmp/report.md")).toBe(
+      "/tmp/report.md",
+    );
+    expect(resolveMarkdownHostLinkPath("notes.md", "/repo", "file:///tmp/a/../report.md")).toBe(
+      "/tmp/report.md",
+    );
+  });
+
+  it("ignores web links, fragments, and empty links", () => {
+    expect(resolveMarkdownHostLinkPath("notes.md", "/repo", "https://example.com/a.md")).toBeNull();
+    expect(resolveMarkdownHostLinkPath("notes.md", "/repo", "#heading")).toBeNull();
+    expect(resolveMarkdownHostLinkPath("notes.md", "/repo", "")).toBeNull();
   });
 });

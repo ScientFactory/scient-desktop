@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  resolveHostFilePath,
   fileRoutePathSegments,
   isSvgImagePreviewFile,
   resolveWorkspaceRelativeFilePath,
@@ -59,5 +60,19 @@ describe("fileHeaderSubtitle", () => {
 
   it("shows only the project for a file at the workspace root", () => {
     expect(fileHeaderSubtitle("t3code", "README.md")).toBe("t3code");
+  });
+});
+
+describe("resolveHostFilePath", () => {
+  it("places a link that climbs out of the workspace on the host", () => {
+    expect(resolveHostFilePath("/Users/me/project", "../reviews/notes.md")).toBe(
+      "/Users/me/reviews/notes.md",
+    );
+    expect(resolveHostFilePath("/Users/me/project", "/tmp/a/../report.md")).toBe("/tmp/report.md");
+  });
+
+  it("cannot place a home-relative path or a relative path without a workspace", () => {
+    expect(resolveHostFilePath("/Users/me/project", "~/notes.md")).toBeNull();
+    expect(resolveHostFilePath(null, "../notes.md")).toBeNull();
   });
 });

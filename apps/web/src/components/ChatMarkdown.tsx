@@ -29,13 +29,14 @@ import {
   TriangleAlertIcon,
   type LucideIcon,
 } from "lucide-react";
-import type {
-  AssetResource,
-  EnvironmentId,
-  MessageId,
-  ScopedThreadRef,
-  ServerProviderSkill,
-  ThreadPullRequestKey,
+import {
+  type AssetResource,
+  EnvironmentFilePath,
+  type EnvironmentId,
+  type MessageId,
+  type ScopedThreadRef,
+  type ServerProviderSkill,
+  type ThreadPullRequestKey,
 } from "@t3tools/contracts";
 import { githubMediaFetchUrl } from "@t3tools/shared/githubMedia";
 import {
@@ -52,10 +53,15 @@ import {
   classifyMarkdownImageSource,
   markdownImageSourceFragment,
 } from "@t3tools/client-runtime/markdown-images";
-import { inlineCodeFilePathCandidate } from "@t3tools/client-runtime/markdown-links";
+import {
+  collapseAbsoluteFilePath,
+  inlineCodeFilePathCandidate,
+} from "@t3tools/client-runtime/markdown-links";
 import { mediaFileReference, mediaUrlReference } from "@t3tools/client-runtime/media-reference";
 import { mediaKindFromPath, mediaMimeTypeFromExtension } from "@t3tools/shared/filePreview";
 import * as Cause from "effect/Cause";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/unstable/reactivity";
 import React, {
   Children,
@@ -243,6 +249,8 @@ import {
 // SCIENT-FORK:END
 import { ScientDisplayMath, ScientInlineMath } from "../scient/math/ScientMath";
 import { openEnvironmentFileInPreview } from "../scient/fileOpening/openEnvironmentFileInPreview";
+import { pickChangedFileForLink } from "../scient/fileOpening/changedFileLinkEvidence";
+import { environmentFilePreparation } from "../scient/fileOpening/environmentFileState";
 import { resolveLinkTarget } from "../browser/browserLinkTarget";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
 
@@ -286,6 +294,10 @@ interface ChatMarkdownProps {
   /** Loads GitHub-hosted media through `cwd`'s GitHub credential, which a private repository's
       uploads need; without it those images and videos load unauthenticated and 404. */
   githubMedia?: boolean | undefined;
+  /** Files the turn that produced this message changed, relative to `cwd`. A
+      link whose location does not exist resolves to one of them only when it
+      names exactly one; see `pickChangedFileForLink`. */
+  changedFiles?: ReadonlyArray<{ readonly path: string }> | undefined;
   /** Levels added to each markdown heading in the accessibility tree so the
       text nests under the heading that introduces it, such as a chat message's
       author. Rendered tags and their styling are unchanged. */
@@ -2139,6 +2151,7 @@ function useChatMarkdownState({
   renderContextReference,
   headingLevelOffset = 0,
   githubMedia = false,
+  changedFiles,
 }: ChatMarkdownProps) {
   // Delimiter normalization is length-preserving, so offset-based behavior
   // (task-list toggling, list positions) stays correct on every surface. The
@@ -2207,6 +2220,10 @@ function useChatMarkdownState({
   });
   const searchProjectEntries = useAtomQueryRunner(projectEnvironment.searchEntries, {
     reportFailure: false,
+  });
+  const prepareEnvironmentFile = useAtomQueryRunner(environmentFilePreparation, {
+    reportFailure: false,
+    refresh: true,
   });
   const openPreview = useAtomCommand(previewEnvironment.open, {
     reportFailure: false,
@@ -2479,6 +2496,29 @@ function useChatMarkdownState({
     },
     [createAssetUrl, openPreview, preparedConnection, threadRef],
   );
+  // Anything but a definite "not found" counts as existing, so a permission or
+  // connection problem, or a path the host cannot check, surfaces on the file
+  // itself instead of redirecting to another one.
+  const linkTargetExists = useCallback(
+    async (path: string) => {
+      if (environmentId === null) return true;
+      const filePath = Schema.decodeUnknownOption(EnvironmentFilePath)(path);
+      if (Option.isNone(filePath)) return true;
+      const result = await prepareEnvironmentFile({
+        environmentId,
+        input: { path: filePath.value },
+      });
+      if (result._tag === "Success") return true;
+      const failure = Cause.squash(result.cause);
+      return !(
+        typeof failure === "object" &&
+        failure !== null &&
+        "failure" in failure &&
+        failure.failure === "not_found"
+      );
+    },
+    [environmentId, prepareEnvironmentFile],
+  );
   const findWorkspaceBasenameMatch = useCallback(
     async (workspaceRelativePath: string) => {
       if (!cwd || environmentId === null || !needsWorkspaceBasenameLookup(workspaceRelativePath)) {
@@ -2509,6 +2549,28 @@ function useChatMarkdownState({
       const isLatestLookup = claimWorkspaceBasenameLookup();
       const openAt = (path: string) =>
         useRightPanelStore.getState().openFile(threadRef, path, line);
+      const changedFileMatch =
+        cwd && changedFiles && changedFiles.length > 0
+          ? pickChangedFileForLink(
+              panelPath,
+              changedFiles.map((file) => file.path),
+              cwd,
+            )
+          : null;
+      if (cwd && changedFileMatch !== null) {
+        // The link and a file this turn changed share a name. Open the link as
+        // written when it exists; otherwise it was written relative to another
+        // directory, and the changed file is the one it meant.
+        const linkPath = collapseAbsoluteFilePath(
+          isAbsolutePath(panelPath) ? panelPath : resolvePathLinkTarget(panelPath, cwd),
+        );
+        void (async () => {
+          const exists = await linkTargetExists(linkPath);
+          if (!isLatestLookup()) return;
+          openAt(exists ? panelPath : changedFileMatch);
+        })();
+        return;
+      }
       if (!cwd || !needsWorkspaceBasenameLookup(panelPath)) {
         openAt(panelPath);
         return;
@@ -2519,7 +2581,7 @@ function useChatMarkdownState({
         openAt(match ?? panelPath);
       })();
     },
-    [cwd, findWorkspaceBasenameMatch, threadRef],
+    [changedFiles, cwd, findWorkspaceBasenameMatch, linkTargetExists, threadRef],
   );
   const revealMarkdownFileInFileManager = useCallback(
     async (fileLinkMeta: MarkdownFileLinkMeta) => {

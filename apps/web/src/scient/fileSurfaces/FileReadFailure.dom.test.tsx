@@ -67,4 +67,72 @@ describe("files panel read failure", () => {
     }
     expect(container.textContent).toContain("Outside this project");
   });
+
+  const button = (label: string) =>
+    [...container.querySelectorAll("button")].find((candidate) =>
+      candidate.textContent?.includes(label),
+    );
+
+  it("names the missing location and lets the user pick a same-named file", () => {
+    const onOpenCandidate = vi.fn();
+    act(() =>
+      root.render(
+        <FileReadFailure
+          failure="operation_failed"
+          reason="not_found"
+          message="raw"
+          retrying={false}
+          onRetry={vi.fn()}
+          path="/Users/me/reviews/notes.md"
+          candidates={["reviews/notes.md", "archive/notes.md"]}
+          onOpenCandidate={onOpenCandidate}
+        />,
+      ),
+    );
+    expect(container.textContent).toContain("File not found");
+    expect(container.textContent).toContain("/Users/me/reviews/notes.md");
+    expect(container.textContent).toContain("Files with the same name exist in this project:");
+    expect(tryAgain()).toBeDefined();
+
+    act(() => button("archive/notes.md")?.click());
+    expect(onOpenCandidate).toHaveBeenCalledExactlyOnceWith("archive/notes.md");
+  });
+
+  it("offers same-named files only for a file that is not found", () => {
+    act(() =>
+      root.render(
+        <FileReadFailure
+          failure="operation_failed"
+          reason="permission_denied"
+          message={null}
+          retrying={false}
+          onRetry={vi.fn()}
+          path="/Users/me/private/notes.md"
+          candidates={["reviews/notes.md"]}
+          onOpenCandidate={vi.fn()}
+          onOpenPrivacySettings={vi.fn()}
+        />,
+      ),
+    );
+    expect(container.textContent).toContain("Access denied");
+    expect(button("reviews/notes.md")).toBeUndefined();
+    expect(button("Open Privacy Settings")).toBeDefined();
+  });
+
+  it("opens an older server's outside-the-project refusal read-only", () => {
+    const onOpenReadOnly = vi.fn();
+    act(() =>
+      root.render(
+        <FileReadFailure
+          failure="workspace_path_outside_root"
+          message="outside"
+          retrying={false}
+          onRetry={vi.fn()}
+          onOpenReadOnly={onOpenReadOnly}
+        />,
+      ),
+    );
+    act(() => button("Open read-only")?.click());
+    expect(onOpenReadOnly).toHaveBeenCalledOnce();
+  });
 });

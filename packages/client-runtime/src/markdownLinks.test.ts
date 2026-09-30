@@ -7,6 +7,7 @@ import {
   parseMarkdownFileLink,
   splitFilePathPosition,
   workspaceRelativeFilePath,
+  collapseAbsoluteFilePath,
 } from "./markdownLinks.ts";
 
 describe("inlineCodeFilePathCandidate", () => {
@@ -168,7 +169,34 @@ describe("workspaceRelativeFilePath", () => {
     ["/tmp/report.ts", "/repo/project", null],
     ["/repo/project-two/a.ts", "/repo/project", null],
     ["/repo/project/a.ts", undefined, null],
+    // Dot segments are resolved before deciding containment.
+    ["/repo/project/../notes.md", "/repo/project", null],
+    ["/repo/project/../project-two/a.ts", "/repo/project", null],
+    ["/repo/project/docs/../src/./a.ts", "/repo/project", "src/a.ts"],
+    ["/repo/other/../project/a.ts", "/repo/project", "a.ts"],
+    ["C:\\repo\\..\\other\\a.ts", "C:\\repo", null],
+    ["/repo/project/docs/..", "/repo/project", null],
   ])("relates %s to %s", (path, workspaceRoot, relativePath) => {
     expect(workspaceRelativeFilePath(path, workspaceRoot)).toBe(relativePath);
+  });
+});
+
+describe("collapseAbsoluteFilePath", () => {
+  it.each([
+    ["/Users/me/project/../reviews/notes.md", "/Users/me/reviews/notes.md"],
+    ["/a/./b//c/", "/a/b/c"],
+    ["/../../etc/hosts", "/etc/hosts"],
+    ["/", "/"],
+    ["C:\\repo\\..\\other\\a.ts", "C:\\other\\a.ts"],
+    ["C:/repo/../other/a.ts", "C:/other/a.ts"],
+    ["/C:/repo/../a.ts", "C:/a.ts"],
+    ["C:\\..\\a.ts", "C:\\a.ts"],
+    ["\\\\server\\share\\docs\\..\\a.ts", "\\\\server\\share\\a.ts"],
+    ["\\\\server\\share\\..\\..\\a.ts", "\\\\server\\share\\a.ts"],
+    // Relative paths are left alone: only the host knows their base.
+    ["../reviews/notes.md", "../reviews/notes.md"],
+    ["docs/./a.md", "docs/./a.md"],
+  ])("collapses %s to %s", (path, collapsed) => {
+    expect(collapseAbsoluteFilePath(path)).toBe(collapsed);
   });
 });

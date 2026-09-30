@@ -2724,6 +2724,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
               threadRef={ctx.threadRef ?? undefined}
               isStreaming={Boolean(row.message.streaming)}
               messageId={row.message.id}
+              changedFiles={row.assistantTurnDiffSummary?.files}
               directionHint={row.assistantDirectionHint}
               lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
               skills={ctx.skills}

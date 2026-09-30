@@ -1,3 +1,4 @@
+import { collapseAbsoluteFilePath } from "@t3tools/client-runtime/markdown-links";
 import {
   isWorkspaceAudioPreviewPath,
   isWorkspaceVideoPreviewPath,
@@ -97,6 +98,23 @@ export function resolveWorkspaceRelativeFilePath(
     return null;
   }
   return normalizeRelativePath(relativePath);
+}
+
+/**
+ * The absolute host path a file link names when it is not a workspace file:
+ * an absolute path as written, or a relative path that climbs above the
+ * workspace root. Such a file opens read-only in the file screen, like any
+ * other host file. Returns null when the link cannot be placed on the host.
+ */
+export function resolveHostFilePath(
+  workspaceRoot: string | null | undefined,
+  targetPath: string,
+): string | null {
+  if (isAbsolutePath(targetPath)) return collapseAbsoluteFilePath(targetPath);
+  if (!workspaceRoot || targetPath.startsWith("~/") || targetPath.startsWith("~\\")) {
+    return null;
+  }
+  return collapseAbsoluteFilePath(resolveWorkspaceFilePath(workspaceRoot, targetPath));
 }
 
 export function isVideoPreviewFile(path: string): boolean {

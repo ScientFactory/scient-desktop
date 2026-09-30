@@ -34,6 +34,7 @@ import { uploadMarkdownImage } from "./assets/client";
 import type { MarkdownPersistenceLease } from "./persistence/markdownPersistenceRegistry";
 import {
   markdownWikiTargetForPath,
+  resolveMarkdownHostLinkPath,
   resolveMarkdownUrlPath,
   resolveWikiLinkPath,
 } from "./workspacePaths";
@@ -282,12 +283,19 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
       const path = resolveMarkdownUrlPath(props.relativePath, target);
       if (!path) {
         beginLinkOpen();
+        // A link that leaves the project still names a file on this machine;
+        // it opens read-only, and a missing one says so in the panel.
+        const hostPath = resolveMarkdownHostLinkPath(props.relativePath, props.cwd, target);
+        if (hostPath) {
+          onOpenFile(hostPath);
+          return;
+        }
         showLinkFeedback(anchor, "This link isn't available.");
         return;
       }
       void openWorkspaceFile(path.relativePath, anchor);
     },
-    [beginLinkOpen, openWorkspaceFile, props.relativePath, showLinkFeedback],
+    [beginLinkOpen, onOpenFile, openWorkspaceFile, props.cwd, props.relativePath, showLinkFeedback],
   );
   const handleOpenWikiLink = useCallback(
     (target: string, anchor: HTMLElement) => {

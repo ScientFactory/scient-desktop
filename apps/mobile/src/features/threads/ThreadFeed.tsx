@@ -189,7 +189,7 @@ import * as Option from "effect/Option";
 import {
   basename,
   fileRoutePathSegments,
-  isAbsolutePath,
+  resolveHostFilePath,
   resolveWorkspaceRelativeFilePath,
 } from "../files/filePath";
 import { fileChipMenu, resolveFileChipTarget, type FileChipAction } from "./fileChipMenu";
@@ -2128,20 +2128,25 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       }
 
       // A host file outside the workspace, such as a report an agent wrote to
-      // a temp directory, opens read-only in the file screen.
-      if (presentation.kind === "file" && isAbsolutePath(presentation.path)) {
+      // a temp directory or a link that climbs out of the project, opens
+      // read-only in the file screen.
+      const hostPath =
+        presentation.kind === "file"
+          ? resolveHostFilePath(props.workspaceRoot, presentation.path)
+          : null;
+      if (presentation.kind === "file" && hostPath !== null) {
         void Haptics.selectionAsync();
-        if (isPdfFile({ name: presentation.path })) {
+        if (isPdfFile({ name: hostPath })) {
           setExpandedFile(
             (current) =>
               current ?? {
                 kind: "pdf",
-                name: basename(presentation.path),
+                name: basename(hostPath),
                 environmentId: props.environmentId,
                 resource: {
                   _tag: "media-file",
                   threadId: props.threadId,
-                  path: presentation.path,
+                  path: hostPath,
                 },
               },
           );
@@ -2150,7 +2155,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         navigation.navigate("ThreadFile", {
           environmentId: String(props.environmentId),
           threadId: String(props.threadId),
-          path: fileRoutePathSegments(presentation.path),
+          path: fileRoutePathSegments(hostPath),
           ...(presentation.line ? { line: String(presentation.line) } : {}),
         });
         return;

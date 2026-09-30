@@ -113,6 +113,7 @@ import {
 import { usePendingSurfaceDeparture } from "~/scient/fileSurfaces/usePendingSurfaceDeparture";
 import { isOutsideProjectFailure, MEDIA_FAILURE_COPY } from "~/scient/fileSurfaces/fileFailureCopy";
 import { FileReadFailure } from "~/scient/fileSurfaces/FileReadFailure";
+import { useMissingFileRecovery } from "~/scient/fileSurfaces/useMissingFileRecovery";
 
 import { AttachmentFilePreview } from "./AttachmentFilePreview";
 import { AudioPreview } from "./AudioPreview";
@@ -1481,8 +1482,9 @@ export default function FilePreviewPanel({
     sourcePending: effectiveSourcePending,
     surfaceOwnsConflictDetection: isRichMarkdown && !isHostFile,
     workspaceMutationId,
-    watchChanges:
-      attachment === undefined && !isHostFile && !quietMarkdownPaths.has(relativePath ?? ""),
+    // Host files outside the workspace are watched too: they stay read-only,
+    // but an agent or another app can still change them while they are open.
+    watchChanges: attachment === undefined && !quietMarkdownPaths.has(relativePath ?? ""),
   });
   const isDirectory = queriedFile.isNotFile && !isHostFile;
   const previewPath = isDirectory ? null : relativePath;
@@ -1578,6 +1580,7 @@ export default function FilePreviewPanel({
           ...queriedFile,
           error: null,
           failure: null,
+          failureReason: null,
           isPending: false,
           data: {
             relativePath,
@@ -1682,6 +1685,14 @@ export default function FilePreviewPanel({
     isBrowserPreviewFile(previewPath);
   const absolutePath =
     relativePath && attachment === undefined ? resolvePathLinkTarget(relativePath, cwd) : null;
+  const missingFileRecovery = useMissingFileRecovery({
+    environmentId,
+    cwd,
+    path: attachment === undefined ? relativePath : null,
+    failureReason: file.data === null ? file.failureReason : null,
+    isLocalEnvironment: environmentId === primaryEnvironmentId,
+  });
+  const readOnlyHostPath = missingFileRecovery.absolutePath;
   const pdfSource = useMemo(
     () =>
       workspacePdfSourceForPreview({
@@ -1953,12 +1964,17 @@ export default function FilePreviewPanel({
               asset={{ environmentId, attachmentId: attachment.id }}
             />
           ) : relativePath && file.data === null && isOutsideProjectFailure(file.failure) ? (
-            // Media and document previews would only fail to authorize the same path.
+            // Only an older server refuses a path by location; media and document
+            // previews would fail to authorize it the same way. Its absolute path
+            // still opens read-only.
             <FileReadFailure
               failure={file.failure}
               message={file.error}
               retrying={false}
               onRetry={requestManualReload}
+              {...(readOnlyHostPath !== null
+                ? { onOpenReadOnly: () => onOpenFile(readOnlyHostPath) }
+                : {})}
             />
           ) : relativePath && isVideo && absolutePath ? (
             <WorkspaceVideoPreview
@@ -2055,9 +2071,16 @@ export default function FilePreviewPanel({
           ) : relativePath && file.error && file.data === null ? (
             <FileReadFailure
               failure={file.failure}
+              reason={file.failureReason}
               message={file.error}
               retrying={file.isPending}
               onRetry={requestManualReload}
+              path={missingFileRecovery.absolutePath ?? relativePath}
+              candidates={missingFileRecovery.candidates}
+              onOpenCandidate={onOpenFile}
+              {...(missingFileRecovery.onOpenPrivacySettings
+                ? { onOpenPrivacySettings: missingFileRecovery.onOpenPrivacySettings }
+                : {})}
             />
           ) : relativePath && file.data === null ? (
             <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">

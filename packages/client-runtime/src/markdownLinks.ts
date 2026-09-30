@@ -324,15 +324,58 @@ export function fileBasename(path: string): string {
   return separatorIndex >= 0 ? trimmed.slice(separatorIndex + 1) : trimmed;
 }
 
+const UNC_ROOT_PATTERN = /^[\\/]{2}[^\\/]+[\\/][^\\/]+/;
+const WINDOWS_DRIVE_ROOT_PATTERN = /^[A-Za-z]:(?=[\\/])/;
+
+/**
+ * Resolves `.` and `..` segments in an absolute host path without climbing
+ * above its root (`/`, `C:\`, or a `\\host\share` UNC share), keeping the
+ * path's own separator style. A relative path is returned unchanged: only the
+ * host that owns it knows what it is relative to.
+ */
+export function collapseAbsoluteFilePath(path: string): string {
+  const source = stripSlashPrefixedWindowsDrive(path);
+  let root: string;
+  let separator: string;
+  const unc = source.match(UNC_ROOT_PATTERN);
+  const drive = source.match(WINDOWS_DRIVE_ROOT_PATTERN);
+  if (unc) {
+    separator = "\\";
+    root = unc[0].replaceAll("/", "\\");
+  } else if (drive) {
+    separator = source.charAt(drive[0].length);
+    root = `${drive[0]}${separator}`;
+  } else if (source.startsWith("/")) {
+    separator = "/";
+    root = "/";
+  } else {
+    return path;
+  }
+  const rest = unc ? source.slice(unc[0].length) : source.slice(root.length);
+  const segments: string[] = [];
+  for (const segment of rest.split(/[\\/]+/)) {
+    if (segment === "" || segment === ".") continue;
+    if (segment === "..") segments.pop();
+    else segments.push(segment);
+  }
+  if (unc) return segments.length > 0 ? `${root}\\${segments.join("\\")}` : root;
+  return `${root}${segments.join(separator)}`;
+}
+
+/**
+ * The path relative to the workspace root, or null when the path is not inside
+ * it. Dot segments are resolved first, so `<root>/../notes.md` is correctly
+ * outside the workspace rather than the workspace path `../notes.md`.
+ */
 export function workspaceRelativeFilePath(
   path: string,
   workspaceRoot: string | null | undefined,
 ): string | null {
   if (!workspaceRoot) return null;
-  const normalizedPath = stripSlashPrefixedWindowsDrive(path.replaceAll("\\", "/"));
-  const normalizedRoot = stripSlashPrefixedWindowsDrive(
-    workspaceRoot.replaceAll("\\", "/"),
-  ).replace(/\/+$/, "");
+  const normalizedPath = collapseAbsoluteFilePath(path).replaceAll("\\", "/");
+  const normalizedRoot = collapseAbsoluteFilePath(workspaceRoot)
+    .replaceAll("\\", "/")
+    .replace(/\/+$/, "");
   const caseInsensitive = isWindowsAbsolutePath(stripSlashPrefixedWindowsDrive(workspaceRoot));
   const pathForCompare = caseInsensitive ? normalizedPath.toLowerCase() : normalizedPath;
   const rootForCompare = caseInsensitive ? normalizedRoot.toLowerCase() : normalizedRoot;

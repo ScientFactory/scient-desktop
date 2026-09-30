@@ -14,10 +14,11 @@ describe("fileReadFailureCopy", () => {
     });
   });
 
-  it("does not offer a retry that cannot succeed for paths outside the project", () => {
+  it("tells an older server's outside-the-project refusal apart from a dead end", () => {
     for (const failure of ["workspace_path_outside_root", "resolved_path_outside_root"] as const) {
-      expect(fileReadFailureCopy({ failure, message: "outside" })).toMatchObject({
+      expect(fileReadFailureCopy({ failure, message: "outside" })).toEqual({
         title: "Outside this project",
+        description: "This file is outside the project folder. You can still open it read-only.",
         details: "outside",
         retryable: false,
       });
@@ -37,6 +38,27 @@ describe("fileReadFailureCopy", () => {
       details: null,
       retryable: true,
     });
+  });
+
+  it("names a missing file when the server reports why the read failed", () => {
+    expect(
+      fileReadFailureCopy({ failure: "operation_failed", reason: "not_found", message: "raw" }),
+    ).toEqual({
+      title: "File not found",
+      description: "Nothing exists at this location. It may have been moved, renamed, or deleted.",
+      details: "raw",
+      retryable: true,
+    });
+  });
+
+  it("names a permission failure when the server reports one", () => {
+    expect(
+      fileReadFailureCopy({
+        failure: "operation_failed",
+        reason: "permission_denied",
+        message: null,
+      }),
+    ).toMatchObject({ title: "Access denied", details: null, retryable: true });
   });
 
   it("names a non-file path", () => {
