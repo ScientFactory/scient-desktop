@@ -1,5 +1,9 @@
+// @effect-diagnostics nodeBuiltinImport:off - FileSystem cannot create a FIFO.
+import * as NodeChildProcess from "node:child_process";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentFilePath } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -103,6 +107,33 @@ describe("EnvironmentFileOpen", () => {
       );
       expect(directory.failure).toBe("not_a_file");
     }).pipe(Effect.provide(TestLayer), Effect.scoped),
+  );
+
+  // Needs mkfifo; Windows has no FIFOs. Opening one for reading would block
+  // until a writer appears, so the type must be checked before opening.
+  it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    "rejects a FIFO as not a file without blocking on open",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-file-fifo-" });
+        const fifoPath = path.join(root, "pipe");
+        yield* Effect.promise(
+          () =>
+            new Promise<void>((resolve, reject) =>
+              NodeChildProcess.execFile("mkfifo", [fifoPath], (error) =>
+                error ? reject(error) : resolve(),
+              ),
+            ),
+        );
+
+        const error = yield* Effect.flip(
+          prepareEnvironmentFileOpen({ path: EnvironmentFilePath.make(fifoPath) }),
+        ).pipe(Effect.timeout("5 seconds"));
+
+        expect(error.failure).toBe("not_a_file");
+      }).pipe(Effect.provide(TestLayer), Effect.scoped),
   );
 
   it.effect("maps host permission failures to the stable unreadable contract", () =>

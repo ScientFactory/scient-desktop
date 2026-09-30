@@ -133,23 +133,35 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         }),
     );
 
-    it.effect("rejects reads outside the workspace root", () =>
+    // Viewing never depends on the project boundary: the same outside file
+    // reads identically whichever way the path is spelled, and never editably.
+    it.effect("reads an outside file read-only through a path that climbs out of the root", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const path = yield* Path.Path;
         const cwd = yield* makeTempDir;
+        const outsideDir = yield* makeTempDir;
+        yield* writeTextFile(outsideDir, "review-notes.md", "# Notes\n");
+        const absolutePath = path.join(outsideDir, "review-notes.md");
+        const climbingPath = path.relative(cwd, absolutePath);
+        expect(climbingPath.startsWith("..")).toBe(true);
 
-        const error = yield* workspaceFileSystem
-          .readFile({ cwd, relativePath: "../escape.md" })
-          .pipe(Effect.flip);
+        const byAbsolutePath = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: absolutePath,
+        });
+        const byClimbingPath = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: climbingPath,
+        });
 
-        expect(error.message).toContain(
-          "Workspace file path must be relative to the project root: ../escape.md",
-        );
+        expect(byClimbingPath).toEqual({ ...byAbsolutePath, relativePath: climbingPath });
+        expect(byClimbingPath).toMatchObject({ contents: "# Notes\n", readOnly: true });
       }),
     );
 
     it.effect.skipIf(!symlinksSupported)(
-      "rejects symlinks that resolve outside the workspace root",
+      "reads a symlink that leads out of the root as its target, read-only",
       () =>
         Effect.gen(function* () {
           const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -157,26 +169,21 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           const path = yield* Path.Path;
           const cwd = yield* makeTempDir;
           const outsideDir = yield* makeTempDir;
-          yield* writeTextFile(outsideDir, "secret.txt", "outside\n");
-          yield* fileSystem.symlink(
-            path.join(outsideDir, "secret.txt"),
-            path.join(cwd, "linked-secret.txt"),
-          );
+          yield* writeTextFile(outsideDir, "notes.txt", "outside\n");
+          const absolutePath = path.join(outsideDir, "notes.txt");
+          yield* fileSystem.symlink(absolutePath, path.join(cwd, "linked-notes.txt"));
 
-          const error = yield* workspaceFileSystem
-            .readFile({ cwd, relativePath: "linked-secret.txt" })
-            .pipe(Effect.flip);
-          const resolvedWorkspaceRoot = yield* fileSystem.realPath(cwd);
-          const resolvedPath = yield* fileSystem.realPath(path.join(outsideDir, "secret.txt"));
-
-          expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFilePathEscapeError);
-          expect(error).toMatchObject({
-            workspaceRoot: cwd,
-            relativePath: "linked-secret.txt",
-            resolvedWorkspaceRoot,
-            resolvedPath,
+          const byAbsolutePath = yield* workspaceFileSystem.readFile({
+            cwd,
+            relativePath: absolutePath,
           });
-          expect("cause" in error).toBe(false);
+          const bySymlink = yield* workspaceFileSystem.readFile({
+            cwd,
+            relativePath: "linked-notes.txt",
+          });
+
+          expect(bySymlink).toEqual({ ...byAbsolutePath, relativePath: "linked-notes.txt" });
+          expect(bySymlink).toMatchObject({ contents: "outside\n", readOnly: true });
         }),
     );
 
@@ -440,7 +447,7 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
-    it.effect("rejects watch paths and symlink targets outside the workspace", () =>
+    it.effect("watches files outside the workspace however the path is spelled", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
         const fileSystem = yield* FileSystem.FileSystem;
@@ -448,22 +455,26 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         const cwd = yield* makeTempDir;
         const outsideDir = yield* makeTempDir;
         yield* writeTextFile(outsideDir, "analysis.m", "answer = 1;\n");
-        yield* fileSystem.symlink(
-          path.join(outsideDir, "analysis.m"),
-          path.join(cwd, "analysis.m"),
-        );
+        const absolutePath = path.join(outsideDir, "analysis.m");
+        const spellings = [absolutePath, path.relative(cwd, absolutePath)];
+        if (symlinksSupported) {
+          yield* fileSystem.symlink(absolutePath, path.join(cwd, "analysis.m"));
+          spellings.push("analysis.m");
+        }
 
-        const lexicalEscape = yield* workspaceFileSystem
-          .watchFile({ cwd, relativePath: "../analysis.m" })
-          .pipe(Stream.runHead, Effect.flip);
-        const symlinkEscape = yield* workspaceFileSystem
-          .watchFile({ cwd, relativePath: "analysis.m" })
-          .pipe(Stream.runHead, Effect.flip);
+        for (const [index, relativePath] of spellings.entries()) {
+          const event = yield* workspaceFileSystem.watchFile({ cwd, relativePath }).pipe(
+            Stream.tap((event) =>
+              event._tag === "watch-ready"
+                ? writeTextFile(outsideDir, "analysis.m", `answer = ${index + 2};\n`)
+                : Effect.void,
+            ),
+            Stream.filter((event) => event._tag === "file-changed"),
+            Stream.runHead,
+          );
 
-        expect(lexicalEscape.message).toContain(
-          "Workspace file path must be relative to the project root: ../analysis.m",
-        );
-        expect(symlinkEscape).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFilePathEscapeError);
+          expect(event).toEqual(Option.some({ _tag: "file-changed", relativePath }));
+        }
       }),
     );
   });

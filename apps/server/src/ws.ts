@@ -65,6 +65,7 @@ import {
   type ProjectDirectoryOperation,
   type ProjectEntriesFailure,
   type ProjectFileFailure,
+  type ProjectFileErrorReason,
   type ProjectFileOperation,
   ProjectListDirectoryError,
   ProjectListEntriesError,
@@ -400,6 +401,22 @@ function filesystemBrowseFailureContext(error: WorkspaceEntries.WorkspaceEntries
   }
 }
 
+/** The operating system's reason for a failed file operation, when it gave one. */
+function projectFileErrorReason(cause: unknown): ProjectFileErrorReason | undefined {
+  const code =
+    typeof cause === "object" && cause !== null && "code" in cause ? cause.code : undefined;
+  switch (code) {
+    case "ENOENT":
+    case "ENOTDIR":
+      return "not_found";
+    case "EACCES":
+    case "EPERM":
+      return "permission_denied";
+    default:
+      return undefined;
+  }
+}
+
 function projectFileFailureContext(
   error:
     | WorkspaceFileSystem.WorkspaceFileSystemError
@@ -411,17 +428,21 @@ function projectFileFailureContext(
   readonly operation?: ProjectFileOperation;
   readonly operationPath?: string;
   readonly currentRevision?: string;
+  readonly reason?: ProjectFileErrorReason;
 } {
   switch (error._tag) {
     case "WorkspacePathOutsideRootError":
       return { failure: "workspace_path_outside_root" };
-    case "WorkspaceFileSystemOperationError":
+    case "WorkspaceFileSystemOperationError": {
+      const reason = projectFileErrorReason(error.cause);
       return {
         failure: "operation_failed",
         resolvedPath: error.resolvedPath,
         operation: error.operation,
         operationPath: error.operationPath,
+        ...(reason ? { reason } : {}),
       };
+    }
     case "WorkspaceFilePathEscapeError":
       return {
         failure: "resolved_path_outside_root",

@@ -220,6 +220,25 @@ export const prepareEnvironmentFileOpen = Effect.fn("EnvironmentFileOpen.prepare
     ),
   );
 
+  // Check the type before opening: opening a FIFO for reading blocks until a
+  // writer appears, which would hang the inspection. The stat after opening
+  // re-checks the file actually opened.
+  const pathInfo = yield* fileSystem.stat(canonicalPath).pipe(
+    Effect.mapError(
+      (cause) =>
+        new EnvironmentFilePrepareError({
+          path: input.path,
+          failure: filesystemFailure(cause),
+        }),
+    ),
+  );
+  if (pathInfo.type !== "File") {
+    return yield* new EnvironmentFilePrepareError({
+      path: input.path,
+      failure: "not_a_file",
+    });
+  }
+
   const opened = yield* Effect.scoped(
     Effect.gen(function* () {
       const file = yield* fileSystem.open(canonicalPath).pipe(
