@@ -44,6 +44,8 @@ import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
+import { applyAutomaticModelDefaults } from "@t3tools/shared/model";
+
 import * as ModelManifest from "../ModelManifest.ts";
 import { applyProviderCompatibility } from "../providerCompatibility.ts";
 import { ServerConfig } from "../../config.ts";
@@ -410,7 +412,7 @@ export const ProviderRegistryLive = Layer.effect(
       manifest: ModelManifest.ModelManifestData,
     ) =>
       applyProviderCompatibility(
-        provider,
+        { ...provider, models: applyAutomaticModelDefaults(provider.driver, provider.models) },
         manifest.compatibility,
         ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
       );

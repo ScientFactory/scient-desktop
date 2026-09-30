@@ -6,7 +6,11 @@ import type {
   ProviderDriverKind,
   ProviderInstanceId,
 } from "@t3tools/contracts";
-import { createModelSelection, resolveSelectableModel } from "@t3tools/shared/model";
+import {
+  createModelSelection,
+  resolveAutomaticModel,
+  resolveSelectableModel,
+} from "@t3tools/shared/model";
 import { ANTIGRAVITY_DEFAULT_MODEL } from "@t3tools/contracts";
 import type { UnifiedSettings } from "@t3tools/contracts/settings";
 import { BlocksIcon, ChevronRightIcon, SearchIcon, SettingsIcon } from "lucide-react";
@@ -59,13 +63,8 @@ export function providerOnboardingStatusLabel(entry: ProviderInstanceEntry | und
 
 /** Resolve the first model a newly connected provider can safely hand to T3's composer. */
 export function readyProviderDefaultModel(entry: ProviderInstanceEntry | undefined): string | null {
-  if (!entry || !isProviderInstancePickerReady(entry)) return null;
-  return (
-    entry.models.find((model) => model.isDefault && !model.isCustom)?.slug ??
-    entry.models.find((model) => !model.isCustom)?.slug ??
-    entry.models[0]?.slug ??
-    null
-  );
+  if (!entry || !isProviderInstancePickerReady(entry) || entry.models.length === 0) return null;
+  return resolveAutomaticModel(entry.driverKind, entry.models) ?? null;
 }
 
 export function readyProviderModelSelection(

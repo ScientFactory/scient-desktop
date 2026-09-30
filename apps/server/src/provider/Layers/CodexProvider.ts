@@ -23,10 +23,10 @@ import type {
   ServerProviderModel,
   ServerProviderSkill,
 } from "@t3tools/contracts";
-import { PREFERRED_DEFAULT_CODEX_MODELS, ServerSettingsError } from "@t3tools/contracts";
+import { ProviderDriverKind, ServerSettingsError } from "@t3tools/contracts";
 
 import {
-  codexModelFamily,
+  applyAutomaticModelDefaults,
   createModelCapabilities,
   readCustomModelEntries,
 } from "@t3tools/shared/model";
@@ -154,7 +154,9 @@ export function mapCodexModelCapabilities(
 ): ModelCapabilities {
   const reasoningOptions = model.supportedReasoningEfforts.map(({ reasoningEffort }) =>
     reasoningEffort ===
-    (codexModelFamily(model.model) === "gpt-6-astra" ? "medium" : model.defaultReasoningEffort)
+    (model.supportedReasoningEfforts.some((effort) => effort.reasoningEffort === "medium")
+      ? "medium"
+      : model.defaultReasoningEffort)
       ? {
           id: reasoningEffort,
           label: reasoningEffortLabel(reasoningEffort),
@@ -247,22 +249,7 @@ function parseCodexModelListResponse(
 export function applyPreferredCodexDefaultModel(
   models: ReadonlyArray<ServerProviderModel>,
 ): ReadonlyArray<ServerProviderModel> {
-  const preferredSlug = PREFERRED_DEFAULT_CODEX_MODELS.flatMap((slug) =>
-    models.filter((model) => !model.isCustom && codexModelFamily(model.slug) === slug),
-  )[0]?.slug;
-  if (!preferredSlug) {
-    return models;
-  }
-  return models.map((model) => {
-    if (model.slug === preferredSlug) {
-      return model.isDefault ? model : { ...model, isDefault: true };
-    }
-    if (!model.isDefault) {
-      return model;
-    }
-    const { isDefault: _isDefault, ...rest } = model;
-    return rest;
-  });
+  return applyAutomaticModelDefaults(ProviderDriverKind.make("codex"), models);
 }
 
 /**

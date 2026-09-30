@@ -35,6 +35,36 @@ its user-global skill directories under that profile, so the profile links those
 back to the user's real `~/.gemini`; MCP servers, hooks, and rules there stay out of the profile.
 See [profile isolation](../../apps/server/src/provider/antigravityAuthSupport.ts).
 
+## Automatic conversation defaults
+
+`resolveAutomaticModel` in `packages/shared/src/model.ts` owns implicit model selection.
+ProviderRegistry publishes the same default flags to all clients. Desktop/web instance
+selection, onboarding, Settings, and mobile consume that policy without changing catalog
+order, native dispatch identifiers, or persisted selections.
+
+| Driver                | Automatic model                                                                                                       | Reasoning for new selections                                                                    |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Codex                 | GPT 6.1 Sol, then GPT 6 Astra, then GPT 6 Luna; otherwise reported default                                            | Medium when advertised, otherwise native default                                                |
+| Claude                | Opus 5.5, then Fable 5.1; otherwise reported default                                                                  | Medium when advertised                                                                          |
+| OpenCode              | Configured native model, or a single connected vendor's reported default; otherwise OpenAI GPT 6.1 Sol when available | Medium for OpenAI/Anthropic models when advertised; other families retain their adapter default |
+| Antigravity           | Native default model family, choosing its verified High Gemini variant when available                                 | High through the native model ID; unsupported/unknown models stay native                        |
+| Pi / Oh My Pi / Droid | Reported default                                                                                                      | Existing reported/configured effort; shared supported-level fallback prefers Medium             |
+| Cursor / Grok         | Reported default                                                                                                      | Native reported effort                                                                          |
+
+Preferred models must exist in the instance's current non-legacy catalog. When neither
+a preference nor a reported/static fallback is available, the first remaining built-in
+model is the final compatibility fallback. Empty Antigravity catalogs never yield an
+invented dispatch ID. Hidden models remain excluded by the existing client preference
+filter before automatic resolution.
+
+Built-in Codex and Claude capability defaults mark supported Medium reasoning as
+concrete so both web and mobile serialize it on dispatch. OpenCode does the same for its
+chosen advertised variant; it no longer invents effort variants when a discovered model
+reports none. Custom model capability declarations and explicit selection options remain
+owned by their existing paths. Automatic Settings displays the effective model alongside
+its traits. These are conversation defaults; background text-generation preferences are
+unchanged. No stored thread, project, or draft selections are migrated.
+
 ## Runtime context
 
 Every adapter uses `apps/server/src/provider/RuntimeInstructions.ts` to identify T3 Code and
@@ -238,7 +268,8 @@ The control descriptor is local UI data, never a provider option sent over ACP o
 selection. The native ID remains authoritative for drafts, defaults, favorites, resume, and turns.
 Favorites retain exact variant shortcuts; hidden rows are not restored by grouping. Custom
 models, ambiguous names, and models already advertising native options are not rewritten.
-The catalog, ACP adapter, legacy `agy` reasoning path, and managed lifecycle remain unchanged.
+The ACP adapter and managed lifecycle preserve native semantics. Automatic selections prefer
+a verified High variant; the legacy `agy` catalog also prefers High when supported.
 
 On desktop/web, an unstarted draft may still contain an old `agy` family ID with
 separate reasoning. `antigravityDraftSelection.ts` reconciles only verified live

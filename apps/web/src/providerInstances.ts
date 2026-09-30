@@ -13,7 +13,6 @@
  * @module providerInstances
  */
 import {
-  DEFAULT_MODEL_BY_PROVIDER,
   compareProviderDriverKinds,
   defaultInstanceIdForDriver,
   resolveProviderInstanceEnabled,
@@ -25,6 +24,7 @@ import {
   type ServerSettings,
   type ServerProviderState,
 } from "@t3tools/contracts";
+import { resolveAutomaticModel } from "@t3tools/shared/model";
 import {
   normalizeProviderAccentColor,
   resolveProviderInstanceDisplayName,
@@ -225,8 +225,7 @@ function getProviderInstanceEntry(
 }
 
 /**
- * Default model slug for a specific instance: its declared built-in default,
- * then its first built-in model, then any model it reports, then the driver-level default. Custom
+ * Automatic model slug for a specific instance, using the shared policy. Custom
  * instances can serve a different model list than the default instance of
  * the same driver kind, so the lookup must be instance-scoped rather than
  * kind-scoped.
@@ -237,12 +236,7 @@ export function getDefaultProviderInstanceModel(
 ): string | undefined {
   const entry = getProviderInstanceEntry(providers, instanceId);
   if (!entry) return undefined;
-  return (
-    entry.models.find((model) => model.isDefault && !model.isCustom)?.slug ??
-    entry.models.find((model) => !model.isCustom)?.slug ??
-    entry.models[0]?.slug ??
-    DEFAULT_MODEL_BY_PROVIDER[entry.driverKind]
-  );
+  return resolveAutomaticModel(entry.driverKind, entry.models);
 }
 
 const isSelectableProviderInstanceEntry = (entry: ProviderInstanceEntry): boolean =>
