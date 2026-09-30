@@ -136,7 +136,30 @@ The complete test graph and native visual evidence in the original Verification
 section describe the original qualification revision, not this catch-up. No local
 tests were rerun during realignment. Fresh hosted CI must qualify the new head,
 including the compute frame-decoder stress test whose prior hosted run timed out
-at five seconds. That timeout has not been claimed fixed or bypassed.
+at five seconds. The follow-up below addresses its configuration mismatch;
+fresh hosted CI must establish the result.
+
+### Compute workspace configuration repair
+
+Hosted run `36785317144` on `58ad65d2990fa10e6fa27ce7fb275804dd2c2c8b`
+passed Check, all web/server shards, native Compute jobs, release smoke, and
+provenance. Test Workspaces again timed out on the thousand-frame decoder case:
+the runner reported a five-second limit and 11.7 seconds elapsed. The three
+workspace tasks interrupted afterward exited 137; their cancellation is not
+evidence of independent assertion failures.
+
+Compute's package command omitted the repository test configuration. It now
+loads `../../vite.config.ts` with `--dir .`, matching the existing contracts,
+SSH, and relay commands. The directory remains the Compute package; the root
+configuration excludes dependency/generated directories and supplies the
+existing 60-second test/hook budget and temporary-directory setup. No test
+count, seed, frame workload, assertion, decoder behavior, or timeout in the
+shared policy is changed. This is correctness/stress coverage, not a
+five-second performance contract.
+
+Source/configuration review and formatting checks qualify this command change.
+Local tests were not rerun. Fresh hosted CI must validate collection and the
+complete workspace result; the repair does not yet establish a passing run.
 
 Quick fixes remain in separate draft PR [#421](https://github.com/ScientFactory/scient-desktop/pull/421).
 Its provider/onboarding/auth-browser changes are not included in this catch-up.
