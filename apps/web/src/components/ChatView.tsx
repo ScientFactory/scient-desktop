@@ -1,9 +1,8 @@
 import {
   canApplySendAnchor,
-  readSendScrollAllowance,
   savedPositionIsAtEnd,
   shouldRevealArrivedPrompt,
-  withReadingEnd,
+  readerAtReadingEnd,
 } from "./chat/readerScrollPolicy";
 import { useAcknowledgeAnswer } from "../scient/answerAttention/useAcknowledgeAnswer";
 import { collectSelectedScientSkillNames } from "@t3tools/shared/composerInlineTokens";
@@ -446,7 +445,6 @@ import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import {
-  resolveTimelineIsAtEnd,
   findLatestCompletedAssistantMessageId,
   findPrecedingCompletedAssistantMessageId,
   worktreeSetupAgentStarted,
@@ -2279,14 +2277,21 @@ function ChatViewContent(props: ChatViewProps) {
     });
   }
   const timelineAnchorMessageId = timelineAnchor.messageId;
-  const getTimelineReadingState = useCallback(() => {
-    // The bottom is the end of the last message's text, not trailing file
-    // lists, tool groups or reserved anchor space.
-    return withReadingEnd(legendListRef.current?.getState(), composerTimelineInset);
-  }, [composerTimelineInset]);
+  // The end is the running turn's latest content while the thread works,
+  // otherwise the latest answer's text; up to its last three lines may be hidden.
+  const threadWorkingRef = useRef(false);
+  const readerAtEndNow = useCallback(
+    () =>
+      readerAtReadingEnd(
+        legendListRef.current?.getState(),
+        composerTimelineInset,
+        threadWorkingRef.current,
+      ),
+    [composerTimelineInset],
+  );
   const isTimelineAtLogicalEnd = useCallback(
-    () => resolveTimelineIsAtEnd(getTimelineReadingState()) ?? isAtEndRef.current,
-    [getTimelineReadingState],
+    () => readerAtEndNow() ?? isAtEndRef.current,
+    [readerAtEndNow],
   );
   const activeRightPanelKind = useRightPanelStore((state) =>
     selectActiveRightPanel(state.byThreadKey, activeThreadRef),
@@ -3685,6 +3690,12 @@ function ChatViewContent(props: ChatViewProps) {
     isCompacting ||
     isForkingThread ||
     awaitingBootstrapTurn;
+  // The latest turn is unfinished while it runs, or when it ended interrupted or
+  // with an error; a fork, revert or send setup alone doesn't make it so.
+  threadWorkingRef.current =
+    activeRunningTurnId !== null ||
+    activeLatestTurn?.state === "interrupted" ||
+    activeLatestTurn?.state === "error";
   const isPreparingWorktree = isLocallyPreparingWorktree || awaitingBootstrapTurn;
   const activeWorkStartedAt = deriveActiveWorkStartedAt(
     activeLatestTurn,
@@ -6160,19 +6171,13 @@ function ChatViewContent(props: ChatViewProps) {
 
   const captureSendReadingPosition = useCallback(
     () => ({
-      atEnd:
-        isDraftHeroState ||
-        (resolveTimelineIsAtEnd(
-          getTimelineReadingState(),
-          readSendScrollAllowance(legendListRef.current?.getScrollableNode()),
-        ) ??
-          isAtEndRef.current),
+      atEnd: isDraftHeroState || (readerAtEndNow() ?? isAtEndRef.current),
       firstMessage:
         activeLatestTurn === null && !timelineMessages.some((message) => message.role === "user"),
       threadKey: routeThreadKey,
       navigationGeneration: anchorUserScrollGenerationRef.current,
     }),
-    [isDraftHeroState, routeThreadKey, timelineMessages, activeLatestTurn, getTimelineReadingState],
+    [isDraftHeroState, routeThreadKey, timelineMessages, activeLatestTurn, readerAtEndNow],
   );
   // Prompts this window sent frame themselves; a queued prompt the server
   // delivered gets the same reveal when the reader is at the end.

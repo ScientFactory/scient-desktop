@@ -570,11 +570,16 @@ clients must update before sending to a server using the new queue protocol.
 By default, an answer grows below your reading position. Reaching the bottom
 or clicking Scroll to end does not enable automatic following, and tool
 activity does not pull the conversation downward. "The bottom" means the end
-of the last message's text: a changed-files list, tool activity or timestamps
-below it do not count as unread.
+of the latest answer's text, and you still count as at the bottom with up to
+its last three lines hidden behind the composer. A changed-files list, tool
+activity, timestamps or your own message sent after that answer do not count
+as unread. While the agent is working, everything it has produced since your
+latest message is new: when its latest step or answer is below you, **Scroll
+to end** appears. The same holds after you stop the turn or it fails, and
+when it finishes without writing an answer.
 
-Sending near the bottom gently reveals your message and its answer, allowing
-a margin of at most two rendered body-text lines. The first message retains its existing placement
+Sending at the bottom (by that same rule) gently reveals your message and its
+answer. The first message retains its existing placement
 near the top. Movement stops when your sent message's first line reaches the top
 of the reading area; only the bubble's padding may pass above it. It then stays there
 while the rest grows below the screen. When progress notes, reasoning or tool

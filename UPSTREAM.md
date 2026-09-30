@@ -7,11 +7,17 @@ sends (LegendList `maintainScrollAtEnd` stays off). While idle and resting at th
 end, `MessagesTimeline` itself keeps that end in place through size changes of existing
 rows and viewport resizes (measured on screen, reacting only when content moves the
 text end), never for new rows or while the reader's own scrolling input is in motion,
-paused during disclosure toggles and briefly after any click or key in the timeline. Scroll bookkeeping runs once per frame. The end is the last message's text
-(`withReadingEnd`), not trailing changed files, tool groups or meta rows. Preserve
-the existing first-message framing. Send eligibility allows at most two
-rendered body-text lines below the reading edge; other end controls retain the
-inherited 40-pixel band. Eligible sends, and queued prompts the server delivers (`queue:` ids) while
+paused during disclosure toggles and briefly after any click or key in the timeline. Scroll bookkeeping runs once per frame. The end is the latest answer's text
+(`withReadingEnd`; the reader's own latest message before any answer), not trailing
+changed files, tool groups, meta rows or the reader's own later messages. While a
+turn runs (a running turn id, not merely a busy thread) or after it was interrupted
+or failed, the end is its latest content row (busy indicators excluded), so its new
+activity below the reader shows the end control; a completed turn that wrote no
+answer keeps its latest content as the end. One rule,
+`readerAtReadingEnd`, decides being at the end for the end control, sending,
+navigation, saved positions and idle end keeping: at most the answer's last three
+lines hidden, in its own line height, never less than the inherited 40-pixel band.
+Preserve the existing first-message framing. Eligible sends, and queued prompts the server delivers (`queue:` ids) while
 the reader is at the end, reveal the prompt and the start of its response's latest
 message through `chat/useBoundedAnswerFollow.ts`: capped at the prompt's first line
 reaching the top margin, past it only to show a message pushed below the fold, never
