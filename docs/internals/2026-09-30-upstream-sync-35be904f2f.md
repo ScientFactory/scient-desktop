@@ -14,7 +14,7 @@ Date: 2026-09-30. Status: alignment qualification receipt, not release authoriza
 - Branch: `codex/t3-sync-35be904f2f-20260930`.
 - Upstream merge: `efacdaf575f2cd3d65068d8e4e78a2ffb2b16578`; exact official target is its second parent.
 - Upstream push URL: `DISABLED`.
-- Owned-main catch-up: none; origin/main remained at the frozen owned base before delivery.
+- Owned-main catch-up (2026-10-01): `14fb2478174667b49afaf6d7405526ed897d0c16`, with owned main `e0efa3fa4346ea6b7c88c93b25b4638cea715fe4` as its second parent. The original owned base and upstream merge above remain unchanged.
 
 ## Advancements and alignment work
 
@@ -95,3 +95,72 @@ Not exercised: real-provider sign-in/tokens, actual subscription-sharing activat
 ## Publication boundary
 
 This alignment does not publish, sign, release, deploy hosted services, enable cloud/mobile, opt users into telemetry, or copy live provider credentials. Automated fixture checks and the agent visual review are separate from real-provider sign-in and user acceptance. Delivery uses a history-preserving PR merge after repository checks and queue policy permit it.
+
+## Owned-main realignment: 2026-10-01
+
+Catch-up merge `14fb2478174667b49afaf6d7405526ed897d0c16` has parents
+`f997ed552f4ad3bfa3c45720e1309769441204f1` and
+`e0efa3fa4346ea6b7c88c93b25b4638cea715fe4`. The seven newer owned-main
+commits merge without textual conflicts. They improve sidebar drop placement,
+header-midpoint handling, and consecutive pointer drags. Semantic review confirms
+that membership changes must succeed before reordering, cancelled membership work
+cannot authorize a reorder, and insertion placement preserves the pinned boundary.
+These owned changes do not overlap the bounded official donor's section files.
+
+The previous hosted Check job reported eight unused files belonging to the
+intentionally inactive upstream subscription-sharing UI. Knip now exempts only
+those eight named files from the file diagnostic, with removal instructions when
+activation is approved. Dependency and export audits remain active. This records
+the existing retained-source policy; it mounts no coordinator and enables no
+authentication, callback, or installation path. The exact paths are listed in
+`knip.jsonc`.
+
+The fresh compiler also reported TS4023 on the exported Markdown grammar plugin
+array. Its explicit `RemarkPlugins` annotation keeps private parser implementation
+types out of the public declaration; plugin values and order are unchanged.
+
+Current catch-up qualification:
+
+| Check                                                                             | Result                                                                                              |
+| --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Formatting                                                                        | Passed across 6,336 files                                                                           |
+| Lint                                                                              | Passed with advisory warnings                                                                       |
+| Full typecheck                                                                    | Passed all 31 tasks                                                                                 |
+| Full Knip audit                                                                   | Passed file/dependency and export stages                                                            |
+| Full application/package build                                                    | Passed all 6 tasks; existing bundler warnings remain                                                |
+| Scient branding                                                                   | Passed across 2,484 product-surface files                                                           |
+| Alignment seam classification against the original owned base and official target | Onboarding, Skills, Analysis, LaTeX, and OMP checks passed; locator checks are not behavioral proof |
+| Upstream provenance                                                               | Passed against current owned main; official integration remains literal ancestry                    |
+
+The complete test graph and native visual evidence in the original Verification
+section describe the original qualification revision, not this catch-up. No local
+tests were rerun during realignment. Fresh hosted CI must qualify the new head,
+including the compute frame-decoder stress test whose prior hosted run timed out
+at five seconds. The follow-up below addresses its configuration mismatch;
+fresh hosted CI must establish the result.
+
+### Compute workspace configuration repair
+
+Hosted run `36785317144` on `58ad65d2990fa10e6fa27ce7fb275804dd2c2c8b`
+passed Check, all web/server shards, native Compute jobs, release smoke, and
+provenance. Test Workspaces again timed out on the thousand-frame decoder case:
+the runner reported a five-second limit and 11.7 seconds elapsed. The three
+workspace tasks interrupted afterward exited 137; their cancellation is not
+evidence of independent assertion failures.
+
+Compute's package command omitted the repository test configuration. It now
+loads `../../vite.config.ts` with `--dir .`, matching the existing contracts,
+SSH, and relay commands. The directory remains the Compute package; the root
+configuration excludes dependency/generated directories and supplies the
+existing 60-second test/hook budget and temporary-directory setup. No test
+count, seed, frame workload, assertion, decoder behavior, or timeout in the
+shared policy is changed. This is correctness/stress coverage, not a
+five-second performance contract.
+
+Source/configuration review and formatting checks qualify this command change.
+Local tests were not rerun. Fresh hosted CI must validate collection and the
+complete workspace result; the repair does not yet establish a passing run.
+
+Quick fixes remain in separate draft PR [#421](https://github.com/ScientFactory/scient-desktop/pull/421).
+Its provider/onboarding/auth-browser changes are not included in this catch-up.
+The running review app, its checkout, and its signed-in profile remain untouched.

@@ -141,11 +141,25 @@ section when un-settled or woken.
 
 **Drops land where the list shows them.**
 
-- **Headers are targets:** a row dropped on a section header lands at the top
-  of that section, from either direction, so an empty or collapsed section
-  (only a header) can be reached from below. `sectionsDropIndex` decides the
-  slot, and the Sections view's sorting strategy slides rows to the same slot
-  while dragging, so the header stays put instead of sliding past the row.
+- **Headers have two insertion sides:** the lower half places a conversation
+  at the top of the named section, including empty or collapsed sections. Crossing
+  the midpoint upward selects the end of the preceding section, and the header
+  slides down immediately to show that slot. Hidden rows remain before an end
+  drop. The first header stays at the top; either half targets its own section.
+  Preview and committed placement use the same slot and preserve pin boundaries.
+- **Rows have two insertion sides:** the pointer above a row's midpoint inserts
+  before it, and below inserts after it, independent of the source's position.
+  The lower half of the last row appends to that section. Collision geometry
+  excludes preview transforms, so a stationary pointer keeps its slot while
+  rows slide. Preview, held layout and order-key planning use the same placement.
+- **Conversation drags follow the pointer:** the grabbed point stays under the
+  pointer as the list scrolls. Only section headers mount a drag overlay; an
+  empty overlay would make sortable rows follow landing slots instead. Vertical
+  movement and scroll-viewport boundaries still constrain the dragged card.
+- **Membership precedes order:** a cross-section drop waits for the section move
+  to succeed before writing order keys. A failed move releases the held preview
+  without changing the conversation’s order in its original section. Same-section
+  reordering does not perform a membership write.
 - **Pins stay on top:** the slot keeps the row on its own side of the pinned
   rows, since a drop never changes a pin.
 - **Whole sections:** a drop is planned against every row of the target
