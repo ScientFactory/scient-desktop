@@ -582,10 +582,13 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
             return reportFailure("Failed to wake thread", result);
           }
         }
-        const moved =
-          plan.sectionId !== undefined
-            ? moveThreadsToSection([threadRef], plan.sectionId)
-            : Promise.resolve(true);
+        if (
+          plan.sectionId !== undefined &&
+          !(await moveThreadsToSection([threadRef], plan.sectionId))
+        ) {
+          release();
+          return;
+        }
         // Stop on failure; each successful key write remains a valid placement.
         for (const assignment of plan.assignments) {
           const target = threadByKey.get(assignment.id);
@@ -603,7 +606,6 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
             break;
           }
         }
-        await moved;
         // Every write has been applied locally by now; show the store's order.
         release();
       })();

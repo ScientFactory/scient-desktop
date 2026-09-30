@@ -156,6 +156,10 @@ section when un-settled or woken.
   pointer as the list scrolls. Only section headers mount a drag overlay; an
   empty overlay would make sortable rows follow landing slots instead. Vertical
   movement and scroll-viewport boundaries still constrain the dragged card.
+- **Membership precedes order:** a cross-section drop waits for the section move
+  to succeed before writing order keys. A failed move releases the held preview
+  without changing the conversation’s order in its original section. Same-section
+  reordering does not perform a membership write.
 - **Pins stay on top:** the slot keeps the row on its own side of the pinned
   rows, since a drop never changes a pin.
 - **Whole sections:** a drop is planned against every row of the target

@@ -297,14 +297,15 @@ it.each([
       (node) => node.dataset.row,
     );
     expect(ids.indexOf(source)).toBe(ids.indexOf("a3") + 1);
-    expect(reorderActiveThread).toHaveBeenCalledTimes(1);
+    expect(reorderActiveThread).not.toHaveBeenCalled();
+    release(true);
+    await vi.waitFor(() => expect(reorderActiveThread).toHaveBeenCalledTimes(1));
     const [ref, key] = reorderActiveThread.mock.calls[0]! as unknown as [
       { threadId: string },
       string,
     ];
     expect(ref.threadId).toBe(source);
     expect(key > "m").toBe(true);
-    release(true);
     await nextFrame();
   },
 );
@@ -608,5 +609,51 @@ it.each([48, 96, 144].flatMap((height) => [4, 24, 44].map((grab) => ({ height, g
     await userEvent.keyboard("{Escape}");
     expect(moveThreadsToSection).not.toHaveBeenCalled();
     expect(reorderActiveThread).not.toHaveBeenCalled();
+  },
+);
+
+it.each([false, true])(
+  "waits for section membership before writing order (success: %s)",
+  async (success) => {
+    let complete: (value: boolean) => void = () => {};
+    moveThreadsToSection.mockImplementation(
+      () =>
+        new Promise<boolean>((resolve) => {
+          complete = resolve;
+        }),
+    );
+    renderView(vi.fn());
+    await nextFrame();
+    const row = document.querySelector<HTMLElement>('[data-row="b2"]')!;
+    const start = row.getBoundingClientRect();
+    const target = document.querySelector<HTMLElement>('[data-row="a2"]')!.getBoundingClientRect();
+    const x = start.left + 20;
+    pointer("pointerdown", row, x, start.top + 4);
+    pointer("pointermove", document, x, start.top + 12);
+    await nextFrame();
+    pointer("pointermove", document, x, target.bottom - 4);
+    await nextFrame();
+    pointer("pointerup", document, x, target.bottom - 4);
+    await vi.waitFor(() =>
+      expect(moveThreadsToSection).toHaveBeenCalledWith(
+        [expect.objectContaining({ threadId: "b2" })],
+        "a",
+      ),
+    );
+    expect(reorderActiveThread).not.toHaveBeenCalled();
+    const ids = () =>
+      [...document.querySelectorAll<HTMLElement>("[data-row]")].map((node) => node.dataset.row);
+    expect(ids().indexOf("b2")).toBe(ids().indexOf("a2") + 1);
+    complete(success);
+    if (success) {
+      await vi.waitFor(() => expect(reorderActiveThread).toHaveBeenCalledTimes(1));
+      expect(reorderActiveThread).toHaveBeenCalledWith(
+        expect.objectContaining({ threadId: "b2" }),
+        expect.any(String),
+      );
+    } else {
+      await vi.waitFor(() => expect(ids().indexOf("b2")).toBe(ids().indexOf("b1") + 1));
+      expect(reorderActiveThread).not.toHaveBeenCalled();
+    }
   },
 );
