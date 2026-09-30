@@ -55,6 +55,17 @@ describe("fileReadFailureCopy", () => {
     });
   });
 
+  it("turns a missing file with candidates into a question", () => {
+    expect(
+      fileReadFailureCopy({
+        failure: "operation_failed",
+        reason: "not_found",
+        message: null,
+        candidateCount: 2,
+      }),
+    ).toMatchObject({ title: "Which file did you mean?", retryable: true });
+  });
+
   it("names a permission failure when the server reports one", () => {
     expect(
       fileReadFailureCopy({

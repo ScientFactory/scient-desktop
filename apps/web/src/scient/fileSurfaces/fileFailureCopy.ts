@@ -48,18 +48,30 @@ export function fileReadFailureCopy(input: {
   readonly failure: ProjectFileFailure | null;
   readonly reason?: ProjectFileErrorReason | null;
   readonly message: string | null;
+  /** How many workspace files the missing path may have meant. */
+  readonly candidateCount?: number;
 }): FileFailureCopy {
   const details = input.message?.trim() || null;
   switch (input.reason) {
     case "not_found":
-      return {
-        title: "File not found",
-        description:
-          "Nothing exists at this location. It may have been moved, renamed, or deleted.",
-        details,
-        retryable: true,
-      };
+      // With files to choose from, the choice is the point, not the failure.
+      return (input.candidateCount ?? 0) > 0
+        ? {
+            title: "Which file did you mean?",
+            description: "Nothing exists at this location.",
+            details,
+            retryable: true,
+          }
+        : {
+            title: "File not found",
+            description:
+              "Nothing exists at this location. It may have been moved, renamed, or deleted.",
+            details,
+            retryable: true,
+          };
     case "permission_denied":
+      // The system does not say whether file permissions or a privacy setting
+      // denied the read, so no settings shortcut is offered as if it would help.
       return {
         title: "Access denied",
         description:

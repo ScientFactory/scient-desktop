@@ -73,7 +73,7 @@ describe("files panel read failure", () => {
       candidate.textContent?.includes(label),
     );
 
-  it("names the missing location and lets the user pick a same-named file", () => {
+  it("names the missing location and lets the user pick which file was meant", () => {
     const onOpenCandidate = vi.fn();
     act(() =>
       root.render(
@@ -83,22 +83,49 @@ describe("files panel read failure", () => {
           message="raw"
           retrying={false}
           onRetry={vi.fn()}
-          path="/Users/me/reviews/notes.md"
-          candidates={["reviews/notes.md", "archive/notes.md"]}
+          path="/Users/me/project/dup.md"
+          candidates={["reviews/a/dup.md", "reviews/b/dup.md"]}
           onOpenCandidate={onOpenCandidate}
         />,
       ),
     );
-    expect(container.textContent).toContain("File not found");
-    expect(container.textContent).toContain("/Users/me/reviews/notes.md");
-    expect(container.textContent).toContain("Files with the same name exist in this project:");
-    expect(tryAgain()).toBeDefined();
+    // A choice to make reads as a question, not as a broken link.
+    expect(container.textContent).toContain("Which file did you mean?");
+    expect(container.textContent).toContain("/Users/me/project/dup.md");
+    expect(container.textContent).toContain("These files in this project have the same name:");
+    expect(container.textContent).not.toContain("couldn't search the whole project");
 
-    act(() => button("archive/notes.md")?.click());
-    expect(onOpenCandidate).toHaveBeenCalledExactlyOnceWith("archive/notes.md");
+    act(() => button("reviews/b/dup.md")?.click());
+    expect(onOpenCandidate).toHaveBeenCalledExactlyOnceWith("reviews/b/dup.md");
   });
 
-  it("offers same-named files only for a file that is not found", () => {
+  it("says plainly when nothing was found, and when the search was incomplete", () => {
+    const render = (candidates: string[], candidatesIncomplete: boolean) =>
+      act(() =>
+        root.render(
+          <FileReadFailure
+            failure="operation_failed"
+            reason="not_found"
+            message="raw"
+            retrying={false}
+            onRetry={vi.fn()}
+            path="/Users/me/project/reviews/missing.md"
+            candidates={candidates}
+            candidatesIncomplete={candidatesIncomplete}
+            onOpenCandidate={vi.fn()}
+          />,
+        ),
+      );
+    render([], false);
+    expect(container.textContent).toContain("File not found");
+    expect(tryAgain()).toBeDefined();
+
+    render(["archive/missing.md"], true);
+    expect(container.textContent).toContain("One file in this project has the same name:");
+    expect(container.textContent).toContain("couldn't search the whole project");
+  });
+
+  it("offers no choices and no settings shortcut for a denied read", () => {
     act(() =>
       root.render(
         <FileReadFailure
@@ -110,13 +137,12 @@ describe("files panel read failure", () => {
           path="/Users/me/private/notes.md"
           candidates={["reviews/notes.md"]}
           onOpenCandidate={vi.fn()}
-          onOpenPrivacySettings={vi.fn()}
         />,
       ),
     );
     expect(container.textContent).toContain("Access denied");
     expect(button("reviews/notes.md")).toBeUndefined();
-    expect(button("Open Privacy Settings")).toBeDefined();
+    expect(button("Privacy")).toBeUndefined();
   });
 
   it("opens an older server's outside-the-project refusal read-only", () => {

@@ -179,6 +179,7 @@ import {
   prepareEnvironmentFileOpen,
   watchEnvironmentFile,
 } from "./scient/fileOpening/EnvironmentFileOpen.ts";
+import { resolveEnvironmentFileLink } from "./scient/fileOpening/EnvironmentFileLinkResolve.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
@@ -3907,6 +3908,12 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.filesystemPrepareFileOpen,
             prepareEnvironmentFileOpen(input),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.filesystemResolveFileLink]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.filesystemResolveFileLink,
+            resolveEnvironmentFileLink(input),
             { "rpc.aggregate": "workspace" },
           ),
         [WS_METHODS.filesystemSubscribeFileChanges]: (input) =>

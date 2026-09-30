@@ -117,7 +117,7 @@ import {
   readFailureBlocksPreview,
 } from "~/scient/fileSurfaces/fileFailureCopy";
 import { FileReadFailure } from "~/scient/fileSurfaces/FileReadFailure";
-import { useMissingFileRecovery } from "~/scient/fileSurfaces/useMissingFileRecovery";
+import { useMissingFileChoices } from "~/scient/fileSurfaces/useMissingFileChoices";
 
 import { AttachmentFilePreview } from "./AttachmentFilePreview";
 import { fileSurfaceAssetResource } from "./fileSurfaceAssetResource";
@@ -1674,14 +1674,13 @@ export default function FilePreviewPanel({
     isBrowserPreviewFile(previewPath);
   const absolutePath =
     relativePath && attachment === undefined ? resolvePathLinkTarget(relativePath, cwd) : null;
-  const missingFileRecovery = useMissingFileRecovery({
+  const missingFile = useMissingFileChoices({
     environmentId,
     cwd,
     path: attachment === undefined ? relativePath : null,
     failureReason: file.data === null ? file.failureReason : null,
-    isLocalEnvironment: environmentId === primaryEnvironmentId,
   });
-  const readOnlyHostPath = missingFileRecovery.absolutePath;
+  const readOnlyHostPath = missingFile.absolutePath;
   const readFailureShownInstead = readFailureBlocksPreview({
     hasData: file.data !== null,
     failure: file.failure,
@@ -1695,12 +1694,10 @@ export default function FilePreviewPanel({
       message={file.error}
       retrying={file.isPending}
       onRetry={requestManualReload}
-      path={missingFileRecovery.absolutePath ?? relativePath ?? ""}
-      candidates={missingFileRecovery.candidates}
+      path={missingFile.absolutePath ?? relativePath ?? ""}
+      candidates={missingFile.paths}
+      candidatesIncomplete={missingFile.incomplete}
       onOpenCandidate={onOpenFile}
-      {...(missingFileRecovery.onOpenPrivacySettings
-        ? { onOpenPrivacySettings: missingFileRecovery.onOpenPrivacySettings }
-        : {})}
     />
   );
   const pdfSource = useMemo(

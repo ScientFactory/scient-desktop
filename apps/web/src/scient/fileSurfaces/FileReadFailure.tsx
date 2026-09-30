@@ -8,7 +8,8 @@ import { fileReadFailureCopy, isOutsideProjectFailure } from "./fileFailureCopy"
 /**
  * The files panel body for a read that failed: plain copy, and only the
  * actions that can help. A missing file names the location that was tried and
- * offers same-named project files as explicit choices, never an automatic pick.
+ * offers the workspace files it may have meant as explicit choices; the panel
+ * never picks one itself.
  */
 export function FileReadFailure(props: {
   readonly failure: ProjectFileFailure | null;
@@ -18,22 +19,23 @@ export function FileReadFailure(props: {
   readonly onRetry: () => void;
   /** The location that was tried, shown when nothing exists there. */
   readonly path?: string;
-  /** Same-named files elsewhere in the project, when the file was not found. */
+  /** Workspace files the missing path may have meant. */
   readonly candidates?: ReadonlyArray<string>;
+  /** The workspace could not be searched completely, so there may be other candidates. */
+  readonly candidatesIncomplete?: boolean;
   readonly onOpenCandidate?: (path: string) => void;
   /** Opens the absolute path read-only, for servers that refused it as outside the project. */
   readonly onOpenReadOnly?: () => void;
-  /** Opens the system privacy settings, when access was denied on this machine. */
-  readonly onOpenPrivacySettings?: () => void;
 }) {
+  const notFound = props.reason === "not_found";
+  const openCandidate = props.onOpenCandidate;
+  const candidates = notFound && openCandidate ? (props.candidates ?? []) : [];
   const copy = fileReadFailureCopy({
     failure: props.failure,
     reason: props.reason ?? null,
     message: props.message,
+    candidateCount: candidates.length,
   });
-  const notFound = props.reason === "not_found";
-  const candidates = notFound && props.onOpenCandidate ? (props.candidates ?? []) : [];
-  const openCandidate = props.onOpenCandidate;
   const description =
     notFound && props.path ? (
       <>
@@ -44,8 +46,13 @@ export function FileReadFailure(props: {
         {candidates.length > 0 ? (
           <span className="mt-2 block">
             {candidates.length === 1
-              ? "A file with the same name exists in this project:"
-              : "Files with the same name exist in this project:"}
+              ? "One file in this project has the same name:"
+              : "These files in this project have the same name:"}
+          </span>
+        ) : null}
+        {props.candidatesIncomplete ? (
+          <span className="mt-2 block">
+            Scient couldn't search the whole project, so there may be others.
           </span>
         ) : null}
       </>
@@ -77,11 +84,6 @@ export function FileReadFailure(props: {
       {isOutsideProjectFailure(props.failure) && props.onOpenReadOnly ? (
         <Button type="button" size="xs" variant="outline" onClick={props.onOpenReadOnly}>
           Open read-only
-        </Button>
-      ) : null}
-      {props.reason === "permission_denied" && props.onOpenPrivacySettings ? (
-        <Button type="button" size="xs" variant="outline" onClick={props.onOpenPrivacySettings}>
-          Open Privacy Settings
         </Button>
       ) : null}
     </FileSurfaceFailure>

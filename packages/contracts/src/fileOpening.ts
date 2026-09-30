@@ -85,3 +85,55 @@ export class EnvironmentFilePrepareError extends Schema.TaggedError<EnvironmentF
     }
   }
 }
+
+const LINK_RESOLVE_MAX_CHANGED_PATHS = 2_000;
+const LINK_RESOLVE_MAX_TIE_PATHS = 20;
+
+/**
+ * A chat link to resolve on the environment that owns the files. The link is
+ * taken exactly as written; only that environment can say what it names.
+ */
+export const EnvironmentFileLinkResolveInput = Schema.Struct({
+  /** The workspace the link belongs to. Relative links resolve against it. */
+  workspaceRoot: EnvironmentFilePath,
+  /** The link's path as written: absolute, or relative to `workspaceRoot`. */
+  path: EnvironmentFilePath,
+  /** Workspace-relative files the link's turn changed. They only break a tie. */
+  changedPaths: Schema.optional(
+    Schema.Array(EnvironmentFilePath).check(Schema.isMaxLength(LINK_RESOLVE_MAX_CHANGED_PATHS)),
+  ),
+});
+export type EnvironmentFileLinkResolveInput = typeof EnvironmentFileLinkResolveInput.Type;
+
+/**
+ * What a link names.
+ *
+ * - `literal`: the link's own location exists, or fails for a reason other
+ *   than absence (a denied read, a folder); open it as written.
+ * - `recovered`: nothing exists at the link's location, and exactly one
+ *   workspace file best matches how the link's path ends.
+ * - `tie`: several workspace files match equally well; the user chooses.
+ * - `none`: no workspace file has the link's file name.
+ * - `incomplete`: the workspace could not be searched completely, so no match
+ *   can be called unique; `paths` holds what was found, as choices only.
+ *
+ * `missingPath` is the absolute location the link named. Other paths are
+ * workspace-relative with `/` separators.
+ */
+export const EnvironmentFileLinkResolution = Schema.Union([
+  Schema.TaggedStruct("literal", { path: EnvironmentFilePath }),
+  Schema.TaggedStruct("recovered", {
+    path: EnvironmentFilePath,
+    missingPath: EnvironmentFilePath,
+  }),
+  Schema.TaggedStruct("tie", {
+    paths: Schema.Array(EnvironmentFilePath).check(Schema.isMaxLength(LINK_RESOLVE_MAX_TIE_PATHS)),
+    missingPath: EnvironmentFilePath,
+  }),
+  Schema.TaggedStruct("none", { missingPath: EnvironmentFilePath }),
+  Schema.TaggedStruct("incomplete", {
+    paths: Schema.Array(EnvironmentFilePath).check(Schema.isMaxLength(LINK_RESOLVE_MAX_TIE_PATHS)),
+    missingPath: EnvironmentFilePath,
+  }),
+]);
+export type EnvironmentFileLinkResolution = typeof EnvironmentFileLinkResolution.Type;

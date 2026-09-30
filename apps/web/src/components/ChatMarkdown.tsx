@@ -29,14 +29,13 @@ import {
   TriangleAlertIcon,
   type LucideIcon,
 } from "lucide-react";
-import {
-  type AssetResource,
-  EnvironmentFilePath,
-  type EnvironmentId,
-  type MessageId,
-  type ScopedThreadRef,
-  type ServerProviderSkill,
-  type ThreadPullRequestKey,
+import type {
+  AssetResource,
+  EnvironmentId,
+  MessageId,
+  ScopedThreadRef,
+  ServerProviderSkill,
+  ThreadPullRequestKey,
 } from "@t3tools/contracts";
 import { githubMediaFetchUrl } from "@t3tools/shared/githubMedia";
 import {
@@ -53,12 +52,10 @@ import {
   classifyMarkdownImageSource,
   markdownImageSourceFragment,
 } from "@t3tools/client-runtime/markdown-images";
-import { fileBasename, inlineCodeFilePathCandidate } from "@t3tools/client-runtime/markdown-links";
+import { inlineCodeFilePathCandidate } from "@t3tools/client-runtime/markdown-links";
 import { mediaFileReference, mediaUrlReference } from "@t3tools/client-runtime/media-reference";
 import { mediaKindFromPath, mediaMimeTypeFromExtension } from "@t3tools/shared/filePreview";
 import * as Cause from "effect/Cause";
-import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/unstable/reactivity";
 import React, {
   Children,
@@ -247,11 +244,11 @@ import {
 import { ScientDisplayMath, ScientInlineMath } from "../scient/math/ScientMath";
 import { openEnvironmentFileInPreview } from "../scient/fileOpening/openEnvironmentFileInPreview";
 import {
-  chatFileOpenNeedsLookup,
-  resolveChatFileOpenPath,
-  type ChatFileOpenResolution,
-} from "../scient/fileOpening/changedFileLinkEvidence";
-import { environmentFilePreparation } from "../scient/fileOpening/environmentFileState";
+  chatFileLinkResolveInput,
+  chatFileOpenPlan,
+  type ChatFileOpenPlan,
+} from "../scient/fileOpening/chatFileLinkResolution";
+import { environmentFileLinkResolution } from "../scient/fileOpening/environmentFileState";
 import { resolveLinkTarget } from "../browser/browserLinkTarget";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
 
@@ -341,21 +338,19 @@ export function shouldUseMarkdownFileBrowserPrimaryAction(input: {
   return input.canOpenInBrowser;
 }
 
-/** Says when a link opened a different file than it names, so an unexpected match is noticed. */
-function announceResolvedLink(resolution: ChatFileOpenResolution): void {
-  if (resolution.missingLinkPath === undefined) return;
+/** Says when a link led to a different file than it names, so an unexpected match is noticed. */
+function announceResolvedLink(plan: Extract<ChatFileOpenPlan, { kind: "resolved" }>): void {
   toastManager.add(
     stackedThreadToast({
       type: "info",
-      title: `Opened ${resolution.path}`,
-      description: `The link pointed to ${resolution.missingLinkPath}, which doesn't exist.`,
+      title: `Link resolved to ${plan.path}`,
+      description: `Nothing exists at ${plan.missingPath}, where the link pointed.`,
     }),
   );
 }
 
-// The index ranks by fuzzy score, so ask for enough results that every file
-// sharing a common name (`index.md`, `README.md`) is among them.
-const WORKSPACE_FILE_NAME_SEARCH_LIMIT = 200;
+// Longer than the environment's own search bound, so a slow search still answers.
+const FILE_LINK_RESOLVE_WAIT_MS = 3_000;
 const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
 const EMPTY_REMARK_PLUGINS: NonNullable<ReactMarkdownOptions["remarkPlugins"]> = [];
 
@@ -2237,7 +2232,7 @@ function useChatMarkdownState({
   const searchProjectEntries = useAtomQueryRunner(projectEnvironment.searchEntries, {
     reportFailure: false,
   });
-  const prepareEnvironmentFile = useAtomQueryRunner(environmentFilePreparation, {
+  const resolveEnvironmentFileLink = useAtomQueryRunner(environmentFileLinkResolution, {
     reportFailure: false,
     refresh: true,
   });
@@ -2512,29 +2507,6 @@ function useChatMarkdownState({
     },
     [createAssetUrl, openPreview, preparedConnection, threadRef],
   );
-  // Anything but a definite "not found" counts as existing, so a permission or
-  // connection problem, or a path the host cannot check, surfaces on the file
-  // itself instead of redirecting to another one.
-  const linkTargetExists = useCallback(
-    async (path: string) => {
-      if (environmentId === null) return true;
-      const filePath = Schema.decodeUnknownOption(EnvironmentFilePath)(path);
-      if (Option.isNone(filePath)) return true;
-      const result = await prepareEnvironmentFile({
-        environmentId,
-        input: { path: filePath.value },
-      });
-      if (result._tag === "Success") return true;
-      const failure = Cause.squash(result.cause);
-      return !(
-        typeof failure === "object" &&
-        failure !== null &&
-        "failure" in failure &&
-        failure.failure === "not_found"
-      );
-    },
-    [environmentId, prepareEnvironmentFile],
-  );
   const findWorkspaceBasenameMatch = useCallback(
     async (workspaceRelativePath: string) => {
       if (!cwd || environmentId === null || !needsWorkspaceBasenameLookup(workspaceRelativePath)) {
@@ -2555,89 +2527,117 @@ function useChatMarkdownState({
     },
     [cwd, environmentId, searchProjectEntries],
   );
-  const findWorkspaceFilesNamed = useCallback(
-    async (fileName: string): Promise<ReadonlyArray<string>> => {
-      if (!cwd || environmentId === null || fileName.length === 0) return [];
-      const result = await searchProjectEntries({
-        environmentId,
-        input: { cwd, query: fileName, limit: WORKSPACE_FILE_NAME_SEARCH_LIMIT, kind: "file" },
+  // Asks the environment that owns the files what a link means; see
+  // resolveEnvironmentFileLink on the server. Null when it could not be asked,
+  // in which case the link opens as written.
+  const planFileLinkOpen = useCallback(
+    async (linkPath: string): Promise<ChatFileOpenPlan> => {
+      const input = chatFileLinkResolveInput({
+        linkPath,
+        workspaceRoot: cwd,
+        changedPaths: changedFiles?.map((file) => file.path) ?? [],
       });
-      if (result._tag !== "Success") return [];
-      return result.value.entries
-        .filter((entry) => entry.kind === "file" && fileBasename(entry.path) === fileName)
-        .map((entry) => entry.path);
+      if (input === null || environmentId === null) return chatFileOpenPlan(null);
+      // A stalled connection must not swallow the click: past the wait, the
+      // link opens as written and the file panel reports what it finds.
+      const resolution = await Promise.race([
+        resolveEnvironmentFileLink({ environmentId, input }).then((result) =>
+          result._tag === "Success" ? result.value : null,
+        ),
+        new Promise<null>((resolve) => setTimeout(resolve, FILE_LINK_RESOLVE_WAIT_MS, null)),
+      ]);
+      return chatFileOpenPlan(resolution);
     },
-    [cwd, environmentId, searchProjectEntries],
+    [changedFiles, cwd, environmentId, resolveEnvironmentFileLink],
   );
-  // Opens the file a chat link means; see resolveChatFileOpenPath. Without a
-  // workspace a link opens as written; otherwise the host is checked first.
+  // Opens the file a chat link means. A link whose location does not exist
+  // opens the one workspace file it meant, when there is exactly one; without
+  // a single answer it opens as written and the file panel offers the choices.
   const openFileInPanel = useCallback(
     (panelPath: string, line: number | undefined) => {
       if (!threadRef) return;
-      // Claimed on every open so a synchronous one supersedes a lookup already
-      // in flight.
+      // Claimed on every click so a newer one supersedes a check in flight, and
+      // anything the user does in the panel meanwhile wins over this click.
       const isLatestLookup = claimWorkspaceBasenameLookup();
-      const openAt = (path: string) =>
-        useRightPanelStore.getState().openFile(threadRef, path, line);
-      const request = {
-        panelPath,
-        workspaceRoot: cwd,
-        changedPaths: changedFiles?.map((file) => file.path) ?? [],
-      };
-      if (!chatFileOpenNeedsLookup(request)) {
-        openAt(panelPath);
-        return;
-      }
-      // Anything the user does in the panel while the host answers wins over
-      // this click, so a slow check never replaces a newer choice.
       const userActionRevision = useRightPanelStore.getState().getUserActionRevision(threadRef);
       void (async () => {
-        const resolution = await resolveChatFileOpenPath({
-          ...request,
-          exists: linkTargetExists,
-          findFilesNamed: findWorkspaceFilesNamed,
-        });
+        const plan = await planFileLinkOpen(panelPath);
         if (
           !isLatestLookup() ||
           useRightPanelStore.getState().getUserActionRevision(threadRef) !== userActionRevision
         ) {
           return;
         }
-        openAt(resolution.path);
-        announceResolvedLink(resolution);
+        useRightPanelStore
+          .getState()
+          .openFile(threadRef, plan.kind === "resolved" ? plan.path : panelPath, line);
+        if (plan.kind === "resolved") announceResolvedLink(plan);
       })();
     },
-    [changedFiles, cwd, findWorkspaceFilesNamed, linkTargetExists, threadRef],
+    [planFileLinkOpen, threadRef],
   );
-  // An outside media link whose file is missing gets the same recovery as any
-  // other file link; otherwise it opens in the media viewer as before.
+  // Outside media opens in the media viewer when its file exists. A missing
+  // one gets the same treatment as any other link, in the file panel.
   const openMarkdownMediaLink = useCallback(
     (mediaPath: string, filePath: string) => {
-      if (!threadRef || !cwd) {
+      if (!threadRef) {
         openMarkdownMedia(mediaPath, filePath);
         return;
       }
+      const isLatestLookup = claimWorkspaceBasenameLookup();
       const userActionRevision = useRightPanelStore.getState().getUserActionRevision(threadRef);
       void (async () => {
-        const resolution = await resolveChatFileOpenPath({
-          panelPath: filePath,
-          workspaceRoot: cwd,
-          changedPaths: changedFiles?.map((file) => file.path) ?? [],
-          exists: linkTargetExists,
-          findFilesNamed: findWorkspaceFilesNamed,
-        });
-        if (useRightPanelStore.getState().getUserActionRevision(threadRef) !== userActionRevision) {
+        const plan = await planFileLinkOpen(filePath);
+        if (
+          !isLatestLookup() ||
+          useRightPanelStore.getState().getUserActionRevision(threadRef) !== userActionRevision
+        ) {
           return;
         }
-        if (resolution.missingLinkPath === undefined) {
+        if (plan.kind === "as-written") {
           openMarkdownMedia(mediaPath, filePath);
           return;
         }
-        useRightPanelStore.getState().openFile(threadRef, resolution.path);
-        announceResolvedLink(resolution);
+        useRightPanelStore
+          .getState()
+          .openFile(threadRef, plan.kind === "resolved" ? plan.path : filePath);
+        if (plan.kind === "resolved") announceResolvedLink(plan);
       })();
     },
-    [changedFiles, cwd, findWorkspaceFilesNamed, linkTargetExists, openMarkdownMedia, threadRef],
+    [openMarkdownMedia, planFileLinkOpen, threadRef],
+  );
+  // An HTML link opens in the integrated browser: the page the link names, or
+  // the one workspace page it meant. With no single answer it goes to the file
+  // panel, which explains and offers the choices.
+  const openHtmlLinkInBrowser = useCallback(
+    async (
+      filePath: string,
+      workspaceRelativePath: string | null,
+    ): Promise<AtomCommandResult<unknown, unknown>> => {
+      const superseded = AsyncResult.success<void, never>(undefined);
+      if (!threadRef) return openEnvironmentHtmlInPreview(filePath);
+      const isLatestLookup = claimWorkspaceBasenameLookup();
+      const userActionRevision = useRightPanelStore.getState().getUserActionRevision(threadRef);
+      const plan = await planFileLinkOpen(filePath);
+      if (
+        !isLatestLookup() ||
+        useRightPanelStore.getState().getUserActionRevision(threadRef) !== userActionRevision
+      ) {
+        return superseded;
+      }
+      if (plan.kind === "missing") {
+        useRightPanelStore.getState().openFile(threadRef, workspaceRelativePath ?? filePath);
+        return superseded;
+      }
+      if (plan.kind === "resolved" && cwd) {
+        announceResolvedLink(plan);
+        return openMarkdownFileInPreview(resolvePathLinkTarget(plan.path, cwd), plan.path);
+      }
+      return cwd && workspaceRelativePath
+        ? openMarkdownFileInPreview(filePath, workspaceRelativePath)
+        : openEnvironmentHtmlInPreview(filePath);
+    },
+    [cwd, openEnvironmentHtmlInPreview, openMarkdownFileInPreview, planFileLinkOpen, threadRef],
   );
   const revealMarkdownFileInFileManager = useCallback(
     async (fileLinkMeta: MarkdownFileLinkMeta) => {
@@ -2706,9 +2706,7 @@ function useChatMarkdownState({
             threadRef &&
             isPreviewSupportedInRuntime() &&
             resolveWorkspaceFileLinkOpenTarget(fileLinkMeta.filePath) === "browser"
-              ? cwd && browserRelativePath
-                ? () => openMarkdownFileInPreview(fileLinkMeta.filePath, browserRelativePath)
-                : () => openEnvironmentHtmlInPreview(fileLinkMeta.filePath)
+              ? () => openHtmlLinkInBrowser(fileLinkMeta.filePath, browserRelativePath)
               : undefined
           }
         />
@@ -2716,13 +2714,11 @@ function useChatMarkdownState({
     },
     [
       canUseShellActions,
-      cwd,
       fileLinkParentSuffixByPath,
-      openEnvironmentHtmlInPreview,
       openFileInPanel,
+      openHtmlLinkInBrowser,
       openInPreferredEditor,
-      openMarkdownFileInPreview,
-      openMarkdownMedia,
+      openMarkdownMediaLink,
       preferredEditorMenuLabel,
       resolvedTheme,
       revealInFileManagerLabel,
