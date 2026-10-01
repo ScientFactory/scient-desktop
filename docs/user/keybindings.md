@@ -228,7 +228,8 @@ terminals so native undo keeps working there.
 `navigation.back` (`mod+[` by default) and `navigation.forward` (`mod+]`) move
 through the pages you have visited, like a browser's back and forward buttons.
 
-`chat.new` may ask you to choose a project when there is more than one.
+`chat.new` opens the **New thread in…** picker, including **No project** when the
+current machine offers scratch conversations, and **Add project**.
 `chat.newLocal` skips that chooser. Both use your
 [new-thread defaults](./thread-sidebar.md#start-a-thread).
 
@@ -236,8 +237,11 @@ Note that `chat.new` and `chat.newLocal` both create a thread through the same p
 inherits the project you were in, along with model and mode selections. Branch, worktree, and
 environment mode always come from your configured defaults, not from the thread you were looking
 at. To keep a worktree, use the explicit "new thread in this worktree" action in the branch
-toolbar. The only difference between the two commands: with the current sidebar and more than one
-project, `chat.new` opens a project chooser first.
+toolbar. With Scient's sidebar, `chat.new` always opens the chooser, even with no projects;
+`chat.newLocal` goes directly to the current project.
+
+`chat.newWithoutProject` (`mod+alt+n` by default) opens a scratch conversation on the
+current machine when available. It uses the same flow as **No project** in the picker.
 
 Background submission from a new thread is the exception. `mod+enter` starts that thread and opens
 another new thread with the same workspace mode and base branch. **New worktree** remains selected,

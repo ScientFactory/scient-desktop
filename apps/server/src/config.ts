@@ -64,12 +64,15 @@ export interface ServerDerivedPaths {
   readonly environmentIdPath: string;
   readonly serverRuntimeStatePath: string;
   readonly secretsDir: string;
+  /** Dev-runner-owned scratch storage outside a worktree-local state directory. */
+  readonly developmentScratchRoot?: string;
 }
 
 export interface DeriveServerPathsOptions {
   readonly baseDirIsExplicit?: boolean;
   readonly developmentStateDirName?: string;
   readonly forceDevelopmentState?: boolean;
+  readonly developmentScratchRoot?: string | undefined;
 }
 
 /**
@@ -147,7 +150,8 @@ export const deriveServerPaths = Effect.fn(function* (
   devUrl: ServerConfig["Service"]["devUrl"],
   options: DeriveServerPathsOptions = {},
 ): Effect.fn.Return<ServerDerivedPaths, never, Path.Path> {
-  const { join } = yield* Path.Path;
+  const path = yield* Path.Path;
+  const { join } = path;
   const stateDir = join(
     baseDir,
     options.forceDevelopmentState || (devUrl !== undefined && !options.baseDirIsExplicit)
@@ -161,6 +165,9 @@ export const deriveServerPaths = Effect.fn(function* (
   const providerLogsDir = join(logsDir, "provider");
   const providerStatusCacheDir = join(baseDir, "caches");
   return {
+    ...(devUrl !== undefined && options.developmentScratchRoot
+      ? { developmentScratchRoot: path.resolve(options.developmentScratchRoot) }
+      : {}),
     stateDir,
     dbPath,
     keybindingsConfigPath: join(stateDir, "keybindings.json"),
@@ -192,6 +199,9 @@ export const ensureServerDirectories = Effect.fn(function* (derivedPaths: Server
 
   yield* Effect.all(
     [
+      ...(derivedPaths.developmentScratchRoot
+        ? [fs.makeDirectory(path.dirname(derivedPaths.developmentScratchRoot), { recursive: true })]
+        : []),
       fs.makeDirectory(derivedPaths.stateDir, { recursive: true }),
       fs.makeDirectory(derivedPaths.logsDir, { recursive: true }),
       fs.makeDirectory(derivedPaths.providerLogsDir, { recursive: true }),
@@ -219,6 +229,14 @@ export const ensureServerDirectories = Effect.fn(function* (derivedPaths: Server
     yield* Effect.logInfo("Removed expired attachment uploads.", { deleted: swept.deleted });
   }
 });
+
+/** Both scratch advertisement and workspace authority use this host-owned location. */
+export const scratchWorkspaceRoot = (config: ServerConfig["Service"], path: Path.Path) =>
+  path.resolve(
+    config.devUrl !== undefined && config.developmentScratchRoot
+      ? config.developmentScratchRoot
+      : path.join(config.baseDir, "scratch"),
+  );
 
 const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
   cwd: string,

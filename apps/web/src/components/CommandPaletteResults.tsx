@@ -15,6 +15,7 @@ import {
   CommandShortcut,
 } from "./ui/command";
 import { ThreadSearchMatchExcerpt } from "./ThreadSearchMatch";
+import { ScrollArea } from "./ui/scroll-area";
 
 interface CommandPaletteResultsProps {
   emptyStateMessage?: string;
@@ -37,29 +38,48 @@ export function CommandPaletteResults(props: CommandPaletteResultsProps) {
     );
   }
 
+  const renderGroup = (group: CommandPaletteGroup) => (
+    <CommandPaletteResultGroup key={group.value} group={group} {...props} />
+  );
+  const pinnedGroups = props.groups.filter((group) => group.pinned);
+  if (pinnedGroups.length === 0) {
+    return <CommandList>{props.groups.map(renderGroup)}</CommandList>;
+  }
+
   return (
-    <CommandList>
-      {props.groups.map((group) => (
-        <CommandGroup items={group.items} key={group.value}>
-          <CommandGroupLabel>{group.label}</CommandGroupLabel>
-          <CommandCollection>
-            {(item) =>
-              item.disabled ? (
-                <DisabledCommandPaletteResultRow item={item} key={item.value} />
-              ) : (
-                <CommandPaletteResultRow
-                  item={item}
-                  key={item.value}
-                  keybindings={props.keybindings}
-                  isActive={props.highlightedItemValue === item.value}
-                  onExecuteItem={props.onExecuteItem}
-                />
-              )
-            }
-          </CommandCollection>
-        </CommandGroup>
-      ))}
+    <CommandList layout="pinned">
+      <ScrollArea className="h-auto" scrollbarGutter scrollFade scrollFadeBottomSize="lg">
+        <div className="p-2 pb-0">
+          {props.groups.filter((group) => !group.pinned).map(renderGroup)}
+        </div>
+      </ScrollArea>
+      <div className="relative -mt-1 shrink-0 px-2 pb-2">{pinnedGroups.map(renderGroup)}</div>
     </CommandList>
+  );
+}
+
+function CommandPaletteResultGroup(
+  props: CommandPaletteResultsProps & { group: CommandPaletteGroup },
+) {
+  return (
+    <CommandGroup items={props.group.items}>
+      {props.group.label ? <CommandGroupLabel>{props.group.label}</CommandGroupLabel> : null}
+      <CommandCollection>
+        {(item) =>
+          item.disabled ? (
+            <DisabledCommandPaletteResultRow item={item} key={item.value} />
+          ) : (
+            <CommandPaletteResultRow
+              item={item}
+              key={item.value}
+              keybindings={props.keybindings}
+              isActive={props.highlightedItemValue === item.value}
+              onExecuteItem={props.onExecuteItem}
+            />
+          )
+        }
+      </CommandCollection>
+    </CommandGroup>
   );
 }
 

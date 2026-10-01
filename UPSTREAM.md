@@ -88,7 +88,7 @@ official `main` only after its untouched baseline passed. That historical
 revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
-The current alignment is [Scient PR #420](https://github.com/ScientFactory/scient-desktop/pull/420),
+The preceding alignment is [Scient PR #420](https://github.com/ScientFactory/scient-desktop/pull/420),
 recorded in [the 2026-09-30 receipt](docs/internals/2026-09-30-upstream-sync-35be904f2f.md)
 and `upstream-state.json`. It integrates all 20 official commits after
 `d2c9281b8112dc3b2991642c4bdb985e4b08b9bb` through
@@ -112,6 +112,20 @@ existing managed CLI lifecycle remain active. The receipt records composition,
 backend and client review, complete passing qualification, and the isolated native
 visual review. No protected release, cloud, telemetry, or publication boundary is
 activated.
+
+The current alignment is [Scient PR #428](https://github.com/ScientFactory/scient-desktop/pull/428),
+recorded in [the 2026-10-01 receipt](docs/internals/2026-10-01-upstream-sync-5cc99e1c23.md)
+and `upstream-state.json`. It integrates the next 20 first-parent official commits
+through `5cc99e1c23980d7995a13c47f969b47cb68ed1be` onto owned base
+`3b3c0b882e98f8df73544d68849f8101d0aecc18`. Upstream merge
+`b6444f75637c8587f3c14b2b6a3cfb11daf750d0` retains that exact target as its second
+parent. Owned-main catch-up merge `8934fe7cd8e568b09d839d8c9bb3ea0b5c84dcc9`
+incorporates `22a3bcf6d9aec5489a9c0c00eac544b9ccfb2ed3` without advancing the
+official target. The range adds scratch conversations, session restart, Claude
+compact/subagent fixes, accessible suggestions, theme and hotkey fixes, and
+agent-driven browser downloads. The receipt separates original qualification,
+later static checks, and the owner's visual/manual acceptance. Create-from-name
+and the deferred publication changes remain off.
 
 ## Receiving T3 updates
 
@@ -575,8 +589,8 @@ mounts. A few lines change in place: two in `Sidebar.tsx`, the search field's cl
 list and the New thread icon's `hidden` attribute in `SidebarThreadHeader.tsx`, and
 the undo-action union in `showThreadUndoNotice.ts`. New thread always opens the
 "New thread in…" picker (`shouldOpenNewThreadTargetPicker` changes in place), which
-ends with Add project, so a project, including the first, can be added from New
-thread; Shift+click and ⇧⌘N still start directly in the current project. The
+keeps Add project above No project beneath the scrolling project list, so a project,
+including the first, can be added from New thread; Shift+click and ⇧⌘N still start directly in the current project. The
 Sections view reuses T3's rows, shelves and order keys and never changes pin state. If T3 ships its own
 grouping or collapsible shelves, reconcile against these seams instead of layering a
 second grouping. Decisions, invariants and the full seam list are in
@@ -608,12 +622,57 @@ code, not a runtime or update dependency. Scient does not refresh from open PR
 heads. Only an official T3 `main` merge enters through the bounded upstream
 process. Immutable event decoders retain only the nullability required to
 replay a historical thread that was moved into a real project before the
-retirement; no current command can create or move a projectless thread.
+retirement. New thread commands continue to require a real owning project.
 
 The exact #5822 snapshot and import merge are frozen as a historical exception
 in `upstream-state.json` with `followUpdates: false`. The dedicated provenance
 workflow rejects new non-official merge parents. Historical sync reports remain
 the provenance record; there is no longer a live Quick Chat seam inventory.
+
+T3 added a different scratch design on its official `main` as
+`pingdotgg/t3code#13612`, integrated through `5cc99e1c23`. The owner approved it
+in alignment PR #428: `SCIENT_DESKTOP_IDENTITY.projectlessThreadsEnabled` is true.
+Unlike the retired Quick Chat experiment, every scratch thread has a real owning
+project, the internal "No project" project, and its own plain subfolder under
+`<data dir>/scratch`, stored in `worktreePath`. No null-project creation or old
+relocation command is restored.
+
+Scient's existing sidebar New thread row opens the shared "New thread in…"
+picker with **Add project** above **No project**, both fixed below its scrolling
+projects. The shared palette renderer keeps these actions in the same keyboard
+navigation list. A separate dashed chat button on the left of the sidebar row
+starts without a project through the same `useScratchProject` flow and current-
+environment capability check. Shift+click still starts in the current project. The draft project picker can switch destinations before sending;
+Scient omits the redundant "or start without a project" composer prompt. Shared
+workspace admission accepts only a registered direct canonical child of this
+server's scratch project, with verified non-Git evidence. It rejects the shared
+parent, nested descendants, and symlink escapes, while retaining ordinary Git
+worktree lineage and existing authority-generation/publication checks.
+
+The server still withholds `ServerConfig.scratchWorkspaceRoot` and
+`projects.ensureScratch` when the selected scratch root's parent is inside a Git
+checkout or VCS detection fails. Clients gate on the advertised root, including remote/mobile
+entry points. The dev runner selects persistent scratch storage outside the
+checkout without moving its existing profile; that selected parent must also be
+outside Git.
+Thread deletion retains scratch files. Moving a started scratch conversation and
+its files into another project remains unsupported. The owner approved both as
+temporary limits, with two planned follow-ups: an explicit option to delete the
+conversation's scratch files when deleting it, and moving a started conversation
+with its files into an existing or newly created project. Neither capability is
+implemented by this alignment. Cleanup must preserve files shared by another
+conversation; relocation must preserve conversation history, attachments,
+workspace authority, and provider continuation or explicitly restart the session
+when continuation cannot survive the move.
+
+`pingdotgg/t3code#14527` "start a new project from just a name", merged in the same
+commit, remains off through `createProjectFromNameEnabled`. Scient already
+creates a project from any typed path through the palette's "Create & Add", and that
+path then runs Scient project initialization (`PROJECT.md`, `AGENTS.md`,
+`.scient/project.json`). Upstream's path slugs the name into a `projects` folder
+under the data directory, writes its own README and icon, runs `git init`, and never
+calls that initializer, so enabling it would give users two different "new project"
+behaviors with Scient-managed projects from only one of them.
 
 Scient's first-run Getting Started flow is isolated under
 `apps/web/src/scient/onboarding`. It reuses canonical provider, project, and

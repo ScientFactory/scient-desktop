@@ -258,11 +258,14 @@ its own threads than to the group above.
   handling described below.
 - **Always a picker:** New thread opens the "New thread in…" picker whatever
   the number of projects (`shouldOpenNewThreadTargetPicker`, used by the row,
-  the header and ⌘N), so the row is never disabled. The current project is
-  listed first, and the list ends with **Add project**, which runs the
-  palette's usual Add project flow; that flow already ends in a new thread in
-  the added project. With no projects, the picker waits until project
-  snapshots have loaded, then shows Add project alone.
+  the header and ⌘N). The current project is listed first. **Add project**
+  sits above **No project**, both fixed below the scrolling projects. Add project
+  runs the palette's usual flow, ending in a new thread in the added project.
+  With no projects, the picker waits until project snapshots have loaded.
+- **Direct scratch entry:** a separate dashed chat button on the left, separated
+  by a subtle vertical divider, uses the shared `useScratchProject` flow. It appears
+  only when the current environment offers scratch. Both buttons are briefly
+  disabled while that request is pending, and repeated clicks cannot duplicate it.
 - **Straight into the current project:** Shift+click on the row, as its
   tooltip says, and `chat.newLocal` (⇧⌘N) skip the picker. T3's shared click
   handler ignores the modifier, so the row handles Shift itself
