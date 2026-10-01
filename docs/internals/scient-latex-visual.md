@@ -65,13 +65,16 @@ document and inserts an editable figure at the original selection; the upload
 limit is 20 MB. Citation selection
 reads explicitly linked project bibliography files through the existing reader.
 Literal BibTeX fields are indexed for selection, not executed or resolved. Object
-references and review checks are scoped to the open file. PDF export delegates to
+references are scoped to the open file. PDF export delegates to
 the existing PDF save-copy hook and requires current revision/dependency evidence.
 These writing features introduce no hosted service, new compiler, or second save
 path. Project creation remains owned by the project sidebar.
 
 The compact writing bar reuses Markdown's dock controls and shared table-size
-picker. Document settings, outline, and review live in the document header.
+picker. Document settings and outline live in the document header. The style
+menu contains Text, headings, and Quote; heading numbering uses a contextual
+switch. Lists have their own menu, and other layouts live in Insert. The header
+uses one Export submenu for PDF and Word.
 Title/author/date remain editable on paper, with visibility controls in the
 contextual footbar and restoration from Document settings. Heading numbering and
 reference labels, table structure, figure properties, and statement properties
@@ -134,8 +137,10 @@ finish, and cannot run while a known save error or conflict is unresolved.
 `LatexBuildService.status` verifies dependency evidence but never starts a
 compiler. A stale status keeps the old artifact readable, marks its descriptor
 stale and removes visual source authorization from that response. The client
-does not build on open, save, focus change or completed toolchain installation.
-Only explicit rebuild requests (including agent tools) start TeX. Existing
+rebuilds when a stale PDF is opened, after 2.5 seconds of idle editing while PDF
+is visible, and on Ctrl/Cmd+S while PDF is visible. Requests wait for file saves,
+coalesce while a build is running, and do not retry the same failed revision
+automatically. Explicit Rebuild remains available. Existing
 root resolution, cancellation, bounded compile stabilization, immutable
 artifacts and PDF navigation remain owned by the existing build/reader path.
 
@@ -241,9 +246,8 @@ whitespace while retaining the user's exact text in the editing session.
 The long-lived ProseMirror guard calls the current source adapter through a
 ref so renderer hot updates do not retain obsolete validation logic.
 The outline starts collapsed, and the status bar follows the visible page.
-The canvas has no ruler above the paper. Native interaction and PDF comparison of
-these changes remain unqualified until manual review; no tests were run for
-this layout pass at the user's request.
+The canvas has no ruler above the paper. Automated source regressions and native
+interaction checks qualify editing separately from human visual acceptance.
 
 Unit tests cover source-range integrity, whitespace, headings, nested lists,
 empty paragraphs, math, escaping, protected syntax and rebuild notices. Build
@@ -318,8 +322,31 @@ measurements and resize-observer refreshes run after painting, not on every inpu
 It never replaces the editable DOM. Layout profiles are cached by preamble.
 
 The parser intentionally leaves unknown commands, optional citation arguments,
-control symbols, comments inside prose, custom macros and unsupported table cells
-as source-only blocks. Simple templates do not establish arbitrary-paper coverage.
+unsupported control symbols, comments inside prose, custom macros and unsupported
+table cells as source-only blocks. Simple templates do not establish arbitrary-paper coverage.
+
+### Scientific statement coverage
+
+Known theorem, lemma, proposition, corollary, claim, definition, example, remark,
+remarks, and proof environments have editable block content. Ordinary prose,
+supported formatting, references, inline formulas, display equations, and supported
+nested blocks use the same editor adapters as the document body. Paragraph changes
+patch the statement body, retaining its opening/closing commands, optional title,
+labels, surrounding whitespace, and untouched equations. Standard literal text
+accents render as characters while retaining their source spelling.
+
+| Content                                                      | Visual behavior                      | Source preservation                                |
+| ------------------------------------------------------------ | ------------------------------------ | -------------------------------------------------- |
+| Ordinary prose and supported formatting                      | Editable on paper                    | Bounded text edits preserve original tokens        |
+| Inline/display math and references                           | Existing math/reference editors      | Formula edits retain delimiters and outer metadata |
+| Numbered align rows                                          | Math editable, outer row count fixed | Row labels, tags, and number suppression retained  |
+| Literal optional statement title                             | Editable in the contextual footer    | Only the title argument changes                    |
+| Unknown body commands, dynamic titles, or unsupported syntax | Exact-source block with Edit LaTeX   | No lossy rendered preview or prose conversion      |
+
+This coverage does not evaluate arbitrary class/package definitions or reproduce
+custom theorem counters, styles, or proof-ending symbols. Their compiled PDF
+remains authoritative. Unsupported blocks can be edited in place as exact LaTeX;
+applying a draft checks both the source generation and the original block.
 
 Export freshness reuses the revision-scoped dependency hashes in the build evidence.
 There is no second visual revision manifest or PDF-overlay interaction host. The

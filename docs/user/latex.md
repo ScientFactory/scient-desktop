@@ -36,20 +36,20 @@ service is required for the writing workflow.
 Write is a source-derived writing canvas, not an editable PDF. You can start
 writing before installing or running TeX. The canvas uses a document workspace
 with a compact toolbar, a collapsible outline, and a contextual
-status bar. The paragraph-style menu includes section levels, paragraph and
-subparagraph headings, quotations and lists; chapter-based classes also offer
+status bar. The paragraph-style menu includes Text, heading levels, and Quote;
+chapter-based classes also offer
 Chapter. The toolbar supports bold, italic,
 lists, undo and redo. **Insert...** opens a searchable menu for equations, tables,
 statements, figures and page breaks. Heading styles live in the style menu rather
 than being duplicated in Insert. Type `/` on an empty
 paragraph or press Ctrl/Cmd+/ to open it; use the arrow keys and Enter to choose.
 The toolbar stays on one slim row. Insert holds elements and references; Lists
-holds list actions. Document settings, Outline, and Review are in the document
+holds list actions. Document settings and Outline are in the document
 header. Selecting title metadata, headings, tables, figures, or statements exposes
 its options in the existing footbar. Title, author, and date remain directly
 editable on paper; Document settings restores missing fields.
 Zoom controls are in the top writing toolbar. Enter an exact percentage (25–400%)
-and press Enter, or use minus/plus and the percentage presets. Escape cancels an
+and press Enter, or use minus/plus. Escape cancels an
 unfinished percentage edit. **Fit width** fills the available pane and follows
 pane resizing automatically. Zoom changes only the on-screen view, not the LaTeX
 page dimensions or PDF layout. Pinch with two fingers on a trackpad, or hold Ctrl
@@ -151,7 +151,7 @@ actions. Warnings do not insert a banner above the writing page or move it.
 
 Writing view uses browser layout with locally bundled math fonts. It is always
 approximate: page breaks, floats, numbering, references, package output and
-arbitrary macro expansion require TeX. Choose Update PDF, then PDF or Split with PDF to
+arbitrary macro expansion require TeX. Choose Rebuild PDF, then PDF or Split with PDF to
 inspect exact output. A successful build never means the browser canvas is
 pixel-identical to that PDF. Compile errors preserve the last successful PDF.
 The canvas reads safe document-class, paper, base-font, `geometry`, paragraph
@@ -164,7 +164,8 @@ build or export becomes available. A failed root save remains visible for resolu
 
 Math and object fields retain the exact text and caret locally. Source updates
 are coalesced during typing and flushed when leaving the field; page measurement
-waits briefly for typing to pause. None of these actions starts a PDF build.
+waits briefly for typing to pause. These changes request a PDF build only when
+PDF is visible, after the idle delay.
 The keyboard button opens **All writing shortcuts**, a searchable list covering
 Write, Math and Tables. Filter by area when needed; shortcut editing, custom math
 actions and the printable reference remain in the same dialog.
@@ -187,10 +188,11 @@ or error badge in the header. This includes the shell-escape-disabled notice.
 
 Standard `\title`, `\author`, and `\date` metadata appears as the document's
 title block at `\maketitle` and can be edited directly on the page. Fields size
-to their text; only the focused field has a subtle underline. Selecting any part
+to their text. Selecting any part
 of the title block puts its options in the existing bottom status bar. **Author**
-shows or hides the author; hiding retains the name in a TeX comment so it can be
-restored after reopening the document. To delete the name, clear the author text.
+shows or hides the author; hiding writes `\author{}` and retains the name in
+local app preferences so it can be restored on this device. To delete the name,
+clear the author text.
 **Date** offers Automatic, Custom, or Hidden. Custom focuses the date on the page;
 typing into an automatic date also makes it custom. An omitted date follows
 LaTeX's default and displays the current date, while `\date{}` hides it.
@@ -230,11 +232,15 @@ Other unsupported structures, including
 custom macros, appear as protected source blocks.
 The visual editor does not silently normalize or discard them. A visual edit
 cannot delete across a protected preview or source block, or across an included
-file boundary. **Edit LaTeX** opens the file that owns the selected block.
+file boundary. Click a source-only block or use **Edit LaTeX** to edit its exact
+source in place; **Apply LaTeX** checks that the document has not changed underneath
+the draft. **Source** opens the file that owns the block.
 
-The **Insert...** menu inserts theorem, claim, lemma, proposition, corollary,
+The **Insert** menu inserts theorem, claim, lemma, proposition, corollary,
 definition, example, remark and proof environments. Their type, optional title,
-body and reference label are editable together in a semantic card. When a newly
+and structural options live in the contextual footbar. Ordinary prose,
+inline/display equations, and references in the body are editable on paper.
+Unknown commands or unsupported syntax retain exact-source editing. When a newly
 inserted statement has no preamble declaration, Scient adds a standard
 `\newtheorem` or `\newenvironment` declaration so the source remains compilable.
 
@@ -242,7 +248,7 @@ The **Figure** action lets you select a project PNG, JPEG, or PDF image, caption
 and width. It inserts a real `figure` and `\includegraphics` structure,
 adds `graphicx` when needed, and resolves its project-relative image through the
 workspace asset service. Edit its path, width, placement, alignment, caption and
-label from the card, or delete the whole figure. Direct external-file import and
+label from the contextual footbar, or delete the whole figure. Direct external-file import and
 asset deletion are separate workspace operations and are not implied by deleting
 the LaTeX figure.
 
@@ -265,11 +271,12 @@ PDF selected, double-click a source line to locate it in the compiled PDF.
 
 ## Build and review
 
-Choose **Update PDF** to build after the current source has been saved.
-Builds are manual; opening a document does not itself request a build.
-**Review** lists repeated labels, references missing from the current file, and
-common unfinished placeholders. References may belong to included files; this
-review does not replace compiling the complete document. **Export PDF** saves a
+Choose **Rebuild PDF** to build after the current source has been saved.
+Opening a stale PDF requests a build. While PDF is visible, Scient also rebuilds
+after about 2.5 seconds without editing and on Ctrl/Cmd+S. Builds wait for saves,
+keep the last successful PDF readable, and coalesce edits while a build is running.
+A failed revision requires an explicit rebuild instead of repeated automatic attempts.
+**Export → PDF** saves a
 copy only when the latest PDF matches the saved buffer and build dependencies.
 Update the PDF first if export is unavailable.
 
@@ -403,7 +410,8 @@ files must be edited one file at a time.
 
 Missing files, cycles and unresolved dynamic or conditional includes show an
 explanation instead of an incomplete Visual document. Use PDF for includes that
-require TeX execution. This does not change the manual PDF-build policy.
+require TeX execution. PDF visibility and idle editing determine automatic builds;
+Visual alone does not compile each edit.
 New tables start with a package-free style. Arbitrary custom macros and packages
 loaded through external class/style files are not expanded by the visual editor.
 
