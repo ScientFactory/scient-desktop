@@ -631,11 +631,11 @@ a deliberate follow-up with its own product decision.
 `pingdotgg/t3code#14527` "start a new project from just a name", merged in the same
 commit, is held the same way through `createProjectFromNameEnabled`. Scient already
 creates a project from any typed path through the palette's "Create & Add", and that
-path then runs Sciant project initialization (`PROJECT.md`, `AGENTS.md`,
+path then runs Scient project initialization (`PROJECT.md`, `AGENTS.md`,
 `.scient/project.json`). Upstream's path slugs the name into a `projects` folder
 under the data directory, writes its own README and icon, runs `git init`, and never
 calls that initializer, so enabling it would give users two different "new project"
-behaviors with Sciant-managed projects from only one of them.
+behaviors with Scient-managed projects from only one of them.
 
 Scient's first-run Getting Started flow is isolated under
 `apps/web/src/scient/onboarding`. It reuses canonical provider, project, and

@@ -75,7 +75,7 @@ function newProjectReadme(name: string): string {
     `# ${name}`,
     "",
     // SCIENT-FORK:START — The generated README is a user file, so it carries
-    // Sciant's name and site rather than the inherited upstream ones.
+    // Scient's name and site rather than the inherited upstream ones.
     "Created in [Scient](https://scientfactory.com).",
     // SCIENT-FORK:END
     "",

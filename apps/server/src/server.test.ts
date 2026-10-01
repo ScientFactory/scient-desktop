@@ -5307,7 +5307,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
   // and projects created from a name (#14527). Scient keeps both behind a
   // server-side policy flag: the config omits the roots that advertise them,
   // both RPCs refuse, and neither creates a folder nor dispatches a command.
-  it.effect("withholds threads without a project while the Sciant gate is off", () =>
+  it.effect("withholds threads without a project while the Scient gate is off", () =>
     Effect.gen(function* () {
       const dispatched: Array<string> = [];
       yield* buildAppUnderTest({
@@ -5338,7 +5338,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("withholds projects created from a name while the Sciant gate is off", () =>
+  it.effect("withholds projects created from a name while the Scient gate is off", () =>
     Effect.gen(function* () {
       const dispatched: Array<string> = [];
       const gitCalls: Array<string> = [];
