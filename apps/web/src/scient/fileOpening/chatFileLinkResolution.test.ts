@@ -25,6 +25,20 @@ describe("chatFileLinkResolveInput", () => {
     });
   });
 
+  it("sends no changed files rather than a partial list that could break a tie wrongly", () => {
+    const changedPaths = Array.from({ length: 2_001 }, (_, index) => `dir${index}/dup.md`);
+    expect(
+      chatFileLinkResolveInput({ linkPath: "dup.md", workspaceRoot: "/repo", changedPaths }),
+    ).toEqual({ workspaceRoot: "/repo", path: "dup.md", changedPaths: [] });
+    expect(
+      chatFileLinkResolveInput({
+        linkPath: "dup.md",
+        workspaceRoot: "/repo",
+        changedPaths: changedPaths.slice(0, 2_000),
+      })?.changedPaths,
+    ).toHaveLength(2_000);
+  });
+
   it("has nothing to ask without a workspace or with a path the environment cannot take", () => {
     const base = { linkPath: "notes.md", changedPaths: [] };
     expect(chatFileLinkResolveInput({ ...base, workspaceRoot: undefined })).toBeNull();

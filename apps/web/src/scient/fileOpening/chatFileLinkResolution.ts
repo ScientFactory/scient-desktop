@@ -24,11 +24,18 @@ export function chatFileLinkResolveInput(input: {
   readonly changedPaths: ReadonlyArray<string>;
 }): EnvironmentFileLinkResolveInput | null {
   if (!input.workspaceRoot) return null;
+  // Changed files only break a tie, and a partial list could break one
+  // wrongly: when a turn changed more than can be sent, none are, and a tie
+  // stays a choice.
+  const changedPaths =
+    input.changedPaths.length > MAX_CHANGED_PATHS
+      ? []
+      : input.changedPaths.filter(isEnvironmentFilePath);
   return Option.getOrNull(
     decodeResolveInput({
       workspaceRoot: input.workspaceRoot,
       path: input.linkPath,
-      changedPaths: input.changedPaths.filter(isEnvironmentFilePath).slice(0, MAX_CHANGED_PATHS),
+      changedPaths,
     }),
   );
 }
