@@ -1,10 +1,13 @@
 import type { ThreadId } from "@t3tools/contracts";
+import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 
+import * as ServerConfig from "../../config.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import {
   type ObservedWorkspaceEvidence,
@@ -69,6 +72,41 @@ const make = Effect.gen(function* () {
   const evidence = yield* WorkspaceBindingEvidence.WorkspaceBindingEvidence;
   const bindings = yield* WorkspaceBindingStore.WorkspaceBindingStore;
   const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const config = yield* ServerConfig.ServerConfig;
+  const scratchRoot = ServerConfig.scratchWorkspaceRoot(config, path);
+
+  const isScratchProject = (workspaceRoot: string) =>
+    SCIENT_DESKTOP_IDENTITY.projectlessThreadsEnabled &&
+    path.resolve(workspaceRoot) === scratchRoot;
+
+  // Scratch threads have host-registered plain folders, not Git worktrees.
+  // Admit only a direct canonical child of this server's scratch project;
+  // neither the shared parent nor a symlink outside it is thread authority.
+  const belongsToScratchProject = Effect.fn("WorkspaceBindingResolver.belongsToScratchProject")(
+    function* (project: ObservedWorkspaceEvidence, selected: ObservedWorkspaceEvidence) {
+      if (
+        project.trustState !== "verified" ||
+        selected.trustState !== "verified" ||
+        project.worktreeIdentity !== null ||
+        selected.worktreeIdentity !== null ||
+        path.dirname(selected.canonicalRoot) !== project.canonicalRoot
+      ) {
+        return false;
+      }
+      const canonicalBaseDir = yield* fs.realPath(path.dirname(scratchRoot)).pipe(
+        Effect.mapError(
+          (cause) =>
+            new WorkspaceBindingResolutionError({
+              operation: "canonicalize-scratch-base",
+              kind: "workspace-unavailable",
+              cause,
+            }),
+        ),
+      );
+      return project.canonicalRoot === path.join(canonicalBaseDir, path.basename(scratchRoot));
+    },
+  );
 
   const registeredRootMatches = Effect.fn("WorkspaceBindingResolver.registeredRootMatches")(
     function* (registeredRoot: string, canonicalRoot: string) {
@@ -194,10 +232,11 @@ const make = Effect.gen(function* () {
       context.value.worktreePath === null
         ? projectObserved
         : yield* evidence.inspect(context.value.worktreePath);
-    if (
-      observed.canonicalRoot !== projectObserved.canonicalRoot &&
-      !belongsToProjectWorktreeLineage(projectObserved, observed)
-    ) {
+    const validWorkspace = isScratchProject(context.value.projectWorkspaceRoot)
+      ? yield* belongsToScratchProject(projectObserved, observed)
+      : observed.canonicalRoot === projectObserved.canonicalRoot ||
+        belongsToProjectWorktreeLineage(projectObserved, observed);
+    if (!validWorkspace) {
       return yield* new WorkspaceBindingResolutionError({
         operation: "verify-worktree-lineage",
         kind: "lineage-conflict",

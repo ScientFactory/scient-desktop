@@ -443,11 +443,11 @@ function SidebarUpdateControl() {
           {!showReleaseNotesPopover ? (
             <TooltipPopup
               align="center"
-              className={showUpdateDetails ? "max-w-48 text-left text-wrap" : undefined}
+              className={showUpdateDetails ? "max-w-48 text-left" : undefined}
               side="top"
               variant={showUpdateDetails ? "glass" : "default"}
             >
-              {tooltip}
+              <span className={showUpdateDetails ? "text-wrap" : undefined}>{tooltip}</span>
             </TooltipPopup>
           ) : null}
         </Tooltip>

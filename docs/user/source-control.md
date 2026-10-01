@@ -10,6 +10,9 @@ changes, and review them without leaving the app.
 Source control is optional. An ordinary local folder can still be a Scient
 project without Git or a hosted repository.
 
+[No project conversations](./thread-sidebar.md#threads-without-a-project) use plain
+scratch folders. They have no Git branch controls, checkpoints, or turn diffs.
+
 ## Supported providers
 
 Scient works with the platforms your team already uses:

@@ -117,10 +117,22 @@ function CommandInput({
   );
 }
 
-function CommandList({ className, ...props }: React.ComponentProps<typeof AutocompleteList>) {
+function CommandList({
+  className,
+  layout = "scroll",
+  ...props
+}: Omit<React.ComponentProps<typeof AutocompleteList>, "scrollable"> & {
+  layout?: "scroll" | "pinned";
+}) {
   return (
     <AutocompleteList
-      className={cn("not-empty:scroll-py-2 not-empty:p-2", className)}
+      className={cn(
+        layout === "pinned"
+          ? "flex min-h-0 flex-col not-empty:p-0"
+          : "not-empty:scroll-py-2 not-empty:p-2",
+        className,
+      )}
+      scrollable={layout !== "pinned"}
       data-slot="command-list"
       {...props}
     />

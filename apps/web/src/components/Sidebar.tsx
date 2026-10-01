@@ -124,6 +124,7 @@ import {
 } from "../threadSelectionStore";
 import { useThreadActions } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { useScratchProject } from "../hooks/useScratchProject";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { useClientSettings } from "../hooks/useSettings";
@@ -2276,6 +2277,12 @@ export default function Sidebar() {
   );
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const { scratchEnvironmentId, startScratchThread } = useScratchProject();
+  const scratchTargetEnvironmentId = scratchEnvironmentId(
+    newThreadContext.activeThread?.environmentId ??
+      newThreadContext.activeDraftThread?.environmentId ??
+      primaryEnvironmentId,
+  );
   const clearSelection = useThreadSelectionStore((s) => s.clearSelection);
   const setSelectionAnchor = useThreadSelectionStore((s) => s.setAnchor);
   const toggleThreadSelection = useThreadSelectionStore((s) => s.toggleThread);
@@ -4520,6 +4527,22 @@ export default function Sidebar() {
   );
   // SCIENT-FORK:END
 
+  const handleNewWithoutProject = useCallback(async () => {
+    if (scratchTargetEnvironmentId === null) return;
+    if (isMobile) setOpenMobile(false);
+    try {
+      await startScratchThread(scratchTargetEnvironmentId);
+    } catch (error) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not start without a project",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    }
+  }, [isMobile, scratchTargetEnvironmentId, setOpenMobile, startScratchThread]);
+
   // chat.newLocal is a valid fallback label only when both commands create
   // directly. When the picker is available, it is advertised separately as
   // the shortcut twin of Shift+click.
@@ -4769,6 +4792,9 @@ export default function Sidebar() {
             {/* SCIENT-FORK:START — New thread gets its own labelled row below search. */}
             <SidebarNewThreadRow
               onNewThread={handleNewThreadRowClick}
+              onNewWithoutProject={
+                scratchTargetEnvironmentId === null ? null : handleNewWithoutProject
+              }
               shortcutLabel={newThreadShortcutLabel}
               inProjectShortcutLabel={newThreadInProjectShortcutLabel}
               showInProjectHint={showNewThreadInProjectHint}

@@ -202,8 +202,8 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
 
   return (
     // Container width follows the sidebar resize, rather than the app window.
-    <div className="@container/sidebar-utilities">
-      <SidebarMenu className="flex-row items-center pl-1 @max-[14rem]/sidebar-utilities:has-[[data-update-active]]:[&_[data-sidebar-utility=secondary]]:hidden @max-[14rem]/sidebar-utilities:has-[[data-update-active]]:[&_[data-sidebar-utility=overflow]]:block">
+    <div className="@container/sidebar-utilities pl-1">
+      <SidebarMenu className="flex-row items-center @max-[14rem]/sidebar-utilities:has-[[data-update-active]]:[&_[data-sidebar-utility=secondary]]:hidden @max-[14rem]/sidebar-utilities:has-[[data-update-active]]:[&_[data-sidebar-utility=overflow]]:block">
         {isOnUtilityPage ? (
           <SidebarMenuItem className="min-w-0 flex-1">
             <SidebarMenuButton onClick={handleBackClick}>

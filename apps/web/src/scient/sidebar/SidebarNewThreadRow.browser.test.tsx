@@ -78,7 +78,10 @@ it("replaces the header's New thread icon with a labelled row below search", asy
   expect(rect.height).toBe(32);
   expect(rect.width).toBeGreaterThan(200);
   // It sits a small gap below the search row, one size step below thread titles.
-  const header = row.parentElement!.previousElementSibling!.getBoundingClientRect();
+  const searchField = host
+    .querySelector<HTMLInputElement>('input[aria-label="Search threads"]')!
+    .closest<HTMLElement>("div.rounded-md")!;
+  const header = searchField.getBoundingClientRect();
   expect(rect.top - header.bottom).toBe(6);
   const icon = row.querySelector("svg")!.getBoundingClientRect();
   expect([icon.width, icon.height]).toEqual([14, 14]);
