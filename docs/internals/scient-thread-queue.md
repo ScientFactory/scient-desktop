@@ -122,6 +122,10 @@ current settings. Explicit steering uses the active thread's settings.
 
 The worker starts once per scoped server service. It subscribes before its
 initial database scan and processes wakeup hints from a deduplicated mailbox.
+Committing a ready session also wakes its queue: a previous attempt may have
+skipped an eligible item while the session was still busy. This notification
+occurs after the projection transaction commits and does not change queue state
+or bypass the answer/checkpoint barrier, Stop recovery, pause, or FIFO rules.
 Hints carry no authority; SQL is always reread. There is no background sender
 poll and no dependency on a mounted ChatView. Client display refreshes ask once
 per second for a revision; unchanged replies do not resend image payloads.
