@@ -184,6 +184,16 @@ export function refreshFailureNoticeCopy(
   }
 }
 
+/**
+ * The one line shown above a file that can be viewed but not edited. It names
+ * the reason when the environment gave it: the file lives outside the project.
+ */
+export function readOnlyNotice(outsideWorkspace: boolean): string {
+  return outsideWorkspace
+    ? "This file is read-only because it is outside this project."
+    : "This file is read-only in Files.";
+}
+
 export type MediaFailureKind = "image" | "audio" | "video" | "document";
 
 /**

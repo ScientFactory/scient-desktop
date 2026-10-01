@@ -38,17 +38,12 @@ describe("universal chat-file opening seam", () => {
     expect(chatMarkdownSource).toContain(
       "homeRelativePath !== undefined ? openHomeRelativeLinkInPanel : openFileInPanel",
     );
-    // A resolved link opens the file it meant and says so on that tab; any
-    // other answer opens the link as written.
+    // A resolved link opens the file it meant; any other answer opens the
+    // link where it is. Nothing is announced: the tab shows which file it is.
     expect(chatMarkdownSource).toContain(
-      "useRightPanelStore.getState().openFile(threadRef, plan.path, line, {",
+      '.openFile(threadRef, plan.kind === "resolved" ? plan.path : location, line);',
     );
-    expect(
-      chatMarkdownSource.match(/linkResolution: \{ missingPath: plan\.missingPath \}/gu),
-    ).toHaveLength(2);
-    expect(chatMarkdownSource).toContain(
-      "useRightPanelStore.getState().openFile(threadRef, location, line);",
-    );
+    expect(chatMarkdownSource).not.toContain("Link resolved to");
     expect(chatMarkdownSource).toContain(
       "(!canPreviewMedia && isAbsolutePath(fileLinkMeta.filePath)",
     );
@@ -62,15 +57,6 @@ describe("universal chat-file opening seam", () => {
       "openMarkdownMediaLink(mediaPath, fileLinkMeta.filePath, homeRelativePath)",
     );
     expect(chatMarkdownSource).toContain("openMarkdownMedia(mediaPath, filePath);");
-  });
-
-  it("announces a repaired page only after the browser has opened it", () => {
-    // Announcing first would claim a page opened when the browser failed and
-    // the link fell back to the panel, which already notes the repair on its tab.
-    expect(chatMarkdownSource).toMatch(
-      /const opened = await openMarkdownFileInPreview\(\s+workspaceFileHostPath\(plan\.path, cwd\),\s+plan\.path,\s+\);\s+if \(opened\._tag === "Success"\) announceResolvedLink\(plan\);\s+return opened;/u,
-    );
-    expect(chatMarkdownSource.match(/announceResolvedLink\(/gu)).toHaveLength(1);
   });
 
   it("routes HTML through the integrated Browser with an explicit document capability", () => {

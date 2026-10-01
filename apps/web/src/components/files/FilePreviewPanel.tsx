@@ -68,12 +68,10 @@ import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 import { cn } from "~/lib/utils";
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
-import {
-  useRightPanelStore,
-  type FileLinkResolution,
-  type HtmlFilePresentationRequest,
-  type LatexFilePresentationRequest,
-  type OpenFileOptions,
+import type {
+  HtmlFilePresentationRequest,
+  LatexFilePresentationRequest,
+  OpenFileOptions,
 } from "~/rightPanelStore";
 import { isAbsolutePath } from "~/terminal-links";
 import { workspaceFileHostPath } from "./filePath";
@@ -121,9 +119,9 @@ import {
   isOutsideProjectFailure,
   MEDIA_FAILURE_COPY,
   readFailureBlocksPreview,
+  readOnlyNotice,
   refreshFailureNoticeCopy,
 } from "~/scient/fileSurfaces/fileFailureCopy";
-import { FileLinkResolutionNotice } from "~/scient/fileSurfaces/FileLinkResolutionNotice";
 import { FileReadFailure } from "~/scient/fileSurfaces/FileReadFailure";
 import {
   fileCopyNotice,
@@ -181,8 +179,6 @@ import {
 interface FilePreviewPanelProps {
   onCiteFile?: MarkdownCiteHandler;
   fileCitation?: FileCitation | undefined;
-  /** Set when a link named a missing location and this file was opened instead. */
-  linkResolution?: FileLinkResolution | undefined;
   environmentId: EnvironmentId;
   cwd: string;
   projectName: string;
@@ -197,11 +193,7 @@ interface FilePreviewPanelProps {
   htmlPresentationRequest: HtmlFilePresentationRequest | null;
   latexPresentationRequest: LatexFilePresentationRequest | null;
   latexRootRelativePath: string | null;
-  /**
-   * Opens a file where it belongs. `linkResolution` says the file is the one a
-   * link meant, not the one it named, so wherever it opens says so.
-   */
-  onOpenFile: (relativePath: string, linkResolution?: FileLinkResolution) => void;
+  onOpenFile: (relativePath: string) => void;
   onOpenFileSource: (relativePath: string, line?: number, options?: OpenFileOptions) => void;
   onHtmlPresentationRequestHandled: (
     relativePath: string,
@@ -1404,7 +1396,6 @@ function initialExplorerOpen(): boolean {
 export default function FilePreviewPanel({
   onCiteFile,
   fileCitation,
-  linkResolution,
   environmentId,
   cwd,
   projectName,
@@ -1554,12 +1545,6 @@ export default function FilePreviewPanel({
     revealLine === null ||
     (handledReveal?.path === relativePath && handledReveal.requestId === revealRequestId);
   const [dismissedCitationReveal, setDismissedCitationReveal] = useState<number | null>(null);
-  // Dismissing removes the note from this tab. It belongs to one open of the
-  // file, so it is gone until a link is repaired into this file again.
-  const dismissLinkResolution = useCallback(() => {
-    if (relativePath === null) return;
-    useRightPanelStore.getState().dismissFileLinkResolution(threadRef, relativePath);
-  }, [relativePath, threadRef]);
   const citationRevealActive =
     fileCitation !== undefined && dismissedCitationReveal !== revealRequestId;
   const renderMarkdown =
@@ -2036,15 +2021,9 @@ export default function FilePreviewPanel({
           onResolve={resolveReloadNotice}
         />
       )}
-      {linkResolution ? (
-        <FileLinkResolutionNotice
-          missingPath={linkResolution.missingPath}
-          onDismiss={dismissLinkResolution}
-        />
-      ) : null}
       {relativePath && !markdownLease && !isPdf && file.data?.readOnly ? (
         <div className="shrink-0 border-b border-border/50 bg-muted/35 px-3 py-1.5 scient-reading-micro text-muted-foreground">
-          This file is read-only in Files.
+          {readOnlyNotice(file.data.outsideWorkspace === true)}
         </div>
       ) : null}
       {previewPath &&
@@ -2312,7 +2291,6 @@ export default function FilePreviewPanel({
                   citationRevealId={revealRequestId}
                   resolvedTheme={resolvedTheme}
                   onOpenFile={onOpenFile}
-                  onOpenResolvedLink={(path, missingPath) => onOpenFile(path, { missingPath })}
                   onOpenFileSource={(path, line) =>
                     runAfterPendingSave([relativePath], () => onOpenFileSource(path, line))
                   }

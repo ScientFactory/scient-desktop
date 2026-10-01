@@ -53,18 +53,8 @@ export interface HtmlFilePresentationRequest {
   readonly mode: "source";
 }
 
-/**
- * A file tab opened from a link that named a location where nothing existed,
- * so the one workspace file the link meant was opened instead.
- */
-export interface FileLinkResolution {
-  /** Where the link pointed. */
-  readonly missingPath: string;
-}
-
 export interface OpenFileOptions {
   readonly fileCitation?: FileCitation;
-  readonly linkResolution?: FileLinkResolution;
   readonly htmlPreviewMode?: HtmlFilePresentationRequest["mode"];
   readonly latexPreviewMode?: LatexFilePresentationRequest["mode"];
   /** Root retained when SyncTeX navigates from a multi-file PDF to a source. */
@@ -104,9 +94,6 @@ export type RightPanelSurface =
       latexRootRelativePath?: string;
       /** Transient rendered-text reveal; the quote remains owned by the message. */
       fileCitation?: FileCitation;
-      /** Transient: says the tab shows a file other than the one its link named.
-          Any later open of the same file replaces the surface and so clears it. */
-      linkResolution?: FileLinkResolution;
       /** Present when the file lives in the thread's attachment store rather
           than at a workspace or host path. */
       attachment?: ChatFileAttachment;
@@ -203,8 +190,6 @@ interface RightPanelStoreState {
     relativePath: string,
     requestId: number,
   ) => void;
-  /** Removes a file tab's note that it was opened from a repaired link. */
-  dismissFileLinkResolution: (ref: ScopedThreadRef, relativePath: string) => void;
   openAttachment: (ref: ScopedThreadRef, attachment: ChatFileAttachment) => void;
   openPullRequest: (
     ref: ScopedThreadRef,
@@ -293,7 +278,6 @@ const fileSurface = (
   revealLine,
   revealRequestId,
   ...(options?.fileCitation ? { fileCitation: options.fileCitation } : {}),
-  ...(options?.linkResolution ? { linkResolution: options.linkResolution } : {}),
   ...(options?.htmlPreviewMode === undefined
     ? {}
     : {
@@ -474,7 +458,6 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                         htmlPresentationRequest: _transientHtmlPresentationRequest,
                         latexPresentationRequest: _transientLatexPresentationRequest,
                         fileCitation: _transientFileCitation,
-                        linkResolution: _transientLinkResolution,
                         latexRootRelativePath: persistedLatexRootRelativePath,
                         ...persistentSurface
                       } = surface;
@@ -857,26 +840,6 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             return changed ? { ...current, surfaces } : current;
           }),
         })),
-      dismissFileLinkResolution: (ref, relativePath) =>
-        set((state) => ({
-          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
-            let changed = false;
-            const surfaces = current.surfaces.map((surface): RightPanelSurface => {
-              if (
-                surface.kind !== "file" ||
-                surface.attachment !== undefined ||
-                surface.relativePath !== relativePath ||
-                surface.linkResolution === undefined
-              ) {
-                return surface;
-              }
-              changed = true;
-              const { linkResolution: _dismissedLinkResolution, ...remainingSurface } = surface;
-              return remainingSurface;
-            });
-            return changed ? { ...current, surfaces } : current;
-          }),
-        })),
       openAttachment: (ref, attachment) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {
@@ -1162,7 +1125,6 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                     htmlPresentationRequest: _transientHtmlPresentationRequest,
                     latexPresentationRequest: _transientLatexPresentationRequest,
                     fileCitation: _transientFileCitation,
-                    linkResolution: _transientLinkResolution,
                     ...persistentSurface
                   } = surface;
                   return persistentSurface;

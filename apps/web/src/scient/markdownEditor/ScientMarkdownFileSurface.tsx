@@ -95,11 +95,6 @@ export interface ScientMarkdownFileSurfaceProps {
   readonly persistence: MarkdownPersistenceLease;
   readonly resolvedTheme: "light" | "dark";
   readonly onOpenFile: (relativePath: string) => void;
-  /**
-   * Opens the one workspace file a link meant when nothing exists where the
-   * link points, noting on that tab where the link pointed.
-   */
-  readonly onOpenResolvedLink?: (relativePath: string, missingPath: string) => void;
   readonly onOpenFileSource?: (relativePath: string, line?: number) => void;
 }
 
@@ -114,7 +109,6 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
     reportFailure: false,
     refresh: true,
   });
-  const onOpenResolvedLink = props.onOpenResolvedLink;
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
     // New sources and explicit viewing/refresh requests renew expired display access.
@@ -262,7 +256,7 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
   );
   // Asks the environment that owns the files what a link means, exactly as a
   // chat link does, and acts on the answer: the file at the link's own
-  // location opens; one workspace file the link meant opens and says so;
+  // location opens; one workspace file the link meant opens instead;
   // several open the link as written so the panel offers them; none leaves
   // the reader here with a plain explanation. `request` is the click this
   // belongs to: a newer click, an unmounted editor or a detached anchor drops
@@ -305,8 +299,7 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
       });
       switch (resolution?._tag) {
         case "recovered":
-          if (onOpenResolvedLink) onOpenResolvedLink(resolution.path, resolution.missingPath);
-          else onOpenFile(resolution.path);
+          onOpenFile(resolution.path);
           return;
         case "literal":
         case "tie":
@@ -323,14 +316,7 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
           );
       }
     },
-    [
-      onOpenFile,
-      onOpenResolvedLink,
-      props.cwd,
-      props.environmentId,
-      resolveFileLink,
-      showLinkFeedback,
-    ],
+    [onOpenFile, props.cwd, props.environmentId, resolveFileLink, showLinkFeedback],
   );
   const openWorkspaceFile = useCallback(
     async (relativePath: string, anchor: HTMLElement) => {

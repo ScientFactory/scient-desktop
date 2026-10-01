@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   fileReadFailureCopy,
   readFailureBlocksPreview,
+  readOnlyNotice,
   refreshFailureNoticeCopy,
   staleCopyNotice,
   UNSUPPORTED_PREVIEW_TITLE,
@@ -168,5 +169,13 @@ describe("refreshFailureNoticeCopy", () => {
     expect(denied?.description).toContain("permissions of the file and its folders");
     expect(denied?.description).toContain("The last confirmed version is still open.");
     expect(refreshFailureNoticeCopy(null, "darwin")).toBeNull();
+  });
+});
+
+describe("readOnlyNotice", () => {
+  it("says why a file is read-only when the reason is where it lives", () => {
+    expect(readOnlyNotice(true)).toBe("This file is read-only because it is outside this project.");
+    // An older environment, or a file that is read-only for another reason.
+    expect(readOnlyNotice(false)).toBe("This file is read-only in Files.");
   });
 });

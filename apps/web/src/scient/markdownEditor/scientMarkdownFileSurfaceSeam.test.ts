@@ -94,7 +94,7 @@ describe("Scient Markdown file-preview seam", () => {
     expect(chatViewSource).toContain("const openFileSourceSurfaceNow = useCallback(");
     expect(chatViewSource).toContain("const openFileSurfaceNow = useScientFileOpening({");
     expect(chatViewSource).toMatch(
-      /const openFileSurface = useCallback\([\s\S]*?runAfterPendingFileSave\(`file:\$\{relativePath\}`,[\s\S]*?openFileSurfaceNow\(relativePath, linkResolution\)/u,
+      /const openFileSurface = useCallback\([\s\S]*?runAfterPendingFileSave\(`file:\$\{relativePath\}`,[\s\S]*?openFileSurfaceNow\(relativePath\)/u,
     );
   });
 

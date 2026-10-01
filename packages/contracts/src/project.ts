@@ -306,6 +306,10 @@ export const ProjectReadFileResult = Schema.Struct({
   // Optional for rolling compatibility with servers predating managed-path
   // read-only metadata. Current servers always provide it.
   readOnly: Schema.optional(Schema.Boolean),
+  // Why a file is read-only, when the reason is where it lives: the file is
+  // outside the workspace, reached by an absolute path, a path that climbs out,
+  // or a link that leads out. Optional: older servers do not say.
+  outsideWorkspace: Schema.optional(Schema.Boolean),
 });
 export type ProjectReadFileResult = typeof ProjectReadFileResult.Type;
 

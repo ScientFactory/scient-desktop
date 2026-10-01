@@ -951,57 +951,6 @@ describe("rightPanelStore", () => {
     }
   });
 
-  it("notes a resolved link on its tab until the file is opened again, and never persists it", () => {
-    const store = useRightPanelStore.getState();
-    const fileSurfaceOf = () =>
-      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces.find(
-        (surface) => surface.id === "file:drafts/plan.md",
-      );
-    store.openFile(refA, "drafts/plan.md", undefined, {
-      linkResolution: { missingPath: "/repo/plan.md" },
-    });
-    expect(fileSurfaceOf()).toMatchObject({ linkResolution: { missingPath: "/repo/plan.md" } });
-
-    // What is written to storage never carries the note, so a restart does not
-    // repeat it; and state saved by a build that did write it is cleaned on load.
-    const written = useRightPanelStore.persist
-      .getOptions()
-      .partialize?.(useRightPanelStore.getState()) as {
-      byThreadKey: Record<string, { surfaces: ReadonlyArray<object> }>;
-    };
-    expect(Object.values(written.byThreadKey)[0]?.surfaces[0]).toMatchObject({
-      id: "file:drafts/plan.md",
-    });
-    expect(Object.values(written.byThreadKey)[0]?.surfaces[0]).not.toHaveProperty("linkResolution");
-    const reloaded = migratePersistedRightPanelState(
-      JSON.parse(JSON.stringify({ byThreadKey: useRightPanelStore.getState().byThreadKey })),
-    );
-    expect(Object.values(reloaded.byThreadKey)[0]?.surfaces[0]).not.toHaveProperty(
-      "linkResolution",
-    );
-
-    // An ordinary open of the same file is not a resolved link.
-    store.openFile(refA, "drafts/plan.md");
-    expect(fileSurfaceOf()).not.toHaveProperty("linkResolution");
-
-    // Dismissing removes the note from that tab only, and only until a link is
-    // repaired into the file again, even after the tab was closed and its
-    // open count started over.
-    const repaired = { linkResolution: { missingPath: "/repo/plan.md" } };
-    store.openFile(refA, "drafts/plan.md", undefined, repaired);
-    store.openFile(refA, "drafts/other.md", undefined, repaired);
-    store.dismissFileLinkResolution(refA, "drafts/plan.md");
-    expect(fileSurfaceOf()).not.toHaveProperty("linkResolution");
-    const surfaces = () =>
-      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces;
-    expect(surfaces().find((surface) => surface.id === "file:drafts/other.md")).toHaveProperty(
-      "linkResolution",
-    );
-    store.closeSurface(refA, "file:drafts/plan.md");
-    store.openFile(refA, "drafts/plan.md", undefined, repaired);
-    expect(fileSurfaceOf()).toMatchObject(repaired);
-  });
-
   it("carries and consumes a one-shot LaTeX Split presentation request", () => {
     useRightPanelStore
       .getState()

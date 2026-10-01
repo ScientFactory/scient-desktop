@@ -176,7 +176,6 @@ describe("ScientMarkdownFileSurface", () => {
       release: () => {},
     };
     const onOpenFile = vi.fn();
-    const onOpenResolvedLink = vi.fn();
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
@@ -192,12 +191,11 @@ describe("ScientMarkdownFileSurface", () => {
             persistence={persistence}
             resolvedTheme="light"
             onOpenFile={onOpenFile}
-            onOpenResolvedLink={onOpenResolvedLink}
           />
         </StrictMode>,
       ),
     );
-    return { host, onOpenFile, onOpenResolvedLink, root };
+    return { host, onOpenFile, root };
   }
 
   function attachedAnchor(): HTMLAnchorElement {
@@ -327,13 +325,12 @@ describe("ScientMarkdownFileSurface", () => {
   });
 
   it("repairs a link to a missing location the way a chat link is repaired", async () => {
-    const { onOpenFile, onOpenResolvedLink } = await mount();
+    const { onOpenFile } = await mount();
     const anchor = attachedAnchor();
     mocks.listDirectory.mockResolvedValue(success());
     const answer = (value: unknown) => ({ _tag: "Success" as const, value });
 
-    // One workspace file is what the link meant: it opens, and its tab is told
-    // where the link pointed.
+    // One workspace file is what the link meant: it opens instead.
     mocks.resolveFileLink.mockResolvedValueOnce(
       answer({
         _tag: "recovered",
@@ -342,17 +339,11 @@ describe("ScientMarkdownFileSurface", () => {
       }),
     );
     openLink("guide.md", anchor);
-    await vi.waitFor(() =>
-      expect(onOpenResolvedLink).toHaveBeenCalledExactlyOnceWith(
-        "archive/guide.md",
-        "/workspace/notes/guide.md",
-      ),
-    );
+    await vi.waitFor(() => expect(onOpenFile).toHaveBeenCalledExactlyOnceWith("archive/guide.md"));
     expect(mocks.resolveFileLink).toHaveBeenLastCalledWith({
       environmentId,
       input: { workspaceRoot: "/workspace", path: "notes/guide.md", changedPaths: [] },
     });
-    expect(onOpenFile).not.toHaveBeenCalled();
 
     // Several candidates: the link opens as written and the panel offers them.
     mocks.resolveFileLink.mockResolvedValueOnce(
@@ -363,7 +354,7 @@ describe("ScientMarkdownFileSurface", () => {
       }),
     );
     openLink("guide.md", anchor);
-    await vi.waitFor(() => expect(onOpenFile).toHaveBeenCalledExactlyOnceWith("notes/guide.md"));
+    await vi.waitFor(() => expect(onOpenFile).toHaveBeenLastCalledWith("notes/guide.md"));
 
     // No candidate, or an environment that could not answer: the reader stays here.
     mocks.resolveFileLink.mockResolvedValueOnce(
@@ -378,8 +369,7 @@ describe("ScientMarkdownFileSurface", () => {
     mocks.resolveFileLink.mockResolvedValueOnce({ _tag: "Failure" });
     openLink("guide.md", anchor);
     await vi.waitFor(() => expect(mocks.anchoredAdd).toHaveBeenCalledTimes(2));
-    expect(onOpenResolvedLink).toHaveBeenCalledOnce();
-    expect(onOpenFile).toHaveBeenCalledOnce();
+    expect(onOpenFile).toHaveBeenCalledTimes(2);
   });
 
   it("opens a home-relative link where the environment says its home folder is", async () => {
@@ -471,7 +461,7 @@ describe("ScientMarkdownFileSurface", () => {
   });
 
   it("repairs a link into a folder that no longer exists", async () => {
-    const { onOpenFile, onOpenResolvedLink } = await mount();
+    const { onOpenFile } = await mount();
     const anchor = attachedAnchor();
     // A missing folder cannot be listed at all.
     mocks.listDirectory.mockResolvedValue({ _tag: "Failure", cause: new Error("ENOENT") });
@@ -486,13 +476,7 @@ describe("ScientMarkdownFileSurface", () => {
 
     openLink("old-folder/guide.md", anchor);
 
-    await vi.waitFor(() =>
-      expect(onOpenResolvedLink).toHaveBeenCalledExactlyOnceWith(
-        "archive/guide.md",
-        "/workspace/notes/old-folder/guide.md",
-      ),
-    );
-    expect(onOpenFile).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(onOpenFile).toHaveBeenCalledExactlyOnceWith("archive/guide.md"));
     expect(mocks.anchoredAdd).not.toHaveBeenCalled();
   });
 
@@ -562,7 +546,7 @@ describe("ScientMarkdownFileSurface", () => {
         const pending = deferred<typeof recovered>();
         mocks.listDirectory.mockResolvedValue(success());
         mocks.resolveFileLink.mockReturnValue(pending.promise);
-        const { onOpenFile, onOpenResolvedLink, root } = await mount();
+        const { onOpenFile, root } = await mount();
 
         openLink(target, attachedAnchor());
         await vi.waitFor(() => expect(mocks.resolveFileLink).toHaveBeenCalledOnce());
@@ -571,8 +555,6 @@ describe("ScientMarkdownFileSurface", () => {
         pending.resolve(recovered);
         await pending.promise;
         await new Promise((resolve) => setTimeout(resolve, 0));
-
-        expect(onOpenResolvedLink).not.toHaveBeenCalled();
         expect(onOpenFile).not.toHaveBeenCalled();
         expect(mocks.anchoredAdd).not.toHaveBeenCalled();
       });
@@ -581,7 +563,7 @@ describe("ScientMarkdownFileSurface", () => {
         const pending = deferred<typeof recovered>();
         mocks.listDirectory.mockResolvedValue(success());
         mocks.resolveFileLink.mockReturnValue(pending.promise);
-        const { onOpenFile, onOpenResolvedLink } = await mount();
+        const { onOpenFile } = await mount();
         const anchor = attachedAnchor();
 
         openLink(target, anchor);
@@ -590,8 +572,6 @@ describe("ScientMarkdownFileSurface", () => {
         pending.resolve(recovered);
         await pending.promise;
         await new Promise((resolve) => setTimeout(resolve, 0));
-
-        expect(onOpenResolvedLink).not.toHaveBeenCalled();
         expect(onOpenFile).not.toHaveBeenCalled();
         expect(mocks.anchoredAdd).not.toHaveBeenCalled();
       });
@@ -600,7 +580,7 @@ describe("ScientMarkdownFileSurface", () => {
         const pending = deferred<typeof recovered>();
         mocks.listDirectory.mockResolvedValue(success());
         mocks.resolveFileLink.mockReturnValueOnce(pending.promise);
-        const { onOpenFile, onOpenResolvedLink } = await mount();
+        const { onOpenFile } = await mount();
         const anchor = attachedAnchor();
 
         openLink(target, anchor);
@@ -611,8 +591,6 @@ describe("ScientMarkdownFileSurface", () => {
         pending.resolve(recovered);
         await pending.promise;
         await new Promise((resolve) => setTimeout(resolve, 0));
-
-        expect(onOpenResolvedLink).not.toHaveBeenCalled();
         expect(onOpenFile).toHaveBeenCalledOnce();
       });
 
@@ -621,7 +599,7 @@ describe("ScientMarkdownFileSurface", () => {
         try {
           mocks.listDirectory.mockResolvedValue(success());
           mocks.resolveFileLink.mockReturnValue(new Promise(() => {}));
-          const { onOpenFile, onOpenResolvedLink } = await mount();
+          const { onOpenFile } = await mount();
           const anchor = attachedAnchor();
 
           openLink(target, anchor);
@@ -631,7 +609,6 @@ describe("ScientMarkdownFileSurface", () => {
 
           // The click is not swallowed: it ends in an explanation, never a guess.
           expect(mocks.anchoredAdd).toHaveBeenCalledOnce();
-          expect(onOpenResolvedLink).not.toHaveBeenCalled();
           expect(onOpenFile).not.toHaveBeenCalled();
         } finally {
           vi.useRealTimers();

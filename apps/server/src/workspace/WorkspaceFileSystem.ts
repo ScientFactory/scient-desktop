@@ -279,9 +279,25 @@ export const make = Effect.gen(function* () {
   ) {
     // A path names one exact file, whitespace included, so it is used as given.
     const requestedPath = input.relativePath;
+    const isOutside = (realRoot: string, realTarget: string) => {
+      const relative = path.relative(realRoot, realTarget);
+      return relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
+    };
+    // A host path is always read-only here. It is reported as outside the
+    // workspace only when it is: an absolute spelling of a workspace file is
+    // read-only for being addressed that way, not for where it lives.
     const readHostFile = (hostPath: string) =>
       Effect.tryPromise({
-        try: () => NodeFSP.realpath(hostPath),
+        try: async () => {
+          const realTargetPath = await NodeFSP.realpath(hostPath);
+          const realRoot = await NodeFSP.realpath(input.cwd).catch(() => null);
+          return {
+            relativePath: requestedPath,
+            realTargetPath,
+            readOnly: true,
+            outsideWorkspace: realRoot !== null && isOutside(realRoot, realTargetPath),
+          };
+        },
         catch: (cause) =>
           new WorkspaceFileSystemOperationError({
             workspaceRoot: input.cwd,
@@ -291,13 +307,7 @@ export const make = Effect.gen(function* () {
             operation: "realpath-target",
             cause,
           }),
-      }).pipe(
-        Effect.map((realTargetPath) => ({
-          relativePath: requestedPath,
-          realTargetPath,
-          readOnly: true,
-        })),
-      );
+      });
     if (path.isAbsolute(requestedPath)) {
       return yield* readHostFile(requestedPath);
     }
@@ -337,12 +347,7 @@ export const make = Effect.gen(function* () {
           cause,
         }),
     });
-    const relativeRealPath = path.relative(realWorkspaceRoot, realTargetPath);
-    if (
-      relativeRealPath.startsWith(`..${path.sep}`) ||
-      relativeRealPath === ".." ||
-      path.isAbsolute(relativeRealPath)
-    ) {
+    if (isOutside(realWorkspaceRoot, realTargetPath)) {
       if (purpose === "contained") {
         return yield* new WorkspaceFilePathEscapeError({
           workspaceRoot: input.cwd,
@@ -353,7 +358,12 @@ export const make = Effect.gen(function* () {
       }
       // A symlink inside the project that leads out of it: show the file it
       // points to, but never edit it through the project.
-      return { relativePath: target.relativePath, realTargetPath, readOnly: true };
+      return {
+        relativePath: target.relativePath,
+        realTargetPath,
+        readOnly: true,
+        outsideWorkspace: true,
+      };
     }
     const canonicalRelativePath = path
       .relative(realWorkspaceRoot, realTargetPath)
@@ -362,6 +372,7 @@ export const make = Effect.gen(function* () {
       relativePath: target.relativePath,
       realTargetPath,
       readOnly: canonicalRelativePath !== target.relativePath,
+      outsideWorkspace: false,
     };
   });
 
@@ -449,6 +460,7 @@ export const make = Effect.gen(function* () {
             truncated: stat.size > PROJECT_READ_FILE_MAX_BYTES,
             revision: revisionForBytes(fileBytes),
             ...(target.readOnly ? { readOnly: true } : {}),
+            ...(target.outsideWorkspace ? { outsideWorkspace: true } : {}),
           };
         }),
       (handle) =>

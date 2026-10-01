@@ -126,7 +126,18 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           truncated: false,
           revision: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
           readOnly: true,
+          outsideWorkspace: true,
         });
+
+        // An absolute spelling of a workspace file is read-only for being
+        // addressed that way; it is not outside the workspace.
+        yield* writeTextFile(cwd, "inside.md", "# Inside\n");
+        const inside = yield* workspaceFileSystem.viewFile({
+          cwd,
+          relativePath: path.join(cwd, "inside.md"),
+        });
+        expect(inside.readOnly).toBe(true);
+        expect(inside).not.toHaveProperty("outsideWorkspace");
       }),
     );
 
@@ -281,6 +292,8 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           contents: "managed\n",
           readOnly: true,
         });
+        // Read-only for being reached through a link, not for where it lives.
+        expect(result).not.toHaveProperty("outsideWorkspace");
       }),
     );
 

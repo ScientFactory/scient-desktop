@@ -254,7 +254,6 @@ import {
   settleWithin,
   type ChatFileOpenPlan,
 } from "../scient/fileOpening/chatFileLinkResolution";
-import { announceResolvedLink } from "../scient/fileOpening/announceResolvedLink";
 import { environmentFileLinkResolution } from "../scient/fileOpening/environmentFileState";
 import { resolveLinkTarget } from "../browser/browserLinkTarget";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
@@ -2582,14 +2581,9 @@ function useChatMarkdownState({
           authoredHomeRelative ? clientPlacedLinkPath(panelPath, cwd) : panelPath,
         );
         if (!isCurrentClick()) return;
-        if (plan.kind === "resolved") {
-          // The tab itself says it shows a different file than the link named.
-          useRightPanelStore.getState().openFile(threadRef, plan.path, line, {
-            linkResolution: { missingPath: plan.missingPath },
-          });
-          return;
-        }
-        useRightPanelStore.getState().openFile(threadRef, location, line);
+        useRightPanelStore
+          .getState()
+          .openFile(threadRef, plan.kind === "resolved" ? plan.path : location, line);
       })();
     },
     [cwd, planFileLinkOpen, threadRef],
@@ -2623,13 +2617,9 @@ function useChatMarkdownState({
           else useRightPanelStore.getState().openFile(threadRef, location);
           return;
         }
-        if (plan.kind === "resolved") {
-          useRightPanelStore.getState().openFile(threadRef, plan.path, undefined, {
-            linkResolution: { missingPath: plan.missingPath },
-          });
-          return;
-        }
-        useRightPanelStore.getState().openFile(threadRef, location);
+        useRightPanelStore
+          .getState()
+          .openFile(threadRef, plan.kind === "resolved" ? plan.path : location);
       })();
     },
     [openMarkdownMedia, planFileLinkOpen, threadRef],
@@ -2654,14 +2644,7 @@ function useChatMarkdownState({
         return superseded;
       }
       if (plan.kind === "resolved" && cwd) {
-        // Announced only once the page is open in the browser. If it could not
-        // be opened, the caller falls back to the panel, whose tab carries the note.
-        const opened = await openMarkdownFileInPreview(
-          workspaceFileHostPath(plan.path, cwd),
-          plan.path,
-        );
-        if (opened._tag === "Success") announceResolvedLink(plan);
-        return opened;
+        return openMarkdownFileInPreview(workspaceFileHostPath(plan.path, cwd), plan.path);
       }
       if (location !== clientPath) {
         // A home-relative page, opened where the environment says it is.

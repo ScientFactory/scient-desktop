@@ -104,7 +104,9 @@ workspace path `../notes.md`. The files panel applies the same rule to a tab's
 path, which also repairs tabs persisted before this rule existed. The only
 reasons a file cannot be shown are that it does not exist, that the operating
 system denies the read, or that it is not a regular file; each is reported as
-itself. Read failures carry the operating system's reason (`not_found`,
+itself. A successful read of a file that lives outside the workspace says so
+(`outsideWorkspace`), so the read-only line can give that as the reason. Read
+failures carry the operating system's reason (`not_found`,
 `permission_denied`) as an optional refinement of `operation_failed`, and the
 system's own error code (`osErrorCode`) beside it. The code is an optional
 field rather than a wider reason union so that older clients still decode the
@@ -160,9 +162,11 @@ environment that owns the files:
    link is the match. Several at that length are a tie, unless exactly one is
    a file the link's own turn changed.
 4. The result is `literal`, `recovered`, `tie`, `none`, or `incomplete`. A
-   click opens a `recovered` file and its tab says where the link pointed;
-   every other outcome opens the link as written, and the files panel offers
-   the candidates as choices. An incomplete search never yields a match.
+   click opens a `recovered` file; every other outcome opens the link as
+   written, and the files panel offers the candidates as choices. An
+   incomplete search never yields a match. A repaired open is not announced
+   (owner decision, 2026-10-01): the tab and its breadcrumb show which file it
+   is, and extra explanatory text was judged noise.
 
 A link written from the home folder (`~/notes.md`) means the home folder of
 the machine that owns the files, which a viewer on another device cannot know.
@@ -170,12 +174,11 @@ The resolver expands it there, after checking that the workspace has no entry
 really named `~`, and the client opens the location it reports.
 
 Chat links and links inside the rich Markdown editor both go through this
-resolver. The note that a tab shows a different file than its link named lives
-on the tab (`linkResolution` on the file surface): it is transient, never
-persisted, cleared by a later ordinary open of the same file, and worded in the
-past tense because the location was only missing when it was checked.
+resolver. A tab's own path is a location, not a link: a workspace folder
+really named `~` is joined to the workspace root (`workspaceFileHostPath`) and
+asked about by its host path, never expanded as the home folder.
 
-Link repair is an announced best guess about what a link's author meant. It is
+Link repair is a best guess about what a link's author meant. It is
 not file identity: it proves nothing about a file that moved, and the files
 panel never applies it by itself to a tab whose file disappeared.
 
