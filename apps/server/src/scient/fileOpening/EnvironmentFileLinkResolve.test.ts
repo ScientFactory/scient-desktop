@@ -80,6 +80,37 @@ describe("resolveEnvironmentFileLink", () => {
     }).pipe(Effect.provide(TestLayer), Effect.scoped),
   );
 
+  it.effect("reads `~/` as the home folder of the machine that owns the files", () =>
+    Effect.gen(function* () {
+      const { base, workspace, write, path } = yield* makeFixture;
+      const home = path.join(base, "home");
+      yield* write("home/notes/today.md");
+      const resolveFromHome = (linkPath: string) =>
+        resolveEnvironmentFileLink(
+          { workspaceRoot: make(workspace), path: make(linkPath) },
+          undefined,
+          home,
+        );
+
+      expect(yield* resolveFromHome("~/notes/today.md")).toEqual({
+        _tag: "literal",
+        path: path.join(home, "notes/today.md"),
+      });
+      // Nothing there: the search is for the file the home path named.
+      expect(yield* resolveFromHome("~/elsewhere/inside.md")).toEqual({
+        _tag: "recovered",
+        path: "project/reviews/inside.md",
+        missingPath: path.join(home, "elsewhere/inside.md"),
+      });
+      // A workspace folder really named `~` is what the path as written names.
+      yield* write("workspace/~/notes/today.md");
+      expect(yield* resolveFromHome("~/notes/today.md")).toEqual({
+        _tag: "literal",
+        path: path.join(workspace, "~/notes/today.md"),
+      });
+    }).pipe(Effect.provide(TestLayer), Effect.scoped),
+  );
+
   it.effect("recovers a link written relative to the wrong directory", () =>
     Effect.gen(function* () {
       const { base, workspace, resolve, path } = yield* makeFixture;

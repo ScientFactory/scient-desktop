@@ -11598,14 +11598,14 @@ function ChatViewContent(props: ChatViewProps) {
         retryWorkspaceMode={forkPreview?.retryWorkspaceMode}
         error={
           forkErrorUpdate?.environmentId === activeThread?.environmentId &&
-          forkErrorUpdate?.threadId === activeThread?.id
+          forkErrorUpdate?.threadId === activeThread?.id &&
+          forkErrorUpdate?.key === forkPreview?.key
             ? forkErrorUpdate?.message
             : forkPreview?.options?.reason
         }
         onOpenChange={(open) => {
-          if (!open && !isForkingThread) {
-            setForkCommandTarget(null);
-          }
+          // Closing while the fork is being made dismisses the dialog only.
+          if (!open) setForkCommandTarget(null);
         }}
         onConfirm={(confirmation, beforeNavigate) => {
           const target = forkCommandTarget;
@@ -11632,6 +11632,7 @@ function ChatViewContent(props: ChatViewProps) {
             setForkCommandTarget((current) =>
               resolveForkTargetAfterAttempt(current, target, outcome),
             );
+            return outcome;
           });
         }}
       />

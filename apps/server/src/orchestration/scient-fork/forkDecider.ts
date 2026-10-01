@@ -813,6 +813,10 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
     },
   });
 
+  // How much this fork copies, on the command's trace span: the first thing to
+  // read when a fork is slow.
+  yield* Effect.annotateCurrentSpan("scient.fork.events", events.length);
+
   // The turn-zero checkpoint is announced by `thread.fork.complete`, after the
   // fork worker has actually copied its ref.
   return events;

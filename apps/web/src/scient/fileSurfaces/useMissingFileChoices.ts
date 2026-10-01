@@ -9,7 +9,8 @@ import { useMemo } from "react";
 import { chatFileLinkResolveInput } from "~/scient/fileOpening/chatFileLinkResolution";
 import { environmentFileLinkResolution } from "~/scient/fileOpening/environmentFileState";
 import { useEnvironmentQuery } from "~/state/query";
-import { isAbsolutePath, resolvePathLinkTarget } from "~/terminal-links";
+import { workspaceFileHostPath } from "~/components/files/filePath";
+import { isAbsolutePath } from "~/terminal-links";
 
 export interface MissingFileChoices {
   /** Workspace files a missing path may have meant, as explicit choices. */
@@ -41,6 +42,26 @@ export function missingFileChoices(
 }
 
 /**
+ * The question to ask about a tab whose file is missing. It names the tab's
+ * exact location: a tab's path is a locator, not a link, so a workspace folder
+ * really named `~` is asked about as that folder, never as the home folder.
+ */
+export function missingFileResolveInput(input: {
+  /** The tab's host path, already joined to the workspace root. */
+  readonly absolutePath: string | null;
+  readonly cwd: string;
+  readonly failureReason: ProjectFileErrorReason | null;
+}) {
+  return input.absolutePath !== null && input.failureReason === "not_found"
+    ? chatFileLinkResolveInput({
+        linkPath: input.absolutePath,
+        workspaceRoot: input.cwd,
+        changedPaths: [],
+      })
+    : null;
+}
+
+/**
  * What a file surface shows when nothing exists at a tab's path: the exact
  * location that was tried, and the workspace files it may have meant. The
  * environment that owns the files decides both, as it does for a link click.
@@ -55,14 +76,11 @@ export function useMissingFileChoices(input: {
   const absolutePath = useMemo(() => {
     if (path === null || path.length === 0) return null;
     if (isAbsolutePath(path)) return collapseAbsoluteFilePath(path);
-    return cwd ? collapseAbsoluteFilePath(resolvePathLinkTarget(path, cwd)) : null;
+    return cwd ? collapseAbsoluteFilePath(workspaceFileHostPath(path, cwd)) : null;
   }, [cwd, path]);
   const resolveInput = useMemo(
-    () =>
-      path !== null && input.failureReason === "not_found"
-        ? chatFileLinkResolveInput({ linkPath: path, workspaceRoot: cwd, changedPaths: [] })
-        : null,
-    [cwd, input.failureReason, path],
+    () => missingFileResolveInput({ absolutePath, cwd, failureReason: input.failureReason }),
+    [absolutePath, cwd, input.failureReason],
   );
   const resolution = useEnvironmentQuery(
     resolveInput === null
