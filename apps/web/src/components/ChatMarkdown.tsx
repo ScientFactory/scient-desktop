@@ -2654,8 +2654,14 @@ function useChatMarkdownState({
         return superseded;
       }
       if (plan.kind === "resolved" && cwd) {
-        announceResolvedLink(plan);
-        return openMarkdownFileInPreview(workspaceFileHostPath(plan.path, cwd), plan.path);
+        // Announced only once the page is open in the browser. If it could not
+        // be opened, the caller falls back to the panel, whose tab carries the note.
+        const opened = await openMarkdownFileInPreview(
+          workspaceFileHostPath(plan.path, cwd),
+          plan.path,
+        );
+        if (opened._tag === "Success") announceResolvedLink(plan);
+        return opened;
       }
       if (location !== clientPath) {
         // A home-relative page, opened where the environment says it is.

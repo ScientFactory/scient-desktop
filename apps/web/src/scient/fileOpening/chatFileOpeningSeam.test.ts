@@ -64,6 +64,15 @@ describe("universal chat-file opening seam", () => {
     expect(chatMarkdownSource).toContain("openMarkdownMedia(mediaPath, filePath);");
   });
 
+  it("announces a repaired page only after the browser has opened it", () => {
+    // Announcing first would claim a page opened when the browser failed and
+    // the link fell back to the panel, which already notes the repair on its tab.
+    expect(chatMarkdownSource).toMatch(
+      /const opened = await openMarkdownFileInPreview\(\s+workspaceFileHostPath\(plan\.path, cwd\),\s+plan\.path,\s+\);\s+if \(opened\._tag === "Success"\) announceResolvedLink\(plan\);\s+return opened;/u,
+    );
+    expect(chatMarkdownSource.match(/announceResolvedLink\(/gu)).toHaveLength(1);
+  });
+
   it("routes HTML through the integrated Browser with an explicit document capability", () => {
     expect(chatMarkdownSource).toContain(
       "openHtmlLinkInBrowser(\n                    fileLinkMeta.filePath,\n                    browserRelativePath,\n                    homeRelativePath,",
