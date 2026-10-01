@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Bounded identity for every valid command id.
+import * as NodeCrypto from "node:crypto";
 import { notifyQueue } from "./signals.ts";
 import {
   SCIENT_THREAD_QUEUE_MAX_BYTES_PER_THREAD,
@@ -80,6 +82,22 @@ export const writeQueue = Effect.fn("ScientQueue.write")(function* (
       }),
     );
   }
+  const attachmentBytes = document.items.reduce(
+    (total, item) =>
+      total +
+      item.attachments.reduce(
+        (bytes, attachment) => bytes + ("dataUrl" in attachment ? 0 : attachment.sizeBytes),
+        0,
+      ),
+    0,
+  );
+  if (
+    new TextEncoder().encode(serialized).byteLength + attachmentBytes >
+    SCIENT_THREAD_QUEUE_MAX_BYTES_PER_THREAD
+  )
+    return yield* new QueueError({
+      message: "The queue is full. Remove an attachment or another queued message first.",
+    });
   if (document.items.length > SCIENT_THREAD_QUEUE_MAX_ITEMS_PER_THREAD) {
     return yield* Effect.fail(new QueueError({ message: "The queue already holds 20 messages." }));
   }
@@ -124,10 +142,69 @@ export const suspendQueue = Effect.fn("ScientQueue.suspend")(function* (
   });
 });
 
+export function queueCommandItemId(
+  command: Extract<OrchestrationCommand, { type: "thread.turn.start" }>,
+) {
+  return `qitem_${NodeCrypto.createHash("sha256").update(`${command.threadId.length}:${command.threadId}${command.commandId}`).digest("hex")}`;
+}
+export const wasQueuedCommand = Effect.fn("ScientQueue.wasQueuedCommand")(function* (
+  command: OrchestrationCommand,
+) {
+  if (command.type !== "thread.turn.start" || command.queueItemId) return false;
+  const sql = yield* SqlClient.SqlClient;
+  const rows =
+    yield* sql`SELECT 1 FROM scient_queue_receipts WHERE queue_item_id = ${queueCommandItemId(command)} AND thread_id = ${command.threadId}`;
+  return rows.length > 0;
+});
+
+/** Reconcile accepted retries before upload normalization or bootstrap side effects. */
+export const readAcceptedTurnReceipt = Effect.fn("ScientQueue.readAcceptedTurnReceipt")(
+  function* (command: {
+    type: string;
+    commandId: string;
+    threadId?: string | undefined;
+    submissionId?: string | undefined;
+  }) {
+    if (command.type !== "thread.turn.start" || !command.threadId) return undefined;
+    const sql = yield* SqlClient.SqlClient;
+    const [receipt] = yield* sql<{
+      aggregate_kind: string;
+      aggregate_id: string;
+      result_sequence: number;
+      status: string;
+    }>`
+    SELECT aggregate_kind, aggregate_id, result_sequence, status FROM orchestration_command_receipts WHERE command_id = ${command.commandId}`;
+    if (
+      !receipt ||
+      receipt.status !== "accepted" ||
+      receipt.aggregate_kind !== "thread" ||
+      receipt.aggregate_id !== command.threadId
+    )
+      return undefined;
+    const queueItemId = `qitem_${NodeCrypto.createHash("sha256").update(`${command.threadId.length}:${command.threadId}${command.commandId}`).digest("hex")}`;
+    const rows =
+      yield* sql`SELECT 1 FROM scient_queue_receipts WHERE queue_item_id = ${queueItemId} AND thread_id = ${command.threadId}`;
+    const queued = rows.length > 0;
+    return {
+      sequence: receipt.result_sequence,
+      queued,
+      ...(command.submissionId
+        ? {
+            submission: {
+              submissionId: command.submissionId,
+              outcome: queued ? ("queued" as const) : ("sent" as const),
+            },
+          }
+        : {}),
+    };
+  },
+);
+
 /** Runs inside the engine's event/receipt transaction, before publishing any event. */
 export const observeQueueCommand = Effect.fn("ScientQueue.observeCommand")(function* (
   command: OrchestrationCommand,
   thread: OrchestrationThread | undefined,
+  bootstrapHandoff?: string,
 ) {
   if (!("threadId" in command)) return;
   const sql = yield* SqlClient.SqlClient;
@@ -154,24 +231,51 @@ export const observeQueueCommand = Effect.fn("ScientQueue.observeCommand")(funct
   const current = yield* readQueue(command.threadId, thread?.session);
   if (command.type === "thread.turn.start") {
     let items = current.items;
-    if (
-      !command.queueItemId &&
-      command.sendIntent !== "steer" &&
-      items.some((item) => item.sendRequested)
-    )
-      return yield* new QueueError({ message: "A queued message is already being sent." });
-    if (
-      !command.queueItemId &&
-      command.sendIntent === "normal" &&
-      (current.blocked ||
-        (!current.awaitingCompletion && items.some((item) => item.state !== "editing")) ||
-        thread?.session?.status === "running" ||
-        thread?.session?.status === "starting")
-    ) {
-      return yield* new QueueError({
-        message:
-          "The thread advanced while sending. Your draft is preserved; send again to queue it.",
+    const setupMessage =
+      bootstrapHandoff === command.message.messageId &&
+      current.turnId === null &&
+      !thread?.session?.activeTurnId &&
+      thread?.session?.status === "starting" &&
+      thread.session.providerName === null
+        ? yield* sql`SELECT 1 FROM projection_thread_messages WHERE thread_id = ${command.threadId} AND message_id = ${bootstrapHandoff} AND role = 'user'`
+        : [];
+    const ownsSetup = setupMessage.length > 0;
+    const mustQueue =
+      current.blocked ||
+      items.some((item) => item.sendRequested) ||
+      (!current.awaitingCompletion &&
+        (current.paused !== null || items.some((item) => item.state !== "editing"))) ||
+      thread?.session?.status === "running" ||
+      thread?.session?.status === "starting";
+    if (!command.queueItemId && command.sendIntent === "normal" && mustQueue && !ownsSetup) {
+      const queueItemId = queueCommandItemId(command);
+      const now = command.createdAt;
+      yield* sql`INSERT INTO scient_queue_receipts (queue_item_id, thread_id) VALUES (${queueItemId}, ${command.threadId})`;
+      yield* writeQueue(command.threadId, {
+        ...current,
+        items: [
+          ...items,
+          {
+            queueItemId,
+            threadId: command.threadId,
+            messageId: command.message.messageId,
+            text: command.message.text,
+            attachments: command.message.attachments,
+            context: command.message.context,
+            composerSnapshot: command.composerSnapshot,
+            selectedScientSkillNames: command.selectedScientSkillNames,
+            modelSelection: command.modelSelection ?? thread?.modelSelection,
+            runtimeMode: command.runtimeMode,
+            interactionMode: command.interactionMode,
+            titleSeed: command.titleSeed,
+            sourceProposedPlan: command.sourceProposedPlan,
+            state: "waiting",
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
       });
+      return true;
     }
     if (command.queueItemId) {
       const item = items.find((entry) => entry.queueItemId === command.queueItemId);

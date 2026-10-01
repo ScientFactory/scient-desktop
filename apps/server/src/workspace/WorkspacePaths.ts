@@ -192,7 +192,8 @@ export const make = Effect.gen(function* () {
 
   const resolveRelativePathWithinRoot: WorkspacePaths["Service"]["resolveRelativePathWithinRoot"] =
     Effect.fn("WorkspacePaths.resolveRelativePathWithinRoot")(function* (input) {
-      const normalizedInputPath = input.relativePath.trim();
+      // Whitespace is part of a file name; the path is resolved exactly as given.
+      const normalizedInputPath = input.relativePath;
       if (path.isAbsolute(normalizedInputPath)) {
         return yield* new WorkspacePathOutsideRootError({
           workspaceRoot: input.workspaceRoot,

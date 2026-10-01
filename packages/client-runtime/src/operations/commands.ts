@@ -333,8 +333,13 @@ export const startThreadTurn: (input: StartThreadTurnInput) => CommandEffect = E
   return yield* dispatch({
     ...input,
     type: "thread.turn.start",
+    sendIntent: input.sendIntent ?? "normal",
     queueProtocolVersion: 2,
-    commandId: metadata.commandId,
+    commandId:
+      input.commandId ??
+      CommandId.make(
+        `turn:${input.threadId.length}:${input.threadId}${input.submissionId ?? input.message.messageId}`,
+      ),
     createdAt: metadata.createdAt,
   });
 });

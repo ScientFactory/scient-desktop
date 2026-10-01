@@ -649,3 +649,18 @@ it("routes the project-root code link to the workspace explorer", () => {
     filePath: cwd,
   });
 });
+
+describe("home-relative file links", () => {
+  it("keeps the authored spelling so the environment that owns the files can place it", () => {
+    expect(resolveMarkdownFileLinkMeta("~/notes/today.md:12", "/srv/project")).toMatchObject({
+      homeRelativePath: "~/notes/today.md",
+      line: 12,
+    });
+    expect(
+      resolveMarkdownFileLinkMeta("~/My%20Notes.md", "/Users/ada/project")?.homeRelativePath,
+    ).toBe("~/My Notes.md");
+    expect(resolveMarkdownFileLinkMeta("notes/today.md", "/srv/project")).not.toHaveProperty(
+      "homeRelativePath",
+    );
+  });
+});

@@ -127,6 +127,7 @@ import { makeThreadLiveEventCoalescer } from "./orchestration/ThreadLiveEventCoa
 import { makeLiveStreamBudget, type RetainedLiveItem } from "./orchestration/LiveStreamBudget.ts";
 import {
   cleanupFailedUploadedAttachments,
+  cleanupUnusedAttachments,
   normalizeDispatchCommand,
   requireQueueProtocol,
 } from "./orchestration/Normalizer.ts";
@@ -226,6 +227,7 @@ import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import { listLinkedPullRequestThreads } from "./pullRequest/linkedThreads.ts";
 import { pullRequestSyncKey } from "./pullRequest/pullRequestSyncKey.ts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import { readAcceptedTurnReceipt } from "./scient/threadQueue/Ledger.ts";
 import * as PullRequestSyncReactor from "./orchestration/PullRequestSyncReactor.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
@@ -403,10 +405,15 @@ function filesystemBrowseFailureContext(error: WorkspaceEntries.WorkspaceEntries
   }
 }
 
-/** The operating system's reason for a failed file operation, when it gave one. */
-function projectFileErrorReason(cause: unknown): ProjectFileErrorReason | undefined {
+/** The operating system's error code for a failed file operation, when it gave one. */
+function projectFileOsErrorCode(cause: unknown): string | undefined {
   const code =
     typeof cause === "object" && cause !== null && "code" in cause ? cause.code : undefined;
+  return typeof code === "string" && /^[A-Z][A-Z0-9_]{0,31}$/u.test(code) ? code : undefined;
+}
+
+/** The operating system's reason for a failed file operation, when it gave one. */
+function projectFileErrorReason(code: string | undefined): ProjectFileErrorReason | undefined {
   switch (code) {
     case "ENOENT":
     case "ENOTDIR":
@@ -431,18 +438,21 @@ function projectFileFailureContext(
   readonly operationPath?: string;
   readonly currentRevision?: string;
   readonly reason?: ProjectFileErrorReason;
+  readonly osErrorCode?: string;
 } {
   switch (error._tag) {
     case "WorkspacePathOutsideRootError":
       return { failure: "workspace_path_outside_root" };
     case "WorkspaceFileSystemOperationError": {
-      const reason = projectFileErrorReason(error.cause);
+      const osErrorCode = projectFileOsErrorCode(error.cause);
+      const reason = projectFileErrorReason(osErrorCode);
       return {
         failure: "operation_failed",
         resolvedPath: error.resolvedPath,
         operation: error.operation,
         operationPath: error.operationPath,
         ...(reason ? { reason } : {}),
+        ...(osErrorCode ? { osErrorCode } : {}),
       };
     }
     case "WorkspaceFilePathEscapeError":
@@ -1882,7 +1892,10 @@ const makeWsRpcLayer = (
             // started. Drop the cancel handle and make the handoff atomic.
             yield* track(worktreeSetupTracker.markUncancellable(threadId));
             const started = yield* Effect.uninterruptible(
-              dispatchFromClient(finalTurnStartCommand),
+              orchestrationEngine.dispatch(finalTurnStartCommand, {
+                origin: clientOrigin,
+                ...(preparingSessionSet ? { bootstrapHandoff: command.message.messageId } : {}),
+              }),
             );
             yield* track(worktreeSetupTracker.stageStatus(threadId, "agent", "done"));
             // An async setup script outlives the handoff: the snapshot stays
@@ -2056,7 +2069,10 @@ const makeWsRpcLayer = (
 
       const dispatchNormalizedCommand = (
         normalizedCommand: OrchestrationCommand,
-      ): Effect.Effect<{ readonly sequence: number }, OrchestrationDispatchCommandError> => {
+      ): Effect.Effect<
+        import("@t3tools/contracts").DispatchResult,
+        OrchestrationDispatchCommandError
+      > => {
         const dispatchEffect =
           normalizedCommand.type === "thread.turn.start" && normalizedCommand.bootstrap
             ? dispatchBootstrapTurnStart(normalizedCommand)
@@ -2170,6 +2186,10 @@ const makeWsRpcLayer = (
             Effect.gen(function* () {
               yield* requireQueueProtocol(command);
               yield* ProjectCloneTracker.rejectCommandsDuringClone(projectCloneTracker, command);
+              const accepted = yield* readAcceptedTurnReceipt(command).pipe(
+                Effect.provideService(SqlClient.SqlClient, sql),
+              );
+              if (accepted) return accepted;
               const normalizedCommand = yield* normalizeDispatchCommand(command);
               // Archive removes the thread from the client, so this transport
               // closes its session and terminals after the command lands.
@@ -2210,6 +2230,10 @@ const makeWsRpcLayer = (
                     : Effect.void,
                 ),
               );
+              if (normalizedCommand.type === "thread.turn.start")
+                yield* cleanupUnusedAttachments(normalizedCommand.message.attachments).pipe(
+                  Effect.provideService(SqlClient.SqlClient, sql),
+                );
               yield* recordClientCommandAnalytics(normalizedCommand);
               let forkAttachmentIdMap: Readonly<Record<string, string>> | void = undefined;
               // SCIENT-FORK:START — command persistence and workspace setup form

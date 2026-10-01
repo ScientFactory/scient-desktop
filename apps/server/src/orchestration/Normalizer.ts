@@ -1,8 +1,10 @@
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import {
+  type ChatAttachment,
   type ClientOrchestrationCommand,
   type UserInputAttachments,
   getProviderAttachmentLimitError,
@@ -17,6 +19,7 @@ import {
   planAttachmentClaim,
   PENDING_ATTACHMENT_THREAD_SEGMENT,
   parseThreadSegmentFromAttachmentId,
+  toSafeThreadAttachmentSegment,
   resolveAttachmentPath,
 } from "../attachmentStore.ts";
 import { ServerConfig } from "../config.ts";
@@ -74,7 +77,10 @@ const removeClaimedAttachmentPaths = Effect.fn("Normalizer.removeClaimedAttachme
   },
 );
 
-export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
+export const normalizeDispatchCommand = (
+  command: ClientOrchestrationCommand,
+  options?: { durableQueueAttachments?: boolean },
+) =>
   Effect.gen(function* () {
     const receivedAt = DateTime.formatIso(yield* DateTime.now);
     const canonicalCommand = canonicalizeClientCommandTimestamps(command, receivedAt);
@@ -166,6 +172,34 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
       attachments,
       (attachment, index) =>
         Effect.gen(function* () {
+          if (!("dataUrl" in attachment) && options?.durableQueueAttachments) {
+            const storedPath = resolveAttachmentPath({
+              attachmentsDir: serverConfig.attachmentsDir,
+              attachment,
+            });
+            if (
+              !storedPath ||
+              parseThreadSegmentFromAttachmentId(attachment.id) !==
+                toSafeThreadAttachmentSegment(canonicalCommand.threadId)
+            )
+              return yield* new OrchestrationDispatchCommandError({
+                message: "The queued attachment belongs to another thread.",
+              });
+            const info = yield* fileSystem.stat(storedPath).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationDispatchCommandError({
+                    message: "The queued attachment is unavailable.",
+                    cause,
+                  }),
+              ),
+            );
+            if (info.type !== "File" || Number(info.size) !== attachment.sizeBytes)
+              return yield* new OrchestrationDispatchCommandError({
+                message: "The queued attachment no longer matches its stored bytes.",
+              });
+            return attachment;
+          }
           if (!("dataUrl" in attachment)) {
             const claim = planAttachmentClaim({
               attachmentsDir: serverConfig.attachmentsDir,
@@ -336,6 +370,7 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
           };
     return {
       ...canonicalCommand,
+      sendIntent: canonicalCommand.sendIntent ?? "normal",
       message: {
         ...canonicalCommand.message,
         attachments: normalizedAttachments,
@@ -400,3 +435,28 @@ export const requireQueueProtocol = (
         }),
       )
     : Effect.void;
+
+/** Reclaim only files no longer owned by either a message or a queue item. */
+export const cleanupUnusedAttachments = Effect.fn("Normalizer.cleanupUnusedAttachments")(function* (
+  attachments: ReadonlyArray<ChatAttachment>,
+) {
+  return yield* Effect.gen(function* () {
+    if (attachments.length === 0) return;
+    const sql = yield* SqlClient.SqlClient;
+    const config = yield* ServerConfig;
+    for (const attachment of attachments) {
+      const owners = yield* sql`
+      SELECT 1 FROM projection_thread_messages AS messages, json_each(COALESCE(messages.attachments_json, '[]')) AS attachment
+      WHERE json_extract(attachment.value, '$.id') = ${attachment.id}
+      UNION ALL
+      SELECT 1 FROM scient_thread_queue AS queue, json_each(queue.document, '$.items') AS item, json_each(item.value, '$.attachments') AS attachment
+      WHERE json_extract(attachment.value, '$.id') = ${attachment.id}
+      LIMIT 1`;
+      if (owners.length > 0) continue;
+      const filePath = resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment });
+      if (filePath) yield* removeClaimedAttachmentPaths([filePath]);
+    }
+  }).pipe(
+    Effect.catch((cause) => Effect.logWarning("Unused attachment cleanup failed", { cause })),
+  );
+});

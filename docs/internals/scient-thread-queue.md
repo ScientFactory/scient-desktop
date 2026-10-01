@@ -11,9 +11,10 @@ and manual product acceptance are separate; no visual acceptance is implied.
 - Enter during a running turn, or while messages are already eligible to advance, adds a
   message to the current environment and thread. After Stop, ordinary idle Send starts
   new work while the existing queue waits for its successful completion. Otherwise idle Send uses
-  the existing immediate-send path. Server admission rejects an ordinary Send
-  that races a busy thread or waiting queue; the draft remains available and
-  sending again queues it. It never silently becomes steering.
+  the existing immediate-send path. The server accepts an ordinary Send as either
+  an immediate turn or a durable queue entry in the existing event/receipt
+  transaction. Busy/completion-boundary races never require a second Send.
+  It never silently becomes steering.
 - Each waiting message starts individually after the preceding turn's answer
   ingestion **and** checkpoint finalization settles. A failed checkpoint does not
   make a successfully delivered answer unsuccessful. A session's `ready` status
@@ -22,23 +23,15 @@ and manual product acceptance are separate; no visual acceptance is implied.
 - Explicit Cmd/Ctrl+Enter and a row's Steer action retain their existing meaning.
   They request immediate provider adoption. Provider support or rejection is
   independent of queue admission. Ordinary queued delivery never steers.
-- Edit withdraws the row from the visible and deliverable queue. Its position
-  remains reserved internally. The queued text and images occupy the existing
-  composer; any ordinary draft is temporarily hidden intact. There is no second
-  editor, additional confirmation, or changed queue layout.
-- Enter while editing returns that item to its reserved position, then restores
-  the ordinary draft. If earlier items started during editing, they cannot be
-  overtaken; the edited item remains ahead of the surviving items that followed
-  its slot. If no turn is active and the queue is eligible, it can start immediately after requeue.
-  Requeue after Stop continues waiting for a successful answer.
-- Editing does not block other waiting messages. Dragging rearranges visible
-  items across visible slots while hidden edit slots remain fixed. For example,
-  `[A, editing B, C, D]`, dragged to visible order `[D, A, C]`, becomes
-  `[D, editing B, A, C]`.
-- The existing Stash action during an edit saves that complete edit, removes its
-  reserved queue slot, and restores the ordinary draft. Restoring that stash is
-  ordinary draft restoration; it does not resurrect a queue position.
-- Stop preserves every waiting item and edit reservation, with no automatic delivery.
+- Edit durably copies text, attachments, settings, and context into the existing
+  local recovery journal, then atomically removes the old queue entry using the
+  existing edit-token receipt. It becomes an ordinary composer draft. The previous
+  ordinary draft is saved through the existing stash menu.
+- The edited draft has no reserved slot and never submits itself. Other queued
+  messages continue normally. Send starts the draft when idle and eligible, or
+  adds it to the queue tail when work is active or earlier entries are eligible.
+  Stash and restoration preserve the full draft without resurrecting a queue slot.
+- Stop preserves every waiting item, with no automatic delivery.
   A new ordinary message can start work once the session is inactive. Starting that
   work, becoming idle, reconnecting, or restarting the server never releases the queue.
   Only a later successfully finalized answer makes the next waiting item eligible.
@@ -52,10 +45,11 @@ and manual product acceptance are separate; no visual acceptance is implied.
 - Retry applies to a pre-admission delivery error. It cannot bypass an active
   finalization barrier or the requirement for a successful answer after Stop.
   No Retry or additional confirmation is needed after later successful completion.
-- Limits remain 20 items (including withdrawn edit slots), 64 MiB serialized
+- Limits remain 20 items, 64 MiB serialized
   queue data per thread, and the existing provider input/attachment limits.
-  Desktop/web queued attachments remain images; generic files are still supported
-  in ordinary drafts and immediate sends, but cannot be queued.
+  Normalized image and file attachments count toward the byte cap. The worker
+  reuses their owned bytes through an internal-only normalization path; client
+  commands cannot claim another message's durable attachment IDs.
 
 ## Durable server authority
 
@@ -105,7 +99,7 @@ and retains an empty migration tombstone so an old JSON file cannot resurrect it
    using the existing attachment pipeline.
 3. Its `thread.turn.start` carries internal `queueItemId` and `queueRevision`.
    The command ID is `queue:<itemId>:<revision>`; the message ID is
-   `queue:<itemId>`. The revision permits a fresh attempt after a rejected stale
+   the original submission message ID, or `queue:<itemId>` for legacy items. The revision permits a fresh attempt after a rejected stale
    claim while command receipts deduplicate the same attempt.
 4. Inside the engine's existing event/receipt transaction, `observeQueueCommand`
    checks the revision, item state, order, session and barrier. It consumes the
@@ -179,9 +173,9 @@ Turn IDs retain their existing meaning: a new execution has a new turn
 ID; reopening an interrupted execution's session is not a new answer.
 
 Ordinary Send admission checks both the actual session and the durable barrier.
-Only an inactive task waiting for completion can accept an ordinary message ahead
-of its retained queue. Two competing recovery sends cannot both win. Editing
-continues to requeue in its reserved slot, even when the task is stopped.
+Only an inactive task waiting for completion can start an ordinary message ahead
+of its retained queue. Of competing recovery sends, one starts and the other is
+accepted into the queue. Edited composer drafts use this same rule.
 
 Earlier candidate documents without `awaitingCompletion` retain compatibility:
 legacy Stop/failure/restart pauses convert transactionally on read to waiting
@@ -223,61 +217,33 @@ remains editable, and already queued delivery does not require an edit snapshot.
 An update replaces/removes optional context and selection fields rather than
 retaining stale data or selection intent from the previous version.
 
-The hidden edit draft carries a client-only `contextThreadId` restored from the
-journal's original target. Existing context setters can therefore reorder,
-remove or add chips without registering a new project draft or redirecting
-changes into the ordinary composer. It is excluded from the queue snapshot and
-is not a server workspace/operation receipt.
+`editSession.ts` keeps both complete drafts in the existing IndexedDB journal,
+including attachment bytes. Before extraction, the client saves the queue item's
+snapshot and bytes. The server checks its update timestamp or existing edit token,
+removes the item transactionally, and records the token in the existing receipt.
+A matching extraction retry succeeds without removing another entry. A legacy
+accepted-requeue fingerprint cannot be mistaken for an extraction receipt.
 
-`editSession.ts` maintains a local IndexedDB journal containing both full drafts,
-including File/Blob bytes, image metadata, settings and structured composer
-context. The ordinary draft keeps its original scoped identity. The edit has an
-internal draft identity but renders through the same keyed ChatComposer. During
-in-app switching, editor state/history/cursor are cached by draft identity and
-never shared between those two drafts. Reload restores draft contents, not the
-previous process's undo history.
+Extraction installs the edited content into the ordinary draft identity. Async
+callbacks retain their captured draft targets. Journal persistence resamples the
+previous draft before replacement, so typing during extraction is retained in
+its stash. Browser Web Locks prevent two windows from recovering the same edit
+journal concurrently. Storage or network failure preserves the draft and recovery
+intent; a lost response reconciles with the same token.
 
-Before withdrawal, both drafts are durably saved. The server's editing token
-owns the reserved slot; other tokens cannot overwrite or delete it. Browser
-Web Locks prevent two windows in the same origin from simultaneously recovering
-and editing the same journal. Closing the owning window releases its lease.
-If Web Locks are unavailable, editing fails before withdrawal and leaves the
-ordinary draft intact; use HTTPS or localhost. A server token cannot replace
-this lock because same-origin windows recover the same journal and token.
-Other devices are still governed by the server token and cannot adopt that
-window's local unsaved draft.
+Send uses the ordinary submission path. Its stable identity is retained through
+an uncertain response, and the server reconciles accepted command receipts before
+repeating upload claims or bootstrap side effects. A queued acknowledgment removes
+the optimistic message and releases local dispatch immediately. Acceptance clears
+only the submitted draft; typing during the request remains in the composer.
 
-Attachment bytes live in a separate IndexedDB store and are written only when
-the File object changes; keystrokes write lightweight draft metadata. Completing
-an edit removes its journal-owned blobs. Autosave operations serialize by journal key. Requeue flushes the journal,
-reasserts the same edit token, submits the replacement, and deletes the journal
-only after durable acceptance. The receipt token makes retries harmless even
-if the worker already consumed the replacement. Storage/network failures retain
-both drafts and report an error. A lost withdrawal response retains its durable
-intent and token for retry. A definitive conflict leaves the ordinary composer
-untouched. A committed edit receipt also stores a payload fingerprint: changed
-text after a lost response cannot be mistaken for an identical retry. Stash
-spends the token without an accepted-update fingerprint: repeating Stash is
-harmless, but a subsequent requeue is rejected so unsubmitted edits remain
-recoverable instead of being acknowledged as sent. Ordinary enqueue identities
-use SHA-256 of the payload and are scoped to environment/thread; plain HTTP uses
-the existing JavaScript SHA-256 implementation when Web Crypto is unavailable.
+Stashes reference full journals instead of placing file bytes in localStorage.
+Restoration saves a discoverable recovery journal for the target draft before
+releasing the source copy. Browser storage is local to that installation; clearing
+it removes local draft recovery data. It is not cloud draft sync.
 
-Async attachment and transcript callbacks retain their original draft target.
-The composer is remounted on draft identity changes; unmounted voice callbacks
-write to their captured draft, never the newly visible composer. Sending waits
-for pending image compression/voice work, and the editing composer is disabled
-while its submission is in progress. Ordinary enqueue clears only the unchanged
-submitted draft, so newly typed text or a different task cannot be erased by a
-late response. If content still arrives during an accepted requeue, a recovery
-copy is retained through the existing prompt stash and reported visibly. Incoming
-approvals/questions cannot consume the editing draft as an answer; their normal
-composer controls return after requeue or stash.
-
-Stashed queue edits retain their full journal rather than fitting file bytes
-into localStorage's smaller prompt-stash image allowance. Their existing stash
-menu entry points to that journal. Browser storage is local to that installation;
-clearing it removes local edit/stash recovery data. It is not cloud draft sync.
+Queue attachment ownership participates in existing revert pruning and removal
+cleanup. Bytes still referenced by a queued item or projected message are retained.
 
 ## API and compatibility
 
@@ -331,11 +297,12 @@ Manual acceptance should exercise these cases in an isolated candidate:
 1. Queue several messages in A, visit B, and stay there while A finishes. Every
    message belongs to A; each starts after its own preceding answer finishes.
 2. Edit a middle item over an ordinary draft containing text and attachments.
-   Requeue it, verify its position and the restored ordinary draft, then exercise
-   cursor/undo and repeated navigation.
+   Verify the old row disappears and the previous draft is available in Stash.
+   Send the edit while idle and busy, then exercise cursor/undo and navigation.
 3. Edit the head while the current answer finishes. Later waiting items may
-   start; the withdrawn message must not. Requeue before and after that advance.
-4. Drag visible items while another slot is being edited. Delete and explicitly
+   start; the withdrawn message must stay in the composer. Send before and
+   after that advance and verify ordinary immediate/tail-queue behavior.
+4. Drag visible items while another message is being edited. Delete and explicitly
    steer rows using the existing controls.
 5. Stop with multiple messages queued. Visit another task, return, and restart
    the candidate: nothing should send. Send a new ordinary message; the queue
@@ -343,8 +310,8 @@ Manual acceptance should exercise these cases in an isolated candidate:
    Stop again and repeat. Check failed delivery/Retry separately. Exercise reload
    during editing, another window, and lost responses; inspect for missing or
    duplicated user messages and retained drafts.
-6. Stash an edit, restore the ordinary draft, then recover that edit through the
-   existing stash menu. Check text, image bytes, settings and context fidelity.
+6. Stash and restore an edit through the usual menu. Reload immediately after
+   restoration; check text, file/image bytes, settings, and context fidelity.
 
 Visual/layout and real-provider adoption remain manual acceptance work. Unit and
 integration tests do not establish those properties.

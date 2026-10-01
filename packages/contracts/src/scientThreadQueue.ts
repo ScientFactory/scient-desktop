@@ -2,11 +2,13 @@ import * as Schema from "effect/Schema";
 import { SelectedScientSkillNames } from "./scientSkillSelection.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
 
-import { IsoDateTime, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { IsoDateTime, MessageId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   UploadChatAttachment,
+  ChatAttachment,
+  ThreadTurnStartCommand,
   ModelSelection,
   RuntimeMode,
   ProviderInteractionMode,
@@ -31,6 +33,9 @@ export const ScientThreadQueueItemId = TrimmedNonEmptyString.check(
 export type ScientThreadQueueItemId = typeof ScientThreadQueueItemId.Type;
 
 export const ScientThreadQueueItem = Schema.Struct({
+  messageId: Schema.optional(MessageId),
+  titleSeed: Schema.optional(TrimmedNonEmptyString),
+  sourceProposedPlan: ThreadTurnStartCommand.fields.sourceProposedPlan,
   // Versioned client edit snapshot. The server preserves this bounded opaque
   // JSON alongside delivery text; it never interprets it as agent authority.
   composerSnapshot: Schema.optional(Schema.String.check(Schema.isMaxLength(4 * 1024 * 1024))),
@@ -46,7 +51,7 @@ export const ScientThreadQueueItem = Schema.Struct({
   runtimeMode: Schema.optional(RuntimeMode),
   interactionMode: Schema.optional(ProviderInteractionMode),
   text: Schema.String.check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_INPUT_CHARS)),
-  attachments: Schema.Array(UploadChatAttachment).check(
+  attachments: Schema.Array(Schema.Union([UploadChatAttachment, ChatAttachment])).check(
     Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS),
   ),
   createdAt: IsoDateTime,
@@ -82,7 +87,9 @@ export const ScientThreadQueueEnqueueRequest = Schema.Struct({
   runtimeMode: ScientThreadQueueItem.fields.runtimeMode,
   interactionMode: ScientThreadQueueItem.fields.interactionMode,
   text: ScientThreadQueueItem.fields.text,
-  attachments: ScientThreadQueueItem.fields.attachments,
+  attachments: Schema.Array(UploadChatAttachment).check(
+    Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS),
+  ),
 });
 export type ScientThreadQueueEnqueueRequest = typeof ScientThreadQueueEnqueueRequest.Type;
 
@@ -97,7 +104,9 @@ export const ScientThreadQueueUpdateRequest = Schema.Struct({
   runtimeMode: ScientThreadQueueItem.fields.runtimeMode,
   interactionMode: ScientThreadQueueItem.fields.interactionMode,
   text: ScientThreadQueueItem.fields.text,
-  attachments: ScientThreadQueueItem.fields.attachments,
+  attachments: Schema.Array(UploadChatAttachment).check(
+    Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS),
+  ),
 });
 export type ScientThreadQueueUpdateRequest = typeof ScientThreadQueueUpdateRequest.Type;
 
@@ -117,7 +126,8 @@ export type ScientThreadQueueReorderRequest = typeof ScientThreadQueueReorderReq
 
 export const ScientThreadQueueControlRequest = Schema.Struct({
   threadId: ThreadId,
-  action: Schema.Literals(["edit", "resume", "steer", "stash", "send"]),
+  action: Schema.Literals(["edit", "extract", "resume", "steer", "stash", "send"]),
+  expectedUpdatedAt: Schema.optional(IsoDateTime),
   queueItemId: Schema.optional(ScientThreadQueueItemId),
   editToken: Schema.optional(Schema.String),
 });

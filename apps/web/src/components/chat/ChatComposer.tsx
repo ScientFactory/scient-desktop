@@ -1365,7 +1365,7 @@ export interface ChatComposerHandle {
 // --------------------------------------------------------------------------
 
 export interface ChatComposerProps {
-  onStashQueueEdit?: () => Promise<void>;
+  onStashRecoveredDraft?: () => Promise<void>;
   composerDraftTarget: ScopedThreadRef | DraftId;
   environmentId: EnvironmentId;
   attachmentUploadsCapabilityKnown: boolean;
@@ -1545,7 +1545,7 @@ export interface ChatComposerProps {
 
 export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps) {
   const {
-    onStashQueueEdit,
+    onStashRecoveredDraft,
     composerDraftTarget,
     environmentId,
     attachmentUploadsCapabilityKnown,
@@ -4424,7 +4424,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (menuEntry.queueEditKey) {
         try {
           await restoreQueueEditStash(menuEntry, composerDraftTarget, environmentId);
-          takeStashEntry(menuEntry.id);
           setIsStashMenuOpen(false);
         } catch (cause) {
           toastManager.add({ type: "error", title: String(cause) });
@@ -4770,9 +4769,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       });
       return;
     }
-    if (onStashQueueEdit) {
+    if (onStashRecoveredDraft) {
       try {
-        await onStashQueueEdit();
+        await onStashRecoveredDraft();
       } catch (cause) {
         toastManager.add({ type: "error", title: String(cause) });
       }
@@ -4994,7 +4993,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       stashInFlightRef.current.delete(snapshotKey);
     }
   }, [
-    onStashQueueEdit,
+    onStashRecoveredDraft,
     clearComposerDraftPromptAndImages,
     clearComposerDraftTerminalContexts,
     setComposerDraftPrompt,
@@ -7271,7 +7270,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       // SCIENT-FORK:END
                     }
                     disabled={
-                      (onStashQueueEdit !== undefined && isSendBusy) ||
                       isConnecting ||
                       isComposerApprovalState ||
                       projectSelectionRequired ||
@@ -7378,7 +7376,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                               size="icon-sm"
                               onPointerDown={(event) => event.preventDefault()}
                               onClick={() => attachmentInputRef.current?.click()}
-                              disabled={onStashQueueEdit !== undefined && isSendBusy}
                               aria-label="Attach files"
                             />
                           }
@@ -7417,9 +7414,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           },
                         }
                       : {})}
-                    disabled={
-                      projectSelectionRequired || (onStashQueueEdit !== undefined && isSendBusy)
-                    }
+                    disabled={projectSelectionRequired}
                   />
                   {/* SCIENT-FORK: pass showSendWhileRunning so the queue
                       affordance appears beside stop on desktop too while a

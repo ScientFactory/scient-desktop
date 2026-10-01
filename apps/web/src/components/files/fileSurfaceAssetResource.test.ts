@@ -35,6 +35,32 @@ describe("fileSurfaceAssetResource", () => {
     ).toEqual({ _tag: "media-file", threadId, path: "/tmp/plot.png" });
   });
 
+  it("serves a host HTML page as a document, so the files beside it load", () => {
+    expect(
+      fileSurfaceAssetResource({
+        absolutePath: "/tmp/report/index.html",
+        workspaceRoot: "/repo",
+        relativePath: "/tmp/report/index.html",
+        threadId,
+        htmlDocument: true,
+      }),
+    ).toEqual({
+      _tag: "environment-file",
+      path: "/tmp/report/index.html",
+      access: "html-document",
+    });
+    // A workspace page already loads its siblings through its rooted locator.
+    expect(
+      fileSurfaceAssetResource({
+        absolutePath: "/repo/site/index.html",
+        workspaceRoot: "/repo",
+        relativePath: "site/index.html",
+        threadId,
+        htmlDocument: true,
+      })._tag,
+    ).toBe("workspace-file");
+  });
+
   it("keeps a workspace file rooted even when the joined path cannot round-trip the root", () => {
     // On POSIX this workspace folder's name ends in a backslash, which the
     // lexical join drops from the absolute path.

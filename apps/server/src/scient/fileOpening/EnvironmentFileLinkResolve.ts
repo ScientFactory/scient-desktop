@@ -15,6 +15,7 @@
  */
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import {
@@ -244,10 +245,17 @@ export function rankLinkCandidates(
   return best;
 }
 
+/** A link written from the home folder (`~/notes.md`), as a shell would read it. */
+function isHomeRelativeLink(linkPath: string): boolean {
+  return linkPath.startsWith("~/") || linkPath.startsWith("~\\");
+}
+
 export const resolveEnvironmentFileLink = Effect.fn("EnvironmentFileLinkResolve.resolve")(
   function* (
     input: EnvironmentFileLinkResolveInput,
     limits?: LinkCandidateSearchLimits,
+    /** The home folder `~/` stands for; tests supply their own. */
+    homeDirectory: string = NodeOS.homedir(),
   ): Effect.fn.Return<EnvironmentFileLinkResolution, EnvironmentFilePrepareError> {
     if (!NodePath.isAbsolute(input.workspaceRoot)) {
       return yield* new EnvironmentFilePrepareError({
@@ -258,8 +266,15 @@ export const resolveEnvironmentFileLink = Effect.fn("EnvironmentFileLinkResolve.
     // `..` applies to the path as written, as it does for the shell and the
     // path tools an agent built the link with.
     const workspaceRoot = NodePath.resolve(input.workspaceRoot);
-    const linkPath = NodePath.resolve(workspaceRoot, input.path);
-    const literalPath = EnvironmentFilePath.make(linkPath);
+    // The location the link names. `~/` means the home folder of the machine
+    // that owns the files, which only this side knows: a viewer on another
+    // device cannot expand it. A workspace entry really named `~` still wins,
+    // decided below, because whatever exists at the path as written is the link.
+    let linkPath = NodePath.resolve(workspaceRoot, input.path);
+    let literalPath = EnvironmentFilePath.make(linkPath);
+    const homePath = isHomeRelativeLink(input.path)
+      ? NodePath.join(homeDirectory, input.path.slice(2))
+      : null;
     const searchLimits = limits ?? DEFAULT_LIMITS;
     return yield* Effect.promise(async (): Promise<EnvironmentFileLinkResolution> => {
       const budget = startTimeBudget(searchLimits);
@@ -277,12 +292,19 @@ export const resolveEnvironmentFileLink = Effect.fn("EnvironmentFileLinkResolve.
       // link whose target is gone. Only absence starts a search; a denied,
       // failing or stalled location is opened as written and reports its
       // real reason.
-      const missing = await budget.within(
-        NodeFSP.lstat(linkPath).then(
-          () => false,
-          (error: unknown) => isMissing(error),
-        ),
-      );
+      const isAbsent = (location: string) =>
+        budget.within(
+          NodeFSP.lstat(location).then(
+            () => false,
+            (error: unknown) => isMissing(error),
+          ),
+        );
+      let missing = await isAbsent(linkPath);
+      if (missing === true && homePath !== null) {
+        linkPath = homePath;
+        literalPath = EnvironmentFilePath.make(homePath);
+        missing = await isAbsent(homePath);
+      }
       if (missing !== true) return { _tag: "literal", path: literalPath };
 
       // The search runs on the real root, so every directory can be checked

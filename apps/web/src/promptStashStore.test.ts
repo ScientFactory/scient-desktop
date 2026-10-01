@@ -135,6 +135,19 @@ describe("promptStashStore", () => {
     expect(usePromptStashStore.getState().takeEntry("citation-stash").entry).toBeNull();
   });
 
+  it("refreshes the same recovery entry without evicting an unrelated draft at capacity", () => {
+    const store = usePromptStashStore.getState();
+    for (let index = 0; index < MAX_STASH_ENTRIES; index += 1)
+      store.stashEntry(makeEntry({ id: `entry-${index}` }));
+    const result = store.stashEntry(makeEntry({ id: "entry-1", prompt: "late typing" }));
+    expect(result.evicted).toBeNull();
+    const entries = usePromptStashStore.getState().entries;
+    expect(entries.find((entry) => entry.id === "entry-0")).toBeDefined();
+    expect(entries.filter((entry) => entry.id === "entry-1").map((entry) => entry.prompt)).toEqual([
+      "late typing",
+    ]);
+  });
+
   it("evicts the oldest entry past the cap and returns it", () => {
     const store = usePromptStashStore.getState();
     for (let index = 0; index < MAX_STASH_ENTRIES; index += 1) {

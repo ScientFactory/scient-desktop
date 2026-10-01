@@ -1,3 +1,4 @@
+import { readQueue, writeQueue } from "../../scient/threadQueue/Ledger.ts";
 import {
   ApprovalRequestId,
   CheckpointRef,
@@ -1890,6 +1891,32 @@ it.layer(
       assert.isTrue(yield* exists(removePath));
       assert.isTrue(yield* exists(otherThreadPath));
 
+      const queuedAttachmentId = "thread-revert-files-00000000-0000-4000-8000-000000000008-txt";
+      const queuedPath = path.join(attachmentsDir, `${queuedAttachmentId}.txt`);
+      yield* fileSystem.writeFileString(queuedPath, "queued");
+      yield* writeQueue(threadId, {
+        ...(yield* readQueue(threadId)),
+        awaitingCompletion: true,
+        items: [
+          {
+            queueItemId: "qitem_retained",
+            threadId,
+            text: "waiting",
+            attachments: [
+              {
+                type: "file",
+                id: queuedAttachmentId,
+                name: "queued.txt",
+                mimeType: "text/plain",
+                sizeBytes: 6,
+              },
+            ],
+            state: "waiting",
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
+      });
       const revertedEvent = yield* eventStore.append({
         type: "thread.reverted",
         eventId: EventId.make("evt-revert-files-7"),
@@ -1975,6 +2002,7 @@ it.layer(
       assert.isTrue(yield* exists(keepFilePath));
       assert.isTrue(yield* exists(path.join(attachmentsDir, `${answerKeepId}.txt`)));
       assert.isFalse(yield* exists(path.join(attachmentsDir, `${answerRemoveId}.txt`)));
+      assert.isTrue(yield* exists(queuedPath));
       assert.isFalse(yield* exists(removePath));
       assert.isTrue(yield* exists(laterPath));
       assert.isTrue(yield* exists(otherThreadPath));
