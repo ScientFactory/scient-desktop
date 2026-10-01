@@ -84,6 +84,10 @@ const liveDroidSkillInventoryClient: DroidSkillInventoryClientFactory = async (i
   input.signal.addEventListener("abort", onAbort, { once: true });
   try {
     await transport.connect();
+    // The SDK rejects a failed write through its own promise and leaves the
+    // stream's error event unhandled: a Droid that exits before a request is
+    // written would end the server with an uncaught EPIPE.
+    transport.getManagedProcess()?.childProcess.stdin?.on("error", () => undefined);
     client = new DroidClient({ transport });
     // Loading the status probe's session lists the same skills without starting
     // another session (verified against Droid 0.228.0 and 0.229.0).
