@@ -13,7 +13,8 @@ Date: 2026-10-01. Status: alignment qualification receipt, not release authoriza
 - Range: 20 first-parent official commits, 81 files, `+4,360 / -459`.
 - Tag relationship: `v0.0.45-nightly.20260930.2493-22-g5cc99e1c23`.
 - Branch: `codex/t3-sync-5cc99e1c23-20261001`.
-- Upstream merge: the merge commit whose second parent is the exact official target.
+- Upstream merge: `b6444f75637c8587f3c14b2b6a3cfb11daf750d0`; the exact official target
+  `5cc99e1c23980d7995a13c47f969b47cb68ed1be` is its second parent.
 - Upstream push URL: `DISABLED`.
 
 ## Advancements and alignment work
@@ -120,6 +121,31 @@ passive preview probing, cloud and relay, analytics consent, service, signing, a
 release and publication workflows were audited. No migration, state root, or release
 authority changes. The only server behavior added by this alignment beyond upstream
 mechanics is the two capability gates described above.
+
+## Verification
+
+Recorded against merge commit `b6444f75637c8587f3c14b2b6a3cfb11daf750d0` on
+`codex/t3-sync-5cc99e1c23-20261001`, macOS arm64, Node 24.19.0, pnpm 11.10.0.
+
+| Check                                                                                     | Result                                                                                      |
+| ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `pnpm exec vp fmt --check`                                                                | pass                                                                                        |
+| `pnpm exec vp lint --report-unused-disable-directives`                                    | pass, 0 errors (warnings are pre-existing)                                                  |
+| `pnpm run typecheck`                                                                      | pass                                                                                        |
+| `pnpm run test`                                                                           | pass, all packages; server 9,071 passed / 114 skipped, web 9,633 passed, desktop 344 passed |
+| `pnpm run build`                                                                          | pass                                                                                        |
+| `pnpm run test:desktop-smoke`                                                             | pass                                                                                        |
+| `pnpm run brand:check`                                                                    | pass across 2,494 product-surface files                                                     |
+| `pnpm run upstream:provenance:check`                                                      | pass at `integrationBase 5cc99e1c23`                                                        |
+| `pnpm alignment:seams:check --base 3b3c0b882e --upstream-ref 5cc99e1c23 --snapshot index` | onboarding, skills, analysis, latex, and omp all passed                                     |
+
+One earlier server-suite run timed out on
+`includes CORS headers on remote websocket-ticket auth failures` at 120s. That test
+passes in isolation and passed again in the full gate, so it is load sensitivity in
+that existing test, not a change from this range.
+
+Not established here: visual and interaction acceptance in the desktop app, Windows
+and native mobile checks, and hosted CI on the pushed revision.
 
 ## Open items for the owner
 

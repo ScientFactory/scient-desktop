@@ -608,12 +608,34 @@ code, not a runtime or update dependency. Scient does not refresh from open PR
 heads. Only an official T3 `main` merge enters through the bounded upstream
 process. Immutable event decoders retain only the nullability required to
 replay a historical thread that was moved into a real project before the
-retirement; no current command can create or move a projectless thread.
+retirement; the only command that can create one is gated off, as recorded below.
 
 The exact #5822 snapshot and import merge are frozen as a historical exception
 in `upstream-state.json` with `followUpdates: false`. The dedicated provenance
 workflow rejects new non-official merge parents. Historical sync reports remain
 the provenance record; there is no longer a live Quick Chat seam inventory.
+
+T3 reintroduced this capability on its own `main` as `pingdotgg/t3code#13612`
+"start threads without a project", merged in `5cc99e1c23`. Upstream's own gate is
+only that the data directory is not inside a Git checkout, which is true for a
+normal install, so adopting it unchanged would have shipped a retired capability
+silently. Scient keeps the code, contracts, clients, and scratch folder rules,
+and holds the capability off through `SCIENT_DESKTOP_IDENTITY
+.projectlessThreadsEnabled` in `packages/shared/src/scientDesktopIdentity.ts`.
+The server then omits `ServerConfig.scratchWorkspaceRoot` and refuses
+`projects.ensureScratch`, and every client already gates its entry points on that
+field, so the palette, the draft project menu, the empty state, and the
+`chat.newWithoutProject` command offer nothing and create nothing. Turning it on is
+a deliberate follow-up with its own product decision.
+
+`pingdotgg/t3code#14527` "start a new project from just a name", merged in the same
+commit, is held the same way through `createProjectFromNameEnabled`. Scient already
+creates a project from any typed path through the palette's "Create & Add", and that
+path then runs Sciant project initialization (`PROJECT.md`, `AGENTS.md`,
+`.scient/project.json`). Upstream's path slugs the name into a `projects` folder
+under the data directory, writes its own README and icon, runs `git init`, and never
+calls that initializer, so enabling it would give users two different "new project"
+behaviors with Sciant-managed projects from only one of them.
 
 Scient's first-run Getting Started flow is isolated under
 `apps/web/src/scient/onboarding`. It reuses canonical provider, project, and
