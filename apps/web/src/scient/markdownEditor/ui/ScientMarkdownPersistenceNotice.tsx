@@ -8,6 +8,7 @@ import type { MarkdownPersistenceLease } from "../persistence/markdownPersistenc
 
 // The same small number of same-name files the plain viewer offers inline.
 const MAX_MISSING_FILE_CHOICES = 2;
+const NO_MISSING_FILE_CHOICES: ReadonlyArray<string> = [];
 
 /**
  * What to say when the open document could not be re-read from disk. The
@@ -44,7 +45,7 @@ export function ScientMarkdownPersistenceNotice({
   persistence,
   refreshFailure = null,
   hostOs = null,
-  missingFileChoices = [],
+  missingFileChoices = NO_MISSING_FILE_CHOICES,
   onOpenFile,
 }: {
   readonly persistence: MarkdownPersistenceLease;

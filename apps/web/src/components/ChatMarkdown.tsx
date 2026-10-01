@@ -247,6 +247,7 @@ import {
   chatFileLinkResolveInput,
   chatFileOpenPlan,
   claimLinkClick,
+  isHomeRelativeLink,
   settleWithin,
   type ChatFileOpenPlan,
 } from "../scient/fileOpening/chatFileLinkResolution";
@@ -2562,7 +2563,7 @@ function useChatMarkdownState({
         FILE_LINK_RESOLVE_WAIT_MS,
         null,
       );
-      return chatFileOpenPlan(resolution);
+      return chatFileOpenPlan(resolution, { path: linkPath, workspaceRoot: cwd });
     },
     [changedFiles, cwd, environmentId, resolveEnvironmentFileLink],
   );
@@ -2583,7 +2584,9 @@ function useChatMarkdownState({
           });
           return;
         }
-        useRightPanelStore.getState().openFile(threadRef, panelPath, line);
+        useRightPanelStore
+          .getState()
+          .openFile(threadRef, (plan.kind === "as-written" && plan.path) || panelPath, line);
       })();
     },
     [planFileLinkOpen, threadRef],
@@ -2675,9 +2678,14 @@ function useChatMarkdownState({
         ) !== null;
       // Media outside the workspace keeps the expanded preview; other host
       // files (a report in a temp dir) open read-only in the files panel.
+      // A `~/` link the client could not place is still a file on the machine
+      // that owns the files; the panel opens it where that machine says it is.
       const panelPath =
         fileLinkMeta.workspaceRelativePath ??
-        (!canPreviewMedia && isAbsolutePath(fileLinkMeta.filePath) ? fileLinkMeta.filePath : null);
+        (!canPreviewMedia &&
+        (isAbsolutePath(fileLinkMeta.filePath) || isHomeRelativeLink(fileLinkMeta.filePath))
+          ? fileLinkMeta.filePath
+          : null);
 
       return (
         <MarkdownFileLink

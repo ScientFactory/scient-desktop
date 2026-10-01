@@ -46,6 +46,16 @@ import {
   WikiLinkRecentPaths,
   wikiLinkRecentsStorageKey,
 } from "./wikiLinkPicker";
+import {
+  chatFileLinkResolveInput,
+  chatFileOpenPlan,
+  isHomeRelativeLink,
+  settleWithin,
+} from "~/scient/fileOpening/chatFileLinkResolution";
+import { environmentFileLinkResolution } from "~/scient/fileOpening/environmentFileState";
+
+// Longer than the environment's own search bound, so a slow search still answers.
+const FILE_LINK_RESOLVE_WAIT_MS = 3_000;
 
 const LINK_FEEDBACK_TIMEOUT_MS = 1_800;
 
@@ -73,6 +83,11 @@ export interface ScientMarkdownFileSurfaceProps {
   readonly persistence: MarkdownPersistenceLease;
   readonly resolvedTheme: "light" | "dark";
   readonly onOpenFile: (relativePath: string) => void;
+  /**
+   * Opens the one workspace file a link meant when nothing exists where the
+   * link points, noting on that tab where the link pointed.
+   */
+  readonly onOpenResolvedLink?: (relativePath: string, missingPath: string) => void;
   readonly onOpenFileSource?: (relativePath: string, line?: number) => void;
 }
 
@@ -83,6 +98,11 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
     reportDefect: false,
     reportFailure: false,
   });
+  const resolveFileLink = useAtomQueryRunner(environmentFileLinkResolution, {
+    reportFailure: false,
+    refresh: true,
+  });
+  const onOpenResolvedLink = props.onOpenResolvedLink;
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
     // New sources and explicit viewing/refresh requests renew expired display access.
@@ -254,12 +274,97 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
         onOpenFile(relativePath);
         return;
       }
+      if (!result.value.complete) {
+        showLinkFeedback(anchor, "Couldn't check this link.");
+        return;
+      }
+      // Nothing exists where the link points. Ask the environment what it
+      // meant, exactly as a chat link does: one answer opens and says so on
+      // its tab, several open the link as written so the panel offers them,
+      // and none leaves the reader here with a plain explanation.
+      const resolveInput = chatFileLinkResolveInput({
+        linkPath: relativePath,
+        workspaceRoot: props.cwd,
+        changedPaths: [],
+      });
+      const resolution =
+        resolveInput === null
+          ? null
+          : await settleWithin(
+              resolveFileLink({ environmentId: props.environmentId, input: resolveInput }).then(
+                (answer) => (answer._tag === "Success" ? answer.value : null),
+              ),
+              FILE_LINK_RESOLVE_WAIT_MS,
+              null,
+            );
+      if (!mountedRef.current || request !== linkOpenRequestRef.current || !anchor.isConnected) {
+        return;
+      }
+      if (resolution?._tag === "recovered" && onOpenResolvedLink) {
+        onOpenResolvedLink(resolution.path, resolution.missingPath);
+        return;
+      }
+      if (resolution?._tag === "tie") {
+        onOpenFile(relativePath);
+        return;
+      }
+      showLinkFeedback(anchor, "Linked file isn't available.");
+    },
+    [
+      beginLinkOpen,
+      listDirectory,
+      onOpenFile,
+      onOpenResolvedLink,
+      props.cwd,
+      props.environmentId,
+      resolveFileLink,
+      showLinkFeedback,
+    ],
+  );
+  const openHomeRelativeFile = useCallback(
+    async (target: string, anchor: HTMLElement) => {
+      const request = beginLinkOpen();
+      const resolveInput = chatFileLinkResolveInput({
+        linkPath: target,
+        workspaceRoot: props.cwd,
+        changedPaths: [],
+      });
+      const resolution =
+        resolveInput === null
+          ? null
+          : await settleWithin(
+              resolveFileLink({ environmentId: props.environmentId, input: resolveInput }).then(
+                (answer) => (answer._tag === "Success" ? answer.value : null),
+              ),
+              FILE_LINK_RESOLVE_WAIT_MS,
+              null,
+            );
+      if (!mountedRef.current || request !== linkOpenRequestRef.current || !anchor.isConnected) {
+        return;
+      }
+      const plan = chatFileOpenPlan(resolution, { path: target, workspaceRoot: props.cwd });
+      if (plan.kind === "resolved" && onOpenResolvedLink) {
+        onOpenResolvedLink(plan.path, plan.missingPath);
+        return;
+      }
+      if (plan.kind === "as-written" && plan.path) {
+        onOpenFile(plan.path);
+        return;
+      }
       showLinkFeedback(
         anchor,
-        result.value.complete ? "Linked file isn't available." : "Couldn't check this link.",
+        resolution === null ? "Couldn't check this link." : "Linked file isn't available.",
       );
     },
-    [beginLinkOpen, listDirectory, props.cwd, props.environmentId, onOpenFile, showLinkFeedback],
+    [
+      beginLinkOpen,
+      onOpenFile,
+      onOpenResolvedLink,
+      props.cwd,
+      props.environmentId,
+      resolveFileLink,
+      showLinkFeedback,
+    ],
   );
   const handleOpenLink = useCallback(
     (target: string, anchor: HTMLElement) => {
@@ -279,6 +384,11 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
       if (target.startsWith("#")) {
         beginLinkOpen();
         showLinkFeedback(anchor, "Linked section wasn't found.");
+        return;
+      }
+      if (isHomeRelativeLink(target)) {
+        // Only the machine that owns the files knows its home folder.
+        void openHomeRelativeFile(target, anchor);
         return;
       }
       const path = resolveMarkdownUrlPath(props.relativePath, target);
@@ -302,7 +412,15 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
       }
       void openWorkspaceFile(path.relativePath, anchor);
     },
-    [beginLinkOpen, onOpenFile, openWorkspaceFile, props.cwd, props.relativePath, showLinkFeedback],
+    [
+      beginLinkOpen,
+      onOpenFile,
+      openHomeRelativeFile,
+      openWorkspaceFile,
+      props.cwd,
+      props.relativePath,
+      showLinkFeedback,
+    ],
   );
   const handleOpenWikiLink = useCallback(
     (target: string, anchor: HTMLElement) => {

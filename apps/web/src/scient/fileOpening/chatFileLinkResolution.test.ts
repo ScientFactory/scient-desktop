@@ -61,6 +61,24 @@ describe("chatFileOpenPlan", () => {
     expect(chatFileOpenPlan(null)).toEqual({ kind: "as-written" });
   });
 
+  it("opens a home-relative link where the environment says its home folder is", () => {
+    const link = { path: "~/notes/today.md", workspaceRoot: "/srv/project" };
+    expect(
+      chatFileOpenPlan({ _tag: "literal", path: path("/home/ada/notes/today.md") }, link),
+    ).toEqual({ kind: "as-written", path: "/home/ada/notes/today.md" });
+    // Inside the workspace it stays a workspace file, so it stays editable.
+    expect(
+      chatFileOpenPlan({ _tag: "literal", path: path("/srv/project/notes/today.md") }, link),
+    ).toEqual({ kind: "as-written", path: "notes/today.md" });
+    // Any other link opens exactly as the client spelled it.
+    expect(
+      chatFileOpenPlan(
+        { _tag: "literal", path: path("/srv/project/a.md") },
+        { path: "a.md", workspaceRoot: "/srv/project" },
+      ),
+    ).toEqual({ kind: "as-written" });
+  });
+
   it("opens the one file a missing link meant, and remembers what was missing", () => {
     expect(
       chatFileOpenPlan({ _tag: "recovered", path: path("project/reviews/inside.md"), missingPath }),

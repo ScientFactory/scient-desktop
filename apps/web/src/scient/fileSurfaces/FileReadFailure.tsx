@@ -27,6 +27,8 @@ export function FileReadFailure(props: {
   /** The workspace could not be searched completely, so there may be other candidates. */
   readonly candidatesIncomplete?: boolean;
   readonly onOpenCandidate?: (path: string) => void;
+  /** Saves a copy to the viewing device, for a file that exists but cannot be previewed. */
+  readonly onSaveCopy?: () => void;
   /** Opens the absolute path read-only, for servers that refused it as outside the project. */
   readonly onOpenReadOnly?: () => void;
 }) {
@@ -86,6 +88,11 @@ export function FileReadFailure(props: {
             </Button>
           ))
         : null}
+      {props.failure === "binary_file" && props.onSaveCopy ? (
+        <Button type="button" size="xs" variant="outline" onClick={props.onSaveCopy}>
+          Save a copy
+        </Button>
+      ) : null}
       {isOutsideProjectFailure(props.failure) && props.onOpenReadOnly ? (
         <Button type="button" size="xs" variant="outline" onClick={props.onOpenReadOnly}>
           Open read-only

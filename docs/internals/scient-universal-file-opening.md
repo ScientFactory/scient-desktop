@@ -3,11 +3,13 @@
 ## Product contract
 
 A primary click on a file link in chat opens the file inside Scient first.
-Workspace files retain the inherited editable Files panel. An absolute file
-outside that workspace receives a durable Scient right-panel surface, except
-HTML, which opens in the existing integrated Browser because Browser already
-owns navigation and executable page state. The context menu retains explicit
-editor and Browser actions.
+Workspace files retain the inherited editable Files panel. A file outside that
+workspace opens in the same Files panel, read-only, by its absolute path,
+except HTML, which opens in the existing integrated Browser because Browser
+already owns navigation and executable page state. The context menu retains
+explicit editor and Browser actions. The separate Scient right-panel file
+surface still exists for tabs saved before host files moved into the Files
+panel; nothing new opens in it.
 
 The result is universal routing, not a claim that every binary format already
 has a bespoke renderer. Every valid regular file has a useful in-app outcome:
@@ -25,10 +27,31 @@ directory, unreadable, and inspection failures remain typed RPC errors.
 
 This makes local and remote behavior honest:
 
-- in the primary environment, a path identifies a desktop file;
+- in the primary environment, a path identifies a desktop file; and
 - in a remote environment, the same-looking path identifies a file on that
-  remote host; and
-- the client never reinterprets a remote path on the desktop.
+  remote host.
+
+One known exception remains: when a remote environment reports an absolute
+image, video, or audio path as unavailable, the web client retries that same
+path on the primary environment (`packages/client-runtime/src/state/assets.ts`).
+That can show a file from the viewer's own machine in place of the remote one.
+It is a correctness limit to remove, not a behavior to rely on.
+
+## Paired and remote viewers
+
+Owner decision (2026-10-01): a paired or remote device may open as much as the
+host can read. There is no locality-based read restriction, and none should be
+added. What bounds a viewer is the same for every client: the session scope
+(`orchestration:read` covers reading, watching, preparing, link repair, and
+asset URLs), the signed asset capability, the formats a client can render, and
+the HTML document-root rules below.
+
+Because the host's own applications are out of reach for a viewer on another
+machine, anything Scient cannot render can be taken to the viewing device:
+"Save a copy" requests the `exact` environment-file capability for that one
+file and hands it to the native Save dialog on desktop or a browser download.
+Actions that happen on the host's screen (open in an editor, reveal in the
+file manager) remain host actions.
 
 Classification prefers content signatures for PDF and common images, then
 uses decoded text plus the extension. UTF-8 and BOM-marked UTF-16 are supported.
@@ -82,7 +105,38 @@ path, which also repairs tabs persisted before this rule existed. The only
 reasons a file cannot be shown are that it does not exist, that the operating
 system denies the read, or that it is not a regular file; each is reported as
 itself. Read failures carry the operating system's reason (`not_found`,
-`permission_denied`) as an optional refinement of `operation_failed`.
+`permission_denied`) as an optional refinement of `operation_failed`, and the
+system's own error code (`osErrorCode`) beside it. The code is an optional
+field rather than a wider reason union so that older clients still decode the
+error. A client says only what the code states: `EACCES` is a permission on the
+file or its folders; `EPERM` is the system declining, which on macOS is usually
+but not provably its privacy protection, and is a setting on the host.
+
+### Paths are identifiers
+
+A file path names one exact file, whitespace included: `notes.md ` and
+`notes.md` are different files. Project file contracts therefore carry paths
+as given (`FilePathString`, `DirectoryPathString`) through listing, search
+results, read, watch, save, rename, their error contexts, and workspace asset
+locators, and the server resolves them as given. A blank path is rejected; the
+empty string still names the root directory. Workspace roots, filesystem
+discovery, favicon paths, and attachment names keep their existing trimming.
+Text a person types for a new name is trimmed where it is typed. A peer that
+predates this still trims, so exact names are guaranteed only when both sides
+are current.
+
+### Known limit: containment is checked, then paths are used
+
+Saves, creates, and renames validate that their target is inside the workspace
+and then operate on path strings; reads decide whether a file is editable from
+a resolved path before opening it; folder creation and rename cleanup are also
+by path. A process able to replace a workspace folder with a link at the right
+instant can therefore redirect them outside the workspace. Node exposes no
+directory-relative file operations, and a design review showed the gap cannot
+be closed with in-process path calls (a staging folder is itself a path the
+same process can move). Closing it needs operations relative to a held
+directory, in a helper process or native code, and is tracked as its own
+change.
 
 ## Link repair
 
@@ -106,9 +160,20 @@ environment that owns the files:
    link is the match. Several at that length are a tie, unless exactly one is
    a file the link's own turn changed.
 4. The result is `literal`, `recovered`, `tie`, `none`, or `incomplete`. A
-   click opens a `recovered` file and says which file the link resolved to;
+   click opens a `recovered` file and its tab says where the link pointed;
    every other outcome opens the link as written, and the files panel offers
    the candidates as choices. An incomplete search never yields a match.
+
+A link written from the home folder (`~/notes.md`) means the home folder of
+the machine that owns the files, which a viewer on another device cannot know.
+The resolver expands it there, after checking that the workspace has no entry
+really named `~`, and the client opens the location it reports.
+
+Chat links and links inside the rich Markdown editor both go through this
+resolver. The note that a tab shows a different file than its link named lives
+on the tab (`linkResolution` on the file surface): it is transient, never
+persisted, cleared by a later ordinary open of the same file, and worded in the
+past tense because the location was only missing when it was checked.
 
 Link repair is an announced best guess about what a link's author meant. It is
 not file identity: it proves nothing about a file that moved, and the files
@@ -146,6 +211,10 @@ identity.
   The document capability lasts 24 hours because silently renewing its URL
   would reload the tab and discard interactive state; reopening the file issues
   a fresh capability. Exact file capabilities keep the one-hour renewable TTL.
+
+The Files panel uses the same `html-document` mode when it shows a host HTML
+page in its own frame, so a viewer without the integrated Browser (a browser
+tab, a remote desktop) sees the page with its stylesheets, scripts, and images.
 
 The HTML mode deliberately preserves JavaScript and normal Browser networking;
 it is not the old inert-document renderer. Each request is canonicalized again,

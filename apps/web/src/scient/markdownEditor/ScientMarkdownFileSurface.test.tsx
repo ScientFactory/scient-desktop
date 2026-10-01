@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
   copyText: vi.fn(),
   listDirectory: vi.fn(),
   openExternal: vi.fn(),
+  resolveFileLink: vi.fn(),
+  resolveFileLinkQuery: Symbol("resolve-file-link"),
   setRecentWikiLinks: vi.fn(),
   toastAdd: vi.fn(),
   workspaceProps: null as Record<string, unknown> | null,
@@ -59,7 +61,11 @@ vi.mock("~/state/use-atom-command", () => ({
     command === mocks.listDirectoryCommand ? mocks.listDirectory : mocks.writeFile,
 }));
 vi.mock("~/state/use-atom-query-runner", () => ({
-  useAtomQueryRunner: () => mocks.createAssetUrl,
+  useAtomQueryRunner: (query: unknown) =>
+    query === mocks.resolveFileLinkQuery ? mocks.resolveFileLink : mocks.createAssetUrl,
+}));
+vi.mock("~/scient/fileOpening/environmentFileState", () => ({
+  environmentFileLinkResolution: mocks.resolveFileLinkQuery,
 }));
 vi.mock("./ScientMarkdownWorkspaceSurface", () => ({
   ScientMarkdownWorkspaceSurface: (props: Record<string, unknown>) => {
@@ -122,6 +128,10 @@ describe("ScientMarkdownFileSurface", () => {
     mocks.createAssetUrl.mockReset();
     mocks.copyText.mockReset().mockResolvedValue(true);
     mocks.listDirectory.mockReset();
+    mocks.resolveFileLink.mockReset().mockResolvedValue({
+      _tag: "Success",
+      value: { _tag: "none", missingPath: "/workspace/missing" },
+    });
     mocks.openExternal.mockReset().mockResolvedValue(undefined);
     mocks.setRecentWikiLinks.mockReset();
     mocks.toastAdd.mockReset();
@@ -166,6 +176,7 @@ describe("ScientMarkdownFileSurface", () => {
       release: () => {},
     };
     const onOpenFile = vi.fn();
+    const onOpenResolvedLink = vi.fn();
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
@@ -181,11 +192,12 @@ describe("ScientMarkdownFileSurface", () => {
             persistence={persistence}
             resolvedTheme="light"
             onOpenFile={onOpenFile}
+            onOpenResolvedLink={onOpenResolvedLink}
           />
         </StrictMode>,
       ),
     );
-    return { host, onOpenFile, root };
+    return { host, onOpenFile, onOpenResolvedLink, root };
   }
 
   function attachedAnchor(): HTMLAnchorElement {
@@ -312,6 +324,83 @@ describe("ScientMarkdownFileSurface", () => {
     );
     expect(onOpenFile).not.toHaveBeenCalled();
     expect(mocks.listDirectory).toHaveBeenCalledOnce();
+  });
+
+  it("repairs a link to a missing location the way a chat link is repaired", async () => {
+    const { onOpenFile, onOpenResolvedLink } = await mount();
+    const anchor = attachedAnchor();
+    mocks.listDirectory.mockResolvedValue(success());
+    const answer = (value: unknown) => ({ _tag: "Success" as const, value });
+
+    // One workspace file is what the link meant: it opens, and its tab is told
+    // where the link pointed.
+    mocks.resolveFileLink.mockResolvedValueOnce(
+      answer({
+        _tag: "recovered",
+        path: "archive/guide.md",
+        missingPath: "/workspace/notes/guide.md",
+      }),
+    );
+    openLink("guide.md", anchor);
+    await vi.waitFor(() =>
+      expect(onOpenResolvedLink).toHaveBeenCalledExactlyOnceWith(
+        "archive/guide.md",
+        "/workspace/notes/guide.md",
+      ),
+    );
+    expect(mocks.resolveFileLink).toHaveBeenLastCalledWith({
+      environmentId,
+      input: { workspaceRoot: "/workspace", path: "notes/guide.md", changedPaths: [] },
+    });
+    expect(onOpenFile).not.toHaveBeenCalled();
+
+    // Several candidates: the link opens as written and the panel offers them.
+    mocks.resolveFileLink.mockResolvedValueOnce(
+      answer({
+        _tag: "tie",
+        paths: ["a/guide.md", "b/guide.md"],
+        missingPath: "/workspace/notes/guide.md",
+      }),
+    );
+    openLink("guide.md", anchor);
+    await vi.waitFor(() => expect(onOpenFile).toHaveBeenCalledExactlyOnceWith("notes/guide.md"));
+
+    // No candidate, or an environment that could not answer: the reader stays here.
+    mocks.resolveFileLink.mockResolvedValueOnce(
+      answer({ _tag: "none", missingPath: "/workspace/notes/guide.md" }),
+    );
+    openLink("guide.md", anchor);
+    await vi.waitFor(() =>
+      expect(mocks.anchoredAdd).toHaveBeenLastCalledWith(
+        expect.objectContaining({ title: "Linked file isn't available." }),
+      ),
+    );
+    mocks.resolveFileLink.mockResolvedValueOnce({ _tag: "Failure" });
+    openLink("guide.md", anchor);
+    await vi.waitFor(() => expect(mocks.anchoredAdd).toHaveBeenCalledTimes(2));
+    expect(onOpenResolvedLink).toHaveBeenCalledOnce();
+    expect(onOpenFile).toHaveBeenCalledOnce();
+  });
+
+  it("opens a home-relative link where the environment says its home folder is", async () => {
+    const { onOpenFile } = await mount();
+    const anchor = attachedAnchor();
+    mocks.resolveFileLink.mockResolvedValueOnce({
+      _tag: "Success",
+      value: { _tag: "literal", path: "/home/ada/notes/today.md" },
+    });
+
+    openLink("~/notes/today.md", anchor);
+
+    await vi.waitFor(() =>
+      expect(onOpenFile).toHaveBeenCalledExactlyOnceWith("/home/ada/notes/today.md"),
+    );
+    expect(mocks.resolveFileLink).toHaveBeenCalledExactlyOnceWith({
+      environmentId,
+      input: { workspaceRoot: "/workspace", path: "~/notes/today.md", changedPaths: [] },
+    });
+    // The client never guessed: no directory was listed under the document.
+    expect(mocks.listDirectory).not.toHaveBeenCalled();
   });
 
   it("opens a link that leaves the project as the host file it names", async () => {

@@ -3,6 +3,7 @@ import {
   EnvironmentFilePath,
   type EnvironmentFileLinkResolution,
 } from "@t3tools/contracts";
+import { workspaceRelativeFilePath } from "@t3tools/client-runtime/markdown-links";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
@@ -41,28 +42,47 @@ export function chatFileLinkResolveInput(input: {
 }
 
 /**
+ * A link written from the home folder (`~/notes.md`). Only the environment
+ * that owns the files knows where its home folder is, so the client never
+ * expands one itself when it can ask.
+ */
+export function isHomeRelativeLink(path: string): boolean {
+  return path.startsWith("~/") || path.startsWith("~\\");
+}
+
+/**
  * What a click on a chat link does with the environment's answer.
  *
  * - `as-written`: the link's own location is the file (it exists, or fails for
  *   a real reason that opening it will show), or the environment could not be
- *   asked.
+ *   asked. `path` is set only for a home-relative link, whose location the
+ *   environment had to spell out: open that instead of the `~/` spelling.
  * - `resolved`: nothing exists at the link's location and one workspace file
  *   is what it meant; open that file and say so.
  * - `missing`: nothing exists there and there is no single answer; open the
  *   link as written so the file panel explains and offers the choices.
  */
 export type ChatFileOpenPlan =
-  | { readonly kind: "as-written" }
+  | { readonly kind: "as-written"; readonly path?: string }
   | { readonly kind: "resolved"; readonly path: string; readonly missingPath: string }
   | { readonly kind: "missing" };
 
 export function chatFileOpenPlan(
   resolution: EnvironmentFileLinkResolution | null,
+  /** The link as the client asked about it, to tell a home-relative one. */
+  link?: { readonly path: string; readonly workspaceRoot: string | undefined },
 ): ChatFileOpenPlan {
   switch (resolution?._tag) {
     case undefined:
-    case "literal":
       return { kind: "as-written" };
+    case "literal":
+      return link !== undefined && isHomeRelativeLink(link.path)
+        ? {
+            kind: "as-written",
+            // A file inside the workspace stays a workspace file, so it stays editable.
+            path: workspaceRelativeFilePath(resolution.path, link.workspaceRoot) ?? resolution.path,
+          }
+        : { kind: "as-written" };
     case "recovered":
       return { kind: "resolved", path: resolution.path, missingPath: resolution.missingPath };
     case "tie":

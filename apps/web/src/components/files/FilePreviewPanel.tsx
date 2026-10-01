@@ -31,6 +31,7 @@ import {
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 import {
   Code2,
+  Download,
   Eye,
   FolderTree,
   Globe,
@@ -121,6 +122,11 @@ import {
 } from "~/scient/fileSurfaces/fileFailureCopy";
 import { FileLinkResolutionNotice } from "~/scient/fileSurfaces/FileLinkResolutionNotice";
 import { FileReadFailure } from "~/scient/fileSurfaces/FileReadFailure";
+import { shouldOpenInBrowserByDefault } from "~/scient/fileOpening/fileOpeningPolicy";
+import {
+  fileCopyNotice,
+  saveEnvironmentFileCopy,
+} from "~/scient/fileOpening/saveEnvironmentFileCopy";
 import { useMissingFileChoices } from "~/scient/fileSurfaces/useMissingFileChoices";
 
 import { AttachmentFilePreview } from "./AttachmentFilePreview";
@@ -393,8 +399,8 @@ function WorkspaceImagePreview(props: {
 /**
  * Renders an HTML or PDF file in place from its signed asset URL. HTML runs in
  * a sandboxed frame with an opaque origin, so a page cannot reach the app's
- * session or storage. A file inside the workspace may load sibling assets; a
- * host file outside it is served on its own.
+ * session or storage. A page may load the files beside it, inside the
+ * workspace or out of it; a PDF outside the workspace is served on its own.
  */
 function WorkspaceBrowserPreview(props: {
   readonly environmentId: EnvironmentId;
@@ -412,6 +418,7 @@ function WorkspaceBrowserPreview(props: {
         workspaceRoot: props.workspaceRoot,
         relativePath: props.relativePath,
         threadId: props.threadRef.threadId,
+        htmlDocument: !isPdfPreviewFile(props.absolutePath),
       }),
     [props.absolutePath, props.relativePath, props.threadRef.threadId, props.workspaceRoot],
   );
@@ -1716,6 +1723,33 @@ export default function FilePreviewPanel({
     reason: file.failureReason,
     isHostFile,
   });
+  // A copy on the device in hand: the one way to take a file Scient cannot
+  // preview to another app when the viewer is not on the machine that holds it.
+  const savingCopyRef = useRef(false);
+  const handleSaveCopy = useCallback(() => {
+    if (!absolutePath || !environmentHttpBaseUrl || savingCopyRef.current) return;
+    savingCopyRef.current = true;
+    void saveEnvironmentFileCopy({
+      environmentId,
+      path: absolutePath,
+      httpBaseUrl: environmentHttpBaseUrl,
+      createAssetUrl,
+    })
+      .then(
+        (result) => fileCopyNotice(result),
+        // The desktop shell or browser refused before any result existed.
+        () => fileCopyNotice({ _tag: "failed", reason: "write-failed" }),
+      )
+      .then((notice) => {
+        if (notice) toastManager.add(stackedThreadToast(notice));
+      })
+      .finally(() => {
+        savingCopyRef.current = false;
+      });
+  }, [absolutePath, createAssetUrl, environmentHttpBaseUrl, environmentId]);
+  const canSaveCopy =
+    attachment === undefined && absolutePath !== null && !isDirectory && !!environmentHttpBaseUrl;
+
   const readFailure = (
     <FileReadFailure
       failure={file.failure}
@@ -1729,6 +1763,7 @@ export default function FilePreviewPanel({
       candidates={missingFile.paths}
       candidatesIncomplete={missingFile.incomplete}
       onOpenCandidate={onOpenFile}
+      {...(canSaveCopy ? { onSaveCopy: handleSaveCopy } : {})}
     />
   );
   const pdfSource = useMemo(
@@ -1929,6 +1964,11 @@ export default function FilePreviewPanel({
           {canOpenInBrowser ? (
             <FileSurfaceAction label="Open file in preview browser" onPress={handleOpenInBrowser}>
               <Globe className="size-3.5" />
+            </FileSurfaceAction>
+          ) : null}
+          {canSaveCopy ? (
+            <FileSurfaceAction label="Save a copy to this device" onPress={handleSaveCopy}>
+              <Download className="size-3.5" />
             </FileSurfaceAction>
           ) : null}
           {attachment === undefined && previewPath !== null ? (
@@ -2259,6 +2299,12 @@ export default function FilePreviewPanel({
                   citationRevealId={revealRequestId}
                   resolvedTheme={resolvedTheme}
                   onOpenFile={onOpenFile}
+                  onOpenResolvedLink={(path, missingPath) =>
+                    // A page opens in the browser, which has no tab to carry the note.
+                    shouldOpenInBrowserByDefault(path)
+                      ? onOpenFile(path)
+                      : onOpenFileSource(path, undefined, { linkResolution: { missingPath } })
+                  }
                   onOpenFileSource={(path, line) =>
                     runAfterPendingSave([relativePath], () => onOpenFileSource(path, line))
                   }

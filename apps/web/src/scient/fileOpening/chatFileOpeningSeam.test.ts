@@ -37,10 +37,10 @@ describe("universal chat-file opening seam", () => {
       chatMarkdownSource.match(/linkResolution: \{ missingPath: plan\.missingPath \}/gu),
     ).toHaveLength(2);
     expect(chatMarkdownSource).toContain(
-      "useRightPanelStore.getState().openFile(threadRef, panelPath, line);",
+      '.openFile(threadRef, (plan.kind === "as-written" && plan.path) || panelPath, line);',
     );
     expect(chatMarkdownSource).toContain(
-      "!canPreviewMedia && isAbsolutePath(fileLinkMeta.filePath)",
+      "(isAbsolutePath(fileLinkMeta.filePath) || isHomeRelativeLink(fileLinkMeta.filePath))",
     );
     // Outside media links resolve like other links, then open in the media viewer.
     expect(chatMarkdownSource).toContain("openMarkdownMediaLink(mediaPath, fileLinkMeta.filePath)");
