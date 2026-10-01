@@ -544,6 +544,7 @@ import {
   resolveComposerProviderSelection,
   getAntigravitySendBlockReason,
   resolveDraftHeroState,
+  forkFailureNeedsNotification,
   resolveForkTargetAfterAttempt,
   resolveProjectThreadTerminalTarget,
   findRecordedWorktreeSetup,
@@ -2119,7 +2120,9 @@ function ChatViewContent(props: ChatViewProps) {
       }
     | null
   >(null);
-  const dismissedForkTargetRef = useRef<typeof forkCommandTarget>(null);
+  // What the fork dialog shows now, for a fork that finishes after this render.
+  const forkCommandTargetRef = useRef(forkCommandTarget);
+  forkCommandTargetRef.current = forkCommandTarget;
   const forkDialogOpen =
     forkCommandTarget !== null &&
     activeThread !== null &&
@@ -11595,10 +11598,8 @@ function ChatViewContent(props: ChatViewProps) {
             : forkPreview?.options?.reason
         }
         onOpenChange={(open) => {
-          if (open) return;
           // Closing while the fork is being made dismisses the dialog only.
-          if (isForkingThread) dismissedForkTargetRef.current = forkCommandTarget;
-          setForkCommandTarget(null);
+          if (!open) setForkCommandTarget(null);
         }}
         onConfirm={(confirmation, beforeNavigate) => {
           const target = forkCommandTarget;
@@ -11626,8 +11627,8 @@ function ChatViewContent(props: ChatViewProps) {
             setForkCommandTarget((current) =>
               resolveForkTargetAfterAttempt(current, target, outcome),
             );
-            // Its dialog is closed, so nothing else would say the fork failed.
-            if (outcome === "not-accepted" && dismissedForkTargetRef.current === target) {
+            // Its own dialog is no longer showing, so nothing else would say the fork failed.
+            if (forkFailureNeedsNotification(forkCommandTargetRef.current, target, outcome)) {
               toastManager.add({
                 type: "error",
                 title: "The fork did not finish",
