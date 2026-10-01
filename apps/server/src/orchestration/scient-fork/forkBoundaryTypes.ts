@@ -15,8 +15,9 @@ export interface ResolvedForkBoundaries {
   /** The retained completed boundary at or immediately before the fork point. */
   readonly selectedBoundary: OrchestrationForkBoundary;
   /**
-   * Turns of the origin that hold history it inherited as a fork or an import.
-   * One that is not among the boundaries ended without an answer.
+   * Turns of the origin that hold history it inherited as a fork or an import,
+   * in history order. One that is not among the boundaries ended without an
+   * answer.
    */
   readonly inheritedTurnIds?: ReadonlySet<string>;
   /** Running-turn forks: which turn each user request started (projection_turns). */

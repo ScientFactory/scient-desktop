@@ -70,6 +70,7 @@ function decodeTurnIds(json: string | null): ReadonlyArray<string> {
 /**
  * Every turn of a thread that holds inherited history: a fork's baseline and
  * inherited turns, or an import's imported turns. Revert never removes them.
+ * The set iterates in history order; a baseline no message belongs to is last.
  */
 export const readInheritedTurnIds = Effect.fn("readInheritedTurnIds")(function* (
   sql: SqlClient.SqlClient,
@@ -91,8 +92,8 @@ export const readInheritedTurnIds = Effect.fn("readInheritedTurnIds")(function* 
   `;
   return new Set<string>(
     rows.flatMap((row) => [
-      ...(row.baselineTurnId === null ? [] : [row.baselineTurnId]),
       ...decodeTurnIds(row.inheritedTurnIdsJson),
+      ...(row.baselineTurnId === null ? [] : [row.baselineTurnId]),
     ]),
   );
 });

@@ -2366,4 +2366,67 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
       expect(activitiesIn(earlier)).toEqual([]);
     }),
   );
+
+  it.effect("orders inherited unanswered turns by their recorded order, not by position", () =>
+    Effect.gen(function* () {
+      const first = TurnId.make("inherited-first");
+      const carried = TurnId.make("inherited-unanswered");
+      const second = TurnId.make("inherited-second");
+      // Copies share timestamps and get random ids, so the unanswered request can
+      // sort on either side of an answer. Here it sits before the first answer
+      // although its turn follows that one.
+      const inherited = (id: string, role: "user" | "assistant", text: string, turnId: TurnId) =>
+        message({ id, role, text, turnId, createdAt: "2026-01-01T00:00:01.000Z" });
+      const reforkOrigin = makeOriginThread({
+        messages: [
+          inherited("first-user", "user", "first prompt", first),
+          inherited("carried-user", "user", "lost prompt", carried),
+          inherited("first-assistant", "assistant", "first answer", first),
+          inherited("second-user", "user", "second prompt", second),
+          inherited("second-assistant", "assistant", "second answer", second),
+        ],
+        activities: [{ ...unansweredActivity, turnId: carried }],
+        checkpoints: [],
+      });
+      const copied = (
+        turnId: TurnId,
+        userMessageId: string,
+        assistantMessageId: string,
+      ): OrchestrationForkBoundary => ({
+        turnId,
+        conversationTurnCount: 0,
+        userMessageId: MessageId.make(userMessageId),
+        assistantMessageId: MessageId.make(assistantMessageId),
+        completedAt: NOW,
+        checkpointTurnCount: null,
+        checkpointStatus: null,
+      });
+      const resolvedBoundaries = [
+        boundaries[0]!,
+        copied(first, "first-user", "first-assistant"),
+        copied(second, "second-user", "second-assistant"),
+      ];
+      const fork = (sourceAssistantMessageId: MessageId) =>
+        forkThreadAuthoritative({
+          command: forkCommand({ sourceAssistantMessageId }),
+          readModel: makeReadModel({ origin: reforkOrigin }),
+          resolvedBoundaries: {
+            ...resolveForkBoundariesFromList({
+              originThreadId: ORIGIN,
+              sourceAssistantMessageId,
+              boundaries: resolvedBoundaries,
+            })!,
+            inheritedTurnIds: new Set([first, carried, second]),
+          },
+        });
+
+      const atFirst = yield* fork(MessageId.make("first-assistant"));
+      expect(sentIn(atFirst).map((entry) => entry.text)).toEqual(["first prompt", "first answer"]);
+      expect(activitiesIn(atFirst)).toEqual([]);
+
+      const atSecond = yield* fork(MessageId.make("second-assistant"));
+      expect(sentIn(atSecond).map((entry) => entry.text)).toContain("lost prompt");
+      expect(activitiesIn(atSecond)).toHaveLength(1);
+    }),
+  );
 });

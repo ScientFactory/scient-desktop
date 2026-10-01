@@ -183,7 +183,10 @@ the baseline stays the last turn that has an answer, while a new worktree still
 starts from the checkpoint of the turn at the fork point. The copied-boundary
 manifest lists answered turns only, so in a fork such a turn is an inherited
 turn the manifest does not name; forking the fork carries it again by that
-rule, which also covers unanswered turns of imported conversations. An
+rule, which also covers unanswered turns of imported conversations. Such a
+turn has no boundary to order it by, so its place in the recorded inherited
+turn list decides: it is carried when it comes before the fork point's turn,
+or when the fork point is a turn the conversation produced itself. An
 answer left streaming in such a turn is not carried. A request that an older
 conversation never bound to its turn cannot be found, so that turn is left out.
 
