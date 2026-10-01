@@ -88,7 +88,7 @@ official `main` only after its untouched baseline passed. That historical
 revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
-The current alignment is [Scient PR #420](https://github.com/ScientFactory/scient-desktop/pull/420),
+The preceding alignment is [Scient PR #420](https://github.com/ScientFactory/scient-desktop/pull/420),
 recorded in [the 2026-09-30 receipt](docs/internals/2026-09-30-upstream-sync-35be904f2f.md)
 and `upstream-state.json`. It integrates all 20 official commits after
 `d2c9281b8112dc3b2991642c4bdb985e4b08b9bb` through
@@ -112,6 +112,20 @@ existing managed CLI lifecycle remain active. The receipt records composition,
 backend and client review, complete passing qualification, and the isolated native
 visual review. No protected release, cloud, telemetry, or publication boundary is
 activated.
+
+The current alignment is [Scient PR #428](https://github.com/ScientFactory/scient-desktop/pull/428),
+recorded in [the 2026-10-01 receipt](docs/internals/2026-10-01-upstream-sync-5cc99e1c23.md)
+and `upstream-state.json`. It integrates the next 20 first-parent official commits
+through `5cc99e1c23980d7995a13c47f969b47cb68ed1be` onto owned base
+`3b3c0b882e98f8df73544d68849f8101d0aecc18`. Upstream merge
+`b6444f75637c8587f3c14b2b6a3cfb11daf750d0` retains that exact target as its second
+parent. Owned-main catch-up merge `8934fe7cd8e568b09d839d8c9bb3ea0b5c84dcc9`
+incorporates `22a3bcf6d9aec5489a9c0c00eac544b9ccfb2ed3` without advancing the
+official target. The range adds scratch conversations, session restart, Claude
+compact/subagent fixes, accessible suggestions, theme and hotkey fixes, and
+agent-driven browser downloads. The receipt separates original qualification,
+later static checks, and the owner's visual/manual acceptance. Create-from-name
+and the deferred publication changes remain off.
 
 ## Receiving T3 updates
 
@@ -636,13 +650,20 @@ parent, nested descendants, and symlink escapes, while retaining ordinary Git
 worktree lineage and existing authority-generation/publication checks.
 
 The server still withholds `ServerConfig.scratchWorkspaceRoot` and
-`projects.ensureScratch` when its data directory is inside a Git checkout or VCS
-detection fails. Clients gate on the advertised root, including remote/mobile
+`projects.ensureScratch` when the selected scratch root's parent is inside a Git
+checkout or VCS detection fails. Clients gate on the advertised root, including remote/mobile
 entry points. The dev runner selects persistent scratch storage outside the
 checkout without moving its existing profile; that selected parent must also be
 outside Git.
 Thread deletion retains scratch files. Moving a started scratch conversation and
-its files into another project remains a follow-up.
+its files into another project remains unsupported. The owner approved both as
+temporary limits, with two planned follow-ups: an explicit option to delete the
+conversation's scratch files when deleting it, and moving a started conversation
+with its files into an existing or newly created project. Neither capability is
+implemented by this alignment. Cleanup must preserve files shared by another
+conversation; relocation must preserve conversation history, attachments,
+workspace authority, and provider continuation or explicitly restart the session
+when continuation cannot survive the move.
 
 `pingdotgg/t3code#14527` "start a new project from just a name", merged in the same
 commit, remains off through `createProjectFromNameEnabled`. Scient already

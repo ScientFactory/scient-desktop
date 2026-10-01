@@ -1,6 +1,6 @@
 # Upstream alignment through 5cc99e1c23
 
-Scient pull request: [#428](https://github.com/ScientFactory/scient-desktop/pull/428), opened as a draft and not queued for merge.
+Scient pull request: [#428](https://github.com/ScientFactory/scient-desktop/pull/428).
 
 Date: 2026-10-01. Status: alignment qualification receipt, not release authorization.
 
@@ -176,7 +176,7 @@ configuration dependency. PR #428 remains draft for further qualification/review
 The worktree-local dev profile is subject to the retained Git data-directory guard;
 renderer hot reload alone does not refresh the bundled backend.
 
-## Open items for the owner
+## Deferred work outside this alignment
 
 1. **Create a project from a name (#14527).** Decide between upstream's slugged folder
    under the data directory and Scient's existing "Create & Add" path, and whether
@@ -207,3 +207,66 @@ candidate responds on backend 15150 and web 7110 with HTTP 200. Native UI inspec
 opened the existing New thread picker and confirmed AAA first, No project, and Add
 project. The picker was left open for the owner's testing. No provider turn was
 submitted; full runtime suites and end-to-end scratch tool execution remain pending.
+
+## Owner acceptance and planned scratch capabilities, 2026-10-02
+
+The owner accepted the visual and manual review and authorized history-preserving
+auto-merge once the repository's required gates permit it. This records product
+acceptance; it does not claim additional live-provider or automated verification.
+
+The current file-retention and relocation limits are temporary. Planned work:
+
+- Offer an explicit option to remove a No-project conversation's scratch files
+  when deleting the conversation, preserving any files another conversation
+  still shares. Retention remains the current behavior.
+- Move a started No-project conversation and its files into an existing or newly
+  created project, preserving history, attachments, workspace authority, and
+  provider continuation where supported. Use an explicit session restart when
+  the provider cannot continue after relocation. No relocation is implemented here.
+
+## Owned-main catch-up, 2026-10-02
+
+Frozen owned main: `22a3bcf6d9aec5489a9c0c00eac544b9ccfb2ed3`.
+Catch-up merge: `8934fe7cd8e568b09d839d8c9bb3ea0b5c84dcc9`.
+The original upstream merge and official second parent remain unchanged.
+
+Git merged all four overlapping files without conflicts. Review covered:
+
+- `ws.ts`: current-main file-error metadata and Droid custom-model failure
+  handling compose with the retained scratch capability, folder registration,
+  and project RPC paths; scratch workspace admission remains unchanged.
+- `project.ts`: path-preserving schemas and optional file-error/read-only
+  metadata remain alongside upstream's new project contracts.
+- `server.test.ts`: current-main Droid fixtures and assertions remain alongside
+  the alignment's scratch fixtures; neither fixture set was discarded.
+- `composer.md`: current-main provider skill guidance remains alongside the
+  alignment's session-restart guidance.
+
+The file-opening resolver still takes the selected workspace root, including a
+scratch leaf. The fork reactor still resolves the origin's `worktreePath` before
+its project root and retains that path for same-workspace forks. Such forks
+intentionally share files, as ordinary same-workspace forks do. Current-main Droid
+runtime/setup changes remain intact; upstream's fresh workspace-snapshot logic
+still refreshes through the provider instance registry.
+
+Catch-up static checks and qualification limits are recorded below separately
+from the owner's acceptance and the earlier full-suite evidence.
+
+Against the composed catch-up candidate on macOS arm64, Node 24.19.0 and
+pnpm 11.10.0:
+
+- `pnpm run typecheck`: pass across all 31 workspace tasks; existing Effect
+  suggestions remain.
+- Focused `vp lint --report-unused-disable-directives` on the three overlapping
+  TypeScript files: pass, no errors; warnings remain.
+- Focused `vp fmt --check` on all four overlapping files: pass.
+- `pnpm run brand:check`: pass across 2,503 product-surface files.
+- `pnpm run upstream:provenance:check`: pass before and after the documentation
+  and owned-main cursor update, retaining the original official integration.
+- `git diff --cached --check` and `git diff --check`: pass.
+
+No additional local runtime tests, build, desktop smoke run, live-provider turns,
+or Windows/mobile interaction checks were performed during this catch-up.
+Earlier suite results remain evidence only for their recorded revisions.
+Required hosted checks qualify the final pushed revision before delivery;
+the owner's acceptance and merge authorization do not bypass them.
