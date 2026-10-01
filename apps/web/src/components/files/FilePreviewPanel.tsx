@@ -1681,7 +1681,9 @@ export default function FilePreviewPanel({
     environmentId,
     cwd,
     path: attachment === undefined ? relativePath : null,
-    failureReason: file.data === null ? file.failureReason : null,
+    // Asked whenever the path is missing, including under a last good copy of
+    // a file that was renamed or moved while it was open.
+    failureReason: file.failureReason,
   });
   const readOnlyHostPath = missingFile.absolutePath;
   const readFailureShownInstead = readFailureBlocksPreview({
@@ -1934,6 +1936,9 @@ export default function FilePreviewPanel({
           relativePath={relativePath}
           notice={reloadNotice}
           readError={isDirectory ? null : file.error}
+          readFailureReason={file.failureReason}
+          missingFileChoices={missingFile.paths}
+          onOpenFile={onOpenFile}
           saveError={saveError}
           saveRetryReady={saveRetryReady}
           hasFallbackData={file.data !== null}

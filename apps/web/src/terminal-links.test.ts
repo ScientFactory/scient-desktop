@@ -180,6 +180,12 @@ describe("resolvePathLinkTarget", () => {
     ).toBe("/Users/julius/project/src/components/ThreadTerminalDrawer.tsx:42:7");
   });
 
+  it("keeps a POSIX directory name that ends in a backslash", () => {
+    expect(resolvePathLinkTarget("notes.txt", "/tmp/project\\")).toBe("/tmp/project\\/notes.txt");
+    expect(resolvePathLinkTarget("notes.txt", "/tmp/project/")).toBe("/tmp/project/notes.txt");
+    expect(resolvePathLinkTarget("notes.txt", "C:\\repo\\")).toBe("C:\\repo\\notes.txt");
+  });
+
   it("keeps absolute paths unchanged", () => {
     expect(
       resolvePathLinkTarget("/Users/julius/project/src/main.ts:12", "/Users/julius/project"),

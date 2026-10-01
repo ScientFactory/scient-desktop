@@ -1,10 +1,15 @@
+import type { ProjectFileErrorReason } from "@t3tools/contracts";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 
 import { Button } from "~/components/ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
 
+import { staleCopyNotice } from "./fileFailureCopy";
 import type { FileReloadNotice, FileSaveErrorNotice } from "./useWorkspaceFileRefresh";
+
+/** The notice is one line; more candidates than this stay behind Try again. */
+const MAX_STALE_COPY_CHOICES = 2;
 
 export function ScientFileReloadButton(props: {
   readonly automaticRefreshUnavailable?: boolean;
@@ -48,6 +53,11 @@ export function ScientFileFreshnessNotices(props: {
   readonly saveError: FileSaveErrorNotice | null;
   readonly saveRetryReady: boolean;
   readonly hasFallbackData: boolean;
+  /** Why the latest read failed, when the system said so. */
+  readonly readFailureReason?: ProjectFileErrorReason | null;
+  /** Workspace files a file that is no longer here may have become. */
+  readonly missingFileChoices?: ReadonlyArray<string>;
+  readonly onOpenFile?: (path: string) => void;
   /** A reload is in flight; blocks a second Try again. */
   readonly reloading?: boolean;
   readonly onCancel: () => void;
@@ -56,6 +66,7 @@ export function ScientFileFreshnessNotices(props: {
   readonly onRetrySave: () => void;
   readonly onResolve: (action: "discard" | "retry") => void;
 }) {
+  const openFile = props.onOpenFile;
   const visibleNotice = props.notice?.relativePath === props.relativePath ? props.notice : null;
   const visibleSaveError =
     props.saveError?.relativePath === props.relativePath ? props.saveError : null;
@@ -132,8 +143,22 @@ export function ScientFileFreshnessNotices(props: {
         >
           <AlertTriangle className="size-3.5 shrink-0" aria-hidden="true" />
           <span className="min-w-0 flex-1 truncate">
-            The latest version could not be loaded. Showing the last available copy.
+            {staleCopyNotice(props.readFailureReason ?? null)}
           </span>
+          {props.readFailureReason === "not_found" && openFile
+            ? (props.missingFileChoices ?? []).slice(0, MAX_STALE_COPY_CHOICES).map((choice) => (
+                <Button
+                  key={choice}
+                  size="xs"
+                  variant="outline"
+                  className="max-w-48"
+                  title={`Open ${choice}`}
+                  onClick={() => openFile(choice)}
+                >
+                  <span className="truncate">{choice}</span>
+                </Button>
+              ))
+            : null}
           <Button
             size="xs"
             variant="outline"

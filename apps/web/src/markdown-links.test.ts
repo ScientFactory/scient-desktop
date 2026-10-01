@@ -416,6 +416,15 @@ describe("links that climb out of the workspace", () => {
   });
 });
 
+describe("a POSIX workspace whose name ends in a backslash", () => {
+  it("keeps a plain relative link inside that workspace", () => {
+    expect(resolveMarkdownFileLinkMeta("notes.txt", "/tmp/project\\")).toMatchObject({
+      filePath: "/tmp/project\\/notes.txt",
+      workspaceRelativePath: "notes.txt",
+    });
+  });
+});
+
 describe("resolveInlineCodeFileLinkMeta", () => {
   it("links relative paths with file extensions", () => {
     expect(

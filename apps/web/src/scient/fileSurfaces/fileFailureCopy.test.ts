@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   fileReadFailureCopy,
   readFailureBlocksPreview,
+  staleCopyNotice,
   UNSUPPORTED_PREVIEW_TITLE,
 } from "./fileFailureCopy";
 
@@ -114,5 +115,17 @@ describe("readFailureBlocksPreview", () => {
       }),
     ).toBe(false);
     expect(readFailureBlocksPreview({ ...failed, hasData: true, reason: "not_found" })).toBe(false);
+  });
+});
+
+describe("staleCopyNotice", () => {
+  it("says why the open file could not be refreshed when the system said so", () => {
+    expect(staleCopyNotice("not_found")).toBe(
+      "This file is no longer at this location. Showing the last available copy.",
+    );
+    expect(staleCopyNotice("permission_denied")).toContain("can no longer be read");
+    expect(staleCopyNotice(null)).toBe(
+      "The latest version could not be loaded. Showing the last available copy.",
+    );
   });
 });

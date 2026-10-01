@@ -115,6 +115,22 @@ export function fileReadFailureCopy(input: {
   }
 }
 
+/**
+ * The caution shown above the last good copy of a file whose latest read
+ * failed. It names the cause when the system gave one: a file renamed or
+ * moved while it was open is the common case.
+ */
+export function staleCopyNotice(reason: ProjectFileErrorReason | null): string {
+  switch (reason) {
+    case "not_found":
+      return "This file is no longer at this location. Showing the last available copy.";
+    case "permission_denied":
+      return "This file can no longer be read. Showing the last available copy.";
+    default:
+      return "The latest version could not be loaded. Showing the last available copy.";
+  }
+}
+
 export type MediaFailureKind = "image" | "audio" | "video" | "document";
 
 /**
