@@ -94,8 +94,7 @@ open through the system chooser. Videos open in a full-screen player with native
 supported iOS videos stream from their environment as they play. Unsupported formats can still be
 saved or shared to another app.
 
-On desktop and web, generic files cannot yet be queued. Keep them in the composer and
-send when the current turn finishes, or use the steer shortcut when supported.
+On desktop and web, supported file attachments stay with the message when it is queued.
 Editing a fork from a sent message with file attachments is not supported yet;
 fork from a completed response to retain the conversation and its files.
 
@@ -537,15 +536,15 @@ action to request an immediate steer. The provider must support adopting the
 message into its current turn; a rejection remains visible.
 
 Drag queued rows to change their order, or delete them. **Edit** removes a row
-from the waiting list and puts its text and images into the same composer. If
-you were already writing, that ordinary draft is temporarily hidden and kept
-intact. Send the edit to return it to its previous place and restore your
-ordinary draft. Messages that already started cannot be overtaken.
+from the waiting list and puts its text, attachments, and context into the same
+composer as an ordinary draft. Any draft you were already writing is saved in
+the usual stash menu. The edited message has no reserved queue position.
 
-An item being edited cannot send itself. Other waiting messages can continue
-while you edit. The existing **Stash** action saves the edit for later, releases
-its queue position, and brings back your ordinary draft. Restore the saved text
-and attachments through the usual stash menu.
+Other waiting messages can continue while you edit. Your draft stays in the
+composer until you press **Send**: it starts when the thread is idle and eligible,
+or joins the end of the queue when work is still running or other messages are
+waiting. Finishing a turn or starting another queued message does not submit
+your draft automatically. **Stash** saves it for later through the usual menu.
 
 **Stop** leaves queued messages in place. When you send another message, that
 answer runs first; the queue waits until it finishes successfully, then advances
@@ -556,11 +555,12 @@ the rest of the queue continues after its answer succeeds. No extra **Retry**
 is needed after that answer finishes.
 
 **Retry** is for a queue delivery error; it cannot bypass a running answer or
-release messages waiting after Stop. If an ordinary Send races another start,
-Scient preserves the draft and asks you to send again so it can join the queue safely.
+release messages waiting after Stop. Ordinary **Send** is accepted as a new turn
+or a queued message, including while the previous answer's checkpoint is settling.
+This completion race does not require sending again.
 
-Queues survive app restarts and hold up to 20 messages and 64 MiB per thread.
-Generic files still cannot be queued. Local threads that have not reached the
+Queues survive app restarts and hold up to 20 messages and 64 MiB per thread,
+including their attachments. Local threads that have not reached the
 server yet have no persistent queue. Edited drafts recover from this browser's
 local storage; keep the owning window or reopen it to finish an edit. Older
 clients must update before sending to a server using the new queue protocol.

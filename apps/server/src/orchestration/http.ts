@@ -1,3 +1,5 @@
+import * as SqlClient from "effect/unstable/sql/SqlClient";
+import { readAcceptedTurnReceipt } from "../scient/threadQueue/Ledger.ts";
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
@@ -10,6 +12,7 @@ import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import { projectThreadDetailSnapshot } from "./ActivityPayloadProjection.ts";
 import {
   cleanupFailedUploadedAttachments,
+  cleanupUnusedAttachments,
   normalizeDispatchCommand,
   requireQueueProtocol,
 } from "./Normalizer.ts";
@@ -31,6 +34,7 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
     const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
     const orchestrationEngine = yield* OrchestrationEngineService;
     const projectCloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
+    const sql = yield* SqlClient.SqlClient;
 
     return handlers
       .handle(
@@ -105,6 +109,13 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
           yield* requireQueueProtocol(args.payload).pipe(
             Effect.catch(() => failEnvironmentInvalidRequest("invalid_command")),
           );
+          const accepted = yield* readAcceptedTurnReceipt(args.payload).pipe(
+            Effect.provideService(SqlClient.SqlClient, sql),
+            Effect.catch((cause) =>
+              failEnvironmentInternal("orchestration_dispatch_failed", cause),
+            ),
+          );
+          if (accepted) return accepted;
           yield* ProjectCloneTracker.rejectCommandsDuringClone(
             projectCloneTracker,
             args.payload,
@@ -124,6 +135,10 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
               failEnvironmentInternal("orchestration_dispatch_failed", cause),
             ),
           );
+          if (normalizedCommand.type === "thread.turn.start")
+            yield* cleanupUnusedAttachments(normalizedCommand.message.attachments).pipe(
+              Effect.provideService(SqlClient.SqlClient, sql),
+            );
           yield* ProjectCloneTracker.discardCloneForDeletedProject(
             projectCloneTracker,
             normalizedCommand,

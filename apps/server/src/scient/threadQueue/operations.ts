@@ -168,14 +168,32 @@ export const controlQueue = Effect.fn("ScientQueue.control")(function* (
   const item = doc.items.find((entry) => entry.queueItemId === payload.queueItemId);
   const receipts = yield* sql<{
     edit_token: string | null;
-  }>`SELECT edit_token FROM scient_queue_receipts WHERE queue_item_id = ${payload.queueItemId ?? ""} AND thread_id = ${payload.threadId}`;
-  if (payload.editToken && receipts[0]?.edit_token === payload.editToken) return doc;
+    edit_fingerprint: string | null;
+  }>`SELECT edit_token, edit_fingerprint FROM scient_queue_receipts WHERE queue_item_id = ${payload.queueItemId ?? ""} AND thread_id = ${payload.threadId}`;
+  if (payload.editToken && receipts[0]?.edit_token === payload.editToken) {
+    if (payload.action === "extract" && receipts[0].edit_fingerprint !== null)
+      return yield* new QueueError({
+        message: "This edit was already queued. Refresh the queue before editing it again.",
+      });
+    return doc;
+  }
   if (!item)
     return yield* Effect.fail(
       new QueueError({
         message: "The queued message has already started or was removed.",
       }),
     );
+  if (payload.action === "extract") {
+    if ((item.state === "editing" && item.editToken !== payload.editToken) || !payload.editToken)
+      return yield* new QueueError({ message: "This message is being edited elsewhere." });
+    if (item.state !== "editing" && payload.expectedUpdatedAt !== item.updatedAt)
+      return yield* new QueueError({
+        message: "The queued message changed. Refresh and try editing again.",
+      });
+    yield* sql`UPDATE scient_queue_receipts SET edit_token = ${payload.editToken}, edit_fingerprint = NULL
+      WHERE queue_item_id = ${item.queueItemId} AND thread_id = ${payload.threadId}`;
+    return { ...doc, items: doc.items.filter((entry) => entry !== item) };
+  }
   if (payload.action === "stash") {
     if (item.state !== "editing" || item.editToken !== payload.editToken)
       return yield* new QueueError({ message: "This queue edit belongs to another editor." });
