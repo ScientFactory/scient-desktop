@@ -351,13 +351,17 @@ function claimFileLinkClick(threadRef: ScopedThreadRef): () => boolean {
   });
 }
 
-/** Says when a link led to a different file than it names, so an unexpected match is noticed. */
+/**
+ * Says when a link led to a different page than it names, so an unexpected
+ * match is noticed. Only for a page opened in the browser: a file opened in
+ * the panel carries the same note on its own tab, where it covers nothing.
+ */
 function announceResolvedLink(plan: Extract<ChatFileOpenPlan, { kind: "resolved" }>): void {
   toastManager.add(
     stackedThreadToast({
       type: "info",
       title: `Link resolved to ${plan.path}`,
-      description: `Nothing exists at ${plan.missingPath}, where the link pointed.`,
+      description: `Nothing existed at ${plan.missingPath}, where the link pointed.`,
     }),
   );
 }
@@ -2572,10 +2576,14 @@ function useChatMarkdownState({
       void (async () => {
         const plan = await planFileLinkOpen(panelPath);
         if (!isCurrentClick()) return;
-        useRightPanelStore
-          .getState()
-          .openFile(threadRef, plan.kind === "resolved" ? plan.path : panelPath, line);
-        if (plan.kind === "resolved") announceResolvedLink(plan);
+        if (plan.kind === "resolved") {
+          // The tab itself says it shows a different file than the link named.
+          useRightPanelStore.getState().openFile(threadRef, plan.path, line, {
+            linkResolution: { missingPath: plan.missingPath },
+          });
+          return;
+        }
+        useRightPanelStore.getState().openFile(threadRef, panelPath, line);
       })();
     },
     [planFileLinkOpen, threadRef],
@@ -2596,10 +2604,13 @@ function useChatMarkdownState({
           openMarkdownMedia(mediaPath, filePath);
           return;
         }
-        useRightPanelStore
-          .getState()
-          .openFile(threadRef, plan.kind === "resolved" ? plan.path : filePath);
-        if (plan.kind === "resolved") announceResolvedLink(plan);
+        if (plan.kind === "resolved") {
+          useRightPanelStore.getState().openFile(threadRef, plan.path, undefined, {
+            linkResolution: { missingPath: plan.missingPath },
+          });
+          return;
+        }
+        useRightPanelStore.getState().openFile(threadRef, filePath);
       })();
     },
     [openMarkdownMedia, planFileLinkOpen, threadRef],

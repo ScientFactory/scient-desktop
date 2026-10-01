@@ -14,6 +14,9 @@ import { fileReadFailureCopy, isOutsideProjectFailure } from "./fileFailureCopy"
 export function FileReadFailure(props: {
   readonly failure: ProjectFileFailure | null;
   readonly reason?: ProjectFileErrorReason | null;
+  /** The system's own error code and the host's operating system, for a denied read. */
+  readonly osErrorCode?: string | null;
+  readonly hostOs?: string | null;
   readonly message: string | null;
   readonly retrying: boolean;
   readonly onRetry: () => void;
@@ -33,6 +36,8 @@ export function FileReadFailure(props: {
   const copy = fileReadFailureCopy({
     failure: props.failure,
     reason: props.reason ?? null,
+    osErrorCode: props.osErrorCode ?? null,
+    hostOs: props.hostOs ?? null,
     message: props.message,
     candidateCount: candidates.length,
   });

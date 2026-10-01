@@ -39,6 +39,28 @@ export function readFailureBlocksPreview(input: {
 }
 
 /**
+ * What the computer that holds a file said when it refused a read. The copy
+ * states only that: `EACCES` is a permission on the file or one of its
+ * folders; `EPERM` is the system itself declining, which on a Mac is usually,
+ * but not provably, its privacy protection. An older server reports neither
+ * code, so nothing more specific is claimed. The settings are on the host,
+ * which for a paired or remote viewer is not the device in hand.
+ */
+export function readDeniedDescription(input: {
+  readonly osErrorCode: string | null;
+  /** Operating system of the environment that owns the file, e.g. `darwin`. */
+  readonly hostOs: string | null;
+}): string {
+  if (input.osErrorCode === "EACCES") {
+    return "The operating system denied access to this file. Check the permissions of the file and its folders on the computer that holds it.";
+  }
+  if (input.osErrorCode === "EPERM" && input.hostOs === "darwin") {
+    return "macOS on the computer that holds this file didn't allow Scient to read it. If it is in a protected folder, allow access in System Settings → Privacy & Security there.";
+  }
+  return "The operating system denied access to this file.";
+}
+
+/**
  * Plain-language copy for a failed workspace or host file read. The operating
  * system's reason wins when the server reports one; otherwise only failures the
  * server classifies distinctly get a specific message, and the fallback must
@@ -47,6 +69,8 @@ export function readFailureBlocksPreview(input: {
 export function fileReadFailureCopy(input: {
   readonly failure: ProjectFileFailure | null;
   readonly reason?: ProjectFileErrorReason | null;
+  readonly osErrorCode?: string | null;
+  readonly hostOs?: string | null;
   readonly message: string | null;
   /** How many workspace files the missing path may have meant. */
   readonly candidateCount?: number;
@@ -70,12 +94,14 @@ export function fileReadFailureCopy(input: {
             retryable: true,
           };
     case "permission_denied":
-      // The system does not say whether file permissions or a privacy setting
-      // denied the read, so no settings shortcut is offered as if it would help.
+      // No settings shortcut: even `EPERM` on a Mac does not prove a privacy
+      // setting denied the read, and the setting lives on the host.
       return {
         title: "Access denied",
-        description:
-          "This file's permissions, or your system's privacy settings, don't let Scient read it.",
+        description: readDeniedDescription({
+          osErrorCode: input.osErrorCode ?? null,
+          hostOs: input.hostOs ?? null,
+        }),
         details,
         retryable: true,
       };

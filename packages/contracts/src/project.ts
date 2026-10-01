@@ -367,6 +367,17 @@ export type ProjectFileOperation = typeof ProjectFileOperation.Type;
 export const ProjectFileErrorReason = Schema.Literals(["not_found", "permission_denied"]);
 export type ProjectFileErrorReason = typeof ProjectFileErrorReason.Type;
 
+/**
+ * The operating system's own error code for a failed operation (`EACCES`,
+ * `EPERM`, ...), when there was one. `reason` groups codes that mean the same
+ * to a person; the code lets a client say exactly what the system reported
+ * without the union having to grow, which older clients could not decode.
+ */
+export const ProjectFileOsErrorCode = Schema.String.check(
+  Schema.isPattern(/^[A-Z][A-Z0-9_]{0,31}$/u),
+);
+export type ProjectFileOsErrorCode = typeof ProjectFileOsErrorCode.Type;
+
 type ProjectFileFailureContext = {
   readonly cwd: string;
   readonly relativePath: string;
@@ -377,6 +388,7 @@ type ProjectFileFailureContext = {
   readonly operationPath?: string;
   readonly currentRevision?: string;
   readonly reason?: ProjectFileErrorReason;
+  readonly osErrorCode?: string;
   readonly cause?: unknown;
 };
 
@@ -391,6 +403,7 @@ export class ProjectReadFileError extends Schema.TaggedError<ProjectReadFileErro
     operation: Schema.optional(ProjectFileOperation),
     operationPath: Schema.optional(FilePathString),
     reason: Schema.optional(ProjectFileErrorReason),
+    osErrorCode: Schema.optional(ProjectFileOsErrorCode),
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),
   },
@@ -434,6 +447,7 @@ export class ProjectWriteFileError extends Schema.TaggedError<ProjectWriteFileEr
     operationPath: Schema.optional(FilePathString),
     currentRevision: Schema.optional(TrimmedNonEmptyString),
     reason: Schema.optional(ProjectFileErrorReason),
+    osErrorCode: Schema.optional(ProjectFileOsErrorCode),
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),
   },

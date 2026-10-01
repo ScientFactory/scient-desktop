@@ -77,6 +77,28 @@ describe("fileReadFailureCopy", () => {
     ).toMatchObject({ title: "Access denied", details: null, retryable: true });
   });
 
+  it("says only what the operating system reported for a denied read", () => {
+    const denied = (osErrorCode: string | null, hostOs: string | null) =>
+      fileReadFailureCopy({
+        failure: "operation_failed",
+        reason: "permission_denied",
+        osErrorCode,
+        hostOs,
+        message: null,
+      }).description;
+
+    // A plain permission problem is not a privacy setting, on any system.
+    expect(denied("EACCES", "darwin")).toContain("permissions of the file and its folders");
+    expect(denied("EACCES", "darwin")).not.toContain("Privacy");
+    // Only the code macOS uses when the system itself declines mentions it,
+    // conditionally, and as a setting on the computer that holds the file.
+    expect(denied("EPERM", "darwin")).toContain("If it is in a protected folder");
+    expect(denied("EPERM", "darwin")).toContain("Privacy & Security there");
+    expect(denied("EPERM", "linux")).toBe("The operating system denied access to this file.");
+    // An older server reports no code: nothing more specific is claimed.
+    expect(denied(null, "darwin")).toBe("The operating system denied access to this file.");
+  });
+
   it("names a non-file path", () => {
     expect(fileReadFailureCopy({ failure: "path_not_file", message: null })).toMatchObject({
       title: "Not a file",

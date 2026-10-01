@@ -34,6 +34,47 @@ export function resolveFileTabPath(path: string, workspaceRoot: string): string 
   return workspaceRelativeFilePath(hostPath, workspaceRoot) === null ? hostPath : path;
 }
 
+function pathSegments(path: string): string[] {
+  return path.split(/[\\/]/).filter(Boolean);
+}
+
+/**
+ * Tab titles for open files. A title is the file's name; when several open
+ * files share a name, each also gets the shortest run of parent folders that
+ * tells it apart from the others (`plan.md — a`, `plan.md — b`). A file with
+ * no parent folder left to show keeps its bare name, and two tabs on the very
+ * same path cannot be told apart by path at all.
+ */
+export function fileTabTitles(paths: ReadonlyArray<string>): Map<string, string> {
+  const titles = new Map<string, string>();
+  const byName = new Map<string, Array<{ path: string; parents: string[] }>>();
+  for (const path of new Set(paths)) {
+    const segments = pathSegments(path);
+    const name = segments.at(-1) ?? path;
+    const group = byName.get(name) ?? [];
+    group.push({ path, parents: segments.slice(0, -1) });
+    byName.set(name, group);
+  }
+  for (const [name, group] of byName) {
+    for (const file of group) {
+      const others = group.filter((other) => other !== file);
+      let depth = others.length === 0 ? 0 : 1;
+      // Grow the shown folders until no other file ends in the same ones.
+      while (
+        depth < file.parents.length &&
+        others.some(
+          (other) => other.parents.slice(-depth).join("/") === file.parents.slice(-depth).join("/"),
+        )
+      ) {
+        depth += 1;
+      }
+      const folders = depth === 0 ? [] : file.parents.slice(-depth);
+      titles.set(file.path, folders.length === 0 ? name : `${name} — ${folders.join("/")}`);
+    }
+  }
+  return titles;
+}
+
 /**
  * Crumbs for a workspace-relative path start at the project. An absolute host
  * path is outside the workspace, so its crumbs start at the filesystem root.

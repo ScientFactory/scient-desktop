@@ -10672,6 +10672,11 @@ function ChatViewContent(props: ChatViewProps) {
               ? renderedRightPanelSurface.fileCitation
               : undefined
           }
+          linkResolution={
+            renderedRightPanelSurface.kind === "file"
+              ? renderedRightPanelSurface.linkResolution
+              : undefined
+          }
           keybindings={keybindings}
           availableEditors={availableEditors}
           relativePath={

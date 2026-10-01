@@ -53,8 +53,18 @@ export interface HtmlFilePresentationRequest {
   readonly mode: "source";
 }
 
+/**
+ * A file tab opened from a link that named a location where nothing existed,
+ * so the one workspace file the link meant was opened instead.
+ */
+export interface FileLinkResolution {
+  /** Where the link pointed. */
+  readonly missingPath: string;
+}
+
 export interface OpenFileOptions {
   readonly fileCitation?: FileCitation;
+  readonly linkResolution?: FileLinkResolution;
   readonly htmlPreviewMode?: HtmlFilePresentationRequest["mode"];
   readonly latexPreviewMode?: LatexFilePresentationRequest["mode"];
   /** Root retained when SyncTeX navigates from a multi-file PDF to a source. */
@@ -94,6 +104,9 @@ export type RightPanelSurface =
       latexRootRelativePath?: string;
       /** Transient rendered-text reveal; the quote remains owned by the message. */
       fileCitation?: FileCitation;
+      /** Transient: says the tab shows a file other than the one its link named.
+          Any later open of the same file replaces the surface and so clears it. */
+      linkResolution?: FileLinkResolution;
       /** Present when the file lives in the thread's attachment store rather
           than at a workspace or host path. */
       attachment?: ChatFileAttachment;
@@ -278,6 +291,7 @@ const fileSurface = (
   revealLine,
   revealRequestId,
   ...(options?.fileCitation ? { fileCitation: options.fileCitation } : {}),
+  ...(options?.linkResolution ? { linkResolution: options.linkResolution } : {}),
   ...(options?.htmlPreviewMode === undefined
     ? {}
     : {
@@ -458,6 +472,7 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                         htmlPresentationRequest: _transientHtmlPresentationRequest,
                         latexPresentationRequest: _transientLatexPresentationRequest,
                         fileCitation: _transientFileCitation,
+                        linkResolution: _transientLinkResolution,
                         latexRootRelativePath: persistedLatexRootRelativePath,
                         ...persistentSurface
                       } = surface;
@@ -1125,6 +1140,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                     htmlPresentationRequest: _transientHtmlPresentationRequest,
                     latexPresentationRequest: _transientLatexPresentationRequest,
                     fileCitation: _transientFileCitation,
+                    linkResolution: _transientLinkResolution,
                     ...persistentSurface
                   } = surface;
                   return persistentSurface;

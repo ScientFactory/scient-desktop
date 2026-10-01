@@ -71,6 +71,8 @@ export interface ProjectFileQueryState extends ProjectQueryState<ProjectReadFile
   readonly failure: ProjectFileFailure | null;
   /** The operating system's reason for a failed read, when the server gave one. */
   readonly failureReason: ProjectFileErrorReason | null;
+  /** The operating system's own error code for a failed read, when the server gave one. */
+  readonly failureOsErrorCode: string | null;
 }
 
 function getProjectEntriesQueryAtom(
@@ -195,6 +197,24 @@ function errorMessage(cause: unknown): string | null {
 
 const isProjectReadFileError = Schema.is(ProjectReadFileError);
 
+/** Why the operating system refused or could not find a file that was read. */
+export interface ProjectReadFailure {
+  readonly reason: ProjectFileErrorReason;
+  readonly osErrorCode: string | null;
+}
+
+/**
+ * The operating system's reason inside an error kept from a failed read,
+ * whether it is the read error itself or the Effect cause that carried it.
+ * Anything else, including a cause with several failures, has no single
+ * reason to report.
+ */
+export function projectReadFailure(error: unknown): ProjectReadFailure | null {
+  const failure = Cause.isCause(error) ? Cause.squash(error) : error;
+  if (!isProjectReadFileError(failure) || failure.reason === undefined) return null;
+  return { reason: failure.reason, osErrorCode: failure.osErrorCode ?? null };
+}
+
 export function useProjectEntriesQuery(
   environmentId: EnvironmentId,
   cwd: string,
@@ -275,6 +295,7 @@ export function useProjectFileQuery(
     isNotFile: isProjectReadFileError(cause) && cause.failure === "path_not_file",
     failure: isProjectReadFileError(cause) ? (cause.failure ?? null) : null,
     failureReason: isProjectReadFileError(cause) ? (cause.reason ?? null) : null,
+    failureOsErrorCode: isProjectReadFileError(cause) ? (cause.osErrorCode ?? null) : null,
     isPending: result.waiting,
     refresh,
   };

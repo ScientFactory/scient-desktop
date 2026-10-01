@@ -403,10 +403,15 @@ function filesystemBrowseFailureContext(error: WorkspaceEntries.WorkspaceEntries
   }
 }
 
-/** The operating system's reason for a failed file operation, when it gave one. */
-function projectFileErrorReason(cause: unknown): ProjectFileErrorReason | undefined {
+/** The operating system's error code for a failed file operation, when it gave one. */
+function projectFileOsErrorCode(cause: unknown): string | undefined {
   const code =
     typeof cause === "object" && cause !== null && "code" in cause ? cause.code : undefined;
+  return typeof code === "string" && /^[A-Z][A-Z0-9_]{0,31}$/u.test(code) ? code : undefined;
+}
+
+/** The operating system's reason for a failed file operation, when it gave one. */
+function projectFileErrorReason(code: string | undefined): ProjectFileErrorReason | undefined {
   switch (code) {
     case "ENOENT":
     case "ENOTDIR":
@@ -431,18 +436,21 @@ function projectFileFailureContext(
   readonly operationPath?: string;
   readonly currentRevision?: string;
   readonly reason?: ProjectFileErrorReason;
+  readonly osErrorCode?: string;
 } {
   switch (error._tag) {
     case "WorkspacePathOutsideRootError":
       return { failure: "workspace_path_outside_root" };
     case "WorkspaceFileSystemOperationError": {
-      const reason = projectFileErrorReason(error.cause);
+      const osErrorCode = projectFileOsErrorCode(error.cause);
+      const reason = projectFileErrorReason(osErrorCode);
       return {
         failure: "operation_failed",
         resolvedPath: error.resolvedPath,
         operation: error.operation,
         operationPath: error.operationPath,
         ...(reason ? { reason } : {}),
+        ...(osErrorCode ? { osErrorCode } : {}),
       };
     }
     case "WorkspaceFilePathEscapeError":

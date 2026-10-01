@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import { Spinner } from "~/components/ui/spinner";
 import type {
   ChatFileAttachment,
@@ -67,6 +68,7 @@ import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 import { cn } from "~/lib/utils";
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
 import type {
+  FileLinkResolution,
   HtmlFilePresentationRequest,
   LatexFilePresentationRequest,
   OpenFileOptions,
@@ -80,6 +82,7 @@ import { buildFileReviewComment } from "~/reviewCommentContext";
 import { assetEnvironment } from "~/state/assets";
 import { useEnvironmentHttpBaseUrl, usePrimaryEnvironmentId } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
+import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import {
@@ -116,6 +119,7 @@ import {
   MEDIA_FAILURE_COPY,
   readFailureBlocksPreview,
 } from "~/scient/fileSurfaces/fileFailureCopy";
+import { FileLinkResolutionNotice } from "~/scient/fileSurfaces/FileLinkResolutionNotice";
 import { FileReadFailure } from "~/scient/fileSurfaces/FileReadFailure";
 import { useMissingFileChoices } from "~/scient/fileSurfaces/useMissingFileChoices";
 
@@ -161,6 +165,7 @@ import { useFileSaveCoordinator } from "./useFileSaveCoordinator";
 import {
   clearProjectFileQueryData,
   getOptimisticProjectFileQueryData,
+  projectReadFailure,
   refreshProjectEntriesQuery,
   setProjectFileQueryData,
 } from "./projectFilesQueryState";
@@ -168,6 +173,8 @@ import {
 interface FilePreviewPanelProps {
   onCiteFile?: MarkdownCiteHandler;
   fileCitation?: FileCitation | undefined;
+  /** Set when a link named a missing location and this file was opened instead. */
+  linkResolution?: FileLinkResolution | undefined;
   environmentId: EnvironmentId;
   cwd: string;
   projectName: string;
@@ -1384,6 +1391,7 @@ function initialExplorerOpen(): boolean {
 export default function FilePreviewPanel({
   onCiteFile,
   fileCitation,
+  linkResolution,
   environmentId,
   cwd,
   projectName,
@@ -1527,6 +1535,12 @@ export default function FilePreviewPanel({
     revealLine === null ||
     (handledReveal?.path === relativePath && handledReveal.requestId === revealRequestId);
   const [dismissedCitationReveal, setDismissedCitationReveal] = useState<number | null>(null);
+  // Dismissing hides the note for this open only; opening the link again shows it again.
+  const [dismissedLinkResolution, setDismissedLinkResolution] = useState<number | null>(null);
+  const shownLinkResolution =
+    linkResolution !== undefined && dismissedLinkResolution !== revealRequestId
+      ? linkResolution
+      : null;
   const citationRevealActive =
     fileCitation !== undefined && dismissedCitationReveal !== revealRequestId;
   const renderMarkdown =
@@ -1551,6 +1565,9 @@ export default function FilePreviewPanel({
   const canToggleRenderedForSurface =
     previewPath !== null && attachment === undefined && renderedMode !== null;
   const surfaceRendered = tableDelimiter ? renderTable : rendered;
+  // A denied read is explained in terms of the computer that holds the file.
+  const hostOs =
+    useAtomValue(serverEnvironment.configValueAtom(environmentId))?.environment.platform.os ?? null;
   const {
     lease: markdownLease,
     snapshot: markdownSnapshot,
@@ -1564,6 +1581,12 @@ export default function FilePreviewPanel({
     authoritativeSnapshot: queriedFile.authoritativeData,
     workspaceMutationId,
   });
+  // The editor keeps showing its last confirmed version when a refresh read
+  // fails; this is why it failed, so the notice can say the file moved.
+  const markdownRefreshFailure =
+    markdownSnapshot && !markdownSnapshot.pending
+      ? projectReadFailure(markdownSnapshot.error)
+      : null;
   // Once admitted, the retained draft is the editor's display truth even when
   // an unrelated cached query fails or temporarily returns an older snapshot.
   const file =
@@ -1573,6 +1596,7 @@ export default function FilePreviewPanel({
           error: null,
           failure: null,
           failureReason: null,
+          failureOsErrorCode: null,
           isPending: false,
           data: {
             relativePath,
@@ -1683,7 +1707,7 @@ export default function FilePreviewPanel({
     path: attachment === undefined ? relativePath : null,
     // Asked whenever the path is missing, including under a last good copy of
     // a file that was renamed or moved while it was open.
-    failureReason: file.failureReason,
+    failureReason: file.failureReason ?? markdownRefreshFailure?.reason ?? null,
   });
   const readOnlyHostPath = missingFile.absolutePath;
   const readFailureShownInstead = readFailureBlocksPreview({
@@ -1696,6 +1720,8 @@ export default function FilePreviewPanel({
     <FileReadFailure
       failure={file.failure}
       reason={file.failureReason}
+      osErrorCode={file.failureOsErrorCode}
+      hostOs={hostOs}
       message={file.error}
       retrying={file.isPending}
       onRetry={requestManualReload}
@@ -1930,7 +1956,14 @@ export default function FilePreviewPanel({
         </div>
       ) : null}
       {markdownLease ? (
-        <ScientMarkdownPersistenceNotice key={relativePath} persistence={markdownLease} />
+        <ScientMarkdownPersistenceNotice
+          key={relativePath}
+          persistence={markdownLease}
+          refreshFailure={markdownRefreshFailure}
+          hostOs={hostOs}
+          missingFileChoices={missingFile.paths}
+          onOpenFile={onOpenFile}
+        />
       ) : (
         <ScientFileFreshnessNotices
           relativePath={relativePath}
@@ -1950,6 +1983,12 @@ export default function FilePreviewPanel({
           onResolve={resolveReloadNotice}
         />
       )}
+      {shownLinkResolution ? (
+        <FileLinkResolutionNotice
+          missingPath={shownLinkResolution.missingPath}
+          onDismiss={() => setDismissedLinkResolution(revealRequestId)}
+        />
+      ) : null}
       {relativePath && !markdownLease && !isPdf && file.data?.readOnly ? (
         <div className="shrink-0 border-b border-border/50 bg-muted/35 px-3 py-1.5 scient-reading-micro text-muted-foreground">
           This file is read-only in Files.

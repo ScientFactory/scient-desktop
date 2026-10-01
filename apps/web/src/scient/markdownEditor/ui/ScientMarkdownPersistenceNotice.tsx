@@ -1,14 +1,60 @@
 import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import { AlertTriangle } from "lucide-react";
 
+import type { ProjectReadFailure } from "~/components/files/projectFilesQueryState";
 import { Button } from "~/components/ui/button";
+import { readDeniedDescription } from "~/scient/fileSurfaces/fileFailureCopy";
 import type { MarkdownPersistenceLease } from "../persistence/markdownPersistenceRegistry";
+
+// The same small number of same-name files the plain viewer offers inline.
+const MAX_MISSING_FILE_CHOICES = 2;
+
+/**
+ * What to say when the open document could not be re-read from disk. The
+ * operating system's reason names the cause; without one the copy must not
+ * guess. The last confirmed version stays open either way.
+ */
+export function markdownRefreshFailureCopy(
+  failure: ProjectReadFailure | null,
+  hostOs: string | null,
+): { readonly title: string; readonly description: string } {
+  switch (failure?.reason) {
+    case "not_found":
+      return {
+        title: "This file is no longer at this location",
+        description:
+          "It may have been moved, renamed, or deleted. The last confirmed version is still open.",
+      };
+    case "permission_denied":
+      return {
+        title: "This file can no longer be read",
+        description: `${readDeniedDescription({ osErrorCode: failure.osErrorCode, hostOs })} The last confirmed version is still open.`,
+      };
+    default:
+      return {
+        title: "This file couldn’t be refreshed",
+        description:
+          "Scient could not check the latest disk version. The last confirmed version is still open. Retry to check it again.",
+      };
+  }
+}
 
 /** Routine persistence is silent. Only an actionable episode is announced. */
 export function ScientMarkdownPersistenceNotice({
   persistence,
+  refreshFailure = null,
+  hostOs = null,
+  missingFileChoices = [],
+  onOpenFile,
 }: {
   readonly persistence: MarkdownPersistenceLease;
+  /** Why the last refresh read failed, when the operating system said. */
+  readonly refreshFailure?: ProjectReadFailure | null;
+  /** Operating system of the environment that owns the file. */
+  readonly hostOs?: string | null;
+  /** Workspace files a missing path may have meant; each opens as another document. */
+  readonly missingFileChoices?: ReadonlyArray<string>;
+  readonly onOpenFile?: (relativePath: string) => void;
 }) {
   const snapshot = useSyncExternalStore(persistence.subscribe, persistence.getSnapshot);
   const titleId = useId();
@@ -27,12 +73,17 @@ export function ScientMarkdownPersistenceNotice({
         ? "failure"
         : "refresh"
       : null;
+  const refreshCopy = markdownRefreshFailureCopy(refreshFailure, hostOs);
   const title =
     issue === "conflict"
       ? "This file was changed by another writer"
       : issue === "refresh"
-        ? "This file couldn’t be refreshed"
+        ? refreshCopy.title
         : "Changes haven’t been saved";
+  const choices =
+    issue === "refresh" && refreshFailure?.reason === "not_found" && onOpenFile
+      ? missingFileChoices.slice(0, MAX_MISSING_FILE_CHOICES)
+      : [];
 
   useEffect(() => {
     if (issue === previousIssue.current) return;
@@ -92,7 +143,7 @@ export function ScientMarkdownPersistenceNotice({
                   : issue === "conflict"
                     ? "Your edits are still open and have not overwritten the newer file on disk."
                     : issue === "refresh"
-                      ? "Scient could not check the latest disk version. The last confirmed version is still open. Retry to check it again."
+                      ? refreshCopy.description
                       : "Your edits are still open, but saving or checking the disk version could not finish. Keep this document open and retry."}
             </p>
           </div>
@@ -152,14 +203,28 @@ export function ScientMarkdownPersistenceNotice({
                 </Button>
               </>
             ) : (
-              <Button
-                size="xs"
-                variant="outline"
-                disabled={busy}
-                onClick={() => void run(() => persistence.retry())}
-              >
-                Retry
-              </Button>
+              <>
+                {choices.map((choice) => (
+                  <Button
+                    key={choice}
+                    size="xs"
+                    variant="outline"
+                    className="max-w-48"
+                    title={`Open ${choice}`}
+                    onClick={() => onOpenFile?.(choice)}
+                  >
+                    <span className="truncate">{choice}</span>
+                  </Button>
+                ))}
+                <Button
+                  size="xs"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => void run(() => persistence.retry())}
+                >
+                  Retry
+                </Button>
+              </>
             )}
           </div>
         </div>

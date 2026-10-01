@@ -28,8 +28,16 @@ describe("universal chat-file opening seam", () => {
     expect(chatMarkdownSource).toContain("await settleWithin(");
     expect(chatMarkdownSource.match(/if \(!isCurrentClick\(\)\) return/gu)).toHaveLength(3);
     expect(chatMarkdownSource).toContain("const plan = await planFileLinkOpen(panelPath);");
+    // A resolved link opens the file it meant and says so on that tab; any
+    // other answer opens the link as written.
     expect(chatMarkdownSource).toContain(
-      '.openFile(threadRef, plan.kind === "resolved" ? plan.path : panelPath, line);',
+      "useRightPanelStore.getState().openFile(threadRef, plan.path, line, {",
+    );
+    expect(
+      chatMarkdownSource.match(/linkResolution: \{ missingPath: plan\.missingPath \}/gu),
+    ).toHaveLength(2);
+    expect(chatMarkdownSource).toContain(
+      "useRightPanelStore.getState().openFile(threadRef, panelPath, line);",
     );
     expect(chatMarkdownSource).toContain(
       "!canPreviewMedia && isAbsolutePath(fileLinkMeta.filePath)",
