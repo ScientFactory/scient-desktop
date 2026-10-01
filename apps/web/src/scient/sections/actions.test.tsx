@@ -1,5 +1,6 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ThreadId, ThreadSectionId } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { act, useLayoutEffect } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
@@ -116,6 +117,13 @@ describe("moving threads into a section", () => {
       environmentId: target.environmentId,
       input: { threadId: target.threadId, sectionId: null },
     });
+  });
+
+  it("returns false for interrupted membership without an error toast or Undo", async () => {
+    mocks.mutate.mockResolvedValue(AsyncResult.failure(Cause.interrupt()));
+    expect(await actions.moveThreadsToSection([target], section)).toBe(false);
+    expect(showThreadUndoNotice).not.toHaveBeenCalled();
+    expect(toastManager.add).not.toHaveBeenCalled();
   });
 
   it("reports a filing failure instead of silently leaving the section empty", async () => {

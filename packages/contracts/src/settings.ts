@@ -689,6 +689,9 @@ function makeProviderSettingsSchema<const Fields extends Schema.Struct.Fields>(
 
 export const CodexSettings = makeProviderSettingsSchema(
   {
+    setupMode: Schema.optionalKey(Schema.Literals(["managed", "existing"])).pipe(
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
     enabled: Schema.Boolean.pipe(
       Schema.withDecodingDefault(Effect.succeed(true)),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
@@ -1680,6 +1683,7 @@ const ModelSelectionPatch = Schema.Struct({
 });
 
 const CodexSettingsPatch = Schema.Struct({
+  setupMode: Schema.optionalKey(Schema.Literals(["managed", "existing"])),
   enabled: Schema.optionalKey(Schema.Boolean),
   binaryPath: Schema.optionalKey(TrimmedString),
   homePath: Schema.optionalKey(TrimmedString),

@@ -209,19 +209,22 @@ export function groupAntigravityModels(
     }
 
     // Collapse effort variants into a single model with reasoning effort options.
-    const defaultEffort = entry.efforts.some((effort) => effort.value === "medium")
-      ? "medium"
+    const defaultEffort = entry.efforts.some((effort) => effort.value === "high")
+      ? "high"
       : entry.efforts[0]?.value;
     const optionDescriptors = [
-      buildSelectOptionDescriptor({
-        id: "reasoning",
-        label: "Reasoning",
-        options: entry.efforts.map((effort) => ({
-          value: effort.value,
-          label: effort.label.charAt(0).toUpperCase() + effort.label.slice(1),
-          isDefault: effort.value === defaultEffort,
-        })),
-      }),
+      {
+        ...buildSelectOptionDescriptor({
+          id: "reasoning",
+          label: "Reasoning",
+          options: entry.efforts.map((effort) => ({
+            value: effort.value,
+            label: effort.label.charAt(0).toUpperCase() + effort.label.slice(1),
+            isDefault: effort.value === defaultEffort,
+          })),
+        }),
+        concreteReasoning: true,
+      },
     ];
     return {
       slug: entry.slug,

@@ -29,6 +29,7 @@ import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import { rejectCodexSubscriptionSharing } from "./scient/providerLifecycle/codexSubscriptionSharingPolicy.ts";
 import {
   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
   AuthAccessStreamError,
@@ -2937,6 +2938,20 @@ const makeWsRpcLayer = (
             WS_METHODS.providerAuthComplete,
             providerAuth.complete(input, currentSessionId),
             { "rpc.aggregate": "provider" },
+          ),
+        [WS_METHODS.chatGptReconnectProfile]: (input) =>
+          rejectCodexSubscriptionSharing(input.instanceId, "export"),
+        [WS_METHODS.chatGptImportProfile]: (input) =>
+          rejectCodexSubscriptionSharing(input.instanceId, "import"),
+        [WS_METHODS.chatGptHandoffSubscribe]: (input) =>
+          Stream.fromEffect(rejectCodexSubscriptionSharing(input.instanceId, "handoff")),
+        [WS_METHODS.codexAuthCallbackSubscribe]: (input) =>
+          observeRpcStream(
+            WS_METHODS.codexAuthCallbackSubscribe,
+            Stream.fromEffect(rejectCodexSubscriptionSharing(input.instanceId, "callback")),
+            {
+              "rpc.aggregate": "provider",
+            },
           ),
         [WS_METHODS.providerAuthCancel]: (input) =>
           observeRpcEffect(

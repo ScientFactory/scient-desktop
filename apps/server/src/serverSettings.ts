@@ -64,6 +64,10 @@ import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 // SCIENT-FORK:START
 import { applyThreadSectionsPrecondition } from "./scient/threadSections/settingsPrecondition.ts";
 // SCIENT-FORK:END
+import {
+  CODEX_SUBSCRIPTION_SHARING_UNAVAILABLE,
+  newlyRequestedCodexSubscriptionSharing,
+} from "./scient/providerLifecycle/codexSubscriptionSharingPolicy.ts";
 import { makeCustomModelReasoning } from "./customModelReasoning.ts";
 import {
   saveCustomModel,
@@ -1152,6 +1156,14 @@ const make = Effect.gen(function* () {
           applyThreadSectionsPrecondition(current, patch),
         );
         // SCIENT-FORK:END
+        const deferredInstance = newlyRequestedCodexSubscriptionSharing(current, updated);
+        if (deferredInstance !== undefined)
+          return yield* new ServerSettingsError({
+            settingsPath,
+            operation: "normalize",
+            providerInstanceId: deferredInstance,
+            cause: new Error(CODEX_SUBSCRIPTION_SHARING_UNAVAILABLE),
+          });
         const persisted = yield* persistProviderEnvironmentSecrets(current, updated);
         const next = yield* normalizeServerSettings(persisted.settings);
         const materialized = yield* Effect.uninterruptibleMask(() =>

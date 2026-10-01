@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type {
@@ -10,6 +10,9 @@ import type {
   ProviderSettingsFormSchemaAnnotation,
 } from "@t3tools/contracts";
 
+import { InfoIcon } from "lucide-react";
+
+import { Button } from "../ui/button";
 import { cn } from "../../lib/utils";
 import { DraftInput } from "../ui/draft-input";
 import { Input } from "../ui/input";
@@ -237,6 +240,7 @@ function ProviderSettingsFieldRow({
   variant,
   onChange,
 }: ProviderSettingsFieldRowProps) {
+  const [helpOpen, setHelpOpen] = useState(false);
   const inputId = `${idPrefix}-${field.key}`;
   const descriptionClassName =
     variant === "dialog"
@@ -248,7 +252,8 @@ function ProviderSettingsFieldRow({
   ) : null;
 
   if (variant === "settings") {
-    const descriptionId = field.description ? `${inputId}-description` : undefined;
+    const helpDescription = field.key === "binaryPath" ? undefined : field.description;
+    const descriptionId = helpDescription ? `${inputId}-description` : undefined;
     const control =
       field.control === "switch" ? (
         <Switch
@@ -257,7 +262,7 @@ function ProviderSettingsFieldRow({
             onChange(nextProviderConfigWithFieldValue(value, field, Boolean(checked)))
           }
           aria-label={field.label}
-          aria-describedby={descriptionId}
+          aria-describedby={helpOpen ? descriptionId : undefined}
         />
       ) : field.control === "select" ? (
         <ProviderSettingsSelect
@@ -271,7 +276,7 @@ function ProviderSettingsFieldRow({
       ) : field.control === "textarea" ? (
         <Textarea
           id={inputId}
-          aria-describedby={descriptionId}
+          aria-describedby={helpOpen ? descriptionId : undefined}
           className="w-full max-w-full @min-[32rem]/settings-row:w-[min(24rem,50cqw)]"
           value={readProviderConfigString(value, field.key)}
           onChange={(event) =>
@@ -283,7 +288,7 @@ function ProviderSettingsFieldRow({
       ) : (
         <DraftInput
           id={inputId}
-          aria-describedby={descriptionId}
+          aria-describedby={helpOpen ? descriptionId : undefined}
           size="sm"
           className="w-full max-w-full @min-[32rem]/settings-row:w-56"
           type={field.control === "password" ? "password" : undefined}
@@ -297,11 +302,33 @@ function ProviderSettingsFieldRow({
 
     return (
       <SettingsRow
+        descriptionSize="compact"
         title={
           field.control === "switch" ? field.label : <label htmlFor={inputId}>{field.label}</label>
         }
         description={
-          field.description ? <span id={descriptionId}>{field.description}</span> : undefined
+          helpDescription ? (
+            <>
+              <Button
+                type="button"
+                size="icon-micro"
+                variant="ghost-muted"
+                aria-label={`About ${field.label}`}
+                aria-expanded={helpOpen}
+                aria-controls={descriptionId}
+                onClick={() => setHelpOpen((open) => !open)}
+              >
+                <InfoIcon />
+              </Button>
+              <span
+                id={descriptionId}
+                hidden={!helpOpen}
+                className={helpOpen ? "mt-1 block" : "hidden"}
+              >
+                {helpDescription}
+              </span>
+            </>
+          ) : undefined
         }
         control={control}
       />

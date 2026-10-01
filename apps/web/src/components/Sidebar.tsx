@@ -1527,11 +1527,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   const accessibleTitle = isRenaming ? null : <span className="sr-only">{thread.title}</span>;
 
   // Stacks show their layer count; multiple unrelated links show their total count.
-  // Plain clicks open T3; individual PR links also support opening the host in a new tab.
+  // Either opens the thread's pull requests tab; a single PR link opens that PR and still
+  // supports opening the host in a new tab.
   const prBadgeShape = supportsMultiplePullRequests
     ? resolveThreadPullRequestBadge(thread.pullRequests)
     : null;
-  const handlePrStackClick = useCallback(() => {
+  const handlePrListClick = useCallback(() => {
     useRightPanelStore.getState().open(threadRef, "pull-requests");
     if (!props.isActive) onThreadActivate(threadRef);
   }, [onThreadActivate, props.isActive, threadRef]);
@@ -1543,7 +1544,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         number={pr?.number ?? currentLinkedPr?.number}
         url={pr?.url ?? currentLinkedPr?.url}
         status={prStatus}
-        onOpenStack={handlePrStackClick}
+        onOpenList={handlePrListClick}
         onOpenPullRequest={handlePrClick}
       />
     ) : null;
@@ -3941,7 +3942,7 @@ export default function Sidebar() {
       const selectedRefs = selectedThreads.map((thread) =>
         scopeThreadRef(thread.environmentId, thread.id),
       );
-      if (await handleSectionMenuAction(clicked.value, selectedRefs)) {
+      if (await handleSectionMenuAction(clicked.value, selectedRefs, position)) {
         clearSelection();
         return;
       }
@@ -4183,7 +4184,7 @@ export default function Sidebar() {
         );
         if (clicked._tag === "Failure") return;
         // SCIENT-FORK:START
-        if (await handleSectionMenuAction(clicked.value, [threadRef])) return;
+        if (await handleSectionMenuAction(clicked.value, [threadRef], position)) return;
         if (handleConversationExportMenuAction(clicked.value, threadRef)) return;
         // SCIENT-FORK:END
         if (clicked.value?.startsWith("snooze:")) {
@@ -5256,7 +5257,7 @@ export default function Sidebar() {
       </SidebarContent>
       <SidebarChromeFooter />
       {/* SCIENT-FORK:START */}
-      {sections.dialog}
+      {sections.popover}
       {/* SCIENT-FORK:END */}
     </>
   );

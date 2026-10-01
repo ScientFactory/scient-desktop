@@ -96,7 +96,20 @@
       // UI component modules are copied and adapted as cohesive sets. Keep their
       // named subcomponents even before they have callers; the file audit still
       // reports an entire component module when nothing imports it.
-      "ignoreIssues": { "src/components/ui/*.tsx": ["exports", "nsExports", "duplicates"] },
+      "ignoreIssues": {
+        "src/components/ui/*.tsx": ["exports", "nsExports", "duplicates"],
+        // Retained donor UI for the explicitly disabled subscription-sharing mode.
+        // Keep file auditing active everywhere else; remove these exact exceptions
+        // when that mode has approved native-client activation.
+        "src/components/settings/AddCodexAccountDialog.tsx": ["files"],
+        "src/components/settings/ChatGptAccountPicker.tsx": ["files"],
+        "src/components/settings/ChatGptConnectionButton.tsx": ["files"],
+        "src/components/settings/ChatGptWelcomeCoordinator.tsx": ["files"],
+        "src/components/settings/CodexSetupSection.logic.ts": ["files"],
+        "src/components/settings/CodexSetupSection.tsx": ["files"],
+        "src/components/settings/ProviderAuthCallbackCoordinator.tsx": ["files"],
+        "src/providerAuthDelivery.ts": ["files"],
+      },
     },
     "apps/mobile": {
       // Expo loads plugins by string; Metro embeds the browser entry in the native WebView.

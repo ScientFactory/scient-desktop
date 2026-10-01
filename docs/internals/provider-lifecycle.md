@@ -81,6 +81,30 @@ An enabled provider begins with a process-local `probePending` placeholder. Unti
 publishes authoritative facts, lifecycle surfaces show a passive loading state instead of guessing
 whether to offer Install, Sign in, or Manage.
 
+## Provider settings presentation
+
+The provider list shows identity, version and update indicators, and enablement. Account state and
+errors appear in the selected provider's detail pane rather than repeating in the list.
+
+Provider settings and onboarding share the same header actions. An enabled missing runtime with
+advertised install capability shows Install; an enabled installed runtime needing authentication
+with an advertised login method shows Sign in. Both retain an icon-only Manage entry. Other states,
+including disabled providers and active operations, show a labeled Manage button. Manage opens
+the existing lifecycle dialog; updates, repairs, enablement, and ongoing-operation details remain
+available there according to the server's advertised capabilities. Version update indicators stay
+visible in the provider list.
+
+Configuration fields use compact secondary typography. Repetitive binary-path explanations are
+omitted; other field guidance remains available through keyboard-accessible information controls,
+including the account-isolation explanation for a shadow home. Authentication prompts avoid
+repeating command-line instructions when a supported sign-in action is available. Failed operations
+and compatibility problems retain their diagnostic details.
+
+Provider authorization pages open through the system browser in the native desktop client.
+Web clients request a separate authorization popup, including when hosted inside Scient's preview
+browser, so signing in cannot replace onboarding or provider settings. The popup does not retain
+an opener; completion is observed through the canonical server provider snapshot.
+
 ## Capability contract
 
 The additive lifecycle contract is defined in

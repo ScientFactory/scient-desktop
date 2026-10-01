@@ -6,6 +6,14 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   create: vi.fn(),
   moveThreadsToSection: vi.fn(),
+  popoverProps: null as null | {
+    readonly open: boolean;
+    readonly threadCount: number;
+    readonly anchor: unknown;
+    readonly onSubmit: (name: string) => Promise<boolean>;
+    readonly onOpenChange: (open: boolean) => void;
+  },
+  mode: "sections",
 }));
 vi.mock("./catalog", () => ({
   useThreadSectionCatalog: () => ({
@@ -31,10 +39,16 @@ vi.mock("./loadedEnvironments", () => ({ loadedThreadEnvironmentsKeyAtom: {} }))
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => "" }));
 vi.mock("../../state/environments", () => ({ useEnvironments: () => ({ environments: [] }) }));
 vi.mock("../../state/entities", () => ({ readThreadShell: () => ({ projectId: "project-a" }) }));
-// Grouped by section, so New section… opens the inline row.
+vi.mock("./NewSectionPopover", () => ({
+  NewSectionPopover: (props: NonNullable<typeof mocks.popoverProps>) => {
+    mocks.popoverProps = props;
+    return null;
+  },
+}));
+// The same creation surface is used in both modes.
 vi.mock("../../hooks/useLocalStorage", () => ({
   useLocalStorage: (key: string, initial: unknown) =>
-    useState(key === "scient:sidebar:view-mode" ? "sections" : initial),
+    useState(key === "scient:sidebar:view-mode" ? mocks.mode : initial),
 }));
 vi.mock("../../components/ui/toast", () => ({
   toastManager: { add: vi.fn() },
@@ -59,7 +73,7 @@ function Probe() {
   useLayoutEffect(() => {
     sections = value;
   });
-  return null;
+  return value.popover;
 }
 
 beforeEach(() => {
@@ -80,35 +94,57 @@ const refs = [
   { environmentId: EnvironmentId.make("local"), threadId: ThreadId.make("t2") },
 ];
 
-it("files the threads New section… was chosen for when the inline row is submitted", async () => {
-  mocks.create.mockResolvedValue({ id: ThreadSectionId.make("design"), name: "Design", order: 0 });
-  mocks.moveThreadsToSection.mockResolvedValue(true);
-  expect(sections.sectionsView).toBe(true);
-  await act(async () => {
-    await sections.handleSectionMenuAction("section:new", refs);
-  });
-  expect(sections.viewProps.creatingSection).toMatchObject({ threadCount: 2 });
-  await act(async () => {
-    await sections.viewProps.creatingSection!.onSubmit("Design");
-  });
-  expect(mocks.create).toHaveBeenCalledWith("Design", {
-    environmentIds: ["local", "local"],
-    createdInProjects: [
-      { environmentId: "local", projectId: "project-a" },
-      { environmentId: "local", projectId: "project-a" },
-      { environmentId: "local", projectId: "project-a" },
-    ],
-  });
-  expect(mocks.moveThreadsToSection).toHaveBeenCalledWith(refs, "design");
-  expect(sections.viewProps.creatingSection).toBeNull();
-});
+it.each(["sections", "status"])(
+  "creates and files threads in an anchored popover in %s mode",
+  async (mode) => {
+    mocks.mode = mode;
+    act(() => {
+      renderer.unmount();
+      renderer = create(<Probe />);
+    });
+    mocks.create.mockResolvedValue({
+      id: ThreadSectionId.make("design"),
+      name: "Design",
+      order: 0,
+    });
+    mocks.moveThreadsToSection.mockResolvedValue(true);
+    expect(sections.sectionsView).toBe(mode === "sections");
+    await act(async () => {
+      await sections.handleSectionMenuAction("section:new", refs, { x: 20, y: 100 });
+    });
+    expect(mocks.popoverProps).toMatchObject({
+      open: true,
+      threadCount: 2,
+      anchor: { x: 20, y: 100 },
+    });
+    await act(async () => {
+      await mocks.popoverProps!.onSubmit("Design");
+      mocks.popoverProps!.onOpenChange(false);
+    });
+    expect(mocks.create).toHaveBeenCalledWith("Design", {
+      environmentIds: ["local", "local"],
+      createdInProjects: [
+        { environmentId: "local", projectId: "project-a" },
+        { environmentId: "local", projectId: "project-a" },
+        { environmentId: "local", projectId: "project-a" },
+      ],
+    });
+    expect(mocks.moveThreadsToSection).toHaveBeenCalledWith(refs, "design");
+    expect(mocks.popoverProps).toMatchObject({ open: false });
+  },
+);
 
 it("creates an empty section from the New section row", async () => {
   mocks.create.mockResolvedValue({ id: ThreadSectionId.make("design"), name: "Design", order: 0 });
-  act(() => sections.viewProps.onStartCreateSection());
-  expect(sections.viewProps.creatingSection).toMatchObject({ threadCount: 0 });
+  act(() => sections.viewProps.onStartCreateSection({ x: 20, y: 100 }));
+  expect(mocks.popoverProps).toMatchObject({
+    open: true,
+    threadCount: 0,
+    anchor: { x: 20, y: 100 },
+  });
   await act(async () => {
-    await sections.viewProps.creatingSection!.onSubmit("Design");
+    await mocks.popoverProps!.onSubmit("Design");
+    mocks.popoverProps!.onOpenChange(false);
   });
   expect(mocks.create).toHaveBeenCalledWith(
     "Design",

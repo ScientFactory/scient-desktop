@@ -1,3 +1,6 @@
+import { CodexInstallation } from "../CodexInstallation.ts";
+import { ServerSecretStore } from "../../auth/ServerSecretStore.ts";
+import { ServerEnvironmentIdentity } from "../../environment/ServerEnvironment.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, it, assert } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
@@ -17,6 +20,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import {
+  EnvironmentId,
   ClaudeSettings,
   CodexSettings,
   DEFAULT_SERVER_SETTINGS,
@@ -396,7 +400,16 @@ const makeCacheWriteObserver = Effect.fn("makeCacheWriteObserver")(function* (
   };
 });
 
-it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), TestHttpClientLive))(
+const TestNodeServices = Layer.mergeAll(
+  NodeServices.layer,
+  Layer.mock(CodexInstallation)({ managedDirectory: "unused-managed-installation" }),
+  Layer.mock(ServerSecretStore)({}),
+  Layer.succeed(ServerEnvironmentIdentity, {
+    getEnvironmentId: Effect.succeed(EnvironmentId.make("00000000-0000-4000-8000-000000000001")),
+  }),
+);
+
+it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), TestHttpClientLive))(
   "ProviderRegistry",
   (it) => {
     describe("checkCodexProviderStatus", () => {
@@ -1322,20 +1335,40 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 const expectedModels = restarted
                   ? retainedModels
                   : [customModel, ...cachedProvider.models];
-                assert.deepStrictEqual((yield* registry.getProviders)[0]?.models, expectedModels);
+                assert.deepStrictEqual(
+                  (yield* registry.getProviders)[0]?.models,
+                  expectedModels.map((model) => ({
+                    ...model,
+                    ...(model.slug === (restarted ? "gpt-6-astra" : "vega-alpha")
+                      ? { isDefault: true }
+                      : {}),
+                  })),
+                );
 
                 yield* registry.refreshInstance(instance.instanceId);
                 assert.deepStrictEqual(
                   (yield* readProviderStatusCache(filePath))?.models,
-                  restarted ? retainedModels : refreshedProvider.models,
+                  (restarted ? retainedModels : refreshedProvider.models).map((model) => ({
+                    ...model,
+                    ...(model.slug === "gpt-6-astra" ? { isDefault: true } : {}),
+                  })),
                 );
 
                 yield* Ref.set(nextProvider, failedProvider);
                 const afterFailure = yield* registry.refreshInstance(instance.instanceId);
-                assert.deepStrictEqual(afterFailure[0]?.models, retainedModels);
+                assert.deepStrictEqual(
+                  afterFailure[0]?.models,
+                  retainedModels.map((model) => ({
+                    ...model,
+                    ...(model.slug === "gpt-6-astra" ? { isDefault: true } : {}),
+                  })),
+                );
                 assert.deepStrictEqual(
                   (yield* readProviderStatusCache(filePath))?.models,
-                  retainedModels,
+                  retainedModels.map((model) => ({
+                    ...model,
+                    ...(model.slug === "gpt-6-astra" ? { isDefault: true } : {}),
+                  })),
                 );
               }).pipe(
                 Effect.provide(ProviderRegistryLive.pipe(Layer.provide(instanceRegistryLayer))),
@@ -2023,7 +2056,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             assert.deepStrictEqual(
               recoveredProviders.find((provider) => provider.instanceId === openCodeInstanceId)
                 ?.models,
-              recoveredOpenCodeProvider.models,
+              recoveredOpenCodeProvider.models.map((model) => ({ ...model, isDefault: true })),
             );
             assert.deepStrictEqual(
               recoveredProviders.find((provider) => provider.instanceId === codexInstanceId),
@@ -2035,7 +2068,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             assert.deepStrictEqual(
               changedProviders.find((provider) => provider.instanceId === openCodeInstanceId)
                 ?.models,
-              changedCatalogProvider.models,
+              changedCatalogProvider.models.map((model) => ({ ...model, isDefault: true })),
             );
             assert.deepStrictEqual(
               changedProviders.find((provider) => provider.instanceId === codexInstanceId),
@@ -2148,9 +2181,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               instanceId: cursorInstanceId,
             });
 
-            assert.deepStrictEqual((yield* registry.getProviders)[0]?.models, [
-              ...initialProvider.models,
-            ]);
+            assert.deepStrictEqual(
+              (yield* registry.getProviders)[0]?.models,
+              initialProvider.models.map((model) => ({ ...model, isDefault: true })),
+            );
             yield* PubSub.publish(changes, refreshedProvider);
             yield* cacheWrites.wait(refreshedProvider.checkedAt);
             const cachedProvider = yield* readProviderStatusCache(filePath);
@@ -2159,7 +2193,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               cachedProvider,
               withBundledCompatibility({
                 ...refreshedProvider,
-                models: [...initialProvider.models],
+                models: initialProvider.models.map((model) => ({ ...model, isDefault: true })),
               }),
             );
           }).pipe(Effect.provide(runtimeServices));
@@ -2458,15 +2492,19 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               yield* cacheWrites.wait(authoritativeProvider.checkedAt);
               let cachedProvider = yield* readProviderStatusCache(filePath);
 
-              assert.deepStrictEqual(cachedProvider?.models, [authoritativeProvider.models[0]!]);
+              assert.deepStrictEqual(cachedProvider?.models, [
+                { ...authoritativeProvider.models[0]!, isDefault: true },
+              ]);
 
               yield* PubSub.publish(changes, failedProvider);
               yield* cacheWrites.wait(failedProvider.checkedAt);
               cachedProvider = yield* readProviderStatusCache(filePath);
 
-              assert.deepStrictEqual(cachedProvider?.models, [authoritativeProvider.models[0]!]);
+              assert.deepStrictEqual(cachedProvider?.models, [
+                { ...authoritativeProvider.models[0]!, isDefault: true },
+              ]);
               assert.deepStrictEqual((yield* registry.getProviders)[0]?.models, [
-                authoritativeProvider.models[0]!,
+                { ...authoritativeProvider.models[0]!, isDefault: true },
               ]);
             }).pipe(Effect.provide(runtimeServices));
           }),

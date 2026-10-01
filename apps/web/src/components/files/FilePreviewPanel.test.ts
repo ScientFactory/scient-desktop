@@ -9,6 +9,7 @@ import {
   isMarkdownPreviewFile,
   resolveMarkdownTaskPreviewUpdate,
   resolveFilePreviewKind,
+  resolveFilePreviewPath,
   setMarkdownTaskChecked,
   shouldLoadFileAsText,
   shouldShowFileExplorer,
@@ -167,5 +168,26 @@ describe("setMarkdownTaskChecked", () => {
         truncated: false,
       }),
     ).toBe("- [x] First\n- [x] Second\n");
+  });
+});
+
+describe("resolveFilePreviewPath", () => {
+  it.each([
+    ["/repo/project", null],
+    ["/repo/project/", null],
+    [".", null],
+    [null, null],
+    ["/repo/project/src", "/repo/project/src"],
+    ["/repo/project/src/main.ts", "/repo/project/src/main.ts"],
+    ["src/main.ts", "src/main.ts"],
+    ["/repo/project-other", "/repo/project-other"],
+  ])("opens %s in the appropriate workspace surface", (path, expected) => {
+    const relativePath = resolveFilePreviewPath(path, "/repo/project");
+    expect(relativePath).toBe(expected);
+    if (expected === null) {
+      expect(
+        shouldShowFileExplorer({ relativePath, explorerOpen: false, attachmentOpen: false }),
+      ).toBe(true);
+    }
   });
 });

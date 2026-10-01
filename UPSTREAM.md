@@ -88,35 +88,30 @@ official `main` only after its untouched baseline passed. That historical
 revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
-The current T3 alignment is recorded in
-[`docs/internals/2026-09-29-upstream-sync-d2c9281b8.md`](docs/internals/2026-09-29-upstream-sync-d2c9281b8.md)
-and in `upstream-state.json`. It advances the integration through
-`d2c9281b8112dc3b2991642c4bdb985e4b08b9bb`: 14 official commits after
-`de251fc2971a884cb5b1305ba4daf309dc8cccb0`, merged onto owned base
-`63d9edf1b6eba1387826c8aa6ae7dfe8c292a770` as
-`eb56e78c44cb76fa37c19d0a99b099a93a69eee3`, whose second parent is the exact
-official target. Every one of the 14 donor commits is literal ancestry. The
-preceding alignment ([PR #384](docs/internals/2026-09-27-upstream-sync-a727d1d9.md))
+The current alignment is [Scient PR #420](https://github.com/ScientFactory/scient-desktop/pull/420),
+recorded in [the 2026-09-30 receipt](docs/internals/2026-09-30-upstream-sync-35be904f2f.md)
+and `upstream-state.json`. It integrates all 20 official commits after
+`d2c9281b8112dc3b2991642c4bdb985e4b08b9bb` through
+`35be904f2fc40aa6d7a42778b6895e8274f3097f`, onto owned base
+`136ab8ad104b92f100a6ccd8fac1e6ee0c884102`. The upstream merge
+`efacdaf575f2cd3d65068d8e4e78a2ffb2b16578` preserves that exact official target
+as its second parent. Owned-main catch-up merge
+`14fb2478174667b49afaf6d7405526ed897d0c16` incorporates owned main
+`e0efa3fa4346ea6b7c88c93b25b4638cea715fe4` without changing the official target.
+The receipt separately records the original qualification and the 2026-10-01
+catch-up checks and the Compute/conversation workspaces' explicit use of the existing root
+test configuration; fresh hosted CI remains required. The [preceding alignment](docs/internals/2026-09-29-upstream-sync-d2c9281b8.md)
 remains literal ancestry.
 
-This routine range activates no protected boundary. It carries Claude Sonnet
-5.5, the OpenCode v2 incompatibility marking, a large-transcript usage
-preservation fix, a shortcut-latency fix, the Linux URL-handler icon and
-MIME-cache refresh, Bitbucket credentials in Source Control settings, and the
-Claude/OpenCode interrupt fixes. `node-pty` stays on `^1.1.0` and no package
-manifest changed: the range does not bump the version, upstream's Windows
-readiness wait is a no-op on 1.1.0 because the process PID is assigned
-synchronously, and upstream's `node-pty@1.2.0-beta.15` patch registration was
-removed because pnpm rejects an entry for an uninstalled version — the patch
-file is retained for a future adoption. Desktop identity stays `scient` /
-`scient.desktop` / `Name=Scient`; the fork's usage-accounting secret lifecycle
-composes beside upstream's Bitbucket one behind a generalized redaction marker.
-Three upstream identity literals had auto-merged into non-conflicted test
-regions and were corrected. `docs/user/remote-access.md` keeps Scient's framing:
-upstream's replacement would have advertised T3 Connect and a hosted relay the
-product does not provide. The receipt records every conflict composition, the
-post-merge semantic findings, the full gate results, and the attributed
-env-blocked `server.test.ts` baseline.
+The range brings Codex 0.159 protocol support, Pro Max/Ultrafast capability
+handling, OpenCode credential-grouped usage, Grok crash recovery, workspace-root
+links, agent-question rows, pull-request navigation/layout fixes, and Vite+ 1.0.
+Upstream ChatGPT subscription-sharing machinery is retained but dormant behind
+Scient's tested activation boundaries. Native Codex authentication and Scient's
+existing managed CLI lifecycle remain active. The receipt records composition,
+backend and client review, complete passing qualification, and the isolated native
+visual review. No protected release, cloud, telemetry, or publication boundary is
+activated.
 
 ## Receiving T3 updates
 
@@ -657,6 +652,18 @@ visibility observation, and section jumps. Preserve its single rendering slot in
 component. The Settings route retains `data-settings-page-layout` as the observer's
 root. Page changes do not automatically open a submenu. Settings search,
 page routing, and shared sidebar primitives remain upstream-owned.
+
+Scient retains native Codex browser/device sign-in and its existing managed-runtime
+lifecycle. Upstream `setupMode: managed` means ChatGPT subscription sharing; it
+is separate from Scient installing a CLI. That capability remains dormant:
+settings activation, driver creation, installer operations, remote handoff/profile
+RPCs, and desktop callbacks reject before credential, browser or process work.
+Its setup/coordinator UI has no active mount, and the dormant installer does not
+probe PATH at startup. Persisted unsupported modes remain decodable and unavailable;
+users can recover by switching to native/existing mode. Preserve these guards until
+a separately qualified activation explicitly replaces them. Shared policy lives in
+`packages/shared/src/scientCodexPolicy.ts`; backend guards live in
+`apps/server/src/scient/providerLifecycle/codexSubscriptionSharingPolicy.ts`.
 
 In the shared provider settings editor, Scient displays the authenticated account's
 subscription label on its own line above the email/visibility control. Preserve

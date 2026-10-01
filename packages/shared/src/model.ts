@@ -1,4 +1,7 @@
 import {
+  DEFAULT_MODEL_BY_PROVIDER,
+  PREFERRED_DEFAULT_CODEX_MODELS,
+  type ServerProviderModel,
   type CustomModelSetting,
   MODEL_SLUG_ALIASES_BY_PROVIDER,
   ModelCapabilities,
@@ -357,6 +360,98 @@ export function toCustomModelSetting(entry: CustomModelDefinition): CustomModelS
       ? { capabilities: createModelCapabilities({ optionDescriptors: descriptors }) }
       : {}),
   };
+}
+
+/** Resolve only implicit selections; explicit and persisted picks never pass through here. */
+export function resolveAutomaticModel(
+  driver: ProviderDriverKind,
+  models: ReadonlyArray<
+    SelectableModelOption & {
+      isDefault?: boolean | undefined;
+      isCustom?: boolean | undefined;
+      isLegacy?: boolean | undefined;
+      capabilities?: ModelCapabilities | null | undefined;
+    }
+  >,
+): string | undefined {
+  const available = models.filter((model) => !model.isLegacy);
+  const builtIns = available.filter((model) => !model.isCustom);
+  const preferences =
+    driver === "codex"
+      ? PREFERRED_DEFAULT_CODEX_MODELS
+      : driver === "claudeAgent"
+        ? ["claude-opus-5-5", "claude-fable-5-1"]
+        : [];
+  const preferred = preferences.flatMap((slug) =>
+    builtIns.filter((model) =>
+      driver === "codex"
+        ? codexModelFamily(model.slug) === slug
+        : model.slug === slug || model.aliases?.includes(slug),
+    ),
+  )[0];
+  const reported = available.find((model) => model.isDefault);
+  const fallback = DEFAULT_MODEL_BY_PROVIDER[driver];
+  const selected =
+    preferred ??
+    reported ??
+    builtIns.find((model) => model.slug === fallback || model.aliases?.includes(fallback ?? "")) ??
+    builtIns[0] ??
+    available[0];
+  if (driver === "antigravity" && selected && !selected.isCustom && selected.capabilities) {
+    const variant = /^(gemini-[a-z0-9.-]+)-(low|medium|high)$/.exec(selected.slug);
+    const name = /^(Gemini .+) \((Low|Medium|High)\)$/.exec(selected.name);
+    if (variant && name && name[2]?.toLowerCase() === variant[2]) {
+      const high = builtIns.find(
+        (model) =>
+          model.slug === `${variant[1]}-high` &&
+          model.name === `${name[1]} (High)` &&
+          Boolean(model.capabilities) &&
+          (model.capabilities?.optionDescriptors?.length ?? 0) === 0,
+      );
+      if (high && (selected.capabilities?.optionDescriptors?.length ?? 0) === 0) return high.slug;
+    }
+  }
+  // Antigravity has no static dispatchable model ID.
+  return selected?.slug ?? (models.length === 0 && driver !== "antigravity" ? fallback : undefined);
+}
+
+/** Publish the same automatic choice to every client without altering catalog order or IDs. */
+export function applyAutomaticModelDefaults(
+  driver: ProviderDriverKind,
+  models: ReadonlyArray<ServerProviderModel>,
+): ReadonlyArray<ServerProviderModel> {
+  const selected = resolveAutomaticModel(driver, models);
+  return models.map((model) => {
+    // Built-in capability defaults affect new selections, not saved selection options.
+    const capabilities =
+      !model.isCustom && (driver === "codex" || driver === "claudeAgent") && model.capabilities
+        ? {
+            ...model.capabilities,
+            optionDescriptors: (model.capabilities.optionDescriptors ?? []).map((descriptor) => {
+              if (
+                descriptor.type !== "select" ||
+                !["reasoningEffort", "effort"].includes(descriptor.id) ||
+                !descriptor.options.some((option) => option.id === "medium")
+              )
+                return descriptor;
+              return {
+                ...descriptor,
+                concreteReasoning: true,
+                currentValue: "medium",
+                options: descriptor.options.map((option) => ({
+                  ...option,
+                  isDefault: option.id === "medium",
+                })),
+              };
+            }),
+          }
+        : model.capabilities;
+    const resolved = capabilities === model.capabilities ? model : { ...model, capabilities };
+    if (model.slug === selected) return { ...resolved, isDefault: true };
+    if (!model.isDefault) return resolved;
+    const { isDefault: _default, ...rest } = resolved;
+    return rest;
+  });
 }
 
 export function resolveSelectableModel(

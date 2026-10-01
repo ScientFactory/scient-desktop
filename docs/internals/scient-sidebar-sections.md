@@ -92,8 +92,10 @@ Because it's one rule, the field never shows a name that saves differently.
 
 **New section… files its threads.** Creating a section from a thread menu
 (or the chat header) creates it already registered for those threads'
-environments and projects, then files them. The dialog and the inline row
-say which threads it is for.
+environments and projects, then files them. The compact creation popover shows a section-name input and small action buttons; its accessible title identifies the threads it is for. It opens beside
+the initiating button or native-menu origin in both sidebar modes and the chat
+header, without a backdrop or modal focus trap. The sidebar's New section row
+opens the same form instead of becoming a bottom-of-list input.
 
 **A fork stays in its origin's section.** The fork decision emits the
 origin's `sectionId` as `thread.meta-updated` right after `thread.created`,
@@ -141,11 +143,25 @@ section when un-settled or woken.
 
 **Drops land where the list shows them.**
 
-- **Headers are targets:** a row dropped on a section header lands at the top
-  of that section, from either direction, so an empty or collapsed section
-  (only a header) can be reached from below. `sectionsDropIndex` decides the
-  slot, and the Sections view's sorting strategy slides rows to the same slot
-  while dragging, so the header stays put instead of sliding past the row.
+- **Headers have two insertion sides:** the lower half places a conversation
+  at the top of the named section, including empty or collapsed sections. Crossing
+  the midpoint upward selects the end of the preceding section, and the header
+  slides down immediately to show that slot. Hidden rows remain before an end
+  drop. The first header stays at the top; either half targets its own section.
+  Preview and committed placement use the same slot and preserve pin boundaries.
+- **Rows have two insertion sides:** the pointer above a row's midpoint inserts
+  before it, and below inserts after it, independent of the source's position.
+  The lower half of the last row appends to that section. Collision geometry
+  excludes preview transforms, so a stationary pointer keeps its slot while
+  rows slide. Preview, held layout and order-key planning use the same placement.
+- **Conversation drags follow the pointer:** the grabbed point stays under the
+  pointer as the list scrolls. Only section headers mount a drag overlay; an
+  empty overlay would make sortable rows follow landing slots instead. Vertical
+  movement and scroll-viewport boundaries still constrain the dragged card.
+- **Membership precedes order:** a cross-section drop waits for the section move
+  to succeed before writing order keys. A failed move releases the held preview
+  without changing the conversation’s order in its original section. Same-section
+  reordering does not perform a membership write.
 - **Pins stay on top:** the slot keeps the row on its own side of the pinned
   rows, since a drop never changes a pin.
 - **Whole sections:** a drop is planned against every row of the target
@@ -294,7 +310,7 @@ Upstream-owned files touched. JavaScript mounts are additive and carry
 | `apps/web/src/components/sidebar/SidebarThreadHeader.tsx`                                                                                                 | `groupingToggle` slot and `hideNewThreadButton`. In place: the search field's class list, and a `hidden` attribute on T3's New thread icon                                                                                                                                                                                                                                               |
 | `apps/web/src/hooks/useHandleNewThread.ts`                                                                                                                | reusing an empty draft forgets its remembered section                                                                                                                                                                                                                                                                                                                                    |
 | `apps/web/src/components/threadActionMenu.logic.ts`                                                                                                       | Section menu ids in `ThreadActionMenuId`; optional `sectionMenu` item right after Snooze, in the placement group                                                                                                                                                                                                                                                                         |
-| `apps/web/src/hooks/useThreadActionMenu.ts`, `components/chat/ChatHeader.tsx`                                                                             | Section submenu in the chat-header menu and its New section dialog                                                                                                                                                                                                                                                                                                                       |
+| `apps/web/src/hooks/useThreadActionMenu.ts`, `components/chat/ChatHeader.tsx`                                                                             | Section submenu in the chat-header menu and its anchored New section popover                                                                                                                                                                                                                                                                                                             |
 | `apps/web/src/hooks/showThreadUndoNotice.ts`                                                                                                              | In place: `"Moved"` in the undo action union                                                                                                                                                                                                                                                                                                                                             |
 | `apps/web/src/components/ui/sidebar.tsx`                                                                                                                  | `toggle` variant of `SidebarMenuButton`                                                                                                                                                                                                                                                                                                                                                  |
 | `apps/web/src/contextMenuFallback.ts`                                                                                                                     | `list-filter` icon                                                                                                                                                                                                                                                                                                                                                                       |

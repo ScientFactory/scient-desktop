@@ -32,8 +32,6 @@ import {
 import { useScientOnboardingStorage } from "./storage";
 import { ScientProjectImportAction } from "./ScientProjectImportAction";
 
-const PRIMARY_ONBOARDING_PROVIDER_COUNT = 3;
-
 export function ScientGettingStartedFlow(props: { readonly mode: "automatic" | "manual" }) {
   const navigate = useNavigate();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -97,7 +95,7 @@ export function ScientGettingStartedFlow(props: { readonly mode: "automatic" | "
   }, [instanceEntries]);
   const choices = useMemo<ReadonlyArray<GettingStartedProviderChoice>>(
     () =>
-      DRIVER_OPTIONS.slice(0, PRIMARY_ONBOARDING_PROVIDER_COUNT).map((definition) => {
+      DRIVER_OPTIONS.map((definition) => {
         const entry = entryByDriver.get(definition.value) ?? null;
         return {
           driverKind: definition.value,
