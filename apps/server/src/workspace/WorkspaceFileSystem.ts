@@ -169,9 +169,24 @@ export class WorkspaceFileSystem extends Context.Service<
   {
     /**
      * Read a UTF-8 text file relative to the workspace root, or any host file by
-     * absolute path.
+     * absolute path. A relative path stays inside the root, symlinks included:
+     * this is the read every feature that works on project files uses, and the
+     * one saves and renames confirm their target with.
      */
     readonly readFile: (
+      input: ProjectReadFileInput,
+    ) => Effect.Effect<
+      ProjectReadFileResult,
+      WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
+    >;
+    /**
+     * Read a file to show it. Viewing never depends on the project boundary: a
+     * relative path that climbs out of the root and a symlink that leads out of
+     * it are read in place, read-only, like an absolute host path. Only the
+     * file viewer uses this; nothing that changes or processes project files
+     * should.
+     */
+    readonly viewFile: (
       input: ProjectReadFileInput,
     ) => Effect.Effect<
       ProjectReadFileResult,
@@ -253,9 +268,10 @@ export const make = Effect.gen(function* () {
    * - `view`: viewing never depends on the project boundary. An absolute path,
    *   a relative path that climbs out of the root and a symlink that leads out
    *   of it all read the host file in place, read-only.
-   * - `contained`: a read that a save or rename relies on to confirm what it
-   *   is about to change. It stays inside the root, symlinks included, and
-   *   fails otherwise, exactly as writes do.
+   * - `contained`: the read for anything that works on project files, and the
+   *   one a save or rename relies on to confirm what it is about to change. A
+   *   relative path stays inside the root, symlinks included, and fails
+   *   otherwise, exactly as writes do.
    */
   const resolveReadTarget = Effect.fn("WorkspaceFileSystem.resolveReadTarget")(function* (
     input: ProjectReadFileInput,
@@ -451,13 +467,9 @@ export const make = Effect.gen(function* () {
   });
 
   const readFile: WorkspaceFileSystem["Service"]["readFile"] = (input) =>
+    readResolvedFile(input, "contained");
+  const viewFile: WorkspaceFileSystem["Service"]["viewFile"] = (input) =>
     readResolvedFile(input, "view");
-  /**
-   * The read a save or rename uses to confirm the file it is about to change.
-   * It must never see outside the root: a rename verifies its destination with
-   * it, and a destination that landed outside has to fail, not be accepted.
-   */
-  const readContainedFile = (input: ProjectReadFileInput) => readResolvedFile(input, "contained");
 
   // Watching is viewing: like reads, a watch follows the file wherever it lives,
   // including absolute host paths, paths that climb out of the root and
@@ -781,7 +793,7 @@ export const make = Effect.gen(function* () {
           });
         }
         if (input.expectedRevision !== undefined) {
-          const current = yield* readContainedFile({
+          const current = yield* readFile({
             cwd: input.cwd,
             relativePath: input.relativePath,
           });
@@ -956,7 +968,7 @@ export const make = Effect.gen(function* () {
             destinationInput,
             initialDestination.realTargetPath,
           );
-          const current = yield* readContainedFile({
+          const current = yield* readFile({
             cwd: input.cwd,
             relativePath: input.relativePath,
           });
@@ -1028,7 +1040,7 @@ export const make = Effect.gen(function* () {
                     cause,
                   }),
           });
-          const linked = yield* readContainedFile({
+          const linked = yield* readFile({
             cwd: input.cwd,
             relativePath: input.destinationRelativePath,
           });
@@ -1156,6 +1168,7 @@ export const make = Effect.gen(function* () {
     inspectWriteTarget,
     readFile,
     renameFile,
+    viewFile,
     watchFile,
     writeFile,
   });

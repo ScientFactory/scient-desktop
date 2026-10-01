@@ -80,14 +80,14 @@ describe("WorkspaceFileSystem.readFile", () => {
         );
 
         const swapped = yield* workspaceFileSystem
-          .readFile({ cwd: workspace, relativePath: "notes.md" })
+          .viewFile({ cwd: workspace, relativePath: "notes.md" })
           .pipe(Effect.result);
 
         expect(armed).toBe(false);
         // It must not return the outside file as an editable workspace file.
         expect(swapped._tag).toBe("Failure");
         // Read again, the link is resolved properly: its target, read-only.
-        const reread = yield* workspaceFileSystem.readFile({
+        const reread = yield* workspaceFileSystem.viewFile({
           cwd: workspace,
           relativePath: "notes.md",
         });

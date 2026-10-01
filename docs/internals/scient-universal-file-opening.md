@@ -66,7 +66,11 @@ Where a file lives decides only whether it is editable, never whether it can be
 viewed. `projects.readFile` and its change subscription read a host file in
 place, read-only, however the path is spelled: an absolute path, a relative
 path that climbs out of the workspace, or a symlink inside the workspace that
-leads out of it. Writes, renames, and creates keep every containment check. A
+leads out of it. Only the viewer's read (`WorkspaceFileSystem.viewFile`) is
+relaxed. `readFile`, which export, analysis, compute, saves, and renames use to
+work on project files, still keeps a relative path inside the root, symlinks
+included; a rename confirms its destination with it. Writes, renames, and
+creates keep every containment check. A
 workspace asset request for such a symlink is served as that exact target
 alone, the same capability an absolute media path grants, with no sibling
 access.
@@ -91,9 +95,13 @@ environment that owns the files:
    reason other than absence. `..` is applied to the path as written, as the
    shell and the path tools that built the link apply it.
 2. Only when nothing exists there is the workspace searched for files with the
-   link's exact name. The search walks the workspace, so it includes symlinks
-   to regular files, which the file index does not list. It does not enter
-   symlinked directories, `.git`, or `node_modules`, and it is bounded.
+   link's exact name. The search walks the workspace's real path, so it
+   includes symlinks to regular files, which the file index does not list. It
+   does not enter symlinked directories, `.git`, or `node_modules`, checks each
+   directory against its own real path, and is bounded in directories and
+   time. It is a snapshot: the best candidates are checked again before the
+   answer is given, and anything that could not be examined makes the result
+   incomplete.
 3. The candidate sharing the longest run of trailing path segments with the
    link is the match. Several at that length are a tie, unless exactly one is
    a file the link's own turn changed.

@@ -3660,7 +3660,9 @@ const makeWsRpcLayer = (
         [WS_METHODS.projectsReadFile]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsReadFile,
-            workspaceFileSystem.readFile(input).pipe(
+            // The viewer's read: a file is shown wherever it lives, read-only
+            // outside the project. Every other feature reads with readFile.
+            workspaceFileSystem.viewFile(input).pipe(
               Effect.map((result) => ({
                 ...result,
                 readOnly:
