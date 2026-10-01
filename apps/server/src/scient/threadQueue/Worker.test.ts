@@ -30,7 +30,7 @@ import { OrchestrationProjectionSnapshotQueryLive } from "../../orchestration/La
 import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ScientQueueWorker, ScientQueueWorkerLive } from "./Worker.ts";
-import { readQueue, writeQueue, finalizeQueueTurn } from "./Ledger.ts";
+import { readQueue, writeQueue, finalizeQueueTurn, type QueueDocument } from "./Ledger.ts";
 import { controlQueue, enqueueQueue } from "./operations.ts";
 
 const engineLayer = Layer.mergeAll(
@@ -46,13 +46,44 @@ const engineLayer = Layer.mergeAll(
   Layer.provide(OrchestrationCommandReceiptRepositoryLive),
   Layer.provide(RepositoryIdentityResolver.layer),
 );
-const testLayer = ScientQueueWorkerLive.pipe(
-  Layer.provideMerge(engineLayer),
-  Layer.provide(WorkspacePaths.layer),
-  Layer.provideMerge(SqlitePersistenceMemory),
-  Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "scient-queue-worker-" })),
-  Layer.provide(NodeServices.layer),
-);
+const makeTestLayer = (onRead?: (id: ThreadId, status: string | undefined) => void) => {
+  const workerLayer = onRead
+    ? ScientQueueWorkerLive.pipe(
+        Layer.provide(
+          Layer.effect(
+            ProjectionSnapshotQuery,
+            Effect.gen(function* () {
+              const query = yield* ProjectionSnapshotQuery;
+              return {
+                ...query,
+                getThreadDetailById: (id, options) =>
+                  query
+                    .getThreadDetailById(id, options)
+                    .pipe(
+                      Effect.tap((target) =>
+                        Effect.sync(() =>
+                          onRead(
+                            id,
+                            Option.isSome(target) ? target.value.session?.status : undefined,
+                          ),
+                        ),
+                      ),
+                    ),
+              } satisfies typeof query;
+            }),
+          ),
+        ),
+      )
+    : ScientQueueWorkerLive;
+  return workerLayer.pipe(
+    Layer.provideMerge(engineLayer),
+    Layer.provide(WorkspacePaths.layer),
+    Layer.provideMerge(SqlitePersistenceMemory),
+    Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "scient-queue-worker-" })),
+    Layer.provide(NodeServices.layer),
+  );
+};
+const testLayer = makeTestLayer();
 const now = "2026-09-04T00:00:00.000Z";
 const threadId = ThreadId.make("background-queue");
 const projectId = ProjectId.make("queue-project");
@@ -435,4 +466,220 @@ it.effect.each([
     );
     expect((yield* readQueue(threadId)).items).toEqual([]);
   }).pipe(Effect.provide(testLayer)),
+);
+
+it.live(
+  "retries an eligible queue after committed readiness and preserves FIFO under repeated wakeups",
+  () =>
+    Effect.gen(function* () {
+      const reads = yield* Queue.unbounded<string | undefined>();
+      yield* Effect.gen(function* () {
+        const engine = yield* OrchestrationEngineService;
+        const worker = yield* ScientQueueWorker;
+        const sql = yield* SqlClient.SqlClient;
+        yield* engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.make("wakeup-project"),
+          projectId,
+          title: "Queue wakeup",
+          workspaceRoot: "/tmp",
+          createdAt: now,
+        });
+        yield* engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("wakeup-thread"),
+          threadId,
+          projectId,
+          title: "Queue wakeup",
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+        });
+        const starts = yield* Queue.unbounded<string>();
+        const delivered: string[] = [];
+        const events = yield* engine.subscribeDomainEvents;
+        yield* events.pipe(
+          Stream.runForEach((event) =>
+            event.type === "thread.turn-start-requested"
+              ? Effect.sync(() => delivered.push(event.payload.messageId)).pipe(
+                  Effect.andThen(Queue.offer(starts, event.payload.messageId)),
+                  Effect.asVoid,
+                )
+              : Effect.void,
+          ),
+          Effect.forkScoped,
+        );
+        yield* worker.start;
+        const setSession = Effect.fnUntraced(function* (
+          commandId: string,
+          status: "running" | "ready",
+          turn: string | null,
+          target = threadId,
+        ) {
+          yield* engine.dispatch({
+            type: "thread.session.set",
+            commandId: CommandId.make(commandId),
+            threadId: target,
+            createdAt: now,
+            session: {
+              threadId: target,
+              status,
+              providerName: "codex",
+              runtimeMode: "full-access",
+              activeTurnId: turn === null ? null : TurnId.make(turn),
+              lastError: null,
+              updatedAt: now,
+            },
+          });
+        });
+        const expected: string[] = [];
+        // Actual worker reads and committed start events synchronize the test, without sleeps.
+        for (let round = 0; round < 24; round++) {
+          const previousTurn = `previous-${round}`;
+          const first = `qitem_${round}-A`;
+          const second = `qitem_${round}-B`;
+          yield* setSession(`running-${round}`, "running", previousTurn);
+          yield* sql.withTransaction(
+            Effect.gen(function* () {
+              let doc = yield* readQueue(threadId);
+              for (const id of [first, second]) {
+                doc = yield* enqueueQueue(
+                  { threadId, queueItemId: id, text: id, attachments: [] },
+                  doc,
+                );
+              }
+              yield* writeQueue(threadId, { ...doc, blocked: true, turnId: previousTurn });
+            }),
+          );
+          yield* finalizeQueueTurn(threadId, previousTurn, true, "answer");
+          yield* finalizeQueueTurn(threadId, previousTurn, round % 2 === 0, "checkpoint");
+          expect(yield* Queue.take(reads).pipe(Effect.timeout("5 seconds"))).toBe("running");
+          expect((yield* readQueue(threadId)).blocked).toBe(false);
+          yield* setSession(`ready-${round}`, "ready", null);
+          expect(yield* Queue.take(starts).pipe(Effect.timeout("5 seconds"))).toBe(
+            `queue:${first}`,
+          );
+          expect(yield* Queue.take(reads)).toBe("ready");
+          expected.push(`queue:${first}`);
+          yield* Effect.forEach(
+            Array.from({ length: 12 }, (_, index) => index),
+            (index) => setSession(`repeat-${round}-${index}`, "ready", null),
+            { concurrency: "unbounded" },
+          );
+          const afterFirst = yield* readQueue(threadId);
+          expect(afterFirst.blocked).toBe(true);
+          expect(afterFirst.items.map((item) => item.queueItemId)).toEqual([second]);
+          expect(yield* Queue.poll(starts)).toEqual(Option.none());
+          // The other ordering remains valid: ready arrives before either finalizer.
+          const firstTurn = `first-${round}`;
+          yield* setSession(`first-running-${round}`, "running", firstTurn);
+          yield* setSession(`first-ready-${round}`, "ready", null);
+          yield* finalizeQueueTurn(threadId, firstTurn, true, "checkpoint");
+          expect((yield* readQueue(threadId)).blocked).toBe(true);
+          yield* finalizeQueueTurn(threadId, firstTurn, true, "answer");
+          expect(yield* Queue.take(starts).pipe(Effect.timeout("5 seconds"))).toBe(
+            `queue:${second}`,
+          );
+          expect(yield* Queue.take(reads)).toBe("ready");
+          expected.push(`queue:${second}`);
+          const secondTurn = `second-${round}`;
+          yield* setSession(`second-running-${round}`, "running", secondTurn);
+          yield* setSession(`second-ready-${round}`, "ready", null);
+          yield* finalizeQueueTurn(threadId, secondTurn, true, "answer");
+          yield* finalizeQueueTurn(threadId, secondTurn, true, "checkpoint");
+          expect((yield* readQueue(threadId)).items).toEqual([]);
+        }
+        expect(delivered).toEqual(expected);
+        expect(delivered).toHaveLength(48);
+
+        const createThread = Effect.fnUntraced(function* (id: ThreadId) {
+          yield* engine.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make(`create-${id}`),
+            threadId: id,
+            projectId,
+            title: id,
+            modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+          });
+        });
+        const protectedQueues = new Map<ThreadId, QueueDocument>();
+        for (const guard of ["checkpoint", "failed-answer", "stop", "pause"] as const) {
+          const id = ThreadId.make(`guard-${guard}`);
+          const turn = `turn-${guard}`;
+          yield* createThread(id);
+          yield* setSession(`running-${guard}`, "running", turn, id);
+          yield* sql.withTransaction(
+            Effect.gen(function* () {
+              const doc = yield* enqueueQueue(
+                { threadId: id, queueItemId: `qitem_${guard}`, text: guard, attachments: [] },
+                yield* readQueue(id),
+              );
+              yield* writeQueue(id, { ...doc, blocked: true, turnId: turn });
+            }),
+          );
+          if (guard === "checkpoint") {
+            yield* finalizeQueueTurn(id, turn, true, "answer");
+          } else if (guard === "pause") {
+            const doc = yield* readQueue(id);
+            yield* writeQueue(id, {
+              ...doc,
+              blocked: false,
+              turnId: null,
+              paused: "Queue paused: fixture failure",
+            });
+          } else {
+            if (guard === "stop") {
+              yield* engine.dispatch({
+                type: "thread.turn.interrupt",
+                commandId: CommandId.make("guard-stop"),
+                threadId: id,
+                createdAt: now,
+              });
+            }
+            yield* finalizeQueueTurn(id, turn, guard === "stop", "answer");
+            yield* finalizeQueueTurn(id, turn, true, "checkpoint");
+          }
+          yield* setSession(`ready-${guard}`, "ready", null, id);
+          protectedQueues.set(id, yield* readQueue(id));
+        }
+        // A later thread's start is a mailbox barrier: all guarded wakeups precede it.
+        const sentinel = ThreadId.make("wakeup-sentinel");
+        yield* createThread(sentinel);
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* writeQueue(
+              sentinel,
+              yield* enqueueQueue(
+                {
+                  threadId: sentinel,
+                  queueItemId: "qitem_sentinel",
+                  text: "Sentinel",
+                  attachments: [],
+                },
+                yield* readQueue(sentinel),
+              ),
+            );
+          }),
+        );
+        expect(yield* Queue.take(starts).pipe(Effect.timeout("5 seconds"))).toBe(
+          "queue:qitem_sentinel",
+        );
+        for (const [id, doc] of protectedQueues) expect(yield* readQueue(id)).toEqual(doc);
+        expect(delivered).toEqual([...expected, "queue:qitem_sentinel"]);
+      }).pipe(
+        Effect.provide(
+          makeTestLayer((_id, status) => {
+            Queue.offerUnsafe(reads, status);
+          }),
+        ),
+      );
+    }),
 );

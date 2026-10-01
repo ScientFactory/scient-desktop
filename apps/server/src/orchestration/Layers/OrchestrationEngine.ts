@@ -1,4 +1,5 @@
 import { observeQueueCommand, wasQueuedCommand } from "../../scient/threadQueue/Ledger.ts";
+import { notifyQueue } from "../../scient/threadQueue/signals.ts";
 import type {
   DispatchResult,
   OrchestrationClientOrigin,
@@ -483,6 +484,15 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           );
 
         commandReadModel = committedCommand.nextCommandReadModel;
+        // SCIENT-FORK:START — Retry queues skipped while busy only after readiness commits.
+        if (
+          envelope.command.type === "thread.session.set" &&
+          envelope.command.session.status === "ready"
+        ) {
+          const threadId = envelope.command.threadId;
+          yield* Effect.sync(() => notifyQueue(sql, threadId));
+        }
+        // SCIENT-FORK:END
         for (const cleanup of committedCommand.attachmentCleanups) {
           yield* cleanup;
         }
