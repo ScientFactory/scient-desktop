@@ -239,12 +239,79 @@ describe("findFilesNamed", () => {
       );
       expect(bounded.complete).toBe(false);
       expect(bounded.paths.length).toBeLessThan(12);
+    }).pipe(Effect.provide(TestLayer), Effect.scoped),
+  );
+});
 
-      // The time bound holds inside a directory too, not only between them.
-      const expired = yield* Effect.promise(() =>
-        findFilesNamed(workspace, "same.md", { maxDirectories: 1_000, deadlineMs: -1 }),
+describe("findFilesNamed time bound", () => {
+  // A clock that advances one tick each time it is read, so a test decides
+  // exactly which check the deadline falls on.
+  const tickingClock = () => {
+    let tick = 0;
+    return () => tick++;
+  };
+  const flatDirectory = Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-link-bound-" });
+    for (const name of ["a.md", "b.md", "c.md", "same.md"]) {
+      yield* fileSystem.writeFileString(path.join(root, name), "x\n");
+    }
+    return { root, fileSystem, path };
+  });
+  const search = (root: string, deadlineMs: number) =>
+    Effect.promise(() =>
+      findFilesNamed(root, "same.md", { maxDirectories: 1_000, deadlineMs, now: tickingClock() }),
+    );
+
+  it.effect("stops inside one large directory, not only between directories", () =>
+    Effect.gen(function* () {
+      const { root } = yield* flatDirectory;
+      // Start 0, directory check 1, then one tick per entry: four entries need
+      // ticks 2..5, so a deadline of 3 expires while the directory is listed.
+      expect((yield* search(root, 3)).complete).toBe(false);
+      // Enough time for every entry and the final check.
+      expect(yield* search(root, 6)).toEqual({
+        paths: [expect.stringMatching(/same\.md$/u)],
+        complete: true,
+      });
+    }).pipe(Effect.provide(TestLayer), Effect.scoped),
+  );
+
+  it.effect("is not complete when time runs out while the last directory was examined", () =>
+    Effect.gen(function* () {
+      const { root } = yield* flatDirectory;
+      // Every entry check passes (ticks 2..5); only the final check (6) is late.
+      expect(yield* search(root, 5)).toEqual({
+        paths: [expect.stringMatching(/same\.md$/u)],
+        complete: false,
+      });
+    }).pipe(Effect.provide(TestLayer), Effect.scoped),
+  );
+
+  it.effect("counts empty and unreadable directories against the bound", () =>
+    Effect.gen(function* () {
+      const { root, fileSystem, path } = yield* flatDirectory;
+      const emptyRoot = path.join(root, "empties");
+      for (let index = 0; index < 20; index += 1) {
+        yield* fileSystem.makeDirectory(path.join(emptyRoot, `empty${index}`), { recursive: true });
+      }
+      const clock = tickingClock();
+      let reads = 0;
+      const result = yield* Effect.promise(() =>
+        findFilesNamed(emptyRoot, "same.md", {
+          maxDirectories: 1_000,
+          deadlineMs: 30,
+          now: () => {
+            reads += 1;
+            return clock();
+          },
+        }),
       );
-      expect(expired).toEqual({ paths: [], complete: false });
+      expect(result.complete).toBe(false);
+      // It stopped at the deadline instead of reading all twenty empty folders:
+      // 1 start + 1 root check + 20 root entries + a few directory checks.
+      expect(reads).toBeLessThan(40);
     }).pipe(Effect.provide(TestLayer), Effect.scoped),
   );
 });

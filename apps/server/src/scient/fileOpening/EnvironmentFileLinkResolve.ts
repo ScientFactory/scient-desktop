@@ -41,6 +41,8 @@ export interface LinkCandidateSearch {
 export interface LinkCandidateSearchLimits {
   readonly maxDirectories: number;
   readonly deadlineMs: number;
+  /** The clock the time bound is measured on; tests supply their own. */
+  readonly now?: () => number;
 }
 
 function errorCode(error: unknown): unknown {
@@ -72,13 +74,15 @@ export async function findFilesNamed(
 ): Promise<LinkCandidateSearch> {
   const paths: string[] = [];
   const pending = [root];
-  const deadline = Date.now() + limits.deadlineMs;
+  const now = limits.now ?? Date.now;
+  const deadline = now() + limits.deadlineMs;
   let searched = 0;
   // Cleared whenever something could not be examined: an unexamined place may
   // hold a better match or a tie, so nothing found elsewhere is provably unique.
   let complete = true;
   for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
-    if (searched >= limits.maxDirectories) return { paths, complete: false };
+    // Checked before every directory, so empty and unreadable ones count too.
+    if (searched >= limits.maxDirectories || now() > deadline) return { paths, complete: false };
     searched += 1;
     const directory = next;
     const entries = await NodeFSP.readdir(directory, { withFileTypes: true }).catch(() => null);
@@ -88,7 +92,7 @@ export async function findFilesNamed(
     }
     for (const entry of entries) {
       // Checked per entry, so one very large directory cannot outlast the bound.
-      if (Date.now() > deadline) return { paths, complete: false };
+      if (now() > deadline) return { paths, complete: false };
       const entryPath = NodePath.join(directory, entry.name);
       if (entry.isDirectory()) {
         if (!SKIPPED_DIRECTORY_NAMES.has(entry.name)) pending.push(entryPath);
@@ -110,7 +114,8 @@ export async function findFilesNamed(
       }
     }
   }
-  return { paths, complete: complete && Date.now() <= deadline };
+  // Time can also run out while the last directory was being examined.
+  return { paths, complete: complete && now() <= deadline };
 }
 
 function pathSegments(path: string): string[] {

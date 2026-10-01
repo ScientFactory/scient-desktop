@@ -26,11 +26,11 @@ export interface FileBreadcrumbChild extends ProjectEntry {
  */
 export function resolveFileTabPath(path: string, workspaceRoot: string): string {
   if (!workspaceRoot || isAbsolutePath(path)) return path;
-  const separator =
-    isWindowsAbsolutePath(workspaceRoot) || workspaceRoot.startsWith("\\\\") ? "\\" : "/";
-  const hostPath = collapseAbsoluteFilePath(
-    `${workspaceRoot.replace(/[\\/]+$/, "")}${separator}${path}`,
-  );
+  const windowsRoot = isWindowsAbsolutePath(workspaceRoot) || workspaceRoot.startsWith("\\\\");
+  const separator = windowsRoot ? "\\" : "/";
+  // On POSIX a trailing backslash is part of the folder's name, not a separator.
+  const root = workspaceRoot.replace(windowsRoot ? /[\\/]+$/ : /\/+$/, "");
+  const hostPath = collapseAbsoluteFilePath(`${root}${separator}${path}`);
   return workspaceRelativeFilePath(hostPath, workspaceRoot) === null ? hostPath : path;
 }
 

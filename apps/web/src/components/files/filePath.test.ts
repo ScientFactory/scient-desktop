@@ -23,6 +23,9 @@ describe("resolveFileTabPath", () => {
     expect(resolveFileTabPath("docs/../notes.md", "/repo")).toBe("docs/../notes.md");
     expect(resolveFileTabPath("/tmp/report.md", "/repo")).toBe("/tmp/report.md");
     expect(resolveFileTabPath("../notes.md", "")).toBe("../notes.md");
+    // On POSIX a workspace folder may be named with a trailing backslash.
+    expect(resolveFileTabPath("notes.md", "/tmp/project\\")).toBe("notes.md");
+    expect(resolveFileTabPath("../notes.md", "/tmp/project\\")).toBe("/tmp/notes.md");
   });
 });
 
