@@ -2156,6 +2156,16 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const mac = config.mac as Record<string, unknown>;
       const extendInfo = mac.extendInfo as Record<string, unknown>;
       assert.match(String(extendInfo.NSMicrophoneUsageDescription), /dictate a message/u);
+      // Opening a file anywhere must not be silently denied in protected folders.
+      for (const key of [
+        "NSDesktopFolderUsageDescription",
+        "NSDocumentsFolderUsageDescription",
+        "NSDownloadsFolderUsageDescription",
+        "NSRemovableVolumesUsageDescription",
+        "NSNetworkVolumesUsageDescription",
+      ]) {
+        assert.match(String(extendInfo[key]), /^Scient reads files /u);
+      }
       assert.deepStrictEqual(extendInfo.CFBundleDocumentTypes, [
         {
           CFBundleTypeName: "Scient Conversation",

@@ -7,6 +7,7 @@ import {
   parseMarkdownFileLink,
   splitFilePathPosition,
   workspaceRelativeFilePath,
+  collapseAbsoluteFilePath,
 } from "./markdownLinks.ts";
 
 describe("inlineCodeFilePathCandidate", () => {
@@ -182,7 +183,43 @@ describe("workspaceRelativeFilePath", () => {
     ["/tmp/report.ts", "/repo/project", null],
     ["/repo/project-two/a.ts", "/repo/project", null],
     ["/repo/project/a.ts", undefined, null],
+    // Dot segments are resolved before deciding containment.
+    ["/repo/project/../notes.md", "/repo/project", null],
+    ["/repo/project/../project-two/a.ts", "/repo/project", null],
+    ["/repo/project/docs/../src/./a.ts", "/repo/project", "src/a.ts"],
+    ["/repo/other/../project/a.ts", "/repo/project", "a.ts"],
+    ["C:\\repo\\..\\other\\a.ts", "C:\\repo", null],
+    // On POSIX a backslash is part of the file name and survives.
+    ["/tmp/repo/a\\b.md", "/tmp/repo", "a\\b.md"],
+    // A path that resolves to the root itself is the workspace, written `.`.
+    ["/repo/project/docs/..", "/repo/project", "."],
   ])("relates %s to %s", (path, workspaceRoot, relativePath) => {
     expect(workspaceRelativeFilePath(path, workspaceRoot)).toBe(relativePath);
+  });
+});
+
+describe("collapseAbsoluteFilePath", () => {
+  it.each([
+    ["/Users/me/project/../reviews/notes.md", "/Users/me/reviews/notes.md"],
+    ["/a/./b//c/", "/a/b/c"],
+    ["/../../etc/hosts", "/etc/hosts"],
+    ["/", "/"],
+    ["C:\\repo\\..\\other\\a.ts", "C:\\other\\a.ts"],
+    ["C:/repo/../other/a.ts", "C:/other/a.ts"],
+    ["/C:/repo/../a.ts", "C:/a.ts"],
+    ["C:\\..\\a.ts", "C:\\a.ts"],
+    ["\\\\server\\share\\docs\\..\\a.ts", "\\\\server\\share\\a.ts"],
+    ["\\\\server\\share\\..\\..\\a.ts", "\\\\server\\share\\a.ts"],
+    // On POSIX a backslash is part of a file name, never a separator.
+    ["/tmp/reports/a\\b.md", "/tmp/reports/a\\b.md"],
+    ["/tmp/reports/x/../a\\..\\b.md", "/tmp/reports/a\\..\\b.md"],
+    // `//` could be POSIX or a forward-slash UNC share; it is left as written.
+    ["//server/share/docs/../a.ts", "//server/share/docs/../a.ts"],
+    ["///tmp/a/../b.md", "/tmp/b.md"],
+    // Relative paths are left alone: only the host knows their base.
+    ["../reviews/notes.md", "../reviews/notes.md"],
+    ["docs/./a.md", "docs/./a.md"],
+  ])("collapses %s to %s", (path, collapsed) => {
+    expect(collapseAbsoluteFilePath(path)).toBe(collapsed);
   });
 });

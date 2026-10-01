@@ -41,8 +41,11 @@ export function pickWorkspaceBasenameMatch(
   const target = basename.trim();
   if (!target) return null;
   const files = entries.filter((entry) => entry.kind === "file");
-  const exact = files.find((entry) => basenameOfPath(entry.path) === target);
-  if (exact) return exact.path;
+  // Two files with the same name have no right answer either: opening
+  // whichever the index ranked first could show a different document than the
+  // one meant. Resolve only a unique match; the panel then offers the choices.
+  const exact = files.filter((entry) => basenameOfPath(entry.path) === target);
+  if (exact.length > 0) return exact.length === 1 ? (exact[0]?.path ?? null) : null;
   // Folded matching covers casing that drifted from disk, but `FOO.ts` against
   // both `Foo.ts` and `foo.ts` has no right answer, so it resolves to nothing
   // rather than opening whichever the index ranked first.

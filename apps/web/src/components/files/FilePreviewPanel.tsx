@@ -111,10 +111,16 @@ import {
   useWorkspaceFileRefresh,
 } from "~/scient/fileSurfaces/useWorkspaceFileRefresh";
 import { usePendingSurfaceDeparture } from "~/scient/fileSurfaces/usePendingSurfaceDeparture";
-import { isOutsideProjectFailure, MEDIA_FAILURE_COPY } from "~/scient/fileSurfaces/fileFailureCopy";
+import {
+  isOutsideProjectFailure,
+  MEDIA_FAILURE_COPY,
+  readFailureBlocksPreview,
+} from "~/scient/fileSurfaces/fileFailureCopy";
 import { FileReadFailure } from "~/scient/fileSurfaces/FileReadFailure";
+import { useMissingFileChoices } from "~/scient/fileSurfaces/useMissingFileChoices";
 
 import { AttachmentFilePreview } from "./AttachmentFilePreview";
+import { fileSurfaceAssetResource } from "./fileSurfaceAssetResource";
 import { AudioPreview } from "./AudioPreview";
 import { BrowserDocumentFrame, isPdfPreviewFile } from "./BrowserDocumentFrame";
 import { DelimitedTablePreview } from "./DelimitedTablePreview";
@@ -300,13 +306,13 @@ function WorkspaceImagePreview(props: {
   readonly refreshKey: number;
 }) {
   const resource = useMemo(
-    () => ({
-      _tag: "workspace-file" as const,
-      cwd: props.workspaceRoot,
-      relativePath: props.relativePath,
-      threadId: props.threadRef.threadId,
-      path: props.absolutePath,
-    }),
+    () =>
+      fileSurfaceAssetResource({
+        absolutePath: props.absolutePath,
+        workspaceRoot: props.workspaceRoot,
+        relativePath: props.relativePath,
+        threadId: props.threadRef.threadId,
+      }),
     [props.absolutePath, props.relativePath, props.threadRef.threadId, props.workspaceRoot],
   );
   const assetUrl = useAssetUrlState(props.environmentId, resource);
@@ -392,30 +398,15 @@ function WorkspaceBrowserPreview(props: {
   readonly title: string;
   readonly refreshKey: number;
 }) {
-  const reference = mediaFileReference(props.absolutePath, props.workspaceRoot);
-  const insideWorkspace = reference.relativePath !== undefined;
   const resource = useMemo(
     () =>
-      insideWorkspace
-        ? {
-            _tag: "workspace-file" as const,
-            cwd: props.workspaceRoot,
-            relativePath: props.relativePath,
-            threadId: props.threadRef.threadId,
-            path: props.absolutePath,
-          }
-        : {
-            _tag: "media-file" as const,
-            threadId: props.threadRef.threadId,
-            path: props.absolutePath,
-          },
-    [
-      insideWorkspace,
-      props.absolutePath,
-      props.relativePath,
-      props.threadRef.threadId,
-      props.workspaceRoot,
-    ],
+      fileSurfaceAssetResource({
+        absolutePath: props.absolutePath,
+        workspaceRoot: props.workspaceRoot,
+        relativePath: props.relativePath,
+        threadId: props.threadRef.threadId,
+      }),
+    [props.absolutePath, props.relativePath, props.threadRef.threadId, props.workspaceRoot],
   );
   const assetUrl = useAssetUrlState(props.environmentId, resource);
   const previousRefreshKey = useRef(props.refreshKey);
@@ -465,29 +456,15 @@ function WorkspaceVideoPreview(props: {
   readonly refreshKey: number;
 }) {
   const reference = mediaFileReference(props.absolutePath, props.workspaceRoot);
-  const insideWorkspace = reference.relativePath !== undefined;
   const resource = useMemo(
     () =>
-      insideWorkspace
-        ? {
-            _tag: "workspace-file" as const,
-            cwd: props.workspaceRoot,
-            relativePath: props.relativePath,
-            threadId: props.threadRef.threadId,
-            path: props.absolutePath,
-          }
-        : {
-            _tag: "media-file" as const,
-            threadId: props.threadRef.threadId,
-            path: props.absolutePath,
-          },
-    [
-      insideWorkspace,
-      props.absolutePath,
-      props.relativePath,
-      props.threadRef.threadId,
-      props.workspaceRoot,
-    ],
+      fileSurfaceAssetResource({
+        absolutePath: props.absolutePath,
+        workspaceRoot: props.workspaceRoot,
+        relativePath: props.relativePath,
+        threadId: props.threadRef.threadId,
+      }),
+    [props.absolutePath, props.relativePath, props.threadRef.threadId, props.workspaceRoot],
   );
   const assetUrl = useAssetUrlState(props.environmentId, resource);
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
@@ -532,6 +509,8 @@ function WorkspaceAudioPreview(props: {
   readonly absolutePath: string;
   readonly name: string;
   readonly workspaceMutationId: string | null;
+  /** Advances when the file's native watcher reports a change. */
+  readonly refreshKey: number;
 }) {
   const resource = useMemo(
     () => ({
@@ -552,10 +531,21 @@ function WorkspaceAudioPreview(props: {
       void refreshAssetUrl().catch(() => undefined);
     },
   });
+  const previousRefreshKey = useRef(props.refreshKey);
+  useEffect(() => {
+    if (previousRefreshKey.current === props.refreshKey) return;
+    previousRefreshKey.current = props.refreshKey;
+    setFailedUrl(null);
+    void refreshAssetUrl().catch(() => undefined);
+  }, [props.refreshKey, refreshAssetUrl]);
+  const revision =
+    props.workspaceMutationId === null && props.refreshKey === 0
+      ? null
+      : `${props.workspaceMutationId ?? ""}:${props.refreshKey}`;
   const revisionSuffix =
-    props.workspaceMutationId === null
+    revision === null
       ? ""
-      : `${assetUrl._tag === "Success" && assetUrl.url.includes("?") ? "&" : "?"}workspace-revision=${encodeURIComponent(props.workspaceMutationId)}`;
+      : `${assetUrl._tag === "Success" && assetUrl.url.includes("?") ? "&" : "?"}workspace-revision=${encodeURIComponent(revision)}`;
   const url = assetUrl._tag === "Success" ? `${assetUrl.url}${revisionSuffix}` : null;
   if (assetUrl._tag === "Failure" || (url !== null && failedUrl === url)) {
     return (
@@ -1484,8 +1474,9 @@ export default function FilePreviewPanel({
     sourcePending: effectiveSourcePending,
     surfaceOwnsConflictDetection: isRichMarkdown && !isHostFile,
     workspaceMutationId,
-    watchChanges:
-      attachment === undefined && !isHostFile && !quietMarkdownPaths.has(relativePath ?? ""),
+    // Host files outside the workspace are watched too: they stay read-only,
+    // but an agent or another app can still change them while they are open.
+    watchChanges: attachment === undefined && !quietMarkdownPaths.has(relativePath ?? ""),
   });
   const isDirectory = queriedFile.isNotFile && !isHostFile;
   const previewPath = isDirectory ? null : relativePath;
@@ -1581,6 +1572,7 @@ export default function FilePreviewPanel({
           ...queriedFile,
           error: null,
           failure: null,
+          failureReason: null,
           isPending: false,
           data: {
             relativePath,
@@ -1685,6 +1677,34 @@ export default function FilePreviewPanel({
     isBrowserPreviewFile(previewPath);
   const absolutePath =
     relativePath && attachment === undefined ? resolvePathLinkTarget(relativePath, cwd) : null;
+  const missingFile = useMissingFileChoices({
+    environmentId,
+    cwd,
+    path: attachment === undefined ? relativePath : null,
+    // Asked whenever the path is missing, including under a last good copy of
+    // a file that was renamed or moved while it was open.
+    failureReason: file.failureReason,
+  });
+  const readOnlyHostPath = missingFile.absolutePath;
+  const readFailureShownInstead = readFailureBlocksPreview({
+    hasData: file.data !== null,
+    failure: file.failure,
+    reason: file.failureReason,
+    isHostFile,
+  });
+  const readFailure = (
+    <FileReadFailure
+      failure={file.failure}
+      reason={file.failureReason}
+      message={file.error}
+      retrying={file.isPending}
+      onRetry={requestManualReload}
+      path={missingFile.absolutePath ?? relativePath ?? ""}
+      candidates={missingFile.paths}
+      candidatesIncomplete={missingFile.incomplete}
+      onOpenCandidate={onOpenFile}
+    />
+  );
   const pdfSource = useMemo(
     () =>
       workspacePdfSourceForPreview({
@@ -1916,6 +1936,9 @@ export default function FilePreviewPanel({
           relativePath={relativePath}
           notice={reloadNotice}
           readError={isDirectory ? null : file.error}
+          readFailureReason={file.failureReason}
+          missingFileChoices={missingFile.paths}
+          onOpenFile={onOpenFile}
           saveError={saveError}
           saveRetryReady={saveRetryReady}
           hasFallbackData={file.data !== null}
@@ -1956,13 +1979,23 @@ export default function FilePreviewPanel({
               asset={{ environmentId, attachmentId: attachment.id }}
             />
           ) : relativePath && file.data === null && isOutsideProjectFailure(file.failure) ? (
-            // Media and document previews would only fail to authorize the same path.
+            // Only an older server refuses a path by location; media and document
+            // previews would fail to authorize it the same way. Its absolute path
+            // still opens read-only.
             <FileReadFailure
               failure={file.failure}
               message={file.error}
               retrying={false}
               onRetry={requestManualReload}
+              {...(readOnlyHostPath !== null
+                ? { onOpenReadOnly: () => onOpenFile(readOnlyHostPath) }
+                : {})}
             />
+          ) : relativePath && readFailureShownInstead ? (
+            // The read already says why nothing can be shown (missing, denied,
+            // or not a regular file); a media or document viewer would only fail
+            // again with less to say.
+            readFailure
           ) : relativePath && isVideo && absolutePath ? (
             <WorkspaceVideoPreview
               key={`${environmentId}:${threadRef.threadId}:${absolutePath}`}
@@ -1982,6 +2015,7 @@ export default function FilePreviewPanel({
               absolutePath={absolutePath}
               name={relativePath}
               workspaceMutationId={workspaceMutationId}
+              refreshKey={viewerRefreshKey}
             />
           ) : relativePath && isImage && absolutePath ? (
             <WorkspaceImagePreview
@@ -2056,12 +2090,7 @@ export default function FilePreviewPanel({
               aria-label="Opening Markdown editor"
             />
           ) : relativePath && file.error && file.data === null ? (
-            <FileReadFailure
-              failure={file.failure}
-              message={file.error}
-              retrying={file.isPending}
-              onRetry={requestManualReload}
-            />
+            readFailure
           ) : relativePath && file.data === null ? (
             <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
               <Spinner size="lg" />

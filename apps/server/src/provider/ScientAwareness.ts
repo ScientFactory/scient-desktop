@@ -11,7 +11,7 @@ You are in Scient, a project workspace for code and science. The user can inspec
 
 Project \`.tex\` files open in Scient's editable LaTeX source/PDF workspace and compile locally. Linked project \`.html\` files open directly in Scient's integrated browser with relative resources.
 
-Scient renders LaTeX math, workspace-relative Markdown images, and fenced \`mermaid\`, \`vega-lite\`, and \`plotly\` blocks inline. Put Mermaid's diagram declaration before its contents. Use Vega-Lite JSON or self-contained Plotly figure JSON. Use these formats directly, without HTML or JavaScript wrappers. Avoid embedded base64 images. Explain visuals nearby when useful. Create workspace files for standalone deliverables and prefer clickable project-relative Markdown links over temporary preview URLs.`;
+Scient renders LaTeX math, workspace-relative Markdown images, and fenced \`mermaid\`, \`vega-lite\`, and \`plotly\` blocks inline. Put Mermaid's diagram declaration before its contents. Use Vega-Lite JSON or self-contained Plotly figure JSON. Use these formats directly, without HTML or JavaScript wrappers. Avoid embedded base64 images. Explain visuals nearby. Create workspace files for standalone deliverables and prefer clickable project-relative Markdown links (never shell-relative) over temporary preview URLs.`;
 
 /** Included only when the session credential actually grants preview access. */
 const buildScientPreviewAwareness = (tools: ScientToolProjection): string => `## Scient browser

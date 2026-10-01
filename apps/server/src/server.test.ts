@@ -8132,7 +8132,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const outsideFile = path.join(outsideDir, "outside.txt");
       yield* fs.writeFileString(outsideFile, "outside\n");
       yield* fs.symlink(outsideFile, path.join(workspaceDir, "linked-outside.txt"));
-      const resolvedOutsideFile = yield* fs.realPath(outsideFile);
 
       yield* buildAppUnderTest();
 
@@ -8157,6 +8156,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               view: "ordinary",
             }).pipe(Effect.result),
             read: client[WS_METHODS.projectsReadFile]({
+              cwd: workspaceDir,
+              relativePath: "missing.txt",
+            }).pipe(Effect.result),
+            linkedRead: client[WS_METHODS.projectsReadFile]({
               cwd: workspaceDir,
               relativePath: "linked-outside.txt",
             }).pipe(Effect.result),
@@ -8223,13 +8226,21 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const readError = results.read.failure;
       assert.equal(
         readError.message,
-        `Failed to read workspace file 'linked-outside.txt' in '${workspaceDir}'.`,
+        `Failed to read workspace file 'missing.txt' in '${workspaceDir}'.`,
       );
       assert.equal(readError.cwd, workspaceDir);
-      assert.equal(readError.relativePath, "linked-outside.txt");
-      assert.equal(readError.failure, "resolved_path_outside_root");
-      assert.equal(readError.resolvedPath, resolvedOutsideFile);
+      assert.equal(readError.relativePath, "missing.txt");
+      assert.equal(readError.failure, "operation_failed");
+      assert.equal(readError.reason, "not_found");
       assert.isDefined(readError.cause);
+
+      // A symlink leading out of the project is viewable, never editable.
+      if (results.linkedRead._tag !== "Success") {
+        assert.fail("Expected the symlinked outside file to be readable");
+      }
+      assert.equal(results.linkedRead.success.relativePath, "linked-outside.txt");
+      assert.equal(results.linkedRead.success.contents, "outside\n");
+      assert.equal(results.linkedRead.success.readOnly, true);
 
       if (
         results.browse._tag !== "Failure" ||
@@ -8248,6 +8259,127 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(browseError.parentPath, missingBrowseParent);
       assert.isDefined(browseError.cause);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "opens the file a chat link means over the wire, wherever it lives",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fs.realPath(
+          yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-file-links-" }),
+        );
+        const workspaceDir = path.join(baseDir, "workspace");
+        const outsideDir = path.join(baseDir, "outside");
+        yield* fs.makeDirectory(path.join(workspaceDir, "reports/2026"), { recursive: true });
+        yield* fs.makeDirectory(path.join(workspaceDir, "data"), { recursive: true });
+        yield* fs.makeDirectory(outsideDir, { recursive: true });
+        yield* fs.writeFileString(path.join(workspaceDir, "reports/2026/summary.md"), "inside\n");
+        yield* fs.writeFileString(path.join(outsideDir, "notes.md"), "outside\n");
+        yield* fs.symlink(
+          path.join(outsideDir, "notes.md"),
+          path.join(workspaceDir, "data/shared-notes.md"),
+        );
+
+        yield* buildAppUnderTest();
+
+        const wsUrl = yield* getWsServerUrl("/ws");
+        const link = (linkPath: string) => ({
+          workspaceRoot: EnvironmentFilePath.make(workspaceDir),
+          path: EnvironmentFilePath.make(linkPath),
+        });
+        const results = yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            Effect.all({
+              outside: client[WS_METHODS.filesystemResolveFileLink](link("../outside/notes.md")),
+              wrongFolder: client[WS_METHODS.filesystemResolveFileLink](link("2026/summary.md")),
+              symlinkOnly: client[WS_METHODS.filesystemResolveFileLink](link("shared-notes.md")),
+              nothing: client[WS_METHODS.filesystemResolveFileLink](link("reports/none.md")),
+              // The outside file reads the same through every spelling.
+              readClimbing: client[WS_METHODS.projectsReadFile]({
+                cwd: workspaceDir,
+                relativePath: "../outside/notes.md",
+              }),
+              readSymlink: client[WS_METHODS.projectsReadFile]({
+                cwd: workspaceDir,
+                relativePath: "data/shared-notes.md",
+              }),
+              // Writing through the same spellings is still refused.
+              writeClimbing: client[WS_METHODS.projectsWriteFile]({
+                cwd: workspaceDir,
+                relativePath: "../outside/notes.md",
+                contents: "overwritten\n",
+              }).pipe(Effect.result),
+              writeSymlink: client[WS_METHODS.projectsWriteFile]({
+                cwd: workspaceDir,
+                relativePath: "data/shared-notes.md",
+                contents: "overwritten\n",
+              }).pipe(Effect.result),
+            }),
+          ),
+        );
+
+        const filePath = EnvironmentFilePath.make;
+        assert.deepEqual(results.outside, {
+          _tag: "literal",
+          path: filePath(path.join(outsideDir, "notes.md")),
+        });
+        assert.deepEqual(results.wrongFolder, {
+          _tag: "recovered",
+          path: filePath("reports/2026/summary.md"),
+          missingPath: filePath(path.join(workspaceDir, "2026/summary.md")),
+        });
+        assert.deepEqual(results.symlinkOnly, {
+          _tag: "recovered",
+          path: filePath("data/shared-notes.md"),
+          missingPath: filePath(path.join(workspaceDir, "shared-notes.md")),
+        });
+        assert.equal(results.nothing._tag, "none");
+        for (const read of [results.readClimbing, results.readSymlink]) {
+          assert.equal(read.contents, "outside\n");
+          assert.equal(read.readOnly, true);
+        }
+        assert.equal(results.readClimbing.revision, results.readSymlink.revision);
+        assert.equal(results.writeClimbing._tag, "Failure");
+        assert.equal(results.writeSymlink._tag, "Failure");
+        assert.equal(yield* fs.readFileString(path.join(outsideDir, "notes.md")), "outside\n");
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  // chmod cannot deny the superuser, and Windows has no POSIX permission bits.
+  it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32" || process.getuid?.() === 0)(
+    "reports an unreadable file as a permission failure",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const workspaceDir = yield* fs.makeTempDirectoryScoped({
+          prefix: "t3-ws-workspace-denied-",
+        });
+        const lockedFile = path.join(workspaceDir, "locked.txt");
+        yield* fs.writeFileString(lockedFile, "private\n");
+        yield* fs.chmod(lockedFile, 0o000);
+
+        yield* buildAppUnderTest();
+
+        const wsUrl = yield* getWsServerUrl("/ws");
+        const result = yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[WS_METHODS.projectsReadFile]({
+              cwd: workspaceDir,
+              relativePath: "locked.txt",
+            }).pipe(Effect.result),
+          ),
+        );
+        yield* fs.chmod(lockedFile, 0o600);
+
+        if (result._tag !== "Failure" || result.failure._tag !== "ProjectReadFileError") {
+          assert.fail("Expected a ProjectReadFileError");
+        }
+        assert.equal(result.failure.failure, "operation_failed");
+        assert.equal(result.failure.reason, "permission_denied");
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("reports workspace root stat failures without relabeling them as missing", () =>

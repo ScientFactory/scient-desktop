@@ -268,6 +268,7 @@ import {
   type FilePathCopyFormat,
   type FileSurfacePath,
 } from "./files/filePathClipboard";
+import { resolveFileTabPath } from "./files/filePath";
 import { AgentsPanel } from "./AgentsPanel";
 import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
 import { ThreadPullRequestsPanel } from "./pullRequest/ThreadPullRequestsPanel";
@@ -10675,7 +10676,12 @@ function ChatViewContent(props: ChatViewProps) {
           availableEditors={availableEditors}
           relativePath={
             renderedRightPanelSurface.kind === "file"
-              ? renderedRightPanelSurface.relativePath
+              ? renderedRightPanelSurface.attachment
+                ? renderedRightPanelSurface.relativePath
+                : resolveFileTabPath(
+                    renderedRightPanelSurface.relativePath,
+                    activeWorkspaceRoot ?? "",
+                  )
               : null
           }
           {...(renderedRightPanelSurface.kind === "file" && renderedRightPanelSurface.attachment

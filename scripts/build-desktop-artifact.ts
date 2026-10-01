@@ -2884,6 +2884,17 @@ export function resolveDesktopProductName(version: string): string {
   return SCIENT_DESKTOP_IDENTITY.baseName;
 }
 
+/** The reasons macOS shows before letting the app read files in protected locations. */
+export function macFileAccessUsageDescriptions(appName: string): Record<string, string> {
+  return {
+    NSDesktopFolderUsageDescription: `${appName} reads files on your Desktop that you open in it.`,
+    NSDocumentsFolderUsageDescription: `${appName} reads files in your Documents folder that you open in it.`,
+    NSDownloadsFolderUsageDescription: `${appName} reads files in your Downloads folder that you open in it.`,
+    NSRemovableVolumesUsageDescription: `${appName} reads files on external drives that you open in it.`,
+    NSNetworkVolumesUsageDescription: `${appName} reads files on network drives that you open in it.`,
+  };
+}
+
 export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   platform: typeof BuildPlatform.Type,
   target: string,
@@ -2974,6 +2985,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       extendInfo: {
         NSMicrophoneUsageDescription: `${SCIENT_DESKTOP_IDENTITY.baseName} uses the microphone only while you dictate a message. Audio is transcribed on this device.`,
         NSScreenCaptureUsageDescription: `${SCIENT_DESKTOP_IDENTITY.baseName} captures the active window when you use the window capture shortcut.`,
+        // Files open wherever they live, so macOS needs a reason to show for
+        // each protected location instead of silently denying the read.
+        ...macFileAccessUsageDescriptions(SCIENT_DESKTOP_IDENTITY.baseName),
         // SCIENT-FORK:START — the `.scic` document type.
         CFBundleDocumentTypes: macConversationDocumentTypes(),
         UTExportedTypeDeclarations: DESKTOP_MAC_EXPORTED_TYPES,

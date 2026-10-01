@@ -52,6 +52,8 @@ import {
 } from "./filesystem.ts";
 import {
   EnvironmentFileChangeEvent,
+  EnvironmentFileLinkResolution,
+  EnvironmentFileLinkResolveInput,
   EnvironmentFilePrepareError,
   EnvironmentFilePrepareInput,
   EnvironmentFilePrepareResult,
@@ -466,6 +468,7 @@ export const WS_METHODS = {
   // Filesystem methods
   filesystemBrowse: "filesystem.browse",
   filesystemPrepareFileOpen: "filesystem.prepareFileOpen",
+  filesystemResolveFileLink: "filesystem.resolveFileLink",
   filesystemSubscribeFileChanges: "filesystem.subscribeFileChanges",
   agentSessionsScan: "agentSessions.scan",
   agentSessionsImport: "agentSessions.import",
@@ -1505,6 +1508,12 @@ const WsFilesystemPrepareFileOpenRpc = Rpc.make(WS_METHODS.filesystemPrepareFile
   error: Schema.Union([EnvironmentFilePrepareError, EnvironmentAuthorizationError]),
 });
 
+const WsFilesystemResolveFileLinkRpc = Rpc.make(WS_METHODS.filesystemResolveFileLink, {
+  payload: EnvironmentFileLinkResolveInput,
+  success: EnvironmentFileLinkResolution,
+  error: Schema.Union([EnvironmentFilePrepareError, EnvironmentAuthorizationError]),
+});
+
 const WsFilesystemSubscribeFileChangesRpc = Rpc.make(WS_METHODS.filesystemSubscribeFileChanges, {
   payload: EnvironmentFilePrepareInput,
   success: EnvironmentFileChangeEvent,
@@ -2115,6 +2124,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
   WsFilesystemPrepareFileOpenRpc,
+  WsFilesystemResolveFileLinkRpc,
   WsFilesystemSubscribeFileChangesRpc,
   WsAgentSessionsScanRpc,
   WsAgentSessionsImportRpc,

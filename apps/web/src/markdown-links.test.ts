@@ -268,7 +268,7 @@ describe("resolveMarkdownFileLinkTarget", () => {
     expect(
       resolveInlineCodeFileLinkMeta("./data/results.csv", "/tmp/report-pack", null),
     ).toMatchObject({
-      filePath: "/tmp/report-pack/./data/results.csv",
+      filePath: "/tmp/report-pack/data/results.csv",
       workspaceRelativePath: null,
     });
   });
@@ -370,6 +370,57 @@ describe("relative links inside a rendered host file", () => {
     ).toMatchObject({
       filePath: "/repo/docs/src/main.ts",
       workspaceRelativePath: "docs/src/main.ts",
+    });
+  });
+});
+
+describe("links that climb out of the workspace", () => {
+  it("name the host file they point to, not a workspace path starting with ..", () => {
+    expect(
+      resolveMarkdownFileLinkMeta(
+        "../reviews/document-editing/notes.md",
+        "/Users/me/ScientFactory",
+      ),
+    ).toMatchObject({
+      filePath: "/Users/me/reviews/document-editing/notes.md",
+      targetPath: "/Users/me/reviews/document-editing/notes.md",
+      workspaceRelativePath: null,
+      basename: "notes.md",
+    });
+    expect(
+      resolveMarkdownFileLinkMeta(
+        "/Users/me/ScientFactory/../notes.md:7",
+        "/Users/me/ScientFactory",
+      ),
+    ).toMatchObject({
+      filePath: "/Users/me/notes.md",
+      targetPath: "/Users/me/notes.md:7",
+      workspaceRelativePath: null,
+      line: 7,
+    });
+  });
+
+  it("stay workspace files when the dot segments resolve back inside", () => {
+    expect(
+      resolveMarkdownFileLinkMeta("../ScientFactory/reviews/notes.md", "/Users/me/ScientFactory"),
+    ).toMatchObject({
+      filePath: "/Users/me/ScientFactory/reviews/notes.md",
+      workspaceRelativePath: "reviews/notes.md",
+    });
+  });
+
+  it("resolve against a rendered file's own directory", () => {
+    expect(
+      resolveMarkdownFileLinkMeta("../../notes.md", "/repo", "/repo", "/repo/docs"),
+    ).toMatchObject({ filePath: "/notes.md", workspaceRelativePath: null });
+  });
+});
+
+describe("a POSIX workspace whose name ends in a backslash", () => {
+  it("keeps a plain relative link inside that workspace", () => {
+    expect(resolveMarkdownFileLinkMeta("notes.txt", "/tmp/project\\")).toMatchObject({
+      filePath: "/tmp/project\\/notes.txt",
+      workspaceRelativePath: "notes.txt",
     });
   });
 });

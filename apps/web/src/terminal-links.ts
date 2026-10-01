@@ -111,11 +111,11 @@ function isWindowsPathStyle(value: string): boolean {
 }
 
 function joinPath(base: string, next: string, separator: "/" | "\\"): string {
-  const cleanBase = base.replace(/[\\/]+$/, "");
   if (separator === "\\") {
-    return `${cleanBase}\\${next.replaceAll("/", "\\")}`;
+    return `${base.replace(/[\\/]+$/, "")}\\${next.replaceAll("/", "\\")}`;
   }
-  return `${cleanBase}/${next.replace(/^\/+/, "")}`;
+  // On POSIX a trailing backslash is part of the directory's name.
+  return `${base.replace(/\/+$/, "")}/${next.replace(/^\/+/, "")}`;
 }
 
 function inferHomeFromCwd(cwd: string): string | undefined {

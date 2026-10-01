@@ -1,3 +1,7 @@
+import {
+  collapseAbsoluteFilePath,
+  workspaceRelativeFilePath,
+} from "@t3tools/client-runtime/markdown-links";
 import type { ProjectEntry } from "@t3tools/contracts";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 
@@ -11,6 +15,23 @@ export interface FileBreadcrumb {
 
 export interface FileBreadcrumbChild extends ProjectEntry {
   label: string;
+}
+
+/**
+ * The path a file tab actually reads. A workspace-relative path that climbs
+ * out of the workspace (`../notes.md`, including tabs saved before links were
+ * resolved) names a host file, so it becomes that absolute path and opens
+ * read-only like any other file outside the project. Paths inside the
+ * workspace are returned unchanged.
+ */
+export function resolveFileTabPath(path: string, workspaceRoot: string): string {
+  if (!workspaceRoot || isAbsolutePath(path)) return path;
+  const windowsRoot = isWindowsAbsolutePath(workspaceRoot) || workspaceRoot.startsWith("\\\\");
+  const separator = windowsRoot ? "\\" : "/";
+  // On POSIX a trailing backslash is part of the folder's name, not a separator.
+  const root = workspaceRoot.replace(windowsRoot ? /[\\/]+$/ : /\/+$/, "");
+  const hostPath = collapseAbsoluteFilePath(`${root}${separator}${path}`);
+  return workspaceRelativeFilePath(hostPath, workspaceRoot) === null ? hostPath : path;
 }
 
 /**

@@ -171,6 +171,7 @@ const makeServiceTestLayer = Effect.fn("makeServiceTestLayer")(function* (
         truncated: false,
         revision: sourceRevision,
       }),
+    viewFile: () => Effect.die("viewFile is not used by the analysis service test"),
     writeFile: () => Effect.die("writeFile is not used by the analysis service test"),
     renameFile: () => Effect.die("renameFile is not used by the analysis service test"),
     watchFile: () => Stream.empty,

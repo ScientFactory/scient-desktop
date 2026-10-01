@@ -66,6 +66,7 @@ import {
   type ProjectDirectoryOperation,
   type ProjectEntriesFailure,
   type ProjectFileFailure,
+  type ProjectFileErrorReason,
   type ProjectFileOperation,
   ProjectListDirectoryError,
   ProjectListEntriesError,
@@ -179,6 +180,7 @@ import {
   prepareEnvironmentFileOpen,
   watchEnvironmentFile,
 } from "./scient/fileOpening/EnvironmentFileOpen.ts";
+import { resolveEnvironmentFileLink } from "./scient/fileOpening/EnvironmentFileLinkResolve.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
@@ -401,6 +403,22 @@ function filesystemBrowseFailureContext(error: WorkspaceEntries.WorkspaceEntries
   }
 }
 
+/** The operating system's reason for a failed file operation, when it gave one. */
+function projectFileErrorReason(cause: unknown): ProjectFileErrorReason | undefined {
+  const code =
+    typeof cause === "object" && cause !== null && "code" in cause ? cause.code : undefined;
+  switch (code) {
+    case "ENOENT":
+    case "ENOTDIR":
+      return "not_found";
+    case "EACCES":
+    case "EPERM":
+      return "permission_denied";
+    default:
+      return undefined;
+  }
+}
+
 function projectFileFailureContext(
   error:
     | WorkspaceFileSystem.WorkspaceFileSystemError
@@ -412,17 +430,21 @@ function projectFileFailureContext(
   readonly operation?: ProjectFileOperation;
   readonly operationPath?: string;
   readonly currentRevision?: string;
+  readonly reason?: ProjectFileErrorReason;
 } {
   switch (error._tag) {
     case "WorkspacePathOutsideRootError":
       return { failure: "workspace_path_outside_root" };
-    case "WorkspaceFileSystemOperationError":
+    case "WorkspaceFileSystemOperationError": {
+      const reason = projectFileErrorReason(error.cause);
       return {
         failure: "operation_failed",
         resolvedPath: error.resolvedPath,
         operation: error.operation,
         operationPath: error.operationPath,
+        ...(reason ? { reason } : {}),
       };
+    }
     case "WorkspaceFilePathEscapeError":
       return {
         failure: "resolved_path_outside_root",
@@ -3638,7 +3660,9 @@ const makeWsRpcLayer = (
         [WS_METHODS.projectsReadFile]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsReadFile,
-            workspaceFileSystem.readFile(input).pipe(
+            // The viewer's read: a file is shown wherever it lives, read-only
+            // outside the project. Every other feature reads with readFile.
+            workspaceFileSystem.viewFile(input).pipe(
               Effect.map((result) => ({
                 ...result,
                 readOnly:
@@ -3901,6 +3925,12 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.filesystemPrepareFileOpen,
             prepareEnvironmentFileOpen(input),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.filesystemResolveFileLink]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.filesystemResolveFileLink,
+            resolveEnvironmentFileLink(input),
             { "rpc.aggregate": "workspace" },
           ),
         [WS_METHODS.filesystemSubscribeFileChanges]: (input) =>

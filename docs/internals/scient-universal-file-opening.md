@@ -60,6 +60,60 @@ use environment plus normalized canonical path as logical identity, so URL
 renewal and thread changes preserve reader state while identical paths in
 different environments remain isolated.
 
+## Viewing is independent of the workspace boundary
+
+Where a file lives decides only whether it is editable, never whether it can be
+viewed. `projects.readFile` and its change subscription read a host file in
+place, read-only, however the path is spelled: an absolute path, a relative
+path that climbs out of the workspace, or a symlink inside the workspace that
+leads out of it. Only the viewer's read (`WorkspaceFileSystem.viewFile`) is
+relaxed. `readFile`, which export, analysis, compute, saves, and renames use to
+work on project files, still keeps a relative path inside the root, symlinks
+included; a rename confirms its destination with it. Writes, renames, and
+creates keep every containment check. A
+workspace asset request for such a symlink is served as that exact target
+alone, the same capability an absolute media path grants, with no sibling
+access.
+
+The client resolves `..` in an absolute path before deciding whether it is
+inside the workspace, so `<root>/../notes.md` is a host file rather than the
+workspace path `../notes.md`. The files panel applies the same rule to a tab's
+path, which also repairs tabs persisted before this rule existed. The only
+reasons a file cannot be shown are that it does not exist, that the operating
+system denies the read, or that it is not a regular file; each is reported as
+itself. Read failures carry the operating system's reason (`not_found`,
+`permission_denied`) as an optional refinement of `operation_failed`.
+
+## Link repair
+
+Agents write links relative to the directory their shell was in, or to a
+folder they were thinking in, which Scient cannot see. `filesystem.resolveFileLink`
+is the single place that decides what a chat link means, and it runs on the
+environment that owns the files:
+
+1. The link as written wins whenever its location exists, or fails for any
+   reason other than absence. `..` is applied to the path as written, as the
+   shell and the path tools that built the link apply it.
+2. Only when nothing exists there is the workspace searched for files with the
+   link's exact name. The search walks the workspace's real path, so it
+   includes symlinks to regular files, which the file index does not list. It
+   does not enter symlinked directories, `.git`, or `node_modules`, checks each
+   directory against its own real path, and is bounded in directories and
+   time. It is a snapshot: the best candidates are checked again before the
+   answer is given, and anything that could not be examined makes the result
+   incomplete.
+3. The candidate sharing the longest run of trailing path segments with the
+   link is the match. Several at that length are a tie, unless exactly one is
+   a file the link's own turn changed.
+4. The result is `literal`, `recovered`, `tie`, `none`, or `incomplete`. A
+   click opens a `recovered` file and says which file the link resolved to;
+   every other outcome opens the link as written, and the files panel offers
+   the candidates as choices. An incomplete search never yields a match.
+
+Link repair is an announced best guess about what a link's author meant. It is
+not file identity: it proves nothing about a file that moved, and the files
+panel never applies it by itself to a tab whose file disappeared.
+
 ## Current identity and relocation limit
 
 The current contract is exact-path reliable but path-bound. If a watched file

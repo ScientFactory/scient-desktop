@@ -1981,6 +1981,56 @@ describe("deriveMessagesTimelineRows", () => {
     expect(assistantRow?.assistantTurnDiffSummary).toBe(assistantTurnDiffSummary);
   });
 
+  it("gives every assistant message of a turn that turn's changed files", () => {
+    const summary = {
+      turnId: "turn-1" as never,
+      completedAt: "2026-01-01T00:00:30Z",
+      assistantMessageId: "assistant-2" as never,
+      checkpointTurnCount: 1,
+      checkpointRef: "checkpoint-1" as never,
+      status: "ready" as const,
+      files: [{ path: "reviews/notes.md", kind: "added", additions: 4, deletions: 0 }],
+    };
+    const assistant = (id: string, turnId: string | null, createdAt: string) => ({
+      id: `${id}-entry`,
+      kind: "message" as const,
+      createdAt,
+      message: {
+        id: id as never,
+        role: "assistant" as const,
+        text: "See [notes](../reviews/notes.md)",
+        turnId: turnId as never,
+        createdAt,
+        updatedAt: createdAt,
+        streaming: false,
+      },
+    });
+
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        assistant("assistant-1", "turn-1", "2026-01-01T00:00:10Z"),
+        assistant("assistant-2", "turn-1", "2026-01-01T00:00:20Z"),
+        assistant("assistant-3", "turn-2", "2026-01-01T00:00:40Z"),
+      ],
+      // Earlier messages of a settled turn render (and so take clicks) once
+      // the turn is expanded.
+      expandedTurnIds: new Set(["turn-1" as never]),
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [summary],
+      supportsConversationRollback: false,
+    });
+
+    const changedFilesById = new Map(
+      rows.flatMap((row) =>
+        row.kind === "message" ? [[String(row.message.id), row.assistantTurnChangedFiles]] : [],
+      ),
+    );
+    expect(changedFilesById.get("assistant-1")).toBe(summary.files);
+    expect(changedFilesById.get("assistant-2")).toBe(summary.files);
+    expect(changedFilesById.get("assistant-3")).toBeUndefined();
+  });
+
   it("folds the first assistant message and settled work before the terminal response", () => {
     const timelineEntries = [
       {

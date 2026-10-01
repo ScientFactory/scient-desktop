@@ -1,6 +1,33 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { fileBreadcrumbChildren, fileBreadcrumbParent, fileBreadcrumbs } from "./filePath";
+import {
+  fileBreadcrumbChildren,
+  fileBreadcrumbParent,
+  fileBreadcrumbs,
+  resolveFileTabPath,
+} from "./filePath";
+
+describe("resolveFileTabPath", () => {
+  it("turns a path that climbs out of the workspace into the host path it names", () => {
+    expect(
+      resolveFileTabPath("../reviews/document-editing/notes.md", "/Users/me/ScientFactory"),
+    ).toBe("/Users/me/reviews/document-editing/notes.md");
+    expect(resolveFileTabPath("docs/../../notes.md", "/Users/me/ScientFactory/")).toBe(
+      "/Users/me/notes.md",
+    );
+    expect(resolveFileTabPath("..\\notes.md", "C:\\work\\project")).toBe("C:\\work\\notes.md");
+  });
+
+  it("leaves workspace paths, absolute paths, and attachment tabs unchanged", () => {
+    expect(resolveFileTabPath("docs/notes.md", "/repo")).toBe("docs/notes.md");
+    expect(resolveFileTabPath("docs/../notes.md", "/repo")).toBe("docs/../notes.md");
+    expect(resolveFileTabPath("/tmp/report.md", "/repo")).toBe("/tmp/report.md");
+    expect(resolveFileTabPath("../notes.md", "")).toBe("../notes.md");
+    // On POSIX a workspace folder may be named with a trailing backslash.
+    expect(resolveFileTabPath("notes.md", "/tmp/project\\")).toBe("notes.md");
+    expect(resolveFileTabPath("../notes.md", "/tmp/project\\")).toBe("/tmp/notes.md");
+  });
+});
 
 describe("fileBreadcrumbs", () => {
   it("builds project, directory, and file crumbs", () => {

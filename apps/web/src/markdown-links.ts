@@ -1,4 +1,5 @@
 import {
+  collapseAbsoluteFilePath,
   fileBasename,
   formatFilePathPosition,
   inlineCodeFilePathCandidate,
@@ -8,7 +9,6 @@ import {
   parseMarkdownFileLink,
   safeDecodeURIComponent,
   splitFilePathPosition,
-  stripSlashPrefixedWindowsDrive,
   workspaceRelativeFilePath,
 } from "@t3tools/client-runtime/markdown-links";
 
@@ -116,36 +116,12 @@ export function resolveMarkdownFileLinkMeta(
  * path is not usable here because it is prefixed with the workspace name.
  */
 export function markdownFileLinkRelativeCopyPath(meta: MarkdownFileLinkMeta): string | null {
-  const lexicalRelativePath = meta.workspaceRelativePath;
-  if (lexicalRelativePath === null) return null;
-  if (lexicalRelativePath === ".") return ".";
-  // The link target is joined lexically, so `../outside.md` still starts with
-  // the workspace root. Recover that root from the lexical split, then decide
-  // containment on both paths with their dot segments resolved.
-  const lexicalPath = stripSlashPrefixedWindowsDrive(meta.filePath.replaceAll("\\", "/"));
-  const lexicalRoot = lexicalPath.slice(0, lexicalPath.length - lexicalRelativePath.length - 1);
-  const path = workspaceRelativeFilePath(
-    collapseDotSegments(lexicalPath),
-    collapseDotSegments(lexicalRoot),
-  );
-  if (path === null) return null;
+  if (meta.workspaceRelativePath === null) return null;
   return formatFilePathPosition({
-    path,
+    path: meta.workspaceRelativePath,
     ...(meta.line !== undefined ? { line: meta.line } : {}),
     ...(meta.column !== undefined ? { column: meta.column } : {}),
   });
-}
-
-/** Resolves `.` and `..` in an absolute `/`-separated path without climbing above its root. */
-function collapseDotSegments(path: string): string {
-  const [head = "", ...rest] = path.split("/");
-  const segments: string[] = [];
-  for (const segment of rest) {
-    if (segment === "" || segment === ".") continue;
-    if (segment === "..") segments.pop();
-    else segments.push(segment);
-  }
-  return `${head}/${segments.join("/")}`;
 }
 
 function buildFileLinkMetaFromTarget(
@@ -153,11 +129,21 @@ function buildFileLinkMetaFromTarget(
   cwd?: string,
   workspaceRoot: string | null | undefined = cwd,
 ): MarkdownFileLinkMeta {
-  const { path, line, column } = splitFilePathPosition(targetPath);
+  const split = splitFilePathPosition(targetPath);
+  // Resolve `..` once, here, so every consumer agrees on which file this is
+  // and whether it is inside the workspace. A link that climbs out of the
+  // workspace becomes the absolute host path it names.
+  const path = collapseAbsoluteFilePath(split.path);
+  const { line, column } = split;
+  const resolvedTargetPath = formatFilePathPosition({
+    path,
+    ...(line !== undefined ? { line } : {}),
+    ...(column !== undefined ? { column } : {}),
+  });
   return {
     filePath: path,
-    targetPath,
-    displayPath: formatWorkspaceRelativePath(targetPath, cwd),
+    targetPath: resolvedTargetPath,
+    displayPath: formatWorkspaceRelativePath(resolvedTargetPath, cwd),
     workspaceRelativePath: workspaceRelativeFilePath(path, workspaceRoot),
     basename: fileBasename(path),
     ...(line !== undefined ? { line } : {}),

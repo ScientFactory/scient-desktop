@@ -302,7 +302,7 @@ describe("ScientMarkdownFileSurface", () => {
     );
     expect(onOpenFile).not.toHaveBeenCalled();
 
-    openLink("/outside.md", anchor);
+    openLink("zotero://select/items/ABC", anchor);
     expect(mocks.anchoredClose).toHaveBeenCalledWith("link-toast-1");
     expect(mocks.anchoredAdd).toHaveBeenLastCalledWith(
       expect.objectContaining({
@@ -310,7 +310,20 @@ describe("ScientMarkdownFileSurface", () => {
         title: "This link isn't available.",
       }),
     );
+    expect(onOpenFile).not.toHaveBeenCalled();
     expect(mocks.listDirectory).toHaveBeenCalledOnce();
+  });
+
+  it("opens a link that leaves the project as the host file it names", async () => {
+    const { onOpenFile } = await mount();
+    const anchor = attachedAnchor();
+
+    openLink("/outside.md", anchor);
+    openLink("../../shared/notes.md", anchor);
+
+    expect(onOpenFile.mock.calls).toEqual([["/outside.md"], ["/shared/notes.md"]]);
+    expect(mocks.anchoredAdd).not.toHaveBeenCalled();
+    expect(mocks.listDirectory).not.toHaveBeenCalled();
   });
 
   it("reports a missing local heading without checking or opening a directory", async () => {

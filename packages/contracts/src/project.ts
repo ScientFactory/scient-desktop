@@ -9,7 +9,9 @@ import {
 const PROJECT_SEARCH_ENTRIES_MAX_LIMIT = 200;
 const PROJECT_SEARCH_CONTENTS_MAX_LIMIT = 500;
 const PROJECT_WRITE_FILE_PATH_MAX_LENGTH = 512;
-const PROJECT_READ_FILE_PATH_MAX_LENGTH = 512;
+// Reads accept absolute host paths anywhere on the machine, so they share the
+// host path limit rather than the shorter workspace-relative one.
+const PROJECT_READ_FILE_PATH_MAX_LENGTH = 4096;
 const PROJECT_DIRECTORY_PATH_MAX_LENGTH = 512;
 
 export const ProjectEntryKind = Schema.Literals(["file", "directory"]);
@@ -353,6 +355,14 @@ export const ProjectFileOperation = Schema.Literals([
 ]);
 export type ProjectFileOperation = typeof ProjectFileOperation.Type;
 
+/**
+ * Why a filesystem operation failed, when the operating system said so. An
+ * optional refinement of `operation_failed`, so older clients ignore it and
+ * newer clients fall back to generic copy when an older server omits it.
+ */
+export const ProjectFileErrorReason = Schema.Literals(["not_found", "permission_denied"]);
+export type ProjectFileErrorReason = typeof ProjectFileErrorReason.Type;
+
 type ProjectFileFailureContext = {
   readonly cwd: string;
   readonly relativePath: string;
@@ -362,6 +372,7 @@ type ProjectFileFailureContext = {
   readonly operation?: ProjectFileOperation;
   readonly operationPath?: string;
   readonly currentRevision?: string;
+  readonly reason?: ProjectFileErrorReason;
   readonly cause?: unknown;
 };
 
@@ -375,6 +386,7 @@ export class ProjectReadFileError extends Schema.TaggedError<ProjectReadFileErro
     resolvedWorkspaceRoot: Schema.optional(TrimmedNonEmptyString),
     operation: Schema.optional(ProjectFileOperation),
     operationPath: Schema.optional(TrimmedNonEmptyString),
+    reason: Schema.optional(ProjectFileErrorReason),
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),
   },
@@ -417,6 +429,7 @@ export class ProjectWriteFileError extends Schema.TaggedError<ProjectWriteFileEr
     operation: Schema.optional(ProjectFileOperation),
     operationPath: Schema.optional(TrimmedNonEmptyString),
     currentRevision: Schema.optional(TrimmedNonEmptyString),
+    reason: Schema.optional(ProjectFileErrorReason),
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),
   },

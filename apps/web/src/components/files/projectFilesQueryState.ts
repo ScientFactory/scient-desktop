@@ -2,6 +2,7 @@ import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 import {
   type EnvironmentId,
+  type ProjectFileErrorReason,
   type ProjectFileFailure,
   type ProjectListEntriesResult,
   ProjectReadFileError,
@@ -68,6 +69,8 @@ export interface ProjectFileQueryState extends ProjectQueryState<ProjectReadFile
   readonly isNotFile: boolean;
   /** The server's classification of a failed read, when it gave one. */
   readonly failure: ProjectFileFailure | null;
+  /** The operating system's reason for a failed read, when the server gave one. */
+  readonly failureReason: ProjectFileErrorReason | null;
 }
 
 function getProjectEntriesQueryAtom(
@@ -271,6 +274,7 @@ export function useProjectFileQuery(
     error: errorMessage(cause),
     isNotFile: isProjectReadFileError(cause) && cause.failure === "path_not_file",
     failure: isProjectReadFileError(cause) ? (cause.failure ?? null) : null,
+    failureReason: isProjectReadFileError(cause) ? (cause.reason ?? null) : null,
     isPending: result.waiting,
     refresh,
   };

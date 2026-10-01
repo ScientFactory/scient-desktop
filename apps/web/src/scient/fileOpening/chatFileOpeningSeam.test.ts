@@ -23,17 +23,26 @@ const htmlPreviewSource = NodeFS.readFileSync(
 describe("universal chat-file opening seam", () => {
   it("uses the file surface for workspace and readable host files while preserving media preview", () => {
     expect(chatMarkdownSource).toContain("onOpenInPanel(panelPath, line);");
+    // Every click asks the environment what the link means before opening,
+    // within a bounded wait, and yields to a newer click or panel action.
+    expect(chatMarkdownSource).toContain("await settleWithin(");
+    expect(chatMarkdownSource.match(/if \(!isCurrentClick\(\)\) return/gu)).toHaveLength(3);
+    expect(chatMarkdownSource).toContain("const plan = await planFileLinkOpen(panelPath);");
     expect(chatMarkdownSource).toContain(
-      "useRightPanelStore.getState().openFile(threadRef, path, line);",
+      '.openFile(threadRef, plan.kind === "resolved" ? plan.path : panelPath, line);',
     );
     expect(chatMarkdownSource).toContain(
       "!canPreviewMedia && isAbsolutePath(fileLinkMeta.filePath)",
     );
-    expect(chatMarkdownSource).toContain("openMarkdownMedia(mediaPath, fileLinkMeta.filePath)");
+    // Outside media links resolve like other links, then open in the media viewer.
+    expect(chatMarkdownSource).toContain("openMarkdownMediaLink(mediaPath, fileLinkMeta.filePath)");
+    expect(chatMarkdownSource).toContain("openMarkdownMedia(mediaPath, filePath);");
   });
 
   it("routes HTML through the integrated Browser with an explicit document capability", () => {
-    expect(chatMarkdownSource).toContain("openEnvironmentHtmlInPreview(fileLinkMeta.filePath)");
+    expect(chatMarkdownSource).toContain(
+      "openHtmlLinkInBrowser(fileLinkMeta.filePath, browserRelativePath)",
+    );
     expect(chatMarkdownSource).toContain(
       'resolveWorkspaceFileLinkOpenTarget(fileLinkMeta.filePath) === "browser"',
     );
