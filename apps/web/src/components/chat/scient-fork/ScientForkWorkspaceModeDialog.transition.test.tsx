@@ -146,24 +146,3 @@ it.each([false, true])(
     expect(document.querySelector('[role="dialog"]') !== null).toBe(reopened);
   },
 );
-
-it("offers to open a fork that a saved attempt already made", async () => {
-  await act(() =>
-    root.render(
-      <ScientForkWorkspaceModeDialog
-        open
-        disabled={false}
-        locked
-        ready
-        retryTitle="My fork"
-        source="this-response"
-        proposedTitle="My fork (2)"
-        titleOverrideSupported
-        worktreeAvailability={{ available: true }}
-        onOpenChange={() => {}}
-        onConfirm={async () => {}}
-      />,
-    ),
-  );
-  expect(document.querySelector('button[type="submit"]')?.textContent).toBe("Open fork");
-});

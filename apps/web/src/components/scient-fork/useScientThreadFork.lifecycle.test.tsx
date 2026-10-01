@@ -190,21 +190,21 @@ describe("fork lifecycle across navigation and remounts", () => {
     }
   });
 
-  it("keeps a saved attempt's error when its dialog opens again, and only for that fork point", async () => {
+  it("names the fork point an error is about, so another point's dialog does not show it", async () => {
     commands.dispatch.mockResolvedValueOnce(
       AsyncResult.failure(Cause.fail(new Error("The workspace could not be prepared."))),
     );
     await render();
+    await act(() => hook.prepareFork(source));
+    const failedKey = hook.preview?.key;
     await act(() => hook.forkFromMessage(source, { workspaceMode: "local" }, "/workspace"));
     expect(hook.errorUpdate?.message).toContain("The workspace could not be prepared.");
-
-    await act(() => hook.prepareFork(source));
-    expect(hook.preview?.locked).toBe(true);
-    expect(hook.errorUpdate?.message).toContain("The workspace could not be prepared.");
+    expect(hook.errorUpdate?.key).toBe(failedKey);
 
     await act(() =>
       hook.prepareFork({ kind: "assistant-response", messageId: MessageId.make("other-answer") }),
     );
+    expect(hook.preview?.key).not.toBe(failedKey);
     expect(hook.errorUpdate).toBeNull();
   });
 

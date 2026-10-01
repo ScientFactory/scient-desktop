@@ -41,7 +41,6 @@ import {
   type ThreadForkedPayload,
 } from "@t3tools/contracts";
 import { deriveForkTitle } from "@t3tools/shared/scientForkTitle";
-import { withoutRepeatedToolUpdates } from "@t3tools/shared/scientForkToolUpdates";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -674,17 +673,10 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
   }
 
   // The visible work log of every retained turn. Payloads are bounded; nothing
-  // executable (approvals, questions) is copied, nor a tool progress row that
-  // only repeats the one before it.
-  const retainedWorkLogSource = origin.activities.filter(
-    (activity) =>
-      activity.turnId !== null &&
-      retainedTurnIds.has(activity.turnId) &&
-      isForkCopiedActivity(activity),
-  );
-  const retainedWorkLog = withoutRepeatedToolUpdates(retainedWorkLogSource);
-  for (const activity of retainedWorkLog) {
-    if (activity.turnId === null) continue;
+  // executable (approvals, questions) is copied.
+  for (const activity of origin.activities) {
+    if (activity.turnId === null || !retainedTurnIds.has(activity.turnId)) continue;
+    if (!isForkCopiedActivity(activity)) continue;
     const turnId = importedTurnIds.get(activity.turnId);
     if (turnId === undefined) continue;
     events.push({
@@ -711,15 +703,7 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
   // The running turn's work log, including the latest row of each unfinished
   // tool call (recorded in flight; its result is unknown at the cut).
   const inFlightActivityIds: EventId[] = [];
-  const liveWorkLogSource = liveTail?.activities ?? [];
-  const keptLiveIds = new Set(
-    withoutRepeatedToolUpdates(liveWorkLogSource).map((activity) => activity.id),
-  );
-  // An unfinished call's latest row is the record that the call was running.
-  const liveWorkLog = liveWorkLogSource.filter(
-    (activity) => keptLiveIds.has(activity.id) || liveTail!.inFlightActivityIds.has(activity.id),
-  );
-  for (const activity of liveWorkLog) {
+  for (const activity of liveTail?.activities ?? []) {
     const turnId = activity.turnId === null ? undefined : importedTurnIds.get(activity.turnId);
     if (turnId === undefined) continue;
     const id = EventId.make(
@@ -829,14 +813,9 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
     },
   });
 
-  // How much this fork copied, on the command's trace span: the first thing to
+  // How much this fork copies, on the command's trace span: the first thing to
   // read when a fork is slow.
-  yield* Effect.annotateCurrentSpan({
-    "scient.fork.events": events.length,
-    "scient.fork.messages": prefixMessages.length + (liveTail?.messages.length ?? 0),
-    "scient.fork.work_log_rows_available": retainedWorkLogSource.length + liveWorkLogSource.length,
-    "scient.fork.work_log_rows_copied": retainedWorkLog.length + liveWorkLog.length,
-  });
+  yield* Effect.annotateCurrentSpan("scient.fork.events", events.length);
 
   // The turn-zero checkpoint is announced by `thread.fork.complete`, after the
   // fork worker has actually copied its ref.

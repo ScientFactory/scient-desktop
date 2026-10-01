@@ -252,8 +252,6 @@ export function useScientThreadFork({
     options: ForkOptions | null;
     checking: boolean;
     locked: boolean;
-    /** The saved attempt already produced its fork; submitting opens it. */
-    ready?: boolean;
     retryTitle?: string;
     retryWorkspaceMode?: "local" | "new-worktree";
   } | null>(null);
@@ -261,8 +259,8 @@ export function useScientThreadFork({
     readonly threadId: ThreadId;
     readonly environmentId: EnvironmentId;
     readonly message: string | null;
-    /** The fork attempt this error belongs to, when it has one. */
-    readonly attemptKey?: string;
+    /** The fork point the error is about; another point's dialog does not show it. */
+    readonly key: string;
   } | null>(null);
   const originId = origin?.id;
   const environmentId = origin?.environmentId;
@@ -327,11 +325,10 @@ export function useScientThreadFork({
       if (!originId || !environmentId) return;
       const key = forkAttemptKey(environmentId, originId, sourceKey(source));
       const sequence = ++previewSequence.current;
+      setErrorUpdate(null);
       setPreview({ key, options: null, checking: true, locked: false });
       try {
         const pending = attemptStore.get(key);
-        // A saved attempt keeps the reason it has not finished.
-        setErrorUpdate((current) => (pending && current?.attemptKey === key ? current : null));
         const options = pending
           ? {
               available: true,
@@ -353,7 +350,6 @@ export function useScientThreadFork({
             options,
             checking: false,
             locked: pending !== null,
-            ...(pending?.ready ? { ready: true } : {}),
             ...(pending?.displayTitle === undefined ? {} : { retryTitle: pending.displayTitle }),
             ...(pending ? { retryWorkspaceMode: pending.command.workspaceMode } : {}),
           });
@@ -368,6 +364,7 @@ export function useScientThreadFork({
           setErrorUpdate({
             threadId: originId,
             environmentId,
+            key,
             message: userFacingForkError(error),
           });
         }
@@ -532,7 +529,7 @@ export function useScientThreadFork({
               setErrorUpdate({
                 threadId: originId,
                 environmentId,
-                ...(pending ? { attemptKey: key } : {}),
+                key,
                 message: pending?.ready
                   ? "The fork is ready. Retry to open it; this will not create another conversation."
                   : `${userFacingForkError(cause)}${pending ? " Retry to resume this same fork; your draft is saved." : ""}`,
@@ -549,6 +546,7 @@ export function useScientThreadFork({
         setErrorUpdate({
           threadId: originId,
           environmentId,
+          key: forkAttemptKey(environmentId, originId, sourceKey(source)),
           message:
             "A fork is already being prepared from this conversation. Wait for it to finish, then retry.",
         });

@@ -1629,51 +1629,6 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
     }),
   );
 
-  it.effect("does not copy tool progress rows that only repeat their neighbours", () =>
-    Effect.gen(function* () {
-      const toolRow = (
-        kind: string,
-        millisecond: number,
-        payload: Record<string, unknown>,
-      ): OrchestrationThreadActivity => ({
-        id: EventId.make(`row-${millisecond}`),
-        tone: "tool",
-        kind,
-        summary: "Ran command",
-        payload,
-        turnId: T2,
-        createdAt: `2026-01-01T00:00:03.${String(millisecond).padStart(3, "0")}Z`,
-      });
-      const running = { toolCallId: "call-run", data: { command: "ls" } };
-      const origin = makeOriginThread({
-        activities: [
-          toolRow("tool.updated", 1, running),
-          toolRow("tool.updated", 2, running),
-          toolRow("tool.updated", 3, running),
-          toolRow("tool.updated", 4, running),
-          toolRow("tool.completed", 5, { ...running, data: { command: "ls", output: "a.ts" } }),
-          toolRow("tool.updated", 6, { toolCallId: "call-edit", data: {} }),
-          // Only this row names the file.
-          toolRow("tool.updated", 7, { toolCallId: "call-edit", data: { path: "src/fit.py" } }),
-          toolRow("tool.updated", 8, { toolCallId: "call-edit", data: {} }),
-          toolRow("tool.completed", 9, { toolCallId: "call-edit", data: { result: "ok" } }),
-        ],
-      });
-      const events = yield* forkThreadForTest({
-        command: forkCommand({ sourceAssistantMessageId: A2 }),
-        readModel: makeReadModel({ origin }),
-      });
-
-      const copied = events.flatMap((event) =>
-        event.type === "thread.activity-appended" ? [event.payload.activity] : [],
-      );
-      // The second and third of the four identical rows are left behind.
-      expect(copied.map((entry) => Number(entry.createdAt.slice(20, 23)))).toEqual([
-        1, 4, 5, 6, 7, 8, 9,
-      ]);
-    }),
-  );
-
   it.effect("forks a running turn with its latest traces", () =>
     Effect.gen(function* () {
       const base = makeOriginThread();
@@ -1724,17 +1679,7 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
             data: { changes: [{ path: "src/fit.py" }] },
           }),
           activity("run-started", "tool.started", { toolCallId: "call-run" }),
-          // Three identical progress rows. The one stored last is the unfinished
-          // call's in-flight row even though it is not the latest by time.
-          ...(["100", "300", "200"] as const).map((millisecond) => ({
-            ...activity(
-              `run-${millisecond}`,
-              "tool.updated",
-              { toolCallId: "call-run", detail: "npm test" },
-              "Running tests",
-            ),
-            createdAt: `2026-01-01T00:00:04.${millisecond}Z`,
-          })),
+          activity("run-progress", "tool.updated", { toolCallId: "call-run", detail: "npm test" }),
           activity(
             "approval",
             "approval.requested",
@@ -1801,14 +1746,11 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
         event.type === "thread.activity-appended" ? [event.payload.activity] : [],
       );
       // Tool rows only: the approval request is never executable in the fork.
-      // The in-flight row is copied even though it only repeats its neighbours.
-      expect(copied.map((entry) => entry.createdAt.slice(17, 23))).toEqual([
-        NOW.slice(17, 23),
-        "04.100",
-        "04.300",
-        "04.200",
+      expect(copied.map((entry) => entry.kind).toSorted()).toEqual([
+        "tool.completed",
+        "tool.updated",
       ]);
-      expect(copied.at(-1)?.id).toBe(cut?.inFlightActivityIds[0]);
+      expect(copied.map((entry) => entry.id)).toContain(cut?.inFlightActivityIds[0]);
     }),
   );
 

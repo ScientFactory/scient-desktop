@@ -2119,6 +2119,7 @@ function ChatViewContent(props: ChatViewProps) {
       }
     | null
   >(null);
+  const dismissedForkTargetRef = useRef<typeof forkCommandTarget>(null);
   const forkDialogOpen =
     forkCommandTarget !== null &&
     activeThread !== null &&
@@ -11584,18 +11585,20 @@ function ChatViewContent(props: ChatViewProps) {
         }
         checking={forkPreview?.checking ?? true}
         locked={forkPreview?.locked ?? false}
-        ready={forkPreview?.ready ?? false}
         retryTitle={forkPreview?.retryTitle}
         retryWorkspaceMode={forkPreview?.retryWorkspaceMode}
         error={
           forkErrorUpdate?.environmentId === activeThread?.environmentId &&
-          forkErrorUpdate?.threadId === activeThread?.id
+          forkErrorUpdate?.threadId === activeThread?.id &&
+          forkErrorUpdate?.key === forkPreview?.key
             ? forkErrorUpdate?.message
             : forkPreview?.options?.reason
         }
         onOpenChange={(open) => {
+          if (open) return;
           // Closing while the fork is being made dismisses the dialog only.
-          if (!open) setForkCommandTarget(null);
+          if (isForkingThread) dismissedForkTargetRef.current = forkCommandTarget;
+          setForkCommandTarget(null);
         }}
         onConfirm={(confirmation, beforeNavigate) => {
           const target = forkCommandTarget;
@@ -11623,6 +11626,14 @@ function ChatViewContent(props: ChatViewProps) {
             setForkCommandTarget((current) =>
               resolveForkTargetAfterAttempt(current, target, outcome),
             );
+            // Its dialog is closed, so nothing else would say the fork failed.
+            if (outcome === "not-accepted" && dismissedForkTargetRef.current === target) {
+              toastManager.add({
+                type: "error",
+                title: "The fork did not finish",
+                description: "Fork from the same message again to resume it.",
+              });
+            }
           });
         }}
       />

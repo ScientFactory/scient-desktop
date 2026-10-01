@@ -100,8 +100,6 @@ interface ScientForkDialogProps {
   readonly error?: string | null | undefined;
   readonly checking?: boolean;
   readonly locked?: boolean;
-  /** The saved attempt already produced its fork; submitting opens it. */
-  readonly ready?: boolean;
   readonly retryTitle?: string | undefined;
   readonly retryWorkspaceMode?: ForkWorkspaceMode | undefined;
 }
@@ -179,7 +177,6 @@ export function ScientForkWorkspaceModeDialog({
   error,
   checking = false,
   locked = false,
-  ready = false,
   retryTitle,
   retryWorkspaceMode,
 }: ScientForkDialogProps & {
@@ -358,15 +355,7 @@ export function ScientForkWorkspaceModeDialog({
             size="sm"
             disabled={disabled || checking || !submission.ok}
           >
-            {disabled
-              ? "Forking…"
-              : checking
-                ? "Checking…"
-                : ready
-                  ? "Open fork"
-                  : locked || error
-                    ? "Retry"
-                    : "Fork"}
+            {disabled ? "Forking…" : checking ? "Checking…" : locked || error ? "Retry" : "Fork"}
           </Button>
         </DialogFooter>
       </DialogPopup>
