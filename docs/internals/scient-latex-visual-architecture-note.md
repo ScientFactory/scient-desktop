@@ -1,6 +1,6 @@
 # Architecture note for the LaTeX Visual editor (#353)
 
-Status: Direction for #353, proposed 2026-10-01. Reviewed against the branch at `6d5cb5e8c4`.
+Status: Direction for #353, proposed 2026-10-01. Reviewed against the branch at `6d5cb5e8c4`. Extended the same day with cases reproduced at that commit: the three checks in rule 2, file ownership of insertions in rule 7, and the rule for shared modules.
 
 This note goes with the [hands-on review](https://github.com/ScientFactory/scient-desktop/pull/353#issuecomment-5907716544). The review said what to change; this says how the deeper items should be built, so each is done once and fits the shared editing plan in the [design record](./scient-document-editing.md). It was written after reading the branch at `6d5cb5e8c4`, including `docs/internals/scient-latex-visual.md` and the two fixes that followed the review.
 
@@ -34,6 +34,8 @@ These stay as they are, and the rest of the note builds on them:
 **You own what a valid change is:** parsing, source ranges, which operations are supported, how each construct is shown, and the tests and capability table that prove it.
 
 **Where the two meet,** the session will call an adapter hook, and you supply the LaTeX side of it: which source ranges map to which parts of the editor, and which existing objects survive a change. Both sides touch `LatexVisualEditor.tsx`, so we agree who edits which part before that work starts.
+
+**Shared modules keep working for Markdown.** The keyboard system, maths input and `scient/writing/` serve both editors. A change there keeps Markdown's behavior unless we agree a change to it, and the Markdown tests pass with it. Where LaTeX needs something different, it is expressed through the LaTeX adapter, not by changing what every consumer gets. One case exists in the branch: inserting a new blank equation now inserts nothing where it inserted `{}`, and two Markdown maths tests fail (`editorAdapters.test.ts`, `mathInput.test.ts`). Markdown on `main` is not affected. We will resolve this one.
 
 **Until the migration lands:** please don't add or rework draft, journal or save mechanisms. Repairs to existing behavior are fine; tell us first if they touch those paths.
 
@@ -86,7 +88,7 @@ This doesn't ask for a pixel-exact page. As your document says, the canvas is a 
   - statement bodies (theorem-like blocks, proofs, abstracts) show their real content: paragraphs, inline maths, `\eqref`, display maths;
   - whatever can't be handled appears as a source part inside the block, and doesn't lock the whole body;
   - a locked block may render its maths for reading, with a "source only" mark.
-- **How to start:** statement bodies are a single attribute on an atomic node today, so making them real editable content is a substantial change. Please start with a thin prototype on one statement type, and agree the approach with us before changing the node structure broadly.
+- **How to start:** statement bodies are a single attribute on an atomic node today, so making them real editable content is a substantial change. First render the locked bodies read-only. For editing, please start with a thin prototype on one statement type, and agree the approach with us before changing the node structure broadly.
 
 ### 2. Editing: change the range that was edited, and nothing else.
 
@@ -98,6 +100,26 @@ An edit inside a block becomes the smallest source change. Writing a whole block
   - verify the smallest affected region. Broaden the check when an edit changes syntax boundaries or what surrounding text means, such as a closing brace or a new macro;
   - add an exact-bytes check: after an edit, everything outside the edited range is byte-identical. Keep the existing structural round-trip check next to it. On its own it normalizes whitespace and some wrappers, so it passes while bytes change;
   - inserting a block must not add a blank line where the source had a single newline, because that splits the paragraph that continued below.
+
+**Three checks, not one.** Today the main acceptance check is that the rewritten source projects back to the content the editor asked for (a guarded text-edit fallback exists beside it). Every case below passes that comparison, so it doesn't establish that the source was preserved. An accepted edit has to satisfy all three:
+
+1. the result represents the intended edit (the existing check);
+2. the source outside the ranges the operation is allowed to touch is identical;
+3. the source inside those ranges keeps what it had to keep: options, widths, labels and comments of the construct, and text that is still valid Unicode.
+
+**Cases reproduced at `6d5cb5e8c4`** (each by projecting a source, applying one edit, and reading the result):
+
+| Edit                                                                  | Result today                                                                                                                       | Should be                                        |
+| --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| Bold on the word `Hello`                                              | `\textbf{H}\textbf{e}\textbf{l}\textbf{l}\textbf{o}`                                                                               | `\textbf{Hello}`                                 |
+| Bold on text containing `😀`                                          | The character is split in two and each half is wrapped; the result has unpaired surrogates and does not survive a UTF-8 round-trip | One wrapper around the run; the character intact |
+| Change a figure's caption                                             | `\centering` is added and the indentation is removed                                                                               | Only the caption text changes                    |
+| Change `print(1)` to `print(2)` in `lstlisting[language=Python]`      | `[language=Python]` moves into the listing body                                                                                    | Only the code changes; the option stays          |
+| Add `\vec{x}`, `\frac{a}{b}`, `\hat{x}` or `\mathcal{A}` to a formula | `\usepackage{amsmath}` is added                                                                                                    | No package: these are core LaTeX                 |
+
+- **Fix formatting first:** one wrapper per marked run, with Unicode characters intact. The marks are applied one UTF-16 unit at a time today (`latexVisualDocument.ts:2865`). The mapping between editor offsets and source offsets is defined, and syntax is never inserted inside a character. Tests cover a whole word, a partial selection, overlapping marks, spaces, an existing `\emph` or `\textit`, combining characters, and characters outside the basic plane.
+- **The Unicode case** was checked on the translator's output: it contains unpaired UTF-16 surrogates, and a UTF-8 round-trip replaces them with replacement characters. A full save to disk was not exercised.
+- **Package requirements** come from a symbol table that lists `amsmath` for commands LaTeX provides itself (`mathSymbols.ts`). In an included chapter, a package requirement is a change to the root (rule 7), so a wrong one makes an ordinary chapter edit depend on the root.
 
 ### 3. Outside changes: the projection can be rebuilt; the user's interaction cannot be thrown away.
 
@@ -192,6 +214,8 @@ When an operation is refused, what the user typed stays in the editor as pending
 
 A chapter is one file with one working source. Which root and preamble interpret it is recorded with the projection, and a change of root refreshes what is supported without creating a second copy of the text.
 
+**An inserted block names the file it belongs to.** The assembled document doesn't contain enough to decide where a new paragraph goes, and today the destination is worked out from a text difference (`latexProjectVisual.ts:263`). Reproduced at `6d5cb5e8c4`: a paragraph appended after the last line of an `\input` chapter is written into the root, after the `\input` line, although the chapter was the preferred destination. With `\include` the same edit is refused at the page boundary, which is the safe outcome. The rule: an edit carries the file it is meant for and a mapped position in that file. The routing checks that intent and refuses when ownership can't be established; it doesn't pick a file from the difference alone. Tests cover the start and end of a chapter, an empty chapter, a file without a final newline, root content directly before and after the include, and `\input`, `\include` and the generated page separators. You own the LaTeX mapping; we agree the shape of the edit with you, because the session uses it too.
+
 **Edits that need a change in another file.** The design record says to refuse these until failure and recovery across two saves is defined. The branch already supports one kind: adding a package or declaration to the root when a chapter needs it, accepted only when every affected buffer is unchanged and available. We keep that one kind as a stated exception. The two saves are independent: the chapter may save without its declaration, or the declaration may save while the chapter edit is still unpublished. Our saving work will give this exception the following guarantees, with the migration. The edit counts as fully saved only when both revisions are acknowledged. Until then, every unacknowledged part is kept for retry or recovery, and each file's state is shown. Before retrying when the outcome is unknown, the files are read again, work done in between is kept, and the declaration isn't added twice. We own the tests for these cases (one save fails, an acknowledgement is lost, a file changes before the retry, the app closes in between); translator tests cover only planning and refusal. Please don't add other kinds until the migration defines the general case. When the root isn't available, the operation is refused, the input is kept, and the message says which change the root needs.
 
 ## The editor framework
@@ -203,18 +227,22 @@ Not decided in this note. The shared session has no dependency on Tiptap or Pros
 
 ## What this means for the review items
 
-| Review item                               | State and approach                                                                                | Who                                                 | When                                |
-| ----------------------------------------- | ------------------------------------------------------------------------------------------------- | --------------------------------------------------- | ----------------------------------- |
-| 1. Labelled equations                     | Implemented for the supported subset in `6d5cb5e8c4`. Its limits go in the capability table.      | You                                                 | Table: with the contributor request |
-| 4. Title deleted after an outside change  | The reported case is fixed in `39619117d7`. General interaction and history follow rules 3 and 4. | You and us                                          | After the adapter hook is agreed    |
-| The small fixes in the review             | As listed there                                                                                   | You                                                 | Now                                 |
-| Contributor request                       | Tests and the capability table                                                                    | You                                                 | Now, after the small fixes          |
-| 5. Whole-block rebuilds                   | Rule 2: range patches and the exact-bytes check                                                   | You                                                 | After the contributor request       |
-| 2, 6. Statement bodies; rendering         | Rule 1: thin prototype first, then agree the node structure                                       | You                                                 | After the contributor request       |
-| 17. When the PDF builds                   | Rule 6                                                                                            | Us: scheduler and setting. You: connect the surface | After the scheduler lands           |
-| Recovery restoring an older copy          | The interim repair above, then the migration                                                      | Us                                                  | Repair: soon. Migration: next       |
-| Refused edits on the remaining paths      | Rule 5                                                                                            | You                                                 | With rule 2                         |
-| Shared frame, Documents, rename, Settings | Shared work in the design record                                                                  | Us                                                  | In parallel                         |
+| Review item                                            | State and approach                                                                                                                      | Who                                                 | When                                                                           |
+| ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------ |
+| 1. Labelled equations                                  | Implemented for the supported subset in `6d5cb5e8c4`. Its limits go in the capability table.                                            | You                                                 | Table: with the contributor request                                            |
+| 4. Title deleted after an outside change               | The reported case is fixed in `39619117d7`. General interaction and history follow rules 3 and 4.                                       | You and us                                          | After the adapter hook is agreed                                               |
+| The small fixes in the review                          | As listed there                                                                                                                         | You                                                 | Now                                                                            |
+| Contributor request                                    | Tests and the capability table                                                                                                          | You                                                 | Now, after the small fixes                                                     |
+| Formatting; Unicode                                    | Rule 2: one wrapper per run, the three checks                                                                                           | You                                                 | First of the fixes                                                             |
+| Insertion after an `\input` chapter                    | Rule 7: the edit names its file                                                                                                         | You, with us for the shape of the edit              | After formatting and Unicode                                                   |
+| Listing options; figure captions; package requirements | Rule 2                                                                                                                                  | You                                                 | After those two                                                                |
+| 5. Whole-block rebuilds                                | Rule 2: range patches and the exact-bytes check                                                                                         | You                                                 | After the contributor request                                                  |
+| 2, 6. Statement bodies; rendering                      | Rule 1. First, show a locked body with its maths rendered, read-only. Then the thin prototype for editing, and agree the node structure | You                                                 | Rendering: right after the fixes above. Editing: after the contributor request |
+| Blank-equation change in shared maths input            | Shared modules keep working for Markdown                                                                                                | Us                                                  | With the recovery repair                                                       |
+| 17. When the PDF builds                                | Rule 6                                                                                                                                  | Us: scheduler and setting. You: connect the surface | After the scheduler lands                                                      |
+| Recovery restoring an older copy                       | The interim repair above, then the migration                                                                                            | Us                                                  | Repair: soon. Migration: next                                                  |
+| Refused edits on the remaining paths                   | Rule 5                                                                                                                                  | You                                                 | With rule 2                                                                    |
+| Shared frame, Documents, rename, Settings              | Shared work in the design record                                                                                                        | Us                                                  | In parallel                                                                    |
 
 ## How we will know it holds
 
@@ -222,22 +250,28 @@ Not decided in this note. The shared session has no dependency on Tiptap or Pros
 - **Tests that can't pass by accident:**
   - no block displays a stripped preview string as its content;
   - after any supported edit, bytes outside the edited range are identical;
+  - formatting a run of text produces one wrapper, and the result is valid Unicode;
+  - a block inserted in a chapter is written to that chapter's file, or refused;
+  - the Markdown tests pass with every change to a shared module;
   - an outside change while typing, while composing, and while a field is focused keeps the selection, the field and the pending input, or resolves them explicitly;
   - after an outside change, Undo reverses surviving local edits and never overwrites the adopted change.
-- **The capability table from the contributor request,** stating for each construct how it is shown, what can be edited, and what happens otherwise.
+- **The capability table from the contributor request,** stating for each construct how it is shown, and for each operation on it what is supported, what survives, and what is refused.
+- **Known gaps before merge.** Before merge, supported operations pass, unsupported ones refuse without losing input, and each known failure is either fixed or stated as outside what is supported.
 
 ## Order of work
 
 **You:**
 
-1. the small fixes from the review;
-2. the [contributor request](./scient-latex-visual-contributor-request.md): tests and the capability table;
-3. rule 2 for statement blocks, and the statement-body prototype for rule 1;
-4. the LaTeX side of rule 3, once the adapter hook is agreed.
+1. realign the branch with `main`, and the small fixes from the review;
+2. the [contributor request](./scient-latex-visual-contributor-request.md): tests and the capability table, including the cases reproduced above;
+3. the source-preservation fixes: formatting and Unicode first, then insertion after an `\input` chapter, then listing options, figure captions and package requirements;
+4. statement bodies shown with their maths rendered, read-only (rule 1);
+5. rule 2 for statement blocks, and the statement-body prototype for editing;
+6. the LaTeX side of rule 3, once the adapter hook is agreed.
 
 **Us:**
 
-1. the interim recovery repair;
+1. the interim recovery repair, and the blank-equation regression in shared maths input;
 2. the test documents your tests run against, and timings of per-keystroke work on small, medium and large documents;
 3. the build scheduler (rule 6), with its own specification;
 4. map the current persistence paths: which views write, which buffers hold unpublished input, how restoring works, how included files are identified;
