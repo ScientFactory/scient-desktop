@@ -277,7 +277,8 @@ export const make = Effect.gen(function* () {
     input: ProjectReadFileInput,
     purpose: "view" | "contained",
   ) {
-    const requestedPath = input.relativePath.trim();
+    // A path names one exact file, whitespace included, so it is used as given.
+    const requestedPath = input.relativePath;
     const readHostFile = (hostPath: string) =>
       Effect.tryPromise({
         try: () => NodeFSP.realpath(hostPath),
@@ -476,7 +477,7 @@ export const make = Effect.gen(function* () {
   // symlinks that lead out of it. Events carry the path exactly as requested.
   const resolveRealFileWatchTarget = Effect.fn("WorkspaceFileSystem.resolveRealFileWatchTarget")(
     function* (input: ProjectReadFileInput) {
-      const requestedPath = input.relativePath.trim();
+      const requestedPath = input.relativePath;
       const containedTarget = path.isAbsolute(requestedPath)
         ? null
         : yield* workspacePaths

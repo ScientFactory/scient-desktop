@@ -7,6 +7,8 @@ import {
   ProjectListDirectoryInput,
   ProjectListDirectoryResult,
   ProjectReadFileError,
+  ProjectReadFileInput,
+  ProjectRenameFileInput,
   ProjectSearchContentsError,
   ProjectSearchContentsInput,
   ProjectSearchEntriesError,
@@ -69,7 +71,7 @@ describe("project directory contracts", () => {
     expect(
       decodeListDirectoryInput({
         cwd: "/workspace",
-        relativeDirectory: "   ",
+        relativeDirectory: "",
         view: "ordinary",
       }),
     ).toEqual({ cwd: "/workspace", relativeDirectory: "", view: "ordinary" });
@@ -182,5 +184,49 @@ describe("project RPC errors", () => {
     expect(writeError.message).toBe("Legacy project write failure.");
     expect(writeError.relativePath).toBeUndefined();
     expect(writeError.failure).toBeUndefined();
+  });
+});
+
+describe("project file paths", () => {
+  const decodeReadFileInput = Schema.decodeUnknownSync(ProjectReadFileInput);
+  const encodeReadFileInput = Schema.encodeSync(ProjectReadFileInput);
+  const decodeRenameFileInput = Schema.decodeUnknownSync(ProjectRenameFileInput);
+
+  it("keeps whitespace that is part of a file name, in both directions", () => {
+    const input = { cwd: "/workspace", relativePath: " drafts/notes.md " };
+    expect(decodeReadFileInput(input).relativePath).toBe(" drafts/notes.md ");
+    expect(encodeReadFileInput(input).relativePath).toBe(" drafts/notes.md ");
+    expect(
+      decodeFileWatchEvent({ _tag: "file-changed", relativePath: "notes.md " }).relativePath,
+    ).toBe("notes.md ");
+    const rename = decodeRenameFileInput({
+      cwd: "/workspace",
+      relativePath: "notes.md ",
+      destinationRelativePath: "notes.md",
+      expectedRevision: "sha256:abc",
+    });
+    expect([rename.relativePath, rename.destinationRelativePath]).toEqual([
+      "notes.md ",
+      "notes.md",
+    ]);
+  });
+
+  it("rejects a blank path instead of trimming it into something else", () => {
+    expect(() => decodeReadFileInput({ cwd: "/workspace", relativePath: "" })).toThrow();
+    expect(() => decodeReadFileInput({ cwd: "/workspace", relativePath: "   " })).toThrow();
+  });
+
+  it("keeps the empty string as the root directory and rejects a blank one", () => {
+    expect(
+      decodeListDirectoryInput({ cwd: "/workspace", relativeDirectory: "", view: "ordinary" })
+        .relativeDirectory,
+    ).toBe("");
+    expect(
+      decodeListDirectoryInput({ cwd: "/workspace", relativeDirectory: "notes ", view: "ordinary" })
+        .relativeDirectory,
+    ).toBe("notes ");
+    expect(() =>
+      decodeListDirectoryInput({ cwd: "/workspace", relativeDirectory: "  ", view: "ordinary" }),
+    ).toThrow();
   });
 });
