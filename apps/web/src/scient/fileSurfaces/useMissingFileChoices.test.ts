@@ -1,7 +1,7 @@
 import { EnvironmentFilePath } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { missingFileChoices } from "./useMissingFileChoices";
+import { missingFileChoices, missingFileResolveInput } from "./useMissingFileChoices";
 
 const path = EnvironmentFilePath.make;
 const missingPath = path("/Users/me/project/dup.md");
@@ -32,5 +32,26 @@ describe("missingFileChoices", () => {
     });
     expect(missingFileChoices({ _tag: "literal", path: missingPath }).paths).toEqual([]);
     expect(missingFileChoices(null).paths).toEqual([]);
+  });
+});
+
+describe("missingFileResolveInput", () => {
+  it("asks about the tab's exact location, so a workspace ~ folder is never read as home", () => {
+    expect(
+      missingFileResolveInput({
+        absolutePath: "/repo/~/notes.md",
+        cwd: "/repo",
+        failureReason: "not_found",
+      }),
+    ).toEqual({ workspaceRoot: "/repo", path: "/repo/~/notes.md", changedPaths: [] });
+  });
+
+  it("asks only about a file that is missing", () => {
+    const tab = { absolutePath: "/repo/notes.md", cwd: "/repo" };
+    expect(missingFileResolveInput({ ...tab, failureReason: "permission_denied" })).toBeNull();
+    expect(missingFileResolveInput({ ...tab, failureReason: null })).toBeNull();
+    expect(
+      missingFileResolveInput({ absolutePath: null, cwd: "/repo", failureReason: "not_found" }),
+    ).toBeNull();
   });
 });

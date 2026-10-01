@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import { Spinner } from "~/components/ui/spinner";
 import type {
   ChatFileAttachment,
@@ -30,6 +31,7 @@ import {
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 import {
   Code2,
+  Download,
   Eye,
   FolderTree,
   Globe,
@@ -71,7 +73,8 @@ import type {
   LatexFilePresentationRequest,
   OpenFileOptions,
 } from "~/rightPanelStore";
-import { isAbsolutePath, resolvePathLinkTarget } from "~/terminal-links";
+import { isAbsolutePath } from "~/terminal-links";
+import { workspaceFileHostPath } from "./filePath";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Button } from "~/components/ui/button";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
@@ -80,6 +83,7 @@ import { buildFileReviewComment } from "~/reviewCommentContext";
 import { assetEnvironment } from "~/state/assets";
 import { useEnvironmentHttpBaseUrl, usePrimaryEnvironmentId } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
+import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import {
@@ -115,8 +119,14 @@ import {
   isOutsideProjectFailure,
   MEDIA_FAILURE_COPY,
   readFailureBlocksPreview,
+  readOnlyNotice,
+  refreshFailureNoticeCopy,
 } from "~/scient/fileSurfaces/fileFailureCopy";
 import { FileReadFailure } from "~/scient/fileSurfaces/FileReadFailure";
+import {
+  fileCopyNotice,
+  saveEnvironmentFileCopy,
+} from "~/scient/fileOpening/saveEnvironmentFileCopy";
 import { useMissingFileChoices } from "~/scient/fileSurfaces/useMissingFileChoices";
 
 import { AttachmentFilePreview } from "./AttachmentFilePreview";
@@ -161,6 +171,7 @@ import { useFileSaveCoordinator } from "./useFileSaveCoordinator";
 import {
   clearProjectFileQueryData,
   getOptimisticProjectFileQueryData,
+  projectReadFailure,
   refreshProjectEntriesQuery,
   setProjectFileQueryData,
 } from "./projectFilesQueryState";
@@ -386,8 +397,8 @@ function WorkspaceImagePreview(props: {
 /**
  * Renders an HTML or PDF file in place from its signed asset URL. HTML runs in
  * a sandboxed frame with an opaque origin, so a page cannot reach the app's
- * session or storage. A file inside the workspace may load sibling assets; a
- * host file outside it is served on its own.
+ * session or storage. A page may load the files beside it, inside the
+ * workspace or out of it; a PDF outside the workspace is served on its own.
  */
 function WorkspaceBrowserPreview(props: {
   readonly environmentId: EnvironmentId;
@@ -405,6 +416,7 @@ function WorkspaceBrowserPreview(props: {
         workspaceRoot: props.workspaceRoot,
         relativePath: props.relativePath,
         threadId: props.threadRef.threadId,
+        htmlDocument: !isPdfPreviewFile(props.absolutePath),
       }),
     [props.absolutePath, props.relativePath, props.threadRef.threadId, props.workspaceRoot],
   );
@@ -1417,6 +1429,12 @@ export default function FilePreviewPanel({
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
   });
+  // A copy must be of the file as it is now. An exact capability is pinned to
+  // the revision it was issued for, so a cached one would refuse a changed file.
+  const createCopyUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
+    reportFailure: false,
+    refresh: true,
+  });
   const openPreview = useAtomCommand(previewEnvironment.open, {
     reportFailure: false,
   });
@@ -1551,6 +1569,9 @@ export default function FilePreviewPanel({
   const canToggleRenderedForSurface =
     previewPath !== null && attachment === undefined && renderedMode !== null;
   const surfaceRendered = tableDelimiter ? renderTable : rendered;
+  // A denied read is explained in terms of the computer that holds the file.
+  const hostOs =
+    useAtomValue(serverEnvironment.configValueAtom(environmentId))?.environment.platform.os ?? null;
   const {
     lease: markdownLease,
     snapshot: markdownSnapshot,
@@ -1564,6 +1585,13 @@ export default function FilePreviewPanel({
     authoritativeSnapshot: queriedFile.authoritativeData,
     workspaceMutationId,
   });
+  // The editor keeps showing its last confirmed version when a refresh read
+  // fails; this is why it failed, so the notice can say the file moved.
+  const markdownRefreshFailure =
+    markdownSnapshot && !markdownSnapshot.pending
+      ? projectReadFailure(markdownSnapshot.error)
+      : null;
+  const markdownRefreshCopy = refreshFailureNoticeCopy(markdownRefreshFailure, hostOs);
   // Once admitted, the retained draft is the editor's display truth even when
   // an unrelated cached query fails or temporarily returns an older snapshot.
   const file =
@@ -1573,6 +1601,7 @@ export default function FilePreviewPanel({
           error: null,
           failure: null,
           failureReason: null,
+          failureOsErrorCode: null,
           isPending: false,
           data: {
             relativePath,
@@ -1676,14 +1705,14 @@ export default function FilePreviewPanel({
     isPreviewSupportedInRuntime() &&
     isBrowserPreviewFile(previewPath);
   const absolutePath =
-    relativePath && attachment === undefined ? resolvePathLinkTarget(relativePath, cwd) : null;
+    relativePath && attachment === undefined ? workspaceFileHostPath(relativePath, cwd) : null;
   const missingFile = useMissingFileChoices({
     environmentId,
     cwd,
     path: attachment === undefined ? relativePath : null,
     // Asked whenever the path is missing, including under a last good copy of
     // a file that was renamed or moved while it was open.
-    failureReason: file.failureReason,
+    failureReason: file.failureReason ?? markdownRefreshFailure?.reason ?? null,
   });
   const readOnlyHostPath = missingFile.absolutePath;
   const readFailureShownInstead = readFailureBlocksPreview({
@@ -1692,10 +1721,39 @@ export default function FilePreviewPanel({
     reason: file.failureReason,
     isHostFile,
   });
+  // A copy on the device in hand: the one way to take a file Scient cannot
+  // preview to another app when the viewer is not on the machine that holds it.
+  const savingCopyRef = useRef(false);
+  const handleSaveCopy = useCallback(() => {
+    if (!absolutePath || !environmentHttpBaseUrl || savingCopyRef.current) return;
+    savingCopyRef.current = true;
+    void saveEnvironmentFileCopy({
+      environmentId,
+      path: absolutePath,
+      httpBaseUrl: environmentHttpBaseUrl,
+      createAssetUrl: createCopyUrl,
+    })
+      .then(
+        (result) => fileCopyNotice(result),
+        // The desktop shell or browser refused before any result existed.
+        () => fileCopyNotice({ _tag: "failed", reason: "write-failed" }),
+      )
+      .then((notice) => {
+        if (notice) toastManager.add(stackedThreadToast(notice));
+      })
+      .finally(() => {
+        savingCopyRef.current = false;
+      });
+  }, [absolutePath, createCopyUrl, environmentHttpBaseUrl, environmentId]);
+  const canSaveCopy =
+    attachment === undefined && absolutePath !== null && !isDirectory && !!environmentHttpBaseUrl;
+
   const readFailure = (
     <FileReadFailure
       failure={file.failure}
       reason={file.failureReason}
+      osErrorCode={file.failureOsErrorCode}
+      hostOs={hostOs}
       message={file.error}
       retrying={file.isPending}
       onRetry={requestManualReload}
@@ -1703,6 +1761,7 @@ export default function FilePreviewPanel({
       candidates={missingFile.paths}
       candidatesIncomplete={missingFile.incomplete}
       onOpenCandidate={onOpenFile}
+      {...(canSaveCopy ? { onSaveCopy: handleSaveCopy } : {})}
     />
   );
   const pdfSource = useMemo(
@@ -1905,6 +1964,11 @@ export default function FilePreviewPanel({
               <Globe className="size-3.5" />
             </FileSurfaceAction>
           ) : null}
+          {canSaveCopy ? (
+            <FileSurfaceAction label="Save a copy to this device" onPress={handleSaveCopy}>
+              <Download className="size-3.5" />
+            </FileSurfaceAction>
+          ) : null}
           {attachment === undefined && previewPath !== null ? (
             <ScientFileReloadButton
               automaticRefreshUnavailable={automaticRefreshUnavailable}
@@ -1930,7 +1994,14 @@ export default function FilePreviewPanel({
         </div>
       ) : null}
       {markdownLease ? (
-        <ScientMarkdownPersistenceNotice key={relativePath} persistence={markdownLease} />
+        <ScientMarkdownPersistenceNotice
+          key={relativePath}
+          persistence={markdownLease}
+          {...(markdownRefreshCopy ? { refreshCopy: markdownRefreshCopy } : {})}
+          {...(markdownRefreshFailure?.reason === "not_found"
+            ? { missingFileChoices: missingFile.paths, onOpenFile }
+            : {})}
+        />
       ) : (
         <ScientFileFreshnessNotices
           relativePath={relativePath}
@@ -1952,7 +2023,7 @@ export default function FilePreviewPanel({
       )}
       {relativePath && !markdownLease && !isPdf && file.data?.readOnly ? (
         <div className="shrink-0 border-b border-border/50 bg-muted/35 px-3 py-1.5 scient-reading-micro text-muted-foreground">
-          This file is read-only in Files.
+          {readOnlyNotice(file.data.outsideWorkspace === true)}
         </div>
       ) : null}
       {previewPath &&

@@ -81,6 +81,30 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
+    // Windows cannot hold a file name that ends in a space.
+    it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+      "reads the file a path names when a sibling differs only by a trailing space",
+      () =>
+        Effect.gen(function* () {
+          const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+          const path = yield* Path.Path;
+          const cwd = yield* makeTempDir;
+          yield* writeTextFile(cwd, "notes.md", "plain\n");
+          yield* writeTextFile(cwd, "notes.md ", "spaced\n");
+
+          const spaced = yield* workspaceFileSystem.readFile({ cwd, relativePath: "notes.md " });
+          const plain = yield* workspaceFileSystem.readFile({ cwd, relativePath: "notes.md" });
+          const absolute = yield* workspaceFileSystem.viewFile({
+            cwd,
+            relativePath: path.join(cwd, "notes.md "),
+          });
+
+          expect([spaced.relativePath, spaced.contents]).toEqual(["notes.md ", "spaced\n"]);
+          expect([plain.relativePath, plain.contents]).toEqual(["notes.md", "plain\n"]);
+          expect(absolute.contents).toBe("spaced\n");
+        }),
+    );
+
     it.effect("reads host files outside the workspace root by absolute path", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -102,7 +126,18 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           truncated: false,
           revision: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
           readOnly: true,
+          outsideWorkspace: true,
         });
+
+        // An absolute spelling of a workspace file is read-only for being
+        // addressed that way; it is not outside the workspace.
+        yield* writeTextFile(cwd, "inside.md", "# Inside\n");
+        const inside = yield* workspaceFileSystem.viewFile({
+          cwd,
+          relativePath: path.join(cwd, "inside.md"),
+        });
+        expect(inside.readOnly).toBe(true);
+        expect(inside).not.toHaveProperty("outsideWorkspace");
       }),
     );
 
@@ -257,6 +292,8 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           contents: "managed\n",
           readOnly: true,
         });
+        // Read-only for being reached through a link, not for where it lives.
+        expect(result).not.toHaveProperty("outsideWorkspace");
       }),
     );
 
@@ -387,6 +424,43 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
 
         expect(event).toEqual(Option.some({ _tag: "file-changed", relativePath: "analysis.m" }));
       }),
+    );
+
+    // Windows cannot hold a file name that ends in a space.
+    it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+      "watches the file a path names, not a sibling without its trailing space",
+      () =>
+        Effect.gen(function* () {
+          const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+          const path = yield* Path.Path;
+          const cwd = yield* makeTempDir;
+          yield* writeTextFile(cwd, "notes.md", "plain\n");
+          yield* writeTextFile(cwd, "notes.md ", "spaced\n");
+
+          // Workspace-relative and absolute spellings both name the spaced file.
+          for (const relativePath of ["notes.md ", path.join(cwd, "notes.md ")]) {
+            const events = yield* workspaceFileSystem.watchFile({ cwd, relativePath }).pipe(
+              Stream.tap((event) =>
+                event._tag === "watch-ready"
+                  ? Effect.gen(function* () {
+                      // The trimmed sibling changes first: watching it would report here.
+                      yield* writeTextFile(cwd, "notes.md", "plain, edited\n");
+                      yield* Effect.sleep("250 millis");
+                      yield* writeTextFile(cwd, "notes.md ", "spaced, edited\n");
+                    })
+                  : Effect.void,
+              ),
+              Stream.filter((event) => event._tag === "file-changed"),
+              Stream.take(1),
+              Stream.runCollect,
+            );
+            expect([...events]).toEqual([{ _tag: "file-changed", relativePath }]);
+            expect(yield* workspaceFileSystem.viewFile({ cwd, relativePath })).toMatchObject({
+              contents: "spaced, edited\n",
+            });
+            yield* writeTextFile(cwd, "notes.md ", "spaced\n");
+          }
+        }),
     );
 
     it.effect("emits a hint when the selected file is removed", () =>
@@ -648,6 +722,46 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         });
         expect(saved).toBe("# Plan\n");
       }),
+    );
+
+    // Windows cannot hold a file name that ends in a space.
+    it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+      "saves and renames the file a path names, trailing space included",
+      () =>
+        Effect.gen(function* () {
+          const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const cwd = yield* makeTempDir;
+          yield* writeTextFile(cwd, "notes.md", "plain\n");
+          yield* writeTextFile(cwd, "notes.md ", "spaced\n");
+          const opened = yield* workspaceFileSystem.readFile({ cwd, relativePath: "notes.md " });
+
+          const saved = yield* workspaceFileSystem.writeFile({
+            cwd,
+            relativePath: "notes.md ",
+            contents: "spaced, edited\n",
+            expectedRevision: opened.revision,
+          });
+          expect(saved.relativePath).toBe("notes.md ");
+          expect(yield* fileSystem.readFileString(path.join(cwd, "notes.md"))).toBe("plain\n");
+          expect(yield* fileSystem.readFileString(path.join(cwd, "notes.md "))).toBe(
+            "spaced, edited\n",
+          );
+
+          const renamed = yield* workspaceFileSystem.renameFile({
+            cwd,
+            relativePath: "notes.md ",
+            destinationRelativePath: "renamed.md",
+            expectedRevision: saved.revision,
+          });
+          expect(renamed.relativePath).toBe("notes.md ");
+          expect(yield* fileSystem.exists(path.join(cwd, "notes.md "))).toBe(false);
+          expect(yield* fileSystem.readFileString(path.join(cwd, "notes.md"))).toBe("plain\n");
+          expect(yield* fileSystem.readFileString(path.join(cwd, "renamed.md"))).toBe(
+            "spaced, edited\n",
+          );
+        }),
     );
 
     it.effect("rejects writes by absolute path", () =>

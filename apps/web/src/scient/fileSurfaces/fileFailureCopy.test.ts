@@ -3,6 +3,8 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   fileReadFailureCopy,
   readFailureBlocksPreview,
+  readOnlyNotice,
+  refreshFailureNoticeCopy,
   staleCopyNotice,
   UNSUPPORTED_PREVIEW_TITLE,
 } from "./fileFailureCopy";
@@ -77,6 +79,28 @@ describe("fileReadFailureCopy", () => {
     ).toMatchObject({ title: "Access denied", details: null, retryable: true });
   });
 
+  it("says only what the operating system reported for a denied read", () => {
+    const denied = (osErrorCode: string | null, hostOs: string | null) =>
+      fileReadFailureCopy({
+        failure: "operation_failed",
+        reason: "permission_denied",
+        osErrorCode,
+        hostOs,
+        message: null,
+      }).description;
+
+    // A plain permission problem is not a privacy setting, on any system.
+    expect(denied("EACCES", "darwin")).toContain("permissions of the file and its folders");
+    expect(denied("EACCES", "darwin")).not.toContain("Privacy");
+    // Only the code macOS uses when the system itself declines mentions it,
+    // conditionally, and as a setting on the computer that holds the file.
+    expect(denied("EPERM", "darwin")).toContain("If it is in a protected folder");
+    expect(denied("EPERM", "darwin")).toContain("Privacy & Security there");
+    expect(denied("EPERM", "linux")).toBe("The operating system denied access to this file.");
+    // An older server reports no code: nothing more specific is claimed.
+    expect(denied(null, "darwin")).toBe("The operating system denied access to this file.");
+  });
+
   it("names a non-file path", () => {
     expect(fileReadFailureCopy({ failure: "path_not_file", message: null })).toMatchObject({
       title: "Not a file",
@@ -127,5 +151,31 @@ describe("staleCopyNotice", () => {
     expect(staleCopyNotice(null)).toBe(
       "The latest version could not be loaded. Showing the last available copy.",
     );
+  });
+});
+
+describe("refreshFailureNoticeCopy", () => {
+  it("names a moved file and a denied read, and claims nothing without a reason", () => {
+    expect(refreshFailureNoticeCopy({ reason: "not_found", osErrorCode: "ENOENT" }, null)).toEqual({
+      title: "This file is no longer at this location",
+      description:
+        "It may have been moved, renamed, or deleted. The last confirmed version is still open.",
+    });
+    const denied = refreshFailureNoticeCopy(
+      { reason: "permission_denied", osErrorCode: "EACCES" },
+      "darwin",
+    );
+    expect(denied?.title).toBe("This file can no longer be read");
+    expect(denied?.description).toContain("permissions of the file and its folders");
+    expect(denied?.description).toContain("The last confirmed version is still open.");
+    expect(refreshFailureNoticeCopy(null, "darwin")).toBeNull();
+  });
+});
+
+describe("readOnlyNotice", () => {
+  it("says why a file is read-only when the reason is where it lives", () => {
+    expect(readOnlyNotice(true)).toBe("This file is read-only because it is outside this project.");
+    // An older environment, or a file that is read-only for another reason.
+    expect(readOnlyNotice(false)).toBe("This file is read-only in Files.");
   });
 });

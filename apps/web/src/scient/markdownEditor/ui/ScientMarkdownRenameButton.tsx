@@ -51,6 +51,12 @@ export function ScientMarkdownRenameButton(props: ScientMarkdownRenameButtonProp
 
   const submit = async () => {
     if (props.disabled || submitting) return;
+    // The field starts as the file's exact path. Submitting it untouched is not
+    // a rename, even when normalizing it as typed text would alter it.
+    if (path === props.relativePath) {
+      setOpen(false);
+      return;
+    }
     const destinationRelativePath = normalizeMarkdownCreatePath(path);
     if (!destinationRelativePath) {
       setError("Enter a relative Markdown path inside this workspace.");

@@ -4,8 +4,11 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import {
   chatFileLinkResolveInput,
   chatFileOpenPlan,
+  linkOpenLocation,
   claimLinkClick,
+  clientPlacedLinkPath,
   settleWithin,
+  workspaceLocatorAskPath,
 } from "./chatFileLinkResolution";
 
 const path = EnvironmentFilePath.make;
@@ -143,5 +146,94 @@ describe("claimLinkClick", () => {
     const click = claimLinkClick(clicks);
     clicks.userActs();
     expect(click()).toBe(false);
+  });
+});
+
+describe("linkOpenLocation", () => {
+  const home = {
+    askedPath: "~/notes/today.md",
+    clientPath: "/Users/guess/notes/today.md",
+    workspaceRoot: "/srv/project",
+  };
+
+  it("opens a home-relative link where the environment says its home folder is", () => {
+    expect(
+      linkOpenLocation({
+        ...home,
+        resolution: { _tag: "literal", path: path("/home/ada/notes/today.md") },
+      }),
+    ).toBe("/home/ada/notes/today.md");
+    // Inside the workspace it stays a workspace file, so it stays editable,
+    // including a workspace folder that really is named `~`.
+    expect(
+      linkOpenLocation({
+        ...home,
+        resolution: { _tag: "literal", path: path("/srv/project/notes/today.md") },
+      }),
+    ).toBe("notes/today.md");
+    expect(
+      linkOpenLocation({
+        ...home,
+        resolution: { _tag: "literal", path: path("/srv/project/~/notes/today.md") },
+      }),
+    ).toBe("~/notes/today.md");
+  });
+
+  it("opens a missing home-relative link at the location the environment checked", () => {
+    const missingPath = path("/home/ada/notes/today.md");
+    for (const resolution of [
+      { _tag: "none", missingPath } as const,
+      { _tag: "tie", paths: [path("a/today.md"), path("b/today.md")], missingPath } as const,
+      { _tag: "incomplete", paths: [], missingPath } as const,
+    ]) {
+      expect(linkOpenLocation({ ...home, resolution })).toBe("/home/ada/notes/today.md");
+    }
+  });
+
+  it("keeps the client's placement when the environment did not expand the home folder", () => {
+    // Could not be asked.
+    expect(linkOpenLocation({ ...home, resolution: null })).toBe(home.clientPath);
+    // An environment that predates expansion looks under the workspace.
+    expect(
+      linkOpenLocation({
+        ...home,
+        resolution: { _tag: "none", missingPath: path("/srv/project/~/notes/today.md") },
+      }),
+    ).toBe(home.clientPath);
+  });
+
+  it("leaves every other link exactly as the client spelled it", () => {
+    expect(
+      linkOpenLocation({
+        askedPath: "a.md",
+        clientPath: "a.md",
+        workspaceRoot: "/srv/project",
+        resolution: { _tag: "literal", path: path("/srv/project/a.md") },
+      }),
+    ).toBe("a.md");
+  });
+});
+
+describe("clientPlacedLinkPath", () => {
+  it("guesses a home folder only as a fallback, and leaves other links alone", () => {
+    expect(clientPlacedLinkPath("~/notes.md", "/Users/ada/project")).toBe("/Users/ada/notes.md");
+    // Inside the workspace the guess is a workspace file.
+    expect(clientPlacedLinkPath("~/project/a.md", "/Users/ada/project")).toBe("a.md");
+    // No conventional home to guess from: the spelling is kept for the environment.
+    expect(clientPlacedLinkPath("~/notes.md", "/srv/project")).toBe("~/notes.md");
+    expect(clientPlacedLinkPath("docs/a.md", "/Users/ada/project")).toBe("docs/a.md");
+  });
+});
+
+describe("workspaceLocatorAskPath", () => {
+  it("asks about a workspace ~ folder by its host path, never as the home folder", () => {
+    expect(workspaceLocatorAskPath("~/guide.md", "/repo")).toBe("/repo/~/guide.md");
+    expect(workspaceLocatorAskPath("~\\guide.md", "C:\\repo")).toBe("C:\\repo\\~\\guide.md");
+  });
+
+  it("leaves every other locator as the client spells it", () => {
+    expect(workspaceLocatorAskPath("notes/guide.md", "/repo")).toBe("notes/guide.md");
+    expect(workspaceLocatorAskPath("/tmp/guide.md", "/repo")).toBe("/tmp/guide.md");
+    expect(workspaceLocatorAskPath("~/guide.md", undefined)).toBe("~/guide.md");
   });
 });

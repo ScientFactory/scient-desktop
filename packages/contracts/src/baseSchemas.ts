@@ -14,6 +14,34 @@ export const TrimmedString = Schema.String.pipe(
 );
 export const TrimmedNonEmptyString = TrimmedString.check(Schema.isNonEmpty());
 
+const hasNonWhitespaceCharacter = (value: string) => value.trim().length > 0;
+
+/**
+ * A file path or file name. Whitespace is part of a name, so the value travels
+ * exactly as given: `notes.md ` and `notes.md` are different files. Only a
+ * value made of nothing but whitespace is rejected. Trim where a person types
+ * a new name, never where a path identifies an existing file.
+ */
+export const FilePathString = Schema.String.check(
+  Schema.makeFilter(
+    (value) => hasNonWhitespaceCharacter(value) || "Expected a path that is not blank",
+  ),
+);
+
+/**
+ * A directory locator in which the empty string names the root. Like
+ * `FilePathString` it is never trimmed, so blank input is rejected instead of
+ * silently becoming the root.
+ */
+export const DirectoryPathString = Schema.String.check(
+  Schema.makeFilter(
+    (value) =>
+      value === "" ||
+      hasNonWhitespaceCharacter(value) ||
+      "Expected the root or a path that is not blank",
+  ),
+);
+
 export const NonNegativeInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 export const PositiveInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
 export const PortSchema = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }));
