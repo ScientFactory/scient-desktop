@@ -168,9 +168,10 @@ pricing update.
 ## Subscription usage widget
 
 Add **Subscription usage** from your iOS or Android widget gallery to see remaining Codex and
-Claude quotas. Tap it to open **Usage → Limits**. On iOS, use **Edit Widget** to choose Session,
-Weekly, or both for each provider. Reopen the retained mobile client to refresh
-expired readings. The Android widget requires Android 12L or later.
+Claude quotas. Tap it to open **Usage → Limits**; on Android that works while the retained
+mobile client runs in the background, otherwise open it from the launcher. On iOS, use
+**Edit Widget** to choose Session, Weekly, or both for each provider. Reopen the retained
+mobile client to refresh expired readings. The Android widget requires Android 12L or later.
 
 ## Keyboard shortcuts
 
