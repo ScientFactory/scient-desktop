@@ -46,6 +46,7 @@ function argument(name: string): string | undefined {
 
 const provider = argument("--provider") as ManagedRuntimeProvider | undefined;
 const runPiLiveTests = process.argv.includes("--pi-live-tests");
+const runDroidLiveTests = process.argv.includes("--droid-live-tests");
 const catalogPath = NodePath.resolve(
   argument("--catalog") ??
     "apps/server/src/scient/providerLifecycle/bundled-managed-runtime-catalog.json",
@@ -54,45 +55,79 @@ if (!provider) throw new Error("--provider is required.");
 if (runPiLiveTests && provider !== "pi") {
   throw new Error("--pi-live-tests is valid only for Pi qualification.");
 }
+if (runDroidLiveTests && provider !== "droid") {
+  throw new Error("--droid-live-tests is valid only for Droid qualification.");
+}
 
-async function verifyPiIntegration(
-  binary: string,
-  version: string,
-  platform: NodeJS.Platform,
-): Promise<void> {
-  const tests = [
-    "apps/server/src/provider/pi/PiCustomModels.live.test.ts",
-    "apps/server/src/provider/pi/PiNativeProvider.live.test.ts",
-    "apps/server/src/provider/pi/PiReasoning.live.test.ts",
-    "apps/server/src/provider/pi/PiRuntime.live.test.ts",
-    "apps/server/src/provider/pi/PiXai.live.test.ts",
-  ];
+/** Runs live suites, one file at a time, against the binary named in `environment`. */
+async function runLiveTests(input: {
+  readonly label: string;
+  readonly tests: ReadonlyArray<string>;
+  readonly environment: Readonly<Record<string, string>>;
+  readonly platform: NodeJS.Platform;
+}): Promise<void> {
   await new Promise<void>((resolve, reject) => {
-    const child = NodeChildProcess.spawn("vp", ["test", "run", "--no-file-parallelism", ...tests], {
-      cwd: process.cwd(),
-      env: {
-        ...process.env,
-        SCIENT_PI_TEST_BINARY: binary,
-        SCIENT_PI_TEST_VERSION: version,
+    const child = NodeChildProcess.spawn(
+      "vp",
+      ["test", "run", "--no-file-parallelism", ...input.tests],
+      {
+        cwd: process.cwd(),
+        env: { ...process.env, ...input.environment },
+        // Windows cannot execute a package-manager .cmd shim directly through spawn.
+        // The shell is needed only to resolve the fixed `vp` command; all arguments are static.
+        shell: input.platform === "win32",
+        stdio: "inherit",
+        windowsHide: true,
       },
-      // Windows cannot execute a package-manager .cmd shim directly through spawn.
-      // The shell is needed only to resolve the fixed `vp` command; all arguments are static.
-      shell: platform === "win32",
-      stdio: "inherit",
-      windowsHide: true,
-    });
+    );
     child.once("error", reject);
     child.once("exit", (code, signal) => {
       if (code === 0) resolve();
       else
         reject(
           new Error(
-            `Pi integration qualification failed${signal ? ` with signal ${signal}` : ` with exit code ${String(code)}`}.`,
+            `${input.label} failed${signal ? ` with signal ${signal}` : ` with exit code ${String(code)}`}.`,
           ),
         );
     });
   });
 }
+
+const verifyPiIntegration = (binary: string, version: string, platform: NodeJS.Platform) =>
+  runLiveTests({
+    label: "Pi integration qualification",
+    tests: [
+      "apps/server/src/provider/pi/PiCustomModels.live.test.ts",
+      "apps/server/src/provider/pi/PiNativeProvider.live.test.ts",
+      "apps/server/src/provider/pi/PiReasoning.live.test.ts",
+      "apps/server/src/provider/pi/PiRuntime.live.test.ts",
+      "apps/server/src/provider/pi/PiXai.live.test.ts",
+    ],
+    environment: { SCIENT_PI_TEST_BINARY: binary, SCIENT_PI_TEST_VERSION: version },
+    platform,
+  });
+
+/**
+ * Droid is published only after the installed binary speaks the protocol the
+ * app depends on: ACP startup, the session controls (model, autonomy level,
+ * reasoning effort), a turn, and the guards around custom-model keys,
+ * background generation and request loops. Every request goes to a local stub
+ * with a fixture key and a private HOME: no Factory account and no network.
+ */
+const verifyDroidProtocol = (binary: string, version: string, platform: NodeJS.Platform) =>
+  runLiveTests({
+    label: "Droid protocol qualification",
+    tests: [
+      "apps/server/src/provider/droid/DroidRuntime.live.test.ts",
+      "apps/server/src/provider/droid/DroidReasoning.live.test.ts",
+      "apps/server/src/provider/droid/DroidProviderStatus.live.test.ts",
+      "apps/server/src/provider/droid/DroidBackgroundGeneration.live.test.ts",
+      "apps/server/src/provider/droid/DroidKeyIsolation.live.test.ts",
+      "apps/server/src/provider/droid/DroidRequestLimits.live.test.ts",
+    ],
+    environment: { SCIENT_DROID_TEST_BINARY: binary, SCIENT_DROID_TEST_VERSION: version },
+    platform,
+  });
 
 /**
  * Oh My Pi is published only after the installed binary completes the app's
@@ -220,6 +255,9 @@ try {
   }
   if (runPiLiveTests) {
     await verifyPiIntegration(runtime.launchPath(artifact), artifact.version, target.platform);
+  }
+  if (runDroidLiveTests) {
+    await verifyDroidProtocol(status.launchPath, artifact.version, target.platform);
   }
   if (provider === "omp") await verifyOmpRpc(status.launchPath, artifact.version);
   if (process.argv.includes("--repair")) {

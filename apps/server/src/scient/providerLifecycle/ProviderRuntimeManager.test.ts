@@ -468,6 +468,96 @@ describe("ProviderRuntimeManager", () => {
     }),
   );
 
+  it.effect("starts a switch to an older managed release only once it was accepted", () =>
+    Effect.gen(function* () {
+      const runCount = yield* Ref.make(0);
+      const olderPlan = {
+        ...installPlan(),
+        catalogRevision: "reviewed:1:older-than-system",
+        systemVersion: "0.200.0",
+        olderThanSystem: true,
+      };
+      const actions: ProviderManagedRuntimeActions = {
+        getSummary: Effect.succeed(systemRuntime),
+        plan: () => Effect.succeed(olderPlan),
+        run: () => Ref.update(runCount, (count) => count + 1),
+      };
+      const { manager } = yield* makeHarness(actions, [systemProvider]);
+      const planned = yield* manager.plan({ instanceId: INSTANCE, action: "install" });
+      assert.strictEqual(planned.olderThanSystem, true);
+      assert.strictEqual(planned.systemVersion, "0.200.0");
+
+      // A client that starts what it planned without showing the decision.
+      const unaccepted = yield* manager
+        .start({
+          instanceId: INSTANCE,
+          action: "install",
+          catalogRevision: planned.catalogRevision,
+        })
+        .pipe(Effect.result);
+      assert.strictEqual(unaccepted._tag, "Failure");
+      if (unaccepted._tag === "Failure") {
+        assert.strictEqual(unaccepted.failure.reason, "runtime_plan_stale");
+        assert.include(unaccepted.failure.message, "0.147.0");
+        assert.include(unaccepted.failure.message, "0.200.0");
+      }
+      assert.strictEqual(yield* Ref.get(runCount), 0);
+
+      yield* manager.start({
+        instanceId: INSTANCE,
+        action: "install",
+        catalogRevision: planned.catalogRevision,
+        acceptOlderThanSystem: true,
+      });
+      yield* yieldUntil(Ref.get(runCount), (count) => count === 1);
+    }),
+  );
+
+  // Install is "Use Scient-managed"; Repair and Update of a copy that was never
+  // selected put it in use the same way.
+  for (const action of ["install", "repair", "update"] as const)
+    it.effect(
+      `starts ${action} over a system runtime of unknown version only once it was accepted`,
+      () =>
+        Effect.gen(function* () {
+          const runCount = yield* Ref.make(0);
+          const summary = { ...systemRuntime, actions: [action] };
+          const actions: ProviderManagedRuntimeActions = {
+            getSummary: Effect.succeed(summary),
+            plan: () =>
+              Effect.succeed({
+                ...installPlan(),
+                action,
+                catalogRevision: "reviewed:1:system-version-unknown",
+                systemVersion: null,
+                olderThanSystem: false,
+              }),
+            run: () => Ref.update(runCount, (count) => count + 1),
+          };
+          const { manager } = yield* makeHarness(actions, [
+            { ...systemProvider, connection: { ...systemProvider.connection!, runtime: summary } },
+          ]);
+          const start = (acceptOlderThanSystem: boolean) =>
+            manager.start({
+              instanceId: INSTANCE,
+              action,
+              catalogRevision: "reviewed:1:system-version-unknown",
+              ...(acceptOlderThanSystem ? { acceptOlderThanSystem } : {}),
+            });
+
+          const unaccepted = yield* start(false).pipe(Effect.result);
+          assert.strictEqual(unaccepted._tag, "Failure");
+          if (unaccepted._tag === "Failure") {
+            assert.strictEqual(unaccepted.failure.reason, "runtime_plan_stale");
+            assert.include(unaccepted.failure.message, "system version unknown");
+          }
+          assert.strictEqual(yield* Ref.get(runCount), 0);
+
+          yield* start(true);
+          yield* yieldUntil(Ref.get(runCount), (count) => count === 1);
+        }),
+    );
+
   it.effect("stages while turns run and switches only once the provider is idle", () =>
     Effect.gen(function* () {
       const busy = yield* Ref.make(true);

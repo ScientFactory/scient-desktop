@@ -1,6 +1,7 @@
 import { isValidElement, type ReactElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
+  ProviderDriverKind,
   ProviderInstanceId,
   type CustomModelConnection,
   type CustomModelSaveInput,
@@ -83,7 +84,8 @@ function editor(
     connections?: CustomModelConnection[];
     edit?: boolean;
     fail?: boolean;
-    agents?: ReadonlyArray<{ id: ProviderInstanceId; name: string }>;
+    agents?: ReadonlyArray<{ id: ProviderInstanceId; name: string; driver?: ProviderDriverKind }>;
+    defaultInstanceIds?: ReadonlyArray<ProviderInstanceId>;
   } = {},
 ) {
   const onSave = vi.fn(async (_input: CustomModelSaveInput) => {
@@ -99,6 +101,7 @@ function editor(
         ...(options.edit ? { model: (options.connection ?? connection).models[0]! } : {}),
       },
       agents: options.agents ?? [{ id: pi, name: "Pi" }],
+      defaultInstanceIds: options.defaultInstanceIds ?? [pi],
       onSave,
       onClose,
     });
@@ -179,6 +182,91 @@ describe("custom model editor", () => {
     f.select("Reasoning", "");
     await f.submit();
     expect(f.onSave.mock.calls[1]![0].connection.models[0]!.defaultReasoningLevel).toBeUndefined();
+  });
+  it("explains which reasoning levels Droid offers when the model is used with Droid", () => {
+    const xhigh: CustomModelConnection = {
+      ...connection,
+      models: [
+        {
+          ...connection.models[0]!,
+          instanceIds: [droid],
+          reasoningMetadata: {
+            ...connection.models[0]!.reasoningMetadata!,
+            mode: "effort",
+            levels: ["low", "medium", "high", "xhigh"],
+          },
+        },
+      ],
+    };
+    const note =
+      "Droid offers Low, Medium and High for this model, and Extra-high only as its default level.";
+    const noteIn = (tree: unknown) => find(tree, (e) => e.props.children === note);
+    const withDroid = editor({
+      connection: xhigh,
+      edit: true,
+      agents: [{ id: droid, name: "Droid", driver: ProviderDriverKind.make("droid") }],
+    });
+    expect(noteIn(withDroid.row("Reasoning").props.children)).toBeDefined();
+    hooks.reset();
+    const piOnly = editor({
+      connection: { ...xhigh, models: [{ ...xhigh.models[0]!, instanceIds: [pi] }] },
+      edit: true,
+    });
+    expect(noteIn(piOnly.row("Reasoning").props.children)).toBeUndefined();
+  });
+  describe("default level of an Anthropic Messages model Droid does not know as adaptive", () => {
+    const droidAgent = { id: droid, name: "Droid", driver: ProviderDriverKind.make("droid") };
+    const piAgent = { id: pi, name: "Pi", driver: ProviderDriverKind.make("pi") };
+    const plain = (instanceIds: ReadonlyArray<ProviderInstanceId>): CustomModelConnection => ({
+      ...connection,
+      protocol: "anthropic-messages",
+      models: [
+        {
+          ...connection.models[0]!,
+          modelId: "plain-anthropic",
+          instanceIds,
+          defaultReasoningLevel: "max",
+          reasoningOverride: { supported: true, levels: ["low", "medium", "high", "max"] },
+        },
+      ],
+    });
+    const item = (f: ReturnType<typeof editor>, value: string) =>
+      find(f.control("Reasoning"), (e) => e.props.value === value && "hideIndicator" in e.props);
+    const says = (f: ReturnType<typeof editor>, text: string) =>
+      find(f.row("Reasoning").props.children, (e) => e.props.children === text) !== undefined;
+    const substitute = "Droid cannot apply Max to this model and uses Medium instead.";
+
+    it("offers a Droid-only model only the defaults Droid applies", async () => {
+      const f = editor({ connection: plain([droid]), edit: true, agents: [droidAgent, piAgent] });
+      // The saved Max stays visible as what it is, and cannot be chosen again.
+      expect(item(f, "max")?.props.disabled).toBe(true);
+      for (const level of ["low", "medium", "high"])
+        expect(item(f, level)?.props.disabled).toBeUndefined();
+      expect(says(f, substitute)).toBe(true);
+
+      f.select("Reasoning", "high");
+      expect(item(f, "max")).toBeUndefined();
+      expect(says(f, substitute)).toBe(false);
+      await f.submit();
+      expect(f.onSave.mock.calls[0]![0].connection.models[0]!.defaultReasoningLevel).toBe("high");
+    });
+
+    it("keeps another agent's levels and says what Droid uses instead", () => {
+      const f = editor({
+        connection: plain([droid, pi]),
+        edit: true,
+        agents: [droidAgent, piAgent],
+      });
+      // Pi applies Max, so it stays a choice.
+      expect(item(f, "max")?.props.disabled).toBeUndefined();
+      expect(says(f, substitute)).toBe(true);
+    });
+
+    it("says nothing about Droid when Droid is not attached", () => {
+      const f = editor({ connection: plain([pi]), edit: true, agents: [droidAgent, piAgent] });
+      expect(item(f, "max")?.props.disabled).toBeUndefined();
+      expect(says(f, substitute)).toBe(false);
+    });
   });
   it("preserves saved limits until the user switches them to automatic", async () => {
     const f = editor({ connection, edit: true });
@@ -317,12 +405,14 @@ describe("custom model editor", () => {
     ]);
     expect(editor().field("Model provider").props.value).toBe("openrouter");
   });
-  it("creates a redacted API-key submission attached to every compatible agent by default", async () => {
+  it("creates a redacted API-key submission attached to the default agents", async () => {
+    // The panel passes the enabled agents (or the agent that opened the editor).
     const f = editor({
       agents: [
         { id: droid, name: "Droid" },
         { id: pi, name: "Pi" },
       ],
+      defaultInstanceIds: [droid],
     });
     f.change("Model ID", "model-id");
     f.change("API key", "synthetic-key");
@@ -333,9 +423,24 @@ describe("custom model editor", () => {
     expect(saved.connection.models[0]).toMatchObject({
       modelId: "model-id",
       name: "model-id",
-      instanceIds: [droid, pi],
+      instanceIds: [droid],
     });
     expect(f.onClose).toHaveBeenCalledOnce();
+  });
+  it("shows an agent that was removed and lets the model be detached from it", async () => {
+    const removed = ProviderInstanceId.make("droid_work");
+    const stale: CustomModelConnection = {
+      ...connection,
+      models: [{ ...connection.models[0]!, instanceIds: [pi, removed] }],
+    };
+    const f = editor({ connection: stale, edit: true });
+    const removedSwitch = () =>
+      find(f.render(), (e) => e.props["aria-label"] === "Use with droid_work (removed)");
+    expect(removedSwitch()?.props.checked).toBe(true);
+    (removedSwitch()!.props.onCheckedChange as (checked: boolean) => void)(false);
+    expect(removedSwitch()?.props.checked).toBe(false);
+    await f.submit();
+    expect(f.onSave.mock.calls[0]![0].connection.models[0]!.instanceIds).toEqual([pi]);
   });
   it("preserves an existing model's explicit agent attachments", async () => {
     const f = editor({

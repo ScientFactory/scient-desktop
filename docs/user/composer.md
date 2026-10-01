@@ -447,10 +447,11 @@ settings does not appear in either menu.
 
 Use **Settings → Skills → External skills** to inspect provider-owned skills.
 Where a switch is available, it changes the provider's own setting and can also
-affect that provider outside Scient. Codex, Droid, Grok, and ordinary personal
-Claude skills support switching; other entries remain read-only when Scient
-cannot change their native setting. A provider may require a new conversation
-to load changed settings.
+affect that provider outside Scient. Codex, Grok, and ordinary personal Claude
+and Droid skills support switching; other entries remain read-only when Scient
+cannot change their native setting. Claude and Droid project skills are
+read-only here: change them in the project. A provider may require a new
+conversation to load changed settings.
 
 Provider commands such as `/compact` only run when they open the message, so the `/` menu offers
 them only there. Scient's own commands, such as `/model` and `/plan`, and skills stay available on

@@ -23,10 +23,12 @@ import type * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as Sink from "effect/Sink";
 
 import {
+  isManagedRuntimeDowngrade,
   makeManagedProviderRuntimeDiagnostics,
   makeManagedProviderRuntimeResolution,
   managedRuntimeInstallationFailureMessage,
   nativeProviderRuntimeBackendLabel,
+  parseConfiguredRuntimeVersion,
   resolveManagedRuntimePolicy,
   resolveManagedRuntimeSource,
 } from "./ManagedProviderRuntimeActions.ts";
@@ -142,12 +144,60 @@ describe("managed provider runtime policy", () => {
     ).toEqual(["install"]);
   });
 
+  it("offers the switch whatever release the system runtime is, and knows when it is older", () => {
+    expect(
+      resolveManagedRuntimePolicy({
+        source: "system",
+        artifact: reviewedArtifact,
+        installed: false,
+        installedVersion: null,
+        managedInstallationAllowed: true,
+        systemToManagedSwitchAllowed: true,
+      }).actions,
+    ).toEqual(["install"]);
+
+    const older = (systemVersion: string | null, artifact = reviewedArtifact) =>
+      isManagedRuntimeDowngrade({ artifact, systemVersion });
+    expect(older("1.2.0")).toBe(true);
+    expect(older("1.0.1")).toBe(true);
+    expect(older("1.0.0")).toBe(false);
+    expect(older("0.9.0")).toBe(false);
+    // A version Scient could not read or compare is not known to be newer.
+    expect(older(null)).toBe(false);
+    expect(older("nightly")).toBe(false);
+
+    // Cursor releases are dated, not semantic versions.
+    const cursor = {
+      ...reviewedArtifact,
+      provider: "cursor",
+      version: "2026.09.02-c22c1a3",
+    } as const;
+    expect(older("2026.10.01-abcdef1", cursor)).toBe(true);
+    expect(older("2026.08.11-e8db854", cursor)).toBe(false);
+  });
+
+  it("reads each provider's own version output", () => {
+    expect(parseConfiguredRuntimeVersion("claudeAgent", "2.1.286 (Claude Code)\n")).toBe("2.1.286");
+    expect(parseConfiguredRuntimeVersion("grok", "grok 1.0.40 (eb1a2256660d) [stable]\n")).toBe(
+      "1.0.40",
+    );
+    expect(parseConfiguredRuntimeVersion("omp", "omp/18.3.1\n")).toBe("18.3.1");
+    expect(parseConfiguredRuntimeVersion("droid", "0.230.0\n")).toBe("0.230.0");
+    expect(parseConfiguredRuntimeVersion("cursor", "2026.08.11-e8db854\n")).toBe(
+      "2026.08.11-e8db854",
+    );
+    expect(parseConfiguredRuntimeVersion("cursor", "cursor-agent\n")).toBeNull();
+    expect(parseConfiguredRuntimeVersion("pi", "development build\n")).toBeNull();
+  });
+
   it.effect("exposes the qualified handoff through the real generic resolution boundary", () =>
     Effect.gen(function* () {
       const baseDir = yield* Effect.promise(() =>
         NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-managed-provider-resolution-")),
       );
       temporaryRoots.push(baseDir);
+      // The stand-in system runtime is this Node binary: the managed release is newer than it.
+      const artifact = { ...reviewedArtifact, version: "999.0.0" };
       const runtime = new ManagedProviderRuntime(
         baseDir,
         {
@@ -177,7 +227,7 @@ describe("managed provider runtime policy", () => {
           providerName: "Claude",
           providerSlug: "claude",
           runtime,
-          bundledArtifact: reviewedArtifact,
+          bundledArtifact: artifact,
           contractRevision: 1,
           targetLabel: "darwin-arm64",
           environment: process.env,
@@ -225,14 +275,14 @@ describe("managed provider runtime policy", () => {
       expect(yield* resolution.actions.getSummary).toMatchObject({
         source: "scient_managed",
         actions: ["repair", "remove"],
-        managedVersion: "1.0.0",
+        managedVersion: "999.0.0",
       });
-      expect(yield* Effect.promise(() => runtime.status(reviewedArtifact))).toMatchObject({
+      expect(yield* Effect.promise(() => runtime.status(artifact))).toMatchObject({
         installed: true,
         selected: true,
       });
       const managedResolution = yield* resolve();
-      expect(managedResolution.effectiveBinaryPath).toBe(runtime.launchPath(reviewedArtifact));
+      expect(managedResolution.effectiveBinaryPath).toBe(runtime.launchPath(artifact));
       expect(managedResolution.usesManagedPath).toBe(true);
 
       const removePlan = yield* managedResolution.actions.plan("remove");

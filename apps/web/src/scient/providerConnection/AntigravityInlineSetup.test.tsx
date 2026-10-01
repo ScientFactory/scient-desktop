@@ -41,6 +41,7 @@ function controller(): ProviderLifecycleController {
     startRuntime: vi.fn(async () => provider()),
     cancelRuntime: vi.fn(async () => provider()),
     updateExternalRuntime: vi.fn(async () => provider()),
+    refresh: vi.fn(async () => provider()),
   } as unknown as ProviderLifecycleController;
 }
 

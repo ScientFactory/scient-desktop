@@ -4,6 +4,7 @@ import {
   CustomModelError,
   customModelAttachmentKey,
   PROVIDER_DISPLAY_NAMES,
+  resolveProviderInstanceEnabled,
   supportsModelConnections,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -20,8 +21,6 @@ import {
 import * as Schema from "effect/Schema";
 import {
   BrainCircuitIcon,
-  CheckIcon,
-  CircleAlertIcon,
   ChevronRightIcon,
   PlusIcon,
   PencilIcon,
@@ -32,7 +31,6 @@ import {
 import { ClaudeAI, GrokIcon, OpenAI, OpenRouterIcon, type Icon } from "../Icons";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   Dialog,
   DialogPopup,
@@ -59,7 +57,16 @@ import { resolvePrimaryOperateAccess, resolveRemoteOperateAccess } from "~/provi
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
 import { ModelConnectionEditor, Choice, type EditorTarget } from "./ModelConnectionEditor";
 import { CustomModelConnectionDialog } from "./CustomModelConnectionDialog";
-import { customModelPresetId, modelConnectionStatus } from "./customModels";
+import { CustomModelRowActions, CustomModelTestGuidance } from "./CustomModelRowActions";
+import {
+  connectionKeyMissing,
+  customModelPresetId,
+  defaultModelAgents,
+  modelConnectionStatus,
+  modelTestAgents,
+  modelUnavailableHint,
+  namedTestFailure,
+} from "./customModels";
 
 const CONNECTION_ICON_BY_PRESET: Partial<Record<string, Icon>> = {
   openrouter: OpenRouterIcon,
@@ -172,6 +179,8 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
     revision: number;
     text: string;
     error: boolean;
+    /** The agent a Test ran through, so a retry uses it again. */
+    agent?: ProviderInstanceId;
   } | null>(null);
   const save = useAtomCommand(serverEnvironment.saveCustomModel, {
     reportFailure: false,
@@ -200,6 +209,19 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
       name: value.displayName ?? PROVIDER_DISPLAY_NAMES[value.driver] ?? value.driver,
       driver: value.driver,
     }));
+  // A built-in default instance runs without a settings entry (for example
+  // after "Reset default instance"); the providers snapshot still lists it.
+  for (const provider of providers ?? []) {
+    if (
+      supportsModelConnections(provider.driver) &&
+      !agents.some((agent) => agent.id === provider.instanceId)
+    )
+      agents.push({
+        id: provider.instanceId,
+        name: provider.displayName ?? PROVIDER_DISPLAY_NAMES[provider.driver] ?? provider.driver,
+        driver: provider.driver,
+      });
+  }
   if (
     !agents.some((a) => a.id === "pi") &&
     !settings.providerInstances[ProviderInstanceId.make("pi")]
@@ -209,6 +231,20 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
       name: "Pi",
       driver: ProviderDriverKind.make("pi"),
     });
+  // The providers snapshot is the runtime view; settings answer until it arrives.
+  const isAgentEnabled = (id: ProviderInstanceId) => {
+    const provider = providers?.find((entry) => entry.instanceId === id);
+    if (provider) return provider.enabled;
+    const configured = settings.providerInstances[id];
+    return configured !== undefined && resolveProviderInstanceEnabled(configured);
+  };
+  const newModelAgents = defaultModelAgents({
+    agents,
+    isEnabled: isAgentEnabled,
+    openedFrom: instanceId,
+  });
+  const keyMissing = (connection: CustomModelConnection) =>
+    connectionKeyMissing(providers, connection.id);
   const onSave = async (input: CustomModelSaveInput) => {
     resultValue(await save({ environmentId, input }));
     setNotice(null);
@@ -236,6 +272,7 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
     target: ProviderInstanceId,
   ) => {
     const key = connection.id + ":" + model.id;
+    const name = agents.find((agent) => agent.id === target)?.name ?? target;
     setBusy(true);
     setTesting(key);
     setNotice(null);
@@ -251,14 +288,20 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
           },
         }),
       );
-      const name = agents.find((agent) => agent.id === target)?.name ?? target;
-      setNotice({ key, revision: catalog.revision, text: name + " · Test passed", error: false });
+      setNotice({
+        key,
+        revision: catalog.revision,
+        text: name + " · Test passed",
+        error: false,
+        agent: target,
+      });
     } catch (cause) {
       setNotice({
         key,
         revision: catalog.revision,
-        text: cause instanceof Error ? cause.message : "Test failed.",
+        text: namedTestFailure(name, cause instanceof Error ? cause.message : "Test failed."),
         error: true,
+        agent: target,
       });
     } finally {
       setBusy(false);
@@ -329,13 +372,15 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
               <p className="px-4 py-3 text-sm text-muted-foreground">No models yet.</p>
             ) : null}
             {connection.models.map((model) => {
-              const testInstance =
-                instanceId && model.instanceIds.includes(instanceId)
-                  ? instanceId
-                  : model.instanceIds[0];
+              const testAgents = modelTestAgents({
+                agents,
+                attached: model.instanceIds,
+                isEnabled: isAgentEnabled,
+                openedFrom: instanceId,
+              });
               const agentNames =
                 model.instanceIds
-                  .map((id) => agents.find((a) => a.id === id)?.name ?? id)
+                  .map((id) => agents.find((a) => a.id === id)?.name ?? `${id} (removed)`)
                   .join(", ") || "Not connected";
               const rowKey = connection.id + ":" + model.id;
               const attachments = model.instanceIds.map((id) => {
@@ -346,9 +391,10 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
                     entry.modelId === model.id &&
                     entry.configurationKey === customModelAttachmentKey(connection, model),
                 );
-                const name = agents.find((agent) => agent.id === id)?.name ?? id;
+                const agent = agents.find((entry) => entry.id === id);
+                const name = agent?.name ?? id;
                 const label = modelConnectionStatus(provider, assessment);
-                return { id, name, label, assessment };
+                return { id, name, label, assessment, driver: agent?.driver };
               });
               const rowNotice =
                 notice && notice.key === rowKey && notice.revision === catalog.revision
@@ -374,12 +420,13 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
                               entry.label +
                               (entry.label === "Needs setup" &&
                               entry.assessment?.reason === "model_unavailable"
-                                ? " — check the model ID and limits in Edit"
+                                ? modelUnavailableHint(entry.driver)
                                 : ""),
                           )
                           .join("; ")}
                       </p>
                     ) : null}
+                    <CustomModelTestGuidance testAgents={testAgents} agents={agents} />
                     {attachments.some((entry) => entry.assessment?.state === "available") ? (
                       <div className="text-xs text-muted-foreground">
                         <Collapsible>
@@ -413,68 +460,17 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
                       </div>
                     ) : null}
                   </div>
-                  {attachments.some(
-                    (entry) => entry.label === "Needs setup" || entry.label === "Check agent",
-                  ) ? (
-                    <Button
-                      size="xs"
-                      variant="ghost"
-                      disabled={busy}
-                      onClick={() => void checkAgain(connection, model)}
-                    >
-                      Check again
-                    </Button>
-                  ) : null}
-                  {testInstance && rowNotice?.error ? (
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <Button
-                            size="xs"
-                            variant="ghost-destructive"
-                            disabled={busy}
-                            aria-label={`Test failed. ${rowNotice.text} Select to try again.`}
-                            onClick={() => void runTest(connection, model, testInstance)}
-                          />
-                        }
-                      >
-                        <CircleAlertIcon />
-                        Failed
-                        <span role="alert" className="sr-only">
-                          {rowNotice.text}
-                        </span>
-                      </TooltipTrigger>
-                      <TooltipPopup>{rowNotice.text}</TooltipPopup>
-                    </Tooltip>
-                  ) : testInstance && rowNotice ? (
-                    <span
-                      role="status"
-                      className="flex h-7 shrink-0 items-center gap-1 px-[calc(--spacing(2)-1px)] text-sm font-medium text-success sm:h-6 sm:text-xs"
-                    >
-                      <CheckIcon className="size-4 sm:size-3.5" />
-                      {rowNotice.text}
-                    </span>
-                  ) : testInstance ? (
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <Button
-                            size="xs"
-                            variant="ghost"
-                            disabled={busy}
-                            onClick={() => void runTest(connection, model, testInstance)}
-                          />
-                        }
-                      >
-                        {testing === connection.id + ":" + model.id ? "Testing…" : "Test"}
-                      </TooltipTrigger>
-                      <TooltipPopup>
-                        Sends a small request through{" "}
-                        {agents.find((agent) => agent.id === testInstance)?.name ?? testInstance}.
-                        API charges may apply.
-                      </TooltipPopup>
-                    </Tooltip>
-                  ) : null}
+                  <CustomModelRowActions
+                    busy={busy}
+                    testing={testing === rowKey}
+                    statuses={attachments.map((entry) => entry.label)}
+                    keyMissing={keyMissing(connection)}
+                    testAgents={testAgents}
+                    notice={rowNotice}
+                    onCheckAgain={() => void checkAgain(connection, model)}
+                    onReenterKey={() => setManaging({ connection, revision: catalog.revision })}
+                    onTest={(agent) => void runTest(connection, model, agent)}
+                  />
                   <Button
                     size="icon-xs"
                     variant="ghost-muted"
@@ -507,6 +503,7 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
           settings={editor.settings}
           target={editor.target}
           agents={agents}
+          defaultInstanceIds={newModelAgents}
           onSave={onSave}
           onClose={() => setEditor(null)}
         />
@@ -515,6 +512,7 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
         <CustomModelConnectionDialog
           connection={managing.connection}
           revision={managing.revision}
+          keyMissing={keyMissing(managing.connection)}
           onSave={onSave}
           onDelete={() => {
             setRemoveError(null);

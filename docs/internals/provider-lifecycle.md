@@ -139,18 +139,18 @@ scanner never guesses that a newline ended terminal metadata and exposes a URL f
 
 ## User action semantics
 
-| Action             | Exact meaning                                                                                                                                                                    |
-| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Enable             | Changes only the provider's enabled setting. It does not install, sign in, or open a browser.                                                                                    |
-| Install            | One explicit click runs preflight, then adds and selects a qualified app-private runtime through verification, smoke testing, and atomic activation.                             |
-| Use Scient-managed | Runs the same qualified install path while a healthy default system runtime remains active. The system installation is not removed or modified.                                  |
-| Update             | One explicit click runs preflight, then replaces an active Scient-managed runtime with a strictly newer qualified stable release through the safe replacement path.              |
-| Repair             | Refreshes the qualified catalog and installs/restores its latest release, even at the current version. A compatible newer installed receipt is the offline floor.                |
-| Remove             | After confirmation, deletes only Scient's app-private runtime. It preserves provider credentials, custom paths, and system installations, then re-probes the provider.           |
-| Sign in            | Starts one official provider-owned account flow and verifies the resulting provider state before reporting success.                                                              |
-| Submit code        | Sends a bounded transient code only to the matching live provider operation when that operation explicitly advertises support. It is not persisted.                              |
-| Cancel             | Requests cancellation of the exact live operation. Final connection verification and committed runtime finalization finish authoritatively instead of being relabeled cancelled. |
-| Sign out           | Delegates credential revocation to the provider and verifies the resulting state. It preserves every runtime.                                                                    |
+| Action             | Exact meaning                                                                                                                                                                                                                                                 |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Enable             | Changes only the provider's enabled setting. It does not install, sign in, or open a browser.                                                                                                                                                                 |
+| Install            | One explicit click runs preflight, then adds and selects a qualified app-private runtime through verification, smoke testing, and atomic activation.                                                                                                          |
+| Use Scient-managed | Runs the same qualified install path while a healthy default system runtime remains active, whichever release is newer; a release older than the system one starts only after a decision that shows both. The system installation is not removed or modified. |
+| Update             | One explicit click runs preflight, then replaces an active Scient-managed runtime with a strictly newer qualified stable release through the safe replacement path.                                                                                           |
+| Repair             | Refreshes the qualified catalog and installs/restores its latest release, even at the current version. A compatible newer installed receipt is the offline floor.                                                                                             |
+| Remove             | After confirmation, deletes only Scient's app-private runtime. It preserves provider credentials, custom paths, and system installations, then re-probes the provider.                                                                                        |
+| Sign in            | Starts one official provider-owned account flow and verifies the resulting provider state before reporting success.                                                                                                                                           |
+| Submit code        | Sends a bounded transient code only to the matching live provider operation when that operation explicitly advertises support. It is not persisted.                                                                                                           |
+| Cancel             | Requests cancellation of the exact live operation. Final connection verification and committed runtime finalization finish authoritatively instead of being relabeled cancelled.                                                                              |
+| Sign out           | Delegates credential revocation to the provider and verifies the resulting state. It preserves every runtime.                                                                                                                                                 |
 
 Account creation and subscription purchase remain on the provider's official page. Scient can explain
 that eligible access is missing, but it does not create a parallel signup or billing flow.
@@ -177,10 +177,63 @@ healthy system runtime. A failed or cancelled install cannot write the managed s
 
 ### System-to-managed handoff
 
-The presence of an app-approved artifact policy does not automatically permit **Use Scient-managed**. A provider
-must explicitly qualify and advertise that transition. The action is available only for a healthy
-default system source, a writable local desktop host, and a fully assisted qualified target. Custom
-paths always remain authoritative.
+The presence of an app-approved artifact policy does not automatically permit **Use
+Scient-managed**. A provider must explicitly qualify and advertise that transition. The action is
+available only for a healthy default system source, a writable local desktop host, and a fully
+assisted qualified target. Custom paths always remain authoritative. It is offered whatever the two
+releases are, in the shared policy and in Codex's own: a private copy is the user's choice and
+leaves the system installation untouched, and a tool that updates itself is usually ahead of the
+qualified release. What must not happen is a switch to an older release that starts from one click.
+
+The health probe keeps the system runtime's own version (`--version` output, or the Codex
+app-server's). The plan of the switch (`managedRuntimeSwitchPlan`, used by both policies) carries
+`systemVersion` and `olderThanSystem` (`isManagedRuntimeDowngrade`) and a message that names both
+releases. A system version Scient does not know is `systemVersion: null`: the message says "system
+version unknown" and that the managed release may be older, instead of implying an order.
+`ProviderRuntimeManager.start` starts a plan that is older, or whose system version is unknown, only
+when the start input carries `acceptOlderThanSystem`; without it the start fails with
+`runtime_plan_stale`, so no client can start the switch without having shown the decision. The
+clients (`managedRuntimeSwitchNeedsDecision`): the runtime section (Settings and the Manage dialog)
+waits for a decision on every system switch and sends the acceptance from it; the inline setups all
+start runtime actions through the one controller `AssistedProviderSetupHost` builds, which
+`useManagedRuntimeSwitchDecision` wraps so that such a plan is shown with Back and Use
+Scient-managed in place of the setup; the Settings header Install opens the dialog on that plan. An
+inline switch to a release known not to be older starts from its click.
+
+The system runtime can be upgraded, installed or removed outside Scient after an instance was built.
+So planning and starting a download that would put a managed copy in use probes the system runtime
+of an enabled instance again, and the versions in the plan are the current ones. What the user has
+to decide (older, unknown, neither) is part of the switch plan's revision: a plan made before that
+changed does not pass the revision check (`runtime_plan_stale` from the manager, and the same check
+in the driver's `run`), nothing is installed, and the client plans again and shows the current
+decision instead of an error. A disabled instance is never probed (`configuredRuntimeProbeAllowed`,
+Cursor), at build or at plan: every download for it that would put an unselected copy in use is
+planned as a switch from a system runtime of unknown version.
+
+Repair and Update of a legacy copy that was never explicitly selected put that copy in use (the
+download records the selection), so they are the same switch: whenever a system runtime is found
+beside it, or the instance is disabled and its system runtime unknown, their plan carries the switch
+fields and message too (`replacesUnselected` in `prepareAction`), the manager requires the
+acceptance for an older or unknown version, and the runtime section shows the decision for any plan
+that names a system runtime. With no system runtime the copy is the only runtime, and its
+maintenance needs no decision. A copy the user selected (for Codex, a healthy private copy) is the
+runtime in use; maintaining it replaces nothing and is not compared with the system runtime. The
+comparison uses the exact artifact the action installs, so a catalog refresh between plan and start
+cannot authorize one release and install another; Repair is judged by the release Repair installs,
+which is the installed one when that is newer than the catalog's. Codex keeps its own rule for a
+private copy that failed its capability check while PATH Codex stands in: Repair and Update are
+withheld, and refused with both versions, when the release they would install is older than PATH
+Codex (a broken private Codex newer than PATH Codex is repaired even when the catalog is older than
+both). The published summary uses the version seen last, so it can still offer an action until the
+next plan corrects it.
+
+Known limit: the probe uses the environment of the instance the action was started on, while the
+managed selection is one state per provider (`<baseDir>/provider-runtimes/<provider>`) and
+`ProviderRuntimeManager.refreshRuntimeInstances` reloads every instance of the driver. A second
+instance whose environment resolves a different, newer system binary is not asked and switches to
+the older managed copy with the rest, without a decision that named its version. Covering it needs
+each instance's actions to answer for their own system runtime at plan and start, and the manager to
+ask them, which the action interface does not offer today. Custom binary paths are unaffected.
 
 During the handoff, the system runtime remains active until the private copy has downloaded, passed
 verification and package-completeness checks, passed its smoke test, and activated. Success reloads
