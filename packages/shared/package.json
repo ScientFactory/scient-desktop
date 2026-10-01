@@ -315,6 +315,10 @@
       "types": "./src/scientForkTitle.ts",
       "import": "./src/scientForkTitle.ts"
     },
+    "./scientForkToolUpdates": {
+      "types": "./src/scientForkToolUpdates.ts",
+      "import": "./src/scientForkToolUpdates.ts"
+    },
     "./scientRelease": {
       "types": "./src/scientRelease.ts",
       "import": "./src/scientRelease.ts"

@@ -1629,6 +1629,62 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
     }),
   );
 
+  it.effect("leaves tool progress rows that a later row replaces behind", () =>
+    Effect.gen(function* () {
+      const toolRow = (
+        id: string,
+        kind: string,
+        second: number,
+        payload: Record<string, unknown>,
+      ): OrchestrationThreadActivity => ({
+        id: EventId.make(id),
+        tone: "tool",
+        kind,
+        summary: id,
+        payload,
+        turnId: T2,
+        createdAt: `2026-01-01T00:00:03.${String(second).padStart(3, "0")}Z`,
+      });
+      const origin = makeOriginThread({
+        activities: [
+          toolRow("run-1", "tool.updated", 1, { toolCallId: "call-run", data: { command: "ls" } }),
+          toolRow("run-2", "tool.updated", 2, { toolCallId: "call-run", data: { command: "ls" } }),
+          toolRow("run-3", "tool.updated", 3, { toolCallId: "call-run", data: { command: "ls" } }),
+          toolRow("run-done", "tool.completed", 4, {
+            toolCallId: "call-run",
+            data: { command: "ls", output: "a.ts" },
+          }),
+          toolRow("edit-1", "tool.updated", 5, { toolCallId: "call-edit", data: {} }),
+          // Only this row names the file; the result does not.
+          toolRow("edit-2", "tool.updated", 6, {
+            toolCallId: "call-edit",
+            data: { path: "src/fit.py" },
+          }),
+          toolRow("edit-3", "tool.updated", 7, { toolCallId: "call-edit", data: {} }),
+          toolRow("edit-done", "tool.completed", 8, {
+            toolCallId: "call-edit",
+            data: { result: "ok" },
+          }),
+        ],
+      });
+      const events = yield* forkThreadForTest({
+        command: forkCommand({ sourceAssistantMessageId: A2 }),
+        readModel: makeReadModel({ origin }),
+      });
+
+      const copied = events.flatMap((event) =>
+        event.type === "thread.activity-appended" ? [event.payload.activity] : [],
+      );
+      expect(copied.map((entry) => entry.summary)).toEqual([
+        "run-1",
+        "run-done",
+        "edit-1",
+        "edit-2",
+        "edit-done",
+      ]);
+    }),
+  );
+
   it.effect("forks a running turn with its latest traces", () =>
     Effect.gen(function* () {
       const base = makeOriginThread();
@@ -1679,6 +1735,8 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
             data: { changes: [{ path: "src/fit.py" }] },
           }),
           activity("run-started", "tool.started", { toolCallId: "call-run" }),
+          activity("run-first", "tool.updated", { toolCallId: "call-run", detail: "npm test" }),
+          activity("run-middle", "tool.updated", { toolCallId: "call-run", detail: "npm test" }),
           activity("run-progress", "tool.updated", { toolCallId: "call-run", detail: "npm test" }),
           activity(
             "approval",
@@ -1746,11 +1804,13 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
         event.type === "thread.activity-appended" ? [event.payload.activity] : [],
       );
       // Tool rows only: the approval request is never executable in the fork.
-      expect(copied.map((entry) => entry.kind).toSorted()).toEqual([
-        "tool.completed",
-        "tool.updated",
+      // Of the unfinished call, the first and the latest progress row.
+      expect(copied.map((entry) => entry.summary)).toEqual([
+        "edit-done",
+        "run-first",
+        "run-progress",
       ]);
-      expect(copied.map((entry) => entry.id)).toContain(cut?.inFlightActivityIds[0]);
+      expect(copied.at(-1)?.id).toBe(cut?.inFlightActivityIds[0]);
     }),
   );
 
