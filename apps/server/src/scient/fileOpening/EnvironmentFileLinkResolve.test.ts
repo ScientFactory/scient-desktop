@@ -1,11 +1,17 @@
+// @effect-diagnostics nodeBuiltinImport:off - tests change the file system while a search runs.
+import type * as NodeFS from "node:fs";
+import * as NodeFSP from "node:fs/promises";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentFilePath } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import { describe, expect, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as TestClock from "effect/testing/TestClock";
 
 import {
   findFilesNamed,
@@ -232,13 +238,13 @@ describe("findFilesNamed", () => {
       }
       const complete = yield* Effect.promise(() => findFilesNamed(workspace, "same.md"));
       expect(complete.complete).toBe(true);
-      expect(complete.paths).toHaveLength(12);
+      expect(complete.candidates).toHaveLength(12);
 
       const bounded = yield* Effect.promise(() =>
         findFilesNamed(workspace, "same.md", { maxDirectories: 4, deadlineMs: 60_000 }),
       );
       expect(bounded.complete).toBe(false);
-      expect(bounded.paths.length).toBeLessThan(12);
+      expect(bounded.candidates.length).toBeLessThan(12);
     }).pipe(Effect.provide(TestLayer), Effect.scoped),
   );
 });
@@ -253,7 +259,10 @@ describe("findFilesNamed time bound", () => {
   const flatDirectory = Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-link-bound-" });
+    // The search requires a real root; the system temp directory is often a link.
+    const root = yield* fileSystem.realPath(
+      yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-link-bound-" }),
+    );
     for (const name of ["a.md", "b.md", "c.md", "same.md"]) {
       yield* fileSystem.writeFileString(path.join(root, name), "x\n");
     }
@@ -272,7 +281,7 @@ describe("findFilesNamed time bound", () => {
       expect((yield* search(root, 3)).complete).toBe(false);
       // Enough time for every entry and the final check.
       expect(yield* search(root, 6)).toEqual({
-        paths: [expect.stringMatching(/same\.md$/u)],
+        candidates: [{ path: expect.stringMatching(/same\.md$/u), kind: "file" }],
         complete: true,
       });
     }).pipe(Effect.provide(TestLayer), Effect.scoped),
@@ -283,7 +292,7 @@ describe("findFilesNamed time bound", () => {
       const { root } = yield* flatDirectory;
       // Every entry check passes (ticks 2..5); only the final check (6) is late.
       expect(yield* search(root, 5)).toEqual({
-        paths: [expect.stringMatching(/same\.md$/u)],
+        candidates: [{ path: expect.stringMatching(/same\.md$/u), kind: "file" }],
         complete: false,
       });
     }).pipe(Effect.provide(TestLayer), Effect.scoped),
@@ -313,6 +322,145 @@ describe("findFilesNamed time bound", () => {
       // 1 start + 1 root check + 20 root entries + a few directory checks.
       expect(reads).toBeLessThan(40);
     }).pipe(Effect.provide(TestLayer), Effect.scoped),
+  );
+});
+
+describe("resolveEnvironmentFileLink while the workspace changes", () => {
+  // Lists a directory for real, then runs a change the first time `directory`
+  // is listed: the moment between the search seeing an entry and using it.
+  const changingAfterListing = (directory: string, change: () => Promise<void>) => {
+    let armed = true;
+    return async (listed: string) => {
+      const entries = await NodeFSP.readdir(listed, { withFileTypes: true });
+      if (armed && listed === directory) {
+        armed = false;
+        await change();
+      }
+      return entries;
+    };
+  };
+  const limits = (readDirectory: (directory: string) => Promise<ReadonlyArray<NodeFS.Dirent>>) => ({
+    maxDirectories: 1_000,
+    deadlineMs: 10_000,
+    readDirectory,
+  });
+
+  it.effect.skipIf(!symlinksSupported)(
+    "opens what is at the link's own location, even a link whose target is gone",
+    () =>
+      Effect.gen(function* () {
+        const { workspace, resolve, write, fileSystem, path } = yield* makeFixture;
+        yield* write("workspace/other/victim.md");
+        yield* fileSystem.symlink(
+          path.join(workspace, "absent.md"),
+          path.join(workspace, "victim.md"),
+        );
+        expect(yield* resolve("victim.md")).toEqual({
+          _tag: "literal",
+          path: path.join(workspace, "victim.md"),
+        });
+      }).pipe(Effect.provide(TestLayer), Effect.scoped),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "does not follow a folder swapped for a link out of the workspace during the search",
+    () =>
+      Effect.gen(function* () {
+        const { base, workspace, write, path } = yield* makeFixture;
+        yield* write("workspace/queued/keep.md");
+        yield* write("outside/victim.md");
+        const queued = path.join(workspace, "queued");
+        const result = yield* resolveEnvironmentFileLink(
+          { workspaceRoot: make(workspace), path: make("missing/victim.md") },
+          limits(
+            changingAfterListing(workspace, async () => {
+              await NodeFSP.rm(queued, { recursive: true });
+              await NodeFSP.symlink(path.join(base, "outside"), queued);
+            }),
+          ),
+        );
+        // The outside file is never offered, and the search admits it did not
+        // examine everything.
+        expect(result).toEqual({
+          _tag: "incomplete",
+          paths: [],
+          missingPath: path.join(workspace, "missing/victim.md"),
+        });
+      }).pipe(Effect.provide(TestLayer), Effect.scoped),
+  );
+
+  it.effect.skipIf(!symlinksSupported || HostProcessPlatform.defaultValue() === "win32")(
+    "does not return a candidate that changed after it was seen",
+    () =>
+      Effect.gen(function* () {
+        for (const replacement of ["deleted", "directory", "link"] as const) {
+          const { base, workspace, write, path } = yield* makeFixture;
+          yield* write("workspace/candidate/victim.md");
+          yield* write("outside/other.md");
+          const candidate = path.join(workspace, "candidate/victim.md");
+          const result = yield* resolveEnvironmentFileLink(
+            { workspaceRoot: make(workspace), path: make("missing/victim.md") },
+            limits(
+              changingAfterListing(path.dirname(candidate), async () => {
+                await NodeFSP.unlink(candidate);
+                if (replacement === "directory") await NodeFSP.mkdir(candidate);
+                if (replacement === "link") {
+                  await NodeFSP.symlink(path.join(base, "outside/other.md"), candidate);
+                }
+              }),
+            ),
+          );
+          expect(result, replacement).toEqual({
+            _tag: "incomplete",
+            paths: [],
+            missingPath: path.join(workspace, "missing/victim.md"),
+          });
+        }
+      }).pipe(Effect.provide(TestLayer), Effect.scoped),
+  );
+
+  it.effect("answers within its bound when a directory listing never returns", () =>
+    Effect.gen(function* () {
+      const { workspace, path } = yield* makeFixture;
+      const started = yield* Clock.currentTimeMillis;
+      const result = yield* resolveEnvironmentFileLink(
+        { workspaceRoot: make(workspace), path: make("missing/inside.md") },
+        { maxDirectories: 1_000, deadlineMs: 150, readDirectory: () => new Promise(() => {}) },
+      );
+      expect(result).toEqual({
+        _tag: "incomplete",
+        paths: [],
+        missingPath: path.join(workspace, "missing/inside.md"),
+      });
+      expect((yield* Clock.currentTimeMillis) - started).toBeLessThan(2_000);
+    }).pipe(Effect.provide(TestLayer), Effect.scoped, TestClock.withLive),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "breaks a tie with a changed file when the workspace root is itself a link",
+    () =>
+      Effect.gen(function* () {
+        const { base, workspace, fileSystem, path } = yield* makeFixture;
+        const alias = path.join(base, "alias");
+        yield* fileSystem.symlink(workspace, alias);
+        const viaAlias = (changedPaths: ReadonlyArray<string>) =>
+          resolveEnvironmentFileLink({
+            workspaceRoot: make(alias),
+            path: make("dup.md"),
+            changedPaths: changedPaths.map((changed) => make(changed)),
+          });
+        const expected = {
+          _tag: "recovered",
+          path: "project/reviews/b/dup.md",
+          missingPath: path.join(alias, "dup.md"),
+        };
+        // Relative to the workspace, by its alias, or by its real path.
+        expect(yield* viaAlias(["project/reviews/b/dup.md"])).toEqual(expected);
+        expect(yield* viaAlias([path.join(alias, "project/reviews/b/dup.md")])).toEqual(expected);
+        expect(yield* viaAlias([path.join(workspace, "project/reviews/b/dup.md")])).toEqual(
+          expected,
+        );
+      }).pipe(Effect.provide(TestLayer), Effect.scoped),
   );
 });
 

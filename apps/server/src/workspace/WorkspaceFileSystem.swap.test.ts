@@ -8,6 +8,7 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { describe, expect, it } from "@effect/vitest";
 import { afterEach, vi } from "vite-plus/test";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
@@ -31,11 +32,11 @@ const entriesStub = Layer.succeed(
     refresh: () => Effect.void,
   }),
 );
-const TestLayer = WorkspaceFileSystem.layer.pipe(
-  Layer.provide(WorkspacePaths.layer),
-  Layer.provide(entriesStub),
-  Layer.provideMerge(NodeServices.layer),
-);
+const TestLayer = Layer.mergeAll(
+  WorkspaceFileSystem.layer.pipe(Layer.provide(WorkspacePaths.layer), Layer.provide(entriesStub)),
+  WorkspacePaths.layer,
+  entriesStub,
+).pipe(Layer.provideMerge(NodeServices.layer));
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -91,6 +92,70 @@ describe("WorkspaceFileSystem.readFile", () => {
           relativePath: "notes.md",
         });
         expect(reread).toMatchObject({ contents: "outside\n", readOnly: true });
+      }).pipe(Effect.provide(TestLayer)),
+  );
+});
+
+describe("WorkspaceFileSystem.renameFile", () => {
+  it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    "fails and keeps the source when its destination folder is swapped for a link out of the workspace",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const base = yield* Effect.promise(async () =>
+          native.realpath(
+            await native.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-workspace-swap-")),
+          ),
+        );
+        roots.push(base);
+        const workspace = NodePath.join(base, "workspace");
+        const outside = NodePath.join(base, "outside");
+        const destinationFolder = NodePath.join(workspace, "dir");
+        const source = NodePath.join(workspace, "source.md");
+        yield* Effect.promise(async () => {
+          await native.mkdir(destinationFolder, { recursive: true });
+          await native.mkdir(outside);
+          await native.writeFile(source, "kept\n");
+        });
+        // After the rename has validated its destination, the folder becomes a
+        // link out of the workspace.
+        let armed = true;
+        const swapping = FileSystem.FileSystem.of({
+          ...fileSystem,
+          makeDirectory: (directory, options) =>
+            Effect.gen(function* () {
+              if (armed && directory === destinationFolder) {
+                armed = false;
+                yield* Effect.promise(async () => {
+                  await native.rename(destinationFolder, NodePath.join(workspace, "parked"));
+                  await native.symlink(outside, destinationFolder);
+                });
+              }
+              return yield* fileSystem.makeDirectory(directory, options);
+            }),
+        });
+        const workspaceFileSystem = yield* WorkspaceFileSystem.make.pipe(
+          Effect.provideService(FileSystem.FileSystem, swapping),
+        );
+        const original = yield* workspaceFileSystem.readFile({
+          cwd: workspace,
+          relativePath: "source.md",
+        });
+
+        const renamed = yield* workspaceFileSystem
+          .renameFile({
+            cwd: workspace,
+            relativePath: "source.md",
+            destinationRelativePath: "dir/moved.md",
+            expectedRevision: original.revision,
+          })
+          .pipe(Effect.result, Effect.provideService(FileSystem.FileSystem, swapping));
+
+        expect(armed).toBe(false);
+        // The rename's own check of its destination must not accept a file
+        // that landed outside the workspace, and the source must survive.
+        expect(renamed._tag).toBe("Failure");
+        expect(yield* Effect.promise(() => native.readFile(source, "utf8"))).toBe("kept\n");
       }).pipe(Effect.provide(TestLayer)),
   );
 });
