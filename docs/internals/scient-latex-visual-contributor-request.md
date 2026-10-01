@@ -51,6 +51,13 @@ Translator-level tests: project a source, apply one small edit, and check the ex
   - adding `\vec`, `\frac`, `\hat` or `\mathcal` to a formula requires no package;
   - a paragraph appended at the end of an `\input` chapter is written to the chapter file, or refused; the same at the start of a chapter, in an empty chapter, in a file without a final newline, and for `\include`.
 
+- **Edits that rewrite untouched source or drop formatting,** also reproduced at `6d5cb5e8c4` and explained in [Editing inside blocks](./scient-latex-visual-editable-content.md). Please add them with the result they should have:
+  - changing one word in one list item leaves the other items exactly as written (indentation, line breaks, `\textit`);
+  - changing one word in one paragraph of a `quote` leaves the other paragraphs exactly as written (`3--5`);
+  - adding a word to a `quotation` or a bibliography entry keeps its `\emph{…}`;
+  - adding a word to an abstract that is entirely bold keeps the bold; with two paragraphs, they stay two;
+  - a table caption with maths is either editable with the maths kept, or not offered for editing.
+
 - **To check, not yet reproduced by us:** changing a column's alignment in a table whose column spec has a width, such as `p{0.3\textwidth}`. In our attempt the edit was refused, which is fine. Please state in the table what the operation does with widths, and add the test.
 
 - **Accepted.** For each operation the table calls supported: it is accepted within its preconditions, and the text outside the edited range is identical.

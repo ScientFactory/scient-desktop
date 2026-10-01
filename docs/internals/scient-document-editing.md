@@ -1178,6 +1178,8 @@ conformance suite; none is assumed to move unchanged.
    as the first visible improvement.
 3. **Hard questions.** Answered for LaTeX in the
    [architecture note](./scient-latex-visual-architecture-note.md) — Proposed.
+   Editing inside lists, statements, captions and tables is detailed in
+   [Editing inside blocks](./scient-latex-visual-editable-content.md) — Direction.
 4. **Math input.** Option A, B, or C, decided in stage 3.
 5. **Views.** The shared Write/Source/PDF vocabulary in the header; LaTeX's
    default view; whether Markdown gets a side-by-side view.
