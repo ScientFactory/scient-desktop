@@ -220,6 +220,33 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
   });
 
   describe("listDirectory", () => {
+    // Windows cannot hold a folder name that ends in a space.
+    it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+      "lists the folder a path names when a sibling differs only by a trailing space",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTempDir({ prefix: "scient-workspace-directory-spaced-" });
+          yield* writeTextFile(cwd, "notes/plain.txt", "plain\n");
+          yield* writeTextFile(cwd, "notes /spaced.txt", "spaced\n");
+
+          const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+          const spaced = yield* workspaceEntries.listDirectory({
+            cwd,
+            relativeDirectory: "notes ",
+            view: "ordinary",
+          });
+
+          expect(spaced.entries).toEqual([
+            {
+              name: "spaced.txt",
+              relativePath: "notes /spaced.txt",
+              kind: "file",
+              readOnly: false,
+            },
+          ]);
+        }),
+    );
+
     it.effect("lists only ordinary direct children with stable metadata", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({ prefix: "scient-workspace-directory-ordinary-" });

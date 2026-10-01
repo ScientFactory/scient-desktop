@@ -28,6 +28,12 @@ export interface MarkdownFileLinkMeta {
   basename: string;
   line?: number;
   column?: number;
+  /**
+   * The link as authored when it is written from the home folder
+   * (`~/notes.md`). `filePath` holds only the client's guess at where that
+   * is; the environment that owns the files is asked with this spelling.
+   */
+  homeRelativePath?: string;
 }
 
 export function extractMarkdownLinkHrefs(markdown: string): string[] {
@@ -107,7 +113,11 @@ export function resolveMarkdownFileLinkMeta(
 ): MarkdownFileLinkMeta | null {
   const targetPath = resolveMarkdownFileLinkTarget(href, cwd, baseDir);
   if (!targetPath) return null;
-  return buildFileLinkMetaFromTarget(targetPath, cwd, workspaceRoot);
+  const meta = buildFileLinkMetaFromTarget(targetPath, cwd, workspaceRoot);
+  const authoredPath = href ? parseMarkdownFileLink(href)?.path : undefined;
+  return authoredPath !== undefined && /^~[\\/]/.test(authoredPath)
+    ? { ...meta, homeRelativePath: authoredPath }
+    : meta;
 }
 
 /**
