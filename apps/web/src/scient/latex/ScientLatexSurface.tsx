@@ -932,11 +932,6 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   return (
     <div className="scient-latex-surface" data-latex-layout={mode} dir="ltr">
       <div className="scient-latex-toolbar">
-        <ScientTooltip content={props.relativePath}>
-          <strong className="scient-latex-document-name">
-            {props.relativePath.split(/[\\/]/u).at(-1)}
-          </strong>
-        </ScientTooltip>
         <div className="scient-latex-modes" role="group" aria-label="Document view">
           {LATEX_PREVIEW_MODES.map((candidate) => (
             <button

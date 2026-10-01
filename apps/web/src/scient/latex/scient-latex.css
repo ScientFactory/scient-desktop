@@ -8,15 +8,6 @@
   color: var(--foreground);
 }
 
-.scient-latex-document-name {
-  max-width: 30%;
-  min-width: 50px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-  font-weight: 600;
-}
 .scient-writing-dialog {
   width: min(560px, calc(100vw - 32px));
   padding: 24px;
