@@ -46,7 +46,7 @@ export function readFailureBlocksPreview(input: {
  * code, so nothing more specific is claimed. The settings are on the host,
  * which for a paired or remote viewer is not the device in hand.
  */
-export function readDeniedDescription(input: {
+function readDeniedDescription(input: {
   readonly osErrorCode: string | null;
   /** Operating system of the environment that owns the file, e.g. `darwin`. */
   readonly hostOs: string | null;
