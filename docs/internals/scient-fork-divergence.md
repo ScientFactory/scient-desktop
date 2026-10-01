@@ -727,6 +727,35 @@ snapshot:
 - Rendering: one JSON preamble with reasoning and tool items instead of V2's
   `[Historical …]` text blocks.
 
+## Copy cost and request recovery
+
+A fork copies its history as ordinary T3 events, one transaction per command.
+Three rules keep that cheap and recoverable.
+
+- **No nested transaction per projected event.** `projectEventDeferred` runs in
+  the caller's transaction. Effect SQL turns a nested transaction into a
+  savepoint and does not release it on success, so one per event stacked
+  thousands of open savepoints in a fork and every later write slowed with the
+  stack. `projectEvent`, the standalone entry point, opens the transaction
+  itself. This is a T3-owned seam in `ProjectionPipeline.ts`; upstream has the
+  same nested transaction and would gain from the same change.
+- **Superseded tool progress rows are not copied.**
+  `packages/shared/src/scientForkToolUpdates.ts` drops a `tool.updated` row
+  when the next kept row of its run carries everything it has. The first row
+  of a run, the row that ends it, results, denials and any row with something
+  no later row carries are kept, so the timeline folds to the same entries and
+  the handoff selects the same rows. `t3_thread_read` and an export of the fork
+  list fewer progress rows than the origin.
+- **A fork request that loses its connection is repeated.** The command id
+  derives from the destination thread id, so repeating it returns the same
+  fork. The web client repeats only on a transport failure; any answer from
+  the server ends the attempt. The fork dialog can be closed while the fork is
+  made; the fork then completes without navigating.
+
+`heavyFork.bench.test.ts` measures a tool-heavy fork (`SCIENT_FORK_BENCH=1`).
+The fork command's trace span carries `scient.fork.events` and the work-log
+row counts.
+
 ## Narrow T3-owned seams
 
 ### Submitted question-answer continuity
@@ -758,6 +787,7 @@ All production seams are additive and marked with `SCIENT-FORK:START` and
 | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------- |
 | `packages/contracts/src/orchestration.ts`, `packages/contracts/src/environment.ts`                                                                                            | Add fork command, optional user title, capability negotiation, lifecycle events, lineage, and explicit workspace/provider status contracts.                  | Map to a compatible T3 contract or retain a thin translation.             |
 | `packages/shared/src/scientForkTitle.ts`                                                                                                                                      | Share automatic numbering between the server authority and client preview.                                                                                   | T3 owns equivalent fork-title allocation.                                 |
+| `packages/shared/src/scientForkToolUpdates.ts`                                                                                                                                | Choose which tool progress rows a fork copies; shared so the web timeline test checks the same rule.                                                         | V2 reads inherited history through lineage and copies nothing.            |
 | `apps/server/src/orchestration/decider.ts`                                                                                                                                    | Delegate `thread.fork` and record the internal completion event.                                                                                             | T3 owns an equivalent exact-boundary decider.                             |
 | `apps/server/src/orchestration/Layers/OrchestrationEngine.ts`                                                                                                                 | Route the new aggregate and rehydrate origin detail for this command only.                                                                                   | T3 command routing natively supports fork.                                |
 | `apps/server/src/orchestration/Layers/ProjectionPipeline.ts`, `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts`, `apps/server/src/orchestration/projector.ts` | Register Scient lineage, expose conversation boundaries, and preserve/advance the immutable baseline through live projection and revert.                     | Generic projection extension and derived-field hooks replace these seams. |
