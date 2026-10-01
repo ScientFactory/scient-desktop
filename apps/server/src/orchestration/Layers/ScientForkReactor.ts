@@ -39,7 +39,7 @@ import {
 import { ScientForkCheckpointBaseline } from "../scient-fork/ForkCheckpointBaseline.ts";
 import { ScientForkContextDelivery } from "../scient-fork/ForkContextDelivery.ts";
 import { makeForkBoundaryResolver } from "../scient-fork/ForkBoundaryReadModel.ts";
-import { retainPrefixMessages } from "../scient-fork/forkDecider.ts";
+import { retainForkHistory } from "../scient-fork/forkDecider.ts";
 import { collectForkLiveTail } from "../scient-fork/forkLiveTail.ts";
 import { ScientLiveTurnFlush } from "../scient-fork/liveTurnFlush.ts";
 import {
@@ -187,16 +187,13 @@ const make = Effect.gen(function* () {
     });
     const existing = exactRef(listed.refs, branch);
     if (existing?.worktreePath) {
-      // A check that cannot run proves nothing either: do not adopt the worktree.
-      const verified = yield* checkpointBaseline
-        .verifyWorktree({
-          ...input,
-          path: existing.worktreePath,
-          branch,
-          checkpointRef: input.fromRef,
-          requireClean: true,
-        })
-        .pipe(Effect.orElseSucceed(() => false));
+      const verified = yield* checkpointBaseline.verifyWorktree({
+        ...input,
+        path: existing.worktreePath,
+        branch,
+        checkpointRef: input.fromRef,
+        requireClean: true,
+      });
       if (!verified) {
         // Retrying would meet the same worktree again. End this fork so the
         // next one starts fresh, and leave the files for the user to decide.
@@ -791,30 +788,19 @@ const make = Effect.gen(function* () {
           0,
           resolved.boundaries.indexOf(resolved.selectedBoundary) + 1,
         );
-        const prefix = retainPrefixMessages(
-          origin.messages,
-          retained,
-          new Set(
-            retained.flatMap((boundary) => (boundary.turnId === null ? [] : [boundary.turnId])),
-          ),
-        );
-        const retainedAnswers = retainQuestionAnswers(
-          origin.activities,
-          new Set(
-            retained.flatMap((boundary) => (boundary.turnId === null ? [] : [boundary.turnId])),
-          ),
-        );
+        const prefix = retainForkHistory({
+          messages: origin.messages,
+          resolvedBoundaries: resolved,
+          retainedBoundaries: retained,
+        });
+        const retainedAnswers = retainQuestionAnswers(origin.activities, prefix.retainedTurnIds);
         if (retainedAnswers.error) return unavailable(retainedAnswers.error);
         const liveTail =
           forkPoint.kind === "running-turn"
             ? collectForkLiveTail({
                 origin,
                 retainedMessageIds: new Set(prefix.messages.map((message) => message.id)),
-                retainedTurnIds: new Set(
-                  retained.flatMap((boundary) =>
-                    boundary.turnId === null ? [] : [boundary.turnId],
-                  ),
-                ),
+                retainedTurnIds: prefix.retainedTurnIds,
                 runningTurnId: forkPoint.turnId,
                 turnRequests: resolved.turnRequests ?? [],
               })

@@ -2155,6 +2155,111 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
     }),
   );
 
+  it.effect("starts from an empty baseline when no retained turn has an answer", () =>
+    Effect.gen(function* () {
+      const origin = makeOriginThread({
+        messages: [
+          ...unansweredMessages("2026-01-01T00:00:01.000Z"),
+          message({
+            id: "user-next",
+            role: "user",
+            text: "next prompt",
+            turnId: null,
+            createdAt: "2026-01-01T00:00:02.000Z",
+          }),
+        ],
+        activities: [unansweredActivity],
+        checkpoints: [checkpoint("turn-x", 1)],
+      });
+      const events = yield* forkThreadForTest({
+        command: {
+          type: "thread.fork",
+          commandId: CommandId.make("cmd-fork"),
+          originThreadId: ORIGIN,
+          newThreadId: NEW,
+          sourceUserMessageId: MessageId.make("user-next"),
+          workspaceMode: "local",
+        },
+        readModel: makeReadModel({ origin }),
+        resolvedBoundaries: [boundaries[0]!, unansweredBoundary(1)],
+      });
+      const sent = sentIn(events);
+      expect(sent.map((entry) => entry.text)).toEqual(["lost prompt", "lost thinking"]);
+      const forked = events.find((event) => event.type === "thread.forked");
+      if (forked?.type !== "thread.forked") throw new Error("missing thread.forked");
+      // The same empty baseline as a fork from a conversation's first message:
+      // a turn of its own that holds no message, so the carried turn is not it.
+      expect(forked.payload.baselineUserMessageId).toBeNull();
+      expect(forked.payload.baselineAssistantMessageId).toBeNull();
+      expect(forked.payload.copiedBoundaries).toEqual([]);
+      expect(sent.map((entry) => entry.turnId)).not.toContain(forked.payload.baselineTurnId);
+      expect(forked.payload.inheritedTurnIds).toEqual([sent[0]!.turnId]);
+    }),
+  );
+
+  it.effect(
+    "carries an unanswered turn once in a running-turn fork, as part of the live tail",
+    () =>
+      Effect.gen(function* () {
+        const base = makeOriginThread();
+        const T_RUN = TurnId.make("turn-running");
+        const origin = makeOriginThread({
+          messages: [
+            ...base.messages.slice(0, 2),
+            ...unansweredMessages("2026-01-01T00:00:03.000Z").slice(0, 2),
+            message({
+              id: "user-running",
+              role: "user",
+              text: "running prompt",
+              turnId: null,
+              createdAt: "2026-01-01T00:00:04.000Z",
+            }),
+          ],
+          activities: [unansweredActivity],
+          latestTurn: {
+            turnId: T_RUN,
+            state: "running",
+            requestedAt: NOW,
+            startedAt: NOW,
+            completedAt: null,
+            assistantMessageId: null,
+          },
+          session: { ...IDLE_SESSION, status: "running", activeTurnId: T_RUN },
+        });
+        const completed = [boundaries[0]!, boundaries[1]!, unansweredBoundary(2)];
+        const events = yield* forkThreadAuthoritative({
+          command: forkCommand({ sourceAssistantMessageId: undefined, sourceRunningTurnId: T_RUN }),
+          readModel: makeReadModel({ origin }),
+          resolvedBoundaries: {
+            originThreadId: ORIGIN,
+            forkPoint: { kind: "running-turn", turnId: T_RUN },
+            boundaries: completed,
+            selectedBoundary: completed[2]!,
+            turnRequests: [
+              { turnId: TurnId.make("turn-1"), userMessageId: MessageId.make("user-1") },
+              { turnId: TX, userMessageId: MessageId.make("user-x") },
+              { turnId: T_RUN, userMessageId: MessageId.make("user-running") },
+            ],
+          },
+        });
+        const sent = sentIn(events);
+        expect(sent.map((entry) => entry.text)).toEqual([
+          "first prompt",
+          "first answer",
+          "lost prompt",
+          "lost thinking",
+          "running prompt",
+        ]);
+        expect(sent[3]!.turnId).toBe(sent[2]!.turnId);
+        expect(sent[4]!.turnId).not.toBe(sent[2]!.turnId);
+        expect(activitiesIn(events).map((entry) => entry.turnId)).toEqual([sent[2]!.turnId]);
+        const forked = events.find((event) => event.type === "thread.forked");
+        if (forked?.type !== "thread.forked") throw new Error("missing thread.forked");
+        expect(forked.payload.baselineTurnId).toBe(sent[1]!.turnId);
+        expect(forked.payload.baselineAssistantMessageId).toBe(sent[1]!.messageId);
+      }),
+  );
+
   it.effect("carries an inherited unanswered turn again when the fork is forked", () =>
     Effect.gen(function* () {
       const inheritedTurn = TurnId.make("inherited-answered");

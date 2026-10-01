@@ -40,7 +40,8 @@ export interface ScientForkCheckpointBaselineShape {
    * Whether a fork worktree is this repository's checkout of the fork branch at
    * the frozen checkpoint, with no checkout still in progress. A reused
    * worktree must also be clean: that scan reads the whole tree, so a worktree
-   * Git has just created is not scanned.
+   * Git has just created is not scanned. A check that cannot run (Git fails or
+   * times out) proves nothing, so it reads as false.
    */
   readonly verifyWorktree: (input: {
     readonly cwd: string;
@@ -48,7 +49,7 @@ export interface ScientForkCheckpointBaselineShape {
     readonly branch: string;
     readonly checkpointRef: string;
     readonly requireClean: boolean;
-  }) => Effect.Effect<boolean, VcsError>;
+  }) => Effect.Effect<boolean>;
   /**
    * Best-effort removal of what an abandoned fork created: its worktree, its
    * `scient/fork/*` branch and its turn-zero checkpoint ref.
@@ -159,49 +160,52 @@ const make = Effect.gen(function* () {
 
   const verifyWorktree: ScientForkCheckpointBaselineShape["verifyWorktree"] = Effect.fn(
     "verifyScientForkWorktree",
-  )(function* (input) {
-    const git = (cwd: string, args: string[]) =>
-      process.run({
-        operation: "ScientForkCheckpointBaseline.verifyWorktree",
-        command: "git",
-        args,
-        cwd,
-        allowNonZeroExit: true,
-      });
-    const head = yield* git(input.path, ["rev-parse", "HEAD"]);
-    const expected = yield* git(input.cwd, ["rev-parse", `${input.checkpointRef}^{commit}`]);
-    const branch = yield* git(input.path, ["symbolic-ref", "--short", "HEAD"]);
-    const common = yield* git(input.path, [
-      "rev-parse",
-      "--path-format=absolute",
-      "--git-common-dir",
-    ]);
-    const originCommon = yield* git(input.cwd, [
-      "rev-parse",
-      "--path-format=absolute",
-      "--git-common-dir",
-    ]);
-    const lock = yield* git(input.path, [
-      "rev-parse",
-      "--path-format=absolute",
-      "--git-path",
-      "index.lock",
-    ]);
-    if (
-      ![head, expected, branch, common, originCommon, lock].every(
-        (result) => result.exitCode === 0,
-      ) ||
-      head.stdout.trim() !== expected.stdout.trim() ||
-      branch.stdout.trim() !== input.branch ||
-      common.stdout.trim() !== originCommon.stdout.trim() ||
-      (yield* fs.exists(lock.stdout.trim()).pipe(Effect.orElseSucceed(() => true)))
-    ) {
-      return false;
-    }
-    if (!input.requireClean) return true;
-    const status = yield* git(input.path, ["status", "--porcelain", "--untracked-files=all"]);
-    return status.exitCode === 0 && status.stdout.trim() === "";
-  });
+  )(
+    function* (input) {
+      const git = (cwd: string, args: string[]) =>
+        process.run({
+          operation: "ScientForkCheckpointBaseline.verifyWorktree",
+          command: "git",
+          args,
+          cwd,
+          allowNonZeroExit: true,
+        });
+      const head = yield* git(input.path, ["rev-parse", "HEAD"]);
+      const expected = yield* git(input.cwd, ["rev-parse", `${input.checkpointRef}^{commit}`]);
+      const branch = yield* git(input.path, ["symbolic-ref", "--short", "HEAD"]);
+      const common = yield* git(input.path, [
+        "rev-parse",
+        "--path-format=absolute",
+        "--git-common-dir",
+      ]);
+      const originCommon = yield* git(input.cwd, [
+        "rev-parse",
+        "--path-format=absolute",
+        "--git-common-dir",
+      ]);
+      const lock = yield* git(input.path, [
+        "rev-parse",
+        "--path-format=absolute",
+        "--git-path",
+        "index.lock",
+      ]);
+      if (
+        ![head, expected, branch, common, originCommon, lock].every(
+          (result) => result.exitCode === 0,
+        ) ||
+        head.stdout.trim() !== expected.stdout.trim() ||
+        branch.stdout.trim() !== input.branch ||
+        common.stdout.trim() !== originCommon.stdout.trim() ||
+        (yield* fs.exists(lock.stdout.trim()).pipe(Effect.orElseSucceed(() => true)))
+      ) {
+        return false;
+      }
+      if (!input.requireClean) return true;
+      const status = yield* git(input.path, ["status", "--porcelain", "--untracked-files=all"]);
+      return status.exitCode === 0 && status.stdout.trim() === "";
+    },
+    (effect) => effect.pipe(Effect.orElseSucceed(() => false)),
+  );
 
   const discard: ScientForkCheckpointBaselineShape["discard"] = Effect.fn(
     "discardScientForkWorkspace",

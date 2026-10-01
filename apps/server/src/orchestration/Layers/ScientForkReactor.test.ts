@@ -7,7 +7,6 @@ import {
   ProviderInstanceId,
   ThreadId,
   TurnId,
-  VcsProcessTimeoutError,
   type VcsCreateWorktreeInput,
   type VcsRef,
 } from "@t3tools/contracts";
@@ -902,7 +901,7 @@ describe("ScientForkReactor", () => {
     }),
   );
 
-  for (const verified of [true, false, "error"] as const) {
+  for (const verified of [true, false]) {
     it.live(`reuses an existing worktree only after verification (${verified})`, () => {
       const creates: VcsCreateWorktreeInput[] = [];
       const discards: unknown[] = [];
@@ -915,11 +914,11 @@ describe("ScientForkReactor", () => {
         yield* dispatchFork("new-worktree", `existing-checkout-${verified}`);
         const result = yield* reactor.awaitCompletion(NEW).pipe(Effect.result);
         yield* reactor.drain;
-        expect(result._tag).toBe(verified === true ? "Success" : "Failure");
+        expect(result._tag).toBe(verified ? "Success" : "Failure");
         expect(creates).toEqual([]);
         const lineage = yield* readLineageRow(sql);
         const threads = (yield* snapshot.getSnapshot()).threads;
-        if (verified === true) {
+        if (verified) {
           expect(lineage?.status).toBe("ready");
           expect(discards).toEqual([]);
           expect(threads.find((thread) => thread.id === NEW)?.worktreePath).toBe(
@@ -950,21 +949,7 @@ describe("ScientForkReactor", () => {
                   expect(input.checkpointRef).toBe(checkpointRefForThreadTurn(NEW, 0));
                   expect(input.requireClean).toBe(true);
                   return verified;
-                }).pipe(
-                  // A check that cannot run (Git timed out) is not a pass.
-                  Effect.flatMap((result) =>
-                    result === "error"
-                      ? Effect.fail(
-                          new VcsProcessTimeoutError({
-                            operation: "test.verifyWorktree",
-                            command: "git status",
-                            cwd: input.path,
-                            timeoutMs: 30_000,
-                          }),
-                        )
-                      : Effect.succeed(result),
-                  ),
-                ),
+                }),
               discard: (input) =>
                 Effect.sync(() => {
                   discards.push(input);
@@ -1129,6 +1114,13 @@ describe("ScientForkReactor", () => {
       };
       expect(yield* historyOf(ORIGIN)).toEqual(history);
 
+      // The availability check selects history exactly as the fork does.
+      expect(
+        (yield* reactor.getOptions({
+          originThreadId: ORIGIN,
+          sourceAssistantMessageId: lastAnswer,
+        })).available,
+      ).toBe(true);
       yield* fork(ORIGIN, NEW, lastAnswer);
       expect(yield* historyOf(NEW)).toEqual(history);
 

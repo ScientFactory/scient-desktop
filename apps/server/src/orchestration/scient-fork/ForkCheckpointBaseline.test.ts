@@ -229,6 +229,10 @@ it.layer(layer)("ScientForkCheckpointBaseline", (it) => {
         assert.isFalse(yield* baseline.verifyWorktree(input));
         // A retry can attach a branch an earlier attempt left at another commit.
         assert.isFalse(yield* baseline.verifyWorktree(created));
+        // A check that cannot run is not a pass.
+        assert.isFalse(
+          yield* baseline.verifyWorktree({ ...created, path: NodePath.join(cwd, "missing") }),
+        );
         // Even a matching branch and commit in another repository is not ours.
         const foreign = NodePath.join(cwd, "foreign");
         yield* git(cwd, ["clone", "--no-hardlinks", path, foreign]);
