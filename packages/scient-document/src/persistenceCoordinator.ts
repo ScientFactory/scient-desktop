@@ -2,6 +2,12 @@
 // @effect-diagnostics globalDate:off -- Elapsed debounce deadlines share the timer clock, virtualized in deterministic tests.
 // @effect-diagnostics globalConsole:off -- Observer defects must not interrupt publication bookkeeping.
 import type { DocumentExternalConflict, DocumentSaveIntent, DocumentSession } from "./session.ts";
+import {
+  applyDocumentSourcePatches,
+  DocumentSourcePatchError,
+  type DocumentSourceEdit,
+  type DocumentSourceEditOutcome,
+} from "./sourcePatch.ts";
 
 /** The combined source of a three-way merge, plus any format-specific detail. */
 export interface DocumentReconciliation {
@@ -177,6 +183,29 @@ export class DocumentPersistenceCoordinator<
     this.update({ draftSource: source, editVersion: this.snapshot.editVersion + 1 });
     this.scheduleDraft();
     return true;
+  }
+
+  /**
+   * Take one planned edit. It becomes the working source only when it was
+   * planned against the current working source and every patch is safe;
+   * otherwise nothing changes and the reason is returned.
+   */
+  applyEdit(edit: DocumentSourceEdit): DocumentSourceEditOutcome {
+    if (this.disposed || this.renameHold !== null)
+      return { accepted: false, reason: "unavailable" };
+    if (edit.basedOnVersion !== this.snapshot.editVersion)
+      return { accepted: false, reason: "version" };
+    let source: string;
+    try {
+      source = applyDocumentSourcePatches(this.snapshot.draftSource, edit.patches);
+    } catch (error) {
+      if (error instanceof DocumentSourcePatchError)
+        return { accepted: false, reason: error.problem };
+      throw error;
+    }
+    return this.change(source, edit.basedOnVersion)
+      ? { accepted: true }
+      : { accepted: false, reason: "unavailable" };
   }
 
   noteFreshnessHint(_reason?: string): void {

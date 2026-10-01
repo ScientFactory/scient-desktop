@@ -14,6 +14,14 @@ export {
   type DocumentSession,
 } from "./session.ts";
 export {
+  applyDocumentSourcePatches,
+  DocumentSourcePatchError,
+  type DocumentSourceEdit,
+  type DocumentSourceEditOutcome,
+  type DocumentSourcePatch,
+  type DocumentSourcePatchProblem,
+} from "./sourcePatch.ts";
+export {
   DocumentPersistenceCoordinator,
   type DocumentExternalUpdate,
   type DocumentPersistenceFailureKind,
