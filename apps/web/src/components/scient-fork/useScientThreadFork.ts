@@ -252,6 +252,8 @@ export function useScientThreadFork({
     options: ForkOptions | null;
     checking: boolean;
     locked: boolean;
+    /** The saved attempt already produced its fork; submitting opens it. */
+    ready?: boolean;
     retryTitle?: string;
     retryWorkspaceMode?: "local" | "new-worktree";
   } | null>(null);
@@ -348,6 +350,7 @@ export function useScientThreadFork({
             options,
             checking: false,
             locked: pending !== null,
+            ...(pending?.ready ? { ready: true } : {}),
             ...(pending?.displayTitle === undefined ? {} : { retryTitle: pending.displayTitle }),
             ...(pending ? { retryWorkspaceMode: pending.command.workspaceMode } : {}),
           });

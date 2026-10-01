@@ -74,7 +74,9 @@ export function resolveForkTargetAfterAttempt<T>(
   attemptedTarget: T,
   outcome: ForkAcceptanceOutcome,
 ): T | null {
-  return outcome === "accepted" && currentTarget === attemptedTarget ? null : currentTarget;
+  if (outcome === "accepted") return currentTarget === attemptedTarget ? null : currentTarget;
+  // A fork that failed after its dialog was closed reopens it, with the error.
+  return currentTarget ?? attemptedTarget;
 }
 
 export function agentControlledBrowserCloseConfirmation(

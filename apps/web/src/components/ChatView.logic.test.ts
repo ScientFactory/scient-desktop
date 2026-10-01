@@ -481,6 +481,16 @@ describe("resolveForkTargetAfterAttempt", () => {
     );
   });
 
+  it("reopens the dialog when a fork fails after its dialog was closed", () => {
+    expect(resolveForkTargetAfterAttempt(null, attemptedTarget, "not-accepted")).toBe(
+      attemptedTarget,
+    );
+  });
+
+  it("leaves a closed dialog closed once its fork is accepted", () => {
+    expect(resolveForkTargetAfterAttempt(null, attemptedTarget, "accepted")).toBeNull();
+  });
+
   it("clears the attempted target once the fork is accepted", () => {
     expect(resolveForkTargetAfterAttempt(attemptedTarget, attemptedTarget, "accepted")).toBeNull();
   });

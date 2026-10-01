@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { EnvironmentId, MessageId, ThreadId, TurnId } from "@t3tools/contracts";
+import { ConnectionTransientError } from "@t3tools/client-runtime/connection";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -15,6 +16,7 @@ vi.mock("../../state/use-atom-command", () => ({
 vi.mock("./forkViewContinuity", () => ({ stageForkViewContinuity: commands.panels }));
 
 import { useComposerDraftStore } from "~/composerDraftStore";
+import { FORK_RECONNECT_DELAYS_MS } from "./forkAttempt";
 import { useScientThreadFork } from "./useScientThreadFork";
 
 const environmentId = EnvironmentId.make("fork-lifecycle-env");
@@ -153,6 +155,39 @@ describe("fork lifecycle across navigation and remounts", () => {
     expect(
       useComposerDraftStore.getState().draftsByThreadKey[scopedThreadKey(destination)]?.prompt,
     ).toBe(request.prompt);
+  });
+
+  it("opens the fork on its own after the request lost its connection", async () => {
+    vi.useFakeTimers();
+    try {
+      commands.dispatch.mockResolvedValueOnce(
+        AsyncResult.failure(
+          Cause.fail(
+            new ConnectionTransientError({ reason: "transport", detail: "Server disconnected." }),
+          ),
+        ),
+      );
+      await render();
+      let pending!: Promise<unknown>;
+      await act(async () => {
+        pending = hook.forkFromMessage(source, { workspaceMode: "local" }, "/workspace");
+      });
+      expect(hook.isForking).toBe(true);
+      expect(hook.errorUpdate).toBeNull();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(FORK_RECONNECT_DELAYS_MS[0]!);
+        await pending;
+      });
+
+      expect(commands.dispatch).toHaveBeenCalledTimes(2);
+      expect(commands.dispatch.mock.calls[1]![0].input).toEqual(
+        commands.dispatch.mock.calls[0]![0].input,
+      );
+      expect(hook.errorUpdate).toBeNull();
+      expect(navigate).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not move a draft edited while the fork request was in flight", async () => {

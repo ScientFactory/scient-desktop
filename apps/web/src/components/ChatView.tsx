@@ -11584,6 +11584,7 @@ function ChatViewContent(props: ChatViewProps) {
         }
         checking={forkPreview?.checking ?? true}
         locked={forkPreview?.locked ?? false}
+        ready={forkPreview?.ready ?? false}
         retryTitle={forkPreview?.retryTitle}
         retryWorkspaceMode={forkPreview?.retryWorkspaceMode}
         error={
@@ -11593,9 +11594,8 @@ function ChatViewContent(props: ChatViewProps) {
             : forkPreview?.options?.reason
         }
         onOpenChange={(open) => {
-          if (!open && !isForkingThread) {
-            setForkCommandTarget(null);
-          }
+          // Closing while the fork is being made dismisses the dialog only.
+          if (!open) setForkCommandTarget(null);
         }}
         onConfirm={(confirmation, beforeNavigate) => {
           const target = forkCommandTarget;

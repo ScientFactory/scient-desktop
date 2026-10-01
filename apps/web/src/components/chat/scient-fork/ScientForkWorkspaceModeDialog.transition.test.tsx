@@ -85,3 +85,77 @@ it.each([false, true])(
     }
   },
 );
+
+it("can be closed while the fork is being made, and then does not move the user", async () => {
+  let completeSetup!: () => void;
+  const setup = new Promise<void>((resolve) => {
+    completeSetup = resolve;
+  });
+  const handoff = vi.fn();
+  function Probe() {
+    const [open, setOpen] = useState(true);
+    const [busy, setBusy] = useState(false);
+    return (
+      <ScientForkWorkspaceModeDialog
+        open={open}
+        disabled={busy}
+        source="this-response"
+        proposedTitle="My fork"
+        titleOverrideSupported
+        worktreeAvailability={{ available: true }}
+        onOpenChange={setOpen}
+        onConfirm={async (_, closeBeforeNavigate) => {
+          setBusy(true);
+          await setup;
+          handoff(await closeBeforeNavigate());
+          setBusy(false);
+        }}
+      />
+    );
+  }
+  await act(() => root.render(<Probe />));
+  await act(() => {
+    document
+      .querySelector("form")!
+      .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  });
+  const buttons = [...document.querySelectorAll("button")];
+  expect(buttons.some((button) => button.textContent === "Forking…")).toBe(true);
+  const close = buttons.find((button) => button.textContent === "Close")!;
+  expect(close.disabled).toBe(false);
+  await act(() => close.click());
+  await vi.waitFor(async () => {
+    await act(async () => {});
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  await act(async () => {
+    completeSetup();
+  });
+  await vi.waitFor(async () => {
+    await act(async () => {});
+    expect(handoff).toHaveBeenCalledWith(false);
+  });
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+});
+
+it("offers to open a fork that a saved attempt already made", async () => {
+  await act(() =>
+    root.render(
+      <ScientForkWorkspaceModeDialog
+        open
+        disabled={false}
+        locked
+        ready
+        retryTitle="My fork"
+        source="this-response"
+        proposedTitle="My fork (2)"
+        titleOverrideSupported
+        worktreeAvailability={{ available: true }}
+        onOpenChange={() => {}}
+        onConfirm={async () => {}}
+      />,
+    ),
+  );
+  expect(document.querySelector('button[type="submit"]')?.textContent).toBe("Open fork");
+});

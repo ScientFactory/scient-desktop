@@ -100,6 +100,8 @@ interface ScientForkDialogProps {
   readonly error?: string | null | undefined;
   readonly checking?: boolean;
   readonly locked?: boolean;
+  /** The saved attempt already produced its fork; submitting opens it. */
+  readonly ready?: boolean;
   readonly retryTitle?: string | undefined;
   readonly retryWorkspaceMode?: ForkWorkspaceMode | undefined;
 }
@@ -177,6 +179,7 @@ export function ScientForkWorkspaceModeDialog({
   error,
   checking = false,
   locked = false,
+  ready = false,
   retryTitle,
   retryWorkspaceMode,
 }: ScientForkDialogProps & {
@@ -191,7 +194,9 @@ export function ScientForkWorkspaceModeDialog({
   const wasOpenRef = useRef(false);
   const [closingForNavigation, setClosingForNavigation] = useState(false);
   const finishClose = useRef<((completed: boolean) => void) | null>(null);
+  const openRef = useRef(open);
   useLayoutEffect(() => {
+    openRef.current = open;
     if (!open) return;
     return () => {
       // Leaving the source while the card closes must release the operation
@@ -246,13 +251,14 @@ export function ScientForkWorkspaceModeDialog({
     event.preventDefault();
     if (disabled || checking || !submission.ok) return;
     try {
-      await onConfirm(
-        { ...submission.confirmation, displayTitle: displayedTitle },
-        () =>
-          new Promise<boolean>((resolve) => {
-            finishClose.current = resolve;
-            setClosingForNavigation(true);
-          }),
+      await onConfirm({ ...submission.confirmation, displayTitle: displayedTitle }, () =>
+        // Closed while the fork was being made: it stays where the user is.
+        openRef.current
+          ? new Promise<boolean>((resolve) => {
+              finishClose.current = resolve;
+              setClosingForNavigation(true);
+            })
+          : Promise.resolve(false),
       );
     } finally {
       // A failed navigation reopens the same form with its saved retry state.
@@ -330,17 +336,16 @@ export function ScientForkWorkspaceModeDialog({
               <p role="alert" className="text-destructive text-xs leading-relaxed">
                 {error}
               </p>
+            ) : disabled ? (
+              <p className="text-muted-foreground text-xs leading-relaxed">
+                You can close this. The fork will appear in the sidebar when it is ready.
+              </p>
             ) : null}
           </form>
         </DialogPanel>
         <DialogFooter variant="bare" padding="compact">
-          <Button
-            type="button"
-            variant="ghost"
-            disabled={disabled}
-            onClick={() => onOpenChange(false)}
-          >
-            Cancel
+          <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
+            {disabled ? "Close" : "Cancel"}
           </Button>
           <Button
             form={formId}
@@ -348,7 +353,15 @@ export function ScientForkWorkspaceModeDialog({
             size="sm"
             disabled={disabled || checking || !submission.ok}
           >
-            {disabled ? "Forking…" : checking ? "Checking…" : locked || error ? "Retry" : "Fork"}
+            {disabled
+              ? "Forking…"
+              : checking
+                ? "Checking…"
+                : ready
+                  ? "Open fork"
+                  : locked || error
+                    ? "Retry"
+                    : "Fork"}
           </Button>
         </DialogFooter>
       </DialogPopup>

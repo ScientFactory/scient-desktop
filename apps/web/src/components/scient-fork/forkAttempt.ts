@@ -1,5 +1,7 @@
 import { EnvironmentId, ThreadForkCommand, type ForkDisposition } from "@t3tools/contracts";
+import { ConnectionTransientError } from "@t3tools/client-runtime/connection";
 import * as Schema from "effect/Schema";
+import { RpcClientError } from "effect/unstable/rpc";
 
 const Attempt = Schema.Struct({
   environmentId: EnvironmentId,
@@ -52,6 +54,27 @@ function forkErrorDisposition(error: unknown): ForkDisposition {
     : "unknown";
 }
 
+const isConnectionTransient = Schema.is(ConnectionTransientError);
+const isRpcFailure = Schema.is(RpcClientError.RpcClientError);
+
+/** The request lost its connection; the server may still be working on the fork. */
+export function isForkConnectionLoss(error: unknown): boolean {
+  if (isConnectionTransient(error)) return true;
+  if (isRpcFailure(error)) return error.reason._tag.startsWith("Socket");
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "_tag" in error &&
+    error._tag === "EnvironmentRpcUnavailableError"
+  );
+}
+
+/** Waits between repeats of a fork command whose request lost its connection. */
+export const FORK_RECONNECT_DELAYS_MS: ReadonlyArray<number> = [1_000, 2_000, 4_000, 8_000, 15_000];
+
+const waitFor = (milliseconds: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+
 /** A missing acknowledgement never proves rejection. Only typed server evidence does. */
 export async function deliverForkAttempt(input: {
   key: string;
@@ -59,12 +82,26 @@ export async function deliverForkAttempt(input: {
   store: ForkAttemptStore;
   dispatch: (attempt: ForkAttempt) => Promise<Readonly<Record<string, string>> | void>;
   discardDraft: () => void;
+  wait?: (milliseconds: number) => Promise<void>;
 }): Promise<ForkAttempt> {
   let attempt = input.attempt;
   if (attempt.ready) return attempt;
   input.store.set(input.key, attempt);
+  // A fork keeps running on the server when its request loses the connection,
+  // and the command is idempotent: repeating it returns that same fork.
+  const dispatch = async (current: ForkAttempt) => {
+    for (let repeat = 0; ; repeat++) {
+      try {
+        return await input.dispatch(current);
+      } catch (error) {
+        const delay = FORK_RECONNECT_DELAYS_MS[repeat];
+        if (delay === undefined || !isForkConnectionLoss(error)) throw error;
+        await (input.wait ?? waitFor)(delay);
+      }
+    }
+  };
   try {
-    const attachmentIdMap = await input.dispatch(attempt);
+    const attachmentIdMap = await dispatch(attempt);
     if (attachmentIdMap !== undefined) attempt = { ...attempt, attachmentIdMap };
   } catch (error) {
     const disposition = forkErrorDisposition(error);
