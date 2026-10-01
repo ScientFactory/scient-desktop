@@ -48,12 +48,12 @@ export function CommandPaletteResults(props: CommandPaletteResultsProps) {
 
   return (
     <CommandList layout="pinned">
-      <ScrollArea className="h-auto" scrollbarGutter scrollFade>
+      <ScrollArea className="h-auto" scrollbarGutter scrollFade scrollFadeBottomSize="lg">
         <div className="p-2 pb-0">
           {props.groups.filter((group) => !group.pinned).map(renderGroup)}
         </div>
       </ScrollArea>
-      <div className="shrink-0 px-2 pb-2">{pinnedGroups.map(renderGroup)}</div>
+      <div className="relative -mt-1 shrink-0 px-2 pb-2">{pinnedGroups.map(renderGroup)}</div>
     </CommandList>
   );
 }
