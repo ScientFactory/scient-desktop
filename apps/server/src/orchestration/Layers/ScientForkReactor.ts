@@ -187,13 +187,16 @@ const make = Effect.gen(function* () {
     });
     const existing = exactRef(listed.refs, branch);
     if (existing?.worktreePath) {
-      const verified = yield* checkpointBaseline.verifyWorktree({
-        ...input,
-        path: existing.worktreePath,
-        branch,
-        checkpointRef: input.fromRef,
-        requireClean: true,
-      });
+      // A check that cannot run proves nothing either: do not adopt the worktree.
+      const verified = yield* checkpointBaseline
+        .verifyWorktree({
+          ...input,
+          path: existing.worktreePath,
+          branch,
+          checkpointRef: input.fromRef,
+          requireClean: true,
+        })
+        .pipe(Effect.orElseSucceed(() => false));
       if (!verified) {
         // Retrying would meet the same worktree again. End this fork so the
         // next one starts fresh, and leave the files for the user to decide.
@@ -215,6 +218,12 @@ const make = Effect.gen(function* () {
             path: null,
           },
     );
+    // Recorded before the check: a failed one must still find this folder to remove it.
+    provisioned.set(input.threadId, {
+      cwd: input.cwd,
+      worktreePath: created.worktree.path,
+      branch,
+    });
     if (
       !(yield* checkpointBaseline.verifyWorktree({
         ...input,

@@ -188,11 +188,14 @@ export function retainPrefixMessages(
  * history such a turn is a boundary without an assistant message; in a fork it
  * is an inherited turn that the copied-boundary manifest does not list.
  *
- * Returns the turn of every message to carry for those turns.
+ * Returns the turn of every message to carry for those turns. A request that
+ * an older conversation never bound to its turn is not found, and is left out.
  */
 function retainUnansweredTurns(input: {
   readonly messages: ReadonlyArray<OrchestrationMessage>;
+  /** Every boundary of the conversation, and those up to the fork point. */
   readonly boundaries: ReadonlyArray<OrchestrationForkBoundary>;
+  readonly retainedBoundaries: ReadonlyArray<OrchestrationForkBoundary>;
   /** Turns of the conversation that hold history inherited from its own origin. */
   readonly inheritedTurnIds: ReadonlySet<string>;
   /** Index of the first message that lies outside the forked history. */
@@ -207,7 +210,7 @@ function retainUnansweredTurns(input: {
   }
   // A request is stored without a turn; its boundary names the turn it started.
   const turnIdByRequest = new Map<string, TurnId>();
-  for (const boundary of input.boundaries) {
+  for (const boundary of input.retainedBoundaries) {
     if (boundary.turnId === null || boundary.assistantMessageId !== null) continue;
     unansweredTurnIds.add(boundary.turnId);
     if (boundary.userMessageId !== null) {
@@ -396,14 +399,18 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
 
   const selectedBoundaryIndex = conversationBoundaries.indexOf(selectedBoundary);
   const retainedBoundaries = conversationBoundaries.slice(0, selectedBoundaryIndex + 1);
+  // Answered turns first; turns without an answer are carried separately below.
   const retainedTurnIds = new Set<string>(
-    retainedBoundaries.flatMap((boundary) => (boundary.turnId === null ? [] : [boundary.turnId])),
+    retainedBoundaries.flatMap((boundary) =>
+      boundary.turnId === null || boundary.assistantMessageId === null ? [] : [boundary.turnId],
+    ),
   );
   const retainedPrefix = retainPrefixMessages(origin.messages, retainedBoundaries, retainedTurnIds);
   const answeredMessageIds = new Set(retainedPrefix.messages.map((message) => message.id));
   const unansweredTurnIdByMessageId = retainUnansweredTurns({
     messages: origin.messages,
     boundaries: conversationBoundaries,
+    retainedBoundaries,
     inheritedTurnIds: resolvedBoundaries.inheritedTurnIds ?? new Set(),
     // A running-turn fork carries everything after its last answer as the live tail.
     endIndex:
@@ -552,6 +559,13 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
   let baselineAssistantMessageId: MessageId | null = null;
   const importedTurnIds = new Map<string, TurnId>();
   const messageIdRemap = new Map<string, MessageId>();
+  // The fork's baseline is the newest inherited turn with an answer: the
+  // running turn for a running-turn fork, otherwise the last answered
+  // boundary (the selected one, unless that turn ended without an answer).
+  const baselineSourceTurnId =
+    liveBaselineTurnId ??
+    retainedBoundaries.findLast((boundary) => boundary.assistantMessageId !== null)?.turnId ??
+    null;
   // Every source turn maps to one destination turn, so a turn's user message,
   // reasoning, answer and work log stay grouped together in the fork.
   const importedTurnIdFor = Effect.fnUntraced(function* (
@@ -560,13 +574,6 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
   ) {
     const existing = importedTurnIds.get(sourceTurnKey);
     if (existing !== undefined) return existing;
-    // The fork's baseline is the newest inherited turn with an answer: the
-    // running turn for a running-turn fork, otherwise the last answered
-    // boundary (the selected one, unless that turn ended without an answer).
-    const baselineSourceTurnId =
-      liveBaselineTurnId ??
-      retainedBoundaries.findLast((boundary) => boundary.assistantMessageId !== null)?.turnId ??
-      null;
     const importedTurnId =
       sourceTurnId !== null && sourceTurnId === baselineSourceTurnId
         ? baselineTurnId

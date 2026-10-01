@@ -1950,6 +1950,15 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
       turnId: "turn-x",
       createdAt,
     }),
+    // An answer the provider never finished: not history, and no reason to refuse the fork.
+    message({
+      id: "partial-x",
+      role: "assistant",
+      text: "lost partial answer",
+      turnId: "turn-x",
+      createdAt,
+      streaming: true,
+    }),
   ];
   const sentIn = (events: ReadonlyArray<{ readonly type: string; readonly payload: unknown }>) =>
     events.flatMap((event) =>
@@ -2084,6 +2093,66 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
         expect(forked.payload.copiedBoundaries.at(-1)?.turnId).toBe(forked.payload.baselineTurnId);
         expect(sent[4]!.turnId).not.toBe(forked.payload.baselineTurnId);
       }),
+  );
+
+  it.effect("leaves out an unanswered turn requested after the selected turn", () =>
+    Effect.gen(function* () {
+      // Steering: the second request and its work land before the first answer completes.
+      const base = makeOriginThread();
+      const origin = makeOriginThread({
+        messages: [
+          base.messages[0]!,
+          ...unansweredMessages("2026-01-01T00:00:01.500Z"),
+          base.messages[1]!,
+        ],
+        activities: [unansweredActivity],
+      });
+      const events = yield* forkThreadForTest({
+        command: forkCommand({ sourceAssistantMessageId: A1 }),
+        readModel: makeReadModel({ origin }),
+        resolvedBoundaries: [boundaries[0]!, boundaries[1]!, unansweredBoundary(2)],
+      });
+      expect(sentIn(events).map((entry) => entry.text)).toEqual(["first prompt", "first answer"]);
+      expect(activitiesIn(events)).toEqual([]);
+    }),
+  );
+
+  it.effect("forks past an unanswered turn whose request an older conversation never bound", () =>
+    Effect.gen(function* () {
+      const base = makeOriginThread();
+      const origin = makeOriginThread({
+        messages: [
+          ...base.messages.slice(0, 2),
+          message({
+            id: "user-x",
+            role: "user",
+            text: "lost prompt",
+            turnId: null,
+            createdAt: "2026-01-01T00:00:02.500Z",
+          }),
+          ...base.messages.slice(2),
+        ],
+        activities: [unansweredActivity, questionAnswerActivity(TX, "lost-answer")],
+      });
+      const events = yield* forkThreadForTest({
+        command: forkCommand({ sourceAssistantMessageId: A2 }),
+        readModel: makeReadModel({ origin }),
+        resolvedBoundaries: [
+          boundaries[0]!,
+          boundaries[1]!,
+          { ...unansweredBoundary(2), userMessageId: null },
+          boundaries[2]!,
+        ],
+      });
+      // Nothing ties the request to the turn, so the turn is left out rather than failing.
+      expect(sentIn(events).map((entry) => entry.text)).toEqual([
+        "first prompt",
+        "first answer",
+        "second prompt",
+        "second answer",
+      ]);
+      expect(activitiesIn(events)).toEqual([]);
+    }),
   );
 
   it.effect("carries an inherited unanswered turn again when the fork is forked", () =>

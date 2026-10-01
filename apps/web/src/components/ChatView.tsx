@@ -10912,7 +10912,10 @@ function ChatViewContent(props: ChatViewProps) {
                 onRevertToTurnCount={
                   paintOnlyDisplayedTimeline ? noopHeldRevert : onRevertTimelineTurn
                 }
-                isRevertingCheckpoint={!paintOnlyDisplayedTimeline && isRevertingCheckpoint}
+                // A fork being prepared copies this history: no rewinding until it is done.
+                isRevertingCheckpoint={
+                  !paintOnlyDisplayedTimeline && (isRevertingCheckpoint || isForkingThread)
+                }
                 {...(!paintOnlyDisplayedTimeline
                   ? {
                       hasForkBaseline: activeThread?.forkLineage != null,

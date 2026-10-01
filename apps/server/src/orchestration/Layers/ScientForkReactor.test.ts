@@ -7,6 +7,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   TurnId,
+  VcsProcessTimeoutError,
   type VcsCreateWorktreeInput,
   type VcsRef,
 } from "@t3tools/contracts";
@@ -332,6 +333,8 @@ const readLineageRow = (sql: SqlClient.SqlClient) =>
   sql<LineageRow>`SELECT * FROM scient_thread_lineage WHERE thread_id = ${NEW}`.pipe(
     Effect.map((rows) => rows[0]),
   );
+
+const invalidCheckoutDiscards: unknown[] = [];
 
 describe("ScientForkReactor", () => {
   it.live(
@@ -899,7 +902,7 @@ describe("ScientForkReactor", () => {
     }),
   );
 
-  for (const verified of [true, false]) {
+  for (const verified of [true, false, "error"] as const) {
     it.live(`reuses an existing worktree only after verification (${verified})`, () => {
       const creates: VcsCreateWorktreeInput[] = [];
       const discards: unknown[] = [];
@@ -912,11 +915,11 @@ describe("ScientForkReactor", () => {
         yield* dispatchFork("new-worktree", `existing-checkout-${verified}`);
         const result = yield* reactor.awaitCompletion(NEW).pipe(Effect.result);
         yield* reactor.drain;
-        expect(result._tag).toBe(verified ? "Success" : "Failure");
+        expect(result._tag).toBe(verified === true ? "Success" : "Failure");
         expect(creates).toEqual([]);
         const lineage = yield* readLineageRow(sql);
         const threads = (yield* snapshot.getSnapshot()).threads;
-        if (verified) {
+        if (verified === true) {
           expect(lineage?.status).toBe("ready");
           expect(discards).toEqual([]);
           expect(threads.find((thread) => thread.id === NEW)?.worktreePath).toBe(
@@ -947,7 +950,21 @@ describe("ScientForkReactor", () => {
                   expect(input.checkpointRef).toBe(checkpointRefForThreadTurn(NEW, 0));
                   expect(input.requireClean).toBe(true);
                   return verified;
-                }),
+                }).pipe(
+                  // A check that cannot run (Git timed out) is not a pass.
+                  Effect.flatMap((result) =>
+                    result === "error"
+                      ? Effect.fail(
+                          new VcsProcessTimeoutError({
+                            operation: "test.verifyWorktree",
+                            command: "git status",
+                            cwd: input.path,
+                            timeoutMs: 30_000,
+                          }),
+                        )
+                      : Effect.succeed(result),
+                  ),
+                ),
               discard: (input) =>
                 Effect.sync(() => {
                   discards.push(input);
@@ -1164,9 +1181,27 @@ describe("ScientForkReactor", () => {
       const threads = (yield* snapshot.getSnapshot()).threads;
       expect(Option.isNone(yield* snapshot.getThreadDetailById(NEW))).toBe(true);
       expect(threads.find((thread) => thread.id === ORIGIN)?.worktreePath).toBe(ORIGIN_WORKTREE);
+      // The folder is removed even when Git no longer lists it under the fork branch
+      // (a hook switched branches): the reactor remembers what it created.
+      expect(invalidCheckoutDiscards).toEqual([
+        expect.objectContaining({
+          worktreePath: NEW_WORKTREE_FIXTURE,
+          branch: `scient/fork/${NEW}`,
+        }),
+      ]);
     }).pipe(
       Effect.provide(
-        makeHarnessLayer([], [], true, undefined, { verifyWorktree: () => Effect.succeed(false) }),
+        makeHarnessLayer([], [], true, undefined, {
+          verifyWorktree: (input) =>
+            Effect.sync(() => {
+              expect(input.requireClean).toBe(false);
+              return false;
+            }),
+          discard: (input) =>
+            Effect.sync(() => {
+              invalidCheckoutDiscards.push(input);
+            }),
+        }),
       ),
     ),
   );

@@ -162,7 +162,7 @@ Dedicated worktrees are verified before publication or reuse: the worktree
 must be this repository's checkout of the fork branch at the frozen checkpoint,
 with no checkout still in progress. A reused worktree must also be clean; that
 scan reads the whole tree, so a worktree Git has just created is not scanned.
-A worktree that fails is never adopted. When it is a newly created one, the
+A worktree that fails, or whose check cannot run, is never adopted. When it is a newly created one, the
 fork follows the terminal cleanup path. When it is one an earlier attempt left
 behind, the fork is abandoned but its worktree and branch are left in place, in
 case they hold work, and the error names the folder. Abandoning matters: a
@@ -183,10 +183,12 @@ the baseline stays the last turn that has an answer, while a new worktree still
 starts from the checkpoint of the turn at the fork point. The copied-boundary
 manifest lists answered turns only, so in a fork such a turn is an inherited
 turn the manifest does not name; forking the fork carries it again by that
-rule, which also covers unanswered turns of imported conversations.
+rule, which also covers unanswered turns of imported conversations. An
+answer left streaming in such a turn is not carried. A request that an older
+conversation never bound to its turn cannot be found, so that turn is left out.
 
-Fork preparation does not display the origin as an active agent turn; existing
-guards still prevent conflicting actions.
+Fork preparation does not display the origin as an active agent turn. Rewinding
+the origin stays disabled until the fork is ready.
 
 The domain-event stream is only a wake-up signal. The lineage table remains the
 authority, so a restart or missed live event cannot lose the work.
