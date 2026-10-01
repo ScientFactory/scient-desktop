@@ -5304,14 +5304,16 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
   );
 
   // SCIENT-FORK:START — Upstream T3 added threads without a project (#13612)
-  // and projects created from a name (#14527). Scient keeps both behind a
-  // server-side policy flag: the config omits the roots that advertise them,
-  // both RPCs refuse, and neither creates a folder nor dispatches a command.
-  it.effect("withholds threads without a project while the Scient gate is off", () =>
+  // and projects created from a name (#14527). Scratch is approved but still
+  // withheld in Git data directories; create-from-name remains gated off.
+  it.effect("withholds threads without a project inside a Git data directory", () =>
     Effect.gen(function* () {
       const dispatched: Array<string> = [];
       yield* buildAppUnderTest({
         layers: {
+          vcsDriver: {
+            isInsideWorkTree: () => Effect.succeed(true),
+          },
           orchestrationEngine: {
             dispatch: (command) =>
               Effect.sync(() => {

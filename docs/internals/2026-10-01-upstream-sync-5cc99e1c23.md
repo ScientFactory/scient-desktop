@@ -26,7 +26,7 @@ Date: 2026-10-01. Status: alignment qualification receipt, not release authoriza
 | `d5980a0ff1`    | Triage exemptions (#14485)                                     | None for users.                                                                                                                                     | **Deferred**, with #14480.                                                                                                                                                                                                                                     |
 | `bd89c13020`    | Grok CLI below 1.0.13 marked broken (#14486)                   | Older Grok runtimes report as broken instead of looking usable.                                                                                     | Upstream-owned mechanics, adopted through the manifest and registry.                                                                                                                                                                                           |
 | `7c67876983`    | Disconnected environments hidden when adding projects (#14490) | The project chooser stops offering machines that are not connected.                                                                                 | Upstream-owned mechanics, adopted on web and mobile.                                                                                                                                                                                                           |
-| `6b286ae8a2`    | Threads without a project (#13612)                             | Would let a thread start in its own scratch folder with no owning project.                                                                          | **Gated off.** Reopens a capability Scient deliberately retired (see below).                                                                                                                                                                                   |
+| `6b286ae8a2`    | Threads without a project (#13612)                             | Starts a conversation in its own plain folder under an internal owning scratch project.                                                             | **Approved and enabled.** Uses Scient's shared picker and workspace admission; does not restore null-project Quick Chat.                                                                                                                                       |
 | `9da066dbe9`    | Claude `/compact` correlation (#14497)                         | `/compact` no longer ends early and leaves the thread busy.                                                                                         | Upstream-owned mechanics, adopted.                                                                                                                                                                                                                             |
 | `1905846e03`    | Dark+/Light+ theme import ids (#14499)                         | Imported editor themes stop colliding with built-in ids.                                                                                            | Upstream-owned mechanics, adopted.                                                                                                                                                                                                                             |
 | `0cf482b08b`    | Screen-reader composer suggestions (#10154)                    | Suggestion lists gain accessible names, loading/empty status, and correct active-descendant wiring.                                                 | Adopted. One Scient-owned test case needed the new required `listId` prop.                                                                                                                                                                                     |
@@ -42,42 +42,46 @@ Date: 2026-10-01. Status: alignment qualification receipt, not release authoriza
 | `148e6deea0`    | Create a project from just a name (#14527)                     | Would type a name and get a initialized project folder.                                                                                             | **Gated off.** Duplicates Scient's existing "Create & Add" path and bypasses Scient project initialization.                                                                                                                                                    |
 | `5cc99e1c23`    | Agent-driven browser downloads (#14573)                        | A download triggered by the agent lands in the browser artifacts folder instead of opening a native Save dialog. Human clicks still get the dialog. | Adopted. Scient's preview partition naming was preserved in the test double.                                                                                                                                                                                   |
 
-## Two capabilities held behind a Scient gate
+## Capability decisions
 
-`6b286ae8a2` (#13612) and `148e6deea0` (#14527) are integrated in ancestry but switched
-off in the product. Both are behind `SCIENT_DESKTOP_IDENTITY` in
-`packages/shared/src/scientDesktopIdentity.ts`:
+The owner approved **No project** (#13612) in this alignment. The shared identity
+now records:
 
-- `projectlessThreadsEnabled: false`
+- `projectlessThreadsEnabled: true`
 - `createProjectFromNameEnabled: false`
 
-The server omits `ServerConfig.scratchWorkspaceRoot` and `ServerConfig.newProjectsRoot`
-unless its flag is set, and refuses the matching RPC with a "not available" error. Every
-client already gates its entry points on those two config fields, so one server-side
-switch keeps the palette, the draft menu, the empty state, the keybinding, and mobile
-honest: nothing is offered and nothing is created.
+Scratch conversations are not historical null-project Quick Chat. Each retains a
+real owning scratch project and a host-registered plain subfolder in `worktreePath`.
+Scient's shared workspace resolver admits that direct canonical child of this
+server's scratch root without requiring Git lineage. Both roots must have verified
+non-Git evidence; the shared parent, nested descendants, and symlink escapes fail
+closed. Existing binding identity, filesystem identity, authority generation, and
+scope revision checks still apply across Sources, Documents, and Compute.
 
-**Why threads without a project is off.** `UPSTREAM.md` records that Scient retired the
-projectless Quick Chat experiment and that "every newly created thread now requires a real
-owning project". `docs/reports/scient-t3-divergence-integration-and-retirements.md` records
-the retirement with the reason that projectless conversations weakened source and file
-authority and made durable lineage less honest. `upstream-state.json` still carries the
-frozen `t3-pr-5822-projectless-threads` snapshot as provenance for that retired
-experiment, with `followUpdates: false`. Upstream's gate is only "the data directory is not
-inside a Git checkout", which is true for a normal install, so it would have shipped the
-capability silently.
+**UX composition.** The existing sidebar New thread row opens the existing
+"New thread in…" picker, with No project before Add project. The current project
+stays first and Shift+click keeps its direct-start behavior. The picker still waits
+for the project catalog; the No project action cannot bypass that readiness guard.
+Scratch uses the same
+composer, project selector, provider selection, and Add project flow. The redundant
+"or start without a project" prompt under ordinary drafts is removed. Scratch
+files remain after thread deletion; moving a started scratch conversation and its
+files into a project remains unsupported.
 
-**Why create-from-name is off.** Scient already creates a project from any typed path:
-the palette's "Create & Add" dispatches `project.create` with
-`createWorkspaceRootIfMissing: true`, and that path then runs Scient project
-initialization, writing `PROJECT.md`, `AGENTS.md`, and `.scient/project.json`. Upstream's
-path instead slugs the name into `<data dir>/projects`, writes its own README and icon,
-runs `git init`, and never calls the Scient initializer, so a user would get two
-different "new project" behaviors and Scient-managed projects from only one of them.
+The server advertises `scratchWorkspaceRoot` only outside Git data directories;
+VCS detection failures still fail closed. This guard keeps scratch folders from
+inheriting a development checkout's Git state. Remote and mobile clients consume
+the same advertised capability. A worktree-local dev profile may not offer it.
 
-Enabling either flag is a deliberate follow-up with its own product decision, tests, and
-release note. The code, contracts, clients, and the folder-creation unit tests
-(`apps/server/src/project/NewProject.test.ts`) are all in place for that.
+**Why create-from-name remains off.** Scient already creates a project from any
+typed path through "Create & Add", dispatching `project.create` with
+`createWorkspaceRootIfMissing: true` and then writing `PROJECT.md`, `AGENTS.md`, and
+`.scient/project.json` through Scient initialization. Upstream's separate path
+slugs a name into `<data dir>/projects`, writes a README and icon, and runs Git init
+without the Scient initializer. It remains a separate product decision.
+
+The original qualification below was recorded with both flags off. It is not
+qualification of this owner-approved follow-up; see the follow-up record below.
 
 ## Conflict composition
 
@@ -105,9 +109,9 @@ Twenty-one paths needed resolution:
 - `docs/user/composer.md` keeps Scient's product name in the command sentence and gains
   upstream's "Restart agent session" paragraph.
 - `docs/user/source-control.md`, `docs/user/thread-sidebar.md`, and
-  `docs/user/keybindings.md` were kept at their Scient `main` content: the sections this
-  range adds document capabilities that are gated off, and `docs/user/keybindings.md`
-  otherwise linked to a section that does not exist.
+  `docs/user/keybindings.md` initially stayed at Scient `main` because both capabilities were gated off.
+  The owner-approved follow-up adds the scratch picker, shortcut, and plain-folder
+  semantics to the existing documentation owners.
 - `scripts/build-npm-platform-packages.ts` and `scripts/smoke-cli-archive.ts` remain
   deleted, and `apps/server/scripts/publishOrder.ts` plus its test were removed with them.
 - `apps/server/src/project/NewProject.ts` no longer stamps the upstream brand into the
@@ -119,8 +123,9 @@ Scient branding, the `scient-next` state roots, preview partition prefixes, prov
 lifecycle, model selection, the reader-owned scroll policy, the updater and restart flow,
 passive preview probing, cloud and relay, analytics consent, service, signing, and the
 release and publication workflows were audited. No migration, state root, or release
-authority changes. The only server behavior added by this alignment beyond upstream
-mechanics is the two capability gates described above.
+authority changes. Scient-specific server composition includes the capability policy and the
+shared scratch workspace admission described above. The old null-project retirement
+migration remains unchanged; scratch conversations retain a real owning project.
 
 ## Verification
 
@@ -147,20 +152,39 @@ that existing test, not a change from this range.
 Not established here: visual and interaction acceptance in the desktop app, Windows
 and native mobile checks, and hosted CI on the pushed revision.
 
+### Owner-approved scratch follow-up
+
+Recorded on 2026-10-01 against the follow-up working diff based on `c69a5d36ac`,
+macOS arm64, Node 24.19.0, pnpm 11.10.0. This evidence supplements the original
+gate-off qualification above; it does not reuse that suite as gate-on proof.
+
+- All-workspace `pnpm run typecheck`: pass, including web, server, desktop, and mobile.
+- Formatting of the changed files: pass.
+- Lint of the changed TypeScript/TSX files: pass, no errors; existing warnings remain.
+- `git diff --check`: pass.
+- Source review followed creation/ensure, shared picker and draft switching, remote
+  capability selection, Sources/Documents admission, Compute root resolution, and
+  authority revalidation. Scratch is admitted only at the registered leaf; ordinary
+  project/worktree lineage and historical null-project retirement remain intact.
+
+Automated tests, a new build, desktop interaction, live provider turns, and hosted
+CI have not been run for this follow-up. The existing gate assertion now describes
+Git data-directory withholding, and the resolver fixture supplies its new runtime
+configuration dependency. PR #428 remains draft for further qualification/review.
+The worktree-local dev profile is subject to the retained Git data-directory guard;
+renderer hot reload alone does not refresh the bundled backend.
+
 ## Open items for the owner
 
-1. **Threads without a project (#13612).** Enabling it reopens a retired capability.
-   Decide whether Scient wants it, and if so what the source and file authority story is
-   for a thread with no owning project.
-2. **Create a project from a name (#14527).** Decide between upstream's slugged folder
+1. **Create a project from a name (#14527).** Decide between upstream's slugged folder
    under the data directory and Scient's existing "Create & Add" path, and whether
    Scient project initialization must run on a name-created project.
-3. **CI restructure (#14025).** Adopting it renames required checks and moves runners to
+2. **CI restructure (#14025).** Adopting it renames required checks and moves runners to
    a different provider. That needs the `Main merge queue` ruleset updated in the same
    change. The balanced server sharding is already in place and does not depend on it.
-4. **Hosted web deployment timing (#14029).** Adopting it moves the public
+3. **Hosted web deployment timing (#14029).** Adopting it moves the public
    `*.vercel.app` hostname before the GitHub Release exists.
-5. **Pre-existing and still open:** `main` lacks `.github/workflows/release-desktop.yml`
+4. **Pre-existing and still open:** `main` lacks `.github/workflows/release-desktop.yml`
    while `desktop-macos-preview-publish.yml:287` still calls it, so that workflow fails on
    every run. Restoring upstream's file would also restore the packaging path this
    repository replaced, so it still needs an explicit release decision.

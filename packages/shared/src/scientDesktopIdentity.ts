@@ -33,13 +33,13 @@ export const SCIENT_DESKTOP_IDENTITY = {
   autoUpdateEnabled: true,
   // SCIENT-FORK:START — Upstream T3 added two project-creation capabilities in
   // `5cc99e1c23`: threads without a project (#13612) and projects created from
-  // just a name (#14527). Both stay off until the owner decides, because the
-  // first reopens the retired projectless Quick Chat path (see UPSTREAM.md) and
-  // the second adds a second project-creation path beside Scient's existing
-  // "Create & Add". The server advertises the matching `ServerConfig` root
+  // just a name (#14527). Scratch threads are approved: they retain a real
+  // owning project and each runs in its own plain folder. Create-from-name
+  // stays off beside Scient's existing "Create & Add". See UPSTREAM.md.
+  // The server advertises the matching `ServerConfig` root
   // only when its flag is set, and every client gates on that field, so one
   // server-side switch keeps the UI, the RPCs, and the folders honest.
-  projectlessThreadsEnabled: false,
+  projectlessThreadsEnabled: true,
   createProjectFromNameEnabled: false,
   // SCIENT-FORK:END
   desktopUpdateChannelPolicy: "stable-only" as DesktopUpdateChannelPolicy,

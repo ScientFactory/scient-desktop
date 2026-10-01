@@ -608,28 +608,39 @@ code, not a runtime or update dependency. Scient does not refresh from open PR
 heads. Only an official T3 `main` merge enters through the bounded upstream
 process. Immutable event decoders retain only the nullability required to
 replay a historical thread that was moved into a real project before the
-retirement; the only command that can create one is gated off, as recorded below.
+retirement. New thread commands continue to require a real owning project.
 
 The exact #5822 snapshot and import merge are frozen as a historical exception
 in `upstream-state.json` with `followUpdates: false`. The dedicated provenance
 workflow rejects new non-official merge parents. Historical sync reports remain
 the provenance record; there is no longer a live Quick Chat seam inventory.
 
-T3 reintroduced this capability on its own `main` as `pingdotgg/t3code#13612`
-"start threads without a project", merged in `5cc99e1c23`. Upstream's own gate is
-only that the data directory is not inside a Git checkout, which is true for a
-normal install, so adopting it unchanged would have shipped a retired capability
-silently. Scient keeps the code, contracts, clients, and scratch folder rules,
-and holds the capability off through `SCIENT_DESKTOP_IDENTITY
-.projectlessThreadsEnabled` in `packages/shared/src/scientDesktopIdentity.ts`.
-The server then omits `ServerConfig.scratchWorkspaceRoot` and refuses
-`projects.ensureScratch`, and every client already gates its entry points on that
-field, so the palette, the draft project menu, the empty state, and the
-`chat.newWithoutProject` command offer nothing and create nothing. Turning it on is
-a deliberate follow-up with its own product decision.
+T3 added a different scratch design on its official `main` as
+`pingdotgg/t3code#13612`, integrated through `5cc99e1c23`. The owner approved it
+in alignment PR #428: `SCIENT_DESKTOP_IDENTITY.projectlessThreadsEnabled` is true.
+Unlike the retired Quick Chat experiment, every scratch thread has a real owning
+project, the internal "No project" project, and its own plain subfolder under
+`<data dir>/scratch`, stored in `worktreePath`. No null-project creation or old
+relocation command is restored.
+
+Scient's existing sidebar New thread row opens the shared "New thread in…"
+picker with **No project** and **Add project**. Shift+click still starts in the
+current project. The draft project picker can switch destinations before sending;
+Scient omits the redundant "or start without a project" composer prompt. Shared
+workspace admission accepts only a registered direct canonical child of this
+server's scratch project, with verified non-Git evidence. It rejects the shared
+parent, nested descendants, and symlink escapes, while retaining ordinary Git
+worktree lineage and existing authority-generation/publication checks.
+
+The server still withholds `ServerConfig.scratchWorkspaceRoot` and
+`projects.ensureScratch` when its data directory is inside a Git checkout or VCS
+detection fails. Clients gate on the advertised root, including remote/mobile
+entry points; a worktree-local development profile may therefore not offer it.
+Thread deletion retains scratch files. Moving a started scratch conversation and
+its files into another project remains a follow-up.
 
 `pingdotgg/t3code#14527` "start a new project from just a name", merged in the same
-commit, is held the same way through `createProjectFromNameEnabled`. Scient already
+commit, remains off through `createProjectFromNameEnabled`. Scient already
 creates a project from any typed path through the palette's "Create & Add", and that
 path then runs Scient project initialization (`PROJECT.md`, `AGENTS.md`,
 `.scient/project.json`). Upstream's path slugs the name into a `projects` folder

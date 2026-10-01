@@ -112,11 +112,25 @@ their default order until the server is updated.
 ## Start a new thread
 
 **New thread**, the row directly below search, starts a thread. It first asks which project to
-use, with the current project first, so **Enter** starts there. The list ends with **Add project**,
-which runs the usual Add project flow and then opens a new thread in that project. With no projects
-yet, that is the only choice, so New thread is also how you add your first project. **⌘N** works
+use, with the current project first, so **Enter** starts there. Choose **No project** to start
+in a scratch folder on the current machine. The list ends with **Add project**, which runs the
+usual Add project flow and then opens a new thread in that project. **⌘N** works
 the same way. To skip the list and start in the current project, **Shift+click** New thread or
 press **⇧⌘N**.
+
+### Threads without a project
+
+**No project** opens the usual composer. Before sending, its project picker lets you switch
+to a real project without losing the draft. The sidebar row and Add project flow stay the same.
+
+Scient creates one internal scratch project per machine and a separate plain folder for
+each conversation under its data directory. Files, Sources, Documents, and Compute use
+that conversation's folder. Scratch conversations do not have Git branches, checkpoints,
+or turn diffs. Deleting a conversation keeps its folder; moving a started scratch
+conversation and its files into another project is not yet supported.
+
+The option is available only on a connected machine whose data directory is outside a
+Git checkout. A dev app with state inside its worktree may therefore not offer it.
 
 ## Group threads into sections
 

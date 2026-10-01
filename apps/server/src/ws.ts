@@ -2074,10 +2074,9 @@ const makeWsRpcLayer = (
       // Probed once per connection: a negative VCS detection is not cached.
       // An interrupt stays an interrupt, so a config load cancelled mid-probe
       // invalidates the cache and the next load probes again.
-      // SCIENT-FORK:START — Scient retired the projectless Quick Chat path, so
-      // upstream's scratch root is not offered until the owner turns it back on.
-      // Clients read this one field, so leaving it undefined hides the option
-      // and fails the RPC instead of creating a projectless thread.
+      // SCIENT-FORK:START — Product policy and environment capability share
+      // this advertisement. Scratch retains a real owning project; each
+      // thread's registered plain folder is also admitted by Scient's resolver.
       const scratchThreadsOffered = SCIENT_DESKTOP_IDENTITY.projectlessThreadsEnabled;
       // SCIENT-FORK:END
       const [cachedScratchWorkspaceRoot, invalidateScratchWorkspaceRoot] =

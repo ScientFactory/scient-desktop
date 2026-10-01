@@ -2064,9 +2064,10 @@ function OpenCommandPaletteDialog(props: {
 
   useLayoutEffect(() => {
     // SCIENT-FORK:START — T3 waits for projects; with none (once they have
-    // loaded), the picker opens with only Add project.
+    // loaded), the picker still offers Add project and, when available, No project.
     if (openIntent?.kind !== "new-thread-in") return;
-    if (projectThreadItems.length === 0 && (projects.length > 0 || !projectSnapshotsReady)) return;
+    // No project is an action, so its presence must not bypass catalog readiness.
+    if (!projectSnapshotsReady || (projectThreadItems.length === 0 && projects.length > 0)) return;
     // SCIENT-FORK:END
     clearOpenIntent();
     browseNavigation.invalidate();
