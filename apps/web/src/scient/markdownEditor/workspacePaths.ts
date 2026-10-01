@@ -4,6 +4,8 @@ import {
   parseMarkdownFileLink,
 } from "@t3tools/client-runtime/markdown-links";
 
+import { isWindowsAbsolutePath } from "@t3tools/shared/path";
+
 import { resolvePathLinkTarget } from "~/terminal-links";
 
 import { isScientMarkdownDocumentPath } from "./markdownDocumentPaths";
@@ -115,7 +117,13 @@ export function resolveMarkdownHostLinkPath(
   workspaceRoot: string,
   destination: string,
 ): string | null {
-  const target = parseMarkdownFileLink(destination);
+  // In a Windows workspace a link may be written with backslashes, encoded or
+  // not; they are separators there. On POSIX they are part of a file name.
+  const target = parseMarkdownFileLink(
+    isWindowsAbsolutePath(workspaceRoot)
+      ? destination.replaceAll(/%5C/giu, "/").replaceAll("\\", "/")
+      : destination,
+  );
   if (target === null) return null;
   if (!isRelativeFilePath(target.path)) return collapseAbsoluteFilePath(target.path);
   if (!workspaceRoot) return null;

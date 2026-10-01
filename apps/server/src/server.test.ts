@@ -8261,6 +8261,92 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect.skipIf(!symlinksSupported)(
+    "opens the file a chat link means over the wire, wherever it lives",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fs.realPath(
+          yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-file-links-" }),
+        );
+        const workspaceDir = path.join(baseDir, "workspace");
+        const outsideDir = path.join(baseDir, "outside");
+        yield* fs.makeDirectory(path.join(workspaceDir, "reports/2026"), { recursive: true });
+        yield* fs.makeDirectory(path.join(workspaceDir, "data"), { recursive: true });
+        yield* fs.makeDirectory(outsideDir, { recursive: true });
+        yield* fs.writeFileString(path.join(workspaceDir, "reports/2026/summary.md"), "inside\n");
+        yield* fs.writeFileString(path.join(outsideDir, "notes.md"), "outside\n");
+        yield* fs.symlink(
+          path.join(outsideDir, "notes.md"),
+          path.join(workspaceDir, "data/shared-notes.md"),
+        );
+
+        yield* buildAppUnderTest();
+
+        const wsUrl = yield* getWsServerUrl("/ws");
+        const link = (linkPath: string) => ({
+          workspaceRoot: EnvironmentFilePath.make(workspaceDir),
+          path: EnvironmentFilePath.make(linkPath),
+        });
+        const results = yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            Effect.all({
+              outside: client[WS_METHODS.filesystemResolveFileLink](link("../outside/notes.md")),
+              wrongFolder: client[WS_METHODS.filesystemResolveFileLink](link("2026/summary.md")),
+              symlinkOnly: client[WS_METHODS.filesystemResolveFileLink](link("shared-notes.md")),
+              nothing: client[WS_METHODS.filesystemResolveFileLink](link("reports/none.md")),
+              // The outside file reads the same through every spelling.
+              readClimbing: client[WS_METHODS.projectsReadFile]({
+                cwd: workspaceDir,
+                relativePath: "../outside/notes.md",
+              }),
+              readSymlink: client[WS_METHODS.projectsReadFile]({
+                cwd: workspaceDir,
+                relativePath: "data/shared-notes.md",
+              }),
+              // Writing through the same spellings is still refused.
+              writeClimbing: client[WS_METHODS.projectsWriteFile]({
+                cwd: workspaceDir,
+                relativePath: "../outside/notes.md",
+                contents: "overwritten\n",
+              }).pipe(Effect.result),
+              writeSymlink: client[WS_METHODS.projectsWriteFile]({
+                cwd: workspaceDir,
+                relativePath: "data/shared-notes.md",
+                contents: "overwritten\n",
+              }).pipe(Effect.result),
+            }),
+          ),
+        );
+
+        const filePath = EnvironmentFilePath.make;
+        assert.deepEqual(results.outside, {
+          _tag: "literal",
+          path: filePath(path.join(outsideDir, "notes.md")),
+        });
+        assert.deepEqual(results.wrongFolder, {
+          _tag: "recovered",
+          path: filePath("reports/2026/summary.md"),
+          missingPath: filePath(path.join(workspaceDir, "2026/summary.md")),
+        });
+        assert.deepEqual(results.symlinkOnly, {
+          _tag: "recovered",
+          path: filePath("data/shared-notes.md"),
+          missingPath: filePath(path.join(workspaceDir, "shared-notes.md")),
+        });
+        assert.equal(results.nothing._tag, "none");
+        for (const read of [results.readClimbing, results.readSymlink]) {
+          assert.equal(read.contents, "outside\n");
+          assert.equal(read.readOnly, true);
+        }
+        assert.equal(results.readClimbing.revision, results.readSymlink.revision);
+        assert.equal(results.writeClimbing._tag, "Failure");
+        assert.equal(results.writeSymlink._tag, "Failure");
+        assert.equal(yield* fs.readFileString(path.join(outsideDir, "notes.md")), "outside\n");
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   // chmod cannot deny the superuser, and Windows has no POSIX permission bits.
   it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32" || process.getuid?.() === 0)(
     "reports an unreadable file as a permission failure",

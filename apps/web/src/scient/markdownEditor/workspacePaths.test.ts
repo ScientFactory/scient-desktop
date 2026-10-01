@@ -86,6 +86,15 @@ describe("resolveMarkdownHostLinkPath", () => {
     );
   });
 
+  it("reads backslashes as separators only in a Windows workspace", () => {
+    expect(
+      resolveMarkdownHostLinkPath("notes\\doc.md", "C:\\repo", "..%5C..%5Cshared%5Ca.md"),
+    ).toBe("C:\\shared\\a.md");
+    expect(resolveMarkdownHostLinkPath("notes\\doc.md", "C:\\repo", "..\\..\\shared\\a.md")).toBe(
+      "C:\\shared\\a.md",
+    );
+  });
+
   it("ignores web links, fragments, and empty links", () => {
     expect(resolveMarkdownHostLinkPath("notes.md", "/repo", "https://example.com/a.md")).toBeNull();
     expect(resolveMarkdownHostLinkPath("notes.md", "/repo", "#heading")).toBeNull();
