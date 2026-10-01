@@ -17,6 +17,7 @@
     "apps/server/src/provider/Drivers/DroidSkills.ts",
     "apps/server/src/scient/operations/AgentInvocationContext.ts",
     "apps/server/src/scient/operations/AgentOperationDispatcher.ts",
+    "apps/server/src/scient/threadQueue/Ledger.ts",
     "apps/server/src/scient/threadQueue/Worker.ts",
     "apps/server/src/scient/threadQueue/operations.ts",
     "apps/web/src/routes/settings.skills_.external.tsx",
