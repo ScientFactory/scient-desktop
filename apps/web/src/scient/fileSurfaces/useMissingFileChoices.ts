@@ -42,6 +42,26 @@ export function missingFileChoices(
 }
 
 /**
+ * The question to ask about a tab whose file is missing. It names the tab's
+ * exact location: a tab's path is a locator, not a link, so a workspace folder
+ * really named `~` is asked about as that folder, never as the home folder.
+ */
+export function missingFileResolveInput(input: {
+  /** The tab's host path, already joined to the workspace root. */
+  readonly absolutePath: string | null;
+  readonly cwd: string;
+  readonly failureReason: ProjectFileErrorReason | null;
+}) {
+  return input.absolutePath !== null && input.failureReason === "not_found"
+    ? chatFileLinkResolveInput({
+        linkPath: input.absolutePath,
+        workspaceRoot: input.cwd,
+        changedPaths: [],
+      })
+    : null;
+}
+
+/**
  * What a file surface shows when nothing exists at a tab's path: the exact
  * location that was tried, and the workspace files it may have meant. The
  * environment that owns the files decides both, as it does for a link click.
@@ -59,11 +79,8 @@ export function useMissingFileChoices(input: {
     return cwd ? collapseAbsoluteFilePath(workspaceFileHostPath(path, cwd)) : null;
   }, [cwd, path]);
   const resolveInput = useMemo(
-    () =>
-      path !== null && input.failureReason === "not_found"
-        ? chatFileLinkResolveInput({ linkPath: path, workspaceRoot: cwd, changedPaths: [] })
-        : null,
-    [cwd, input.failureReason, path],
+    () => missingFileResolveInput({ absolutePath, cwd, failureReason: input.failureReason }),
+    [absolutePath, cwd, input.failureReason],
   );
   const resolution = useEnvironmentQuery(
     resolveInput === null

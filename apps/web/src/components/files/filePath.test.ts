@@ -177,6 +177,12 @@ describe("fileTabTitles", () => {
     expect(titles.get("\\\\nas\\tmp\\report.md")).toBe("report.md — \\\\nas/tmp");
   });
 
+  it("keeps a POSIX backslash as part of a folder's name", () => {
+    const titles = fileTabTitles(["/tmp/a\\b/report.md", "/tmp/a/b/report.md"]);
+    expect(titles.get("/tmp/a\\b/report.md")).toBe("report.md — a\\b");
+    expect(titles.get("/tmp/a/b/report.md")).toBe("report.md — b");
+  });
+
   it("handles Windows separators and a path opened twice", () => {
     const titles = fileTabTitles(["C:\\work\\a\\plan.md", "b/plan.md", "b/plan.md"]);
     expect(titles.get("C:\\work\\a\\plan.md")).toBe("plan.md — a");

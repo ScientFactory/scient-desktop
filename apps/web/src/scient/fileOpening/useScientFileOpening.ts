@@ -1,5 +1,6 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import {
+  type AtomCommandResult,
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
@@ -37,60 +38,73 @@ export function useScientFileOpening(input: {
   return useCallback(
     (relativePath: string, linkResolution?: FileLinkResolution) => {
       if (!threadRef || !workspaceRoot) return;
-      // A file the link did not name says so wherever it lands: on its tab in
-      // the panel, or announced when it is a page in the browser.
-      const openInPanel = () =>
-        openSource(relativePath, undefined, linkResolution ? { linkResolution } : undefined);
-
-      if (
-        !shouldOpenInBrowserByDefault(relativePath) ||
-        !isPreviewSupportedInRuntime() ||
-        environmentHttpBaseUrl === null
-      ) {
-        openInPanel();
-        return;
-      }
-
-      void (async () => {
-        try {
-          const result = await openFileInPreview({
-            threadRef,
-            workspaceRoot,
-            relativePath,
-            filePath: workspaceFileHostPath(relativePath, workspaceRoot),
-            httpBaseUrl: environmentHttpBaseUrl,
-            createAssetUrl,
-            openPreview,
-          });
-          if (result._tag === "Success") {
-            if (linkResolution) {
-              announceResolvedLink({ path: relativePath, missingPath: linkResolution.missingPath });
-            }
-            return;
-          }
-          if (isAtomCommandInterrupted(result)) return;
-
-          openInPanel();
-          const error = squashAtomCommandFailure(result);
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Unable to preview HTML",
-              description: `${error instanceof Error ? error.message : "An error occurred."} Opened the source instead.`,
-            }),
-          );
-        } catch (cause) {
-          openInPanel();
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Unable to preview HTML",
-              description: `${cause instanceof Error ? cause.message : "An error occurred."} Opened the source instead.`,
-            }),
-          );
-        }
-      })();
+      void openFileWhereItBelongs({
+        relativePath,
+        linkResolution,
+        openSource,
+        openInBrowser:
+          shouldOpenInBrowserByDefault(relativePath) &&
+          isPreviewSupportedInRuntime() &&
+          environmentHttpBaseUrl !== null
+            ? () =>
+                openFileInPreview({
+                  threadRef,
+                  workspaceRoot,
+                  relativePath,
+                  filePath: workspaceFileHostPath(relativePath, workspaceRoot),
+                  httpBaseUrl: environmentHttpBaseUrl,
+                  createAssetUrl,
+                  openPreview,
+                })
+            : null,
+      });
     },
     [createAssetUrl, environmentHttpBaseUrl, openPreview, openSource, threadRef, workspaceRoot],
   );
+}
+
+/**
+ * Opens a file in the browser when it is a page and the browser is available,
+ * otherwise in the files panel; a page the browser could not open falls back
+ * to its source in the panel. A file that a link did not name says so wherever
+ * it lands: on its tab in the panel, or announced when it is a page in the
+ * browser, which has no tab to carry the note.
+ */
+export async function openFileWhereItBelongs(input: {
+  readonly relativePath: string;
+  readonly linkResolution: FileLinkResolution | undefined;
+  readonly openSource: (relativePath: string, line?: number, options?: OpenFileOptions) => void;
+  /** Opens the page in the browser; null when this file or runtime does not use it. */
+  readonly openInBrowser: (() => Promise<AtomCommandResult<unknown, unknown>>) | null;
+}): Promise<void> {
+  const { linkResolution, relativePath } = input;
+  const openInPanel = () =>
+    input.openSource(relativePath, undefined, linkResolution ? { linkResolution } : undefined);
+  if (input.openInBrowser === null) {
+    openInPanel();
+    return;
+  }
+  const openedSourceInstead = (cause: unknown) => {
+    openInPanel();
+    toastManager.add(
+      stackedThreadToast({
+        type: "error",
+        title: "Unable to preview HTML",
+        description: `${cause instanceof Error ? cause.message : "An error occurred."} Opened the source instead.`,
+      }),
+    );
+  };
+  try {
+    const result = await input.openInBrowser();
+    if (result._tag === "Success") {
+      if (linkResolution) {
+        announceResolvedLink({ path: relativePath, missingPath: linkResolution.missingPath });
+      }
+      return;
+    }
+    if (isAtomCommandInterrupted(result)) return;
+    openedSourceInstead(squashAtomCommandFailure(result));
+  } catch (cause) {
+    openedSourceInstead(cause);
+  }
 }

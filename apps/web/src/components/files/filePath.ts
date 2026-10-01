@@ -57,7 +57,9 @@ export function resolveFileTabPath(path: string, workspaceRoot: string): string 
  * look like the same folder.
  */
 function pathSegments(path: string): string[] {
-  const segments = path.split(/[\\/]/).filter(Boolean);
+  // Only a Windows path separates with backslashes; on POSIX one is part of a name.
+  const windowsPath = isWindowsAbsolutePath(path) || path.startsWith("\\\\");
+  const segments = path.split(windowsPath ? /[\\/]/ : "/").filter(Boolean);
   const first = segments[0];
   if (first === undefined) return segments;
   const root = path.startsWith("\\\\") ? "\\\\" : path.startsWith("/") ? "/" : "";
