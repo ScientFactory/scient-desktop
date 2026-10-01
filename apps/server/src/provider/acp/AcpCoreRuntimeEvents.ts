@@ -9,6 +9,7 @@ import {
   type ProviderRuntimeEvent,
   type RuntimeRequestId,
   type ThreadId,
+  type ToolLifecycleItemType,
   type TurnId,
 } from "@t3tools/contracts";
 
@@ -154,6 +155,8 @@ export function makeAcpToolCallEvent(input: {
   readonly threadId: ThreadId;
   readonly turnId: TurnId | undefined;
   readonly toolCall: AcpToolCallState;
+  /** For a tool whose ACP kind does not say what it is, such as a call about a sub-agent. */
+  readonly itemType?: ToolLifecycleItemType;
   readonly rawPayload: unknown;
 }): ProviderRuntimeEvent {
   const runtimeStatus = runtimeItemStatusFromAcpToolStatus(input.toolCall.status);
@@ -168,7 +171,7 @@ export function makeAcpToolCallEvent(input: {
     turnId: input.turnId,
     itemId: RuntimeItemId.make(input.toolCall.toolCallId),
     payload: {
-      itemType: canonicalItemTypeFromAcpToolKind(input.toolCall.kind),
+      itemType: input.itemType ?? canonicalItemTypeFromAcpToolKind(input.toolCall.kind),
       ...(runtimeStatus ? { status: runtimeStatus } : {}),
       ...(input.toolCall.title ? { title: input.toolCall.title } : {}),
       ...(input.toolCall.detail ? { detail: input.toolCall.detail } : {}),

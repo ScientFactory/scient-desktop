@@ -239,9 +239,12 @@ export const DroidDriver: ProviderDriver<DroidSettings, DroidDriverEnv> = {
       let status: Effect.Success<ReturnType<typeof makeDroidProviderStatus>> | undefined;
       const adapter = yield* makeDroidAdapter(effectiveConfig, {
         environment: processEnv,
+        sensitiveEnvironmentValues,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
         instanceId,
         makeAcpRuntime,
+        onAuthenticationRejected: (message) =>
+          Effect.suspend(() => status?.reportAccountRejected(message) ?? Effect.void),
       });
       const textGeneration = yield* makeDroidTextGeneration(
         effectiveConfig,

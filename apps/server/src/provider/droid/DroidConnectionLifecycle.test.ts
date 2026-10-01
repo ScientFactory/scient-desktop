@@ -2,6 +2,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -15,7 +16,7 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 import { ServerConfig } from "../../config.ts";
 import type { ResolvedModelConnection } from "../../customModels.ts";
 import { makeDroidTextGeneration } from "../../textGeneration/DroidTextGeneration.ts";
-import { makeDroidAdapter } from "../Layers/DroidAdapter.ts";
+import { DROID_CONFIGURATION_RETIRED_MESSAGE, makeDroidAdapter } from "../Layers/DroidAdapter.ts";
 import { makeDroidAcpRuntime } from "../acp/DroidAcpSupport.ts";
 import { droidCustomModelId, makeDroidCustomModelsRuntimeFactory } from "./DroidCustomModels.ts";
 
@@ -238,6 +239,35 @@ it.effect(
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
 );
 
+it.live("fails a send on a session a Custom models change retired with a typed error", () =>
+  Effect.gen(function* () {
+    const f = yield* fixture(false);
+    const adapter = yield* makeDroidAdapter(f.settings, { instanceId, makeAcpRuntime: f.factory });
+    const threadId = ThreadId.make("droid-retired-send");
+    yield* adapter.startSession({
+      threadId,
+      cwd: f.root,
+      runtimeMode: "full-access" as const,
+      modelSelection: f.selection,
+    });
+    yield* f.update("rotate");
+    // The process ends shortly after the change; a send that raced it must say why.
+    while (f.processes.length === 0 || (yield* f.processes[0]!.isRunning))
+      yield* Effect.sleep("20 millis");
+    yield* Effect.sleep("100 millis");
+    const result = yield* adapter
+      .sendTurn({ threadId, input: "hello", attachments: [] })
+      .pipe(Effect.exit);
+    expect(result._tag).toBe("Failure");
+    const error = result._tag === "Failure" ? Cause.squash(result.cause) : undefined;
+    expect(error).toMatchObject({
+      _tag: "ProviderAdapterRequestError",
+      detail:
+        "Custom models changed, so Droid restarted this conversation and your message was not sent. Send it again.",
+    });
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
+);
+
 for (const change of ["rotate", "remove"] as const) {
   it.effect(`preserves partial chat output, settles once and recovers after ${change}`, () =>
     Effect.gen(function* () {
@@ -282,6 +312,12 @@ for (const change of ["rotate", "remove"] as const) {
       expect(terminalEvents.find((event) => event.type === "turn.completed")?.payload.state).toBe(
         "cancelled",
       );
+      // The thread says why the turn stopped.
+      expect(
+        terminalEvents
+          .filter((event) => event.type === "runtime.warning")
+          .map((event) => event.payload.message),
+      ).toEqual([DROID_CONFIGURATION_RETIRED_MESSAGE]);
       expect(
         terminalEvents.some(
           (event) =>

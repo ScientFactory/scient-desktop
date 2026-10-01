@@ -2,15 +2,22 @@ import {
   ApprovalRequestId,
   CheckpointRef,
   EnvironmentId,
+  EventId,
   MessageId,
   TurnId,
   type ComposerContextRecord,
+  type OrchestrationThreadActivity,
 } from "@t3tools/contracts";
+import {
+  deriveAgentPanelModel,
+  foldSubagentActivities,
+} from "@t3tools/client-runtime/state/subagentRuntime";
 import { act, createRef, useLayoutEffect, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { LegendListRef, MaintainScrollAtEndOptions } from "@legendapp/list/react";
+import { deriveWorkLogEntries } from "../../session-logic";
 import { shouldUseRestingComposerLayout } from "../composerFooterLayout";
 import { useComposerFocusState } from "./useComposerFocusState";
 
@@ -2497,4 +2504,144 @@ it("announces a runtime failure as an operation, preserving the concise label", 
   expect(markup).toContain('aria-label="Operation failed"');
   expect(markup).not.toContain("tool call failed");
   expect(markup).toContain("The agent encountered a problem");
+});
+
+describe("sub-agent rows: what runs, whether it is alive, how it ended", () => {
+  // Activities as the server stores them for two Droid Task calls and a TaskOutput wait.
+  const START = Date.parse(MESSAGE_CREATED_AT);
+  const at = (seconds: number) => new Date(START + seconds * 1_000).toISOString();
+  const turnId = TurnId.make("turn-subagents");
+  const activity = (
+    id: string,
+    kind: string,
+    seconds: number,
+    payload: Record<string, unknown>,
+  ): OrchestrationThreadActivity => ({
+    id: EventId.make(id),
+    kind,
+    summary: kind,
+    tone: "info",
+    turnId,
+    createdAt: at(seconds),
+    payload: kind.startsWith("task.") ? { ...payload, agentKind: "agent" } : payload,
+  });
+  const linkage = (taskId: string, title: string) => ({
+    taskId,
+    toolUseId: taskId,
+    taskType: "subagent",
+    title,
+    role: "explorer",
+  });
+  const code = linkage("task-code", "Audit scient-desktop code smells");
+  const ci = linkage("task-ci", "Audit build, CI, and release pipeline");
+  const note = "Droid reports a sub-agent's steps only when it finishes.";
+  const launched = [
+    activity("a1", "task.started", 60, { ...code, detail: code.title }),
+    activity("a2", "task.progress", 60, {
+      ...code,
+      detail: note,
+      summary: note,
+      status: "running",
+    }),
+    activity("a3", "task.started", 60, { ...ci, detail: ci.title }),
+    activity("a4", "task.progress", 60, { ...ci, detail: note, summary: note, status: "running" }),
+  ];
+  const cancelled = activity("a5", "task.updated", 90, {
+    ...code,
+    status: "cancelled",
+    error: "Cancelled when you sent a follow-up message.",
+  });
+  const waiting = {
+    ...activity("a6", "tool.updated", 100, {
+      itemType: "collab_agent_tool_call",
+      toolCallId: "wait-1",
+      status: "inProgress",
+      title: "Waiting for sub-agent · Review OMP host integration (up to 10 min)",
+      data: { toolCallId: "wait-1", kind: "other" },
+    }),
+    tone: "tool" as const,
+  };
+
+  const timeline = (activities: ReadonlyArray<OrchestrationThreadActivity>) => ({
+    isWorking: true,
+    runningTurnId: turnId,
+    activeTurnStartedAt: MESSAGE_CREATED_AT,
+    latestTurn: {
+      turnId,
+      state: "running" as const,
+      startedAt: MESSAGE_CREATED_AT,
+      completedAt: null,
+    },
+    agentPanelModel: deriveAgentPanelModel({ agents: foldSubagentActivities(activities) }),
+    timelineEntries: deriveWorkLogEntries(activities).map((entry) => ({
+      id: entry.id,
+      kind: "work" as const,
+      createdAt: entry.createdAt,
+      entry,
+    })),
+  });
+  const textOf = (renderer: ReactTestRenderer) =>
+    renderer.root
+      .findAll(() => true)
+      .flatMap((node) => node.children)
+      .filter((child) => typeof child === "string")
+      .join("|");
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    // 2m 5s into the turn, 1m 5s after the sub-agents were launched.
+    vi.setSystemTime(START + 125_000);
+    return () => vi.useRealTimers();
+  });
+
+  it("says on the collapsed row how many sub-agents work and for how long", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} {...timeline([...launched, cancelled])} />,
+    );
+    expect(markup).toContain("Kicked off 2 subagents · 1 working");
+    // Since the launch, not since the turn began ("Working for 2m 5s").
+    expect(markup).toContain("1m 5s");
+  });
+
+  it("lists each sub-agent with its type, a live timer, and why it stopped", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(() => {
+        renderer = create(
+          <MessagesTimeline {...buildProps()} {...timeline([...launched, cancelled])} />,
+        );
+      });
+      await act(() => renderer!.root.findByProps({ "aria-expanded": false }).props.onClick());
+      const text = textOf(renderer!);
+      expect(text).toContain("Audit build, CI, and release pipeline|explorer");
+      expect(text).toContain("Working · |1m 5s");
+      expect(text).toContain(note);
+      expect(text).toContain("Audit scient-desktop code smells|explorer");
+      expect(text).toContain("Stopped");
+      expect(text).toContain("Cancelled when you sent a follow-up message.");
+    } finally {
+      await act(() => renderer?.unmount());
+    }
+  });
+
+  it("shows what a long-running step waits for and how long it has run", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} {...timeline([waiting])} />,
+    );
+    expect(markup).toContain("Waiting for sub-agent · Review OMP host integration (up to 10 min)");
+    // 25 s since the wait began.
+    expect(markup).toContain(" · 25s");
+  });
+
+  it("keeps a step that has only just begun free of a timer", () => {
+    vi.setSystemTime(START + 104_000);
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} {...timeline([waiting])} />,
+    );
+    expect(markup).toContain("Waiting for sub-agent");
+    expect(markup).not.toContain(" · 4s");
+  });
 });
