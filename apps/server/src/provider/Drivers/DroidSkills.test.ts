@@ -1,4 +1,7 @@
 import * as NodeAssert from "node:assert/strict";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -274,6 +277,34 @@ it.effect("reports startup failure without acquiring a client", () =>
     );
     NodeAssert.equal(Exit.isFailure(exit), true);
   }),
+);
+
+it.live("reports a Droid that stops reading at startup as a failure, not an uncaught error", () =>
+  Effect.gen(function* () {
+    const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-droid-skills-"));
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => NodeFS.rmSync(directory, { recursive: true, force: true })),
+    );
+    // Closes its input at once, so the first request written to it fails with EPIPE.
+    const binaryPath = NodePath.join(directory, "droid");
+    NodeFS.writeFileSync(binaryPath, "#!/bin/sh\nexec 0<&-\nsleep 1\nexit 3\n");
+    NodeFS.chmodSync(binaryPath, 0o755);
+    const uncaught: Array<unknown> = [];
+    const record = (error: unknown) => uncaught.push(error);
+    process.on("uncaughtException", record);
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => process.removeListener("uncaughtException", record)),
+    );
+
+    const exit = yield* Effect.exit(
+      discoverDroidSkills({ binaryPath, cwd: directory, environment: process.env }),
+    );
+    // The stream reports the failed write after the request was rejected.
+    yield* Effect.sleep("200 millis");
+
+    NodeAssert.equal(Exit.isFailure(exit), true);
+    NodeAssert.deepEqual(uncaught, []);
+  }).pipe(Effect.scoped),
 );
 
 it.effect("closes an acquired client when discovery is interrupted", () =>
