@@ -39,9 +39,11 @@ These stay as they are, and the rest of the note builds on them:
 
 **One repair should not wait for the migration, and it is ours.** Restoring a recovered draft today writes the whole recovered source over the current buffer. The stored base revision isn't checked when the draft is read (`visualDrafts.ts:26`), so changes made since can be overwritten. The raw typing snapshot is also installed automatically. Until recovery moves into the session:
 
-- recovery whose base no longer matches must show a comparison and ask;
+- recovery whose base no longer matches must show a comparison and ask. This covers both the Restore action and the automatic reinstall of the raw typing snapshot;
+- the current source is checked again at the moment the user applies the recovery, not only when the comparison opens. If the source or its context changed in between, the earlier choice isn't applied: the comparison is refreshed and the user is asked again;
 - where a safe merge can't be established, the recovered text stays available to read or copy;
-- nothing is replaced without an explicit choice.
+- nothing is replaced without an explicit choice;
+- the recovery record is kept until the replacement is acknowledged as saved, or the user discards it. Only the recovery version covered by that exact acknowledgement is cleared; later recovered or pending work stays.
 
 We will propose this change to you before it lands on the branch.
 
@@ -143,26 +145,54 @@ When an operation is refused, what the user typed stays in the editor as pending
 ### 6. Saving and building are separate, visible facts.
 
 - **Saved** means published to the file. **Recoverable** means the recovery record has it. They are separate acknowledgements.
-- **The PDF's state comes from the build evidence:** current, out of date, or unknown.
-- **The building behavior is decided** (review item 17, updated):
-  - opening the PDF, from any view, builds it if it is out of date;
-  - Cmd+S saves now, and also builds when the PDF is visible;
-  - typing doesn't build;
-  - when the PDF is visible and out of date, and the user has neither edited nor touched the PDF (scroll, zoom, select, search, pointer over it) for about 45 seconds, it rebuilds once;
-  - Update PDF is always available;
-  - a setting chooses when the PDF updates automatically: when idle (default), as I type (also after a 2–3 second pause in typing), or never.
-- **Every build runs in the background and swaps in only when ready.** The old PDF stays usable, with no blank screen and no spinner over the page. The new one replaces it in one step at the same page, scroll position and zoom. A failed build changes nothing on screen except a small mark on the button. Builds are coalesced, and nothing is attempted without a TeX installation.
-- **Messages stay minimal.** Nothing is shown when all is well. An out-of-date PDF is shown by the button reading "Rebuild PDF". No explanatory paragraphs; details go in a tooltip or behind a click.
-- **One prerequisite for every build, however it was requested:** the affected files, including included ones, have saved successfully, with no unresolved save error or conflict. If something is unresolved, including pending input that the build would leave out, the request says what it is and how to resolve it. It is never just disabled.
-- **Ownership:**
-  - you implement these triggers in the LaTeX surface (`0a74929cc1` had the pause mechanism, for the "as I type" choice);
-  - we add the setting and the shared status presentation. Until the setting exists, the default (when idle) applies.
+- **The PDF's state comes from the build evidence.** Today the build service reports current or out of date. The design record adds "unknown", for evidence that is incomplete; reporting it is part of our scheduler work. Today, missing evidence is treated as out of date, while incomplete evidence can still report current. Treating incomplete evidence cautiously also needs our service changes.
+
+**When the PDF builds** (decided; this replaces the earlier wording of review item 17):
+
+| Trigger                                                                                                                    | What happens                                                             |
+| -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| The PDF comes into view                                                                                                    | No PDF yet, or out of date: build. Current: show it                      |
+| Cmd+S                                                                                                                      | Save now. Then build if the PDF is in view                               |
+| Update PDF                                                                                                                 | Always available, whatever the view or setting                           |
+| Idle: the PDF is in view and out of date, and for about 45 seconds the user has neither edited nor interacted with the PDF | Build once                                                               |
+| "As I type", only when chosen in the setting                                                                               | Also build after a 2–3 second pause in editing, while the PDF is in view |
+
+- **"In view"** means PDF mode, or Split with the PDF selected as its preview. Split with Visual doesn't count. Switching Split's preview from Visual to PDF, and coming back to the PDF from another view, both count as the PDF coming into view.
+- **By default, typing doesn't build.** Only the "as I type" choice adds a build after a pause in editing.
+- **The setting, "Update the PDF automatically",** has three choices: when idle (default), as I type, never. "Never" turns off only the two timed rows, idle and as I type. Opening the PDF, Cmd+S and Update PDF work the same under every choice.
+- **Interacting with the PDF** means scrolling, zooming, selecting, searching, or moving the pointer over it. A pointer resting on the PDF doesn't count. Any interaction, and any edit, restarts the 45 seconds.
+
+**What holds for every build, however it was requested:**
+
+- **It builds what is saved.** A request waits for saves that are in progress, for the root and the files it includes. If something needs the user (a save error, a conflict, pending input the build would leave out), the request doesn't wait in the background. It says what is unresolved and how to resolve it, and the user asks again afterwards. It is never just disabled.
+- **One running, one waiting.** Requests made during a build collapse into a single follow-up build.
+- **Timed builds don't repeat on the same inputs.** After an idle or as-I-type build, successful or failed, the next timed build needs a changed input. An explicit request can always retry.
+- **Timed builds apply only while their conditions hold.** A timed build that hasn't started is dropped when the PDF leaves view, or when the setting no longer allows it.
+- **Background, then swap.** The old PDF stays usable while the new one builds, with no blank screen and no spinner over the page. Only a successfully published PDF is swapped in, in one step. Zoom and rotation are kept, and the view stays on the same page number, limited to the new page count, at the same scroll position.
+- **A swapped-in PDF is judged against the latest inputs.** If the published PDF's inputs differ from the latest inputs, it is shown and still counts as out of date. The service's own repeat passes within a build belong to one request. If the service can't publish a result because inputs changed during compilation, the previous PDF stays and the build counts as failed.
+- **A failed build changes nothing on screen except a small mark on the button.** The details and the log are behind a click.
+- **Without a TeX installation, no build is submitted.** The request offers the installation instead.
+- **Messages stay minimal.** Nothing is shown when all is well. An out-of-date PDF is shown by the button reading "Rebuild PDF". No explanatory paragraphs.
+
+**Ownership:**
+
+- **We provide** the scheduler, the setting, Cmd+S, the connection to saving (which files must be published, and how a request waits), the build store and service changes it needs, and the shared hooks for PDF visibility and interaction.
+- **You connect the LaTeX surface** through those hooks: report when the PDF is in view, pass on Update PDF, and show the result or the unresolved reason. We agree the interface with you before that connection starts.
+- **Please don't build a separate scheduler in the branch.** Until ours is active, builds stay explicitly requested. `0a74929cc1` is a useful reference for the pause mechanism.
+- **Yours now, independent of the scheduler:** review item 18 (the banner), and Update PDF saying why when it can't run.
+
+**Not specified here.** The scheduler gets its own specification and tests when we build it. That specification settles:
+
+- the exact timer transitions when the mode or the view changes;
+- how input identity is recorded for "the same inputs", including across reopening;
+- how "unknown" freshness is reported and handled;
+- whether an outside change to an included file restarts the quiet period.
 
 ### 7. Context: one source per file, whatever root interprets it.
 
 A chapter is one file with one working source. Which root and preamble interpret it is recorded with the projection, and a change of root refreshes what is supported without creating a second copy of the text.
 
-**Edits that need a change in another file.** The design record says to refuse these until failure and recovery across two saves is defined. The branch already supports one kind: adding a package or declaration to the root when a chapter needs it, accepted only when every affected buffer is unchanged and available. We keep that one kind as a stated exception. The two saves are independent: the chapter may save without its declaration, or the declaration may save while the chapter edit is still unpublished. When that happens, keep the failed edit available to retry or recover, show which file failed, and don't report the edit as fully saved. Please don't add other kinds until the migration defines the general case. When the root isn't available, the operation is refused, the input is kept, and the message says which change the root needs.
+**Edits that need a change in another file.** The design record says to refuse these until failure and recovery across two saves is defined. The branch already supports one kind: adding a package or declaration to the root when a chapter needs it, accepted only when every affected buffer is unchanged and available. We keep that one kind as a stated exception. The two saves are independent: the chapter may save without its declaration, or the declaration may save while the chapter edit is still unpublished. Our saving work will give this exception the following guarantees, with the migration. The edit counts as fully saved only when both revisions are acknowledged. Until then, every unacknowledged part is kept for retry or recovery, and each file's state is shown. Before retrying when the outcome is unknown, the files are read again, work done in between is kept, and the declaration isn't added twice. We own the tests for these cases (one save fails, an acknowledgement is lost, a file changes before the retry, the app closes in between); translator tests cover only planning and refusal. Please don't add other kinds until the migration defines the general case. When the root isn't available, the operation is refused, the input is kept, and the message says which change the root needs.
 
 ## The editor framework
 
@@ -173,18 +203,18 @@ Not decided in this note. The shared session has no dependency on Tiptap or Pros
 
 ## What this means for the review items
 
-| Review item                               | State and approach                                                                                | Who                                    | When                             |
-| ----------------------------------------- | ------------------------------------------------------------------------------------------------- | -------------------------------------- | -------------------------------- |
-| 1. Labelled equations                     | Implemented for the supported subset in `6d5cb5e8c4`. Its limits go in the capability table.      | You                                    | Table: with the first assignment |
-| 4. Title deleted after an outside change  | The reported case is fixed in `39619117d7`. General interaction and history follow rules 3 and 4. | You and us                             | After the adapter hook is agreed |
-| The small fixes in the review             | As listed there                                                                                   | You                                    | Now                              |
-| First assignment                          | Tests, capability table, measurements                                                             | You                                    | Now, after the small fixes       |
-| 5. Whole-block rebuilds                   | Rule 2: range patches and the exact-bytes check                                                   | You                                    | After the first assignment       |
-| 2, 6. Statement bodies; rendering         | Rule 1: thin prototype first, then agree the node structure                                       | You                                    | After the first assignment       |
-| 17. When the PDF builds                   | Rule 6                                                                                            | You: triggers. Us: Settings and status | Any time                         |
-| Recovery restoring an older copy          | The interim repair above, then the migration                                                      | Us                                     | Repair: soon. Migration: next    |
-| Refused edits on the remaining paths      | Rule 5                                                                                            | You                                    | With rule 2                      |
-| Shared frame, Documents, rename, Settings | Shared work in the design record                                                                  | Us                                     | In parallel                      |
+| Review item                               | State and approach                                                                                | Who                                                 | When                                |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------- | --------------------------------------------------- | ----------------------------------- |
+| 1. Labelled equations                     | Implemented for the supported subset in `6d5cb5e8c4`. Its limits go in the capability table.      | You                                                 | Table: with the contributor request |
+| 4. Title deleted after an outside change  | The reported case is fixed in `39619117d7`. General interaction and history follow rules 3 and 4. | You and us                                          | After the adapter hook is agreed    |
+| The small fixes in the review             | As listed there                                                                                   | You                                                 | Now                                 |
+| Contributor request                       | Tests and the capability table                                                                    | You                                                 | Now, after the small fixes          |
+| 5. Whole-block rebuilds                   | Rule 2: range patches and the exact-bytes check                                                   | You                                                 | After the contributor request       |
+| 2, 6. Statement bodies; rendering         | Rule 1: thin prototype first, then agree the node structure                                       | You                                                 | After the contributor request       |
+| 17. When the PDF builds                   | Rule 6                                                                                            | Us: scheduler and setting. You: connect the surface | After the scheduler lands           |
+| Recovery restoring an older copy          | The interim repair above, then the migration                                                      | Us                                                  | Repair: soon. Migration: next       |
+| Refused edits on the remaining paths      | Rule 5                                                                                            | You                                                 | With rule 2                         |
+| Shared frame, Documents, rename, Settings | Shared work in the design record                                                                  | Us                                                  | In parallel                         |
 
 ## How we will know it holds
 
@@ -194,24 +224,26 @@ Not decided in this note. The shared session has no dependency on Tiptap or Pros
   - after any supported edit, bytes outside the edited range are identical;
   - an outside change while typing, while composing, and while a field is focused keeps the selection, the field and the pending input, or resolves them explicitly;
   - after an outside change, Undo reverses surviving local edits and never overwrites the adopted change.
-- **The capability table from the first assignment,** stating for each construct how it is shown, what can be edited, and what happens otherwise.
+- **The capability table from the contributor request,** stating for each construct how it is shown, what can be edited, and what happens otherwise.
 
 ## Order of work
 
 **You:**
 
 1. the small fixes from the review;
-2. the first assignment: tests, capability table, measurements;
+2. the contributor request: tests and the capability table;
 3. rule 2 for statement blocks, and the statement-body prototype for rule 1;
 4. the LaTeX side of rule 3, once the adapter hook is agreed.
 
 **Us:**
 
 1. the interim recovery repair;
-2. map the current persistence paths: which views write, which buffers hold unpublished input, how restoring works, how included files are identified;
-3. define the recovery record and the adapter hook with you;
-4. move LaTeX onto the shared session, with one active saver per file throughout;
-5. test it under typing during saves, outside edits, view switches, recovery, and failures across several files;
-6. retire the old paths.
+2. the test documents your tests run against, and timings of per-keystroke work on small, medium and large documents;
+3. the build scheduler (rule 6), with its own specification;
+4. map the current persistence paths: which views write, which buffers hold unpublished input, how restoring works, how included files are identified;
+5. define the recovery record and the adapter hook with you;
+6. move LaTeX onto the shared session, with one active saver per file throughout;
+7. test it under typing during saves, outside edits, view switches, recovery, and failures across several files;
+8. retire the old paths.
 
 The shared frame proceeds in parallel.
