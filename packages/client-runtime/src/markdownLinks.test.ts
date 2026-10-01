@@ -189,6 +189,8 @@ describe("workspaceRelativeFilePath", () => {
     ["/repo/project/docs/../src/./a.ts", "/repo/project", "src/a.ts"],
     ["/repo/other/../project/a.ts", "/repo/project", "a.ts"],
     ["C:\\repo\\..\\other\\a.ts", "C:\\repo", null],
+    // On POSIX a backslash is part of the file name and survives.
+    ["/tmp/repo/a\\b.md", "/tmp/repo", "a\\b.md"],
     // A path that resolves to the root itself is the workspace, written `.`.
     ["/repo/project/docs/..", "/repo/project", "."],
   ])("relates %s to %s", (path, workspaceRoot, relativePath) => {

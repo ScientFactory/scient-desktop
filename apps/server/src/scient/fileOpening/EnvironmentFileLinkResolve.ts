@@ -12,6 +12,7 @@
  *
  * @module EnvironmentFileLinkResolve
  */
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
@@ -42,10 +43,18 @@ export interface LinkCandidateSearchLimits {
   readonly deadlineMs: number;
 }
 
+function errorCode(error: unknown): unknown {
+  return typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+}
+
 function isMissing(error: unknown): boolean {
-  const code =
-    typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+  const code = errorCode(error);
   return code === "ENOENT" || code === "ENOTDIR";
+}
+
+/** A link that only leads back to itself names no file. */
+function isSymlinkLoop(error: unknown): boolean {
+  return errorCode(error) === "ELOOP";
 }
 
 /**
@@ -65,22 +74,21 @@ export async function findFilesNamed(
   const pending = [root];
   const deadline = Date.now() + limits.deadlineMs;
   let searched = 0;
+  // Cleared whenever something could not be examined: an unexamined place may
+  // hold a better match or a tie, so nothing found elsewhere is provably unique.
   let complete = true;
   for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
-    if (searched >= limits.maxDirectories || Date.now() > deadline) {
-      complete = false;
-      break;
-    }
+    if (searched >= limits.maxDirectories) return { paths, complete: false };
     searched += 1;
     const directory = next;
     const entries = await NodeFSP.readdir(directory, { withFileTypes: true }).catch(() => null);
     if (entries === null) {
-      // An unreadable directory may hold a better match, so nothing found
-      // elsewhere can be called unique.
       complete = false;
       continue;
     }
     for (const entry of entries) {
+      // Checked per entry, so one very large directory cannot outlast the bound.
+      if (Date.now() > deadline) return { paths, complete: false };
       const entryPath = NodePath.join(directory, entry.name);
       if (entry.isDirectory()) {
         if (!SKIPPED_DIRECTORY_NAMES.has(entry.name)) pending.push(entryPath);
@@ -89,14 +97,20 @@ export async function findFilesNamed(
       if (entry.name !== fileName) continue;
       if (entry.isFile()) {
         paths.push(entryPath);
-      } else if (entry.isSymbolicLink()) {
-        // A dangling link, or one to a folder, is not a file to open.
-        const target = await NodeFSP.stat(entryPath).catch(() => null);
-        if (target?.isFile()) paths.push(entryPath);
+        continue;
+      }
+      if (!entry.isSymbolicLink()) continue;
+      const target = await NodeFSP.stat(entryPath).catch((error: unknown) => error);
+      if (target instanceof NodeFS.Stats) {
+        // A link to a folder is not a file to open.
+        if (target.isFile()) paths.push(entryPath);
+      } else if (!isMissing(target) && !isSymlinkLoop(target)) {
+        // A target that cannot be inspected may be a file, and so a tie.
+        complete = false;
       }
     }
   }
-  return { paths, complete };
+  return { paths, complete: complete && Date.now() <= deadline };
 }
 
 function pathSegments(path: string): string[] {

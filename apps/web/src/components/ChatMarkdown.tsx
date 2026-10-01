@@ -246,6 +246,8 @@ import { openEnvironmentFileInPreview } from "../scient/fileOpening/openEnvironm
 import {
   chatFileLinkResolveInput,
   chatFileOpenPlan,
+  claimLinkClick,
+  settleWithin,
   type ChatFileOpenPlan,
 } from "../scient/fileOpening/chatFileLinkResolution";
 import { environmentFileLinkResolution } from "../scient/fileOpening/environmentFileState";
@@ -336,6 +338,17 @@ export function shouldUseMarkdownFileBrowserPrimaryAction(input: {
   // The caller supplies this action only when the canonical workspace-file
   // policy selected Browser preview. Do not duplicate extension policy here.
   return input.canOpenInBrowser;
+}
+
+/**
+ * Marks a chat link click as the user's latest intent for the thread's panel:
+ * a newer link click, or anything done in the panel, supersedes it.
+ */
+function claimFileLinkClick(threadRef: ScopedThreadRef): () => boolean {
+  return claimLinkClick({
+    claimLatest: claimWorkspaceBasenameLookup,
+    readUserActionRevision: () => useRightPanelStore.getState().getUserActionRevision(threadRef),
+  });
 }
 
 /** Says when a link led to a different file than it names, so an unexpected match is noticed. */
@@ -2538,14 +2551,13 @@ function useChatMarkdownState({
         changedPaths: changedFiles?.map((file) => file.path) ?? [],
       });
       if (input === null || environmentId === null) return chatFileOpenPlan(null);
-      // A stalled connection must not swallow the click: past the wait, the
-      // link opens as written and the file panel reports what it finds.
-      const resolution = await Promise.race([
+      const resolution = await settleWithin(
         resolveEnvironmentFileLink({ environmentId, input }).then((result) =>
           result._tag === "Success" ? result.value : null,
         ),
-        new Promise<null>((resolve) => setTimeout(resolve, FILE_LINK_RESOLVE_WAIT_MS, null)),
-      ]);
+        FILE_LINK_RESOLVE_WAIT_MS,
+        null,
+      );
       return chatFileOpenPlan(resolution);
     },
     [changedFiles, cwd, environmentId, resolveEnvironmentFileLink],
@@ -2556,18 +2568,10 @@ function useChatMarkdownState({
   const openFileInPanel = useCallback(
     (panelPath: string, line: number | undefined) => {
       if (!threadRef) return;
-      // Claimed on every click so a newer one supersedes a check in flight, and
-      // anything the user does in the panel meanwhile wins over this click.
-      const isLatestLookup = claimWorkspaceBasenameLookup();
-      const userActionRevision = useRightPanelStore.getState().getUserActionRevision(threadRef);
+      const isCurrentClick = claimFileLinkClick(threadRef);
       void (async () => {
         const plan = await planFileLinkOpen(panelPath);
-        if (
-          !isLatestLookup() ||
-          useRightPanelStore.getState().getUserActionRevision(threadRef) !== userActionRevision
-        ) {
-          return;
-        }
+        if (!isCurrentClick()) return;
         useRightPanelStore
           .getState()
           .openFile(threadRef, plan.kind === "resolved" ? plan.path : panelPath, line);
@@ -2584,16 +2588,10 @@ function useChatMarkdownState({
         openMarkdownMedia(mediaPath, filePath);
         return;
       }
-      const isLatestLookup = claimWorkspaceBasenameLookup();
-      const userActionRevision = useRightPanelStore.getState().getUserActionRevision(threadRef);
+      const isCurrentClick = claimFileLinkClick(threadRef);
       void (async () => {
         const plan = await planFileLinkOpen(filePath);
-        if (
-          !isLatestLookup() ||
-          useRightPanelStore.getState().getUserActionRevision(threadRef) !== userActionRevision
-        ) {
-          return;
-        }
+        if (!isCurrentClick()) return;
         if (plan.kind === "as-written") {
           openMarkdownMedia(mediaPath, filePath);
           return;
@@ -2616,15 +2614,9 @@ function useChatMarkdownState({
     ): Promise<AtomCommandResult<unknown, unknown>> => {
       const superseded = AsyncResult.success<void, never>(undefined);
       if (!threadRef) return openEnvironmentHtmlInPreview(filePath);
-      const isLatestLookup = claimWorkspaceBasenameLookup();
-      const userActionRevision = useRightPanelStore.getState().getUserActionRevision(threadRef);
+      const isCurrentClick = claimFileLinkClick(threadRef);
       const plan = await planFileLinkOpen(filePath);
-      if (
-        !isLatestLookup() ||
-        useRightPanelStore.getState().getUserActionRevision(threadRef) !== userActionRevision
-      ) {
-        return superseded;
-      }
+      if (!isCurrentClick()) return superseded;
       if (plan.kind === "missing") {
         useRightPanelStore.getState().openFile(threadRef, workspaceRelativePath ?? filePath);
         return superseded;

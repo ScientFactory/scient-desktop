@@ -64,3 +64,40 @@ export function chatFileOpenPlan(
       return { kind: "missing" };
   }
 }
+
+/**
+ * Waits for `pending` at most `waitMs`, then answers `fallback`. A stalled
+ * connection must not swallow a click: past the wait the link opens as
+ * written. A rejection is treated the same way.
+ */
+export function settleWithin<T>(pending: Promise<T>, waitMs: number, fallback: T): Promise<T> {
+  return new Promise<T>((resolve) => {
+    const timer = setTimeout(resolve, waitMs, fallback);
+    pending.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      () => {
+        clearTimeout(timer);
+        resolve(fallback);
+      },
+    );
+  });
+}
+
+/**
+ * Marks a link click as the user's latest intent and returns a check for
+ * whether it still is. A newer link click, or anything the user did in the
+ * panel since, supersedes it, so a slow answer never replaces a newer choice.
+ */
+export function claimLinkClick(input: {
+  /** Claims the shared click sequence; the result says whether it is still the latest. */
+  readonly claimLatest: () => () => boolean;
+  /** The panel's count of user actions, read at the click and again later. */
+  readonly readUserActionRevision: () => number;
+}): () => boolean {
+  const isLatest = input.claimLatest();
+  const revision = input.readUserActionRevision();
+  return () => isLatest() && input.readUserActionRevision() === revision;
+}

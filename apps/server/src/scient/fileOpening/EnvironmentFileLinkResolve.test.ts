@@ -194,6 +194,33 @@ describe("resolveEnvironmentFileLink", () => {
         });
       }).pipe(Effect.provide(TestLayer), Effect.scoped),
   );
+
+  it.effect.skipIf(
+    !symlinksSupported ||
+      HostProcessPlatform.defaultValue() === "win32" ||
+      process.getuid?.() === 0,
+  )("does not call a match unique while a same-named symlink cannot be inspected", () =>
+    Effect.gen(function* () {
+      const { base, workspace, resolve, write, fileSystem, path } = yield* makeFixture;
+      // The link's target sits in a folder that cannot be searched, so it may
+      // well be a file: an equally good second candidate.
+      yield* write("outside/sealed/inside.md");
+      yield* fileSystem.makeDirectory(path.join(workspace, "other/reviews"), { recursive: true });
+      yield* fileSystem.symlink(
+        path.join(base, "outside/sealed/inside.md"),
+        path.join(workspace, "other/reviews/inside.md"),
+      );
+      yield* fileSystem.chmod(path.join(base, "outside/sealed"), 0o000);
+      const result = yield* resolve("reviews/inside.md");
+      yield* fileSystem.chmod(path.join(base, "outside/sealed"), 0o700);
+
+      expect(result).toEqual({
+        _tag: "incomplete",
+        paths: ["project/reviews/inside.md"],
+        missingPath: path.join(workspace, "reviews/inside.md"),
+      });
+    }).pipe(Effect.provide(TestLayer), Effect.scoped),
+  );
 });
 
 describe("findFilesNamed", () => {
@@ -212,6 +239,12 @@ describe("findFilesNamed", () => {
       );
       expect(bounded.complete).toBe(false);
       expect(bounded.paths.length).toBeLessThan(12);
+
+      // The time bound holds inside a directory too, not only between them.
+      const expired = yield* Effect.promise(() =>
+        findFilesNamed(workspace, "same.md", { maxDirectories: 1_000, deadlineMs: -1 }),
+      );
+      expect(expired).toEqual({ paths: [], complete: false });
     }).pipe(Effect.provide(TestLayer), Effect.scoped),
   );
 });

@@ -378,6 +378,16 @@ export function collapseAbsoluteFilePath(path: string): string {
 }
 
 /**
+ * Writes a Windows path (drive or UNC) with `/` separators for comparison. A
+ * POSIX path is returned as is: there a backslash is part of a file name.
+ */
+function portableSeparators(path: string): string {
+  return WINDOWS_DRIVE_ROOT_PATTERN.test(path) || path.startsWith("\\\\")
+    ? path.replaceAll("\\", "/")
+    : path;
+}
+
+/**
  * The path relative to the workspace root, or null when the path is not inside
  * it. Dot segments are resolved first, so `<root>/../notes.md` is correctly
  * outside the workspace rather than the workspace path `../notes.md`.
@@ -387,10 +397,11 @@ export function workspaceRelativeFilePath(
   workspaceRoot: string | null | undefined,
 ): string | null {
   if (!workspaceRoot) return null;
-  const normalizedPath = collapseAbsoluteFilePath(path).replaceAll("\\", "/");
-  const normalizedRoot = collapseAbsoluteFilePath(workspaceRoot)
-    .replaceAll("\\", "/")
-    .replace(/\/+$/, "");
+  const normalizedPath = portableSeparators(collapseAbsoluteFilePath(path));
+  const normalizedRoot = portableSeparators(collapseAbsoluteFilePath(workspaceRoot)).replace(
+    /\/+$/,
+    "",
+  );
   const caseInsensitive = isWindowsAbsolutePath(stripSlashPrefixedWindowsDrive(workspaceRoot));
   const pathForCompare = caseInsensitive ? normalizedPath.toLowerCase() : normalizedPath;
   const rootForCompare = caseInsensitive ? normalizedRoot.toLowerCase() : normalizedRoot;
