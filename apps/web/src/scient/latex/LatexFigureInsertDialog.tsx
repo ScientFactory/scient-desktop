@@ -1,6 +1,13 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useEffect, useRef, useState } from "react";
-import { Dialog, DialogPopup, DialogTitle, DialogDescription } from "~/components/ui/dialog";
+import {
+  Dialog,
+  DialogPopup,
+  DialogTitle,
+  DialogDescription,
+  DialogHeader,
+  DialogPanel,
+} from "~/components/ui/dialog";
 import { useProjectEntriesQuery } from "~/components/files/projectFilesQueryState";
 import { latexFigureSource } from "./figureSource";
 
@@ -15,13 +22,19 @@ export function LatexFigureInsertDialog(props: {
 }) {
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogPopup className="scient-writing-dialog">
-        <DialogTitle>Insert a figure</DialogTitle>
-        <DialogDescription>
-          Choose an image already in this project. Its caption and size can be edited after
-          insertion.
-        </DialogDescription>
-        {props.open ? <FigurePicker {...props} /> : null}
+      <DialogPopup className="w-[min(560px,calc(100vw-32px))]" padding="none" gap="none">
+        <DialogHeader>
+          <DialogTitle>Insert a figure</DialogTitle>
+          <DialogDescription>
+            Choose an image already in this project. Its caption and size can be edited after
+            insertion.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogPanel>
+          <div className="scient-writing-dialog">
+            {props.open ? <FigurePicker {...props} /> : null}
+          </div>
+        </DialogPanel>
       </DialogPopup>
     </Dialog>
   );

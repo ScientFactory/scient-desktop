@@ -31,6 +31,11 @@ export function readVisualDraft(
   return draft && draft.source !== current?.source ? draft.source : null;
 }
 
+/** A recovered whole-file draft cannot replace a newer disk revision. */
+export function canRestoreVisualDraft(key: string, revision: string): boolean {
+  return load(key)?.baseRevision === revision;
+}
+
 /** One source copy, coalesced off the input path. Workspace saving owns durability. */
 export function checkpointVisualDraft(
   key: string,

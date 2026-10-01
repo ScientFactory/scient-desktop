@@ -6,6 +6,7 @@ import {
   confirmVisualDraft,
   discardVisualDraft,
   readVisualDraft,
+  canRestoreVisualDraft,
 } from "./visualDrafts";
 
 const keys = [
@@ -45,6 +46,13 @@ afterEach(() => {
 });
 
 describe("Visual draft recovery", () => {
+  it("only restores a draft over its original disk revision", () => {
+    expect(canRestoreVisualDraft("versioned", "disk-one")).toBe(false);
+    checkpointVisualDraft("versioned", "new visual prose", before, after, "disk-one");
+    expect(canRestoreVisualDraft("versioned", "disk-one")).toBe(true);
+    expect(canRestoreVisualDraft("versioned", "disk-two")).toBe(false);
+    expect(readVisualDraft("versioned")).toBe(after);
+  });
   it("keeps an optimistic complete-source checkpoint durable but silent until disk confirmation", () => {
     retain("pending", "new visual prose", after);
     checkpointVisualDraft("pending", "new visual prose", before, after, "disk-one");

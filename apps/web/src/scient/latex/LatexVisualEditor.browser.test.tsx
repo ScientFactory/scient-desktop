@@ -1,4 +1,4 @@
-import { type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { page } from "vitest/browser";
@@ -11,6 +11,7 @@ vi.mock("~/assets/assetUrls", () => ({
 }));
 
 import { LatexVisualEditor } from "./LatexVisualEditor";
+import { clearVisualDraft } from "./visualDrafts";
 import "./scient-latex.css";
 
 const source = `\\documentclass[10pt,letterpaper]{article}
@@ -79,6 +80,7 @@ describe("visual LaTeX page layout", () => {
   let root: Root;
 
   beforeEach(async () => {
+    clearVisualDraft("browser-statement-test");
     await page.viewport(1400, 900);
     container = document.createElement("div");
     Object.assign(container.style, { width: "1200px", height: "900px" });
@@ -89,6 +91,77 @@ describe("visual LaTeX page layout", () => {
   afterEach(() => {
     root.unmount();
     container.remove();
+    clearVisualDraft("browser-statement-test");
+  });
+
+  it.each(["Theorem", "Remark"])("inserts and edits %s through the actual menu", async (name) => {
+    let current = "\\documentclass{article}\n\\begin{document}\nBefore\n\\end{document}";
+    function Harness() {
+      const [text, setText] = useState(current);
+      return (
+        <LatexVisualEditor
+          draftKey="browser-statement-test"
+          fileRevision="r1"
+          source={text}
+          disabled={false}
+          onEditingChange={() => {}}
+          onOpenSource={() => {}}
+          onEdit={(expected, next) => {
+            if (expected !== current) return false;
+            current = next;
+            setText(next);
+            return true;
+          }}
+        />
+      );
+    }
+    root.render(<Harness />);
+    await page.getByRole("button", { name: "Insert", exact: true }).click();
+    await page.getByRole("menuitem", { name, exact: true }).click();
+    const body = page.getByLabelText("Scientific statement body", { exact: true });
+    await body.fill("The statement is editable.");
+    await expect.poll(() => current).toContain("The statement is editable.");
+    await body.fill("The statement is editable. More text.");
+    await expect.poll(() => current).toContain("The statement is editable. More text.");
+    await page.getByText("Statement options", { exact: true }).click();
+    await page
+      .getByRole("textbox", { name: "Scientific statement title", exact: true })
+      .fill("Main result");
+    await expect.poll(() => current).toContain("\\begin{" + name.toLowerCase() + "}[Main result]");
+    expect(container.querySelector(".scient-latex-scientific-structure")).not.toBeNull();
+  });
+
+  it("edits the exact source of a scientific block with unsupported commands", async () => {
+    const raw =
+      "\\begin{theorem}\nFor $u_0 \\in L^2(\\Omega)$, $t \\ge 0$.\n\\custom{Keep}\n\\end{theorem}";
+    let current = "\\documentclass{article}\n\\begin{document}\n" + raw + "\n\\end{document}";
+    function Harness() {
+      const [text, setText] = useState(current);
+      return (
+        <LatexVisualEditor
+          draftKey="browser-statement-test"
+          fileRevision="r1"
+          source={text}
+          disabled={false}
+          onEditingChange={() => {}}
+          onOpenSource={() => {}}
+          onEdit={(expected, next) => {
+            if (expected !== current) return false;
+            current = next;
+            setText(next);
+            return true;
+          }}
+        />
+      );
+    }
+    root.render(<Harness />);
+    await page.getByRole("button", { name: "Edit this block’s LaTeX", exact: true }).click();
+    await page
+      .getByRole("textbox", { name: "Block LaTeX source", exact: true })
+      .fill(raw.replace("t \\ge 0", "t > 0"));
+    await page.getByRole("button", { name: "Apply LaTeX", exact: true }).click();
+    await expect.poll(() => current).toContain("$t > 0$");
+    expect(current).toContain("$u_0 \\in L^2(\\Omega)$");
   });
 
   it("keeps content out of gaps and honors the explicit break after Contents", async () => {

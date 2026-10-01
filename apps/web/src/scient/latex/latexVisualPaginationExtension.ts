@@ -185,6 +185,20 @@ function measureDocument(
       return;
     }
     const rect = dom.getBoundingClientRect();
+    if (node.type.name === "latexScientific") {
+      const heading = dom.querySelector<HTMLElement>(".scient-latex-scientific-heading");
+      if (heading) {
+        const headingRect = heading.getBoundingClientRect();
+        units.push({
+          position: before,
+          top: y(rect.top),
+          bottom: y(headingRect.bottom),
+          keepWithNext: true,
+        });
+      }
+      node.forEach((child, offset) => visit(child, position + 1 + offset));
+      return;
+    }
     const contentHeight = dimensions.pageHeight - dimensions.marginTop - dimensions.marginBottom;
     if (
       node.type.name === "latexRichPreview" &&

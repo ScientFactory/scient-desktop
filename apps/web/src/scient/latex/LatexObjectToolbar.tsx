@@ -20,7 +20,10 @@ export function LatexObjectToolbar(props: {
   }, [id, props.selected]);
   useEffect(() => {
     const element = props.root.current;
-    const activate = () => {
+    const activate = (event: Event) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest("[data-node-view-wrapper]") !== element)
+        return;
       document.dispatchEvent(new CustomEvent("scient-latex-context-activate", { detail: id }));
       setActive(true);
     };

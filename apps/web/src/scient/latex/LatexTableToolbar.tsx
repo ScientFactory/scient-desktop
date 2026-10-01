@@ -133,7 +133,7 @@ export function LatexTableToolbar(props: Props) {
     >
       <span
         className="scient-latex-context-label scient-latex-table-position"
-        title={`Table: row ${props.row + 1}, column ${props.column + 1}`}
+        aria-label={`Table: row ${props.row + 1}, column ${props.column + 1}`}
       >
         R{props.row + 1} C{props.column + 1}
       </span>

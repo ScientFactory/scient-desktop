@@ -9,21 +9,7 @@
 }
 
 .scient-writing-dialog {
-  width: min(560px, calc(100vw - 32px));
-  padding: 24px;
-  overflow-y: auto;
   font-family: var(--font-sans);
-}
-.scient-writing-dialog [data-slot="dialog-title"] {
-  font-size: 18px;
-  font-weight: 600;
-  padding-right: 22px;
-}
-.scient-writing-dialog [data-slot="dialog-description"] {
-  margin-top: 7px;
-  color: var(--muted-foreground);
-  font-size: 12px;
-  line-height: 1.6;
 }
 .scient-writing-search {
   width: 100%;
@@ -261,6 +247,7 @@
   min-width: 28px;
   padding: 4px 6px;
   white-space: nowrap;
+  background: transparent;
 }
 .scient-latex-zoom-controls svg {
   width: 15px;
@@ -273,11 +260,11 @@
   padding-right: 6px;
   border: 1px solid var(--border);
   border-radius: 5px;
-  background: var(--background);
+  background: transparent;
   color: var(--foreground);
   font-variant-numeric: tabular-nums;
 }
-.scient-latex-writing-toolbar .scient-latex-zoom-value input {
+.scient-latex-zoom-value input {
   width: 52px;
   min-width: 0;
   min-height: 26px;
@@ -287,6 +274,9 @@
   color: var(--foreground);
   font: inherit;
   text-align: right;
+}
+.scient-latex-zoom-controls button {
+  background: transparent;
 }
 .scient-latex-zoom-value > span {
   color: var(--muted-foreground);
@@ -520,10 +510,6 @@
   font-size: 11px;
 }
 @container scient-writing (max-width: 440px) {
-  .scient-latex-writing-toolbar .scient-latex-insert-label,
-  .scient-latex-writing-toolbar .scient-latex-zoom-controls .scient-latex-zoom-step {
-    display: none;
-  }
   .scient-latex-writing-toolbar > .scient-latex-toolbar-group > select {
     width: 92px;
   }
@@ -784,8 +770,7 @@
 
 .scient-latex-visual-document {
   --scient-latex-selection-background: #c9ddf5;
-  display: flex;
-  flex-direction: column;
+  display: flow-root;
   counter-reset: scient-section;
   width: 100%;
   min-height: var(--scient-latex-document-height, var(--scient-latex-paper-height, 1056px));
@@ -803,7 +788,6 @@
   caret-color: #2769bc;
 }
 .scient-latex-visual-document > * {
-  flex: none;
   min-width: 0;
 }
 .scient-latex-visual-document > .react-renderer {
@@ -1018,6 +1002,7 @@
 
 .scient-latex-visual-inline-math {
   display: inline-block;
+  text-indent: 0;
   position: relative;
   vertical-align: baseline;
   border-radius: 4px;
@@ -1494,6 +1479,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 
 .scient-latex-visual-command {
   display: inline-block;
+  text-indent: 0;
   font: 12px/1.5 var(--font-sans);
   vertical-align: baseline;
 }
@@ -1521,6 +1507,20 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   background: #f7f9fb;
   border-radius: 5px;
   padding: 10px 12px;
+}
+.scient-latex-visual-raw textarea {
+  display: block;
+  width: 100%;
+  min-height: 8em;
+  field-sizing: content;
+  resize: vertical;
+  padding: 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: inherit;
+  font: 12px/1.5 var(--font-mono);
+  text-align: left;
+  text-indent: 0;
 }
 .scient-latex-visual-raw-label {
   color: #63758a;
@@ -1573,10 +1573,6 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 }
 .scient-latex-title-preview textarea:focus {
   outline: none;
-  text-decoration: underline;
-  text-decoration-color: #94aac4;
-  text-decoration-thickness: 1px;
-  text-underline-offset: 0.2em;
 }
 .scient-latex-title-preview textarea::placeholder {
   color: #8090a4;
@@ -2201,6 +2197,16 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 .scient-latex-scientific-preview {
   padding-bottom: 0;
 }
+.scient-latex-scientific-structure {
+  display: flow-root;
+  margin-block: 0.8em;
+}
+.scient-latex-scientific-body {
+  display: flow-root;
+}
+.scient-latex-scientific-body > div > p:first-child {
+  text-indent: 0;
+}
 .scient-latex-scientific-preview .scient-latex-rich-preview-label button {
   border: 0;
   background: transparent;
@@ -2305,8 +2311,10 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 
 .scient-latex-toolbar {
   display: flex;
-  flex-wrap: wrap;
-  min-height: 34px;
+  flex-wrap: nowrap;
+  height: 34px;
+  box-sizing: border-box;
+  overflow-x: auto;
   flex: none;
   align-items: center;
   gap: 8px;
@@ -2346,8 +2354,8 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   display: flex;
   min-width: 0;
   flex: 1;
-  flex-wrap: wrap;
-  flex-basis: 140px;
+  flex-wrap: nowrap;
+  flex-basis: 0;
   align-items: center;
   gap: 6px;
 }
@@ -2407,6 +2415,32 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   align-items: center;
   gap: 4px;
   margin-left: auto;
+}
+.scient-latex-build-action {
+  width: 116px;
+  flex: none;
+  white-space: nowrap;
+}
+.scient-latex-cancel-slot {
+  width: 66px;
+  flex: none;
+}
+.scient-latex-cancel-slot button:disabled {
+  visibility: hidden;
+}
+.scient-latex-paragraph-style {
+  display: flex;
+  width: 126px;
+  flex: none;
+}
+.scient-latex-paragraph-style button {
+  width: 100%;
+}
+.scient-latex-paragraph-style button span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .scient-latex-action {
@@ -2792,16 +2826,24 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   background: transparent;
   font-size: 12px;
 }
+.scient-latex-writing-toolbar .scient-latex-zoom-value input {
+  padding: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
 .scient-latex-writing-toolbar .scient-markdown-command-button:hover,
 .scient-latex-writing-toolbar .scient-markdown-command-button[aria-pressed="true"] {
   background: var(--accent);
 }
 .scient-latex-writing-toolbar .scient-latex-toolbar-group:first-child > button:first-child {
-  max-width: 126px;
+  width: 126px;
+  flex: none;
 }
 .scient-latex-writing-toolbar .scient-latex-toolbar-group:first-child > button:first-child > span {
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .scient-latex-insert-search {
   padding: 5px;
@@ -2947,8 +2989,12 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 }
 
 .scient-latex-writing-toolbar {
-  overflow-x: auto;
+  overflow: visible;
   scrollbar-width: none;
+}
+.scient-latex-writing-toolbar > .scient-markdown-editor-dock {
+  width: 100%;
+  min-width: 0;
 }
 .scient-latex-writing-toolbar::-webkit-scrollbar {
   display: none;

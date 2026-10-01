@@ -1,6 +1,13 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Dialog, DialogPopup, DialogTitle, DialogDescription } from "~/components/ui/dialog";
+import {
+  Dialog,
+  DialogPopup,
+  DialogTitle,
+  DialogDescription,
+  DialogHeader,
+  DialogPanel,
+} from "~/components/ui/dialog";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import { projectEnvironment } from "~/state/projects";
 import {
@@ -92,85 +99,98 @@ export function LatexReferenceDialog(props: {
   };
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogPopup className="scient-writing-dialog" initialFocus={input}>
-        <DialogTitle>Citations and references</DialogTitle>
-        <DialogDescription>
-          Choose a labelled object in this file or a source from its linked bibliography.
-        </DialogDescription>
-        <div className="scient-writing-dialog-tabs">
-          <button
-            type="button"
-            aria-pressed={mode === "reference"}
-            onClick={() => setMode("reference")}
-          >
-            Document objects
-          </button>
-          <button
-            type="button"
-            aria-pressed={mode === "citation"}
-            onClick={() => setMode("citation")}
-          >
-            Citations
-          </button>
-        </div>
-        <input
-          ref={input}
-          className="scient-writing-search"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder={
-            mode === "citation"
-              ? "Search title, author, year, or key…"
-              : "Find a section, equation, figure, or table…"
-          }
-          aria-label="Search references"
-        />
-        <div className="scient-writing-choices">
-          {choices.map((entry, index) => (
-            <button
-              type="button"
-              key={`${entry.key}:${index}`}
-              onClick={() => insert(entry.command, entry.key)}
-            >
-              <span>
-                <strong>{entry.title}</strong>
-                <small>{entry.detail}</small>
-              </span>
-            </button>
-          ))}
-          {choices.length === 0 ? (
-            <p>
-              {pending && mode === "citation"
-                ? "Reading project bibliography…"
-                : mode === "citation"
-                  ? "No matching bibliography entries. Link a .bib file in LaTeX, or enter a citation key below."
-                  : "No matching labelled objects in this file. Add a reference label to an object, or enter a key below."}
-            </p>
-          ) : null}
-        </div>
-        {unavailable.length && mode === "citation" ? (
-          <p role="status">Could not read: {unavailable.join(", ")}. You can still insert a key.</p>
-        ) : null}
-        <form
-          className="scient-writing-reference-key"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (key.trim() && !/[{}\\%\s]/u.test(key.trim()))
-              insert(mode === "citation" ? "cite" : "ref", key.trim());
-          }}
-        >
-          <label>
-            Known key
+      <DialogPopup
+        className="w-[min(560px,calc(100vw-32px))]"
+        padding="none"
+        gap="none"
+        initialFocus={input}
+      >
+        <DialogHeader>
+          <DialogTitle>Citations and references</DialogTitle>
+          <DialogDescription>
+            Choose a labelled object in this file or a source from its linked bibliography.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogPanel>
+          <div className="scient-writing-dialog">
+            <div className="scient-writing-dialog-tabs">
+              <button
+                type="button"
+                aria-pressed={mode === "reference"}
+                onClick={() => setMode("reference")}
+              >
+                Document objects
+              </button>
+              <button
+                type="button"
+                aria-pressed={mode === "citation"}
+                onClick={() => setMode("citation")}
+              >
+                Citations
+              </button>
+            </div>
             <input
-              value={key}
-              onChange={(event) => setKey(event.target.value)}
-              placeholder={mode === "citation" ? "author2026" : "fig:result"}
+              ref={input}
+              className="scient-writing-search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder={
+                mode === "citation"
+                  ? "Search title, author, year, or key…"
+                  : "Find a section, equation, figure, or table…"
+              }
+              aria-label="Search references"
             />
-          </label>
-          <button type="submit" disabled={!key.trim() || /[{}\\%\s]/u.test(key.trim())}>
-            Insert
-          </button>
-        </form>
+            <div className="scient-writing-choices">
+              {choices.map((entry, index) => (
+                <button
+                  type="button"
+                  key={`${entry.key}:${index}`}
+                  onClick={() => insert(entry.command, entry.key)}
+                >
+                  <span>
+                    <strong>{entry.title}</strong>
+                    <small>{entry.detail}</small>
+                  </span>
+                </button>
+              ))}
+              {choices.length === 0 ? (
+                <p>
+                  {pending && mode === "citation"
+                    ? "Reading project bibliography…"
+                    : mode === "citation"
+                      ? "No matching bibliography entries. Link a .bib file in LaTeX, or enter a citation key below."
+                      : "No matching labelled objects in this file. Add a reference label to an object, or enter a key below."}
+                </p>
+              ) : null}
+            </div>
+            {unavailable.length && mode === "citation" ? (
+              <p role="status">
+                Could not read: {unavailable.join(", ")}. You can still insert a key.
+              </p>
+            ) : null}
+            <form
+              className="scient-writing-reference-key"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (key.trim() && !/[{}\\%\s]/u.test(key.trim()))
+                  insert(mode === "citation" ? "cite" : "ref", key.trim());
+              }}
+            >
+              <label>
+                Known key
+                <input
+                  value={key}
+                  onChange={(event) => setKey(event.target.value)}
+                  placeholder={mode === "citation" ? "author2026" : "fig:result"}
+                />
+              </label>
+              <button type="submit" disabled={!key.trim() || /[{}\\%\s]/u.test(key.trim())}>
+                Insert
+              </button>
+            </form>
+          </div>
+        </DialogPanel>
       </DialogPopup>
     </Dialog>
   );

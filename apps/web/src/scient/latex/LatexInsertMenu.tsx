@@ -10,6 +10,7 @@ import {
   MenuGroupLabel,
 } from "~/components/ui/menu";
 import { DocumentTableSizeMenu } from "../writing/DocumentTableSizeMenu";
+import { dockButtonClass } from "../markdownEditor/ui/dockChrome";
 
 export interface LatexInsertAction {
   id: string;
@@ -17,6 +18,7 @@ export interface LatexInsertAction {
   description: string;
   group: string;
   run: () => void;
+  disabled?: boolean;
 }
 
 /** All insertion routes share these commands and return focus to their destination. */
@@ -73,7 +75,7 @@ export function LatexInsertMenu(props: {
         <MenuTrigger
           disabled={props.disabled}
           render={
-            <button type="button" aria-label="Insert">
+            <button type="button" aria-label="Insert" className={dockButtonClass()}>
               <Plus aria-hidden="true" />
               <span className="scient-latex-insert-label">Insert</span>
             </button>
@@ -117,11 +119,14 @@ export function LatexInsertMenu(props: {
             />
           </div>
           <div className="scient-latex-insert-items">
-            {!props.mathOnly &&
-            (!query || "table grid rows columns".includes(query.toLowerCase())) ? (
-              <DocumentTableSizeMenu
-                onInsert={({ rows, columns }) => run(() => props.onInsertTable(rows, columns))}
-              />
+            {!query || "table grid rows columns".includes(query.toLowerCase()) ? (
+              props.mathOnly ? (
+                <MenuItem disabled>Table</MenuItem>
+              ) : (
+                <DocumentTableSizeMenu
+                  onInsert={({ rows, columns }) => run(() => props.onInsertTable(rows, columns))}
+                />
+              )
             ) : null}
             {groups.map((group) => (
               <MenuGroup key={group}>
@@ -132,6 +137,7 @@ export function LatexInsertMenu(props: {
                     <MenuItem
                       key={action.id}
                       size="compact"
+                      disabled={action.disabled}
                       aria-description={action.description}
                       onClick={() => run(action.run)}
                     >

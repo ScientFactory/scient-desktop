@@ -1,4 +1,4 @@
-import { useId, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { Maximize2, Minus, Plus } from "lucide-react";
 import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
 import { MIN_VISUAL_ZOOM as MIN_ZOOM, MAX_VISUAL_ZOOM as MAX_ZOOM } from "./useLatexPinchZoom";
@@ -18,8 +18,7 @@ export function LatexVisualZoomControls({
 }) {
   const [draft, setDraft] = useState<string | null>(null);
   const cancelled = useRef(false);
-  const presetsId = useId();
-  const percentage = Math.round(zoom * 10000) / 100;
+  const percentage = Math.round(zoom * 100);
   const step = (direction: -1 | 1) => {
     setDraft(null);
     const levels = direction === 1 ? ZOOM_LEVELS : ZOOM_LEVELS.toReversed();
@@ -41,47 +40,45 @@ export function LatexVisualZoomControls({
           <Minus aria-hidden="true" />
         </button>
       </ScientTooltip>
-      <label className="scient-latex-zoom-value" title="Enter a zoom percentage (25–400%)">
-        <input
-          aria-label="Document zoom percentage"
-          type="text"
-          inputMode="decimal"
-          list={presetsId}
-          value={draft ?? String(percentage)}
-          onFocus={(event) => {
-            cancelled.current = false;
-            event.currentTarget.select();
-          }}
-          onChange={(event) => setDraft(event.currentTarget.value)}
-          onBlur={(event) => {
-            if (!cancelled.current && draft !== null) {
-              const text = event.currentTarget.value.trim().replace(/%$/u, "").trim();
-              const value = /^\d+(?:[.,]\d+)?$/u.test(text) ? Number(text.replace(",", ".")) : NaN;
-              if (Number.isFinite(value) && value > 0)
-                onZoom(Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, value / 100)));
-            }
-            setDraft(null);
-          }}
-          onKeyDown={(event) => {
-            event.stopPropagation();
-            if (event.key === "Escape") {
-              event.preventDefault();
-              cancelled.current = true;
-              event.currentTarget.blur();
-            }
-            if (event.key === "Enter") {
-              event.preventDefault();
-              event.currentTarget.blur();
-            }
-          }}
-        />
-        <span aria-hidden="true">%</span>
-      </label>
-      <datalist id={presetsId}>
-        {ZOOM_LEVELS.map((level) => (
-          <option key={level} value={Math.round(level * 100)} />
-        ))}
-      </datalist>
+      <ScientTooltip content="Enter a zoom percentage (25–400%)">
+        <label className="scient-latex-zoom-value">
+          <input
+            aria-label="Document zoom percentage"
+            type="text"
+            inputMode="decimal"
+            value={draft ?? String(percentage)}
+            onFocus={(event) => {
+              cancelled.current = false;
+              event.currentTarget.select();
+            }}
+            onChange={(event) => setDraft(event.currentTarget.value)}
+            onBlur={(event) => {
+              if (!cancelled.current && draft !== null) {
+                const text = event.currentTarget.value.trim().replace(/%$/u, "").trim();
+                const value = /^\d+(?:[.,]\d+)?$/u.test(text)
+                  ? Number(text.replace(",", "."))
+                  : NaN;
+                if (Number.isFinite(value) && value > 0)
+                  onZoom(Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, value / 100)));
+              }
+              setDraft(null);
+            }}
+            onKeyDown={(event) => {
+              event.stopPropagation();
+              if (event.key === "Escape") {
+                event.preventDefault();
+                cancelled.current = true;
+                event.currentTarget.blur();
+              }
+              if (event.key === "Enter") {
+                event.preventDefault();
+                event.currentTarget.blur();
+              }
+            }}
+          />
+          <span aria-hidden="true">%</span>
+        </label>
+      </ScientTooltip>
       <ScientTooltip content="Zoom in">
         <button
           type="button"

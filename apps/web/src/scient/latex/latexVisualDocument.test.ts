@@ -215,7 +215,10 @@ A concise introduction.
   });
 
   it("preserves numbered math environments when editing an equation", () => {
-    const source = document("\\begin{equation}\nx^2\n\\end{equation}");
+    const source = document("\\begin{equation}\nx^2\n\\end{equation}").replace(
+      "\\begin{document}",
+      "\\usepackage{amsmath}\n\\begin{document}",
+    );
     const nodes = structuredClone(projectLatexVisualDocument(source).content.content!);
     nodes[0]!.attrs!.tex = "\\frac{x}{2}";
     expect(edit(source, nodes)?.source).toBe(source.replace("x^2", "\\frac{x}{2}"));
@@ -448,27 +451,35 @@ Theory & Proofs \\\\
   });
 
   it("edits theorem-like scientific blocks and converts their semantic type", () => {
-    const block = latexVisualScientificSource("claim")!;
+    expect(latexVisualScientificSource("claim")).toBe("\\begin{claim}\n\n\\end{claim}");
+    const block = "\\begin{claim}[Title]\nStatement.\n\\end{claim}";
     const source = document(block);
     const projection = projectLatexVisualDocument(source);
     expect(projection.blocks[0]!.node.attrs).toMatchObject({
-      kind: "scientific",
       environment: "claim",
       title: "Title",
-      body: "Statement.",
-      editable: true,
     });
     const nodes = structuredClone(projection.content.content!);
     Object.assign(nodes[0]!.attrs!, {
       environment: "theorem",
       title: "Main result",
-      body: "Every supported edit round-trips.",
-      label: "thm:main",
     });
+    nodes[0]!.content = [
+      {
+        type: "paragraph",
+        content: [
+          {
+            type: "latexInlineCommand",
+            attrs: { name: "label", argument: "thm:main", raw: "\\label{thm:main}" },
+          },
+          { type: "text", text: "Every supported edit round-trips." },
+        ],
+      },
+    ];
     const changed = edit(source, nodes);
     expect(changed?.source).toContain("\\newtheorem{theorem}{Theorem}");
     expect(changed?.source).toContain(
-      "\\begin{theorem}[Main result]\n\\label{thm:main}\nEvery supported edit round-trips.\n\\end{theorem}",
+      "\\begin{theorem}[Main result]\n\\label{thm:main}Every supported edit round-trips.\n\\end{theorem}",
     );
   });
 
@@ -540,7 +551,7 @@ Text
 Value & $x^2$ \\\\
 \\end{tabular}`);
     const projection = projectLatexVisualDocument(source);
-    expect(projection.blocks[0]!.node.type).toBe("latexRichPreview");
+    expect(projection.blocks[0]!.node.type).toBe("latexRawBlock");
     expect(projection.blocks[0]!.editable).toBe(false);
     expect(edit(source, [paragraph("replacement")])).toBeNull();
   });
@@ -551,7 +562,7 @@ Value & $x^2$ \\\\
     );
     const projection = projectLatexVisualDocument(source);
     expect(projection.blocks.map((block) => block.node.type)).toEqual([
-      "latexRawBlock",
+      "latexRichPreview",
       "paragraph",
       "latexRawBlock",
     ]);

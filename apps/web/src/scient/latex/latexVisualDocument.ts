@@ -1,11 +1,12 @@
 import type { JSONContent } from "@tiptap/core";
 import { patchNumberedMathSource, projectMathNumbering } from "./latexMathNumbering";
-import { newMathSymbolPackages } from "./mathSymbols";
+import { MATH_SYMBOLS, newMathSymbolPackages } from "./mathSymbols";
 import {
   ensureLatexPackages,
   ensureLatexMenuColors,
   latexPackageInventory,
   newLatexCommandPackages,
+  latexCommands,
 } from "./latexPackages";
 import {
   latexLengthInches,
@@ -301,6 +302,29 @@ function closingBrace(source: string, opening: number): number | null {
   return null;
 }
 
+function textAccent(source: string): { source: string; text: string } | null {
+  const match = /^\\(['"`^~=.]|[uvHckr](?=\s*\{))(?:\s*\{([A-Za-z])\}|([A-Za-z]))/u.exec(source);
+  if (!match) return null;
+  const accents: Record<string, string> = {
+    "'": "\u0301",
+    '"': "\u0308",
+    "`": "\u0300",
+    "^": "\u0302",
+    "~": "\u0303",
+    "=": "\u0304",
+    ".": "\u0307",
+    u: "\u0306",
+    v: "\u030c",
+    H: "\u030b",
+    c: "\u0327",
+    k: "\u0328",
+    r: "\u030a",
+  };
+  const text = ((match[2] ?? match[3]!) + accents[match[1]!]).normalize("NFC");
+  // A single source token must map to one editor character for narrow edits.
+  return text.length === 1 ? { source: match[0], text } : null;
+}
+
 function parseInline(source: string, marks: readonly string[] = []): JSONContent[] | null {
   const nodes: JSONContent[] = [];
   let plain = "";
@@ -334,6 +358,12 @@ function parseInline(source: string, marks: readonly string[] = []): JSONContent
       continue;
     }
     if (char === "\\") {
+      const accent = textAccent(source.slice(index));
+      if (accent) {
+        plain += accent.text;
+        index += accent.source.length;
+        continue;
+      }
       const escaped = ESCAPES[source[index + 1] ?? ""];
       if (escaped !== undefined) {
         plain += escaped;
@@ -700,29 +730,9 @@ function nextBlockEnd(body: string, from: number): number {
   return body.length;
 }
 
-function previewText(source: string): string {
-  let value = source.replace(/%[^\r\n]*/gu, " ");
-  for (let pass = 0; pass < 8; pass++) {
-    const previous = value;
-    value = value
-      .replace(/\\href\{[^{}]*\}\{([^{}]*)\}/gu, "$1")
-      .replace(
-        /\\(?:textbf|textit|emph|texttt|textsc|underline|mbox|url|footnote)\{([^{}]*)\}/gu,
-        "$1",
-      );
-    if (value === previous) break;
-  }
-  return value
-    .replace(/\$\$|\\\[|\\\]|\\\(|\\\)|\$/gu, "")
-    .replace(/\\(?:toprule|midrule|bottomrule|hline|centering|small|footnotesize)\b/gu, " ")
-    .replace(/\\(?:cite\w*|ref|eqref|autoref|pageref|label)\{([^{}]*)\}/gu, "$1")
-    .replace(/\\([%&_#${}])/gu, "$1")
-    .replace(/~/gu, " ")
-    .replace(/\\\\/gu, " ")
-    .replace(/\\[A-Za-z]+\*?/gu, " ")
-    .replace(/[{}]/gu, "")
-    .replace(/\s+/gu, " ")
-    .trim();
+/** Unsupported metadata stays visibly exact; it is never stripped into prose. */
+function exactMetadataSource(source: string): string {
+  return source;
 }
 
 function parseDescriptionPreview(source: string): JSONContent | null {
@@ -747,8 +757,8 @@ function parseDescriptionPreview(source: string): JSONContent | null {
     return {
       id: `description-${index}`,
       raw,
-      label: label?.display ?? previewText(match[1]!),
-      body: itemBody?.display ?? previewText(raw.slice(bodyStart)),
+      label: label?.display ?? exactMetadataSource(match[1]!),
+      body: itemBody?.display ?? exactMetadataSource(raw.slice(bodyStart)),
       labelFrom: label?.from ?? 0,
       labelTo: label?.to ?? 0,
       bodyFrom: itemBody?.from ?? 0,
@@ -834,16 +844,16 @@ export function titleMetadata(source: string) {
           ? "hidden"
           : "explicit";
   return {
-    title: title === null ? "" : (metadataText(title) ?? previewText(title)),
+    title: title === null ? "" : (metadataText(title) ?? exactMetadataSource(title)),
     author:
       author === null || !author.trim()
         ? hiddenAuthor(preamble)
-        : (metadataText(author) ?? previewText(author)),
+        : (metadataText(author) ?? exactMetadataSource(author)),
     authorEnabled: author !== null && author.trim() !== "",
     date:
       dateMode === "default" || dateMode === "today"
         ? currentDateLabel()
-        : (metadataText(date ?? "") ?? previewText(date ?? "")),
+        : (metadataText(date ?? "") ?? exactMetadataSource(date ?? "")),
     dateEnabled: dateMode !== "hidden",
     dateMode,
     sourceMeta: {
@@ -906,8 +916,11 @@ function parseDocumentFrontMatter(source: string, documentSource: string): JSONC
     attrs: {
       kind: "abstract",
       raw: source,
-      body: body?.display ?? previewText(source.slice(opening[0].length, ending)),
+      body: body?.display ?? exactMetadataSource(source.slice(opening[0].length, ending)),
       editable: body !== null,
+      sourceMeta: body
+        ? { bodyRange: { from: body.from, to: body.to, original: body.display } }
+        : null,
     },
   };
 }
@@ -944,12 +957,15 @@ function parseSimpleLayout(source: string): JSONContent | null {
       );
   const editable =
     code ||
-    (inline !== null && inline.every((node) => node.type === "text" || node.type === "hardBreak"));
+    (inline !== null &&
+      inline.every(
+        (node) => (node.type === "text" || node.type === "hardBreak") && !node.marks?.length,
+      ));
   const body = code
     ? interior
     : editable
       ? inline!.map((node) => (node.type === "hardBreak" ? "\n" : (node.text ?? ""))).join("")
-      : previewText(interior);
+      : exactMetadataSource(interior);
   return {
     type: "latexRichPreview",
     attrs: { kind: "simple", environment, body, raw: source, editable },
@@ -964,12 +980,15 @@ function parsePartPreview(source: string): JSONContent | null {
   const label = /^\s*\\label\{([^{}\\%\s]+)\}$/u.exec(source.slice(close + 1).trim());
   if (source.slice(close + 1).trim() && !label) return null;
   const inline = parseInline(source.slice(opening[0].length, close));
-  const editable = inline !== null && inline.every((node) => node.type === "text");
+  const editable =
+    inline !== null && inline.every((node) => node.type === "text" && !node.marks?.length);
   return {
     type: "latexRichPreview",
     attrs: {
       kind: "part",
-      title: editable ? inline!.map((node) => node.text ?? "").join("") : previewText(source),
+      title: editable
+        ? inline!.map((node) => node.text ?? "").join("")
+        : exactMetadataSource(source),
       unnumbered: Boolean(opening[1]),
       label: label?.[1] ?? "",
       raw: source,
@@ -1017,13 +1036,18 @@ function parseBibliographyPreview(source: string): JSONContent | null {
     const end = matches[index + 1]?.index ?? body.length;
     const raw = body.slice(match.index! + match[0].length, end).trim();
     const inline = parseInline(raw);
-    if (!inline || inline.some((node) => node.type !== "text" && node.type !== "hardBreak"))
+    if (
+      !inline ||
+      inline.some(
+        (node) => (node.type !== "text" && node.type !== "hardBreak") || node.marks?.length,
+      )
+    )
       editable = false;
     return {
       label: match[1]!,
       body: inline
         ? inline.map((node) => (node.type === "hardBreak" ? "\n" : (node.text ?? ""))).join("")
-        : previewText(raw),
+        : exactMetadataSource(raw),
     };
   });
   return {
@@ -1283,7 +1307,9 @@ function parseTablePreview(source: string): JSONContent | null {
         editableTableCell(cell.source, body.from + row.from + cell.from),
       );
       return {
-        rows: cells.map((cell, index) => editableCells[index]?.display ?? previewText(cell.source)),
+        rows: cells.map(
+          (cell, index) => editableCells[index]?.display ?? exactMetadataSource(cell.source),
+        ),
         sources: cells.map((cell) => {
           const clean = cell.source
             .trim()
@@ -1334,8 +1360,9 @@ function parseTablePreview(source: string): JSONContent | null {
     attrs: {
       kind: "table",
       raw: source,
-      caption: captionCell?.display ?? previewText(commandArgument(source, "caption") ?? ""),
-      label: labelCell?.display ?? previewText(commandArgument(source, "label") ?? ""),
+      caption:
+        captionCell?.display ?? exactMetadataSource(commandArgument(source, "caption") ?? ""),
+      label: labelCell?.display ?? exactMetadataSource(commandArgument(source, "label") ?? ""),
       rows,
       cellRanges: editable ? parsedRows.map((row) => row.ranges) : null,
       rowIds: rows.map((_, index) => `table-row-${index}`),
@@ -1453,6 +1480,12 @@ function parseScientificEnvironment(source: string): JSONContent | null {
     body !== null &&
     (titleRange === null || title !== null) &&
     (labelCommand === null || label !== null) &&
+    !(
+      body &&
+      labelCommand &&
+      body.from < openingTo + labelCommand.to &&
+      body.to > openingTo + labelCommand.from
+    ) &&
     !/\\[A-Za-z]+/u.test(
       bodySource.replace(/\\(?:textbackslash|textasciitilde|textasciicircum)\{\}/gu, ""),
     );
@@ -1462,9 +1495,9 @@ function parseScientificEnvironment(source: string): JSONContent | null {
       kind: "scientific",
       raw: source,
       environment,
-      title: title?.display ?? previewText(titleRange?.source ?? ""),
-      body: body?.display ?? previewText(bodySource),
-      label: label?.display ?? previewText(labelCommand?.argument.source ?? ""),
+      title: title?.display ?? exactMetadataSource(titleRange?.source ?? ""),
+      body: body?.display ?? exactMetadataSource(bodySource),
+      label: label?.display ?? exactMetadataSource(labelCommand?.argument.source ?? ""),
       editable,
       sourceMeta: editable
         ? {
@@ -1544,9 +1577,9 @@ function parseFigurePreview(source: string): JSONContent | null {
     attrs: {
       kind: "figure",
       raw: source,
-      path: path?.display ?? previewText(source.slice(pathOpening + 1, pathClose)),
-      caption: caption?.display ?? previewText(captionRange?.source ?? ""),
-      label: label?.display ?? previewText(labelRange?.source ?? ""),
+      path: path?.display ?? exactMetadataSource(source.slice(pathOpening + 1, pathClose)),
+      caption: caption?.display ?? exactMetadataSource(captionRange?.source ?? ""),
+      label: label?.display ?? exactMetadataSource(labelRange?.source ?? ""),
       figureWidth: graphicsWidth(options),
       figureOptions: options,
       figurePlacement: opening[2] ?? "",
@@ -1602,9 +1635,84 @@ function parseRichPreview(source: string, documentSource: string): JSONContent |
   );
 }
 
+function scientificSourceRanges(source: string) {
+  const opening = /^\\begin\{([A-Za-z*]+)\}/u.exec(source);
+  const environment = opening?.[1] ?? "";
+  if (!opening || !SCIENTIFIC_ENVIRONMENTS.has(environment)) return null;
+  const titleRange = optionalArgumentRange(source, opening[0].length);
+  const title = titleRange ? editableTableCell(titleRange.source, titleRange.from) : null;
+  if (titleRange && !title) return null;
+  const from = titleRange?.end ?? opening[0].length;
+  const to = source.lastIndexOf("\\end{" + environment + "}");
+  if (to < from || source.slice(to + environment.length + 6).trim()) return null;
+  return { environment, title, titleRange, openingTo: opening[0].length, from, to };
+}
+
+const scientificMathCommands = new Set([
+  ...MATH_SYMBOLS.flatMap((symbol) => latexCommands(symbol.latex).map((match) => match[1]!)),
+  "le",
+  "ge",
+  "to",
+  "text",
+  "textrm",
+  "textsf",
+  "texttt",
+  "textbf",
+  "textit",
+  "textnormal",
+  "operatorname",
+  "limits",
+  "nolimits",
+  "displaylimits",
+  "substack",
+  "overset",
+  "underset",
+  "mathop",
+  "mathbin",
+  "mathrel",
+  "mathord",
+  "mathopen",
+  "mathclose",
+  "mathpunct",
+  "mathinner",
+]);
+
+function supportedScientificMath(node: JSONContent): boolean {
+  if (node.type === "latexInlineMath" || node.type === "latexDisplayMath") {
+    const tex = String(node.attrs?.tex ?? "");
+    if (
+      latexCommands(tex).some(
+        (match) => /^[A-Za-z]/u.test(match[1]!) && !scientificMathCommands.has(match[1]!),
+      )
+    )
+      return false;
+    if (
+      [...tex.matchAll(/\\(?:begin|end)\{([^}]+)\}/gu)].some(
+        (match) => !STRUCTURED_MATH_ENVIRONMENT.test(match[1]!),
+      )
+    )
+      return false;
+  }
+  return node.content?.every(supportedScientificMath) ?? true;
+}
+
+function parseScientificStructure(source: string, depth: number): JSONContent | null {
+  if (depth >= 32) return null;
+  const ranges = scientificSourceRanges(source);
+  if (!ranges) return null;
+  const body = projectLatexVisualDocument(source.slice(ranges.from, ranges.to), depth + 1);
+  if (body.rawBlocks > 0 || !supportedScientificMath(body.content)) return null;
+  return {
+    type: "latexScientific",
+    attrs: { environment: ranges.environment, title: ranges.title?.display ?? "", raw: source },
+    content: body.content.content ?? [{ type: "paragraph" }],
+  };
+}
+
 function classifyBlock(source: string, depth: number): JSONContent | null {
   if (source.trim() === "\\par") return { type: "paragraph", content: [] };
   return (
+    parseScientificStructure(source, depth) ??
     parseHeading(source) ??
     parseList(source, depth) ??
     (() => {
@@ -1648,7 +1756,8 @@ export function projectLatexVisualDocument(source: string, depth = 0): LatexVisu
         raw,
       );
     const classified = dynamicSyntax ? null : classifyBlock(raw, depth);
-    const preview = classified === null && !dynamicSyntax ? parseRichPreview(raw, source) : null;
+    const candidate = classified === null && !dynamicSyntax ? parseRichPreview(raw, source) : null;
+    const preview = candidate?.attrs?.editable === true ? candidate : null;
     const node = withSourceId(
       classified ?? preview ?? { type: "latexRawBlock", attrs: { raw, label: "Raw LaTeX" } },
       id,
@@ -1758,7 +1867,18 @@ export function escapeText(text: string): string {
 }
 
 function serializeInline(nodes: readonly JSONContent[] | undefined): string {
-  return (nodes ?? [])
+  const merged: JSONContent[] = [];
+  for (const node of nodes ?? []) {
+    const previous = merged.at(-1);
+    if (
+      node.type === "text" &&
+      previous?.type === "text" &&
+      JSON.stringify(node.marks ?? []) === JSON.stringify(previous.marks ?? [])
+    )
+      merged[merged.length - 1] = { ...previous, text: (previous.text ?? "") + (node.text ?? "") };
+    else merged.push(node);
+  }
+  return merged
     .map((node) => {
       if (node.type === "latexInlineMath")
         return latexVisualMathSource(
@@ -1768,7 +1888,11 @@ function serializeInline(nodes: readonly JSONContent[] | undefined): string {
           },
           false,
         );
-      if (node.type === "latexInlineCommand") return String(node.attrs?.raw ?? "");
+      if (node.type === "latexInlineCommand") {
+        const name = String(node.attrs?.name ?? "");
+        if (!INLINE_ATOMS.has(name) || SOURCE_ONLY_INLINE_COMMANDS.has(name)) return "";
+        return "\\" + name + "{" + String(node.attrs?.argument ?? "") + "}";
+      }
       if (node.type === "hardBreak") return "\\\\\n";
       if (node.type !== "text") return "";
       let value = escapeText(node.text ?? "");
@@ -1990,6 +2114,27 @@ function serializeFigurePreview(node: JSONContent): string | null {
 }
 
 export function serializeLatexVisualBlock(node: JSONContent): string | null {
+  if (node.type === "latexScientific") {
+    const environment = safeLatexArgument(node.attrs?.environment);
+    if (!environment || !SCIENTIFIC_ENVIRONMENTS.has(environment)) return null;
+    const title = typeof node.attrs?.title === "string" ? node.attrs.title : "";
+    if (/[\[\]]/u.test(title)) return null;
+    const blocks = (node.content ?? []).map(serializeLatexVisualBlock);
+    if (blocks.some((block) => block === null)) return null;
+    const eol = String(node.attrs?.raw ?? "").includes("\r\n") ? "\r\n" : "\n";
+    return (
+      "\\begin{" +
+      environment +
+      "}" +
+      (title ? "[" + escapeText(title) + "]" : "") +
+      eol +
+      blocks.join(eol + eol) +
+      eol +
+      "\\end{" +
+      environment +
+      "}"
+    );
+  }
   if (node.type === "paragraph") return serializeInline(node.content) || "\\par";
   if (node.type === "heading") {
     const command =
@@ -2421,6 +2566,8 @@ function comparableNode(node: JSONContent): ComparableVisualNode {
       .filter(([key, value]) => {
         if (
           key === "sourceId" ||
+          (node.type === "latexInlineCommand" && key === "raw") ||
+          (node.type === "latexScientific" && key === "raw") ||
           (node.type === "latexDisplayMath" && key === "numberingSource") ||
           key === "latexCommand" ||
           (node.type === "latexRichPreview" &&
@@ -2624,7 +2771,8 @@ function scientificEnvironments(content: readonly JSONContent[]): Set<string> {
   return new Set(
     content
       .flatMap((node) => [
-        ...(node.type === "latexRichPreview" && node.attrs?.kind === "scientific"
+        ...((node.type === "latexRichPreview" && node.attrs?.kind === "scientific") ||
+        node.type === "latexScientific"
           ? [String(node.attrs?.environment ?? "")]
           : []),
         ...scientificEnvironments(node.content ?? []),
@@ -2797,6 +2945,7 @@ interface InlineSourceUnit {
   from: number;
   to: number;
   marks: readonly string[];
+  wrappers: readonly string[];
 }
 
 /** A source map for supported inline content, including TeX whitespace and aliases. */
@@ -2804,6 +2953,7 @@ function inlineSourceUnits(
   source: string,
   offset = 0,
   marks: readonly string[] = [],
+  wrappers: readonly string[] = [],
 ): InlineSourceUnit[] | null {
   const units: InlineSourceUnit[] = [];
   for (let at = 0; at < source.length;) {
@@ -2813,17 +2963,22 @@ function inlineSourceUnits(
       const open = at + wrapper[0].length - 1;
       const close = closingBrace(source, open);
       if (close === null) return null;
-      const children = inlineSourceUnits(source.slice(open + 1, close), offset + open + 1, [
-        ...marks,
-        INLINE_MARKS[wrapper[1]!]!,
-      ]);
+      const children = inlineSourceUnits(
+        source.slice(open + 1, close),
+        offset + open + 1,
+        [...marks, INLINE_MARKS[wrapper[1]!]!],
+        [...wrappers, wrapper[1]!],
+      );
       if (!children) return null;
       units.push(...children);
       at = close + 1;
       continue;
     }
     let end = at + 1;
-    if (rest.startsWith("\\(")) {
+    const accent = textAccent(rest);
+    if (accent) {
+      end = at + accent.source.length;
+    } else if (rest.startsWith("\\(")) {
       const close = findDelimiter(source, "\\)", at + 2);
       if (close < 0) return null;
       end = close + 2;
@@ -2854,6 +3009,7 @@ function inlineSourceUnits(
       from: offset + at,
       to: offset + end,
       marks,
+      wrappers,
     });
     at = end;
   }
@@ -2864,6 +3020,63 @@ function inlineEditorUnits(nodes: readonly JSONContent[]): JSONContent[] {
   return nodes.flatMap((node) =>
     node.type === "text" ? (node.text ?? "").split("").map((text) => ({ ...node, text })) : [node],
   );
+}
+
+/** A paragraph split keeps each surviving token's original TeX spelling. */
+function splitParagraphSource(
+  block: LatexVisualSourceBlock,
+  next: readonly JSONContent[],
+): string[] | null {
+  if (
+    block.node.type !== "paragraph" ||
+    next.length < 2 ||
+    next.some((node) => node.type !== "paragraph")
+  )
+    return null;
+  const units = inlineSourceUnits(block.source);
+  if (!units) return null;
+  let at = 0;
+  const results: string[] = [];
+  for (const node of next) {
+    const desired = inlineEditorUnits(node.content ?? []);
+    let value = "";
+    let wrappers: readonly string[] = [];
+    for (const child of desired) {
+      const key = latexVisualNodeSignature(child);
+      // Enter consumes boundary whitespace, which must not migrate into a wrapper.
+      while (
+        units[at]?.key !== key &&
+        units[at]?.node.type === "text" &&
+        /^\s+$/u.test(units[at]!.node.text ?? "")
+      )
+        at++;
+      const unit = units[at++];
+      if (!unit || unit.key !== key) return null;
+      let shared = 0;
+      while (
+        shared < wrappers.length &&
+        shared < unit.wrappers.length &&
+        wrappers[shared] === unit.wrappers[shared]
+      )
+        shared++;
+      value += "}".repeat(wrappers.length - shared);
+      value += unit.wrappers
+        .slice(shared)
+        .map((name) => "\\" + name + "{")
+        .join("");
+      value += block.source.slice(unit.from, unit.to);
+      wrappers = unit.wrappers;
+    }
+    value += "}".repeat(wrappers.length);
+    results.push(value || "\\par");
+  }
+  if (
+    units
+      .slice(at)
+      .some((unit) => unit.node.type !== "text" || !/^\s*$/u.test(unit.node.text ?? ""))
+  )
+    return null;
+  return results;
 }
 
 function minimallyPatchedBlock(block: LatexVisualSourceBlock, next: JSONContent): string | null {
@@ -2880,8 +3093,17 @@ function minimallyPatchedBlock(block: LatexVisualSourceBlock, next: JSONContent)
           block.source,
         )
       : null;
-  const from = heading?.[0].length ?? 0;
-  const to = heading ? closingBrace(block.source, from - 1) : block.source.length;
+  const plain = (block.node.content ?? []).every(
+    (node) => node.type === "text" && !node.marks?.length,
+  )
+    ? (block.node.content ?? []).map((node) => node.text ?? "").join("")
+    : null;
+  const trimmed: readonly [number, number] =
+    plain !== null && block.source === escapeText(plain)
+      ? [0, block.source.length]
+      : trimSourceRange(block.source, 0, block.source.length);
+  const from = heading?.[0].length ?? trimmed[0];
+  const to = heading ? closingBrace(block.source, from - 1) : trimmed[1];
   if (to === null) return null;
   // Plain prose needs no per-character LaTeX tokenization. Keep the general
   // mapper for commands, marks, nonbreaking spaces and original TeX spelling.
@@ -2935,6 +3157,135 @@ function minimallyPatchedBlock(block: LatexVisualSourceBlock, next: JSONContent)
         if (reparsed && roundTripSignature(reparsed) === roundTripSignature(next)) return candidate;
       }
   return null;
+}
+
+function patchScientificStructure(
+  block: LatexVisualSourceBlock,
+  next: JSONContent,
+  rootSource: string | null,
+): string | null {
+  if (next.type !== "latexScientific") return null;
+  const ranges = scientificSourceRanges(block.source);
+  const environment = safeLatexArgument(next.attrs?.environment);
+  const title = next.attrs?.title;
+  if (
+    !ranges ||
+    !environment ||
+    !SCIENTIFIC_ENVIRONMENTS.has(environment) ||
+    typeof title !== "string" ||
+    /[\[\]]/u.test(title)
+  )
+    return null;
+  const originalBody = block.source.slice(ranges.from, ranges.to);
+  const body = applyLatexVisualDocumentChange(
+    originalBody,
+    projectLatexVisualDocument(originalBody),
+    {
+      type: "doc",
+      content: next.content ?? [],
+    },
+    { rootSource, allowRootUpdates: true },
+  );
+  if (!body) return null;
+  let changedBody = body.source;
+  const eol = block.source.includes("\r\n") ? "\r\n" : "\n";
+  if (!originalBody.trim() && changedBody.trim() && !/[\r\n]$/u.test(changedBody))
+    changedBody += eol;
+  let head = block.source.slice(0, ranges.from);
+  if (title !== (ranges.title?.display ?? "")) {
+    if (ranges.title) {
+      const raw = head.slice(ranges.title.from, ranges.title.to);
+      const content = parseInline(raw);
+      const patched =
+        content &&
+        minimallyPatchedBlock(
+          { ...block, source: raw, node: { type: "paragraph", content } },
+          {
+            type: "paragraph",
+            content: title ? [{ type: "text", text: title }] : [],
+          },
+        );
+      if (patched === null || patched === undefined) return null;
+      head = head.slice(0, ranges.title.from) + patched + head.slice(ranges.title.to);
+    } else if (title) head += "[" + escapeText(title) + "]";
+  }
+  head = head.slice(0, 7) + environment + head.slice(7 + ranges.environment.length);
+  return head + changedBody + "\\end{" + environment + "}";
+}
+
+function patchRichTextBlock(block: LatexVisualSourceBlock, next: JSONContent): string | null {
+  if (block.node.type !== "latexRichPreview" || next.type !== block.node.type) return null;
+  const original = parseRichPreview(block.source, block.source);
+  if (!original?.attrs?.editable || original.attrs.kind !== next.attrs?.kind) return null;
+  const kind = String(original.attrs.kind);
+  if (kind !== "scientific" && kind !== "abstract") return null;
+  const meta = original.attrs.sourceMeta;
+  if (!meta || typeof meta !== "object") return null;
+  const patches: { from: number; to: number; value: string }[] = [];
+  for (const field of kind === "scientific" ? ["body", "title"] : ["body"]) {
+    const value = next.attrs?.[field];
+    if (typeof value !== "string") return null;
+    if (value === original.attrs[field]) continue;
+    const range = meta[field + "Range"];
+    if (!range) {
+      if (field !== "title") return null;
+      patches.push({
+        from: meta.openingTo,
+        to: meta.openingTo,
+        value: "[" + escapeText(value) + "]",
+      });
+      continue;
+    }
+    const raw = block.source.slice(range.from, range.to);
+    const content = parseInline(raw);
+    if (!content) return null;
+    const changed = minimallyPatchedBlock(
+      { ...block, source: raw, node: { type: "paragraph", content } },
+      { type: "paragraph", content: value ? [{ type: "text", text: value }] : [] },
+    );
+    if (changed === null) return null;
+    patches.push({ from: range.from, to: range.to, value: changed });
+  }
+  if (kind === "scientific") {
+    const environment = safeLatexArgument(next.attrs?.environment);
+    const label = safeLatexLabel(next.attrs?.label ?? "");
+    if (!environment || !SCIENTIFIC_ENVIRONMENTS.has(environment) || label === null) return null;
+    if (environment !== original.attrs.environment) {
+      const old = String(original.attrs.environment);
+      patches.push(
+        { from: 7, to: 7 + old.length, value: environment },
+        { from: meta.endingFrom + 5, to: meta.endingFrom + 5 + old.length, value: environment },
+      );
+    }
+    if (label !== original.attrs.label) {
+      const range = meta.labelCommandRange;
+      if (range)
+        patches.push(
+          label
+            ? { from: range.argumentFrom, to: range.argumentTo, value: label }
+            : { from: range.from, to: range.to, value: "" },
+        );
+      else if (label) {
+        const eol = block.source.includes("\r\n") ? "\r\n" : "\n";
+        patches.push({
+          from: meta.openingTo,
+          to: meta.openingTo,
+          value: eol + "\\label{" + label + "}",
+        });
+      }
+    }
+  }
+  const ordered = patches
+    .map((patch, order) => ({ ...patch, order }))
+    .sort((left, right) => right.from - left.from || right.order - left.order);
+  let changed = block.source;
+  let boundary = block.source.length;
+  for (const patch of ordered) {
+    if (patch.from < 0 || patch.to > boundary || patch.to < patch.from) return null;
+    changed = changed.slice(0, patch.from) + patch.value + changed.slice(patch.to);
+    boundary = patch.from;
+  }
+  return changed;
 }
 
 export function applyLatexVisualDocumentChange(
@@ -3006,22 +3357,55 @@ export function applyLatexVisualDocumentChange(
     };
   }
   const eol = source.includes("\r\n") ? "\r\n" : "\n";
-  const serialized = newChanged.map((node, index) => {
-    const previousBlock = oldChanged.length === newChanged.length ? oldChanged[index] : null;
-    if (
-      previousBlock?.node.type === "latexDisplayMath" &&
-      previousBlock.node.attrs?.numberingSource
-    )
-      return serializeNumberedMath(
-        { ...node.attrs, tex: String(node.attrs?.tex ?? "") },
-        previousBlock.source,
-      );
-    const minimal =
-      oldChanged.length === newChanged.length && oldChanged[index]
-        ? minimallyPatchedBlock(oldChanged[index]!, node)
-        : null;
-    return minimal ?? serializeLatexVisualBlock(node)?.replace(/\r?\n/gu, eol) ?? null;
-  });
+  const split = oldChanged.length === 1 ? splitParagraphSource(oldChanged[0]!, newChanged) : null;
+  const serialized =
+    split ??
+    newChanged.map((node, index) => {
+      const previousBlock = oldChanged.length === newChanged.length ? oldChanged[index] : null;
+      if (previousBlock?.node.type === "latexScientific" && node.type === "latexScientific")
+        return patchScientificStructure(
+          previousBlock,
+          node,
+          source.includes("\\begin{document}") ? source : (context?.rootSource ?? null),
+        );
+      if (
+        previousBlock?.node.type === "latexDisplayMath" &&
+        node.type === "latexDisplayMath" &&
+        !previousBlock.node.attrs?.numberingSource &&
+        previousBlock.node.attrs?.wrapper === node.attrs?.wrapper &&
+        (previousBlock.node.attrs?.environment ?? null) === (node.attrs?.environment ?? null) &&
+        typeof node.attrs?.tex === "string"
+      ) {
+        const old = String(previousBlock.node.attrs?.tex ?? "");
+        const from = old ? previousBlock.source.indexOf(old) : -1;
+        if (from >= 0)
+          return (
+            previousBlock.source.slice(0, from) +
+            node.attrs.tex +
+            previousBlock.source.slice(from + old.length)
+          );
+      }
+      if (
+        previousBlock?.node.type === "latexDisplayMath" &&
+        previousBlock.node.attrs?.numberingSource
+      )
+        return serializeNumberedMath(
+          { ...node.attrs, tex: String(node.attrs?.tex ?? "") },
+          previousBlock.source,
+        );
+      const minimal =
+        oldChanged.length === newChanged.length && oldChanged[index]
+          ? minimallyPatchedBlock(oldChanged[index]!, node)
+          : null;
+      if (
+        previousBlock?.node.type === "latexRichPreview" &&
+        ["scientific", "abstract"].includes(String(previousBlock.node.attrs?.kind)) &&
+        node.type === previousBlock.node.type &&
+        node.attrs?.kind === previousBlock.node.attrs?.kind
+      )
+        return patchRichTextBlock(previousBlock, node);
+      return minimal ?? serializeLatexVisualBlock(node)?.replace(/\r?\n/gu, eol) ?? null;
+    });
   if (serialized.some((value) => value === null)) return null;
   let from = oldChanged[0]?.from ?? previous[prefix]?.from ?? previous.at(-1)?.to ?? source.length;
   let to = oldChanged.at(-1)?.to ?? from;
@@ -3034,7 +3418,13 @@ export function applyLatexVisualDocumentChange(
     const after = previous[previous.length - suffix];
     if (before && /^\s*$/u.test(source.slice(before.to, from))) from = before.to;
     if (after && /^\s*$/u.test(source.slice(to, after.from))) to = after.from;
-    const gap = eol + eol;
+    const originalGap = before && after ? source.slice(before.to, after.from) : "";
+    const gap =
+      (before?.node.type === "latexDisplayMath" || after?.node.type === "latexDisplayMath") &&
+      /^\s*$/u.test(originalGap) &&
+      !/\r?\n[\t ]*\r?\n/u.test(originalGap)
+        ? eol
+        : eol + eol;
     if (replacement) {
       if (before && from === before.to) replacement = gap + replacement;
       if (after && to === after.from) replacement += gap;
