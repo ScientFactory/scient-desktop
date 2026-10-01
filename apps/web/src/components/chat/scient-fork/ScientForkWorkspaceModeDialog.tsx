@@ -194,10 +194,14 @@ export function ScientForkWorkspaceModeDialog({
   const wasOpenRef = useRef(false);
   const [closingForNavigation, setClosingForNavigation] = useState(false);
   const finishClose = useRef<((completed: boolean) => void) | null>(null);
-  const openRef = useRef(open);
+  // Whether the dialog has stayed open since its last submission. Closing it
+  // dismisses that fork for good; opening the dialog again does not undo it.
+  const openSinceSubmit = useRef(false);
   useLayoutEffect(() => {
-    openRef.current = open;
-    if (!open) return;
+    if (!open) {
+      openSinceSubmit.current = false;
+      return;
+    }
     return () => {
       // Leaving the source while the card closes must release the operation
       // without navigating back or leaving the origin locked.
@@ -250,10 +254,11 @@ export function ScientForkWorkspaceModeDialog({
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
     if (disabled || checking || !submission.ok) return;
+    openSinceSubmit.current = true;
     try {
       await onConfirm({ ...submission.confirmation, displayTitle: displayedTitle }, () =>
         // Closed while the fork was being made: it stays where the user is.
-        openRef.current
+        openSinceSubmit.current
           ? new Promise<boolean>((resolve) => {
               finishClose.current = resolve;
               setClosingForNavigation(true);

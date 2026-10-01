@@ -41,7 +41,7 @@ import {
   type ThreadForkedPayload,
 } from "@t3tools/contracts";
 import { deriveForkTitle } from "@t3tools/shared/scientForkTitle";
-import { withoutSupersededToolUpdates } from "@t3tools/shared/scientForkToolUpdates";
+import { withoutRepeatedToolUpdates } from "@t3tools/shared/scientForkToolUpdates";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -674,15 +674,15 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
   }
 
   // The visible work log of every retained turn. Payloads are bounded; nothing
-  // executable (approvals, questions) is copied, nor tool progress rows that a
-  // later row of the same call replaces.
+  // executable (approvals, questions) is copied, nor a tool progress row that
+  // only repeats the one before it.
   const retainedWorkLogSource = origin.activities.filter(
     (activity) =>
       activity.turnId !== null &&
       retainedTurnIds.has(activity.turnId) &&
       isForkCopiedActivity(activity),
   );
-  const retainedWorkLog = withoutSupersededToolUpdates(retainedWorkLogSource);
+  const retainedWorkLog = withoutRepeatedToolUpdates(retainedWorkLogSource);
   for (const activity of retainedWorkLog) {
     if (activity.turnId === null) continue;
     const turnId = importedTurnIds.get(activity.turnId);
@@ -713,7 +713,7 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
   const inFlightActivityIds: EventId[] = [];
   const liveWorkLogSource = liveTail?.activities ?? [];
   const keptLiveIds = new Set(
-    withoutSupersededToolUpdates(liveWorkLogSource).map((activity) => activity.id),
+    withoutRepeatedToolUpdates(liveWorkLogSource).map((activity) => activity.id),
   );
   // An unfinished call's latest row is the record that the call was running.
   const liveWorkLog = liveWorkLogSource.filter(

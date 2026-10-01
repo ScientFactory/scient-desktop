@@ -190,6 +190,24 @@ describe("fork lifecycle across navigation and remounts", () => {
     }
   });
 
+  it("keeps a saved attempt's error when its dialog opens again, and only for that fork point", async () => {
+    commands.dispatch.mockResolvedValueOnce(
+      AsyncResult.failure(Cause.fail(new Error("The workspace could not be prepared."))),
+    );
+    await render();
+    await act(() => hook.forkFromMessage(source, { workspaceMode: "local" }, "/workspace"));
+    expect(hook.errorUpdate?.message).toContain("The workspace could not be prepared.");
+
+    await act(() => hook.prepareFork(source));
+    expect(hook.preview?.locked).toBe(true);
+    expect(hook.errorUpdate?.message).toContain("The workspace could not be prepared.");
+
+    await act(() =>
+      hook.prepareFork({ kind: "assistant-response", messageId: MessageId.make("other-answer") }),
+    );
+    expect(hook.errorUpdate).toBeNull();
+  });
+
   it("does not move a draft edited while the fork request was in flight", async () => {
     let release!: (value: unknown) => void;
     commands.dispatch.mockImplementationOnce(
