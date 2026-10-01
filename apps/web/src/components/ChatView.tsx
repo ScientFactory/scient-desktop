@@ -2120,15 +2120,22 @@ function ChatViewContent(props: ChatViewProps) {
       }
     | null
   >(null);
-  // What the fork dialog shows now, for a fork that finishes after this render.
-  const forkCommandTargetRef = useRef(forkCommandTarget);
-  forkCommandTargetRef.current = forkCommandTarget;
   const forkDialogOpen =
     forkCommandTarget !== null &&
     activeThread !== null &&
     activeThread !== undefined &&
     forkCommandTarget.threadId === activeThread.id &&
     forkCommandTarget.environmentId === activeThread.environmentId;
+  // What the fork dialog shows now, for a fork that finishes after this render:
+  // nothing once the dialog is closed, another conversation is open, or this view is gone.
+  const shownForkTargetRef = useRef<typeof forkCommandTarget>(null);
+  shownForkTargetRef.current = forkDialogOpen ? forkCommandTarget : null;
+  useEffect(
+    () => () => {
+      shownForkTargetRef.current = null;
+    },
+    [],
+  );
   const forkSource = useMemo(
     (): ForkSource | null =>
       forkCommandTarget === null
@@ -11628,7 +11635,7 @@ function ChatViewContent(props: ChatViewProps) {
               resolveForkTargetAfterAttempt(current, target, outcome),
             );
             // Its own dialog is no longer showing, so nothing else would say the fork failed.
-            if (forkFailureNeedsNotification(forkCommandTargetRef.current, target, outcome)) {
+            if (forkFailureNeedsNotification(shownForkTargetRef.current, target, outcome)) {
               toastManager.add({
                 type: "error",
                 title: "The fork did not finish",
