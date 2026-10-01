@@ -406,7 +406,10 @@ function SidebarUpdateControl() {
   );
 
   return (
-    <SidebarMenuItem className="ml-auto shrink-0">
+    <SidebarMenuItem
+      className="ml-auto shrink-0"
+      data-update-active={showUpdateDetails || undefined}
+    >
       <Popover
         handle={releaseNotesPopoverHandle}
         onOpenChange={(open, details) => {
@@ -440,6 +443,7 @@ function SidebarUpdateControl() {
           {!showReleaseNotesPopover ? (
             <TooltipPopup
               align="center"
+              className={showUpdateDetails ? "max-w-48 text-left text-wrap" : undefined}
               side="top"
               variant={showUpdateDetails ? "glass" : "default"}
             >

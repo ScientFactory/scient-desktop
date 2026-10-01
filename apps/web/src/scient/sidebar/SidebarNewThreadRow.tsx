@@ -7,8 +7,8 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/toolt
 /**
  * Scient's New thread control: a labelled row of its own below the sidebar
  * search, in place of T3's icon in the header group. It takes the header's
- * own new-thread inputs (shortcut labels and the Shift+click hint), and its
- * caller makes Shift+click start in the current project, as the hint says. It
+ * own new-thread inputs (shortcut labels and the current-project hint), and its
+ * caller also supports Shift+click to start in the current project. It
  * is never disabled: New thread opens the "New thread in…" picker, which ends
  * with Add project, even when there are no projects yet.
  *
@@ -44,7 +44,7 @@ export function SidebarNewThreadRow(props: {
             <span className="flex flex-col gap-0.5">
               <span>{label}</span>
               <span className="text-muted-foreground">
-                New thread in current project: Shift+click
+                In current project
                 {props.inProjectShortcutLabel ? ` (${props.inProjectShortcutLabel})` : ""}
               </span>
             </span>

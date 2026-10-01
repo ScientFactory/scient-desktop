@@ -4500,8 +4500,8 @@ export default function Sidebar() {
     if (isMobile) setOpenMobile(false);
     openCommandPalette({ open: "new-thread-in" });
   }, [isMobile, newThreadContext, opensNewThreadTargetPicker, setOpenMobile]);
-  // SCIENT-FORK:START — the New thread row honours the Shift+click its tooltip
-  // advertises: straight into the current project, skipping the picker.
+  // SCIENT-FORK:START — Shift+click starts straight in the current project,
+  // skipping the picker.
   const handleNewThreadRowClick = useCallback(
     (event: { readonly shiftKey: boolean }) => {
       if (!event.shiftKey || projectGroups.length === 0) {
