@@ -1081,34 +1081,40 @@ describe("Droid key broker and the endpoint's transport", () => {
       const silent = yield* Effect.promise(() => startUpstream(() => undefined));
       yield* Effect.addFinalizer(() => Effect.promise(silent.close));
       const stalled = connection("anthropic-messages", "stalled", silent.origin);
-      yield* withBroker(
-        { connections: [refused, unknown, stalled], upstreamTimeoutMs: 200 },
-        async (broker) => {
-          const cases = [
-            [
-              refused,
-              "/chat/completions",
-              `Scient could not connect to ${new URL(closed.origin).host}: connection refused.`,
-            ],
-            [
-              unknown,
-              "/responses",
-              "Scient could not connect to scient-no-such-host.invalid: host not found.",
-            ],
-            [
-              stalled,
-              "/v1/messages",
-              `Scient could not connect to ${new URL(silent.origin).host}: no response in time.`,
-            ],
-          ] as const;
-          for (const [target, path, message] of cases) {
-            const reply = await droidRequest(broker, target, path);
-            // Droid retries 5xx for minutes without a word; a 4xx ends the turn with this message.
-            expect(reply.status, message).toBe(400);
-            expect(await brokerError(reply)).toEqual({ type: "scient_broker", message });
-          }
-        },
-      );
+      const expectFailure = async (
+        broker: DroidKeyBroker,
+        target: ResolvedModelConnection,
+        path: string,
+        message: string,
+      ) => {
+        const reply = await droidRequest(broker, target, path);
+        // Droid retries 5xx for minutes without a word; a 4xx ends the turn with this message.
+        expect(reply.status, message).toBe(400);
+        expect(await brokerError(reply)).toEqual({ type: "scient_broker", message });
+      };
+      yield* withBroker({ connections: [refused, unknown] }, async (broker) => {
+        await expectFailure(
+          broker,
+          refused,
+          "/chat/completions",
+          `Scient could not connect to ${new URL(closed.origin).host}: connection refused.`,
+        );
+        // A real name lookup: it answers in its own time, so no short limit here.
+        await expectFailure(
+          broker,
+          unknown,
+          "/responses",
+          "Scient could not connect to scient-no-such-host.invalid: host not found.",
+        );
+      });
+      yield* withBroker({ connections: [stalled], upstreamTimeoutMs: 200 }, async (broker) => {
+        await expectFailure(
+          broker,
+          stalled,
+          "/v1/messages",
+          `Scient could not connect to ${new URL(silent.origin).host}: no response in time.`,
+        );
+      });
     }).pipe(Effect.scoped, TestClock.withLive),
   );
 
