@@ -117,13 +117,15 @@ export function resolveMarkdownHostLinkPath(
   workspaceRoot: string,
   destination: string,
 ): string | null {
-  // In a Windows workspace a link may be written with backslashes, encoded or
-  // not; they are separators there. On POSIX they are part of a file name.
-  const target = parseMarkdownFileLink(
-    isWindowsAbsolutePath(workspaceRoot)
-      ? destination.replaceAll(/%5C/giu, "/").replaceAll("\\", "/")
-      : destination,
-  );
+  // The link as written comes first, which keeps absolute drive and UNC paths
+  // exact. Failing that, in a Windows workspace a relative link written with
+  // backslashes, encoded or not, uses them as separators; on POSIX they are
+  // part of a file name.
+  const target =
+    parseMarkdownFileLink(destination) ??
+    (isWindowsAbsolutePath(workspaceRoot)
+      ? parseMarkdownFileLink(destination.replaceAll(/%5C/giu, "/").replaceAll("\\", "/"))
+      : null);
   if (target === null) return null;
   if (!isRelativeFilePath(target.path)) return collapseAbsoluteFilePath(target.path);
   if (!workspaceRoot) return null;

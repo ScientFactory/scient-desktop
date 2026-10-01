@@ -343,11 +343,17 @@ export const make = Effect.gen(function* () {
     return yield* Effect.acquireUseRelease(
       Effect.tryPromise({
         // Non-blocking so a FIFO cannot hang the open; the stat below rejects
-        // it. Regular files ignore the flag. Windows lacks it.
+        // it. Regular files ignore the flag. The target was already resolved,
+        // so its last component is not a link: refusing to follow one means a
+        // file swapped for a symlink after that check fails here instead of
+        // being read under the flags decided for the original. Windows lacks
+        // both flags.
         try: () =>
           NodeFSP.open(
             realTargetPath,
-            NodeFS.constants.O_RDONLY | (NodeFS.constants.O_NONBLOCK ?? 0),
+            NodeFS.constants.O_RDONLY |
+              (NodeFS.constants.O_NONBLOCK ?? 0) |
+              (NodeFS.constants.O_NOFOLLOW ?? 0),
           ),
         catch: (cause) =>
           new WorkspaceFileSystemOperationError({
