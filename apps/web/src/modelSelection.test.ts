@@ -1,5 +1,6 @@
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
+  DROID_DEFAULT_MODEL,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
@@ -9,7 +10,11 @@ import { describe, expect, it } from "vite-plus/test";
 import { createModelSelection } from "@t3tools/shared/model";
 import { deriveEffectiveComposerModelState } from "./composerDraftStore";
 import { getComposerProviderState } from "./components/chat/composerProviderState";
-import { deriveProviderInstanceEntries, NO_PROVIDER_MODEL_SELECTION } from "./providerInstances";
+import {
+  deriveProviderInstanceEntries,
+  getDefaultProviderInstanceModel,
+  NO_PROVIDER_MODEL_SELECTION,
+} from "./providerInstances";
 import {
   getCustomModelOptionsByInstance,
   getAppModelOptionsForInstance,
@@ -877,6 +882,29 @@ describe("instance-scoped model selection", () => {
       instanceId: ProviderInstanceId.make("claude_openrouter"),
       model: "openai/gpt-5.5",
     });
+  });
+
+  it("resolves Droid's default marker to the model Droid reports, not the first listed", () => {
+    const instanceId = ProviderInstanceId.make("droid");
+    const base = provider({
+      provider: ProviderDriverKind.make("droid"),
+      instanceId,
+      models: ["claude-fable-5.1", "gpt-6-sol"],
+    });
+    const droid = {
+      ...base,
+      models: base.models.map((model) =>
+        model.slug === "gpt-6-sol" ? { ...model, isDefault: true } : model,
+      ),
+    };
+    const settings: UnifiedSettings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      textGenerationModelSelection: { instanceId, model: DROID_DEFAULT_MODEL },
+    };
+
+    // Settings shows the model the marker stands for; a new thread starts on it too.
+    expect(resolveAppModelSelectionState(settings, [droid]).model).toBe("gpt-6-sol");
+    expect(getDefaultProviderInstanceModel([droid], instanceId)).toBe("gpt-6-sol");
   });
 
   it("does not select a provider that cannot generate system text", () => {

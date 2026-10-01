@@ -3,6 +3,7 @@ import * as AcpError from "./errors.ts";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -133,6 +134,117 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
         assert.equal(update?._tag, "SessionUpdate");
         assert.equal(completion?._tag, "ElicitationComplete");
       }),
+  );
+
+  it.effect("reports a request's id when sent and its response in arrival order", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const arrivals: Array<string> = [];
+      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+        onNotification: (notification) =>
+          Effect.sync(() => {
+            if (notification._tag === "SessionUpdate")
+              arrivals.push(`update:${notification.params.update.sessionUpdate}`);
+          }),
+        onRequest: (request) =>
+          Effect.sync(() => {
+            arrivals.push(`request:${request.method}:${String(request.requestId)}`);
+          }),
+        onResponse: (response) =>
+          Effect.sync(() => {
+            arrivals.push(`response:${String(response.requestId)}`);
+          }),
+      });
+      const delivered = yield* Deferred.make<void>();
+      yield* transport.clientProtocol
+        .run(0, () => Deferred.succeed(delivered, undefined).pipe(Effect.asVoid))
+        .pipe(Effect.forkScoped);
+      yield* transport.clientProtocol.send(0, {
+        _tag: "Request",
+        id: "7",
+        tag: "session/set_config_option",
+        payload: { sessionId: "session-1", configId: "model", value: "a" },
+        headers: [],
+      });
+      // Known before the request's bytes go out, so its response cannot come first.
+      assert.deepEqual(arrivals, ["request:session/set_config_option:7"]);
+      yield* Queue.take(output);
+      // A response to an extension request is not the generated client's.
+      const extension = yield* transport
+        .request("x/test", { hello: "world" })
+        .pipe(Effect.forkScoped);
+      yield* Queue.take(output);
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(ExtResponse, { jsonrpc: "2.0", id: 1, result: { ok: true } }),
+      );
+      yield* Fiber.join(extension);
+      const update = (text: string) =>
+        encodeJsonl(SessionUpdateNotification, {
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: {
+            sessionId: "session-1",
+            update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } },
+          },
+        });
+      // One chunk: an update, the response, and an update right behind it.
+      const chunk = new Uint8Array([
+        ...(yield* update("before")),
+        ...encoder.encode(`${encodeUnknownJsonString({ jsonrpc: "2.0", id: 7, result: {} })}\n`),
+        ...(yield* update("after")),
+      ]);
+      yield* Queue.offer(input, chunk);
+      yield* Deferred.await(delivered);
+      yield* Effect.yieldNow;
+      assert.deepEqual(arrivals, [
+        "request:session/set_config_option:7",
+        "update:agent_message_chunk",
+        "response:7",
+        "update:agent_message_chunk",
+      ]);
+    }),
+  );
+
+  it.effect("reports a request as sent only when it is handed to the writer", () =>
+    Effect.gen(function* () {
+      const { stdio, output } = yield* makeInMemoryStdio();
+      const sent: Array<string> = [];
+      const logging = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+        logOutgoing: true,
+        // A log flush that has not returned yet: nothing is written while it waits.
+        logger: () =>
+          Deferred.succeed(logging, undefined).pipe(Effect.andThen(Deferred.await(release))),
+        onRequest: (request) =>
+          Effect.sync(() => {
+            sent.push(`${request.method}:${String(request.requestId)}`);
+          }),
+      });
+      const request = (id: string) =>
+        transport.clientProtocol.send(0, {
+          _tag: "Request",
+          id,
+          tag: "session/prompt",
+          payload: { sessionId: "session-1", prompt: [] },
+          headers: [],
+        });
+      const stopped = yield* request("1").pipe(Effect.forkScoped);
+      yield* Deferred.await(logging);
+      yield* Fiber.interrupt(stopped);
+      // Stopped before the write: not sent, and nothing reached the agent.
+      assert.deepEqual(sent, []);
+      assert.equal(Option.isNone(yield* Queue.poll(output)), true);
+      yield* Deferred.succeed(release, undefined);
+      yield* request("2");
+      assert.deepEqual(sent, ["session/prompt:2"]);
+      assert.include(yield* Queue.take(output), '"id":"2"');
+    }),
   );
 
   it.effect("keeps only recent raw notifications after their callbacks run", () =>

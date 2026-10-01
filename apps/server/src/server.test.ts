@@ -12,6 +12,7 @@ import {
   AuthTokenExchangeGrantType,
   CommandId,
   DEFAULT_SERVER_SETTINGS,
+  DroidSettings,
   type CustomModelsSettings,
   EnvironmentFilePath,
   type DpopFailureReason,
@@ -128,6 +129,9 @@ afterAll(() => {
 
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as ServerConfig from "./config.ts";
+import type { DroidAcpRuntime } from "./provider/acp/DroidAcpSupport.ts";
+import { droidCustomModelId } from "./provider/droid/DroidCustomModels.ts";
+import { makeDroidTextGeneration } from "./textGeneration/DroidTextGeneration.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { HTTP_ROUTER_CONFIG, makeRoutesLayer } from "./server.ts";
 import {
@@ -288,6 +292,7 @@ const providerSetupAuthState: ProviderAuthState = {
   expiresAt: null,
   message: null,
 };
+const decodeDroidSettings = Schema.decodeEffect(DroidSettings);
 const providerSetupInstance: ProviderInstance = {
   instanceId: providerSetupInstanceId,
   driverKind: providerSetupDriver,
@@ -917,6 +922,7 @@ const buildAppUnderTest = (options?: {
           getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
           updateSettings: () => Effect.succeed(DEFAULT_SERVER_SETTINGS),
           streamChanges: Stream.empty,
+          committedCustomModels: () => DEFAULT_SERVER_SETTINGS.customModels,
           ...options?.layers?.serverSettings,
         }),
       ),
@@ -6256,6 +6262,234 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("says why Droid ran no custom model test when its tool blocking is not confirmed", () =>
+    Effect.gen(function* () {
+      const id = ProviderInstanceId.make("droid");
+      const catalog: CustomModelsSettings = {
+        revision: 1,
+        connections: [
+          {
+            id: "lab",
+            name: "Lab",
+            baseUrl: "http://127.0.0.1:1/v1",
+            protocol: "openai-completions",
+            credentialId: "saved-key",
+            models: [
+              {
+                id: "one",
+                modelId: "one",
+                name: "One",
+                images: false,
+                reasoning: false,
+                instanceIds: [id],
+              },
+            ],
+          },
+        ],
+      };
+      const slug = droidCustomModelId("lab", "one");
+      let prompts = 0;
+      const current: Record<string, string> = { autonomy_level: "auto-high", model: "gpt-5.6-sol" };
+      // Droid's own background generation, in a process whose organization
+      // policy dropped the hook that refuses tool calls.
+      const textGeneration = yield* makeDroidTextGeneration(
+        yield* decodeDroidSettings({ binaryPath: "droid" }),
+        {},
+        () =>
+          Effect.sync(
+            () =>
+              ({
+                handleSessionUpdate: () => Effect.void,
+                handleRequestPermission: () => Effect.void,
+                handleElicitation: () => Effect.void,
+                start: () => Effect.succeed({}),
+                getConfigOptions: Effect.sync(() => [
+                  {
+                    id: "autonomy_level",
+                    name: "Autonomy",
+                    type: "select" as const,
+                    currentValue: current.autonomy_level,
+                    options: ["normal", "auto-high"].map((value) => ({ value, name: value })),
+                  },
+                  {
+                    id: "model",
+                    name: "Model",
+                    category: "model",
+                    type: "select" as const,
+                    currentValue: current.model,
+                    options: ["gpt-5.6-sol", slug].map((value) => ({ value, name: value })),
+                  },
+                ]),
+                setConfigOption: (configId: string, value: string) =>
+                  Effect.sync(() => {
+                    current[configId] = value;
+                    return {};
+                  }),
+                setModel: (model: string) =>
+                  Effect.sync(() => {
+                    current.model = model;
+                  }),
+                backgroundToolGuard: () => Effect.succeed("disabled-by-policy" as const),
+                prompt: () =>
+                  Effect.sync(() => {
+                    prompts += 1;
+                    return { stopReason: "end_turn" as const };
+                  }),
+              }) as unknown as DroidAcpRuntime,
+          ),
+      ).pipe(Effect.provide(NodeServices.layer));
+      const instance: ProviderInstance = {
+        instanceId: id,
+        driverKind: ProviderDriverKind.make("droid"),
+        enabled: true,
+        displayName: "Droid",
+        continuationIdentity: {
+          driverKind: ProviderDriverKind.make("droid"),
+          continuationKey: id,
+        },
+        get adapter(): never {
+          throw new Error("Must not start a chat");
+        },
+        get snapshot(): never {
+          throw new Error("Must not probe");
+        },
+        textGeneration,
+      };
+      yield* buildAppUnderTest({
+        layers: {
+          serverSettings: {
+            getSettings: Effect.succeed({ ...DEFAULT_SERVER_SETTINGS, customModels: catalog }),
+            resolveCustomModels: () =>
+              Effect.succeed([
+                { ...catalog.connections[0]!, apiKey: Redacted.make("synthetic-key") },
+              ]),
+          },
+          providerInstanceRegistry: { getInstance: () => Effect.succeed(instance) },
+        },
+      });
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.serverTestCustomModel]({
+            revision: 1,
+            connectionId: "lab",
+            modelId: "one",
+            instanceId: id,
+          }).pipe(Effect.result),
+        ),
+      );
+      if (result._tag !== "Failure" || result.failure._tag !== "CustomModelError")
+        assert.fail("Expected the test to be refused");
+      // The Test runs through background generation, so it is refused too, in its own words.
+      assert.equal(
+        result.failure.message,
+        "Droid: Your organization's Droid policy disables Scient's tool blocking, which the test needs, so the test was not run. To try this model, send a message in a Droid thread.",
+      );
+      assert.equal(prompts, 0);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("says a custom model test timed out and names the agent", () =>
+    Effect.gen(function* () {
+      const id = ProviderInstanceId.make("droid_work");
+      const catalog: CustomModelsSettings = {
+        revision: 1,
+        connections: [
+          {
+            id: "slow",
+            name: "Slow",
+            baseUrl: "http://127.0.0.1:1/v1",
+            protocol: "openai-completions",
+            credentialId: null,
+            models: [
+              {
+                id: "one",
+                modelId: "one",
+                name: "One",
+                images: false,
+                reasoning: false,
+                instanceIds: [id],
+              },
+            ],
+          },
+        ],
+      };
+      const started = yield* Deferred.make<void>();
+      const instance: ProviderInstance = {
+        instanceId: id,
+        driverKind: ProviderDriverKind.make("droid"),
+        enabled: true,
+        displayName: "Droid work",
+        continuationIdentity: { driverKind: ProviderDriverKind.make("droid"), continuationKey: id },
+        get adapter(): never {
+          throw new Error("Must not start a chat");
+        },
+        get snapshot(): never {
+          throw new Error("Must not probe");
+        },
+        textGeneration: {
+          generateThreadTitle: () =>
+            Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never)),
+          generateBranchName: (): never => {
+            throw new Error("Unexpected generation");
+          },
+          generateCommitMessage: (): never => {
+            throw new Error("Unexpected generation");
+          },
+          generatePrContent: (): never => {
+            throw new Error("Unexpected generation");
+          },
+        },
+      };
+      yield* buildAppUnderTest({
+        layers: {
+          serverSettings: {
+            getSettings: Effect.succeed({ ...DEFAULT_SERVER_SETTINGS, customModels: catalog }),
+            resolveCustomModels: () =>
+              Effect.succeed([{ ...catalog.connections[0]!, apiKey: null }]),
+          },
+          providerInstanceRegistry: { getInstance: () => Effect.succeed(instance) },
+        },
+      });
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const pending = yield* client[WS_METHODS.serverTestCustomModel]({
+              revision: 1,
+              connectionId: "slow",
+              modelId: "one",
+              instanceId: id,
+            }).pipe(Effect.result, Effect.forkChild);
+            yield* Deferred.await(started);
+            // The timeout's timer registers on the server's own schedule, and its
+            // answer travels back in real time. Advance test time once past the
+            // timeout and wait; advancing while the answer is on its way would add
+            // minutes of test time and trip the connection's own timers.
+            const waitLive = (millis: number) =>
+              Effect.gen(function* () {
+                for (
+                  let waited = 0;
+                  waited < millis && pending.pollUnsafe() === undefined;
+                  waited += 20
+                )
+                  yield* Effect.sleep("20 millis").pipe(TestClock.withLive);
+              });
+            yield* waitLive(100);
+            for (let attempt = 0; attempt < 3 && pending.pollUnsafe() === undefined; attempt += 1) {
+              yield* TestClock.adjust("46 seconds");
+              yield* waitLive(2_000);
+            }
+            return yield* Fiber.join(pending);
+          }),
+        ),
+      );
+      if (result._tag !== "Failure" || result.failure._tag !== "CustomModelError")
+        assert.fail("Expected a timed-out test");
+      assert.equal(result.failure.message, "Droid work: No response within 45 s.");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("keeps agent session import project failures structured over websocket rpc", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();
@@ -8469,6 +8703,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         }
         assert.equal(result.failure.failure, "operation_failed");
         assert.equal(result.failure.reason, "permission_denied");
+        // The system's own code travels too: a file mode refuses with EACCES,
+        // which the client tells apart from the system itself declining.
+        assert.equal(result.failure.osErrorCode, "EACCES");
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

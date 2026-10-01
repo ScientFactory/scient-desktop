@@ -49,8 +49,8 @@ copy passes its smoke test. Provider-tool updates and provider sign-in are seria
 change shared runtime state underneath the other.
 
 Scient checks for qualified managed releases in the background and again when you open an Install or
-Update plan. It never installs one automatically. **Repair** restores the exact active release rather
-than silently changing versions.
+Update plan. It never installs one automatically. **Repair** installs the latest qualified release (or
+the installed one, when that is newer), so it can also bring a newer release.
 
 ## Why Use More Than One Account?
 

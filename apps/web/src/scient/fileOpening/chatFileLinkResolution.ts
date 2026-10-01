@@ -3,8 +3,15 @@ import {
   EnvironmentFilePath,
   type EnvironmentFileLinkResolution,
 } from "@t3tools/contracts";
+import {
+  collapseAbsoluteFilePath,
+  workspaceRelativeFilePath,
+} from "@t3tools/client-runtime/markdown-links";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+
+import { workspaceFileHostPath } from "~/components/files/filePath";
+import { resolvePathLinkTarget } from "~/terminal-links";
 
 const decodeResolveInput = Schema.decodeUnknownOption(EnvironmentFileLinkResolveInput);
 const isEnvironmentFilePath = Schema.is(EnvironmentFilePath);
@@ -41,6 +48,43 @@ export function chatFileLinkResolveInput(input: {
 }
 
 /**
+ * A link written from the home folder (`~/notes.md`). Only the environment
+ * that owns the files knows where its home folder is, so the client never
+ * expands one itself when it can ask.
+ */
+export function isHomeRelativeLink(path: string): boolean {
+  return path.startsWith("~/") || path.startsWith("~\\");
+}
+
+/**
+ * How to ask the environment about a workspace locator, as opposed to an
+ * authored link. A locator names one location under the workspace, and a
+ * folder really named `~` gives it the same `~/` spelling an authored
+ * home-relative link has. Asked by that spelling it could be answered with a
+ * file from the home folder, so such a locator is asked by its host path.
+ */
+export function workspaceLocatorAskPath(
+  locator: string,
+  workspaceRoot: string | undefined,
+): string {
+  return workspaceRoot && isHomeRelativeLink(locator)
+    ? workspaceFileHostPath(locator, workspaceRoot)
+    : locator;
+}
+
+/**
+ * Where the client itself would place a link. A home-relative link is placed
+ * by guessing the home folder from the workspace's own location, which is
+ * right only for a workspace under a conventional home; it is the fallback
+ * for an environment that cannot say. Any other link is already placed.
+ */
+export function clientPlacedLinkPath(linkPath: string, workspaceRoot: string | undefined): string {
+  if (!isHomeRelativeLink(linkPath) || !workspaceRoot) return linkPath;
+  const guessed = collapseAbsoluteFilePath(resolvePathLinkTarget(linkPath, workspaceRoot));
+  return workspaceRelativeFilePath(guessed, workspaceRoot) ?? guessed;
+}
+
+/**
  * What a click on a chat link does with the environment's answer.
  *
  * - `as-written`: the link's own location is the file (it exists, or fails for
@@ -70,6 +114,35 @@ export function chatFileOpenPlan(
     case "incomplete":
       return { kind: "missing" };
   }
+}
+
+/**
+ * The path a link opens at when it opens as written. Ordinarily that is the
+ * client's own spelling. A home-relative link has no spelling the client can
+ * trust, so it opens where the environment says the link's location is: the
+ * file it found there, or the location it checked and found empty. That
+ * location stays a workspace path when it is inside the workspace, so the
+ * file stays editable.
+ *
+ * `clientPath` is the client's own placement of the link, used when the
+ * environment could not be asked or predates home-folder expansion (it then
+ * reports the unexpanded `~` under the workspace for a missing file).
+ */
+export function linkOpenLocation(input: {
+  readonly resolution: EnvironmentFileLinkResolution | null;
+  /** The link as the environment was asked about it. */
+  readonly askedPath: string;
+  readonly clientPath: string;
+  readonly workspaceRoot: string | undefined;
+}): string {
+  const { resolution } = input;
+  if (resolution === null || !isHomeRelativeLink(input.askedPath)) return input.clientPath;
+  if (resolution._tag === "recovered") return input.clientPath;
+  const reported = resolution._tag === "literal" ? resolution.path : resolution.missingPath;
+  const location = workspaceRelativeFilePath(reported, input.workspaceRoot) ?? reported;
+  return resolution._tag !== "literal" && isHomeRelativeLink(location)
+    ? input.clientPath
+    : location;
 }
 
 /**

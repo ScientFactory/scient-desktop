@@ -2353,6 +2353,69 @@ describe("deriveWorkLogEntries quiet-timeline guarantee", () => {
     expect(entries.some((entry) => entry.sourceActivityKind?.startsWith("tool."))).toBe(false);
   });
 
+  it("shows Droid's sub-agents as one row and a wait on one as a step that keeps its start", () => {
+    // What the server stores for two Droid Task calls and a blocking TaskOutput
+    // (Droid 0.231.0): the Task calls are sub-agents, not tool rows.
+    const at = (seconds: number) => new Date(Date.UTC(2026, 9, 1, 9, 0, seconds)).toISOString();
+    const launch = (taskId: string, title: string, sequence: number) => [
+      makeActivity({
+        id: `started-${taskId}`,
+        kind: "task.started",
+        summary: "Task started",
+        tone: "info",
+        payload: { taskId, toolUseId: taskId, taskType: "subagent", title, role: "explorer" },
+        turnId: "turn-droid",
+        createdAt: at(0),
+        sequence,
+      }),
+    ];
+    const wait = (
+      kind: "tool.updated" | "tool.completed",
+      seconds: number,
+      status: string,
+      title: string,
+      sequence: number,
+    ) =>
+      makeActivity({
+        kind,
+        summary: title,
+        payload: { itemType: "collab_agent_tool_call", toolCallId: "wait-1", status, title },
+        turnId: "turn-droid",
+        createdAt: at(seconds),
+        sequence,
+      });
+    const waitingTitle = "Waiting for sub-agent · Review the host (up to 10 min)";
+    const running = [
+      ...launch("task-a", "Review the host", 1),
+      ...launch("task-b", "Audit the build", 2),
+      wait("tool.updated", 5, "inProgress", waitingTitle, 3),
+      wait("tool.updated", 40, "inProgress", waitingTitle, 4),
+    ];
+
+    const live = deriveWorkLogEntries(running);
+    expect(live.map((entry) => entry.agentSpawn?.agentTaskIds ?? entry.label)).toEqual([
+      ["task-a", "task-b"],
+      waitingTitle,
+    ]);
+    // The timer on a running step counts from its first update, not its latest.
+    expect(live[1]).toMatchObject({
+      toolLifecycleStatus: "inProgress",
+      startedAt: at(5),
+      createdAt: at(40),
+    });
+
+    const done = deriveWorkLogEntries([
+      ...running,
+      wait("tool.completed", 95, "completed", "Waited for sub-agent · Review the host", 5),
+    ]);
+    expect(done).toHaveLength(2);
+    expect(done[1]).toMatchObject({
+      label: "Waited for sub-agent · Review the host",
+      toolLifecycleStatus: "completed",
+      startedAt: at(5),
+    });
+  });
+
   it("a workflow run and its members collapse into one CTA row keyed to the coordinator", () => {
     const entries = deriveWorkLogEntries([
       makeActivity({

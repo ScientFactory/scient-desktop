@@ -119,6 +119,11 @@ export interface WorkLogEntry {
   questionAnswer?: UserInputAttachmentAnswerPayload;
   id: string;
   createdAt: string;
+  /**
+   * When a row merged from several lifecycle updates first appeared;
+   * `createdAt` follows the latest update. Absent on a row with one update.
+   */
+  startedAt?: string;
   turnId?: TurnId | null;
   /** Stable provider identity across in-progress and completed lifecycle updates. */
   toolCallId?: string;
@@ -1054,6 +1059,7 @@ function mergeDerivedWorkLogEntries(
   return {
     ...previous,
     ...next,
+    startedAt: previous.startedAt ?? previous.createdAt,
     ...(detail ? { detail } : {}),
     ...(viewedImagePath ? { viewedImagePath } : {}),
     ...(command ? { command } : {}),

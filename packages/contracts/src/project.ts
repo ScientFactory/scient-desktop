@@ -1,5 +1,7 @@
 import * as Schema from "effect/Schema";
 import {
+  DirectoryPathString,
+  FilePathString,
   NonNegativeInt,
   PositiveInt,
   ProjectId,
@@ -30,7 +32,7 @@ export const ProjectSearchEntriesInput = Schema.Struct({
 export type ProjectSearchEntriesInput = typeof ProjectSearchEntriesInput.Type;
 
 export const ProjectEntry = Schema.Struct({
-  path: TrimmedNonEmptyString,
+  path: FilePathString,
   kind: ProjectEntryKind,
   ignored: Schema.optional(Schema.Boolean),
 });
@@ -61,7 +63,7 @@ export const ProjectContentMatchRange = Schema.Struct({
 export type ProjectContentMatchRange = typeof ProjectContentMatchRange.Type;
 
 export const ProjectContentMatch = Schema.Struct({
-  path: TrimmedNonEmptyString,
+  path: FilePathString,
   lineNumber: PositiveInt,
   lineContent: Schema.String,
   matchRanges: Schema.Array(ProjectContentMatchRange),
@@ -79,7 +81,7 @@ export const ProjectListEntriesInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   // Present for immediate filesystem children, including ignored entries; empty means root.
   // Omitted preserves the indexed recursive listing used by older clients.
-  directoryPath: Schema.optional(TrimmedString),
+  directoryPath: Schema.optional(DirectoryPathString),
 });
 export type ProjectListEntriesInput = typeof ProjectListEntriesInput.Type;
 
@@ -96,8 +98,8 @@ export const ProjectDirectoryEntryKind = Schema.Literals(["file", "directory", "
 export type ProjectDirectoryEntryKind = typeof ProjectDirectoryEntryKind.Type;
 
 export const ProjectDirectoryEntry = Schema.Struct({
-  name: TrimmedNonEmptyString,
-  relativePath: TrimmedNonEmptyString,
+  name: FilePathString,
+  relativePath: FilePathString,
   kind: ProjectDirectoryEntryKind,
   readOnly: Schema.Boolean,
 });
@@ -105,7 +107,9 @@ export type ProjectDirectoryEntry = typeof ProjectDirectoryEntry.Type;
 
 export const ProjectListDirectoryInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
-  relativeDirectory: TrimmedString.check(Schema.isMaxLength(PROJECT_DIRECTORY_PATH_MAX_LENGTH)),
+  relativeDirectory: DirectoryPathString.check(
+    Schema.isMaxLength(PROJECT_DIRECTORY_PATH_MAX_LENGTH),
+  ),
   view: ProjectDirectoryView,
 });
 export type ProjectListDirectoryInput = typeof ProjectListDirectoryInput.Type;
@@ -264,13 +268,13 @@ export class ProjectListDirectoryError extends Schema.TaggedError<ProjectListDir
   "ProjectListDirectoryError",
   {
     cwd: Schema.optional(TrimmedNonEmptyString),
-    relativeDirectory: Schema.optional(TrimmedString),
+    relativeDirectory: Schema.optional(DirectoryPathString),
     view: Schema.optional(ProjectDirectoryView),
     failure: Schema.optional(ProjectDirectoryFailure),
-    resolvedPath: Schema.optional(TrimmedNonEmptyString),
+    resolvedPath: Schema.optional(FilePathString),
     resolvedWorkspaceRoot: Schema.optional(TrimmedNonEmptyString),
     operation: Schema.optional(ProjectDirectoryOperation),
-    operationPath: Schema.optional(TrimmedNonEmptyString),
+    operationPath: Schema.optional(FilePathString),
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),
   },
@@ -290,12 +294,12 @@ export const ProjectReadFileInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   // Workspace-relative, or an absolute host path for a file outside the
   // workspace. Only workspace-relative paths can be written back.
-  relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_READ_FILE_PATH_MAX_LENGTH)),
+  relativePath: FilePathString.check(Schema.isMaxLength(PROJECT_READ_FILE_PATH_MAX_LENGTH)),
 });
 export type ProjectReadFileInput = typeof ProjectReadFileInput.Type;
 
 export const ProjectReadFileResult = Schema.Struct({
-  relativePath: TrimmedNonEmptyString,
+  relativePath: FilePathString,
   contents: Schema.String,
   byteLength: NonNegativeInt,
   truncated: Schema.Boolean,
@@ -303,6 +307,10 @@ export const ProjectReadFileResult = Schema.Struct({
   // Optional for rolling compatibility with servers predating managed-path
   // read-only metadata. Current servers always provide it.
   readOnly: Schema.optional(Schema.Boolean),
+  // Why a file is read-only, when the reason is where it lives: the file is
+  // outside the workspace, reached by an absolute path, a path that climbs out,
+  // or a link that leads out. Optional: older servers do not say.
+  outsideWorkspace: Schema.optional(Schema.Boolean),
 });
 export type ProjectReadFileResult = typeof ProjectReadFileResult.Type;
 
@@ -319,10 +327,10 @@ export type ProjectSubscribeFileChangesInput = typeof ProjectSubscribeFileChange
  */
 export const ProjectFileWatchEvent = Schema.Union([
   Schema.TaggedStruct("watch-ready", {
-    relativePath: TrimmedNonEmptyString,
+    relativePath: FilePathString,
   }),
   Schema.TaggedStruct("file-changed", {
-    relativePath: TrimmedNonEmptyString,
+    relativePath: FilePathString,
   }),
 ]);
 export type ProjectFileWatchEvent = typeof ProjectFileWatchEvent.Type;
@@ -364,6 +372,17 @@ export type ProjectFileOperation = typeof ProjectFileOperation.Type;
 export const ProjectFileErrorReason = Schema.Literals(["not_found", "permission_denied"]);
 export type ProjectFileErrorReason = typeof ProjectFileErrorReason.Type;
 
+/**
+ * The operating system's own error code for a failed operation (`EACCES`,
+ * `EPERM`, ...), when there was one. `reason` groups codes that mean the same
+ * to a person; the code lets a client say exactly what the system reported
+ * without the union having to grow, which older clients could not decode.
+ */
+export const ProjectFileOsErrorCode = Schema.String.check(
+  Schema.isPattern(/^[A-Z][A-Z0-9_]{0,31}$/u),
+);
+export type ProjectFileOsErrorCode = typeof ProjectFileOsErrorCode.Type;
+
 type ProjectFileFailureContext = {
   readonly cwd: string;
   readonly relativePath: string;
@@ -374,6 +393,7 @@ type ProjectFileFailureContext = {
   readonly operationPath?: string;
   readonly currentRevision?: string;
   readonly reason?: ProjectFileErrorReason;
+  readonly osErrorCode?: string;
   readonly cause?: unknown;
 };
 
@@ -381,13 +401,14 @@ export class ProjectReadFileError extends Schema.TaggedError<ProjectReadFileErro
   "ProjectReadFileError",
   {
     cwd: Schema.optional(TrimmedNonEmptyString),
-    relativePath: Schema.optional(TrimmedNonEmptyString),
+    relativePath: Schema.optional(FilePathString),
     failure: Schema.optional(ProjectFileFailure),
-    resolvedPath: Schema.optional(TrimmedNonEmptyString),
+    resolvedPath: Schema.optional(FilePathString),
     resolvedWorkspaceRoot: Schema.optional(TrimmedNonEmptyString),
     operation: Schema.optional(ProjectFileOperation),
-    operationPath: Schema.optional(TrimmedNonEmptyString),
+    operationPath: Schema.optional(FilePathString),
     reason: Schema.optional(ProjectFileErrorReason),
+    osErrorCode: Schema.optional(ProjectFileOsErrorCode),
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),
   },
@@ -405,7 +426,7 @@ export class ProjectReadFileError extends Schema.TaggedError<ProjectReadFileErro
 
 export const ProjectWriteFileInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
-  relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH)),
+  relativePath: FilePathString.check(Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH)),
   contents: Schema.String,
   expectedRevision: Schema.optional(TrimmedNonEmptyString),
   /** Create a new file atomically and fail if its path already exists. */
@@ -414,7 +435,7 @@ export const ProjectWriteFileInput = Schema.Struct({
 export type ProjectWriteFileInput = typeof ProjectWriteFileInput.Type;
 
 export const ProjectWriteFileResult = Schema.Struct({
-  relativePath: TrimmedNonEmptyString,
+  relativePath: FilePathString,
   revision: TrimmedNonEmptyString,
 });
 export type ProjectWriteFileResult = typeof ProjectWriteFileResult.Type;
@@ -443,14 +464,15 @@ export class ProjectWriteFileError extends Schema.TaggedError<ProjectWriteFileEr
   "ProjectWriteFileError",
   {
     cwd: Schema.optional(TrimmedNonEmptyString),
-    relativePath: Schema.optional(TrimmedNonEmptyString),
+    relativePath: Schema.optional(FilePathString),
     failure: Schema.optional(ProjectFileFailure),
-    resolvedPath: Schema.optional(TrimmedNonEmptyString),
+    resolvedPath: Schema.optional(FilePathString),
     resolvedWorkspaceRoot: Schema.optional(TrimmedNonEmptyString),
     operation: Schema.optional(ProjectFileOperation),
-    operationPath: Schema.optional(TrimmedNonEmptyString),
+    operationPath: Schema.optional(FilePathString),
     currentRevision: Schema.optional(TrimmedNonEmptyString),
     reason: Schema.optional(ProjectFileErrorReason),
+    osErrorCode: Schema.optional(ProjectFileOsErrorCode),
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),
   },
@@ -470,8 +492,8 @@ export class ProjectWriteFileError extends Schema.TaggedError<ProjectWriteFileEr
 
 export const ProjectRenameFileInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
-  relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH)),
-  destinationRelativePath: TrimmedNonEmptyString.check(
+  relativePath: FilePathString.check(Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH)),
+  destinationRelativePath: FilePathString.check(
     Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH),
   ),
   expectedRevision: TrimmedNonEmptyString,
@@ -479,8 +501,8 @@ export const ProjectRenameFileInput = Schema.Struct({
 export type ProjectRenameFileInput = typeof ProjectRenameFileInput.Type;
 
 export const ProjectRenameFileResult = Schema.Struct({
-  relativePath: TrimmedNonEmptyString,
-  destinationRelativePath: TrimmedNonEmptyString,
+  relativePath: FilePathString,
+  destinationRelativePath: FilePathString,
   revision: TrimmedNonEmptyString,
 });
 export type ProjectRenameFileResult = typeof ProjectRenameFileResult.Type;
@@ -489,13 +511,13 @@ export class ProjectRenameFileError extends Schema.TaggedError<ProjectRenameFile
   "ProjectRenameFileError",
   {
     cwd: Schema.optional(TrimmedNonEmptyString),
-    relativePath: Schema.optional(TrimmedNonEmptyString),
-    destinationRelativePath: Schema.optional(TrimmedNonEmptyString),
+    relativePath: Schema.optional(FilePathString),
+    destinationRelativePath: Schema.optional(FilePathString),
     failure: Schema.optional(ProjectFileFailure),
-    resolvedPath: Schema.optional(TrimmedNonEmptyString),
+    resolvedPath: Schema.optional(FilePathString),
     resolvedWorkspaceRoot: Schema.optional(TrimmedNonEmptyString),
     operation: Schema.optional(ProjectFileOperation),
-    operationPath: Schema.optional(TrimmedNonEmptyString),
+    operationPath: Schema.optional(FilePathString),
     currentRevision: Schema.optional(TrimmedNonEmptyString),
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),

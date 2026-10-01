@@ -4,7 +4,7 @@ import { beforeAll } from "vite-plus/test";
 import { qualifyDroidTestBinary } from "./DroidLiveTestPreflight.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId } from "@t3tools/contracts";
+import { ProviderInstanceId } from "@t3tools/contracts";
 import { Effect, FileSystem, Path, Redacted, Stream, Schema } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as TestClock from "effect/testing/TestClock";
@@ -21,6 +21,7 @@ const decodeRequest = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
 );
 
+// Verified against Droid 0.213.0 and 0.230.0 with a local stub.
 it.effect.skipIf(!binary)(
   "real Droid transmits corrected efforts and rejects levels its generic transport would remap",
   () =>
@@ -84,14 +85,16 @@ it.effect.skipIf(!binary)(
               contextWindow: 128000,
               maxOutputTokens: 1024,
               reasoning: true,
-              defaultReasoningLevel: "high",
+              // The overlay configures the user's default level, the one level Droid
+              // sends beyond its generic low/medium/high ladder.
+              defaultReasoningLevel: "max",
               images: false,
               reasoningMetadata: {
                 status: "known",
                 source: "provider",
                 supported: true,
                 levels: ["minimal", "low", "medium", "high", "xhigh", "max"],
-                defaultLevel: "max",
+                defaultLevel: "medium",
                 mandatory: true,
                 mode: "effort",
                 checkedAt: "2026-09-06T00:00:00.000Z",
@@ -103,10 +106,7 @@ it.effect.skipIf(!binary)(
       ];
       const factory = yield* makeDroidCustomModelsRuntimeFactory(
         {
-          getSettings: Effect.succeed({
-            ...DEFAULT_SERVER_SETTINGS,
-            customModels: { revision: 0, connections },
-          }),
+          committedCustomModels: () => ({ revision: 0, connections }),
           resolveCustomModels: () => Effect.succeed(connections),
           subscribeChanges: Effect.succeed(Stream.never),
         },
@@ -148,7 +148,7 @@ it.effect.skipIf(!binary)(
           .pipe(Effect.timeout("10 seconds"));
         expect(result.stopReason).toBe("end_turn");
         expect(requests.length).toBeGreaterThan(before);
-        expect(requests[before]?.reasoning_effort).toBe(effort ?? "high");
+        expect(requests[before]?.reasoning_effort).toBe(effort ?? "max");
       }
       const before = requests.length;
       for (const effort of ["xhigh", "minimal"]) {

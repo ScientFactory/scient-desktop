@@ -46,8 +46,9 @@ cached account session; it does not remove an environment-provided API key.
   device-code option.
 - **Sign-in is stuck:** cancel the current flow and start it again. Scient sends cancellation to the
   exact Grok auth request and stops its local process.
-- **Runtime needs repair:** repair downloads and verifies the exact active release before atomically
-  replacing the private runtime. A newer qualified stable release appears separately as Update. The
+- **Runtime needs repair:** repair downloads and verifies the latest qualified release (or the
+  installed one, when that is newer) before atomically replacing the private runtime, so it can also
+  bring a newer release. A newer qualified stable release also appears as Update. The
   previous working copy remains available until verification succeeds.
 - **System or custom install:** run `grok login` or `grok logout` on the machine running the Scient
   server when you need manual recovery.

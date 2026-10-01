@@ -386,6 +386,24 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
           message: "The provider setup plan changed. Review it again before continuing.",
         });
       }
+      // Replacing the system runtime with a release that is older, or that
+      // cannot be compared with it, is decided with both in view, whichever
+      // surface started it.
+      if (
+        (planned.olderThanSystem === true || planned.systemVersion === null) &&
+        input.acceptOlderThanSystem !== true
+      ) {
+        return yield* makeError({
+          provider: target.provider,
+          instanceId: input.instanceId,
+          reason: "runtime_plan_stale",
+          message: `The Scient-managed release ${planned.version ?? ""} ${
+            planned.systemVersion === null
+              ? "may be older than the installed one (system version unknown)"
+              : `is older than the installed ${planned.systemVersion}`
+          }. Review the switch and confirm it before it starts.`,
+        });
+      }
       const operationId = `runtime-${yield* crypto.randomUUIDv4.pipe(Effect.orDie)}`;
       const reserved = yield* lifecycleCoordinator.reserve({
         instanceId: input.instanceId,

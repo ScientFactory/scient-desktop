@@ -180,6 +180,60 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-clea
   },
 );
 
+// SCIENT-FORK:START
+it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-no-savepoint-")))(
+  "OrchestrationProjectionPipeline deferred projection",
+  (it) => {
+    it.effect("projects inside the caller's transaction without leaving a savepoint open", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const now = "2026-01-01T00:00:00.000Z";
+        const projectId = ProjectId.make("project-no-savepoint");
+
+        // Effect SQL names a nested transaction's savepoint by depth and does not
+        // release it on success. A fork projects thousands of events in one
+        // transaction, so one left open per event made every later write slower.
+        const releaseError = yield* sql.withTransaction(
+          Effect.gen(function* () {
+            const projectCreated = yield* eventStore.append({
+              type: "project.created",
+              eventId: EventId.make("evt-no-savepoint-project"),
+              aggregateKind: "project",
+              aggregateId: projectId,
+              occurredAt: now,
+              commandId: CommandId.make("cmd-no-savepoint-project"),
+              causationEventId: null,
+              correlationId: null,
+              metadata: {},
+              payload: {
+                projectId,
+                title: "No savepoint project",
+                workspaceRoot: "/tmp/project-no-savepoint",
+                defaultModelSelection: null,
+                scripts: [],
+                createdAt: now,
+                updatedAt: now,
+              },
+            });
+            // No attachments are involved, so the returned cleanup is a no-op.
+            yield* Effect.flatten(projectionPipeline.projectEventDeferred(projectCreated));
+            return yield* sql.unsafe("RELEASE SAVEPOINT effect_sql_1").pipe(Effect.flip);
+          }),
+        );
+        assert.include(String(releaseError.reason.cause), "no such savepoint");
+
+        const projects = yield* sql<{ readonly projectId: string }>`
+          SELECT project_id AS "projectId" FROM projection_projects
+        `;
+        assert.deepEqual(projects, [{ projectId }]);
+      }),
+    );
+  },
+);
+// SCIENT-FORK:END
+
 it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-import-shell-")))(
   "imported thread shell projection",
   (it) => {

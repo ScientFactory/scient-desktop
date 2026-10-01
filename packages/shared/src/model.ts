@@ -82,10 +82,11 @@ function resolveDescriptorChoiceValue(
   raw: string | null | undefined,
 ): string | undefined {
   const trimmed = trimOrNull(raw);
+  // A concrete control resolves to a level; Off only when the provider offers it.
   if (
     descriptor.concreteReasoning &&
     (!trimmed ||
-      ["off", "none", "default", "inherited"].includes(trimmed) ||
+      ["none", "default", "inherited"].includes(trimmed) ||
       !descriptor.options.some((option) => option.id === trimmed))
   ) {
     return preferredReasoningLevel(

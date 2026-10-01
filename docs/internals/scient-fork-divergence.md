@@ -727,6 +727,35 @@ snapshot:
 - Rendering: one JSON preamble with reasoning and tool items instead of V2's
   `[Historical …]` text blocks.
 
+## Copy cost and request recovery
+
+A fork copies its history as ordinary T3 events, one transaction per command.
+Two rules keep that cheap and recoverable.
+
+- **No nested transaction per projected event.** `projectEventDeferred` runs in
+  the caller's transaction. Effect SQL turns a nested transaction into a
+  savepoint and does not release it on success, so one per event stacked
+  thousands of open savepoints in a fork and every later write slowed with the
+  stack. `projectEvent`, the standalone entry point, opens the transaction
+  itself. This is a T3-owned seam in `ProjectionPipeline.ts`; upstream has the
+  same nested transaction and would gain from the same change.
+- **A fork request that loses its connection is repeated.** The command id
+  derives from the destination thread id, so repeating it returns the same
+  fork. The web client repeats only on a transport failure; any answer from
+  the server ends the attempt. The fork dialog can be closed while the fork is
+  made; that fork then completes without navigating, and a failure is reported
+  as a notification.
+
+The copy still includes every work-log row of the retained turns. Leaving out
+tool progress rows was tried twice and withdrawn: the timeline folds a call's
+rows in ways (titles, changed-file order, hidden rows, same-instant order,
+label-based collapse) that made each rule either change what renders or save
+too little to justify it. A smaller copy is a product decision about what a
+fork's work log shows.
+
+`heavyFork.bench.test.ts` measures a tool-heavy fork (`SCIENT_FORK_BENCH=1`).
+The fork command's trace span carries `scient.fork.events`.
+
 ## Narrow T3-owned seams
 
 ### Submitted question-answer continuity
