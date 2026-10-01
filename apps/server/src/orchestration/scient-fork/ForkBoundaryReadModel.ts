@@ -20,7 +20,7 @@ import {
   resolveUserForkBoundariesFromList,
   type ResolvedForkBoundaries,
 } from "./forkBoundaryTypes.ts";
-import { toConversationImportMarker } from "./importRepository.ts";
+import { readInheritedTurnIds, toConversationImportMarker } from "./importRepository.ts";
 
 /**
  * Error raised when the Scient-owned resolver cannot find or validate a fork
@@ -112,6 +112,9 @@ function mapForkBoundaries(
 
 function makeForkBoundaryQueries(sql: SqlClient.SqlClient) {
   return {
+    // A turn can record an answer id that no message carries. Its boundary then
+    // names the turn's own last completed answer, or none: the turn ended
+    // without an answer and the fork carries only its request and work log.
     listForkBoundaryRowsByThread: SqlSchema.findAll({
       Request: Schema.Struct({ threadId: ThreadId }),
       Result: ProjectionForkBoundaryRow,
@@ -125,12 +128,12 @@ function makeForkBoundaryQueries(sql: SqlClient.SqlClient) {
               SELECT 1 FROM projection_thread_messages AS recorded
               WHERE recorded.thread_id = turns.thread_id
                 AND recorded.message_id = turns.assistant_message_id
-            ) THEN COALESCE((
+            ) THEN (
               SELECT answer.message_id FROM projection_thread_messages AS answer
               WHERE answer.thread_id = turns.thread_id AND answer.turn_id = turns.turn_id
                 AND answer.role = 'assistant' AND answer.is_streaming = 0
               ORDER BY answer.created_at DESC, answer.message_id DESC LIMIT 1
-            ), turns.assistant_message_id)
+            )
             ELSE turns.assistant_message_id
           END AS "assistantMessageId",
           turns.completed_at AS "completedAt",
@@ -326,6 +329,9 @@ export function makeForkBoundaryResolver(sql: SqlClient.SqlClient) {
       input.threadCreatedAt,
       copiedBoundaryRow._tag === "Some" ? copiedBoundaryRow.value.copiedBoundaries : [],
     );
+    const inheritedTurnIds = yield* readInheritedTurnIds(sql, input.originThreadId).pipe(
+      Effect.mapError(toPersistenceSqlError("ForkBoundaryResolver.resolve:readInheritedTurnIds")),
+    );
     if (input.sourceRunningTurnId !== undefined) {
       // Completed boundaries only: the running turn has no row among them.
       const selectedBoundary = boundaries.at(-1)!;
@@ -346,6 +352,7 @@ export function makeForkBoundaryResolver(sql: SqlClient.SqlClient) {
         forkPoint: { kind: "running-turn", turnId: input.sourceRunningTurnId },
         boundaries,
         selectedBoundary,
+        inheritedTurnIds,
         turnRequests: turnRequests.map((turn) => ({
           turnId: turn.turnId,
           userMessageId: turn.userMessageId,
@@ -407,7 +414,7 @@ export function makeForkBoundaryResolver(sql: SqlClient.SqlClient) {
       });
     }
 
-    return resolved;
+    return { ...resolved, inheritedTurnIds } satisfies ResolvedForkBoundaries;
   });
 
   return { resolve } as const;

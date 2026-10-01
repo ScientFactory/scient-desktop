@@ -36,11 +36,18 @@ export interface ScientForkCheckpointBaselineShape {
     readonly cwd: string;
     readonly toCheckpointRef: CheckpointRef;
   }) => Effect.Effect<boolean>;
+  /**
+   * Whether a fork worktree is this repository's checkout of the fork branch at
+   * the frozen checkpoint, with no checkout still in progress. A reused
+   * worktree must also be clean: that scan reads the whole tree, so a worktree
+   * Git has just created is not scanned.
+   */
   readonly verifyWorktree: (input: {
     readonly cwd: string;
     readonly path: string;
     readonly branch: string;
     readonly checkpointRef: string;
+    readonly requireClean: boolean;
   }) => Effect.Effect<boolean, VcsError>;
   /**
    * Best-effort removal of what an abandoned fork created: its worktree, its
@@ -180,17 +187,20 @@ const make = Effect.gen(function* () {
       "--git-path",
       "index.lock",
     ]);
-    const status = yield* git(input.path, ["status", "--porcelain", "--untracked-files=all"]);
-    return (
-      [head, expected, branch, common, originCommon, lock, status].every(
+    if (
+      ![head, expected, branch, common, originCommon, lock].every(
         (result) => result.exitCode === 0,
-      ) &&
-      head.stdout.trim() === expected.stdout.trim() &&
-      branch.stdout.trim() === input.branch &&
-      common.stdout.trim() === originCommon.stdout.trim() &&
-      !(yield* fs.exists(lock.stdout.trim()).pipe(Effect.orElseSucceed(() => true))) &&
-      status.stdout.trim() === ""
-    );
+      ) ||
+      head.stdout.trim() !== expected.stdout.trim() ||
+      branch.stdout.trim() !== input.branch ||
+      common.stdout.trim() !== originCommon.stdout.trim() ||
+      (yield* fs.exists(lock.stdout.trim()).pipe(Effect.orElseSucceed(() => true)))
+    ) {
+      return false;
+    }
+    if (!input.requireClean) return true;
+    const status = yield* git(input.path, ["status", "--porcelain", "--untracked-files=all"]);
+    return status.exitCode === 0 && status.stdout.trim() === "";
   });
 
   const discard: ScientForkCheckpointBaselineShape["discard"] = Effect.fn(

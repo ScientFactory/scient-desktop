@@ -1,4 +1,5 @@
 import {
+  EventId,
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   MessageId,
@@ -36,6 +37,7 @@ import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { ScientForkReactor } from "../Services/ScientForkReactor.ts";
+import { makeForkBoundaryResolver } from "../scient-fork/ForkBoundaryReadModel.ts";
 import { testLayer as ScientForkContextDeliveryTest } from "../scient-fork/ForkContextDelivery.ts";
 import {
   testLayer as ScientForkCheckpointBaselineTest,
@@ -911,13 +913,24 @@ describe("ScientForkReactor", () => {
         const result = yield* reactor.awaitCompletion(NEW).pipe(Effect.result);
         yield* reactor.drain;
         expect(result._tag).toBe(verified ? "Success" : "Failure");
-        expect((yield* readLineageRow(sql))?.status).toBe(verified ? "ready" : "failed");
         expect(creates).toEqual([]);
-        expect(discards).toEqual([]);
+        const lineage = yield* readLineageRow(sql);
         const threads = (yield* snapshot.getSnapshot()).threads;
-        expect(threads.find((thread) => thread.id === NEW)?.worktreePath).toBe(
-          verified ? NEW_WORKTREE_FIXTURE : null,
-        );
+        if (verified) {
+          expect(lineage?.status).toBe("ready");
+          expect(discards).toEqual([]);
+          expect(threads.find((thread) => thread.id === NEW)?.worktreePath).toBe(
+            NEW_WORKTREE_FIXTURE,
+          );
+        } else {
+          // The fork ends for good, so the next one starts fresh instead of
+          // meeting this worktree again. Its files and branch are not removed.
+          expect(lineage?.status).toBe("abandoned");
+          expect(lineage?.last_error).toContain(NEW_WORKTREE_FIXTURE);
+          expect(lineage?.last_error).toContain("Fork again");
+          expect(discards).toEqual([expect.objectContaining({ worktreePath: null, branch: null })]);
+          expect(Option.isNone(yield* snapshot.getThreadDetailById(NEW))).toBe(true);
+        }
         expect(threads.find((thread) => thread.id === ORIGIN)?.worktreePath).toBe(ORIGIN_WORKTREE);
       }).pipe(
         Effect.provide(
@@ -932,6 +945,7 @@ describe("ScientForkReactor", () => {
                   expect(input.path).toBe(NEW_WORKTREE_FIXTURE);
                   expect(input.branch).toBe(`scient/fork/${NEW}`);
                   expect(input.checkpointRef).toBe(checkpointRefForThreadTurn(NEW, 0));
+                  expect(input.requireClean).toBe(true);
                   return verified;
                 }),
               discard: (input) =>
@@ -952,6 +966,188 @@ describe("ScientForkReactor", () => {
       );
     });
   }
+
+  it.live("forks, forks again and reverts past a turn that ended without an answer", () =>
+    Effect.gen(function* () {
+      const engine = yield* OrchestrationEngineService;
+      const reactor = yield* ScientForkReactor;
+      const snapshot = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+      const model = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" };
+      let tick = 0;
+      const now = () => `2026-01-01T00:00:${String(10 + tick++).padStart(2, "0")}.000Z`;
+      let command = 0;
+      const commandId = () => CommandId.make(`cmd-lost-${command++}`);
+      // One turn as the app records it: request, running session, optional
+      // work and answer, session back to ready, then the turn's checkpoint.
+      const turn = (count: number, request: string, answer: string | null) =>
+        Effect.gen(function* () {
+          const turnId = TurnId.make(`origin-turn-${count}`);
+          const session = (status: "running" | "ready") =>
+            engine.dispatch({
+              type: "thread.session.set",
+              commandId: commandId(),
+              threadId: ORIGIN,
+              session: {
+                threadId: ORIGIN,
+                status,
+                providerName: "codex",
+                runtimeMode: "approval-required",
+                activeTurnId: status === "running" ? turnId : null,
+                lastError: null,
+                updatedAt: now(),
+              },
+              createdAt: now(),
+            });
+          yield* engine.dispatch({
+            type: "thread.turn.start",
+            commandId: commandId(),
+            threadId: ORIGIN,
+            message: {
+              messageId: MessageId.make(`origin-user-${count}`),
+              role: "user",
+              text: request,
+              attachments: [],
+            },
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            runtimeMode: "approval-required",
+            createdAt: now(),
+          });
+          yield* session("running");
+          yield* engine.dispatch({
+            type: "thread.activity.append",
+            commandId: commandId(),
+            threadId: ORIGIN,
+            createdAt: now(),
+            activity: {
+              id: EventId.make(`origin-activity-${count}`),
+              tone: "tool",
+              kind: "tool.completed",
+              summary: `Work for: ${request}`,
+              turnId,
+              createdAt: now(),
+              payload: { toolCallId: `origin-call-${count}` },
+            },
+          });
+          const answerId = MessageId.make(
+            answer === null ? `assistant:${turnId}` : `origin-assistant-${count}`,
+          );
+          if (answer !== null) {
+            yield* engine.dispatch({
+              type: "thread.message.assistant.complete",
+              commandId: commandId(),
+              threadId: ORIGIN,
+              messageId: answerId,
+              text: answer,
+              turnId,
+              createdAt: now(),
+            });
+          }
+          yield* session("ready");
+          // A turn without an answer still records an answer id here; no message carries it.
+          yield* engine.dispatch({
+            type: "thread.turn.diff.complete",
+            commandId: commandId(),
+            threadId: ORIGIN,
+            turnId,
+            completedAt: now(),
+            checkpointRef: checkpointRefForThreadTurn(ORIGIN, count),
+            status: "ready",
+            files: [],
+            assistantMessageId: answerId,
+            checkpointTurnCount: count,
+            createdAt: now(),
+          });
+          return answerId;
+        });
+      const historyOf = (threadId: ThreadId) =>
+        snapshot.getThreadDetailById(threadId).pipe(
+          Effect.map(Option.getOrThrow),
+          Effect.map((thread) => ({
+            messages: thread.messages.map((message) => message.text),
+            workLog: thread.activities.map((activity) => activity.summary),
+          })),
+        );
+      const fork = (originThreadId: ThreadId, newThreadId: ThreadId, source: MessageId) =>
+        engine
+          .dispatch({
+            type: "thread.fork",
+            commandId: commandId(),
+            originThreadId,
+            newThreadId,
+            sourceAssistantMessageId: source,
+            workspaceMode: "local",
+          })
+          .pipe(Effect.andThen(reactor.awaitCompletion(newThreadId)));
+
+      yield* reactor.start();
+      yield* engine.dispatch({
+        type: "project.create",
+        commandId: commandId(),
+        projectId: PROJECT_ID,
+        title: "Fork Project",
+        workspaceRoot: WORKSPACE_ROOT,
+        defaultModelSelection: model,
+        createdAt: now(),
+      });
+      yield* engine.dispatch({
+        type: "thread.create",
+        commandId: commandId(),
+        threadId: ORIGIN,
+        projectId: PROJECT_ID,
+        title: "Origin",
+        modelSelection: model,
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: ORIGIN_WORKTREE,
+        createdAt: now(),
+      });
+      yield* turn(1, "Investigate", "Found it");
+      yield* turn(2, "Run the build", null);
+      const lastAnswer = yield* turn(3, "Summarise", "Summary");
+      const history = {
+        messages: ["Investigate", "Found it", "Run the build", "Summarise", "Summary"],
+        workLog: ["Work for: Investigate", "Work for: Run the build", "Work for: Summarise"],
+      };
+      expect(yield* historyOf(ORIGIN)).toEqual(history);
+
+      yield* fork(ORIGIN, NEW, lastAnswer);
+      expect(yield* historyOf(NEW)).toEqual(history);
+
+      // The fork offers only its answered turns as fork points, all of them inherited.
+      const forkBoundaries = (yield* makeForkBoundaryResolver(sql).resolve({
+        originThreadId: NEW,
+        threadCreatedAt: CREATED_AT,
+      })).boundaries;
+      expect(
+        forkBoundaries.map((boundary) => [
+          boundary.conversationTurnCount,
+          boundary.assistantMessageId !== null,
+        ]),
+      ).toEqual([
+        [0, false],
+        [0, true],
+        [0, true],
+      ]);
+
+      // A fork of the fork still carries the unanswered turn.
+      const again = ThreadId.make("new-thread-fork-again");
+      yield* fork(NEW, again, forkBoundaries.at(-1)!.assistantMessageId!);
+      expect(yield* historyOf(again)).toEqual(history);
+
+      // Reverting the fork to its start keeps all inherited history.
+      yield* engine.dispatch({
+        type: "thread.revert.complete",
+        commandId: commandId(),
+        threadId: NEW,
+        turnCount: 0,
+        createdAt: now(),
+      });
+      expect(yield* historyOf(NEW)).toEqual(history);
+      yield* reactor.drain;
+    }).pipe(Effect.provide(makeHarnessLayer([], []))),
+  );
 
   it.live("does not publish an incomplete new checkout as ready", () =>
     Effect.gen(function* () {

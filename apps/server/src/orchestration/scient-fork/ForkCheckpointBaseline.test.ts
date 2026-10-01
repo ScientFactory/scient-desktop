@@ -200,14 +200,19 @@ it.layer(layer)("ScientForkCheckpointBaseline", (it) => {
           process.run({ operation: "test.verify", command: "git", args, cwd: directory });
         yield* git(cwd, ["update-ref", checkpointRef, "HEAD"]);
         yield* git(cwd, ["worktree", "add", "-b", branch, path, checkpointRef]);
-        const input = { cwd, path, branch, checkpointRef };
+        const input = { cwd, path, branch, checkpointRef, requireClean: true };
+        // A checkout Git has just made is checked for identity only, not scanned.
+        const created = { ...input, requireClean: false };
         assert.isTrue(yield* baseline.verifyWorktree(input));
+        assert.isTrue(yield* baseline.verifyWorktree(created));
+        assert.isFalse(yield* baseline.verifyWorktree({ ...created, branch: "another-branch" }));
         assert.isFalse(yield* baseline.verifyWorktree({ ...input, branch: "another-branch" }));
         NodeFS.unlinkSync(NodePath.join(path, "evidence.txt"));
         assert.isFalse(yield* baseline.verifyWorktree(input));
         yield* git(path, ["checkout", "--", "evidence.txt"]);
         NodeFS.writeFileSync(NodePath.join(path, "unexpected.txt"), "user work");
         assert.isFalse(yield* baseline.verifyWorktree(input));
+        assert.isTrue(yield* baseline.verifyWorktree(created));
         NodeFS.unlinkSync(NodePath.join(path, "unexpected.txt"));
         const lock = yield* git(path, [
           "rev-parse",
@@ -217,10 +222,13 @@ it.layer(layer)("ScientForkCheckpointBaseline", (it) => {
         ]);
         NodeFS.writeFileSync(lock.stdout.trim(), "");
         assert.isFalse(yield* baseline.verifyWorktree(input));
+        assert.isFalse(yield* baseline.verifyWorktree(created));
         NodeFS.unlinkSync(lock.stdout.trim());
         NodeFS.writeFileSync(NodePath.join(path, "evidence.txt"), "different commit\n");
         yield* git(path, ["commit", "-am", "different commit"]);
         assert.isFalse(yield* baseline.verifyWorktree(input));
+        // A retry can attach a branch an earlier attempt left at another commit.
+        assert.isFalse(yield* baseline.verifyWorktree(created));
         // Even a matching branch and commit in another repository is not ours.
         const foreign = NodePath.join(cwd, "foreign");
         yield* git(cwd, ["clone", "--no-hardlinks", path, foreign]);
@@ -231,6 +239,7 @@ it.layer(layer)("ScientForkCheckpointBaseline", (it) => {
             path: foreign,
             branch: "foreign-check",
             checkpointRef: "HEAD",
+            requireClean: false,
           }),
         );
       }),

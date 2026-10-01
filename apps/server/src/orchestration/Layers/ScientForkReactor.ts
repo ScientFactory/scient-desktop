@@ -64,7 +64,11 @@ const isScientForkAttachmentCopyError = Schema.is(ScientForkAttachmentCopyError)
 
 class ScientForkTerminalProvisioningError extends Schema.TaggedError<ScientForkTerminalProvisioningError>()(
   "ScientForkTerminalProvisioningError",
-  { detail: Schema.String },
+  {
+    detail: Schema.String,
+    /** The fork's worktree and branch may hold work: abandon the fork, keep them. */
+    keepWorkspace: Schema.optional(Schema.Boolean),
+  },
 ) {}
 
 const isScientForkTerminalProvisioningError = Schema.is(ScientForkTerminalProvisioningError);
@@ -188,12 +192,14 @@ const make = Effect.gen(function* () {
         path: existing.worktreePath,
         branch,
         checkpointRef: input.fromRef,
+        requireClean: true,
       });
       if (!verified) {
-        return yield* new ScientForkCompletionError({
-          threadId: input.threadId,
-          detail:
-            "The existing fork worktree is incomplete or has changed. Its files were left intact. Restore it to the saved checkpoint before retrying.",
+        // Retrying would meet the same worktree again. End this fork so the
+        // next one starts fresh, and leave the files for the user to decide.
+        return yield* new ScientForkTerminalProvisioningError({
+          keepWorkspace: true,
+          detail: `An earlier attempt left this fork's worktree incomplete or changed, so the fork was cancelled. Fork again to get a fresh worktree. The old files were left in place at ${existing.worktreePath}; delete that folder if you do not need them.`,
         });
       }
       return { path: existing.worktreePath, refName: branch };
@@ -215,10 +221,12 @@ const make = Effect.gen(function* () {
         path: created.worktree.path,
         branch,
         checkpointRef: input.fromRef,
+        requireClean: false,
       }))
     ) {
       return yield* new ScientForkTerminalProvisioningError({
-        detail: "The new fork worktree did not complete checkout. Nothing was published as ready.",
+        detail:
+          "The new fork worktree was not checked out at the saved checkpoint, so the fork was cancelled. Fork again.",
       });
     }
     return created.worktree;
@@ -424,8 +432,9 @@ const make = Effect.gen(function* () {
    * fork-owned names are touched (its `scient/fork/<id>` branch, that branch's
    * worktree and its turn-zero ref), found from Git rather than from memory,
    * so a worktree created by an earlier attempt or before a restart is removed.
+   * `keepWorkspace` leaves the worktree and its branch for the user.
    */
-  const discardProvisioned = (payload: ThreadForkedPayload) =>
+  const discardProvisioned = (payload: ThreadForkedPayload, keepWorkspace: boolean) =>
     Effect.gen(function* () {
       const created = provisioned.get(payload.newThreadId);
       provisioned.delete(payload.newThreadId);
@@ -455,8 +464,10 @@ const make = Effect.gen(function* () {
         yield* checkpointBaseline.discard({
           cwd,
           checkpointRef: checkpointRefForThreadTurn(payload.newThreadId, 0),
-          worktreePath: existing?.worktreePath ?? created?.worktreePath ?? null,
-          branch: existing !== null ? branch : (created?.branch ?? null),
+          worktreePath: keepWorkspace
+            ? null
+            : (existing?.worktreePath ?? created?.worktreePath ?? null),
+          branch: keepWorkspace ? null : existing !== null ? branch : (created?.branch ?? null),
         });
       }
       if (yield* isForkThreadDeleted(sql, payload.newThreadId)) return;
@@ -491,12 +502,15 @@ const make = Effect.gen(function* () {
         }
         const error = forkFailureDetail(cause);
         const terminal = isTerminalForkFailure(cause);
+        const failure = forkFailure(cause);
+        const keepWorkspace =
+          isScientForkTerminalProvisioningError(failure) && failure.keepWorkspace === true;
         const logCause = Effect.logWarning("scient fork provisioning failure", {
           newThreadId: payload.newThreadId,
           cause: Cause.pretty(cause),
         });
         const persistFailure = terminal
-          ? discardProvisioned(payload).pipe(
+          ? discardProvisioned(payload, keepWorkspace).pipe(
               Effect.andThen(
                 nowIso.pipe(
                   Effect.flatMap((updatedAt) =>

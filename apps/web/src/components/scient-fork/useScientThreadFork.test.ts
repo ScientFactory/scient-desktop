@@ -91,7 +91,7 @@ describe("user-message fork draft staging", () => {
     ).toBeUndefined();
   });
 
-  it("leaves no partial draft when an unreadable image is not explicitly accepted", async () => {
+  it("refuses, with no partial draft, when nobody can confirm omitting an unreadable image", async () => {
     const fetchAsset: typeof fetch = async () => new Response(null, { status: 403 });
 
     await expect(
@@ -102,7 +102,7 @@ describe("user-message fork draft staging", () => {
         fetchAsset,
         readAsDataUrl: async () => "unused",
       }),
-    ).resolves.toBe(false);
+    ).rejects.toThrow(`These images could not be read: ${attachment.name}`);
 
     expect(
       useComposerDraftStore.getState().draftsByThreadKey[scopedThreadKey(destinationRef)],

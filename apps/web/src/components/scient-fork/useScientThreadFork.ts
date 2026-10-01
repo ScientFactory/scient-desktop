@@ -215,7 +215,15 @@ export async function stageUserForkDraft(input: {
     }),
   );
   const skipped = results.flatMap((result) => result.skipped);
-  if (skipped.length > 0 && !(await input.confirmSkippedImages?.(skipped))) return false;
+  if (skipped.length > 0) {
+    // Without someone to ask, omitting an image would be silent: refuse instead.
+    if (input.confirmSkippedImages === undefined) {
+      throw new Error(
+        `These images could not be read: ${skipped.join(", ")}. Fork from another message, or try again when they are available.`,
+      );
+    }
+    if (!(await input.confirmSkippedImages(skipped))) return false;
+  }
   const preparedAttachments = results.flatMap((result) => result.prepared);
   const drafts = useComposerDraftStore.getState();
   drafts.setPrompt(input.destinationRef, input.prompt);

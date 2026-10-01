@@ -254,7 +254,10 @@ layer("ForkBoundaryReadModel resolver", (it) => {
         sourceAssistantMessageId: A3,
         threadCreatedAt: THREAD_CREATED_AT,
       });
-      assert.strictEqual(result.boundaries[1]?.assistantMessageId, "assistant:turn-1");
+      // The turn stays in the history without an answer, and later answers still resolve.
+      assert.strictEqual(result.boundaries[1]?.turnId, T1);
+      assert.strictEqual(result.boundaries[1]?.assistantMessageId, null);
+      assert.strictEqual(result.selectedBoundary.assistantMessageId, A3);
     }),
   );
 
@@ -489,6 +492,18 @@ layer("ForkBoundaryReadModel resolver", (it) => {
         checkpointTurnCount: 1,
         checkpointStatus: "ready",
       });
+      for (const [messageId, turnId] of [
+        ["fork-baseline-assistant", baselineTurnId],
+        ["fork-assistant-1", postForkTurnId],
+      ] as const) {
+        yield* insertMessage(sql, {
+          threadId: forkThreadId,
+          messageId: MessageId.make(messageId),
+          turnId,
+          role: "assistant",
+          createdAt: NOW,
+        });
+      }
       const resolver = makeForkBoundaryResolver(sql);
 
       // Select the baseline assistant.
@@ -680,6 +695,13 @@ layer("ForkBoundaryReadModel resolver", (it) => {
         completedAt: "2026-01-01T00:00:02.000Z",
         checkpointTurnCount: null,
         checkpointStatus: null,
+      });
+      yield* insertMessage(sql, {
+        threadId: ORIGIN,
+        messageId: A1,
+        turnId: T1,
+        role: "assistant",
+        createdAt: "2026-01-01T00:00:02.000Z",
       });
       const resolver = makeForkBoundaryResolver(sql);
 
