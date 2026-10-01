@@ -4,7 +4,8 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { DroidSettings } from "@t3tools/contracts";
+import { DroidSettings, ProviderDriverKind } from "@t3tools/contracts";
+import { applyAutomaticModelDefaults, resolveAutomaticModel } from "@t3tools/shared/model";
 import { AcpRequestError } from "effect-acp/errors";
 import type { DroidAcpRuntime, DroidAcpRuntimeFactory } from "../acp/DroidAcpSupport.ts";
 
@@ -16,6 +17,7 @@ import {
 } from "./DroidProvider.ts";
 
 const decodeDroidSettings = Schema.decodeSync(DroidSettings);
+const DROID = ProviderDriverKind.make("droid");
 
 const modelCatalog = [
   { value: "native-model", name: "Native model" },
@@ -25,8 +27,12 @@ const modelCatalog = [
 
 // Only the ACP boundary is simulated: exercise the real status probe, catalog
 // mapping without accounts or inference requests.
-const catalogRuntime = (catalog = modelCatalog, failSelection = false) => {
-  let currentValue = "native-model";
+const catalogRuntime = (
+  catalog = modelCatalog,
+  failSelection = false,
+  current = "native-model",
+) => {
+  let currentValue = current;
   const selections: string[] = [];
   const options = () => [
     {
@@ -117,6 +123,37 @@ it.layer(NodeServices.layer)("Droid catalog ownership", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect(
+    "marks the model Droid starts a session with as the default, not the first listed",
+    () =>
+      Effect.gen(function* () {
+        const catalog = [
+          { value: "claude-fable-5.1", name: "Fable" },
+          { value: "gpt-6-sol", name: "Sol" },
+          { value: "custom:scient-fixture", name: "Scient BYOK" },
+        ];
+        const fixture = catalogRuntime(catalog, false, "gpt-6-sol");
+        const { snapshot } = yield* checkDroidProviderStatusWithCapabilities(
+          decodeDroidSettings({ enabled: true, binaryPath: yield* versionOnlyDroid }),
+          {},
+          fixture.makeRuntime,
+        );
+        expect(
+          snapshot.models.filter((model) => model.isDefault).map((model) => model.slug),
+        ).toEqual(["gpt-6-sol"]);
+        // The shared policy every client uses starts new threads on it, and
+        // the registry publishes the same flag unchanged.
+        expect(resolveAutomaticModel(DROID, snapshot.models)).toBe("gpt-6-sol");
+        expect(
+          applyAutomaticModelDefaults(DROID, snapshot.models)
+            .filter((model) => model.isDefault)
+            .map((model) => model.slug),
+        ).toEqual(["gpt-6-sol"]);
+        // The discovery walk restores Droid's own selection.
+        expect(fixture.selections.at(-1)).toBe("gpt-6-sol");
+      }).pipe(Effect.scoped),
+  );
+
   it.effect("a fresh discovery removes detached models and uses current names", () =>
     Effect.gen(function* () {
       const settings = decodeDroidSettings({ enabled: true, binaryPath: yield* versionOnlyDroid });
@@ -159,6 +196,15 @@ describe("buildInitialDroidProviderSnapshot", () => {
       const snapshot = yield* buildInitialDroidProviderSnapshot(decodeDroidSettings({}));
       expect(snapshot.enabled).toBe(false);
       expect(snapshot.status).toBe("disabled");
+    }),
+  );
+
+  it.effect("never offers conversation rewind for Droid", () =>
+    Effect.gen(function* () {
+      for (const enabled of [true, false]) {
+        const snapshot = yield* buildInitialDroidProviderSnapshot(decodeDroidSettings({ enabled }));
+        expect(snapshot.supportsConversationRollback).toBe(false);
+      }
     }),
   );
 
@@ -229,6 +275,70 @@ it.layer(NodeServices.layer)("checkDroidProviderStatus", (it) => {
       expect(snapshot.message).toBe("Droid CLI is installed but failed to run.");
       // CLI stderr must never leak into the user-facing snapshot message.
       expect(snapshot.message).not.toContain(secretStderr);
+    }),
+  );
+
+  it.effect("says why ACP startup failed, without the process's own output", () =>
+    Effect.gen(function* () {
+      const secretStderr = "fatal: secret-token-value";
+      const exited = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-droid-acp-exit-" });
+          const droidPath = path.join(dir, "droid");
+          yield* fs.writeFileString(
+            droidPath,
+            [
+              "#!/bin/sh",
+              'if [ "$1" = "--version" ]; then printf "0.230.0\\n"; exit 0; fi',
+              `printf "%s\\n" "${secretStderr}" >&2`,
+              "exit 3",
+              "",
+            ].join("\n"),
+          );
+          yield* fs.chmod(droidPath, 0o755);
+          return yield* checkDroidProviderStatus(
+            decodeDroidSettings({ enabled: true, binaryPath: droidPath }),
+          );
+        }),
+      );
+      expect(exited.status).toBe("error");
+      expect(exited.message).toBe(
+        "Droid CLI is installed but ACP startup failed: Droid exited with code 3 before it was ready.",
+      );
+      expect(exited.message).not.toContain(secretStderr);
+
+      // Droid's own answer to a startup request is the reason.
+      const refused = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const initializeResult = { protocolVersion: 1, agentCapabilities: {} };
+          const runtime = {
+            initialize: () => Effect.succeed(initializeResult),
+            start: () =>
+              Effect.fail(
+                new AcpRequestError({
+                  code: -32603,
+                  errorMessage:
+                    "Invalid settings: hooks must be an object (key fk-live-0123456789abcdef, token gateway-token-0123456789)\nat loadSettings",
+                }),
+              ),
+          } as unknown as DroidAcpRuntime;
+          return yield* checkDroidProviderStatusWithCapabilities(
+            decodeDroidSettings({ enabled: true, binaryPath: yield* versionOnlyDroid }),
+            { FACTORY_API_KEY: "fk-live-0123456789abcdef" },
+            () => Effect.succeed(runtime),
+            process.cwd(),
+            ["gateway-token-0123456789"],
+          );
+        }),
+      );
+      expect(refused.snapshot.status).toBe("error");
+      // Droid's answer, without the instance's credentials it repeated.
+      expect(refused.snapshot.message).toBe(
+        'Droid CLI is installed but ACP startup failed: Droid answered "Invalid settings: hooks must be an object (key [redacted], token [redacted])".',
+      );
+      expect(refused.snapshot.auth.status).toBe("unknown");
     }),
   );
 

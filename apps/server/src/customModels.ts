@@ -49,6 +49,18 @@ export type ResolvedModelConnection = CustomModelConnection &
     | { readonly credentialError: string; readonly apiKey?: never }
   );
 
+/** A stored key as it is used: without the whitespace around it. Undefined when nothing is left. */
+const usableStoredKey = (stored: Uint8Array): string | undefined =>
+  new TextDecoder().decode(stored).trim() || undefined;
+
+/**
+ * Droid's key broker must recognize a key an endpoint echoes back, and a
+ * JSON-escaped control character (a tab becomes `\t`) or a space would hide
+ * it. So Droid, and only Droid, cannot use a key with whitespace or a control
+ * character inside.
+ */
+export const droidCanUseKey = (key: string) => !/[\s\p{Cc}]/u.test(key);
+
 /** Run before setup IO and again under the commit lock. */
 const validateCustomModelSave = Effect.fn("CustomModels.validateSave")(function* (
   current: ServerSettings,
@@ -63,26 +75,34 @@ const validateCustomModelSave = Effect.fn("CustomModels.validateSave")(function*
     !input.connection.models.some((model) => model.id === input.refreshModelId)
   )
     return yield* failure("This model is no longer in the connection.");
+  const existing = current.customModels.connections.find((c) => c.id === input.connection.id);
+  let attachedToDroid = false;
   for (const model of input.connection.models) {
     if (new Set(model.instanceIds).size !== model.instanceIds.length)
       return yield* failure("This model already includes that agent.");
+    const saved = existing?.models.find((entry) => entry.id === model.id)?.instanceIds ?? [];
     for (const id of model.instanceIds) {
-      const instance = current.providerInstances[id];
-      if (
-        !supportsModelConnections(
-          instance?.driver ?? (id === "pi" && !instance ? "pi" : undefined),
-          input.connection.protocol,
-        )
-      )
+      // A built-in driver's default instance runs from the legacy providers map
+      // even without an entry (for example after "Reset default instance").
+      const driver =
+        current.providerInstances[id]?.driver ??
+        (Object.hasOwn(current.providers, id) ? id : undefined);
+      // A removed agent's id stays until the user detaches it; nothing loads it.
+      if (driver === undefined && saved.includes(id)) continue;
+      if (!supportsModelConnections(driver, input.connection.protocol))
         return yield* failure("This agent does not support custom models.");
+      attachedToDroid ||= driver === "droid";
     }
   }
-  const existing = current.customModels.connections.find((c) => c.id === input.connection.id);
   if (!existing && current.customModels.connections.length >= 100)
     return yield* failure("Connection limit reached.");
-  const key = input.apiKey === undefined ? undefined : Redacted.value(input.apiKey);
-  if (key !== undefined && (!key.trim() || key.length > 16_384 || /[\r\n\0]/u.test(key)))
+  const key = input.apiKey === undefined ? undefined : Redacted.value(input.apiKey).trim();
+  if (key !== undefined && (!key || key.length > 16_384 || /[\r\n\0]/u.test(key)))
     return yield* failure("Enter a valid API key.");
+  if (key !== undefined && attachedToDroid && !droidCanUseKey(key))
+    return yield* failure(
+      "Droid can't use an API key that contains spaces, tabs or other control characters. Paste the key again without them, or remove Droid under Use with.",
+    );
   if (key !== undefined && input.removeKey)
     return yield* failure("Choose either replacing or removing the API key.");
   // A retained credential must never silently move to another origin.
@@ -104,15 +124,18 @@ export const prepareCustomModelSave = Effect.fn("CustomModels.prepareSave")(func
 ) {
   const { existing, key } = yield* validateCustomModelSave(current, input);
   const credentialId = input.removeKey ? null : (existing?.credentialId ?? null);
-  let apiKey = input.apiKey ?? null;
+  let apiKey = key === undefined ? null : Redacted.make(key);
   let credentialError: string | undefined;
   if (key === undefined && credentialId) {
     const stored = yield* secrets
       .get(customModelSecretName(credentialId))
       .pipe(Effect.catch(() => Effect.succeed(Option.none<Uint8Array>())));
+    const usable = Option.isSome(stored) ? usableStoredKey(stored.value) : undefined;
     if (Option.isNone(stored))
       credentialError = "Saved API key is unavailable. Re-enter or remove it.";
-    else apiKey = Redacted.make(new TextDecoder().decode(stored.value));
+    else if (usable === undefined)
+      credentialError = "Saved API key can't be used. Re-enter or remove it.";
+    else apiKey = Redacted.make(usable);
   }
   // A broken key must not prevent editing or detaching models. Do not use an
   // unauthenticated network lookup as a substitute for that credential.
@@ -199,7 +222,15 @@ export const resolveCustomModels = Effect.fn("CustomModels.resolve")(function* (
         ? secrets.get(customModelSecretName(connection.credentialId))
         : Effect.succeed(Option.none<Uint8Array>())
     ).pipe(Effect.result);
-    if (stored._tag === "Failure" || (connection.credentialId && Option.isNone(stored.success))) {
+    const usable =
+      stored._tag === "Success" && Option.isSome(stored.success)
+        ? usableStoredKey(stored.success.value)
+        : undefined;
+    if (
+      stored._tag === "Failure" ||
+      (connection.credentialId && Option.isNone(stored.success)) ||
+      (Option.isSome(stored.success) && usable === undefined)
+    ) {
       // Keep the failure attached to its connection, never turn it into keyless access.
       connections.push({
         ...connection,
@@ -211,9 +242,7 @@ export const resolveCustomModels = Effect.fn("CustomModels.resolve")(function* (
     connections.push({
       ...connection,
       models,
-      apiKey: Option.isSome(stored.success)
-        ? Redacted.make(new TextDecoder().decode(stored.success.value))
-        : null,
+      apiKey: usable === undefined ? null : Redacted.make(usable),
     });
   }
   return connections;

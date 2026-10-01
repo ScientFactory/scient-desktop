@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   DEFAULT_SERVER_SETTINGS,
+  DROID_DEFAULT_MODEL,
   type CustomModel,
   ModelSelection,
   ProjectId,
@@ -13,7 +14,7 @@ import {
   UsageAccountingSourceId,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
-import { assert, it } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
@@ -657,6 +658,35 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("saves and resets Droid's Factory sync setting through the settings patch", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const persistedSync = fs.readFileString(config.settingsPath).pipe(
+        Effect.flatMap(decodeSettingsJson),
+        Effect.map((persisted) => persisted.providers.droid.cloudSessionSync),
+      );
+      // As the settings RPC receives it: decoded through the patch contract.
+      const off = yield* decodeSettingsPatch({ providers: { droid: { cloudSessionSync: false } } });
+      assert.equal(
+        (yield* serverSettings.updateSettings(off)).providers.droid.cloudSessionSync,
+        false,
+      );
+      assert.equal((yield* serverSettings.getSettings).providers.droid.cloudSessionSync, false);
+      assert.equal(yield* persistedSync, false);
+      // "Reset default instance" sends the driver's default settings back.
+      const reset = yield* decodeSettingsPatch({
+        providers: { droid: DEFAULT_SERVER_SETTINGS.providers.droid },
+      });
+      assert.equal(
+        (yield* serverSettings.updateSettings(reset)).providers.droid.cloudSessionSync,
+        true,
+      );
+      assert.equal(yield* persistedSync, true);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("decodes nested settings patches", () =>
     Effect.gen(function* () {
       assert.deepEqual(
@@ -883,6 +913,125 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           { id: "reasoningEffort", value: "high" },
         ]),
       );
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("gives Droid-only users Droid's own default model for text generation", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const disabled = { enabled: false };
+      const next = yield* serverSettings.updateSettings({
+        providers: {
+          codex: disabled,
+          claudeAgent: disabled,
+          cursor: disabled,
+          grok: disabled,
+          opencode: disabled,
+          droid: { enabled: true },
+        },
+      });
+      assert.deepEqual(next.textGenerationModelSelection, {
+        instanceId: ProviderInstanceId.make("droid"),
+        model: DROID_DEFAULT_MODEL,
+      });
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  describe("automatic text-generation provider with every built-in instance disabled", () => {
+    const disabled = { enabled: false };
+    const builtInsDisabled = {
+      codex: disabled,
+      claudeAgent: disabled,
+      cursor: disabled,
+      grok: disabled,
+      opencode: disabled,
+      droid: disabled,
+      pi: disabled,
+      omp: disabled,
+      antigravity: disabled,
+    };
+    const named = (driver: string, enabled = true) => ({
+      driver: ProviderDriverKind.make(driver),
+      enabled,
+    });
+    const selectionWith = (
+      patch: Parameters<ServerSettingsModule.ServerSettingsService["Service"]["updateSettings"]>[0],
+    ) =>
+      Effect.gen(function* () {
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        return (yield* serverSettings.updateSettings(patch)).textGenerationModelSelection;
+      }).pipe(Effect.provide(makeServerSettingsLayer()));
+
+    it.effect("uses a named Droid instance, with the model Droid starts with", () =>
+      Effect.gen(function* () {
+        assert.deepEqual(
+          yield* selectionWith({
+            providers: builtInsDisabled,
+            providerInstances: { [ProviderInstanceId.make("droid_work")]: named("droid") },
+          }),
+          { instanceId: ProviderInstanceId.make("droid_work"), model: DROID_DEFAULT_MODEL },
+        );
+      }),
+    );
+
+    it.effect("uses a named instance of any other provider, with that provider's model", () =>
+      Effect.gen(function* () {
+        assert.deepEqual(
+          yield* selectionWith({
+            providers: builtInsDisabled,
+            providerInstances: { [ProviderInstanceId.make("claude_work")]: named("claudeAgent") },
+          }),
+          { instanceId: ProviderInstanceId.make("claude_work"), model: "claude-haiku-4-5" },
+        );
+      }),
+    );
+
+    it.effect("picks among several named instances by provider order, then by id", () =>
+      Effect.gen(function* () {
+        assert.deepEqual(
+          yield* selectionWith({
+            providers: builtInsDisabled,
+            providerInstances: {
+              [ProviderInstanceId.make("droid_work")]: named("droid"),
+              [ProviderInstanceId.make("claude_b")]: named("claudeAgent"),
+              [ProviderInstanceId.make("claude_a")]: named("claudeAgent"),
+              // Disabled and unknown-driver instances are never chosen.
+              [ProviderInstanceId.make("codex_off")]: named("codex", false),
+              [ProviderInstanceId.make("a_fork")]: named("someForkDriver"),
+            },
+          }),
+          { instanceId: ProviderInstanceId.make("claude_a"), model: "claude-haiku-4-5" },
+        );
+      }),
+    );
+
+    it.effect("prefers an enabled built-in instance over named ones", () =>
+      Effect.gen(function* () {
+        assert.deepEqual(
+          yield* selectionWith({
+            providers: { ...builtInsDisabled, droid: { enabled: true } },
+            providerInstances: { [ProviderInstanceId.make("claude_work")]: named("claudeAgent") },
+          }),
+          { instanceId: ProviderInstanceId.make("droid"), model: DROID_DEFAULT_MODEL },
+        );
+      }),
+    );
+  });
+
+  it.effect("keeps the selected provider while it is enabled, whatever named instances exist", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const before = (yield* serverSettings.getSettings).textGenerationModelSelection;
+      const next = yield* serverSettings.updateSettings({
+        providerInstances: {
+          [ProviderInstanceId.make("droid_work")]: {
+            driver: ProviderDriverKind.make("droid"),
+            enabled: true,
+          },
+        },
+      });
+      assert.deepEqual(next.textGenerationModelSelection, before);
+      assert.equal(before.instanceId, ProviderInstanceId.make("codex"));
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 

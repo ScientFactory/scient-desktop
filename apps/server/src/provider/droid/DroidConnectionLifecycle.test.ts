@@ -92,7 +92,7 @@ const fixture = (stallFirst = true) =>
     let generation = 0;
     const factory = yield* makeDroidCustomModelsRuntimeFactory(
       {
-        getSettings: Effect.sync(snapshot),
+        committedCustomModels: () => snapshot().customModels,
         resolveCustomModels: () => Effect.sync(() => connections),
         subscribeChanges: PubSub.subscribe(pubsub).pipe(Effect.map(Stream.fromSubscription)),
       },
@@ -114,6 +114,8 @@ const fixture = (stallFirst = true) =>
               ...input.environment,
               HOME: root,
               T3_ACP_DROID_ASYNC_CONFIG_REFRESH: "1",
+              // Real Droid offers autonomy_level; background generation requires it.
+              T3_ACP_DROID_AUTONOMY: "auto-high",
               T3_ACP_EMIT_CONTENT_THEN_HANG: generation++ === 0 && stallFirst ? "1" : "0",
               T3_ACP_PROMPT_RESPONSE_TEXT: '{"title":"Recovered"}',
             },
@@ -139,6 +141,8 @@ const fixture = (stallFirst = true) =>
               ),
           };
         }),
+      // No organization policy; never the real home folder's Droid settings.
+      () => Effect.succeed("overlay-hooks-allowed" as const),
     );
     return {
       root,
@@ -147,7 +151,7 @@ const fixture = (stallFirst = true) =>
       partial,
       promptEntered,
       releasePrompt,
-      settings: { binaryPath, enabled: true, customModels: [] },
+      settings: { binaryPath, enabled: true, customModels: [], cloudSessionSync: true },
       selection: { instanceId, model: droidCustomModelId("fixture", "model") },
       update: (kind: "labels" | "add" | "rotate" | "remove") =>
         Effect.gen(function* () {

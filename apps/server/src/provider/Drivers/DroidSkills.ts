@@ -44,17 +44,16 @@ class DroidSkillDiscoveryError extends Data.TaggedError(DROID_SKILL_DISCOVERY_ER
 export interface DroidSkillInventoryClient {
   readonly close: () => Promise<void>;
   readonly listSkills: () => Promise<unknown>;
-  readonly setSkillDisabled?: (
-    skillName: string,
-    disabled: boolean,
-    settingsLevel: "user" | "project",
-  ) => Promise<void>;
+  /** Records the choice in Droid's user-level settings. */
+  readonly setSkillDisabled?: (skillName: string, disabled: boolean) => Promise<void>;
 }
 
 export type DroidSkillInventoryClientFactory = (input: {
   readonly binaryPath: string;
   readonly cwd: string;
   readonly environment: NodeJS.ProcessEnv;
+  /** An existing session to read from; otherwise the client starts a new one. */
+  readonly sessionId?: string | undefined;
   readonly signal: AbortSignal;
 }) => Promise<DroidSkillInventoryClient>;
 
@@ -64,15 +63,12 @@ export type DroidSkillInventoryClientFactory = (input: {
 // level client preserves that login and still owns framing, request matching,
 // protocol compatibility, process cleanup, and cross-platform spawning.
 const liveDroidSkillInventoryClient: DroidSkillInventoryClientFactory = async (input) => {
-  const environment = Object.fromEntries(
-    Object.entries(input.environment).flatMap(([key, value]) =>
-      value === undefined ? [] : ([[key, value]] as const),
-    ),
-  );
   const transport = new ProcessTransport({
     droidExecPath: input.binaryPath,
     cwd: input.cwd,
-    env: environment,
+    // The SDK spreads the server's environment under this one. Undefined
+    // entries mask what the agent environment contract removed; Node omits them.
+    env: input.environment as Record<string, string>,
   });
   let client: DroidClient | undefined;
   let closePromise: Promise<void> | undefined;
@@ -89,12 +85,16 @@ const liveDroidSkillInventoryClient: DroidSkillInventoryClientFactory = async (i
   try {
     await transport.connect();
     client = new DroidClient({ transport });
-    const initialized = await client.initializeSession({
-      machineId: "scient-provider-skill-inventory",
-      cwd: input.cwd,
-    });
-    if (initialized.error) {
-      throw new Error(initialized.error.message);
+    // Loading the status probe's session lists the same skills without starting
+    // another session (verified against Droid 0.228.0 and 0.229.0).
+    const opened = input.sessionId
+      ? await client.loadSession({ sessionId: input.sessionId })
+      : await client.initializeSession({
+          machineId: "scient-provider-skill-inventory",
+          cwd: input.cwd,
+        });
+    if (opened.error) {
+      throw new Error(opened.error.message);
     }
   } catch (cause) {
     await close().catch(() => undefined);
@@ -111,13 +111,9 @@ const liveDroidSkillInventoryClient: DroidSkillInventoryClientFactory = async (i
       }
       return response.result;
     },
-    setSkillDisabled: async (skillName, disabled, settingsLevel) => {
+    setSkillDisabled: async (skillName, disabled) => {
       if (!client) throw new Error("Droid skill inventory client is not initialized.");
-      const response = await client.setSkillDisabled(
-        skillName,
-        disabled,
-        settingsLevel === "project" ? SettingsLevel.Project : SettingsLevel.User,
-      );
+      const response = await client.setSkillDisabled(skillName, disabled, SettingsLevel.User);
       if (response.error) {
         throw new Error(response.error.message);
       }
@@ -140,10 +136,14 @@ export function droidSkillsToServerProviderSkills(
     if (!name || !path) continue;
 
     const description = trimOptional(skill.description);
-    const writableLevel = skill.location === "project" ? "project" : "user";
-    const hasIncompatibleLedgerSource =
+    // The level whose settings hold this skill's own state. Scient writes
+    // only the user level; a project's level belongs to the project, whose
+    // settings Droid writes relative to its working directory (see
+    // setDroidSkillEnabled).
+    const ownLevel = skill.location === "project" ? "project" : "user";
+    const disabledAtAnotherLevel =
       skill.disabledBy?.kind === "ledger" &&
-      skill.disabledBy.sources.some((source) => source.level !== writableLevel);
+      skill.disabledBy.sources.some((source) => source.level !== ownLevel);
     skills.push({
       name,
       path,
@@ -151,9 +151,11 @@ export function droidSkillsToServerProviderSkills(
       enabled: skill.enabled !== false,
       ...(skill.disabledBy?.kind === "frontmatter"
         ? { enabledReadOnlyReason: "Controlled by the skill file" }
-        : hasIncompatibleLedgerSource
+        : disabledAtAnotherLevel
           ? { enabledReadOnlyReason: "Managed by another Droid settings level" }
-          : { canSetEnabled: true }),
+          : ownLevel === "project"
+            ? { enabledReadOnlyReason: "Managed in this project" }
+            : { canSetEnabled: true }),
       ...(description ? { description, shortDescription: description } : {}),
       ...(skill.userInvocable !== undefined ? { userInvocable: skill.userInvocable } : {}),
     });
@@ -168,6 +170,8 @@ export const discoverDroidSkills = Effect.fn("discoverDroidSkills")(function* (
     readonly binaryPath: string;
     readonly cwd: string;
     readonly environment: NodeJS.ProcessEnv;
+    /** The status probe's session, so one probe starts one Droid session. */
+    readonly sessionId?: string | undefined;
   },
   makeClient: DroidSkillInventoryClientFactory = liveDroidSkillInventoryClient,
 ) {
@@ -211,6 +215,13 @@ export const discoverDroidSkills = Effect.fn("discoverDroidSkills")(function* (
   );
 });
 
+/**
+ * Turns a personal, built-in or automation skill on or off in Droid's
+ * user-level settings. A project skill is refused: Droid writes project-level
+ * settings into its working directory, and this session runs in the server's,
+ * so the choice would land there and leave the project's skill unchanged
+ * (verified against Droid 0.213.0 and 0.230.0).
+ */
 export const setDroidSkillEnabled = Effect.fn("setDroidSkillEnabled")(function* (
   input: {
     readonly binaryPath: string;
@@ -222,6 +233,11 @@ export const setDroidSkillEnabled = Effect.fn("setDroidSkillEnabled")(function* 
   },
   makeClient: DroidSkillInventoryClientFactory = liveDroidSkillInventoryClient,
 ) {
+  if (input.scope === "project") {
+    return yield* new DroidSkillDiscoveryError({
+      detail: `Droid project skills are managed in the project. Change '${input.name}' there.`,
+    });
+  }
   const client = yield* Effect.tryPromise({
     try: (signal) => makeClient({ ...input, signal }),
     catch: (cause) =>
@@ -239,11 +255,7 @@ export const setDroidSkillEnabled = Effect.fn("setDroidSkillEnabled")(function* 
           if (!acquired.setSkillDisabled) {
             throw new Error("Droid skill management is unavailable.");
           }
-          return acquired.setSkillDisabled(
-            input.name,
-            !input.enabled,
-            input.scope === "project" ? "project" : "user",
-          );
+          return acquired.setSkillDisabled(input.name, !input.enabled);
         },
         catch: (cause) =>
           new DroidSkillDiscoveryError({

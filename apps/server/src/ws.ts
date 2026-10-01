@@ -13,6 +13,7 @@ import { createModelSelection } from "@t3tools/shared/model";
 import * as EffectAcpErrors from "effect-acp/errors";
 import { customModelProviderId } from "./customModels.ts";
 import { droidCustomModelId } from "./provider/droid/DroidCustomModels.ts";
+import { droidToolGuardTestRefusal } from "./textGeneration/DroidTextGeneration.ts";
 import { encodeOmpModelSlug } from "./provider/omp/OmpModel.ts";
 import { encodePiModelSlug } from "./provider/pi/PiModel.ts";
 import * as Crypto from "effect/Crypto";
@@ -23,6 +24,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -258,8 +260,22 @@ const compactProviderError = (value: unknown): string | null => {
   return compact.length <= 500 ? compact : `${compact.slice(0, 497)}...`;
 };
 
-const customModelTestFailure = (driver: ProviderDriverKind, cause: unknown) => {
-  const agent = PROVIDER_DISPLAY_NAMES[driver] ?? driver;
+const CUSTOM_MODEL_TEST_TIMEOUT_SECONDS = 45;
+
+/** Names the agent the test ran through: its instance label, else the driver's name. */
+const customModelTestFailure = (
+  instance: { readonly driverKind: ProviderDriverKind; readonly displayName: string | undefined },
+  cause: unknown,
+) => {
+  const agent =
+    instance.displayName ?? PROVIDER_DISPLAY_NAMES[instance.driverKind] ?? instance.driverKind;
+  if (Predicate.isTagged(cause, "TimeoutError"))
+    return new CustomModelError({
+      message: `${agent}: No response within ${CUSTOM_MODEL_TEST_TIMEOUT_SECONDS} s.`,
+    });
+  // Droid refuses to run without its tool blocking; say so for a Test, not for titles.
+  const toolGuard = isTextGenerationError(cause) ? droidToolGuardTestRefusal(cause) : undefined;
+  if (toolGuard !== undefined) return new CustomModelError({ message: `${agent}: ${toolGuard}` });
   if (isTextGenerationError(cause) && isAcpRequestError(cause.cause)) {
     const providerDetail = compactProviderError(cause.cause.data);
     if (providerDetail) return new CustomModelError({ message: `${agent}: ${providerDetail}` });
@@ -3110,8 +3126,8 @@ const makeWsRpcLayer = (
                 modelSelection: createModelSelection(input.instanceId, slug),
               })
               .pipe(
-                Effect.timeout("45 seconds"),
-                Effect.mapError((cause) => customModelTestFailure(instance.driverKind, cause)),
+                Effect.timeout(Duration.seconds(CUSTOM_MODEL_TEST_TIMEOUT_SECONDS)),
+                Effect.mapError((cause) => customModelTestFailure(instance, cause)),
               );
             const latest = yield* serverSettings.getSettings;
             if (latest.customModels.revision !== input.revision)

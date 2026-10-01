@@ -257,6 +257,13 @@ export class ServerSettingsService extends Context.Service<
     readonly resolveCustomModels: (
       instanceId: ProviderInstanceId,
     ) => Effect.Effect<ReadonlyArray<ResolvedModelConnection>, CustomModelError>;
+    /**
+     * The custom-model catalog as last committed or reloaded, read
+     * synchronously: no keys, no settings load, no lock. A save replaces it
+     * before its old key is removed, so a check that reads it and starts a
+     * request in the same step is ordered with every committed change.
+     */
+    readonly committedCustomModels: () => CustomModelsSettings;
 
     /** Patch settings and persist. Returns the new full settings object. */
     readonly updateSettings: (
@@ -296,6 +303,7 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
 
     return {
       ...customModelsTestMethods,
+      committedCustomModels: () => Ref.getUnsafe(currentSettingsRef).customModels,
       start: Effect.void,
       ready: Effect.void,
       getSettings: Ref.get(currentSettingsRef).pipe(Effect.map(resolveTextGenerationProvider)),
@@ -328,9 +336,10 @@ export const customModelsTestMethods = {
       }),
     ),
   resolveCustomModels: () => Effect.succeed([]),
+  committedCustomModels: () => DEFAULT_SERVER_SETTINGS.customModels,
 } satisfies Pick<
   ServerSettingsService["Service"],
-  "saveCustomModel" | "removeCustomModel" | "resolveCustomModels"
+  "saveCustomModel" | "removeCustomModel" | "resolveCustomModels" | "committedCustomModels"
 >;
 
 const ServerSettingsJson = fromLenientJson(ServerSettings);
@@ -412,25 +421,53 @@ function fallbackTextGenerationProvider(settings: ServerSettings): ServerSetting
   // Same precedence as isModelSelectionProviderEnabled: an explicit provider
   // instance wins over the legacy providers map, which decodes to defaults
   // (codex enabled) when the Providers UI has only written providerInstances.
-  const fallbackEntry = Object.entries(settings.providers).find(([driver, provider]) => {
+  const builtIn = Object.entries(settings.providers).find(([driver, provider]) => {
     const instance = settings.providerInstances[ProviderInstanceId.make(driver)];
     return instance === undefined ? provider.enabled : resolveProviderInstanceEnabled(instance);
   });
-  const fallback = fallbackEntry ? ProviderDriverKind.make(fallbackEntry[0]) : undefined;
+  const fallback = builtIn
+    ? { instanceId: ProviderInstanceId.make(builtIn[0]), driver: builtIn[0] }
+    : enabledNamedInstance(settings);
   if (!fallback) {
     return settings;
   }
 
+  const driver = ProviderDriverKind.make(fallback.driver);
   return {
     ...settings,
     textGenerationModelSelection: {
-      instanceId: ProviderInstanceId.make(fallback),
+      instanceId: fallback.instanceId,
       model:
-        DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[fallback] ??
-        DEFAULT_MODEL_BY_PROVIDER[fallback] ??
+        DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[driver] ??
+        DEFAULT_MODEL_BY_PROVIDER[driver] ??
         DEFAULT_TEXT_GENERATION_MODEL,
     } satisfies ModelSelection,
   };
+}
+
+/**
+ * With no built-in instance enabled, an enabled instance under another id (a
+ * second account, a named setup) generates text. Instances of a driver this
+ * build does not have are skipped. The choice is stable: drivers in the
+ * built-in order, then instance ids in code-point order.
+ */
+function enabledNamedInstance(
+  settings: ServerSettings,
+): { readonly instanceId: ProviderInstanceId; readonly driver: string } | undefined {
+  const drivers = Object.keys(settings.providers);
+  const [first] = Object.entries(settings.providerInstances)
+    .filter(
+      ([, instance]) =>
+        drivers.includes(instance.driver) && resolveProviderInstanceEnabled(instance),
+    )
+    .toSorted(
+      ([leftId, left], [rightId, right]) =>
+        drivers.indexOf(left.driver) - drivers.indexOf(right.driver) ||
+        (leftId < rightId ? -1 : leftId > rightId ? 1 : 0),
+    );
+  return first
+    ? { instanceId: ProviderInstanceId.make(first[0]), driver: first[1].driver }
+    : undefined;
 }
 
 // Values under these keys are compared as a whole — never stripped field-by-field.
@@ -765,12 +802,21 @@ const make = Effect.gen(function* () {
     return migrated;
   });
 
+  // Replaced whenever settings are committed or reloaded, never loaded lazily.
+  const committedCustomModels = Ref.makeUnsafe(DEFAULT_SERVER_SETTINGS.customModels);
   const settingsCache = yield* Cache.make<typeof cacheKey, ServerSettings, ServerSettingsError>({
     capacity: 1,
-    lookup: () => loadSettingsFromDisk,
+    lookup: () =>
+      loadSettingsFromDisk.pipe(
+        Effect.tap((settings) => Ref.set(committedCustomModels, settings.customModels)),
+      ),
   });
 
   const getSettingsFromCache = Cache.get(settingsCache, cacheKey);
+  const cacheSettings = (settings: ServerSettings) =>
+    Ref.set(committedCustomModels, settings.customModels).pipe(
+      Effect.andThen(Cache.set(settingsCache, cacheKey, settings)),
+    );
 
   const materializeProviderEnvironmentSecrets = (
     settings: ServerSettings,
@@ -1186,7 +1232,7 @@ const make = Effect.gen(function* () {
             return materializedExit.value;
           }),
         );
-        yield* Cache.set(settingsCache, cacheKey, next);
+        yield* cacheSettings(next);
         yield* emitChange(next);
         return resolveTextGenerationProvider(materialized);
       }),
@@ -1266,7 +1312,7 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const next = yield* normalizeServerSettings({ ...current, customModels });
       yield* writeSettingsAtomically(next);
-      yield* Cache.set(settingsCache, cacheKey, next);
+      yield* cacheSettings(next);
       yield* emitChange(next);
     }).pipe(Effect.mapError(customModelFailure));
 
@@ -1340,6 +1386,7 @@ const make = Effect.gen(function* () {
           ),
         ),
       ),
+    committedCustomModels: () => Ref.getUnsafe(committedCustomModels),
     getSettings: getSettingsFromCache.pipe(
       Effect.flatMap(materializeProviderEnvironmentSecrets),
       Effect.map(resolveTextGenerationProvider),

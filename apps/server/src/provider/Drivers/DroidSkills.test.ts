@@ -65,12 +65,13 @@ it("maps Droid's native locations and invocation state without recreating preced
         canSetEnabled: true,
       },
       {
+        // A project's skills are changed in the project, not from Scient.
         name: "project-review",
         path: "/work/.factory/skills/project-review/SKILL.md",
         scope: "project",
         enabled: true,
         userInvocable: true,
-        canSetEnabled: true,
+        enabledReadOnlyReason: "Managed in this project",
         description: "Review the project.",
         shortDescription: "Review the project.",
       },
@@ -96,6 +97,43 @@ it("keeps frontmatter-disabled Droid skills read-only", () => {
         scope: "personal",
         enabled: false,
         enabledReadOnlyReason: "Controlled by the skill file",
+      },
+    ],
+  );
+});
+
+it("says which settings hold a project skill's state", () => {
+  NodeAssert.deepEqual(
+    droidSkillsToServerProviderSkills([
+      {
+        name: "off-in-project",
+        location: "project",
+        filePath: "/work/.factory/skills/off-in-project/SKILL.md",
+        enabled: false,
+        disabledBy: { kind: "ledger", sources: [{ level: "project", folderPath: "/work" }] },
+      },
+      {
+        name: "off-for-user",
+        location: "project",
+        filePath: "/work/.factory/skills/off-for-user/SKILL.md",
+        enabled: false,
+        disabledBy: { kind: "ledger", sources: [{ level: "user" }] },
+      },
+    ]).map(({ name, enabledReadOnlyReason, canSetEnabled }) => ({
+      name,
+      enabledReadOnlyReason,
+      canSetEnabled,
+    })),
+    [
+      {
+        name: "off-for-user",
+        enabledReadOnlyReason: "Managed by another Droid settings level",
+        canSetEnabled: undefined,
+      },
+      {
+        name: "off-in-project",
+        enabledReadOnlyReason: "Managed in this project",
+        canSetEnabled: undefined,
       },
     ],
   );
@@ -192,6 +230,21 @@ it.effect("decodes native inventory and always closes the client", () =>
   }),
 );
 
+it.effect("reads skills from the status probe's session instead of starting one", () =>
+  Effect.gen(function* () {
+    const sessions: Array<string | undefined> = [];
+    const makeClient: DroidSkillInventoryClientFactory = async (input) => {
+      sessions.push(input.sessionId);
+      return { close: async () => {}, listSkills: async () => ({ skills: [] }) };
+    };
+    yield* discoverDroidSkills(
+      { binaryPath: "droid", cwd: "/work", environment: {}, sessionId: "probe-session" },
+      makeClient,
+    );
+    NodeAssert.deepEqual(sessions, ["probe-session"]);
+  }),
+);
+
 it.effect("rejects invalid native inventory and still closes the client", () =>
   Effect.gen(function* () {
     let closed = 0;
@@ -250,38 +303,68 @@ it.effect("closes an acquired client when discovery is interrupted", () =>
   }),
 );
 
-it.effect("uses Droid's native settings ledger and always closes the client", () =>
+it.effect("uses Droid's own user-level settings and always closes the client", () =>
   Effect.gen(function* () {
-    const writes: Array<{
-      name: string;
-      disabled: boolean;
-      level: "user" | "project";
-    }> = [];
+    const writes: Array<{ name: string; disabled: boolean }> = [];
     let closed = 0;
     const makeClient: DroidSkillInventoryClientFactory = async () => ({
       close: async () => {
         closed += 1;
       },
       listSkills: async () => ({ skills: [] }),
-      setSkillDisabled: async (name, disabled, level) => {
-        writes.push({ name, disabled, level });
+      setSkillDisabled: async (name, disabled) => {
+        writes.push({ name, disabled });
       },
     });
 
     const result = yield* setDroidSkillEnabled(
       {
         binaryPath: "droid",
-        cwd: "/work",
+        cwd: "/server",
         environment: {},
         name: "review",
-        scope: "project",
+        scope: "personal",
         enabled: false,
       },
       makeClient,
     );
 
     NodeAssert.deepEqual(result, { effectiveEnabled: false });
-    NodeAssert.deepEqual(writes, [{ name: "review", disabled: true, level: "project" }]);
+    NodeAssert.deepEqual(writes, [{ name: "review", disabled: true }]);
     NodeAssert.equal(closed, 1);
+  }),
+);
+
+it.effect("refuses to change a project skill, without starting Droid", () =>
+  Effect.gen(function* () {
+    // Scient does not know the project here: a project-level write would land
+    // in the server's own working directory and leave the project unchanged.
+    let started = 0;
+    const makeClient: DroidSkillInventoryClientFactory = async () => {
+      started += 1;
+      return {
+        close: async () => undefined,
+        listSkills: async () => ({ skills: [] }),
+        setSkillDisabled: async () => undefined,
+      };
+    };
+
+    const exit = yield* setDroidSkillEnabled(
+      {
+        binaryPath: "droid",
+        cwd: "/server",
+        environment: {},
+        name: "project-review",
+        scope: "project",
+        enabled: false,
+      },
+      makeClient,
+    ).pipe(Effect.flip);
+
+    NodeAssert.equal(
+      exit.detail,
+      "Droid project skills are managed in the project. Change 'project-review' there.",
+    );
+    NodeAssert.equal(started, 0);
   }),
 );
