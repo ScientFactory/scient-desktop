@@ -1,18 +1,45 @@
 import { sha256 } from "@noble/hashes/sha2";
 import { randomUUID } from "../../lib/utils";
-import type { OrchestrationMessageContext } from "@t3tools/contracts";
-import { serializeLegacyContextMessage } from "@t3tools/shared/composerContextLegacySend";
+import * as Schema from "effect/Schema";
+import type { ComposerThreadDraftState } from "../../composerDraftStore";
 
-/** Queue context support is independent of immediate-turn context support. */
-export function prepareQueueMessage(
-  text: string,
-  context: OrchestrationMessageContext | undefined,
-  supportsContext: boolean,
-): { text: string; context?: OrchestrationMessageContext } {
-  if (!context) return { text };
-  return supportsContext
-    ? { text, context }
-    : { text: serializeLegacyContextMessage({ text, records: context.records }) };
+export function composerSubmissionMatchesDraft(
+  submitted: ComposerThreadDraftState | null | undefined,
+  current: ComposerThreadDraftState | null | undefined,
+) {
+  if (submitted === current) return true;
+  if (!submitted || !current || submitted.prompt !== current.prompt) return false;
+  const attachmentsMatch = (
+    before: ComposerThreadDraftState["files"] | ComposerThreadDraftState["images"],
+    after: ComposerThreadDraftState["files"] | ComposerThreadDraftState["images"],
+  ) =>
+    before.length === after.length &&
+    before.every(
+      (attachment, index) =>
+        attachment.id === after[index]?.id && attachment.file === after[index]?.file,
+    );
+  return (
+    attachmentsMatch(submitted.images, current.images) &&
+    attachmentsMatch(submitted.files, current.files) &&
+    (submitted.terminalContexts === current.terminalContexts ||
+      JSON.stringify(submitted.terminalContexts) === JSON.stringify(current.terminalContexts)) &&
+    (submitted.previewAnnotations === current.previewAnnotations ||
+      JSON.stringify(submitted.previewAnnotations) ===
+        JSON.stringify(current.previewAnnotations)) &&
+    (submitted.reviewComments === current.reviewComments ||
+      JSON.stringify(submitted.reviewComments) === JSON.stringify(current.reviewComments))
+  );
+}
+
+const SubmissionJournal = Schema.Union([
+  Schema.Struct({ fingerprint: Schema.String, id: Schema.String }),
+  Schema.Record(Schema.String, Schema.String),
+]);
+function readSubmissionJournal(key: string): Record<string, string> {
+  const stored = localStorage.getItem(key);
+  if (!stored) return {};
+  const saved = Schema.decodeUnknownSync(SubmissionJournal)(JSON.parse(stored));
+  return "fingerprint" in saved && "id" in saved ? { [saved.fingerprint]: saved.id } : { ...saved };
 }
 
 /** Keep the same SHA-256 identity on HTTPS, localhost, and plain HTTP. */
@@ -24,21 +51,21 @@ async function payloadFingerprint(payload: unknown): Promise<string> {
   return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-/** A lost enqueue response must not turn Retry into another queued message. */
+/** Lost responses retain every outstanding intent, even while newer drafts are sent. */
 export async function queueSubmissionId(targetKey: string, payload: unknown): Promise<string> {
   const fingerprint = await payloadFingerprint(payload);
   const key = `scient-queue-submission:${targetKey}`;
-  const previous = localStorage.getItem(key);
-  if (previous) {
-    const saved = JSON.parse(previous) as { fingerprint: string; id: string };
-    if (saved.fingerprint === fingerprint) return saved.id;
-  }
+  const journal = readSubmissionJournal(key);
+  if (journal[fingerprint]) return journal[fingerprint];
   const id = `qitem_${randomUUID()}`;
-  localStorage.setItem(key, JSON.stringify({ id, fingerprint }));
+  localStorage.setItem(key, JSON.stringify({ ...journal, [fingerprint]: id }));
   return id;
 }
 export function acknowledgeQueueSubmission(targetKey: string, id: string) {
   const key = `scient-queue-submission:${targetKey}`;
-  const current = localStorage.getItem(key);
-  if (current && (JSON.parse(current) as { id: string }).id === id) localStorage.removeItem(key);
+  const remaining = Object.fromEntries(
+    Object.entries(readSubmissionJournal(key)).filter(([, savedId]) => savedId !== id),
+  );
+  if (Object.keys(remaining).length === 0) localStorage.removeItem(key);
+  else localStorage.setItem(key, JSON.stringify(remaining));
 }

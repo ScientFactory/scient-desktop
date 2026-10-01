@@ -899,6 +899,7 @@ describe("ProviderRuntimeIngestion", () => {
       await harness.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("start-new-while-old-finishes"),
+        sendIntent: "steer",
         threadId,
         message: {
           messageId: asMessageId("new-turn-prompt"),
@@ -2837,6 +2838,7 @@ describe("ProviderRuntimeIngestion", () => {
       harness.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-turn-start-steer"),
+        sendIntent: "steer",
         threadId,
         message: {
           messageId: asMessageId("msg-steer"),

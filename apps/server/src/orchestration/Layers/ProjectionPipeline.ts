@@ -1,3 +1,4 @@
+import { readQueue } from "../../scient/threadQueue/Ledger.ts";
 import {
   ApprovalRequestId,
   isImportedAgentSessionMessageId,
@@ -2164,6 +2165,15 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             threadId: ThreadId.make(threadId),
           });
           const retainedPaths = collectThreadAttachmentRelativePaths(threadId, messages);
+          const queue = yield* readQueue(ThreadId.make(threadId)).pipe(
+            Effect.provideService(SqlClient.SqlClient, sql),
+          );
+          for (const item of queue.items)
+            for (const attachment of item.attachments) {
+              if ("dataUrl" in attachment) continue;
+              const relativePath = attachmentRelativePath(attachment);
+              if (relativePath) retainedPaths.add(relativePath);
+            }
           const activities = yield* projectionThreadActivityRepository.listByThreadId({
             threadId: ThreadId.make(threadId),
           });

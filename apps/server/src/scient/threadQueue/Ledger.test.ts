@@ -120,10 +120,18 @@ const stop = () =>
       undefined,
     ),
   );
+let manualSequence = 0;
 const ordinaryStart = (sendIntent: "normal" | undefined = "normal") => {
   const { queueItemId: _id, queueRevision: _revision, ...start } = command("manual", 0);
   return transaction(
-    observeQueueCommand({ ...start, ...(sendIntent ? { sendIntent } : {}) }, undefined),
+    observeQueueCommand(
+      {
+        ...start,
+        commandId: CommandId.make(`manual-${++manualSequence}`),
+        ...(sendIntent ? { sendIntent } : {}),
+      },
+      undefined,
+    ),
   );
 };
 const adopt = (id: string) => transaction(observeQueueCommand(sessionCommand(id), undefined));
@@ -426,13 +434,16 @@ describe("server queue ordering and admission", () => {
             controlQueue({ threadId, action: "send", queueItemId: "qitem_A" }, doc),
           );
           expect(requested.items[0]?.sendRequested).toBe(true);
-          expect(Exit.isFailure(yield* Effect.exit(ordinaryStart()))).toBe(true);
+          expect(yield* ordinaryStart()).toBe(true);
           const retry = yield* change((doc) =>
             controlQueue({ threadId, action: "send", queueItemId: "qitem_A" }, doc),
           );
           expect(retry.items[0]?.sendRequested).toBe(true);
           yield* transaction(observeQueueCommand(command("A", retry.revision), undefined));
-          expect((yield* readQueue(threadId)).items.map((item) => item.text)).toEqual(["B"]);
+          expect((yield* readQueue(threadId)).items.map((item) => item.text)).toEqual([
+            "B",
+            "manual",
+          ]);
           yield* adopt("recovery");
           yield* finalizeQueueTurn(threadId, "recovery", true, "answer");
           expect((yield* readQueue(threadId)).blocked).toBe(true);
@@ -539,11 +550,52 @@ describe("server queue ordering and admission", () => {
         yield* enqueue("A");
         const queued = command("A", 1);
         const { queueItemId: _id, queueRevision: _revision, ...ordinary } = queued;
-        const rejected = yield* Effect.exit(
-          transaction(observeQueueCommand({ ...ordinary, sendIntent: "normal" }, undefined)),
+        const queuedResult = yield* transaction(
+          observeQueueCommand({ ...ordinary, sendIntent: "normal" }, undefined),
         );
-        expect(Exit.isFailure(rejected)).toBe(true);
-        expect((yield* readQueue(threadId)).items).toHaveLength(1);
+        expect(queuedResult).toBe(true);
+        const items = (yield* readQueue(threadId)).items;
+        expect(items.map((item) => item.text)).toEqual(["A", "A"]);
+        expect(items[1]?.queueItemId).not.toBe(items[0]?.queueItemId);
+      }),
+    ),
+  );
+  it.effect("extracts once and distinguishes an accepted legacy requeue receipt", () =>
+    run(
+      Effect.gen(function* () {
+        yield* enqueue("A");
+        const item = (yield* readQueue(threadId)).items[0]!;
+        const request = {
+          threadId,
+          action: "extract" as const,
+          queueItemId: item.queueItemId,
+          editToken: "extract-token",
+          expectedUpdatedAt: item.updatedAt,
+        };
+        yield* change((doc) => controlQueue(request, doc));
+        yield* change((doc) => controlQueue(request, doc));
+        expect((yield* readQueue(threadId)).items).toHaveLength(0);
+        yield* enqueue("B");
+        yield* edit("B", "legacy-editor");
+        yield* update("B", "legacy-editor");
+        expect(
+          Exit.isFailure(
+            yield* Effect.exit(
+              change((doc) =>
+                controlQueue(
+                  {
+                    threadId,
+                    action: "extract",
+                    queueItemId: "qitem_B",
+                    editToken: "legacy-editor",
+                  },
+                  doc,
+                ),
+              ),
+            ),
+          ),
+        ).toBe(true);
+        expect((yield* readQueue(threadId)).items.map((item) => item.text)).toEqual(["B edited"]);
       }),
     ),
   );
@@ -816,7 +868,10 @@ describe("Stop and completion recovery", () => {
           [Effect.exit(ordinaryStart()), Effect.exit(ordinaryStart())],
           { concurrency: 2 },
         );
-        expect(outcomes.filter(Exit.isSuccess)).toHaveLength(1);
+        expect(outcomes.filter(Exit.isSuccess)).toHaveLength(2);
+        expect(
+          outcomes.filter((outcome) => Exit.isSuccess(outcome) && outcome.value === true),
+        ).toHaveLength(1);
         yield* adopt("second");
         yield* stop();
         yield* finish("first");
@@ -826,7 +881,7 @@ describe("Stop and completion recovery", () => {
         yield* adopt("third");
         yield* finish("third");
         expect((yield* readQueue(threadId)).awaitingCompletion).toBe(false);
-        expect((yield* readQueue(threadId)).items).toHaveLength(1);
+        expect((yield* readQueue(threadId)).items).toHaveLength(2);
       }),
     ),
   );
