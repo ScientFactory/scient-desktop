@@ -575,8 +575,8 @@ mounts. A few lines change in place: two in `Sidebar.tsx`, the search field's cl
 list and the New thread icon's `hidden` attribute in `SidebarThreadHeader.tsx`, and
 the undo-action union in `showThreadUndoNotice.ts`. New thread always opens the
 "New thread in…" picker (`shouldOpenNewThreadTargetPicker` changes in place), which
-ends with Add project, so a project, including the first, can be added from New
-thread; Shift+click and ⇧⌘N still start directly in the current project. The
+keeps Add project above No project beneath the scrolling project list, so a project,
+including the first, can be added from New thread; Shift+click and ⇧⌘N still start directly in the current project. The
 Sections view reuses T3's rows, shelves and order keys and never changes pin state. If T3 ships its own
 grouping or collapsible shelves, reconcile against these seams instead of layering a
 second grouping. Decisions, invariants and the full seam list are in
@@ -624,7 +624,9 @@ project, the internal "No project" project, and its own plain subfolder under
 relocation command is restored.
 
 Scient's existing sidebar New thread row opens the shared "New thread in…"
-picker with **No project** and **Add project**. Shift+click still starts in the
+picker with **Add project** above **No project**, both fixed below its scrolling
+projects. The shared palette renderer keeps these actions in the same keyboard
+navigation list. Shift+click still starts in the
 current project. The draft project picker can switch destinations before sending;
 Scient omits the redundant "or start without a project" composer prompt. Shared
 workspace admission accepts only a registered direct canonical child of this

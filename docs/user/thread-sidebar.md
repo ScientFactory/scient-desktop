@@ -113,9 +113,10 @@ their default order until the server is updated.
 
 **New thread**, the row directly below search, starts a thread. It first asks which project to
 use, with the current project first, so **Enter** starts there. Choose **No project** to start
-in a scratch folder on the current machine. The list ends with **Add project**, which runs the
-usual Add project flow and then opens a new thread in that project. **⌘N** works
-the same way. To skip the list and start in the current project, **Shift+click** New thread or
+in a scratch folder on the current machine. **Add project** sits above **No project** at the
+bottom of the picker and runs the usual Add project flow before opening a new thread in
+that project. When there are many projects, only the projects scroll; both actions stay
+visible. **⌘N** works the same way. To skip the list and start in the current project, **Shift+click** New thread or
 press **⇧⌘N**.
 
 ### Threads without a project

@@ -59,7 +59,8 @@ closed. Existing binding identity, filesystem identity, authority generation, an
 scope revision checks still apply across Sources, Documents, and Compute.
 
 **UX composition.** The existing sidebar New thread row opens the existing
-"New thread in…" picker, with No project before Add project. The current project
+"New thread in…" picker, with Add project above No project in a fixed bottom
+section while the projects scroll. The current project
 stays first and Shift+click keeps its direct-start behavior. The picker still waits
 for the project catalog; the No project action cannot bypass that readiness guard.
 Scratch uses the same

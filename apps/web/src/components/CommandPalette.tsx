@@ -179,6 +179,7 @@ import {
   browseInputEndPaddingClass,
   buildBrowseGroups,
   buildCommandPaletteProjectMetadata,
+  buildNewThreadProjectGroups,
   buildProjectActionItems,
   buildRootGroups,
   buildThreadActionItems,
@@ -2088,15 +2089,10 @@ function OpenCommandPaletteDialog(props: {
       : projectThreadItems;
     pushPaletteView({
       addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
-      groups: [
-        {
-          value: "projects",
-          label: "Projects",
-          // SCIENT-FORK:START — Add project ends the list (T3: projects only).
-          items: [...enumerateCommandPaletteItems(prioritized), newThreadAddProjectItem],
-          // SCIENT-FORK:END
-        },
-      ],
+      groups: buildNewThreadProjectGroups(
+        enumerateCommandPaletteItems(prioritized),
+        newThreadAddProjectItem,
+      ),
     });
   }, [
     clearOpenIntent,
@@ -2154,14 +2150,8 @@ function OpenCommandPaletteDialog(props: {
       title: "New thread in...",
       icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
       addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
-      // SCIENT-FORK:START — Add project ends the list (T3: projects only).
-      groups: [
-        {
-          value: "projects",
-          label: "Projects",
-          items: [...projectThreadItems, newThreadAddProjectItem],
-        },
-      ],
+      // SCIENT-FORK:START — keep project actions below the scrolling projects.
+      groups: buildNewThreadProjectGroups(projectThreadItems, newThreadAddProjectItem),
       // SCIENT-FORK:END
     });
   }
